@@ -276,14 +276,22 @@ fn spawn_detached_reconcile_with(l: &mut Launcher, generation: u64, opened_after
     });
 }
 
-pub(super) fn retry_detached_reconcile(s: &mut State) {
+pub(crate) fn can_retry_detached_workspace(s: &State, workspace_id: &str) -> bool {
+    crate::workspace::has_detached_panels(s)
+        && s.screen.launcher().is_some_and(|l| {
+            l.failed_detached_workspaces.contains(workspace_id)
+                && l.detached_reconcile.is_none()
+                && !l.authentication_required
+                && l.workspace_stream_generation % 2 == 1
+        })
+}
+
+pub(crate) fn retry_detached_reconcile(s: &mut State) {
     if !crate::workspace::has_detached_panels(s) {
         return;
     }
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    if !l.failed_detached_workspaces.is_empty()
+    if let Some(l) = s.screen.launcher_mut()
+        && !l.failed_detached_workspaces.is_empty()
         && l.detached_reconcile.is_none()
         && !l.authentication_required
         && l.workspace_stream_generation % 2 == 1

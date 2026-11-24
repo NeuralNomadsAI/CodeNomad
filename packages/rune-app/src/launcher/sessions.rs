@@ -324,6 +324,7 @@ pub fn can_change_session(s: &State) -> bool {
     s.phase != Phase::Streaming
         && !s.composer.blocks_navigation()
         && !crate::workspace::unconfirmed_drafts_full(s)
+        && !s.files.as_ref().is_some_and(|ui| ui.document.pending())
         && !s.transcript_display.messages.pending()
         && !s.status_permissions.settling()
         && crate::workspace::input_ready(s)
@@ -423,25 +424,14 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
     crate::timeline::search::close(s);
     clear_conversation_only(s);
     s.show_launcher();
-    crate::git::detach_session(s);
-    let stream_online = s.screen.launcher().is_some_and(|l| {
-        l.project
-            .as_ref()
-            .is_some_and(|p| l.workspace_stream_online_for(&p.id))
-    });
     if let Some(files) = &mut s.files {
         files.close_reader();
         files.online(false);
-        if stream_online {
-            files.online(true);
-        }
     }
     if s.git.owner.is_some() {
         crate::git::online(s, false);
-        if stream_online {
-            crate::git::online(s, true);
-        }
     }
+    crate::git::detach_session(s);
     crate::workspace::schedule_catalogue_refresh(s);
     tx.instant();
     true

@@ -140,7 +140,6 @@ pub(super) fn load(s: &mut State) {
                     let Some(mut location) = pages.remaining.pop_front() else {
                         break;
                     };
-                    let first_page = location.cursor.is_none();
                     let matches_target = target.as_deref().is_some_and(|target_dir| {
                         codenomad_client::same_server_path(&location.directory, target_dir)
                     });
@@ -217,7 +216,7 @@ pub(super) fn load(s: &mut State) {
                         }
                     };
                     let kept_all = pages.keep(page.rows, &mut ids);
-                    if first_page && kept_all && matches_target {
+                    if kept_all && matches_target && page.next.is_none() {
                         target_verified = true;
                     }
                     if !kept_all {
@@ -231,7 +230,11 @@ pub(super) fn load(s: &mut State) {
                             break;
                         }
                         location.cursor = Some(next);
-                        pages.remaining.push_back(location);
+                        if matches_target {
+                            pages.remaining.push_front(location);
+                        } else {
+                            pages.remaining.push_back(location);
+                        }
                     }
                 }
                 if let Some(location) = deferred_target {

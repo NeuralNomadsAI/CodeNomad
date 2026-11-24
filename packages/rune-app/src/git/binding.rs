@@ -172,10 +172,11 @@ pub(crate) fn detach_session(s: &mut State) {
         backend.session.clear();
         Some(backend)
     });
-    let is_online = backend.as_ref().is_some_and(|backend| {
-        s.screen
-            .launcher()
-            .is_some_and(|launcher| launcher.workspace_stream_online_for(&backend.workspace))
+    let is_online = s.screen.launcher().is_some_and(|launcher| {
+        launcher
+            .project
+            .as_ref()
+            .is_some_and(|project| launcher.workspace_stream_online_for(&project.id))
     });
     if let Some(files) = &mut s.files {
         files.detach_session();

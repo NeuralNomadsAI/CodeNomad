@@ -5,12 +5,60 @@ mod inventory;
 use crate::catalog::Sessions;
 use codenomad_client::{Receiver, bounded, stream::CatalogueChanges};
 use rune::Tx;
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    hash::{DefaultHasher, Hash, Hasher},
+};
 
 enum LinkedCheck {
     Page(Sessions),
     Removed,
     Unverified,
+}
+
+async fn load_linked_target_all(
+    backend: &crate::backend::Backend,
+    project: &crate::catalog::Project,
+    target_dir: &str,
+    reads: &crate::platform::reads::Reads,
+    cancelled: &Receiver<()>,
+) -> Option<crate::history::Result<Sessions>> {
+    let mut rows = Vec::new();
+    let mut ids = HashSet::new();
+    let mut seen_cursors = HashSet::new();
+    let mut cursor: Option<String> = None;
+    let mut bytes = 0usize;
+    loop {
+        let page = {
+            let _permit = reads.background(cancelled).await?;
+            backend
+                .linked_session_page(project, target_dir, cursor.as_deref())
+                .await
+        };
+        let page = match page {
+            Ok(page) => page,
+            Err(err) if cursor.is_none() => return Some(Err(err)),
+            Err(_) => return Some(Err("linked target pagination incomplete".into())),
+        };
+        for row in page.rows {
+            if ids.insert(row.id.clone()) {
+                bytes += row.id.len() + row.title.len();
+                if bytes > 24 * 1024 * 1024 {
+                    return Some(Err("linked target text budget reached".into()));
+                }
+                rows.push(row);
+            }
+        }
+        let Some(next) = page.next else {
+            return Some(Ok(Sessions { rows, next: None }));
+        };
+        let mut hash = DefaultHasher::new();
+        next.hash(&mut hash);
+        if seen_cursors.len() >= 999 || !seen_cursors.insert(hash.finish()) {
+            return Some(Err("linked target pagination exceeded its bound".into()));
+        }
+        cursor = Some(next);
+    }
 }
 
 async fn verify_uncertain_linked(
@@ -20,11 +68,7 @@ async fn verify_uncertain_linked(
     reads: &crate::platform::reads::Reads,
     cancelled: &Receiver<()>,
 ) -> Option<LinkedCheck> {
-    let target_page = {
-        let _permit = reads.background(cancelled).await?;
-        backend.linked_session_page(project, target_dir, None).await
-    };
-    match target_page {
+    match load_linked_target_all(backend, project, target_dir, reads, cancelled).await? {
         Ok(target_page) => return Some(LinkedCheck::Page(target_page)),
         Err(err) if !err.is::<codenomad_client::catalog::LocationUnavailable>() => {
             return Some(LinkedCheck::Unverified);
@@ -50,17 +94,15 @@ async fn verify_uncertain_linked(
     if !target_absent {
         return Some(LinkedCheck::Unverified);
     }
-    let retry_page = {
-        let _permit = reads.background(cancelled).await?;
-        backend.linked_session_page(project, target_dir, None).await
-    };
-    Some(match retry_page {
-        Ok(target_page) => LinkedCheck::Page(target_page),
-        Err(err) if err.is::<codenomad_client::catalog::LocationUnavailable>() => {
-            LinkedCheck::Removed
-        }
-        Err(_) => LinkedCheck::Unverified,
-    })
+    Some(
+        match load_linked_target_all(backend, project, target_dir, reads, cancelled).await? {
+            Ok(target_page) => LinkedCheck::Page(target_page),
+            Err(err) if err.is::<codenomad_client::catalog::LocationUnavailable>() => {
+                LinkedCheck::Removed
+            }
+            Err(_) => LinkedCheck::Unverified,
+        },
+    )
 }
 
 #[derive(Default)]
