@@ -63,7 +63,7 @@ enum SyntaxState {
     ObjKey,
     ObjColon,
     ArrValueOrEnd,
-    String { in_key: bool, esc: Esc },
+    String { in_key: bool, esc: Esc, utf8_rem: u8, utf8_min: u8, utf8_max: u8 },
     Number(NumState),
     Keyword(&'static [u8], usize),
     Invalid,
@@ -96,21 +96,124 @@ impl JsonSyntax {
         loop {
             match self.state {
                 SyntaxState::Invalid => return,
-                SyntaxState::String { in_key, esc } => {
+                SyntaxState::String { in_key, esc, utf8_rem, utf8_min, utf8_max } => {
                     match esc {
-                        Esc::None => match current {
-                            b'"' => {
-                                self.state = if in_key { SyntaxState::ObjColon } else { SyntaxState::AfterValue };
+                        Esc::None => {
+                            if utf8_rem > 0 {
+                                if current >= utf8_min && current <= utf8_max {
+                                    self.state = SyntaxState::String {
+                                        in_key,
+                                        esc: Esc::None,
+                                        utf8_rem: utf8_rem - 1,
+                                        utf8_min: 0x80,
+                                        utf8_max: 0xBF,
+                                    };
+                                } else {
+                                    self.state = SyntaxState::Invalid;
+                                }
+                            } else {
+                                match current {
+                                    b'"' => {
+                                        self.state =
+                                            if in_key { SyntaxState::ObjColon } else { SyntaxState::AfterValue };
+                                    }
+                                    b'\\' => {
+                                        self.state = SyntaxState::String {
+                                            in_key,
+                                            esc: Esc::Slash,
+                                            utf8_rem: 0,
+                                            utf8_min: 0x80,
+                                            utf8_max: 0xBF,
+                                        };
+                                    }
+                                    0x00..=0x1F => self.state = SyntaxState::Invalid,
+                                    0x20..=0x7F => {}
+                                    0xC2..=0xDF => {
+                                        self.state = SyntaxState::String {
+                                            in_key,
+                                            esc: Esc::None,
+                                            utf8_rem: 1,
+                                            utf8_min: 0x80,
+                                            utf8_max: 0xBF,
+                                        };
+                                    }
+                                    0xE0 => {
+                                        self.state = SyntaxState::String {
+                                            in_key,
+                                            esc: Esc::None,
+                                            utf8_rem: 2,
+                                            utf8_min: 0xA0,
+                                            utf8_max: 0xBF,
+                                        };
+                                    }
+                                    0xE1..=0xEC | 0xEE..=0xEF => {
+                                        self.state = SyntaxState::String {
+                                            in_key,
+                                            esc: Esc::None,
+                                            utf8_rem: 2,
+                                            utf8_min: 0x80,
+                                            utf8_max: 0xBF,
+                                        };
+                                    }
+                                    0xED => {
+                                        self.state = SyntaxState::String {
+                                            in_key,
+                                            esc: Esc::None,
+                                            utf8_rem: 2,
+                                            utf8_min: 0x80,
+                                            utf8_max: 0x9F,
+                                        };
+                                    }
+                                    0xF0 => {
+                                        self.state = SyntaxState::String {
+                                            in_key,
+                                            esc: Esc::None,
+                                            utf8_rem: 3,
+                                            utf8_min: 0x90,
+                                            utf8_max: 0xBF,
+                                        };
+                                    }
+                                    0xF1..=0xF3 => {
+                                        self.state = SyntaxState::String {
+                                            in_key,
+                                            esc: Esc::None,
+                                            utf8_rem: 3,
+                                            utf8_min: 0x80,
+                                            utf8_max: 0xBF,
+                                        };
+                                    }
+                                    0xF4 => {
+                                        self.state = SyntaxState::String {
+                                            in_key,
+                                            esc: Esc::None,
+                                            utf8_rem: 3,
+                                            utf8_min: 0x80,
+                                            utf8_max: 0x8F,
+                                        };
+                                    }
+                                    _ => self.state = SyntaxState::Invalid,
+                                }
                             }
-                            b'\\' => self.state = SyntaxState::String { in_key, esc: Esc::Slash },
-                            0x00..=0x1F => self.state = SyntaxState::Invalid,
-                            _ => {}
-                        },
+                        }
                         Esc::Slash => match current {
                             b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => {
-                                self.state = SyntaxState::String { in_key, esc: Esc::None };
+                                self.state = SyntaxState::String {
+                                    in_key,
+                                    esc: Esc::None,
+                                    utf8_rem: 0,
+                                    utf8_min: 0x80,
+                                    utf8_max: 0xBF,
+                                };
                             }
-                            b'u' => self.state = SyntaxState::String { in_key, esc: Esc::Hex(4) },
+                            b'u' => {
+                                self.state = SyntaxState::String {
+                                    in_key,
+                                    esc: Esc::Hex(4),
+                                    utf8_rem: 0,
+                                    utf8_min: 0x80,
+                                    utf8_max: 0xBF,
+                                };
+                            }
                             _ => self.state = SyntaxState::Invalid,
                         },
                         Esc::Hex(rem) => {
@@ -118,6 +221,9 @@ impl JsonSyntax {
                                 self.state = SyntaxState::String {
                                     in_key,
                                     esc: if rem <= 1 { Esc::None } else { Esc::Hex(rem - 1) },
+                                    utf8_rem: 0,
+                                    utf8_min: 0x80,
+                                    utf8_max: 0xBF,
                                 };
                             } else {
                                 self.state = SyntaxState::Invalid;
@@ -223,7 +329,15 @@ impl JsonSyntax {
                                 self.state = SyntaxState::ArrValueOrEnd;
                             }
                         }
-                        b'"' => self.state = SyntaxState::String { in_key: false, esc: Esc::None },
+                        b'"' => {
+                            self.state = SyntaxState::String {
+                                in_key: false,
+                                esc: Esc::None,
+                                utf8_rem: 0,
+                                utf8_min: 0x80,
+                                utf8_max: 0xBF,
+                            }
+                        }
                         b'-' => self.state = SyntaxState::Number(NumState::Sign),
                         b'0' => self.state = SyntaxState::Number(NumState::Zero),
                         b'1'..=b'9' => self.state = SyntaxState::Number(NumState::Int),
@@ -246,7 +360,15 @@ impl JsonSyntax {
                                 self.state = SyntaxState::Invalid;
                             }
                         }
-                        b'"' => self.state = SyntaxState::String { in_key: true, esc: Esc::None },
+                        b'"' => {
+                            self.state = SyntaxState::String {
+                                in_key: true,
+                                esc: Esc::None,
+                                utf8_rem: 0,
+                                utf8_min: 0x80,
+                                utf8_max: 0xBF,
+                            }
+                        }
                         _ => self.state = SyntaxState::Invalid,
                     }
                     return;
@@ -256,7 +378,13 @@ impl JsonSyntax {
                         return;
                     }
                     if current == b'"' {
-                        self.state = SyntaxState::String { in_key: true, esc: Esc::None };
+                        self.state = SyntaxState::String {
+                            in_key: true,
+                            esc: Esc::None,
+                            utf8_rem: 0,
+                            utf8_min: 0x80,
+                            utf8_max: 0xBF,
+                        };
                     } else {
                         self.state = SyntaxState::Invalid;
                     }
@@ -762,14 +890,10 @@ impl MessageListStream {
         }
         // Invalid JSON anywhere in the document: restore all deferred URIs verbatim with ZERO
         // extra heap copies by slicing each modified segment and moving each `Box<[u8]>` original
-        // directly into `Bytes`, matching TS `proxy.ts:91`.
+        // directly into `Bytes`, matching TS `proxy.ts:91` (`Response.text()` strips leading UTF-8 BOM).
         let mut by_idx: std::collections::HashMap<usize, Vec<UndoPatch>> = self.undo.into_iter().collect();
-        let mut restored = std::collections::VecDeque::with_capacity(self.segments.len() + by_idx.len() * 2 + 1);
+        let mut restored = std::collections::VecDeque::with_capacity(self.segments.len() + by_idx.len() * 2);
         let mut total_bytes = 0usize;
-        if self.had_bom {
-            restored.push_back(axum::body::Bytes::from_static(&[0xEF, 0xBB, 0xBF]));
-            total_bytes += 3;
-        }
         for (idx, seg) in self.segments.into_iter().enumerate() {
             if let Some(patches) = by_idx.remove(&idx) {
                 let mut cursor = 0usize;
@@ -794,7 +918,7 @@ impl MessageListStream {
                 restored.push_back(seg);
             }
         }
-        Ok((restored, total_bytes, false))
+        Ok((restored, total_bytes, self.had_bom))
     }
 }
 
@@ -1290,6 +1414,131 @@ pub(crate) fn extract_tool_media(
     }))
 }
 
+/// Checks that a JSON payload has at most `limit` structural container/item delimiters (`{`, `[`,
+/// `,` outside string literals) in O(1) memory, preventing dense numeric arrays from amplifying
+/// multi-MiB HTTP bodies into hundreds of MiB of `serde_json::Value` heap allocations.
+pub(crate) fn json_node_count_within(bytes: &[u8], limit: usize) -> bool {
+    let mut count = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for &b in bytes {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+        } else {
+            match b {
+                b'"' => in_string = true,
+                b'{' | b'[' | b',' => {
+                    count += 1;
+                    if count > limit {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    true
+}
+
+/// Validates full RFC 8259 JSON syntax on a native `GET /api/session/:id` response and extracts
+/// only `id`, `projectID`, `location.{directory,workspaceID}`, and `revert` without allocating a
+/// `serde_json::Value` tree over ignored fields.
+pub(crate) fn extract_session_record(raw: &[u8], id: &str, strict_id: bool) -> Result<serde_json::Value, ()> {
+    let text = std::str::from_utf8(raw).map_err(|_| ())?;
+    let mut syntax = JsonSyntax::new();
+    syntax.feed(raw);
+    if !syntax.is_valid_eof() {
+        return Err(());
+    }
+    let mut has_data = false;
+    let mut data_raw: Option<&str> = None;
+    for_each_json_object_field(text, |k, v| {
+        if k == "data" {
+            has_data = true;
+            data_raw = Some(v);
+        }
+    })
+    .ok_or(())?;
+    let obj_raw = if has_data { data_raw.ok_or(())?.trim() } else { text.trim() };
+    if !obj_raw.starts_with('{') {
+        return Err(());
+    }
+    let (mut id_raw, mut project_raw, mut location_raw, mut revert_raw) = (None, None, None, None);
+    for_each_json_object_field(obj_raw, |k, v| match k {
+        "id" => id_raw = Some(v),
+        "projectID" => project_raw = Some(v),
+        "location" => location_raw = Some(v),
+        "revert" => revert_raw = Some(v),
+        _ => {}
+    })
+    .ok_or(())?;
+    let mut out = serde_json::Map::new();
+    if let Some(v) = id_raw {
+        if !json_node_count_within(v.as_bytes(), 16) {
+            return Err(());
+        }
+        let val: serde_json::Value = serde_json::from_str(v).map_err(|_| ())?;
+        if strict_id && val.as_str() != Some(id) {
+            return Err(());
+        }
+        out.insert("id".into(), val);
+    } else if strict_id {
+        return Err(());
+    }
+    if let Some(v) = project_raw {
+        if !json_node_count_within(v.as_bytes(), 16) {
+            return Err(());
+        }
+        out.insert("projectID".into(), serde_json::from_str(v).map_err(|_| ())?);
+    }
+    if let Some(loc) = location_raw {
+        let loc = loc.trim();
+        if loc.starts_with('{') {
+            let (mut dir_raw, mut ws_raw) = (None, None);
+            for_each_json_object_field(loc, |k, v| match k {
+                "directory" => dir_raw = Some(v),
+                "workspaceID" => ws_raw = Some(v),
+                _ => {}
+            })
+            .ok_or(())?;
+            let mut loc_map = serde_json::Map::new();
+            if let Some(v) = dir_raw {
+                if !json_node_count_within(v.as_bytes(), 16) {
+                    return Err(());
+                }
+                loc_map.insert("directory".into(), serde_json::from_str(v).map_err(|_| ())?);
+            }
+            if let Some(v) = ws_raw {
+                let kept = if v.len() <= 2048
+                    && let Some(s) = parse_string(v)
+                    && s.len() <= 514
+                {
+                    serde_json::Value::String(s)
+                } else {
+                    serde_json::Value::Null
+                };
+                loc_map.insert("workspaceID".into(), kept);
+            }
+            out.insert("location".into(), serde_json::Value::Object(loc_map));
+        } else if json_node_count_within(loc.as_bytes(), 16) {
+            out.insert("location".into(), serde_json::from_str(loc).map_err(|_| ())?);
+        }
+    }
+    if let Some(rev) = revert_raw {
+        if !json_node_count_within(rev.as_bytes(), 65_536) {
+            return Err(());
+        }
+        out.insert("revert".into(), serde_json::from_str(rev).map_err(|_| ())?);
+    }
+    Ok(serde_json::Value::Object(out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1468,7 +1717,7 @@ mod tests {
     }
 
     #[test]
-    fn projects_utf8_bom_json_and_restores_bom_on_invalid_tail() {
+    fn projects_utf8_bom_json_and_strips_bom_on_invalid_tail() {
         let large = format!("data:image/png;base64,{}", "A".repeat(40 * 1024));
         let valid = format!(
             "\u{FEFF}{}",
@@ -1487,7 +1736,34 @@ mod tests {
 
         let invalid = format!("{valid} garbage");
         let (out, changed) = run_stream("ws_1", "ses_1", invalid.as_bytes(), 2);
+        assert!(changed);
+        assert_eq!(out.as_ref(), &invalid.as_bytes()[3..]);
+    }
+
+    #[test]
+    fn rejects_invalid_utf8_in_json_strings_and_caps_nodes() {
+        let large = format!("data:image/png;base64,{}", "A".repeat(40 * 1024));
+        let prefix = format!(
+            "{{\"data\":[{{\"id\":\"msg_u\",\"type\":\"assistant\",\"content\":[{{\"type\":\"tool\",\"state\":{{\"content\":[{{\"type\":\"file\",\"mime\":\"image/png\",\"uri\":\"{large}\"}}]}}}}]}}],\"bad\":\"",
+        );
+        let mut raw = prefix.into_bytes();
+        raw.extend_from_slice(&[0xFF, 0xFE]);
+        raw.extend_from_slice(b"\"}");
+        let (out, changed) = run_stream("ws_1", "ses_1", &raw, 256);
         assert!(!changed);
-        assert_eq!(out.as_ref(), invalid.as_bytes());
+        assert_eq!(out.as_ref(), raw.as_slice());
+
+        assert!(json_node_count_within(br#"{"a":[1,2,3]}"#, 4));
+        assert!(!json_node_count_within(br#"{"a":[1,2,3,4,5]}"#, 4));
+
+        let dense_session = format!(
+            "{{\"data\":{{\"id\":\"ses_1\",\"projectID\":\"p1\",\"location\":{{\"directory\":\"/tmp/a\",\"workspaceID\":null}},\"huge\":[{}]}}}}",
+            vec!["0"; 50_000].join(",")
+        );
+        let extracted = extract_session_record(dense_session.as_bytes(), "ses_1", true).unwrap();
+        assert_eq!(extracted["id"], "ses_1");
+        assert_eq!(extracted["projectID"], "p1");
+        assert_eq!(extracted["location"]["directory"], "/tmp/a");
+        assert!(extracted["location"].get("workspaceID").is_some());
     }
 }

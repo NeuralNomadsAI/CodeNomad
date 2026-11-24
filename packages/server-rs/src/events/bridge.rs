@@ -253,28 +253,13 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
             biased;
             _ = shutdown.cancelled() => return,
             _ = app.native.wait_retired(&endpoint) => continue,
-            res = tokio::time::timeout(
-                Duration::from_secs(30),
-                app.native
-                    .client
-                    .get(event_url)
-                    .basic_auth("opencode", Some(&endpoint.password))
-                    .header("accept", "text/event-stream")
-                    .send(),
-            ) => match res {
-                Ok(res) => res,
-                Err(_) => {
-                    app.native.invalidate(&endpoint);
-                    eprintln!("Shared OpenCode event stream disconnected: Shared OpenCode event stream timed out");
-                    status(&app, "error", Some("Shared OpenCode event stream timed out"));
-                    tokio::select! {
-                        biased;
-                        _ = shutdown.cancelled() => return,
-                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-                    }
-                    continue;
-                }
-            },
+            res = app
+                .native
+                .client
+                .get(event_url)
+                .basic_auth("opencode", Some(&endpoint.password))
+                .header("accept", "text/event-stream")
+                .send() => res,
         };
         if let Ok(response) = response
             && response.status().is_success()

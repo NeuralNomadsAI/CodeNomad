@@ -216,8 +216,13 @@ impl Owner {
         }
         let folder = self.folder();
         let created = *self.created.lock().unwrap();
-        if created.is_some() && artifact::directory_identity(&folder) == created {
-            let _ = fs::remove_dir(&folder);
+        if created.is_some() {
+            let _ = tokio::task::spawn_blocking(move || {
+                if artifact::directory_identity(&folder) == created {
+                    let _ = fs::remove_dir(&folder);
+                }
+            })
+            .await;
         }
     }
 }

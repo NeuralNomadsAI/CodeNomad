@@ -518,6 +518,12 @@ fn parse_and_validate_history(status: Status, mut body: Vec<u8>, action: &str) -
     let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return Err(blocked("unavailable")) };
     let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
     let raw_bytes = raw.get().as_bytes();
+    // Bound JSON structural nodes before allocating a `serde_json::Value` tree so a dense
+    // numeric array (e.g. millions of tiny ints under 24 MiB) cannot amplify memory into GiB.
+    const MAX_HISTORY_NODES: usize = 500_000;
+    if !crate::sessions::media_stream::json_node_count_within(raw_bytes, MAX_HISTORY_NODES) {
+        return Err(blocked("unavailable"));
+    }
     let offset = raw_bytes.as_ptr() as usize - body.as_ptr() as usize;
     let raw_range = offset..offset + raw_bytes.len();
     let Ok(mut output) = serde_json::from_str::<Value>(raw.get()) else { return Err(blocked("unavailable")) };

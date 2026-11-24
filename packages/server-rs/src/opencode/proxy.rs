@@ -158,6 +158,11 @@ fn is_json_content_type(headers: &axum::http::HeaderMap) -> bool {
     })
 }
 
+/// Non-OK native error classification (`transport.ts:59`: `contentType.includes("application/json")`).
+fn is_transport_json_content_type(headers: &axum::http::HeaderMap) -> bool {
+    headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|ct| ct.contains("application/json"))
+}
+
 fn parse_location_context(headers: &axum::http::HeaderMap) -> Result<Option<Value>, Error> {
     let invalid = || error(Status::BAD_REQUEST, "Invalid location context");
     let mut values = headers.get_all("x-codenomad-location").iter();
@@ -346,10 +351,26 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     // (`http-server.ts:1248-1269`).
     let mut requested_checkout = None;
     let mut verified_media_dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
+    // Hold the admission slot across the entire `message.list` admission phase (query/header
+    // checks, `session.get`, session location identity, and `media_directory`/placement inventory).
+    static LIST_ADMISSION_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+    let _list_admission_slot = if message_list {
+        Some(match LIST_ADMISSION_SLOTS.try_acquire() {
+            Ok(permit) => permit,
+            Err(_) => tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                _ = workspace_closed() => return Err(not_found()),
+                permit = tokio::time::timeout_at(list_deadline, LIST_ADMISSION_SLOTS.acquire()) => {
+                    permit.map_err(|_| upstream_error())?.map_err(|_| upstream_error())?
+                }
+            },
+        })
+    } else {
+        None
+    };
     let admission_work = async {
-        static LIST_ADMISSION_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
-        let _admission_slot =
-            if message_list { Some(LIST_ADMISSION_SLOTS.acquire().await.map_err(|_| upstream_error())?) } else { None };
         for req in &requested_dirs {
             if message_list {
                 let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), req.clone()).await else {
@@ -561,6 +582,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     {
         return Err(foreign());
     }
+    drop(_list_admission_slot);
     target.path_segments_mut().map_err(|_| invalid())?.clear().extend(route.trim_start_matches('/').split('/'));
     if message_list && !verified_media_dirs.is_empty() {
         let pairs: Vec<(String, String)> = target
@@ -593,7 +615,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     {
         return Err(foreign());
     }
-    let mut list_context_directory: Option<String> = None;
     if let Some(context) = parsed_location_context {
         if send_input {
             let context = super::prompt::directory(&app, &workspace, super::prompt::context(&context)?).await?;
@@ -604,13 +625,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             {
                 return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
             }
-        } else if message_list {
-            // Shape, ownership and query conflicts were already verified before session lookup;
-            // forward the validated location context as `x-opencode-directory` (TS `http-server.ts:1665`).
-            list_context_directory = context["directory"].as_str().map(str::to_owned);
-        } else {
+        } else if !message_list {
             one_location(&context, directory)?;
         }
+        // For `message_list`, shape, ownership, and query conflicts were already verified before
+        // session lookup; TS (`location.ts:35-37, 74-84`) strips `x-codenomad-location` and does
+        // not inject `x-opencode-directory` on `/api/session/:id/message`.
     }
     let session_list = route == "/api/session" && head.method == Method::GET;
     let cursor = if session_list { crate::opencode::scope::authorize_cursor(&mut target, directory)? } else { None };
@@ -937,9 +957,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         upstream = upstream.header(header::ACCEPT, accept);
     }
     if message_list {
-        if let Some(ctx_dir) = &list_context_directory {
-            upstream = upstream.header("x-opencode-directory", crate::sessions::media::encode(ctx_dir));
-        }
         for conditional in [header::IF_NONE_MATCH, header::IF_MODIFIED_SINCE] {
             if let Some(value) = head.headers.get(&conditional) {
                 upstream = upstream.header(conditional, value);
@@ -989,7 +1006,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-            sent = tokio::time::timeout_at(list_deadline, upstream.send()) => match sent {
+            sent = tokio::time::timeout(super::PROXY_IDLE, upstream.send()) => match sent {
                 Ok(Ok(response)) => response,
                 Ok(Err(_)) => {
                     app.native.invalidate(&endpoint);
@@ -1014,7 +1031,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    next = tokio::time::timeout_at(list_deadline, response.chunk()) => {
+                    next = tokio::time::timeout(super::PROXY_IDLE, response.chunk()) => {
                         next.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                     }
                 };
@@ -1033,8 +1050,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        permit = tokio::time::timeout_at(
-                            list_deadline,
+                        permit = tokio::time::timeout(
+                            super::PROXY_IDLE,
                             crate::shared::acquire_response_units(
                                 crate::shared::ResponsePool::List,
                                 pre_needed - held_units,
@@ -1063,8 +1080,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                             biased;
                             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                            permit = tokio::time::timeout_at(
-                                list_deadline,
+                            permit = tokio::time::timeout(
+                                super::PROXY_IDLE,
                                 crate::shared::acquire_response_units(
                                     crate::shared::ResponsePool::List,
                                     needed - held_units,
@@ -1090,8 +1107,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        res = tokio::time::timeout_at(
-                            list_deadline,
+                        res = tokio::time::timeout(
+                            super::PROXY_IDLE,
                             tokio::task::spawn_blocking(move || {
                                 let mut s = moved_stream;
                                 let (out, undo) = crate::sessions::media_stream::project_item(&ws, &ses, raw);
@@ -1122,8 +1139,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        permit = tokio::time::timeout_at(
-                            list_deadline,
+                        permit = tokio::time::timeout(
+                            super::PROXY_IDLE,
                             crate::shared::acquire_response_units(
                                 crate::shared::ResponsePool::List,
                                 needed - held_units,
@@ -1144,8 +1161,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    res = tokio::time::timeout_at(
-                        list_deadline,
+                    res = tokio::time::timeout(
+                        super::PROXY_IDLE,
                         tokio::task::spawn_blocking(move || (stream.finish(), held, held_mem)),
                     ) => res.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
                 };
@@ -1165,8 +1182,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    permit = tokio::time::timeout_at(
-                        list_deadline,
+                    permit = tokio::time::timeout(
+                        super::PROXY_IDLE,
                         crate::shared::acquire_response_units(
                             crate::shared::ResponsePool::List,
                             final_units - held_units,
@@ -1229,7 +1246,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return Err(upstream_error());
         }
         let unauthorized = status == Status::UNAUTHORIZED;
-        if !status.is_success() && status != Status::NOT_MODIFIED && !is_json_content_type(response.headers()) {
+        if !status.is_success() && status != Status::NOT_MODIFIED && !is_transport_json_content_type(response.headers())
+        {
             drop(response);
             if unauthorized {
                 app.native.invalidate(&endpoint);
@@ -1363,7 +1381,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         if message_list
             && !response.status().is_success()
             && response.status() != Status::NOT_MODIFIED
-            && !is_json_content_type(response.headers())
+            && !is_transport_json_content_type(response.headers())
         {
             let status = response.status();
             let unauthorized = status == Status::UNAUTHORIZED;

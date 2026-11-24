@@ -137,10 +137,6 @@ async fn prepare_inner(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) 
         (state.features.clone(), state.stop.clone())
     };
     connection_at(app, Some(endpoint), &features, stop.as_ref()).await;
-    let mut state = STATE.lock().unwrap();
-    if state.active && app.native.current(endpoint) && state.current.is_some() {
-        state.prepared = Some(endpoint.clone());
-    }
 }
 
 /// This backend's Design request (`designRequestRefresher`): derived from the
@@ -335,11 +331,20 @@ async fn connection_at(
         let mut state = STATE.lock().unwrap();
         match outcome {
             Ok((index, fresh)) => {
-                state.current = Some(index);
-                state.reported.clear();
-                state.last = None;
-                if !fresh {
-                    println!("plugin-provision connection {} reused", state.connections);
+                if !state.active
+                    || stop.is_some_and(CancellationToken::is_cancelled)
+                    || endpoint.is_some_and(|ep| !app.native.current(ep))
+                {
+                    state.current = None;
+                    state.prepared = None;
+                } else {
+                    state.current = Some(index);
+                    state.prepared = endpoint.cloned();
+                    state.reported.clear();
+                    state.last = None;
+                    if !fresh {
+                        println!("plugin-provision connection {} reused", state.connections);
+                    }
                 }
             }
             Err(message) => {
@@ -485,10 +490,6 @@ pub fn start(
         if let Some(endpoint) = app.native.endpoint() {
             let _serial = SERIAL.lock().await;
             connection_at(&app, Some(&endpoint), &features, Some(&stop)).await;
-            let mut state = STATE.lock().unwrap();
-            if state.current.is_some() && !stop.is_cancelled() && app.native.current(&endpoint) {
-                state.prepared = Some(endpoint);
-            }
         }
         while !stop.is_cancelled() {
             tokio::select! {
@@ -505,14 +506,6 @@ pub fn start(
                         continue;
                     }
                     connection_at(&app, endpoint.as_ref(), &features, Some(&stop)).await;
-                    if let Some(endpoint) = endpoint
-                        && app.native.current(&endpoint)
-                    {
-                        let mut state = STATE.lock().unwrap();
-                        if state.current.is_some() {
-                            state.prepared = Some(endpoint);
-                        }
-                    }
                 }
             }
         }
@@ -526,13 +519,16 @@ pub fn start(
             sync_task.abort();
         }
         // Hold `SERIAL` briefly across shutdown cleanup so any finishing `prepare()` registers its
-        // leases before we drain them, without blocking forever on a stalled mount.
-        let _serial = tokio::time::timeout(Duration::from_secs(2), SERIAL.lock()).await.ok();
+        // leases before we drain them; if `SERIAL` is still held past the cap, report failure so
+        // shutdown never claims `complete` with a potentially unregistered in-flight lease.
+        let serial_guard = tokio::time::timeout(Duration::from_secs(2), SERIAL.lock()).await.ok();
+        let serial_timed_out = serial_guard.is_none();
         let (owners, leases, snapshot): (Vec<_>, Vec<_>, _) = {
             let mut state = STATE.lock().unwrap();
             state.active = false;
             let installations = std::mem::take(&mut state.installations);
             state.current = None;
+            state.prepared = None;
             let snapshot = status(&app, &state);
             let (owners, leases) = installations.into_iter().map(|i| (i.readiness, i.features)).unzip();
             (owners, leases, snapshot)
@@ -566,8 +562,10 @@ pub fn start(
             Err(last_err.unwrap())
         })
         .await;
+        drop(serial_guard);
         match disposed {
-            Ok(Ok(())) => Ok(()),
+            Ok(Ok(())) if !serial_timed_out => Ok(()),
+            Ok(Ok(())) => Err("Timed out waiting for in-flight plugin provisioning during shutdown".into()),
             Ok(Err(e)) => Err(e),
             Err(e) => Err(e.to_string()),
         }
@@ -593,7 +591,9 @@ pub async fn ready_at(
         if !state.active {
             return Ok(());
         }
-        if !state.prepared.as_ref().is_some_and(|prepared| Arc::ptr_eq(prepared, endpoint)) {
+        if !app.native.current(endpoint)
+            || !state.prepared.as_ref().is_some_and(|prepared| Arc::ptr_eq(prepared, endpoint))
+        {
             return Err("Pruning lease does not match captured connection".into());
         }
         state.current.and_then(|i| state.installations[i].readiness.clone())

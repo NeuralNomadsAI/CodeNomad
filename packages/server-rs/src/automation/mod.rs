@@ -8,6 +8,7 @@ pub mod diagnostics;
 mod registry;
 
 pub use developer::Pins;
+pub use registry::Record;
 
 use std::{
     sync::atomic::{AtomicBool, Ordering},
@@ -48,8 +49,12 @@ pub fn published() -> bool {
 }
 
 /// Binds the private IPv4 loopback listener and writes its registration before the plugins are
-/// provisioned, as `publishAutomationBridge` does; serves until `stop`, then removes it.
-pub async fn publish(app: &Shared, stop: CancellationToken) -> Option<tokio::task::JoinHandle<std::io::Result<()>>> {
+/// provisioned, as `publishAutomationBridge` does; returns the server task and registration
+/// record so shutdown removes the registration only after all listeners finish draining.
+pub async fn publish(
+    app: &Shared,
+    stop: CancellationToken,
+) -> Option<(tokio::task::JoinHandle<std::io::Result<()>>, Record)> {
     let token = app.bridge_token.clone()?;
     let opened = async {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
@@ -70,12 +75,7 @@ pub async fn publish(app: &Shared, stop: CancellationToken) -> Option<tokio::tas
     PUBLISHED.store(true, Ordering::Relaxed);
     let router =
         Router::new().route(PATH, post(handle)).layer(from_fn(crate::panic_guard::catch)).with_state(app.clone());
-    Some(tokio::spawn(async move {
-        let served = crate::shared::serve_local(listener, router, stop, || {}).await;
-        let removed = tokio::task::spawn_blocking(move || record.remove()).await.map_err(std::io::Error::other)?;
-        served?;
-        removed
-    }))
+    Some((tokio::spawn(async move { crate::shared::serve_local(listener, router, stop, || {}).await }), record))
 }
 
 fn refuse(status: Status, message: &str) -> Response {

@@ -330,7 +330,7 @@ pub async fn session_record_with_timeout_at(
     if !valid_id(id) {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    session_record_segment_at(app, endpoint, id, timeout, true, 2 * 1024 * 1024).await
+    session_record_segment_at(app, endpoint, id, timeout, true, 2 * 1024 * 1024, false).await
 }
 
 /// Variant for opaque session IDs (`navigation-contract.ts` / `session-media-contract.ts`)
@@ -350,7 +350,7 @@ pub async fn session_record_opaque_at(
     {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    session_record_segment_at(app, endpoint, id, timeout, strict_id, max_bytes).await
+    session_record_segment_at(app, endpoint, id, timeout, strict_id, max_bytes, true).await
 }
 
 /// Variant for `GET /api/session/:id/message` admission checks: accepts opaque session IDs with
@@ -378,6 +378,7 @@ async fn session_record_segment_at(
     timeout: Duration,
     strict_id: bool,
     max_bytes: usize,
+    compact: bool,
 ) -> Result<Value, Error> {
     let mut url = endpoint.url.clone();
     url.path_segments_mut().map_err(|_| upstream_error())?.clear().extend(["api", "session", id]);
@@ -422,7 +423,13 @@ async fn session_record_segment_at(
     let raw = read_bytes(response.error_for_status().map_err(|_| upstream_error())?, max_bytes)
         .await
         .map_err(|_| upstream_error())?;
-    let parse = |bytes: Vec<u8>, id: &str, strict_id: bool| -> Result<Value, ()> {
+    let parse = move |bytes: Vec<u8>, id: &str, strict_id: bool| -> Result<Value, ()> {
+        if compact {
+            return crate::sessions::media_stream::extract_session_record(&bytes, id, strict_id);
+        }
+        if !crate::sessions::media_stream::json_node_count_within(&bytes, 100_000) {
+            return Err(());
+        }
         let mut parsed: Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
         let data = match parsed.as_object_mut().and_then(|o| o.remove("data")) {
             Some(inner) => inner,

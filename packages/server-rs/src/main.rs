@@ -162,7 +162,10 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     } else {
         bench::stop_on_stdin(shutdown.clone());
     }
-    let bridge = automation::publish(&state, shutdown.clone()).await;
+    let (bridge, bridge_record) = match automation::publish(&state, shutdown.clone()).await {
+        Some((task, record)) => (Some(task), Some(record)),
+        None => (None, None),
+    };
     let plugins_stop = CancellationToken::new();
     let plugins = extensions::lifecycle::start(&state, plugins_stop.clone())?;
     tokio::spawn(previews::sweep(state.clone(), shutdown.clone()));
@@ -256,20 +259,40 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         }
     );
     // Drain local, remote, and automation bridge HTTP listeners before tearing down plugin leases
-    // (TS `index.ts:753-767`, `shutdown.ts:130-137`). Bound cleanup to 4 s so shutdown always emits
-    // its status line inside the desktop host's 30 s hard stop window (`tests/serve.rs:113`).
+    // and removing the bridge registration (TS `index.ts:753-767`, `shutdown.ts:130-147`). Bound
+    // cleanup to 4 s so shutdown always emits its status line inside the desktop host's 30 s stop
+    // window (`tests/serve.rs:113`).
     plugins_stop.cancel();
-    let plugins_ok = match plugins {
-        Some(mut task) => match tokio::time::timeout(std::time::Duration::from_secs(4), &mut task).await {
-            Ok(Ok(Ok(()))) => true,
-            Ok(_) => false,
-            Err(_) => {
-                task.abort();
-                false
+    let (plugins_ok, bridge_removed_ok) = tokio::join!(
+        async {
+            match plugins {
+                Some(mut task) => match tokio::time::timeout(std::time::Duration::from_secs(4), &mut task).await {
+                    Ok(Ok(Ok(()))) => true,
+                    Ok(_) => false,
+                    Err(_) => {
+                        task.abort();
+                        false
+                    }
+                },
+                None => true,
             }
         },
-        None => true,
-    };
+        async {
+            match bridge_record {
+                Some(record) => match tokio::time::timeout(
+                    std::time::Duration::from_secs(4),
+                    tokio::task::spawn_blocking(move || record.remove()),
+                )
+                .await
+                {
+                    Ok(Ok(Ok(()))) => true,
+                    _ => false,
+                },
+                None => true,
+            }
+        }
+    );
+    let bridge_ok = bridge_ok && bridge_removed_ok;
     host::native_parent::close();
     if !launch.serve {
         served?;

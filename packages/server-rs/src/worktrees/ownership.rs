@@ -78,6 +78,8 @@ impl DirectoryProof {
                         tree.contains_receipt_location(physical)
                     } else if self.media {
                         tree.contains_media(physical)
+                    } else if history_root.is_some() {
+                        tree.contains_history(physical)
                     } else {
                         tree.contains_live(physical)
                     }) && (!(self.external || history_root.is_some()) || no_nested_git(physical, tree.target_root()))
@@ -227,27 +229,91 @@ pub(crate) async fn capture_directory_with_refresh(
     }
     for &refresh in if refresh_on_miss { &[false, true][..] } else { &[false] } {
         let catalogue = super::linked::catalogue(app, workspace, refresh).await.ok()?;
-        if let Some(proof) = catalogue_proof(&catalogue, physical, external, false) {
+        if let Some(proof) = catalogue_proof(&catalogue, physical, external, ProofMode::Live) {
             return proof.live(physical).then_some(proof);
         }
     }
     None
 }
 
+#[derive(Clone, Copy)]
+enum ProofMode {
+    Live,
+    Media,
+    History,
+}
+
 fn catalogue_proof(
     catalogue: &super::inventory::Catalogue,
     path: &Path,
     external: bool,
-    media: bool,
+    mode: ProofMode,
 ) -> Option<DirectoryProof> {
     let root = catalogue.get("root").ok()?;
     let tree = catalogue
         .trees
         .iter()
-        .filter(|tree| if media { tree.contains_media(path) } else { tree.contains_live(path) })
-        .max_by_key(|tree| if media { tree.media_path_len() } else { tree.path.as_os_str().len() })?;
+        .filter(|tree| match mode {
+            ProofMode::Live => tree.contains_live(path),
+            ProofMode::Media => tree.contains_media(path),
+            ProofMode::History => tree.contains_history(path),
+        })
+        .max_by_key(|tree| match mode {
+            ProofMode::Live => tree.path.as_os_str().len(),
+            ProofMode::Media | ProofMode::History => tree.media_path_len(),
+        })?;
     let source = (external || tree.registered() != root.registered()).then(|| root.clone());
-    Some(DirectoryProof { tree: Some(tree.clone()), source, root: None, external, media })
+    Some(DirectoryProof {
+        tree: Some(tree.clone()),
+        source,
+        root: None,
+        external,
+        media: matches!(mode, ProofMode::Media),
+    })
+}
+
+fn reject_network_path(raw: &str, path: &Path) -> Result<(), ()> {
+    if raw.starts_with("\\\\") || raw.starts_with("//") || raw.starts_with(r"\??\") {
+        return Err(());
+    }
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        if let Some(Component::Prefix(prefix)) = path.components().next()
+            && matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..) | Prefix::DeviceNS(..))
+        {
+            return Err(());
+        }
+    }
+    let _ = path;
+    Ok(())
+}
+
+fn component_eq(a: std::path::Component<'_>, b: std::path::Component<'_>) -> bool {
+    #[cfg(windows)]
+    {
+        a.as_os_str().to_string_lossy().to_lowercase() == b.as_os_str().to_string_lossy().to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        a == b
+    }
+}
+
+#[cfg(windows)]
+fn path_starts_with_scope(scope: &Path, candidate: &Path) -> bool {
+    let mut parts = candidate.components();
+    scope.components().all(|s| parts.next().is_some_and(|c| component_eq(s, c)))
+}
+
+#[cfg(windows)]
+fn is_windows_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or_default().trim_end_matches(' ').to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        stem.strip_prefix(prefix)
+            .is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"))
+    };
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") || numbered("COM") || numbered("LPT")
 }
 
 /// A missing child is owned through its nearest existing directory, never
@@ -265,6 +331,7 @@ pub(crate) fn directory_anchor(path: &Path) -> Result<Option<&Path>, ()> {
 }
 
 pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, PathBuf)> {
+    use std::path::Component;
     if raw.is_empty() || raw.len() > 32_768 || raw.contains('\0') {
         return None;
     }
@@ -284,34 +351,91 @@ pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, Pa
     if !raw.starts_with('/') {
         return None;
     }
+    // Check lexical `scope` prefix BEFORE any filesystem I/O so paths on other drives (including
+    // Windows mapped SMB drives) or outside `scope` are rejected with zero filesystem calls.
+    let scope_comps: Vec<Component<'_>> = scope.components().collect();
+    let mut comps = Path::new(raw).components();
+    let mut matched = 0usize;
+    while matched < scope_comps.len() {
+        match comps.next()? {
+            Component::CurDir => continue,
+            Component::ParentDir => return None,
+            comp if component_eq(comp, scope_comps[matched]) => matched += 1,
+            _ => return None,
+        }
+    }
     // Resolve symlinks component-by-component BEFORE applying `..` so a POSIX path like
     // `/workspace/link_to_foreign/..` resolves through `link_to_foreign` into `/foreign`
     // rather than being lexically collapsed back into `/workspace`.
-    let mut cur = PathBuf::new();
+    let mut cur = if scope_comps.is_empty() { PathBuf::new() } else { scope.to_path_buf() };
     let mut missing = false;
-    for component in Path::new(raw).components() {
-        use std::path::Component;
+    for component in comps {
         match component {
             Component::Prefix(prefix) => cur.push(prefix.as_os_str()),
             Component::RootDir => cur.push(component.as_os_str()),
             Component::CurDir => {}
             Component::Normal(seg) => {
+                #[cfg(windows)]
+                if is_windows_device_name(&seg.to_string_lossy()) {
+                    return None;
+                }
                 cur.push(seg);
                 if !missing {
-                    match dunce::canonicalize(&cur) {
-                        Ok(real) => cur = real,
+                    match std::fs::symlink_metadata(&cur) {
                         Err(e) if e.kind() == std::io::ErrorKind::NotFound => missing = true,
                         Err(_) => return None,
+                        Ok(_) => {
+                            // Inspect link/junction target BEFORE `canonicalize` so a link to a
+                            // UNC share or mapped drive outside `scope` triggers zero SMB I/O.
+                            if let Ok(target) = std::fs::read_link(&cur) {
+                                let target_str = target.to_string_lossy();
+                                if reject_network_path(&target_str, &target).is_err() {
+                                    return None;
+                                }
+                                #[cfg(windows)]
+                                {
+                                    let simplified = dunce::simplified(&target);
+                                    if simplified.is_absolute()
+                                        && !scope_comps.is_empty()
+                                        && !path_starts_with_scope(scope, simplified)
+                                    {
+                                        return None;
+                                    }
+                                }
+                            }
+                            match dunce::canonicalize(&cur) {
+                                Ok(real) => {
+                                    if reject_network_path(&real.to_string_lossy(), &real).is_err() {
+                                        return None;
+                                    }
+                                    if !scope_comps.is_empty() && !real.starts_with(scope) {
+                                        return None;
+                                    }
+                                    cur = real;
+                                }
+                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => missing = true,
+                                Err(_) => return None,
+                            }
+                        }
                     }
                 }
             }
             Component::ParentDir => {
+                if !scope_comps.is_empty() && cur == scope {
+                    return None;
+                }
                 if !cur.pop() {
+                    return None;
+                }
+                if !scope_comps.is_empty() && !cur.starts_with(scope) {
                     return None;
                 }
                 if missing {
                     match dunce::canonicalize(&cur) {
                         Ok(real) => {
+                            if !scope_comps.is_empty() && !real.starts_with(scope) {
+                                return None;
+                            }
                             cur = real;
                             missing = false;
                         }
@@ -322,7 +446,7 @@ pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, Pa
             }
         }
     }
-    if !cur.starts_with(scope) {
+    if !scope_comps.is_empty() && !cur.starts_with(scope) {
         return None;
     }
     let anchor = directory_anchor(&cur).ok()??.to_path_buf();
@@ -340,7 +464,7 @@ async fn catalogue_proof_live_async(
     scope: Option<PathBuf>,
 ) -> Option<DirectoryProof> {
     tokio::task::spawn_blocking(move || {
-        catalogue_proof(&catalogue, &path, external, true).filter(|proof| {
+        catalogue_proof(&catalogue, &path, external, ProofMode::Media).filter(|proof| {
             scope
                 .as_ref()
                 .is_none_or(|scope| proof.tree.as_ref().is_none_or(|tree| tree.registered().starts_with(scope)))
@@ -560,7 +684,7 @@ impl HistoryInventory {
     pub(crate) fn prove(&self, workspace: &Path, path: &Path) -> Option<DirectoryProof> {
         let external = !path.starts_with(workspace);
         let proof = match &self.0 {
-            Some(inventory) => catalogue_proof(inventory, path, external, false)?,
+            Some(inventory) => catalogue_proof(inventory, path, external, ProofMode::History)?,
             None if !external => DirectoryProof { tree: None, source: None, root: None, external, media: false },
             None => return None,
         };
@@ -716,22 +840,6 @@ fn strict_discover_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
             }
         }
         current = parent.to_path_buf();
-    };
-    let reject_network_path = |raw: &str, path: &Path| -> Result<(), ()> {
-        if raw.starts_with("\\\\") || raw.starts_with("//") {
-            return Err(());
-        }
-        #[cfg(windows)]
-        {
-            use std::path::{Component, Prefix};
-            if let Some(Component::Prefix(prefix)) = path.components().next()
-                && matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..) | Prefix::DeviceNS(..))
-            {
-                return Err(());
-            }
-        }
-        let _ = path;
-        Ok(())
     };
     let entry = root.join(".git");
     let entry_meta = std::fs::symlink_metadata(&entry).map_err(|_| ())?;

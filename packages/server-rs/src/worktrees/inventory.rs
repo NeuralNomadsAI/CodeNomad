@@ -285,6 +285,20 @@ impl Tree {
             && self.link_live()
             && identity(&self.path).ok() == self.identity
     }
+    /// History search provenance (`query`/`ranked`): admits a sibling worktree whose projected
+    /// subfolder symlinks into another verified worktree of the same repository while keeping
+    /// `contains_live`/`owns_path`/`direct_folder` strict for Git staging and mutations.
+    pub(super) fn contains_history(&self, dir: &Path) -> bool {
+        if let Some(link) = &self.projected_link {
+            let (link_path, target, target_layout, target_id) = link.as_ref();
+            return dir.starts_with(target)
+                && self.layout.live()
+                && target_layout.live()
+                && dunce::canonicalize(link_path).ok().as_ref() == Some(target)
+                && identity(target).ok().as_deref() == Some(target_id.as_str());
+        }
+        self.contains_live(dir)
+    }
     pub(super) fn contains_media(&self, dir: &Path) -> bool {
         if let Some(link) = &self.projected_link {
             let (link_path, target, target_layout, target_id) = link.as_ref();
