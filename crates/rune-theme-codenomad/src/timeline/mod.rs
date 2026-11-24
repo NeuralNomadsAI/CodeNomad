@@ -699,13 +699,17 @@ mod tests {
             "same-frame momentum-chained follow-up must accumulate on pending jump instead of being overwritten: {:?}",
             scroll.get().2
         );
-        // Ending the chained momentum gesture releases ownership so a subsequent gesture scrolls natively.
+        // Ending the chained momentum gesture immediately releases ownership before any next gesture.
         rt.wheel_event(
             WheelEvent::new(0.0, 0.0)
                 .at(20.0, 60.0)
                 .phase(GesturePhase::Ended),
         );
         rt.frame(0.016);
+        assert!(
+            !scroll.get().1.is_owned(),
+            "momentum Ended must immediately release ownership before any subsequent Began"
+        );
         rt.wheel_event(
             WheelEvent::new(0.0, 0.0)
                 .at(20.0, 60.0)

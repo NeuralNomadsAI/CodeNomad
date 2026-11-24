@@ -4122,12 +4122,12 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
         !rt.animating
             && stalled_after_tap > 80.0
             && stall_dt > 0.0
-            && stall_dt <= 0.06
-            && (watchdog_cadence - 0.050).abs() <= 0.005,
-        "zero-drag tap must stall mid-flight (!animating) on the exact 50ms watchdog schedule (not 1ms or 500ms long-press): animating={}, offset={stalled_after_tap}, dt={stall_dt}, cadence={watchdog_cadence}",
+            && stall_dt <= 0.055
+            && (watchdog_cadence - 0.050).abs() <= 0.001,
+        "zero-drag tap must stall mid-flight (!animating) on the exact 50ms watchdog schedule (not 1ms, 30ms, or 500ms long-press): animating={}, offset={stalled_after_tap}, dt={stall_dt}, cadence={watchdog_cadence}",
         rt.animating
     );
-    // Advance strictly via the ~50ms watchdog wakes until the watchdog itself restarts the glide.
+    // Advance strictly via the 50ms watchdog wakes until the watchdog itself restarts the glide.
     let mut watchdog_wakes = 0usize;
     let mut restarted = false;
     for _ in 0..80 {
@@ -4142,10 +4142,18 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
             rt.frame(0.016);
         } else if let Some(deadline) = rt.wake_deadline() {
             let dt = deadline - rt.clock;
-            assert!(
-                dt > 0.0 && dt <= 0.06,
-                "stall watchdog wake must remain bounded at ~50ms (not 500ms long-press): dt={dt}"
-            );
+            if watchdog_wakes == 0 {
+                assert!(
+                    (deadline - glide_wake_origin - 0.050).abs() <= 0.001,
+                    "first stall watchdog wake must land at exact +50ms from glide_wake_origin: cadence={}",
+                    deadline - glide_wake_origin
+                );
+            } else {
+                assert!(
+                    (dt - 0.050).abs() <= 0.001,
+                    "follow-up stall watchdog wake must keep an exact 50ms cadence: dt={dt}"
+                );
+            }
             watchdog_wakes += 1;
             rt.frame(dt.max(0.016));
         } else {
@@ -5242,11 +5250,13 @@ fn toggling_rail_at_fixed_width_keeps_inner_passage_anchored() {
     assert!(
         frag0_narrow[3] > frag0_after_show[3] + 10.0
             && (after_narrow_rel - before_rel).abs() <= 2.0
-            && owner(&mut rt.state).jump.is_locked(),
-        "narrowing across 420px must keep inner passage anchored on the very first unmounted frame without unlocking a landed marker: frag0_h={}->{}, rel={before_rel}->{after_narrow_rel}, locked={}",
+            && owner(&mut rt.state).jump.is_locked()
+            && owner(&mut rt.state).jump.active.as_deref() == Some("head:User:0:false"),
+        "narrowing across 420px must keep inner passage anchored on the very first unmounted frame without unlocking or clearing a landed marker: frag0_h={}->{}, rel={before_rel}->{after_narrow_rel}, locked={}, active={:?}",
         frag0_after_show[3],
         frag0_narrow[3],
-        owner(&mut rt.state).jump.is_locked()
+        owner(&mut rt.state).jump.is_locked(),
+        owner(&mut rt.state).jump.active
     );
 }
 
@@ -5460,11 +5470,23 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
         rt.frame(0.016);
     }
     assert!(rt.presented("timeline").is_some());
+    let hist_500 = rt.presented("history").expect("history presented").0;
+    let frag1_500 = rt
+        .presented("fragment-long-msg:1")
+        .expect("fragment 1 presented at 500px")
+        .0;
+    assert!(
+        (frag1_500[1] - hist_500[1]).abs() <= 2.0,
+        "precondition: fragment-long-msg:1 aligned at top at 500px before narrowing: rel={}",
+        frag1_500[1] - hist_500[1]
+    );
     // Frame 1 measures 419px and enqueues Action::Layout(419).
     rt.set_viewport((419.0, 320.0), 1.0);
     rt.frame(0.016);
     assert!(rt.presented("timeline").is_some());
     let hist_pre_narrow = rt.presented("history").expect("history presented").0;
+    let offset_pre_narrow = owner(&mut rt.state).scroll.get().viewport.offset[1];
+    assert!(offset_pre_narrow > 100.0);
     // Frame 2 drains poll (setting poll_input_waiting=true), then Action::Layout(419) and wheel.
     rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
     rt.wheel_xy(
@@ -5479,15 +5501,19 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
         .presented("fragment-long-msg:1")
         .expect("fragment 1 presented after narrow with wheel")
         .0;
+    let offset_post_narrow = owner(&mut rt.state).scroll.get().viewport.offset[1];
     let rel_post_narrow = frag1_post_narrow[1] - hist_post_narrow[1];
     assert!(
-        !super::demanded(&rt.state) && !owner(&mut rt.state).rail_shown && rel_post_narrow >= 35.0,
-        "on_layout_tx rail removal with queued transcript wheel must skip keep_passage: demanded={}, rail_shown={}, rel_post_narrow={rel_post_narrow}",
+        !super::demanded(&rt.state)
+            && !owner(&mut rt.state).rail_shown
+            && (offset_pre_narrow - offset_post_narrow) >= 40.0
+            && rel_post_narrow >= 40.0,
+        "on_layout_tx rail removal with queued transcript wheel must apply the upward wheel delta: demanded={}, rail_shown={}, offset={offset_pre_narrow}->{offset_post_narrow}, rel_post_narrow={rel_post_narrow}",
         super::demanded(&rt.state),
         owner(&mut rt.state).rail_shown
     );
     // Once the exit transition and subsequent poll settle, timeline must be unmounted and
-    // timeline::poll must NOT belatedly snap fragment 1 back to rel=0.
+    // flush_deferred_keep_passage must discard the deferred re-anchor because the transcript scrolled.
     rt.poll = Some(crate::poll);
     for _ in 0..20 {
         rt.frame(0.016);
@@ -5497,11 +5523,52 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
         .presented("fragment-long-msg:1")
         .expect("fragment 1 presented after settle")
         .0;
+    let offset_settled = owner(&mut rt.state).scroll.get().viewport.offset[1];
     let rel_settled = frag1_settled[1] - hist_settled[1];
     assert!(
-        rt.presented("timeline").is_none() && rel_settled >= 35.0,
-        "subsequent poll after guarded on_layout_tx rail removal must keep timeline unmounted without snapping back: shown={}, rel_settled={rel_settled}",
-        rt.presented("timeline").is_some()
+        rt.presented("timeline").is_none()
+            && owner(&mut rt.state).keep_passage_deferred.is_none()
+            && (offset_pre_narrow - offset_settled) >= 40.0
+            && rel_settled >= 40.0,
+        "subsequent poll after guarded on_layout_tx rail removal with wheel must keep timeline unmounted and preserve wheel offset: shown={}, deferred={:?}, offset={offset_pre_narrow}->{offset_settled}, rel_settled={rel_settled}",
+        rt.presented("timeline").is_some(),
+        owner(&mut rt.state).keep_passage_deferred
+    );
+
+    // Conversely, if input_waiting=true came from non-scroll input (no wheel/transcript scroll),
+    // the deferred keep_passage MUST replay on the next idle poll and re-anchor fragment-long-msg:1.
+    rt.set_viewport((500.0, 320.0), 1.0);
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_key_to("long-msg/fragment-long-msg:1", 0.0);
+    });
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    assert!(rt.presented("timeline").is_some());
+    rt.set_viewport((419.0, 320.0), 1.0);
+    rt.frame(0.016);
+    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
+    rt.frame(0.016);
+    assert!(owner(&mut rt.state).keep_passage_deferred.is_some());
+    rt.poll = Some(crate::poll);
+    for _ in 0..20 {
+        rt.frame(0.016);
+    }
+    let hist_reanchored = rt.presented("history").expect("history presented").0;
+    let frag1_reanchored = rt
+        .presented("fragment-long-msg:1")
+        .expect("fragment 1 presented after deferred re-anchor")
+        .0;
+    let rel_reanchored = frag1_reanchored[1] - hist_reanchored[1];
+    assert!(
+        rt.presented("timeline").is_none()
+            && owner(&mut rt.state).keep_passage_deferred.is_none()
+            && rel_reanchored.abs() <= 2.0,
+        "non-scroll input during threshold crossing must replay deferred keep_passage on the next idle poll: rel={rel_reanchored}"
     );
 }
 

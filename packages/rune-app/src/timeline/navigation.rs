@@ -24,7 +24,7 @@ pub(super) struct Navigation {
     pub(super) active_version: Option<u64>,
     active_index: Option<(u64, usize)>,
     locked: bool,
-    last: super::view::Scroll,
+    pub(super) last: super::view::Scroll,
     browse: bool,
 }
 

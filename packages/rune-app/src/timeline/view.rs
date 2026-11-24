@@ -347,12 +347,18 @@ pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
                     && (super::owner(s).has_raw_markers || !super::owner(s).markers.is_empty());
                 if shown != was_shown {
                     super::owner(s).rail_shown = shown;
-                    if !super::owner(s).poll_input_waiting
-                        && super::owner(s).scroll.get().wheel_last_rail.is_none()
-                        && super::owner(s).jump.align.is_none()
-                    {
-                        tx.instant();
-                        crate::chat::reading::keep_passage(s, tx);
+                    if super::owner(s).jump.align.is_none() {
+                        if super::owner(s).poll_input_waiting
+                            || super::owner(s).scroll.get().wheel_last_rail.is_some()
+                        {
+                            if let Some(target) = crate::chat::reading::passage_target(s) {
+                                super::owner(s).keep_passage_deferred = Some(target);
+                                tx.wake_after(std::time::Duration::ZERO);
+                            }
+                        } else {
+                            tx.instant();
+                            crate::chat::reading::keep_passage(s, tx);
+                        }
                     }
                 }
                 (s.wake)();

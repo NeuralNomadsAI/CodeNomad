@@ -88,6 +88,7 @@ pub(crate) struct Timeline {
     visible: bool,
     rail_shown: bool,
     poll_input_waiting: bool,
+    keep_passage_deferred: Option<(String, f32)>,
     live: bool,
     width: f32,
     markers: Vec<Marker>,
@@ -189,6 +190,7 @@ pub(crate) fn suspend(s: &mut State) {
     let t = owner(s);
     t.visible = false;
     t.live = false;
+    t.keep_passage_deferred = None;
     t.previews.hide();
     cancel_scan(t);
     t.refresh = true;
@@ -360,9 +362,33 @@ pub(super) fn poll_with_input(s: &mut State, tx: &mut rune::Tx, input_waiting: b
     poll_inner(s, tx, input_waiting)
 }
 
+fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
+    let on_conversation = conversation_shown(s);
+    let t = owner(s);
+    if t.keep_passage_deferred.is_none() {
+        return false;
+    }
+    let scroll = t.scroll.get();
+    let scrolled = scroll.transcript != t.jump.last.transcript || scroll.wheel_last_rail.is_some();
+    if scrolled || !on_conversation || t.jump.align.is_some() {
+        t.keep_passage_deferred = None;
+        return false;
+    }
+    if input_waiting {
+        tx.wake_after(std::time::Duration::ZERO);
+        return false;
+    }
+    if let Some((key, offset)) = t.keep_passage_deferred.take() {
+        tx.scroll_key_to(key, offset);
+        true
+    } else {
+        false
+    }
+}
+
 fn poll_inner(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
     owner(s).poll_input_waiting = input_waiting;
-    let mut changed = sync_outline_mutation(s);
+    let mut changed = sync_outline_mutation(s) | flush_deferred_keep_passage(s, tx, input_waiting);
     if !demanded(s) {
         let on_conversation = conversation_shown(s);
         owner(s).previews.hide();
@@ -382,8 +408,15 @@ fn poll_inner(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
             }
             return changed | navigation::apply_alignment(s, tx);
         }
-        if was_shown && !input_waiting && owner(s).jump.align.is_none() {
-            crate::chat::reading::keep_passage(s, tx);
+        if was_shown && owner(s).jump.align.is_none() {
+            if input_waiting {
+                if let Some(target) = crate::chat::reading::passage_target(s) {
+                    owner(s).keep_passage_deferred = Some(target);
+                    tx.wake_after(std::time::Duration::ZERO);
+                }
+            } else {
+                crate::chat::reading::keep_passage(s, tx);
+            }
         }
         if std::mem::take(&mut owner(s).live) || was_visible {
             cancel_scan(owner(s));
@@ -484,8 +517,15 @@ fn poll_inner(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
     let was_shown = std::mem::replace(&mut owner(s).rail_shown, shown);
     if shown != was_shown {
         changed = true;
-        if !input_waiting && owner(s).jump.align.is_none() {
-            crate::chat::reading::keep_passage(s, tx);
+        if owner(s).jump.align.is_none() {
+            if input_waiting {
+                if let Some(target) = crate::chat::reading::passage_target(s) {
+                    owner(s).keep_passage_deferred = Some(target);
+                    tx.wake_after(std::time::Duration::ZERO);
+                }
+            } else {
+                crate::chat::reading::keep_passage(s, tx);
+            }
         }
     }
     changed | navigation::poll(s, tx) | preview::poll(s, tx)
