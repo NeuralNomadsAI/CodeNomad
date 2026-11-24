@@ -164,6 +164,7 @@ mod native {
     pub struct Store {
         files: std::sync::Arc<std::sync::Mutex<Files>>,
         staged: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+        file_drafts_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     }
     impl Store {
         pub(crate) fn memory_seen(&self) -> Result<std::collections::BTreeMap<String, i64>> {
@@ -217,6 +218,7 @@ mod native {
             Ok(Self {
                 files: std::sync::Arc::new(std::sync::Mutex::new(files)),
                 staged: Default::default(),
+                file_drafts_generation: Default::default(),
             })
         }
         pub async fn load(&self) -> Result<Option<Vec<u8>>> {
@@ -236,11 +238,48 @@ mod native {
             })
             .await?
         }
+        #[cfg(test)]
         pub fn save_file_drafts(&self, bytes: &[u8]) -> Result<()> {
+            self.file_drafts_generation
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             self.files
                 .lock()
                 .map_err(|_| "state store unavailable")?
                 .save_file("workspace-file-drafts.json", FILE_DRAFT_BYTES, bytes)
+        }
+        pub async fn save_file_drafts_async(&self, bytes: Vec<u8>) -> Result<()> {
+            let generation = self
+                .file_drafts_generation
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+                + 1;
+            let files = self.files.clone();
+            let latest = self.file_drafts_generation.clone();
+            tokio::task::spawn_blocking(move || {
+                let files = files.lock().map_err(|_| "state store unavailable")?;
+                if latest.load(std::sync::atomic::Ordering::Acquire) != generation {
+                    return Ok(());
+                }
+                files.save_file("workspace-file-drafts.json", FILE_DRAFT_BYTES, &bytes)
+            })
+            .await?
+        }
+        pub fn save_file_drafts_exit(&self, bytes: Vec<u8>) -> Result<()> {
+            crate::platform::block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    self.save_file_drafts_async(bytes),
+                )
+                .await?
+            })
+        }
+        #[cfg(test)]
+        pub(super) fn lock_files(&self) -> std::sync::MutexGuard<'_, Files> {
+            self.files.lock().unwrap()
+        }
+        #[cfg(test)]
+        pub(super) fn file_drafts_generation(&self) -> u64 {
+            self.file_drafts_generation
+                .load(std::sync::atomic::Ordering::Acquire)
         }
         pub async fn load_outlines(&self) -> Result<Option<Vec<u8>>> {
             let files = self.files.clone();

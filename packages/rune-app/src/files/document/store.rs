@@ -285,9 +285,37 @@ impl Store {
         store.saved = saved;
         true
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn file_draft_revision(&self) -> u64 {
+        lock(&self.0).revision
+    }
     pub(crate) fn file_draft_snapshot(&self, saved_revision: u64) -> Option<(u64, Vec<u8>)> {
         let store = lock(&self.0);
         (saved_revision != store.revision).then(|| (store.revision, Self::encode(&store.saved)))
+    }
+    #[cfg(test)]
+    pub(crate) fn insert_test_file_draft(&self, path: &str, text: &str) {
+        let key = Key {
+            server: "transport".into(),
+            instance: "tab-0".into(),
+            native_project: None,
+            directory: "/project".into(),
+            path: path.into(),
+        };
+        let scope = SavedKey {
+            server: "installation".into(),
+            project: "/project".into(),
+            native_project: None,
+            directory: key.directory.clone(),
+            path: key.path.clone(),
+        };
+        let shared = self.open_saved(&key, Some(&scope));
+        {
+            let mut draft = lock(&shared);
+            draft.original = Some(Snapshot::loaded("original"));
+            draft.text = text.into();
+        }
+        self.sync_saved(&key, Some(&scope), &shared);
     }
     pub(crate) fn has_unretained_file_drafts(&self) -> bool {
         let drafts: Vec<_> = lock(&self.0).drafts.values().cloned().collect();

@@ -100,3 +100,36 @@ fn relative_directory_and_file_in_place_of_directory_are_rejected() {
     assert!(Files::open(root.0.join("rune")).is_err());
     assert_eq!(fs::read(root.0.join("rune")).unwrap(), b"foreign");
 }
+
+#[test]
+fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
+    let root = Root::new();
+    let path = root.0.join("rune");
+    let store = crate::platform::block_on(async {
+        let store = super::Store::open(path.clone()).await.unwrap();
+        let guard = store.lock_files();
+        let stale = store.clone();
+        let stale_task =
+            tokio::spawn(async move { stale.save_file_drafts_async(b"stale".to_vec()).await });
+        while store.file_drafts_generation() == 0 {
+            tokio::task::yield_now().await;
+        }
+        let fresh = store.clone();
+        let fresh_task =
+            tokio::spawn(async move { fresh.save_file_drafts_async(b"fresh".to_vec()).await });
+        while store.file_drafts_generation() < 2 {
+            tokio::task::yield_now().await;
+        }
+        drop(guard);
+        stale_task.await.unwrap().unwrap();
+        fresh_task.await.unwrap().unwrap();
+        assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"fresh");
+        store
+    });
+    store.save_file_drafts_exit(b"exit".to_vec()).unwrap();
+    drop(store);
+    crate::platform::block_on(async {
+        let reopened = super::Store::open(path).await.unwrap();
+        assert_eq!(reopened.load_file_drafts().await.unwrap().unwrap(), b"exit");
+    });
+}
