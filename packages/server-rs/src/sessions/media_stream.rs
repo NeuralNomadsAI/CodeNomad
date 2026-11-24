@@ -291,106 +291,144 @@ fn parse_string(raw: &RawValue) -> Option<String> {
     serde_json::from_str::<String>(raw.get()).ok()
 }
 
-/// Projects a single message JSON item without building a `serde_json::Value` tree,
-/// keeping unknown or dense numeric subtrees as raw JSON slices (1x memory).
+enum RawRef<'a> {
+    Borrowed(&'a RawValue),
+    Owned(Box<RawValue>),
+}
+
+impl serde::Serialize for RawRef<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Borrowed(raw) => raw.serialize(serializer),
+            Self::Owned(raw) => raw.serialize(serializer),
+        }
+    }
+}
+
+/// Projects a single message JSON item by borrowing `&RawValue` slices directly from `raw`
+/// (zero-copy for untouched or nested subtrees) and only allocating the short replacement URI
+/// strings and modified containers, keeping peak memory near 1x the raw message size.
 pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>) -> (Vec<u8>, bool) {
     if !may_contain_image_uri(&raw) {
         return (raw, false);
     }
-    let Ok(mut fields) = serde_json::from_slice::<BTreeMap<String, Box<RawValue>>>(&raw) else {
-        return (raw, false);
-    };
-    if fields.get("type").and_then(|v| parse_string(v)).as_deref() != Some("assistant") {
-        return (raw, false);
-    }
-    let Some(id_raw) = fields.get("id").and_then(|v| parse_string(v)).filter(|id| media::valid_id(id)) else {
-        return (raw, false);
-    };
-    let Some(content_raw) = fields.get("content") else {
-        return (raw, false);
-    };
-    if !may_contain_image_uri(content_raw.get().as_bytes()) {
-        return (raw, false);
-    }
-    let Ok(mut parts) = serde_json::from_str::<Vec<Box<RawValue>>>(content_raw.get()) else {
-        return (raw, false);
-    };
-    let id_enc = media::encode(&id_raw);
-    let mut changed = false;
-    for (part_idx, part_raw) in parts.iter_mut().take(100_001).enumerate() {
-        if !may_contain_image_uri(part_raw.get().as_bytes()) {
-            continue;
+    let projected = (|| -> Option<Vec<u8>> {
+        let raw_fields = serde_json::from_slice::<BTreeMap<String, &RawValue>>(&raw).ok()?;
+        if parse_string(raw_fields.get("type")?)?.as_str() != "assistant" {
+            return None;
         }
-        let Ok(mut part_fields) = serde_json::from_str::<BTreeMap<String, Box<RawValue>>>(part_raw.get()) else {
-            continue;
-        };
-        if part_fields.get("type").and_then(|v| parse_string(v)).as_deref() != Some("tool") {
-            continue;
+        let id_raw = parse_string(raw_fields.get("id")?)?;
+        if !media::valid_id(&id_raw) {
+            return None;
         }
-        let Some(state_raw) = part_fields.get("state") else {
-            continue;
-        };
-        if !may_contain_image_uri(state_raw.get().as_bytes()) {
-            continue;
+        let content_raw = raw_fields.get("content")?;
+        if !may_contain_image_uri(content_raw.get().as_bytes()) {
+            return None;
         }
-        let Ok(mut state_fields) = serde_json::from_str::<BTreeMap<String, Box<RawValue>>>(state_raw.get()) else {
-            continue;
-        };
-        let Some(items_raw) = state_fields.get("content") else {
-            continue;
-        };
-        if !may_contain_image_uri(items_raw.get().as_bytes()) {
-            continue;
-        }
-        let Ok(mut items) = serde_json::from_str::<Vec<Box<RawValue>>>(items_raw.get()) else {
-            continue;
-        };
-        let mut part_changed = false;
-        for (item_idx, item_raw) in items.iter_mut().take(100_001).enumerate() {
-            if item_raw.get().len() <= INLINE_THRESHOLD || !may_contain_image_uri(item_raw.get().as_bytes()) {
+        let raw_parts = serde_json::from_str::<Vec<&RawValue>>(content_raw.get()).ok()?;
+        let id_enc = media::encode(&id_raw);
+        let mut parts: Vec<RawRef<'_>> = raw_parts.into_iter().map(RawRef::Borrowed).collect();
+        let mut changed = false;
+        for (part_idx, part_ref) in parts.iter_mut().take(100_001).enumerate() {
+            let RawRef::Borrowed(part_raw) = *part_ref else {
+                continue;
+            };
+            if !may_contain_image_uri(part_raw.get().as_bytes()) {
                 continue;
             }
-            let Ok(mut file_fields) = serde_json::from_str::<BTreeMap<String, Box<RawValue>>>(item_raw.get()) else {
+            let Ok(raw_part_fields) = serde_json::from_str::<BTreeMap<String, &RawValue>>(part_raw.get()) else {
                 continue;
             };
-            let Some(file_type) = file_fields.get("type").and_then(|v| parse_string(v)) else {
+            if raw_part_fields.get("type").and_then(|v| parse_string(v)).as_deref() != Some("tool") {
+                continue;
+            }
+            let Some(state_raw) = raw_part_fields.get("state") else {
                 continue;
             };
-            let Some(mime) = file_fields.get("mime").and_then(|v| parse_string(v)) else {
+            if !may_contain_image_uri(state_raw.get().as_bytes()) {
+                continue;
+            }
+            let Ok(raw_state_fields) = serde_json::from_str::<BTreeMap<String, &RawValue>>(state_raw.get()) else {
                 continue;
             };
-            let Some(uri) = file_fields.get("uri").and_then(|v| parse_string(v)) else {
+            let Some(items_raw) = raw_state_fields.get("content") else {
                 continue;
             };
-            if let Some(reference) =
-                media::defer_uri(workspace_enc, session_enc, &id_enc, part_idx, item_idx, &file_type, &mime, &uri)
-                && let Ok(encoded_uri) = to_raw_value(&reference)
-            {
-                file_fields.insert("uri".into(), encoded_uri);
-                if let Ok(encoded_file) = to_raw_value(&file_fields) {
-                    *item_raw = encoded_file;
-                    part_changed = true;
+            if !may_contain_image_uri(items_raw.get().as_bytes()) {
+                continue;
+            }
+            let Ok(raw_items) = serde_json::from_str::<Vec<&RawValue>>(items_raw.get()) else {
+                continue;
+            };
+            let mut items: Vec<RawRef<'_>> = raw_items.into_iter().map(RawRef::Borrowed).collect();
+            let mut part_changed = false;
+            for (item_idx, item_ref) in items.iter_mut().take(100_001).enumerate() {
+                let RawRef::Borrowed(item_raw) = *item_ref else {
+                    continue;
+                };
+                if item_raw.get().len() <= INLINE_THRESHOLD || !may_contain_image_uri(item_raw.get().as_bytes()) {
+                    continue;
+                }
+                let Ok(raw_file_fields) = serde_json::from_str::<BTreeMap<String, &RawValue>>(item_raw.get()) else {
+                    continue;
+                };
+                let Some(file_type) = raw_file_fields.get("type").and_then(|v| parse_string(v)) else {
+                    continue;
+                };
+                let Some(mime) = raw_file_fields.get("mime").and_then(|v| parse_string(v)) else {
+                    continue;
+                };
+                let Some(uri_raw) = raw_file_fields.get("uri") else {
+                    continue;
+                };
+                if uri_raw.get().len() <= INLINE_THRESHOLD {
+                    continue;
+                }
+                let Some(uri) = parse_string(uri_raw) else {
+                    continue;
+                };
+                if let Some(reference) =
+                    media::defer_uri(workspace_enc, session_enc, &id_enc, part_idx, item_idx, &file_type, &mime, &uri)
+                    && let Ok(encoded_uri) = to_raw_value(&reference)
+                {
+                    drop(uri);
+                    let mut file_fields: BTreeMap<String, RawRef<'_>> =
+                        raw_file_fields.into_iter().map(|(k, v)| (k, RawRef::Borrowed(v))).collect();
+                    file_fields.insert("uri".into(), RawRef::Owned(encoded_uri));
+                    if let Ok(encoded_file) = to_raw_value(&file_fields) {
+                        *item_ref = RawRef::Owned(encoded_file);
+                        part_changed = true;
+                    }
+                }
+            }
+            if part_changed && let Ok(encoded_items) = to_raw_value(&items) {
+                let mut state_fields: BTreeMap<String, RawRef<'_>> =
+                    raw_state_fields.into_iter().map(|(k, v)| (k, RawRef::Borrowed(v))).collect();
+                state_fields.insert("content".into(), RawRef::Owned(encoded_items));
+                if let Ok(encoded_state) = to_raw_value(&state_fields) {
+                    let mut part_fields: BTreeMap<String, RawRef<'_>> =
+                        raw_part_fields.into_iter().map(|(k, v)| (k, RawRef::Borrowed(v))).collect();
+                    part_fields.insert("state".into(), RawRef::Owned(encoded_state));
+                    if let Ok(encoded_part) = to_raw_value(&part_fields) {
+                        *part_ref = RawRef::Owned(encoded_part);
+                        changed = true;
+                    }
                 }
             }
         }
-        if part_changed && let Ok(encoded_items) = to_raw_value(&items) {
-            state_fields.insert("content".into(), encoded_items);
-            if let Ok(encoded_state) = to_raw_value(&state_fields) {
-                part_fields.insert("state".into(), encoded_state);
-                if let Ok(encoded_part) = to_raw_value(&part_fields) {
-                    *part_raw = encoded_part;
-                    changed = true;
-                }
-            }
+        if !changed {
+            return None;
         }
+        let encoded_parts = to_raw_value(&parts).ok()?;
+        let mut fields: BTreeMap<String, RawRef<'_>> =
+            raw_fields.into_iter().map(|(k, v)| (k, RawRef::Borrowed(v))).collect();
+        fields.insert("content".into(), RawRef::Owned(encoded_parts));
+        serde_json::to_vec(&fields).ok()
+    })();
+    match projected {
+        Some(serialized) => (serialized, true),
+        None => (raw, false),
     }
-    if changed && let Ok(encoded_parts) = to_raw_value(&parts) {
-        fields.insert("content".into(), encoded_parts);
-        if let Ok(serialized) = serde_json::to_vec(&fields) {
-            return (serialized, true);
-        }
-    }
-    (raw, false)
 }
 
 #[cfg(test)]

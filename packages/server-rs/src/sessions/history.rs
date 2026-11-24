@@ -99,7 +99,9 @@ impl Placement {
             {
                 return Err(error(Status::GONE, "Media operation stale"));
             }
-            let source = if media {
+            let source = if strict_media {
+                crate::opencode::session_record_media_raw_at(app, &endpoint, session).await?
+            } else if media {
                 crate::opencode::session_record_media_at(app, &endpoint, session).await?
             } else {
                 crate::opencode::session_record_at(app, &endpoint, session).await?
@@ -113,6 +115,9 @@ impl Placement {
             }
             // Reference: `ownsLocation(id, session.location)`, linked worktrees included.
             let forbidden = || error(Status::FORBIDDEN, "Session does not belong to workspace");
+            if strict_media && source["id"] != session {
+                return Err(forbidden());
+            }
             let location = &source["location"];
             if location.get("workspaceID").is_some() {
                 return Err(forbidden());
@@ -206,7 +211,9 @@ impl Placement {
         if !self.live(app, id).await {
             return Err(changed());
         }
-        let newest = if self.media {
+        let newest = if self.strict_media {
+            crate::opencode::session_record_media_raw_at(app, &self.endpoint, session).await?
+        } else if self.media {
             crate::opencode::session_record_media_at(app, &self.endpoint, session).await?
         } else {
             crate::opencode::session_record_at(app, &self.endpoint, session).await?
@@ -216,7 +223,7 @@ impl Placement {
         }
         if newest["id"] != self.source["id"]
             || newest["location"] != self.source["location"]
-            || newest["projectID"] != self.source["projectID"]
+            || (!self.strict_media && newest["projectID"] != self.source["projectID"])
             || !self.live(app, id).await
         {
             return Err(changed());
@@ -379,23 +386,32 @@ fn blocked(reason: &str) -> Response {
     Json(json!({"status":"blocked","reason":reason})).into_response()
 }
 
-fn project_history_response(
+struct ValidatedHistory {
+    output: Value,
+    raw_range: std::ops::Range<usize>,
+    body: Bytes,
+    user_files_marker: Option<Value>,
+}
+
+fn parse_and_validate_history(
     status: Status,
     body: axum::body::Bytes,
     action: &str,
-    id: &str,
-    session: &str,
     reference: bool,
-    defer: bool,
-    slot: Option<tokio::sync::SemaphorePermit<'static>>,
-    abort: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
-) -> Result<Response, Response> {
+) -> Result<ValidatedHistory, Response> {
     let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return Err(blocked("unavailable")) };
     let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
+    let raw_bytes = raw.get().as_bytes();
+    let offset = raw_bytes.as_ptr() as usize - body.as_ptr() as usize;
+    let raw_range = offset..offset + raw_bytes.len();
     let Ok(mut output) = serde_json::from_str::<Value>(raw.get()) else { return Err(blocked("unavailable")) };
-    if reference && output["status"] == "window" && !user_files::validate_window(&mut output) {
-        return Err(blocked("unavailable"));
-    }
+    // Temporarily strip `userFiles` so base contract validation runs before session revalidation,
+    // matching TS `session-navigation.ts:86-91` (schema parse -> revalidate -> user-files check).
+    let user_files_marker = if reference && output["status"] == "window" {
+        output.as_object_mut().and_then(|root| root.remove("userFiles"))
+    } else {
+        None
+    };
     if !status.is_success()
         || !crate::sessions::contracts::valid(crate::sessions::contracts::get(action, true), &output)
     {
@@ -408,24 +424,45 @@ fn project_history_response(
     }) {
         return Err(blocked("unavailable"));
     }
-    let deferred = defer && output["status"] == "window" && media::defer(id, session, &mut output["messages"]);
-    let referenced = reference && output["status"] == "window";
+    Ok(ValidatedHistory { output, raw_range, body, user_files_marker })
+}
+
+fn finalize_history_response(
+    mut validated: ValidatedHistory,
+    id: &str,
+    session: &str,
+    reference: bool,
+    defer: bool,
+    abort: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
+) -> Result<Response, Response> {
+    if reference && validated.output["status"] == "window" {
+        if let Some(marker) = validated.user_files_marker.take()
+            && let Some(root) = validated.output.as_object_mut()
+        {
+            root.insert("userFiles".into(), marker);
+        }
+        if !user_files::validate_window(&mut validated.output) {
+            return Err(blocked("unavailable"));
+        }
+    }
+    let deferred =
+        defer && validated.output["status"] == "window" && media::defer(id, session, &mut validated.output["messages"]);
+    let referenced = reference && validated.output["status"] == "window";
     let payload: Bytes = if referenced || deferred {
         if referenced {
-            output["userFiles"] = user_files::REFERENCE.into();
+            validated.output["userFiles"] = user_files::REFERENCE.into();
         }
-        let Ok(projected) = serde_json::to_vec(&output) else { return Err(blocked("unavailable")) };
+        let Ok(projected) = serde_json::to_vec(&validated.output) else { return Err(blocked("unavailable")) };
         if referenced && projected.len() > 24 * 1024 * 1024 {
             return Err(blocked("unsupported_storage"));
         }
         projected.into()
     } else {
-        body.slice_ref(raw.get().as_bytes())
+        validated.body.slice(validated.raw_range)
     };
     let length = axum::http::HeaderValue::from(payload.len());
-    let held_slot = if payload.len() > 256 * 1024 { slot } else { None };
     let response_body = match abort {
-        Some(abort) => crate::shared::permit_body(payload, held_slot, abort),
+        Some(abort) => crate::shared::permit_body(payload, None, abort),
         None => axum::body::Body::from(payload),
     };
     Ok((
@@ -536,6 +573,29 @@ pub async fn handle(
                     (status, body) = fallback;
                 }
             }
+            let body_len = body.len();
+            let (validated, slot) = if defer && body_len > 32 * 1024 {
+                let action_owned = action.clone();
+                match tokio::task::spawn_blocking(move || {
+                    (parse_and_validate_history(status, body, &action_owned, reference), slot)
+                })
+                .await
+                {
+                    Ok((Ok(validated), slot)) => (validated, slot),
+                    Ok((Err(invalid_response), _)) => return invalid_response,
+                    Err(_) => return blocked("unavailable"),
+                }
+            } else {
+                match parse_and_validate_history(status, body, &action, reference) {
+                    Ok(validated) => (validated, slot),
+                    Err(invalid_response) => return invalid_response,
+                }
+            };
+            match placement.current(&app, &id, session).await {
+                Recheck::Current => {}
+                Recheck::Conflict => return blocked("conflict"),
+                Recheck::Unavailable => return blocked("unavailable"),
+            }
             let abort = defer.then(|| {
                 crate::shared::stream_abort(
                     app.clone(),
@@ -543,13 +603,14 @@ pub async fn handle(
                     placement.workspace.clone(),
                     placement.endpoint.clone(),
                     principal.0.clone(),
-                    Duration::from_secs(30),
                 )
             });
-            let projected = if defer && body.len() > 32 * 1024 {
-                let (action, id, session) = (action.clone(), id.clone(), session.to_owned());
+            let projected = if defer && body_len > 32 * 1024 {
+                let (id, session) = (id.clone(), session.to_owned());
                 match tokio::task::spawn_blocking(move || {
-                    project_history_response(status, body, &action, &id, &session, reference, defer, slot, abort)
+                    let result = finalize_history_response(validated, &id, &session, reference, defer, abort);
+                    drop(slot);
+                    result
                 })
                 .await
                 {
@@ -557,16 +618,16 @@ pub async fn handle(
                     Err(_) => return blocked("unavailable"),
                 }
             } else {
-                project_history_response(status, body, &action, &id, session, reference, defer, slot, abort)
+                let result = finalize_history_response(validated, &id, session, reference, defer, abort);
+                drop(slot);
+                result
             };
             let response = match projected {
                 Ok(response) => response,
                 Err(invalid_response) => return invalid_response,
             };
-            match placement.current(&app, &id, session).await {
-                Recheck::Current => {}
-                Recheck::Conflict => return blocked("conflict"),
-                Recheck::Unavailable => return blocked("unavailable"),
+            if defer && !placement.operation_current(&app, &id).await {
+                return blocked("unavailable");
             }
             if principal.live().is_err() {
                 return crate::auth::unauthorized().into_response();

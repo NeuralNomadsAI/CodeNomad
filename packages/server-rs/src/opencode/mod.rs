@@ -304,7 +304,7 @@ pub async fn session_record_at(app: &App, endpoint: &Endpoint, id: &str) -> Resu
     if !valid_id(id) {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    session_record_segment_at(app, endpoint, id, Duration::from_secs(4)).await
+    session_record_segment_at(app, endpoint, id, Duration::from_secs(4), true).await
 }
 
 /// Variant for opaque media/history-media session IDs (TS `session-media-contract.ts`).
@@ -317,7 +317,20 @@ pub async fn session_record_media_at(app: &App, endpoint: &Endpoint, id: &str) -
     {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    session_record_segment_at(app, endpoint, id, Duration::from_secs(30)).await
+    session_record_segment_at(app, endpoint, id, Duration::from_secs(30), true).await
+}
+
+/// Variant for `session-media` that lets the caller classify an unexpected `data.id`
+/// (`403` on initial lookup, `409` on revalidation, matching TS `session-media.ts:54-70`).
+pub async fn session_record_media_raw_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
+    if id.is_empty()
+        || id.encode_utf16().nth(256).is_some()
+        || matches!(id, "." | "..")
+        || id.bytes().any(|b| b.is_ascii_control())
+    {
+        return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
+    }
+    session_record_segment_at(app, endpoint, id, Duration::from_secs(30), false).await
 }
 
 async fn session_record_segment_at(
@@ -325,6 +338,7 @@ async fn session_record_segment_at(
     endpoint: &Endpoint,
     id: &str,
     timeout: Duration,
+    strict_id: bool,
 ) -> Result<Value, Error> {
     let mut url = endpoint.url.clone();
     url.path_segments_mut().map_err(|_| upstream_error())?.clear().extend(["api", "session", id]);
@@ -363,7 +377,11 @@ async fn session_record_segment_at(
         .await
         .map_err(|_| upstream_error())?;
     let response = response.get("data").unwrap_or(&response);
-    if response["id"] != id { Err(upstream_error()) } else { Ok(response.clone()) }
+    if !response.is_object() || (strict_id && response["id"] != id) {
+        Err(upstream_error())
+    } else {
+        Ok(response.clone())
+    }
 }
 
 pub async fn session_directory(app: &App, id: &str) -> Result<String, Error> {

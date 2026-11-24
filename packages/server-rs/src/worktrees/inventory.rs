@@ -116,37 +116,41 @@ fn linked_markers(root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 
 async fn checkout(path: &Path) -> Result<Physical, Error> {
     let text =
         git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]).await?;
-    let mut lines = text.lines();
-    let root = lines.next().and_then(physical).ok_or_else(native_error)?;
-    let admin = lines.next().and_then(physical).ok_or_else(native_error)?;
-    let common = lines.next().and_then(physical).ok_or_else(native_error)?;
-    if lines.next().is_some() {
-        return Err(native_error());
-    }
-    let (marker, backlink, common_marker) = if admin == common {
-        if common != root.join(".git") {
-            return Err(conflict("External Git directory is unavailable"));
+    tokio::task::spawn_blocking(move || {
+        let mut lines = text.lines();
+        let root = lines.next().and_then(physical).ok_or_else(native_error)?;
+        let admin = lines.next().and_then(physical).ok_or_else(native_error)?;
+        let common = lines.next().and_then(physical).ok_or_else(native_error)?;
+        if lines.next().is_some() {
+            return Err(native_error());
         }
-        (None, None, None)
-    } else {
-        let [marker, backlink, common_marker] = linked_markers(&root, &admin, &common)?;
-        (Some(marker), Some(backlink), Some(common_marker))
-    };
-    Ok(Physical {
-        stamp: [
-            config_stamp(&common.join("config")).ok_or_else(native_error)?,
-            config_stamp(&admin.join("config.worktree")).ok_or_else(native_error)?,
-        ],
-        root_id: identity(&root)?,
-        admin_id: identity(&admin)?,
-        common_id: identity(&common)?,
-        root,
-        admin,
-        common,
-        marker,
-        backlink,
-        common_marker,
+        let (marker, backlink, common_marker) = if admin == common {
+            if common != root.join(".git") {
+                return Err(conflict("External Git directory is unavailable"));
+            }
+            (None, None, None)
+        } else {
+            let [marker, backlink, common_marker] = linked_markers(&root, &admin, &common)?;
+            (Some(marker), Some(backlink), Some(common_marker))
+        };
+        Ok(Physical {
+            stamp: [
+                config_stamp(&common.join("config")).ok_or_else(native_error)?,
+                config_stamp(&admin.join("config.worktree")).ok_or_else(native_error)?,
+            ],
+            root_id: identity(&root)?,
+            admin_id: identity(&admin)?,
+            common_id: identity(&common)?,
+            root,
+            admin,
+            common,
+            marker,
+            backlink,
+            common_marker,
+        })
     })
+    .await
+    .map_err(|_| native_error())?
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tree {
@@ -312,7 +316,13 @@ async fn root_at(
     {
         return Err(conflict("Workspace and native project do not share a checkout"));
     }
-    if !local.live() || !main.live() {
+    let (live_ok, local, main) = tokio::task::spawn_blocking(move || {
+        let ok = local.live() && main.live();
+        (ok, local, main)
+    })
+    .await
+    .map_err(|_| native_error())?;
+    if !live_ok {
         return Err(native_error());
     }
     Ok(Root { project: project.into(), local, main })
@@ -419,21 +429,47 @@ async fn catalogue_in_at(
                 Err(_) => continue,
             }
         };
-        if check.root != root || check.common != local.common || check.common_id != local.common_id || !check.live() {
+        if check.root != root || check.common != local.common || check.common_id != local.common_id {
             continue;
         }
         let opened = root == local.root;
         let projected = if tail.as_os_str().is_empty() { root.clone() } else { root.join(tail) };
-        let id = match dunce::canonicalize(&projected) {
-            Ok(real) if real == projected && real.is_dir() => match identity(&projected) {
-                Ok(value) => Some(value),
-                Err(_) if !opened && !root.starts_with(&app.scope) => None,
-                Err(error) => return Err(error),
-            },
-            Ok(real) if !opened && (real == projected && real.is_file() || !root.starts_with(&app.scope)) => None,
-            Ok(_) if !opened => continue,
-            Ok(_) => return Err(conflict("Projected worktree directory is not physically owned")),
-            Err(_) => None,
+        let (check, id) = {
+            let root = root.clone();
+            let projected = projected.clone();
+            let scope = app.scope.clone();
+            match tokio::task::spawn_blocking(move || -> Result<Option<(Physical, Option<String>)>, Error> {
+                if !check.live() {
+                    return Ok(None);
+                }
+                let id = match dunce::canonicalize(&projected) {
+                    Ok(real) if real == projected && real.is_dir() => match identity(&projected) {
+                        Ok(value) => Some(value),
+                        Err(_) if !opened && !root.starts_with(&scope) => None,
+                        Err(error) => return Err(error),
+                    },
+                    // TS admits sibling worktrees whose projected subfolder is a symlink to another
+                    // directory inside the same checkout (`worktree-directory.ts:226-278`).
+                    Ok(real)
+                        if !opened
+                            && ((real == projected && real.is_file())
+                                || (real.starts_with(&root) && real.is_dir())
+                                || !root.starts_with(&scope)) =>
+                    {
+                        None
+                    }
+                    Ok(_) if !opened => return Ok(None),
+                    Ok(_) => return Err(conflict("Projected worktree directory is not physically owned")),
+                    Err(_) => None,
+                };
+                Ok(Some((check, id)))
+            })
+            .await
+            .map_err(|_| native_error())??
+            {
+                Some(pair) => pair,
+                None => continue,
+            }
         };
         let service = if opened {
             native_dir.to_string()

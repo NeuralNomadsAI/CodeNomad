@@ -340,13 +340,13 @@ pub(super) async fn route(
             if !placement.live(&app, &r.workspace).await {
                 return Err(error(Status::CONFLICT, "Session location changed"));
             }
+            drop(slot);
             let abort = crate::shared::stream_abort(
                 app.clone(),
                 r.workspace.clone(),
                 initial_workspace.clone(),
                 placement.endpoint.clone(),
                 principal.0.clone(),
-                Duration::from_secs(30),
             );
             let length = HeaderValue::from(bytes.len());
             Ok((
@@ -357,7 +357,7 @@ pub(super) async fn route(
                     (header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")),
                     (header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'; sandbox")),
                 ],
-                crate::shared::permit_body(bytes.into(), Some(slot), abort),
+                crate::shared::permit_body(bytes.into(), None, abort),
             )
                 .into_response())
         };

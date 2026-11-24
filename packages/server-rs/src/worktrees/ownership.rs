@@ -23,6 +23,7 @@ pub struct Owned {
 pub(crate) struct DirectoryProof {
     tree: Option<super::inventory::Tree>,
     source: Option<super::inventory::Tree>,
+    root: Option<(PathBuf, String)>,
     external: bool,
     media: bool,
 }
@@ -78,7 +79,13 @@ impl DirectoryProof {
                         tree.contains_live(physical)
                     }) && (!(self.external || history_root.is_some()) || no_nested_git(physical, tree.registered()))
                 }
-                None => history_root.is_none_or(|root| no_nested_git(physical, root)),
+                None => {
+                    self.root.as_ref().is_none_or(|(root, id)| {
+                        dunce::canonicalize(root).ok().as_deref() == Some(root.as_path())
+                            && crate::files::host_identity(root).ok().as_deref() == Some(id.as_str())
+                            && physical.starts_with(root)
+                    }) && history_root.is_none_or(|root| no_nested_git(physical, root))
+                }
             }
     }
 }
@@ -120,7 +127,7 @@ pub(crate) async fn receipt_location(
     let external = !within(&w.path, &path);
     let mut revision = None;
     let proof = if path == w.path {
-        DirectoryProof { tree: None, source: None, external, media: false }
+        DirectoryProof { tree: None, source: None, root: None, external, media: false }
     } else {
         let stamp = app.linked_events.lock().unwrap().stamp();
         match super::inventory::receipt_catalogue(app, w, endpoint).await {
@@ -129,7 +136,7 @@ pub(crate) async fn receipt_location(
                 registered_proof(&inventory, &path, external)?
             }
             None if !external && matches!(super::root_only(w).await, Ok(Some(true))) => {
-                DirectoryProof { tree: None, source: None, external, media: false }
+                DirectoryProof { tree: None, source: None, root: None, external, media: false }
             }
             None => return None,
         }
@@ -150,7 +157,7 @@ pub(super) fn registered_proof(
         .filter(|tree| tree.contains_receipt_location(path))
         .max_by_key(|tree| tree.path.as_os_str().len())?;
     let source = (tree.registered() != root.registered()).then(|| root.clone());
-    Some(DirectoryProof { tree: Some(tree.clone()), source, external, media: false })
+    Some(DirectoryProof { tree: Some(tree.clone()), source, root: None, external, media: false })
 }
 
 pub(super) fn existing_directory(path: &Path) -> Option<&Path> {
@@ -199,7 +206,7 @@ pub(crate) async fn capture_directory_with_refresh(
     }
     let external = !physical.starts_with(&workspace.path);
     if physical == workspace.path || !external && matches!(super::root_only(workspace).await, Ok(Some(true))) {
-        return Some(DirectoryProof { tree: None, source: None, external, media: false });
+        return Some(DirectoryProof { tree: None, source: None, root: None, external, media: false });
     }
     if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
         return None;
@@ -226,7 +233,7 @@ fn catalogue_proof(
         .filter(|tree| if media { tree.contains_media(path) } else { tree.contains_live(path) })
         .max_by_key(|tree| tree.path.as_os_str().len())?;
     let source = (external || tree.registered() != root.registered()).then(|| root.clone());
-    Some(DirectoryProof { tree: Some(tree.clone()), source, external, media })
+    Some(DirectoryProof { tree: Some(tree.clone()), source, root: None, external, media })
 }
 
 /// A missing child is owned through its nearest existing directory, never
@@ -278,14 +285,38 @@ pub(crate) async fn media_directory(
     }
     let external = !path.starts_with(&workspace.path);
     if path == workspace.path {
-        let proof = DirectoryProof { tree: None, source: None, external, media: true };
+        let root_path = workspace.path.clone();
+        let Some(root_id) =
+            tokio::task::spawn_blocking(move || crate::files::host_identity(&root_path).ok()).await.ok().flatten()
+        else {
+            return Ok(None);
+        };
+        let proof = DirectoryProof {
+            tree: None,
+            source: None,
+            root: Some((workspace.path.clone(), root_id)),
+            external,
+            media: true,
+        };
         return Ok(proof_live_async(proof, path.to_path_buf()).await);
     }
     if !external && let Some(subfolders) = super::root_only(workspace).await? {
         if !current() || !subfolders {
             return Err(native_error());
         }
-        let proof = DirectoryProof { tree: None, source: None, external, media: true };
+        let root_path = workspace.path.clone();
+        let Some(root_id) =
+            tokio::task::spawn_blocking(move || crate::files::host_identity(&root_path).ok()).await.ok().flatten()
+        else {
+            return Ok(None);
+        };
+        let proof = DirectoryProof {
+            tree: None,
+            source: None,
+            root: Some((workspace.path.clone(), root_id)),
+            external,
+            media: true,
+        };
         return Ok(proof_live_async(proof, path.to_path_buf()).await);
     }
     if external && !shares_common_directory(&workspace.path, anchor).await.map_err(|_| native_error())? {
@@ -453,7 +484,7 @@ impl HistoryInventory {
         let external = !path.starts_with(workspace);
         let proof = match &self.0 {
             Some(inventory) => catalogue_proof(inventory, path, external, false)?,
-            None if !external => DirectoryProof { tree: None, source: None, external, media: false },
+            None if !external => DirectoryProof { tree: None, source: None, root: None, external, media: false },
             None => return None,
         };
         proof.history_live(workspace, path).then_some(proof)

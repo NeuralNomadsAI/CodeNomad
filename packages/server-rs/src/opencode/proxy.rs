@@ -299,11 +299,21 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let requested = requested_dirs.first().cloned();
     static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
     let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
+    let workspace_closed = || async {
+        loop {
+            let notified = app.workspace_closed.notified();
+            if !app.workspace(id).is_ok_and(|current| current.id == workspace.id && current.path == workspace.path) {
+                return;
+            }
+            notified.await;
+        }
+    };
     let defer_slot = if defer_media.is_some() {
         let slot = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+            _ = workspace_closed() => return Err(not_found()),
             permit = tokio::time::timeout(super::PROXY_IDLE, DEFER_SLOTS.acquire()) => {
                 permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
             }
@@ -317,20 +327,19 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     // TS checks every client-supplied directory and ambient context before session lookup or relay
     // (`http-server.ts:1248-1269`).
     let mut requested_checkout = None;
-    let mut verified_media_dirs: Vec<(String, std::path::PathBuf, crate::worktrees::ownership::DirectoryProof)> =
-        Vec::new();
+    let mut verified_media_dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
     for req in &requested_dirs {
         if message_list {
             let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), req.clone()).await else {
                 return Err(foreign());
             };
-            let proof =
+            let _proof =
                 crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor, false)
                     .await
                     .ok()
                     .flatten()
                     .ok_or_else(foreign)?;
-            verified_media_dirs.push((req.clone(), resolved, proof));
+            verified_media_dirs.push((req.clone(), resolved));
         } else if send_input {
             let Some(physical) = crate::files::paths::canonical(&app.scope, req) else {
                 return Err(foreign());
@@ -346,27 +355,23 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
     }
     if message_list && let Some(ctx_dir) = parsed_location_context.as_ref().and_then(|v| v["directory"].as_str()) {
-        let ctx_resolved = if let Some((_, resolved, _)) = verified_media_dirs.iter().find(|(raw, _, _)| raw == ctx_dir)
-        {
+        let ctx_resolved = if let Some((_, resolved)) = verified_media_dirs.iter().find(|(raw, _)| raw == ctx_dir) {
             resolved.clone()
         } else {
             let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), ctx_dir.to_owned()).await else {
                 return Err(foreign());
             };
-            let proof =
+            let _proof =
                 crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor, false)
                     .await
                     .ok()
                     .flatten()
                     .ok_or_else(foreign)?;
-            verified_media_dirs.push((ctx_dir.to_owned(), resolved.clone(), proof));
+            verified_media_dirs.push((ctx_dir.to_owned(), resolved.clone()));
             resolved
         };
         if requested_dirs.iter().any(|req| {
-            verified_media_dirs
-                .iter()
-                .find(|(raw, _, _)| raw == req)
-                .is_none_or(|(_, resolved, _)| *resolved != ctx_resolved)
+            verified_media_dirs.iter().find(|(raw, _)| raw == req).is_none_or(|(_, resolved)| *resolved != ctx_resolved)
         }) {
             return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
         }
@@ -410,12 +415,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         allow_subfolder.then(&identity_now).flatten()
     };
+    // Always verify the session's own resolved location freshly after `session.get` so an
+    // alias retargeted between query validation and `session.get` cannot reuse a stale proof.
     let input_checkout = if message_list {
-        if let Some((_, _, proof)) =
-            native_directory.and_then(|dir| verified_media_dirs.iter().find(|(raw, _, _)| raw == dir))
-        {
-            Some(proof.clone())
-        } else if let Some((resolved, anchor, _)) = &initial_identity {
+        if let Some((resolved, anchor, _)) = &initial_identity {
             crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor, false)
                 .await
                 .ok()
@@ -819,11 +822,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     if let Some(session) = defer_media {
         let slot = defer_slot.ok_or_else(interrupted)?;
+        let list_deadline = tokio::time::Instant::now() + super::PROXY_IDLE;
         let mut response = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-            sent = tokio::time::timeout(super::PROXY_IDLE, upstream.send()) => {
+            _ = workspace_closed() => return Err(not_found()),
+            sent = tokio::time::timeout_at(list_deadline, upstream.send()) => {
                 sent.map_err(|_| interrupted())?.map_err(|_| upstream_error())?
             }
         };
@@ -841,7 +846,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    next = tokio::time::timeout(super::PROXY_IDLE, response.chunk()) => {
+                    _ = workspace_closed() => return Err(not_found()),
+                    next = tokio::time::timeout_at(list_deadline, response.chunk()) => {
                         next.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                     }
                 };
@@ -858,17 +864,21 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        res = tokio::task::spawn_blocking(move || {
-                            let (out, changed) = crate::sessions::media_stream::project_item(&ws, &ses, raw);
-                            (out, changed, held)
-                        }) => res.map_err(|_| interrupted())?,
+                        _ = workspace_closed() => return Err(not_found()),
+                        res = tokio::time::timeout_at(
+                            list_deadline,
+                            tokio::task::spawn_blocking(move || {
+                                let (out, changed) = crate::sessions::media_stream::project_item(&ws, &ses, raw);
+                                (out, changed, held)
+                            }),
+                        ) => res.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
                     };
                     slot = Some(returned);
                     stream.commit_item(projected, changed, pending.delimiter).map_err(|_| interrupted())?;
                 }
             }
             let (payload, changed) = stream.finish().map_err(|_| interrupted())?;
-            let slot = slot.ok_or_else(interrupted)?;
+            drop(slot);
             // Matches TS `http-server.ts:1671-1677` & `proxy.ts:80-94`: once the page is received,
             // deliver the projected JSON without an extra native round-trip, keeping liveness guards.
             if !app.native.current(&endpoint) {
@@ -909,14 +919,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             // Drop the upstream strong ETag only when the JSON body was actually rewritten
             // (RFC 9110: never reuse the original validator for a modified representation).
             let length = axum::http::HeaderValue::from(payload.len());
-            let held_slot = if payload.len() > 256 * 1024 { Some(slot) } else { None };
             let abort = crate::shared::stream_abort(
                 app.clone(),
                 id.to_owned(),
                 workspace.clone(),
                 endpoint.clone(),
                 principal.0.clone(),
-                Duration::from_secs(30),
             );
             let builder = headers
                 .into_iter()
@@ -925,7 +933,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 .header(header::CONTENT_LENGTH, length);
             return builder
                 .extension(NativeBody)
-                .body(crate::shared::permit_body(payload, held_slot, abort))
+                .body(crate::shared::permit_body(payload, None, abort))
                 .map_err(|_| upstream_error());
         }
         drop(slot);

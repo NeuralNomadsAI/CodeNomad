@@ -121,7 +121,8 @@ fn route_path(uri: &axum::http::Uri) -> Option<String> {
         let media_id = media_route && matches!(index, 4 | 5);
         if decoded == "."
             || decoded == ".."
-            || decoded.contains(['\0', ';', '#', '?'])
+            || decoded.contains(['\0', '#', '?'])
+            || (!media_id && decoded.contains(';'))
             || (!storage && !media_id && decoded.contains('/'))
             || (!storage && decoded.contains('\\'))
             || (!storage && !media_id && decoded.contains('%'))

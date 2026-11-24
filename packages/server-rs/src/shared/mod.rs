@@ -92,7 +92,6 @@ pub fn stream_abort(
     workspace: crate::Workspace,
     endpoint: std::sync::Arc<crate::opencode::Endpoint>,
     cancel: tokio_util::sync::CancellationToken,
-    limit: std::time::Duration,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     Box::pin(async move {
         let workspace_closed = async {
@@ -111,7 +110,6 @@ pub fn stream_abort(
             _ = cancel.cancelled() => {}
             _ = app.native.wait_retired(&endpoint) => {}
             _ = workspace_closed => {}
-            _ = tokio::time::sleep(limit) => {}
         }
     })
 }
