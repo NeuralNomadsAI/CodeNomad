@@ -272,10 +272,30 @@ impl Persistence {
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.drain_file_draft_save();
-            self.saving_file_drafts = None;
             self.file_draft_retry_requested = false;
             self.file_drafts_first_dirty = None;
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            if let Some(rx) = self.saving_file_drafts.take() {
+                if !self.file_draft_read_error
+                    && self.attempted_file_drafts == documents.file_draft_revision()
+                {
+                    if let Some(remaining) =
+                        deadline.checked_duration_since(std::time::Instant::now())
+                    {
+                        match crate::platform::block_on(async {
+                            tokio::time::timeout(remaining, rx.recv()).await
+                        }) {
+                            Ok(Ok((revision, true))) => {
+                                self.saved_file_drafts = self.saved_file_drafts.max(revision);
+                                self.file_draft_error = false;
+                            }
+                            Ok(Ok((_, false))) | Ok(Err(_)) | Err(_) => {
+                                self.file_draft_error = true;
+                            }
+                        }
+                    }
+                }
+            }
             loop {
                 let Some((revision, bytes)) = documents.file_draft_snapshot(self.saved_file_drafts)
                 else {
@@ -609,6 +629,18 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
+        // Wait for the background worker to release state.lock before simulating reopen.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while rt
+            .state
+            .0
+            .store
+            .as_ref()
+            .is_some_and(Store::file_draft_worker_running)
+        {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
         // Drop without flush_file_drafts to verify drafts survive an abrupt exit.
         drop(rt);
         let loaded = crate::platform::block_on(async {
@@ -730,6 +762,32 @@ mod tests {
         assert!(rt.state.0.flush_file_drafts(&rt.state.1));
         assert_eq!(rt.state.0.saved_file_drafts, 5);
         assert!(!rt.state.0.file_draft_error);
+        // If an in-flight save already covers the current revision, flush_file_drafts awaits
+        // its receipt without issuing a redundant disk write.
+        rt.state
+            .1
+            .insert_test_file_draft("src/main.rs", "confirmed by in-flight save");
+        let (inflight_tx, inflight_rx) = bounded(1);
+        rt.state.0.attempted_file_drafts = 6;
+        rt.state.0.saving_file_drafts = Some(inflight_rx);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(10));
+            let _ = inflight_tx.send_blocking((6, true));
+        });
+        assert!(rt.state.0.flush_file_drafts(&rt.state.1));
+        assert_eq!(rt.state.0.saved_file_drafts, 6);
+        assert!(!rt.state.0.file_draft_error);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while rt
+            .state
+            .0
+            .store
+            .as_ref()
+            .is_some_and(Store::file_draft_worker_running)
+        {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
         drop(rt);
         let loaded = crate::platform::block_on(async {
             let reopened = Store::open(root.0.join("rune")).await.unwrap();

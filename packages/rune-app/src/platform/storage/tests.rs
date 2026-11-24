@@ -144,13 +144,19 @@ fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
         assert!(!older_task.await.unwrap().unwrap());
         assert!(newer_task.await.unwrap().unwrap());
         assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"newer");
-        // A timed-out write cancels its generation and skips disk I/O once the lock frees.
+        // A timed-out write already dequeued by the worker cancels its generation and skips
+        // disk I/O once the lock frees.
         let guard = store.lock_file_drafts();
-        let timed_out = store.start_file_drafts_save_with_timeout(
+        let timed_out = tokio::spawn(store.start_file_drafts_save_with_timeout(
             b"timed-out".to_vec(),
-            std::time::Duration::from_millis(20),
-        );
-        assert!(timed_out.await.is_err());
+            std::time::Duration::from_millis(100),
+        ));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !store.file_draft_worker_running() || store.file_draft_pending() {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        assert!(timed_out.await.unwrap().is_err());
         drop(guard);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         while store.file_draft_worker_running() || store.files_refcount() > 1 {
@@ -175,24 +181,31 @@ fn pre_rename_staleness_cancels_publication_and_removes_temp_file() {
     let files = root.open();
     assert!(
         files
-            .save_file_if(
+            .save_file_with(
                 "workspace-file-drafts.json",
                 super::FILE_DRAFT_BYTES,
                 b"kept",
                 || true,
+                |tmp, dst| {
+                    fs::rename(tmp, dst)?;
+                    Ok(true)
+                },
             )
             .unwrap()
     );
     let checks = std::cell::Cell::new(0usize);
     let published = files
-        .save_file_if(
+        .save_file_with(
             "workspace-file-drafts.json",
             super::FILE_DRAFT_BYTES,
             b"stale-after-sync",
             || {
-                let count = checks.get();
-                checks.set(count + 1);
-                count == 0
+                checks.set(checks.get() + 1);
+                true
+            },
+            |_, _| {
+                checks.set(checks.get() + 1);
+                Ok(false)
             },
         )
         .unwrap();

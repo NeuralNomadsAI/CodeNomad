@@ -128,14 +128,25 @@ mod native {
             self.save_file("state.json", MAX_BYTES, bytes)
         }
         fn save_file(&self, name: &str, limit: usize, bytes: &[u8]) -> Result<()> {
-            self.save_file_if(name, limit, bytes, || true).map(|_| ())
+            self.save_file_with(
+                name,
+                limit,
+                bytes,
+                || true,
+                |temporary, destination| {
+                    fs::rename(temporary, destination)?;
+                    Ok(true)
+                },
+            )
+            .map(|_| ())
         }
-        pub(super) fn save_file_if(
+        pub(super) fn save_file_with(
             &self,
             name: &str,
             limit: usize,
             bytes: &[u8],
             still_current: impl Fn() -> bool,
+            publish: impl FnOnce(&Path, &Path) -> Result<bool>,
         ) -> Result<bool> {
             if bytes.len() > limit {
                 return Err("state too large".into());
@@ -161,10 +172,9 @@ mod native {
                 file.write_all(bytes)?;
                 file.sync_all()?;
                 drop(file);
-                if !still_current() {
+                if !publish(&temporary, &destination)? {
                     return Ok(false);
                 }
-                fs::rename(&temporary, &destination)?;
                 #[cfg(unix)]
                 File::open(&self.directory)?.sync_all()?;
                 Ok(true)
@@ -216,11 +226,21 @@ mod native {
                     Ok(false)
                 } else {
                     match file_drafts_lock.lock() {
-                        Ok(_guard) => files.save_file_if(
+                        Ok(_guard) => files.save_file_with(
                             "workspace-file-drafts.json",
                             FILE_DRAFT_BYTES,
                             &task.bytes,
                             current,
+                            |temporary, destination| {
+                                // Hold the queue lock across generation verification and rename so
+                                // a timeout or newer write cannot invalidate between check and publish.
+                                let state = queue.lock().map_err(|_| "state store unavailable")?;
+                                if state.generation != task.generation {
+                                    return Ok(false);
+                                }
+                                fs::rename(temporary, destination)?;
+                                Ok(true)
+                            },
                         ),
                         Err(_) => Err("state store unavailable".into()),
                     }
@@ -429,7 +449,7 @@ mod native {
             std::sync::Arc::strong_count(&self.files)
         }
         #[cfg(test)]
-        pub(super) fn file_draft_worker_running(&self) -> bool {
+        pub(crate) fn file_draft_worker_running(&self) -> bool {
             self.file_drafts_queue
                 .lock()
                 .is_ok_and(|state| state.running)
