@@ -185,8 +185,21 @@ mod native {
             result
         }
     }
+    const DRAFT_ACTIVE: u8 = 0;
+    const DRAFT_PUBLISHING: u8 = 1;
+    const DRAFT_CANCELLED: u8 = 2;
+
+    fn cancel_draft(state: &std::sync::atomic::AtomicU8) {
+        let _ = state.compare_exchange(
+            DRAFT_ACTIVE,
+            DRAFT_CANCELLED,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        );
+    }
+
     struct PendingFileDraft {
-        generation: u64,
+        state: std::sync::Arc<std::sync::atomic::AtomicU8>,
         bytes: Vec<u8>,
         reply: tokio::sync::oneshot::Sender<Result<bool>>,
     }
@@ -194,7 +207,7 @@ mod native {
     #[derive(Default)]
     struct FileDraftQueue {
         running: bool,
-        generation: u64,
+        active: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
         pending: Option<PendingFileDraft>,
     }
 
@@ -217,11 +230,8 @@ mod native {
                         }
                     }
                 };
-                let current = || {
-                    queue
-                        .lock()
-                        .is_ok_and(|state| state.generation == task.generation)
-                };
+                let current =
+                    || task.state.load(std::sync::atomic::Ordering::Acquire) == DRAFT_ACTIVE;
                 let outcome = if !current() {
                     Ok(false)
                 } else {
@@ -232,10 +242,18 @@ mod native {
                             &task.bytes,
                             current,
                             |temporary, destination| {
-                                // Hold the queue lock across generation verification and rename so
-                                // a timeout or newer write cannot invalidate between check and publish.
-                                let state = queue.lock().map_err(|_| "state store unavailable")?;
-                                if state.generation != task.generation {
+                                // Transition atomically from ACTIVE to PUBLISHING without holding
+                                // the queue mutex across rename so callers/timeouts never block.
+                                if task
+                                    .state
+                                    .compare_exchange(
+                                        DRAFT_ACTIVE,
+                                        DRAFT_PUBLISHING,
+                                        std::sync::atomic::Ordering::AcqRel,
+                                        std::sync::atomic::Ordering::Acquire,
+                                    )
+                                    .is_err()
+                                {
                                     return Ok(false);
                                 }
                                 fs::rename(temporary, destination)?;
@@ -338,18 +356,24 @@ mod native {
         }
         #[cfg(test)]
         pub fn save_file_drafts(&self, bytes: &[u8]) -> Result<()> {
-            if let Ok(mut state) = self.file_drafts_queue.lock() {
-                state.generation += 1;
-                if let Some(evicted) = state.pending.take() {
-                    let _ = evicted.reply.send(Ok(false));
-                }
-            }
+            self.cancel_file_drafts_save();
             let _guard = self
                 .file_drafts_lock
                 .lock()
                 .map_err(|_| "state store unavailable")?;
             self.files
                 .save_file("workspace-file-drafts.json", FILE_DRAFT_BYTES, bytes)
+        }
+        pub fn cancel_file_drafts_save(&self) {
+            if let Ok(mut state) = self.file_drafts_queue.lock() {
+                if let Some(active) = state.active.take() {
+                    cancel_draft(&active);
+                }
+                if let Some(evicted) = state.pending.take() {
+                    cancel_draft(&evicted.state);
+                    let _ = evicted.reply.send(Ok(false));
+                }
+            }
         }
         pub fn start_file_drafts_save(
             &self,
@@ -362,34 +386,37 @@ mod native {
             bytes: Vec<u8>,
             timeout: std::time::Duration,
         ) -> impl std::future::Future<Output = Result<bool>> + Send + 'static {
-            // Enqueue and claim generation synchronously at admission so an unpolled task
-            // cannot outrank a later save or exit flush, and repeated retries share one worker.
+            // Enqueue synchronously at admission so an unpolled task cannot outrank a later save
+            // or exit flush, and repeated retries share one worker without blocking on disk I/O.
             let (tx, rx) = tokio::sync::oneshot::channel();
             let files = self.files.clone();
             let file_drafts_lock = self.file_drafts_lock.clone();
             let queue = self.file_drafts_queue.clone();
-            let generation = match queue.lock() {
+            let write_state = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(DRAFT_ACTIVE));
+            let admitted = match queue.lock() {
                 Ok(mut state) => {
-                    state.generation += 1;
-                    let generation = state.generation;
+                    if let Some(previous) = state.active.replace(write_state.clone()) {
+                        cancel_draft(&previous);
+                    }
                     if let Some(evicted) = state.pending.replace(PendingFileDraft {
-                        generation,
+                        state: write_state.clone(),
                         bytes,
                         reply: tx,
                     }) {
+                        cancel_draft(&evicted.state);
                         let _ = evicted.reply.send(Ok(false));
                     }
-                    Some(generation)
+                    true
                 }
                 Err(_) => {
                     let _ = tx.send(Err("state store unavailable".into()));
-                    None
+                    false
                 }
             };
             async move {
-                let Some(generation) = generation else {
+                if !admitted {
                     return Err("state store unavailable".into());
-                };
+                }
                 let start_worker = queue
                     .lock()
                     .map(|mut state| {
@@ -408,15 +435,18 @@ mod native {
                     Ok(Ok(outcome)) => outcome,
                     Ok(Err(_)) => Err("state store unavailable".into()),
                     Err(elapsed) => {
+                        cancel_draft(&write_state);
                         if let Ok(mut state) = queue.lock() {
-                            if state.generation == generation {
-                                state.generation += 1;
-                            }
                             if state
-                                .pending
+                                .active
                                 .as_ref()
-                                .is_some_and(|pending| pending.generation == generation)
+                                .is_some_and(|active| std::sync::Arc::ptr_eq(active, &write_state))
                             {
+                                state.active = None;
+                            }
+                            if state.pending.as_ref().is_some_and(|pending| {
+                                std::sync::Arc::ptr_eq(&pending.state, &write_state)
+                            }) {
                                 state.pending = None;
                             }
                         }
@@ -441,11 +471,11 @@ mod native {
             }
         }
         #[cfg(test)]
-        pub(super) fn lock_file_drafts(&self) -> std::sync::MutexGuard<'_, ()> {
+        pub(crate) fn lock_file_drafts(&self) -> std::sync::MutexGuard<'_, ()> {
             self.file_drafts_lock.lock().unwrap()
         }
         #[cfg(test)]
-        pub(super) fn files_refcount(&self) -> usize {
+        pub(crate) fn files_refcount(&self) -> usize {
             std::sync::Arc::strong_count(&self.files)
         }
         #[cfg(test)]

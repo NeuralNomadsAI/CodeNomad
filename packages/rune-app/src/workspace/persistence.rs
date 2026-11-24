@@ -26,7 +26,7 @@ pub(super) struct Persistence {
     retrying_file_drafts: Option<Receiver<Result<Option<Vec<u8>>>>>,
     saving: Option<Receiver<(u64, bool)>>,
     #[cfg(not(target_arch = "wasm32"))]
-    saving_file_drafts: Option<Receiver<(u64, bool)>>,
+    saving_file_drafts: Option<(u64, Receiver<(u64, bool)>)>,
     saved: u64,
     saved_file_drafts: u64,
     attempted_file_drafts: u64,
@@ -245,7 +245,7 @@ impl Persistence {
     }
     #[cfg(not(target_arch = "wasm32"))]
     fn drain_file_draft_save(&mut self) {
-        let Some(rx) = &self.saving_file_drafts else {
+        let Some((_, rx)) = &self.saving_file_drafts else {
             return;
         };
         match rx.try_recv() {
@@ -275,9 +275,9 @@ impl Persistence {
             self.file_draft_retry_requested = false;
             self.file_drafts_first_dirty = None;
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            if let Some(rx) = self.saving_file_drafts.take() {
+            if let Some((in_flight_revision, rx)) = self.saving_file_drafts.take() {
                 if !self.file_draft_read_error
-                    && self.attempted_file_drafts == documents.file_draft_revision()
+                    && in_flight_revision == documents.file_draft_revision()
                 {
                     if let Some(remaining) =
                         deadline.checked_duration_since(std::time::Instant::now())
@@ -289,7 +289,13 @@ impl Persistence {
                                 self.saved_file_drafts = self.saved_file_drafts.max(revision);
                                 self.file_draft_error = false;
                             }
-                            Ok(Ok((_, false))) | Ok(Err(_)) | Err(_) => {
+                            Ok(Ok((_, false))) | Ok(Err(_)) => {
+                                self.file_draft_error = true;
+                            }
+                            Err(_) => {
+                                if let Some(store) = &self.store {
+                                    store.cancel_file_drafts_save();
+                                }
                                 self.file_draft_error = true;
                             }
                         }
@@ -372,7 +378,7 @@ impl Persistence {
             self.file_drafts_first_dirty = None;
             self.attempted_file_drafts = revision;
             let (out, input) = bounded(1);
-            self.saving_file_drafts = Some(input);
+            self.saving_file_drafts = Some((revision, input));
             let write = store.start_file_drafts_save(bytes);
             crate::platform::spawn(async move {
                 let ok = matches!(write.await, Ok(true));
@@ -629,14 +635,14 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
-        // Wait for the background worker to release state.lock before simulating reopen.
+        // Wait for the background worker to drop its Arc<Files> (releasing state.lock) before reopen.
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while rt
             .state
             .0
             .store
             .as_ref()
-            .is_some_and(Store::file_draft_worker_running)
+            .is_some_and(|store| store.file_draft_worker_running() || store.files_refcount() > 1)
         {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
@@ -741,7 +747,7 @@ mod tests {
         // A Retry clicked while a failing write is still queued triggers a fresh write on the next poll.
         let (stale_tx, stale_rx) = bounded(1);
         stale_tx.try_send((4, false)).unwrap();
-        rt.state.0.saving_file_drafts = Some(stale_rx);
+        rt.state.0.saving_file_drafts = Some((4, stale_rx));
         rt.state
             .1
             .insert_test_file_draft("src/main.rs", "retried after in-flight failure");
@@ -758,42 +764,53 @@ mod tests {
         rt.state
             .1
             .insert_test_file_draft("src/main.rs", "flushed on exit");
-        let exit_expected = rt.state.1.file_draft_snapshot(4).unwrap().1;
         assert!(rt.state.0.flush_file_drafts(&rt.state.1));
         assert_eq!(rt.state.0.saved_file_drafts, 5);
         assert!(!rt.state.0.file_draft_error);
-        // If an in-flight save already covers the current revision, flush_file_drafts awaits
-        // its receipt without issuing a redundant disk write.
+        // Even after repeated Retry clicks while an actual background save of the current
+        // revision is in flight, flush_file_drafts awaits that real save without rewriting.
         rt.state
             .1
-            .insert_test_file_draft("src/main.rs", "confirmed by in-flight save");
-        let (inflight_tx, inflight_rx) = bounded(1);
-        rt.state.0.attempted_file_drafts = 6;
-        rt.state.0.saving_file_drafts = Some(inflight_rx);
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(10));
-            let _ = inflight_tx.send_blocking((6, true));
+            .insert_test_file_draft("src/main.rs", "confirmed by real in-flight save");
+        let inflight_expected = rt.state.1.file_draft_snapshot(5).unwrap().1;
+        let lock_store = rt.state.0.store.clone().unwrap();
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let blocker = std::thread::spawn(move || {
+            let _guard = lock_store.lock_file_drafts();
+            let _ = locked_tx.send(());
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(15));
         });
+        locked_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let wake_six = wake.clone();
+        rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 9.0, tx, wake_six));
+        let wake_six_due = wake.clone();
+        rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 9.25, tx, wake_six_due));
+        assert!(rt.state.0.saving_file_drafts.is_some());
+        rt.state.0.retry();
+        rt.state.0.retry();
+        release_tx.send(()).unwrap();
         assert!(rt.state.0.flush_file_drafts(&rt.state.1));
+        blocker.join().unwrap();
         assert_eq!(rt.state.0.saved_file_drafts, 6);
         assert!(!rt.state.0.file_draft_error);
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while rt
-            .state
-            .0
-            .store
-            .as_ref()
-            .is_some_and(Store::file_draft_worker_running)
+        while wakes.load(Ordering::SeqCst) < 6
+            || rt.state.0.store.as_ref().is_some_and(|store| {
+                store.file_draft_worker_running() || store.files_refcount() > 1
+            })
         {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
+        assert_eq!(wakes.load(Ordering::SeqCst), 6);
         drop(rt);
         let loaded = crate::platform::block_on(async {
             let reopened = Store::open(root.0.join("rune")).await.unwrap();
             reopened.load_file_drafts().await.unwrap().unwrap()
         });
         assert_ne!(loaded, expected);
-        assert_eq!(loaded, exit_expected);
+        assert_eq!(loaded, inflight_expected);
     }
 }

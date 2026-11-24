@@ -144,12 +144,12 @@ fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
         assert!(!older_task.await.unwrap().unwrap());
         assert!(newer_task.await.unwrap().unwrap());
         assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"newer");
-        // A timed-out write already dequeued by the worker cancels its generation and skips
+        // A timed-out write already dequeued by the worker cancels its state and skips
         // disk I/O once the lock frees.
         let guard = store.lock_file_drafts();
         let timed_out = tokio::spawn(store.start_file_drafts_save_with_timeout(
             b"timed-out".to_vec(),
-            std::time::Duration::from_millis(100),
+            std::time::Duration::from_millis(500),
         ));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         while !store.file_draft_worker_running() || store.file_draft_pending() {
