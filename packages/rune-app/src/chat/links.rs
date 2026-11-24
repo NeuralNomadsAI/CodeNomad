@@ -248,7 +248,7 @@ fn native_transcript_dispatches_link_and_context_actions_without_a_window() {
         crate::init(),
         |s, _| {
             crate::strings::with_locale("fr", || {
-                super::document::prose(s, "links".into(), SOURCE, false)
+                super::document::prose(s, "", "links".into(), SOURCE, false)
             })
         },
         (800.0, 360.0),
