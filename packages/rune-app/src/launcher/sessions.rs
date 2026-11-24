@@ -150,6 +150,33 @@ pub fn list(s: &mut State, more: bool) {
         ))
     });
 }
+pub fn create_blank(s: &mut State) {
+    if !can_change_session(s) {
+        return;
+    }
+    let dismiss = s.shell.floating_sessions();
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    if l.pending || l.creation_uncertain {
+        return;
+    }
+    let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
+        return;
+    };
+    // A create request is never automatically retried. Refresh reconciles a lost response.
+    l.job("rune.create_error", async move {
+        let session = b.create_untitled_session(&p).await?;
+        let (backend, _, slug) = b.bind_session_placed(&p, &session.id, true).await?;
+        Ok(Reply::Created(
+            backend,
+            session.title,
+            slug,
+            String::new(),
+            dismiss,
+        ))
+    });
+}
 pub fn create(s: &mut State, _: &mut Tx) {
     if !can_change_session(s) {
         return;
@@ -274,7 +301,7 @@ pub(super) fn dismiss_origin_panel(s: &mut State, origin: Option<u64>, tx: &mut 
     }
 }
 
-fn clear_active_conversation(s: &mut State) {
+fn clear_conversation_only(s: &mut State) {
     s.attachments.cancel();
     s.composer.picker.reset();
     s.composer.device.cancel();
@@ -282,7 +309,6 @@ fn clear_active_conversation(s: &mut State) {
     s.incoming = None;
     s.reader = None;
     s.agent = None;
-    s.files = None;
     s.attachments = Default::default();
     s.composer = Default::default();
     s.history_detached = false;
@@ -295,6 +321,8 @@ fn clear_active_conversation(s: &mut State) {
 pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
     if s.screen.is_launcher()
         || !can_change_session(s)
+        || s.composer.unconfirmed_id().is_some()
+        || s.composer.command_unconfirmed.is_some()
         || s.files
             .as_ref()
             .is_some_and(|ui| ui.document.pending() || ui.document.dirty())
@@ -314,16 +342,9 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
         return false;
     }
     s.notifications.supersede_navigation();
-    clear_active_conversation(s);
-    if let Some(git) = &mut s.git.owner {
-        git.close_preview();
-        if s.screen.launcher().is_none_or(|l| l.connection.is_none()) {
-            git.online(false);
-        }
-    }
+    clear_conversation_only(s);
     s.show_launcher();
-    crate::git::project_opened(s);
-    crate::workspace::restore_files_mode(s);
+    crate::git::detach_session(s);
     list(s, false);
     tx.instant();
     true
@@ -333,7 +354,8 @@ pub(super) fn retire_session(s: &mut State, id: &str) {
     if !crate::workspace::unselect_missing(s, id) {
         return;
     }
-    clear_active_conversation(s);
+    clear_conversation_only(s);
+    s.files = None;
     s.show_launcher();
     if let Some(l) = s.screen.launcher_mut() {
         l.sessions.retain(|row| row.id != id);

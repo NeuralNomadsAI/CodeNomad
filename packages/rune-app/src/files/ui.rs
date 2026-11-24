@@ -160,6 +160,10 @@ impl Ui {
         }
         self.demand();
     }
+    pub fn detach_session(&mut self) {
+        self.close_reader();
+        self.backend.session.clear();
+    }
     pub fn online(&mut self, online: bool) {
         if !online {
             self.pictures.suspend();

@@ -11,6 +11,10 @@ pub(super) fn blocks_recording(event: &KeyEvent) -> bool {
 fn consumed_by_editor(event: &KeyEvent, web: bool, windows: bool) -> bool {
     let mods = event.mods;
     let primary = mods.ctrl || mods.cmd || mods.logo;
+    // Rune reserves F6 / Shift+F6 for region focus cycling (and floating panel focus).
+    if !primary && !mods.alt && event.key == Key::Function(6) {
+        return true;
+    }
     // Rune #1661: the Web text-field bridge drops function keys without Ctrl/Cmd.
     if web && !primary && matches!(event.key, Key::Function(_)) {
         return true;
@@ -39,6 +43,27 @@ fn only_record_shortcuts_the_focused_editor_can_receive() {
         key: Key::Command('v'),
         mods: ctrl,
     };
+    let f6 = KeyEvent {
+        key: Key::Function(6),
+        mods: Default::default(),
+    };
+    let shift_f6 = KeyEvent {
+        key: Key::Function(6),
+        mods: rune::Mods {
+            shift: true,
+            ..Default::default()
+        },
+    };
+    assert!(consumed_by_editor(&f6, false, true));
+    assert!(consumed_by_editor(&shift_f6, false, true));
+    assert!(!consumed_by_editor(
+        &KeyEvent {
+            key: Key::Function(6),
+            mods: ctrl,
+        },
+        false,
+        true
+    ));
     assert!(consumed_by_editor(&f8, true, false));
     assert!(!consumed_by_editor(&f8, false, true));
     assert!(!consumed_by_editor(

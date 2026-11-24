@@ -180,43 +180,91 @@ fn close_instance_respects_file_edit_and_pending_form_guards() {
 }
 
 #[test]
-fn session_new_opens_sidebar_and_title_and_honors_guards_and_overrides() {
-    let mut rt = project_runtime(workspace_state(1));
-    // Collapse the sessions panel first.
-    let (x, y) = rt.find("sessions-panel-toggle").unwrap();
-    rt.pointer_down(x, y);
-    rt.pointer_up(x, y);
-    settle(&mut rt);
-    assert!(!rt.state.shell.visible(0));
+#[cfg(not(target_arch = "wasm32"))]
+fn session_new_creates_and_binds_session_immediately_and_honors_guards_and_overrides() {
+    use crate::files::test_http::Http as Fixture;
+    crate::platform::block_on(async {
+        let http = Fixture::new().await;
+        let mut s = workspace_state(1);
+        let project = Project {
+            id: "proj-1".into(),
+            path: "/repo".into(),
+        };
+        let l = s.screen.launcher_mut().unwrap();
+        l.connection = Some(http.backend.clone());
+        l.project = Some(project.clone());
+        workspace::opened(&mut s, &project);
+        let mut rt = project_runtime(s);
 
-    // Streaming blocks session-new.
-    rt.state.phase = Phase::Streaming;
-    send_key(&mut rt, Key::Command('n'), primary_mods(true));
-    assert!(!rt.state.shell.visible(0));
-    assert!(!rt.state.screen.launcher().unwrap().show_title);
+        // Streaming blocks session-new.
+        rt.state.phase = Phase::Streaming;
+        send_key(&mut rt, Key::Command('n'), primary_mods(true));
+        assert!(!rt.state.screen.launcher().unwrap().pending);
 
-    // Ready allows session-new: reveals the sidebar, opens and focuses session-title.
-    rt.state.phase = Phase::Ready;
-    send_key(&mut rt, Key::Command('n'), primary_mods(true));
-    assert!(rt.state.shell.visible(0));
-    assert!(rt.state.screen.launcher().unwrap().show_title);
-    assert!(
-        rt.elements()
-            .iter()
-            .any(|el| el.focused && el.path.contains("/session-title/"))
-    );
+        // Uncertain prior creation blocks session-new.
+        rt.state.phase = Phase::Ready;
+        rt.state.screen.launcher_mut().unwrap().creation_uncertain = true;
+        send_key(&mut rt, Key::Command('n'), primary_mods(true));
+        assert!(!rt.state.screen.launcher().unwrap().pending);
+        rt.state.screen.launcher_mut().unwrap().creation_uncertain = false;
 
-    // Custom override works and disabled [] suppresses it.
-    rt.state.screen.launcher_mut().unwrap().show_title = false;
-    settings::fixture_shortcuts(&rt.state, json!({"session-new": [{"key": "f7"}]}));
-    send_key(&mut rt, Key::Command('n'), primary_mods(true));
-    assert!(!rt.state.screen.launcher().unwrap().show_title);
-    send_key(&mut rt, Key::Function(7), Mods::default());
-    assert!(rt.state.screen.launcher().unwrap().show_title);
+        async fn expect_create(rt: &mut Runtime<State>, http: &Fixture, id: &str) {
+            assert!(rt.state.screen.launcher().unwrap().pending);
+            loop {
+                let req = http.accept().await;
+                if req
+                    .header
+                    .starts_with("POST /workspaces/proj-1/instance/api/session ")
+                {
+                    req.reply(
+                        200,
+                        json!({"data":{"id":id,"title":"","location":{"directory":"/repo"}}}),
+                    )
+                    .await;
+                    break;
+                }
+                req.reply(404, json!({})).await;
+            }
+            let bind_want = format!("GET /workspaces/proj-1/instance/api/session/{id}");
+            loop {
+                let req = http.accept().await;
+                if req.header.starts_with(&bind_want) {
+                    req.reply(
+                        200,
+                        json!({"data":{"id":id,"title":"","location":{"directory":"/repo"}}}),
+                    )
+                    .await;
+                    break;
+                }
+                req.reply(404, json!({})).await;
+            }
+            for _ in 0..300 {
+                let mut done = false;
+                rt.update(|s, tx| done = crate::launcher::poll(s, tx));
+                if done {
+                    break;
+                }
+                crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            settle(rt);
+            assert_eq!(workspace::active_session(&rt.state), Some(id));
+        }
+
+        // Ready creates and binds a new untitled session immediately.
+        send_key(&mut rt, Key::Command('n'), primary_mods(true));
+        expect_create(&mut rt, &http, "new-1").await;
+
+        // Custom override replaces default and creates a new session.
+        settings::fixture_shortcuts(&rt.state, json!({"session-new": [{"key": "f7"}]}));
+        send_key(&mut rt, Key::Command('n'), primary_mods(true));
+        assert!(!rt.state.screen.launcher().unwrap().pending);
+        send_key(&mut rt, Key::Function(7), Mods::default());
+        expect_create(&mut rt, &http, "new-2").await;
+    });
 }
 
 #[test]
-fn close_session_clears_active_session_preserves_draft_and_honors_guards() {
+fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
     let mut s = workspace_state(1);
     let backend = Backend {
         workspace: "header-windows".into(),
@@ -235,6 +283,9 @@ fn close_session_clears_active_session_preserves_draft_and_honors_guards() {
     )
     .with_documents(s.documents.clone(), "tab-0".into());
     files.online(true);
+    files.tree.select("src".into());
+    let _ = files.tree.toggle("src");
+    assert!(files.tree.expanded("src"));
     files.open("draft.txt".into());
     files.reader.scene(Ok(codenomad_client::files::Preview {
         workspace_id: backend.workspace.clone(),
@@ -247,6 +298,8 @@ fn close_session_clears_active_session_preserves_draft_and_honors_guards() {
     files.document.input(scope).replace_text("unsaved edit");
     files.document.changed(scope);
     s.files = Some(files);
+    crate::git::connected(&mut s, &backend);
+    crate::git::fixture_commit_draft(&mut s, Some("wip commit"));
     s.draft = TextEdit::new("unsent draft");
     let mut rt = project_runtime(s);
     assert!(!rt.state.screen.is_launcher());
@@ -263,20 +316,35 @@ fn close_session_clears_active_session_preserves_draft_and_honors_guards() {
         files.document.changed(scope);
     }
 
+    // Unconfirmed slash command blocks close-session so reopening cannot resend it.
+    rt.state.composer.command_unconfirmed = Some(("compact".into(), String::new()));
+    send_key(&mut rt, Key::Command('w'), primary_mods(true));
+    assert!(!rt.state.screen.is_launcher());
+    assert_eq!(workspace::active_session(&rt.state), Some("session"));
+    rt.state.composer.command_unconfirmed = None;
+
     // Streaming blocks close-session.
     rt.state.phase = Phase::Streaming;
     send_key(&mut rt, Key::Command('w'), primary_mods(true));
     assert!(!rt.state.screen.is_launcher());
     assert_eq!(workspace::active_session(&rt.state), Some("session"));
 
-    // Ready closes the active session, keeps the project + Files/Git attached, and saves the draft.
+    // Ready closes the active session while preserving Files tree expansion, Git commit draft, and session draft.
     rt.state.phase = Phase::Ready;
     send_key(&mut rt, Key::Command('w'), primary_mods(true));
     assert!(rt.state.screen.is_launcher());
     assert!(rt.state.screen.launcher().unwrap().project.is_some());
     assert_eq!(workspace::active_session(&rt.state), None);
-    assert!(rt.state.files.is_some());
-    assert!(rt.state.git.owner.is_some());
+    assert!(
+        rt.state
+            .files
+            .as_ref()
+            .is_some_and(|ui| ui.tree.expanded("src"))
+    );
+    assert_eq!(
+        crate::git::fixture_commit_draft(&mut rt.state, None).as_deref(),
+        Some("wip commit")
+    );
     let snap = rt.state.workspace.as_ref().unwrap().snapshot();
     let workspace::Tab::Workspace(saved) = &snap.tabs[0] else {
         panic!("expected workspace tab");
@@ -289,7 +357,7 @@ fn close_session_clears_active_session_preserves_draft_and_honors_guards() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn session_prev_next_and_session_tabs_select_visible_sessions_and_respect_overrides() {
+fn session_prev_and_next_select_visible_sessions_and_respect_overrides() {
     use crate::files::test_http::Http as Fixture;
     crate::platform::block_on(async {
         let http = Fixture::new().await;
@@ -353,13 +421,13 @@ fn session_prev_next_and_session_tabs_select_visible_sessions_and_respect_overri
                 );
                 req.reply(404, json!({})).await;
             }
-            for _ in 0..40 {
+            for _ in 0..300 {
                 let mut done = false;
                 rt.update(|s, tx| done = crate::launcher::poll(s, tx));
                 if done {
                     break;
                 }
-                crate::platform::sleep(std::time::Duration::from_millis(5)).await;
+                crate::platform::sleep(std::time::Duration::from_millis(10)).await;
             }
             settle(rt);
             assert_eq!(workspace::active_session(&rt.state), Some(expected));
@@ -377,28 +445,29 @@ fn session_prev_next_and_session_tabs_select_visible_sessions_and_respect_overri
         send_key(&mut rt, Key::Command('{'), primary_mods(true));
         expect_bind(&mut rt, &http, "s-3").await;
 
-        // session-tab-2 (Ctrl+Shift+2) jumps directly to s-2.
+        // session-tab-2 remains inactive until subsession/logs tabs exist (must not switch root sessions).
         send_key(&mut rt, Key::Command('2'), primary_mods(true));
-        expect_bind(&mut rt, &http, "s-2").await;
+        assert!(!rt.state.screen.launcher().unwrap().pending);
+        assert_eq!(workspace::active_session(&rt.state), Some("s-3"));
 
         // Filtered search restricts session-next to matching visible sessions only.
         {
             let l = rt.state.screen.launcher_mut().unwrap();
             l.show_search = true;
-            l.search = TextEdit::new("Gamma");
+            l.search = TextEdit::new("Alpha");
         }
         send_key(&mut rt, Key::Command('}'), primary_mods(true));
-        expect_bind(&mut rt, &http, "s-3").await;
+        expect_bind(&mut rt, &http, "s-1").await;
 
-        // Override on session-tab-1 selects the first visible session.
+        // Override on session-next moves s-1 -> s-2.
         {
             let l = rt.state.screen.launcher_mut().unwrap();
             l.show_search = false;
             l.search = TextEdit::new("");
         }
-        settings::fixture_shortcuts(&rt.state, json!({"session-tab-1": [{"key": "f8"}]}));
+        settings::fixture_shortcuts(&rt.state, json!({"session-next": [{"key": "f8"}]}));
         send_key(&mut rt, Key::Function(8), Mods::default());
-        expect_bind(&mut rt, &http, "s-1").await;
+        expect_bind(&mut rt, &http, "s-2").await;
     });
 }
 
@@ -643,4 +712,57 @@ fn authentication_required_git_ime_f11_override_and_repeat_consumption() {
     settings::fixture_shortcuts(&rt.state, json!({"instance-next": [{"key": "f11"}]}));
     send_key(&mut rt, Key::Function(11), Mods::default());
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+}
+
+#[test]
+fn file_editor_pagedown_does_not_fire_remapped_global_shortcut() {
+    let mut s = workspace_state(2);
+    let backend = Backend {
+        workspace: "header-windows".into(),
+        session: "session".into(),
+        ..Backend::unauthenticated("http://127.0.0.1:9/").unwrap()
+    };
+    let mut files = crate::files::Ui::new(
+        backend.clone(),
+        "/repo".into(),
+        s.reads.clone(),
+        s.wake.clone(),
+    )
+    .with_documents(s.documents.clone(), "tab-0".into());
+    files.online(true);
+    files.open("long.rs".into());
+    let body = (0..120)
+        .map(|i| format!("let line_{i} = {i};"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    files.reader.scene(Ok(codenomad_client::files::Preview {
+        workspace_id: backend.workspace,
+        path: "long.rs".into(),
+        bytes: body.into_bytes(),
+        version: Some("v1".into()),
+    }));
+    files.document.poll(&mut files.reader);
+    s.files = Some(files);
+    let mut rt = project_runtime(s);
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+
+    let input = rt
+        .elements()
+        .into_iter()
+        .find(|node| node.path.contains("/file-editor/") && node.role == "textbox")
+        .expect("mounted file-editor textbox");
+    let [x, y, width, height] = input.visible;
+    assert!(width > 0.0 && height > 0.0);
+    rt.pointer_down(x + width / 2.0, y + 4.0);
+    rt.pointer_up(x + width / 2.0, y + 4.0);
+    settle(&mut rt);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|node| node.path == input.path && node.focused)
+    );
+
+    settings::fixture_shortcuts(&rt.state, json!({"instance-next": [{"key": "pagedown"}]}));
+    send_key(&mut rt, Key::PageDown, Mods::default());
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
 }

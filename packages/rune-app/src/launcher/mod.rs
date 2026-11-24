@@ -31,7 +31,9 @@ use sessions::attach;
 pub use sessions::back;
 pub(crate) use sessions::choose_destination;
 use sessions::{bind, dismiss_origin_panel, retire_session};
-pub use sessions::{can_change_session, can_visit, choose, close_session, create, list, visit};
+pub use sessions::{
+    can_change_session, can_visit, choose, close_session, create, create_blank, list, visit,
+};
 use std::{collections::HashSet, future::Future};
 pub(crate) use visits::Visits;
 
@@ -290,7 +292,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         Ok(Reply::Created(b, title, slug, submitted, dismiss)) => {
-            if l.title.text == submitted {
+            if !submitted.is_empty() && l.title.text == submitted {
                 l.title = TextEdit::new("");
                 l.show_title = false;
             }

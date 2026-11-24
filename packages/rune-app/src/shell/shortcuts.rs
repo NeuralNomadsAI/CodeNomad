@@ -1,4 +1,4 @@
-use super::{launcher_replaces_project, notifications, sidebar, toggle_panel};
+use super::{launcher_replaces_project, notifications, sidebar};
 use crate::{State, launcher, settings, workspace};
 use rune::{Key, KeyEvent, Tx, edit::TextEdit};
 
@@ -12,18 +12,6 @@ const APP_TAB_IDS: [&str; 9] = [
     "app-tab-7",
     "app-tab-8",
     "app-tab-9",
-];
-
-const SESSION_TAB_IDS: [&str; 9] = [
-    "session-tab-1",
-    "session-tab-2",
-    "session-tab-3",
-    "session-tab-4",
-    "session-tab-5",
-    "session-tab-6",
-    "session-tab-7",
-    "session-tab-8",
-    "session-tab-9",
 ];
 
 pub(super) fn modal_open(s: &State) -> bool {
@@ -71,7 +59,8 @@ fn any_editor_composing(s: &State) -> bool {
 
 fn focused_text_field(s: &State, tx: &Tx) -> bool {
     let focused = tx.focused();
-    if focused == Some("input") {
+    // Every rune-kit TextInput/TextArea focuses its inner "input" leaf (file-editor included).
+    if matches!(focused, Some("input" | "file-editor")) {
         return true;
     }
     #[cfg(target_arch = "wasm32")]
@@ -138,7 +127,6 @@ enum Action {
     SessionPrev,
     SessionNext,
     CloseSession,
-    SessionTab(usize),
 }
 
 pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
@@ -187,9 +175,6 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             if session_open && matches("close-session") {
                 return Some(Action::CloseSession);
             }
-            if let Some(index) = SESSION_TAB_IDS.iter().position(|id| matches(id)) {
-                return Some(Action::SessionTab(index));
-            }
         }
         None
     }) else {
@@ -219,29 +204,14 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         Action::InstancePrev => workspace::select_relative(s, false, tx),
         Action::InstanceNext => workspace::select_relative(s, true, tx),
         Action::AppTab(index) => workspace::select_index(s, index, tx),
-        Action::SessionNew => open_new_session(s, tx),
+        Action::SessionNew => launcher::create_blank(s),
         Action::SessionPrev => select_relative_session(s, false, tx),
         Action::SessionNext => select_relative_session(s, true, tx),
         Action::CloseSession => {
             launcher::close_session(s, tx);
         }
-        Action::SessionTab(index) => select_session_index(s, index, tx),
     }
     true
-}
-
-fn open_new_session(s: &mut State, tx: &mut Tx) {
-    if !launcher::can_change_session(s) || s.screen.launcher().is_none_or(|l| l.pending) {
-        return;
-    }
-    if !s.shell.visible(0) {
-        toggle_panel(s, 0, tx);
-    }
-    if let Some(l) = s.screen.launcher_mut() {
-        l.show_title = true;
-        tx.focus_when_shown("session-title", true);
-        tx.instant();
-    }
 }
 
 fn select_relative_session(s: &mut State, next: bool, tx: &mut Tx) {
@@ -270,15 +240,4 @@ fn select_relative_session(s: &mut State, next: bool, tx: &mut Tx) {
         }
     };
     launcher::choose(s, ids[target].clone(), tx);
-}
-
-fn select_session_index(s: &mut State, index: usize, tx: &mut Tx) {
-    let Some(target) = s
-        .screen
-        .launcher()
-        .and_then(|l| sidebar::visible_session_ids(l).into_iter().nth(index))
-    else {
-        return;
-    };
-    launcher::choose(s, target, tx);
 }

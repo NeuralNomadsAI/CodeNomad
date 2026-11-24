@@ -351,6 +351,21 @@ impl Backend {
         .await?;
         session(&data["data"], project)
     }
+    pub async fn create_untitled_session(&self, project: &Project) -> Result<Session> {
+        let data = read_json(
+            self.client
+                .post(format!(
+                    "{}workspaces/{}/instance/api/session",
+                    self.base, project.id
+                ))
+                .json(&json!({"location":{"directory":project.path}}))
+                .send()
+                .await?
+                .error_for_status()?,
+        )
+        .await?;
+        session(&data["data"], project)
+    }
 }
 fn server_id(data: &Value) -> Result<String> {
     let id = data["serverId"].as_str().ok_or("invalid server identity")?;

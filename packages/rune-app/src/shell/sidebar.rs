@@ -138,12 +138,9 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                     t("sessionList.actions.newSession.title"),
                     "session-new",
                 ))
-                .disabled(disabled)
-                .on_press_tx(screen::action_tx(scope, |s, tx| {
-                    if let Some(l) = s.screen.launcher_mut() {
-                        l.show_title = true;
-                        tx.focus_when_shown("session-title", true);
-                    }
+                .disabled(disabled || l.creation_uncertain)
+                .on_press_tx(screen::action_tx(scope, |s, _| {
+                    launcher::create_blank(s);
                 }))
                 .build(kit(layout::dark()))
                 .key("session-new"),

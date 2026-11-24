@@ -44,15 +44,6 @@ pub(in crate::settings) fn active(id: &str) -> bool {
             | "session-prev"
             | "session-next"
             | "close-session"
-            | "session-tab-1"
-            | "session-tab-2"
-            | "session-tab-3"
-            | "session-tab-4"
-            | "session-tab-5"
-            | "session-tab-6"
-            | "session-tab-7"
-            | "session-tab-8"
-            | "session-tab-9"
             | FILE_SAVE
     ) || id == "browse-folder" && crate::platform::folder_picker_available()
 }
@@ -179,7 +170,7 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
     assert_eq!(keys.len(), 75);
     assert_eq!(
         keys.iter().filter(|id| active(id)).count(),
-        27 + usize::from(crate::platform::folder_picker_available())
+        18 + usize::from(crate::platform::folder_picker_available())
     );
     for def in defs {
         for defaults in def["defaults"].as_array().unwrap() {

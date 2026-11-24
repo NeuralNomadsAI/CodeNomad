@@ -74,6 +74,15 @@ pub(crate) fn fixture_commit_preedit(s: &mut State, text: &str) {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn fixture_commit_draft(s: &mut State, text: Option<&str>) -> Option<String> {
+    let ui = s.git.owner.as_mut()?;
+    if let Some(text) = text {
+        ui.changes.draft.replace_text(text);
+    }
+    Some(ui.changes.draft.text.clone())
+}
+
 pub(crate) fn set_diff_preferences(s: &mut State, preference: DiffPreferences) {
     s.git.preferences.set(preference);
     if let Some(owner) = &mut s.git.owner {
@@ -122,6 +131,36 @@ fn connect(s: &mut State, backend: &Backend, placement: Option<&str>) {
         owner.bind_placed(backend, Some(slug));
     }
     s.git.owner = Some(owner);
+}
+
+pub(crate) fn detach_session(s: &mut State) {
+    let backend = s.screen.launcher().and_then(|launcher| {
+        let mut backend = launcher.connection.clone()?;
+        backend.workspace.clone_from(&launcher.project.as_ref()?.id);
+        backend.session.clear();
+        Some(backend)
+    });
+    if let Some(files) = &mut s.files {
+        files.detach_session();
+        if backend.is_none() {
+            files.online(false);
+        }
+    } else if let Some(backend) = &backend {
+        crate::files::bind(s, backend);
+        if let Some(files) = &mut s.files {
+            files.online(true);
+        }
+    }
+    if let Some(owner) = &mut s.git.owner {
+        owner.detach_session();
+        if backend.is_none() {
+            owner.online(false);
+        }
+    } else if let Some(backend) = &backend {
+        connected(s, backend);
+        online(s, true);
+        crate::workspace::restore_files_mode(s);
+    }
 }
 
 pub(crate) fn project_opened(s: &mut State) {
