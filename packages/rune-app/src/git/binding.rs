@@ -59,8 +59,6 @@ pub(crate) fn overlay_open(s: &State) -> bool {
 
 pub(crate) enum SessionDirectory {
     Root,
-    Known(String),
-    ResolveSlug(String),
     ResolveSession(String),
 }
 
@@ -68,38 +66,16 @@ pub(crate) fn session_directory(s: &State) -> SessionDirectory {
     if s.screen.is_launcher() {
         return SessionDirectory::Root;
     }
-    let Some(owner) = s.git.owner.as_ref() else {
-        return SessionDirectory::Root;
-    };
-    if owner.session_moved || matches!(s.phase, crate::Phase::Failed | crate::Phase::Reconnecting) {
-        let active = crate::workspace::active_session(s)
-            .map(str::to_owned)
-            .or_else(|| (!owner.backend.session.is_empty()).then(|| owner.backend.session.clone()));
-        if let Some(session_id) = active {
-            return SessionDirectory::ResolveSession(session_id);
-        }
-    }
-    if owner.session_slug == "root" {
-        return SessionDirectory::Root;
-    }
-    owner
-        .inventory
-        .as_ref()
-        .and_then(|list| {
-            list.trees
-                .iter()
-                .find(|tree| tree.slug == owner.session_slug && !tree.missing)
-                .map(|tree| {
-                    tree.service_directory
-                        .as_ref()
-                        .unwrap_or(&tree.directory)
-                        .clone()
-                })
-        })
-        .map_or_else(
-            || SessionDirectory::ResolveSlug(owner.session_slug.clone()),
-            SessionDirectory::Known,
-        )
+    let active = crate::workspace::active_session(s)
+        .map(str::to_owned)
+        .or_else(|| {
+            s.git
+                .owner
+                .as_ref()
+                .filter(|owner| !owner.backend.session.is_empty())
+                .map(|owner| owner.backend.session.clone())
+        });
+    active.map_or(SessionDirectory::Root, SessionDirectory::ResolveSession)
 }
 
 pub(crate) fn is_composing(s: &State) -> bool {
@@ -131,13 +107,6 @@ pub(crate) fn fixture_commit_draft(s: &mut State, text: Option<&str>) -> Option<
 pub(crate) fn fixture_open_picker(s: &mut State) {
     if let Some(ui) = s.git.owner.as_mut() {
         ui.picker = true;
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn fixture_worktrees(s: &mut State, inventory: codenomad_client::git::Worktrees) {
-    if let Some(ui) = s.git.owner.as_mut() {
-        ui.inventory = Some(inventory);
     }
 }
 

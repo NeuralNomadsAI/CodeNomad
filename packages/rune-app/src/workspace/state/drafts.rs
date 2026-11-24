@@ -11,7 +11,7 @@ const MAX_WINDOW_DEVICE_FILES: usize = super::super::MAX_DRAFTS * MAX_FILES;
 pub(super) struct LiveDraft {
     text: Option<String>,
     parts: Option<(Draft, bool)>,
-    unconfirmed: Option<crate::composer::UnconfirmedSend>,
+    unconfirmed: Option<crate::composer::UnconfirmedPrompt>,
     command_unconfirmed: Option<(String, String)>,
 }
 

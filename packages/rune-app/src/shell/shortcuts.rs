@@ -27,12 +27,17 @@ pub(super) fn modal_open(s: &State) -> bool {
         || notifications::history_open(s)
         || crate::files::modal_open(s)
         || workspace::mission_confirmation(s).is_some()
+        || (!s.screen.is_launcher()
+            && s.transcript_display
+                .messages
+                .confirmation_open(&s.input_scope))
 }
 
 fn overlay_open(s: &State) -> bool {
     s.composer.picker.open()
         || s.agent.as_ref().is_some_and(|a| a.picker)
         || crate::git::overlay_open(s)
+        || (!s.screen.is_launcher() && s.transcript_display.messages.menu_open())
 }
 
 fn any_editor_composing(s: &State) -> bool {

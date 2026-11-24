@@ -397,10 +397,14 @@ mod tests {
             "instanceId": "proj-1",
             "event": {"type": "filesystem.changed"}
         }));
+        watch.signals.observe(&json!({
+            "type": "storage.configChanged",
+            "owner": "ui"
+        }));
         let (generation, overflow, events) = watch.take_workspace_events();
         assert_eq!(generation, 0);
         assert!(!overflow);
-        assert_eq!(events.len(), 3);
+        assert_eq!(events.len(), 4);
         assert!(matches!(
             &events[0],
             WorkspaceEvent::FilesChanged { workspace_id, changes }
@@ -417,6 +421,7 @@ mod tests {
             &events[2],
             WorkspaceEvent::NativeFilesystemChanged { workspace_id } if workspace_id == "proj-1"
         ));
+        assert!(matches!(&events[3], WorkspaceEvent::UiPreferencesChanged));
         watch.signals.reconnected();
         assert_eq!(watch.take_workspace_events().0, 1);
         watch.signals.observe(&json!({

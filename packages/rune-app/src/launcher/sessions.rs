@@ -151,7 +151,7 @@ pub fn list(s: &mut State, more: bool) {
     });
 }
 pub fn create_blank(s: &mut State) {
-    if !can_change_session(s) {
+    if !can_change_session(s) || crate::git::placement_unconfirmed(s) {
         return;
     }
     let dismiss = s.shell.floating_sessions();
@@ -169,10 +169,6 @@ pub fn create_blank(s: &mut State) {
     l.job("rune.create_error", async move {
         let directory = match target {
             crate::git::SessionDirectory::Root => p.path.clone(),
-            crate::git::SessionDirectory::Known(directory) => directory,
-            crate::git::SessionDirectory::ResolveSlug(slug) => {
-                b.worktree_directory(&p, &slug).await?
-            }
             crate::git::SessionDirectory::ResolveSession(session_id) => {
                 b.session_directory(&p, &session_id).await?
             }
@@ -324,6 +320,7 @@ fn clear_conversation_only(s: &mut State) {
     s.agent = None;
     s.attachments = Default::default();
     s.composer = Default::default();
+    s.transcript_display.messages = Default::default();
     s.history_detached = false;
     s.messages.clear();
     s.chat_title.clear();

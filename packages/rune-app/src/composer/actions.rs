@@ -14,7 +14,7 @@ pub struct Owner {
     pub picker: super::picker::Picker,
     sending: Option<Send>,
     pub send_error: bool,
-    unconfirmed: Option<Send>,
+    unconfirmed: Option<UnconfirmedPrompt>,
     pub command_unconfirmed: Option<(String, String)>,
     pub restored: bool,
     pub attachments_missing: bool,
@@ -29,21 +29,102 @@ impl Owner {
     pub fn unconfirmed_id(&self) -> Option<&str> {
         self.unconfirmed.as_ref().map(|send| send.id.as_str())
     }
-    pub(crate) fn clone_unconfirmed(&self) -> Option<UnconfirmedSend> {
-        self.unconfirmed.clone().map(UnconfirmedSend)
+    pub(crate) fn clone_unconfirmed(&self) -> Option<UnconfirmedPrompt> {
+        self.unconfirmed.clone()
     }
-    pub(crate) fn restore_unconfirmed(&mut self, send: UnconfirmedSend) {
-        self.unconfirmed = Some(send.0);
+    pub(crate) fn restore_unconfirmed(&mut self, send: UnconfirmedPrompt) {
+        self.unconfirmed = Some(send);
     }
     #[cfg(test)]
     pub fn pending_text(&self) -> Option<&str> {
         self.sending.as_ref().map(|send| send.edit.text.as_str())
     }
 }
-#[derive(Clone)]
-pub(crate) struct UnconfirmedSend(Send);
-
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct UnconfirmedPrompt {
+    id: String,
+    text_len: usize,
+    text_hash: u64,
+    attachments_len: usize,
+    attachments_hash: u64,
+}
+impl UnconfirmedPrompt {
+    fn from_send(send: &Send) -> Self {
+        let (text_len, text_hash) = hash_text(&send.edit.text);
+        let (attachments_len, attachments_hash) = hash_attachments(&send.draft.attachments);
+        Self {
+            id: send.id.clone(),
+            text_len,
+            text_hash,
+            attachments_len,
+            attachments_hash,
+        }
+    }
+    fn matches(&self, text: &str, attachments: &[super::draft::Attachment]) -> bool {
+        (self.text_len, self.text_hash) == hash_text(text)
+            && (self.attachments_len, self.attachments_hash) == hash_attachments(attachments)
+    }
+}
+fn hash_text(text: &str) -> (usize, u64) {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    (text.len(), hasher.finish())
+}
+fn hash_attachments(attachments: &[super::draft::Attachment]) -> (usize, u64) {
+    use super::draft::Attachment;
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    attachments.len().hash(&mut hasher);
+    for item in attachments {
+        match item {
+            Attachment::Pasted { id, text } => {
+                0u8.hash(&mut hasher);
+                id.hash(&mut hasher);
+                text.hash(&mut hasher);
+            }
+            Attachment::Device {
+                name,
+                mime,
+                bytes,
+                token,
+            } => {
+                1u8.hash(&mut hasher);
+                name.hash(&mut hasher);
+                mime.hash(&mut hasher);
+                bytes.len().hash(&mut hasher);
+                bytes.as_ref().hash(&mut hasher);
+                token.hash(&mut hasher);
+            }
+            Attachment::Project {
+                name,
+                path,
+                uri,
+                directory,
+            } => {
+                2u8.hash(&mut hasher);
+                name.hash(&mut hasher);
+                path.hash(&mut hasher);
+                uri.hash(&mut hasher);
+                directory.hash(&mut hasher);
+            }
+            Attachment::Path(path) => {
+                3u8.hash(&mut hasher);
+                path.hash(&mut hasher);
+            }
+            Attachment::Agent(name) => {
+                4u8.hash(&mut hasher);
+                name.hash(&mut hasher);
+            }
+            Attachment::Skill { id, name } => {
+                5u8.hash(&mut hasher);
+                id.hash(&mut hasher);
+                name.hash(&mut hasher);
+            }
+        }
+    }
+    (attachments.len(), hasher.finish())
+}
 struct Send {
     id: String,
     edit: TextEdit,
@@ -207,12 +288,13 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         return;
     }
     if matches!(outcome, PromptOutcome::Unconfirmed) {
+        let prompt = UnconfirmedPrompt::from_send(&send);
         if s.draft.text.is_empty() && s.composer.draft.attachments.is_empty() {
-            s.draft = send.edit.clone();
-            s.composer.draft = send.draft.clone();
+            s.draft = send.edit;
+            s.composer.draft = send.draft;
             s.composer.restored = true;
         }
-        s.composer.unconfirmed = Some(send);
+        s.composer.unconfirmed = Some(prompt);
         return;
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
@@ -270,8 +352,7 @@ pub fn reconcile(s: &mut State) {
             .iter()
             .any(|row| row.id == send.id && row.role == "user")
     }) && let Some(send) = s.composer.unconfirmed.take()
-        && s.draft.text == send.edit.text
-        && s.composer.draft.attachments == send.draft.attachments
+        && send.matches(&s.draft.text, &s.composer.draft.attachments)
     {
         s.draft.clear();
         s.composer.draft = Draft::default();

@@ -75,7 +75,7 @@ fn body(
     panels::view(s, cx.touch_controls(), has_project, body)
 }
 
-fn launcher_replaces_project(s: &State) -> bool {
+pub(crate) fn launcher_replaces_project(s: &State) -> bool {
     s.screen
         .launcher()
         .is_some_and(|l| l.authentication_required)

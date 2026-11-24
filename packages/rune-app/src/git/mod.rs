@@ -20,7 +20,6 @@ pub(crate) use binding::{
 #[cfg(test)]
 pub(crate) use binding::{
     fixture_commit_draft, fixture_commit_preedit, fixture_online, fixture_open_picker,
-    fixture_worktrees,
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};
@@ -122,7 +121,6 @@ pub(crate) struct Ui {
     inventory: Option<Worktrees>,
     slug: String,
     session_slug: String,
-    session_moved: bool,
     workspace_preview: bool,
     scope: std::rc::Rc<()>,
     tree_epoch: u64,
@@ -174,7 +172,6 @@ impl Ui {
             inventory: None,
             slug: "root".into(),
             session_slug: "root".into(),
-            session_moved: false,
             workspace_preview: false,
             scope: std::rc::Rc::new(()),
             tree_epoch: 0,
@@ -246,14 +243,11 @@ impl Ui {
             if let Some(slug) = placement {
                 self.session_slug = slug.into();
             }
-            self.session_moved = false;
             self.close_preview();
             if self.slug != self.session_slug {
                 self.slug.clone_from(&self.session_slug);
                 self.reset_tree();
             }
-        } else if placement.is_some() {
-            self.session_moved = false;
         }
         true
     }
@@ -262,8 +256,8 @@ impl Ui {
         self.backend.session.clear();
         self.backend.session_directory = None;
         self.session_slug = "root".into();
-        self.session_moved = false;
         self.placement_picker = None;
+        self.close_preview();
     }
 
     pub(crate) fn online(&mut self, online: bool) {

@@ -102,6 +102,26 @@ impl Actions {
     pub(crate) fn pending(&self) -> bool {
         self.job.is_some() || self.confirmation.is_some()
     }
+
+    pub(crate) fn confirmation_open(&self, scope: &Rc<()>) -> bool {
+        self.confirmation
+            .as_ref()
+            .is_some_and(|(owner, _)| owner.ptr_eq(&Rc::downgrade(scope)))
+    }
+
+    pub(crate) fn menu_open(&self) -> bool {
+        self.open_menu.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_open_menu(&mut self, id: Option<&str>) {
+        self.open_menu = id.map(str::to_owned);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_confirmation(&mut self, scope: &Rc<()>, preview: Option<PrunePreview>) {
+        self.confirmation = preview.map(|preview| (Rc::downgrade(scope), preview));
+    }
 }
 
 fn available(s: &State) -> bool {

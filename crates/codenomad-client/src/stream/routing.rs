@@ -119,6 +119,9 @@ fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
 }
 
 pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
+    if storage_owner(value) == Some(crate::settings::Owner::Config) {
+        return Some(WorkspaceEvent::UiPreferencesChanged);
+    }
     if let Some(event) = parse_workspace_event(value) {
         return Some(event);
     }

@@ -42,21 +42,23 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         .chain(std::iter::once(crate::shell::notifications::history_entry(
             s, touch,
         )));
-    let browse_shadows_new = crate::platform::folder_picker_available()
-        && matches!(ui.entries[ui.active].saved, Tab::Blank)
-        && {
-            let new_key = crate::settings::shortcut_label(s, "new-instance");
-            !new_key.is_empty() && new_key == crate::settings::shortcut_label(s, "browse-folder")
-        };
-    let new_help = if browse_shadows_new {
-        strings::t("instanceTabs.new.title").to_owned()
+    let shadowed: &[&str] = if crate::platform::folder_picker_available()
+        && crate::shell::launcher_replaces_project(s)
+    {
+        &["browse-folder"]
+    } else if !crate::shell::launcher_replaces_project(s)
+        && s.screen.launcher().is_some_and(|l| l.project.is_some())
+    {
+        &["session-new"]
     } else {
-        crate::settings::with_shortcut_label(
-            s,
-            strings::t("instanceTabs.new.title"),
-            "new-instance",
-        )
+        &[]
     };
+    let new_help = crate::settings::with_shortcut_label_excluding(
+        s,
+        strings::t("instanceTabs.new.title"),
+        "new-instance",
+        shadowed,
+    );
     let active_close_help = crate::settings::with_shortcut_label(
         s,
         strings::t("instanceTab.actions.close.ariaLabel"),

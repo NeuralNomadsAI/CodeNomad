@@ -54,12 +54,36 @@ pub(crate) fn save_label(s: &State) -> String {
     format_chords(&catalog::resolve(&s.settings.shared.borrow(), FILE_SAVE))
 }
 
-pub(crate) fn shortcut_label(s: &State, action: &str) -> String {
+fn shortcut_label(s: &State, action: &str) -> String {
     format_chords(&catalog::resolve(&s.settings.shared.borrow(), action))
 }
 
 pub(crate) fn with_shortcut_label(s: &State, label: &str, action: &str) -> String {
     let shortcut = shortcut_label(s, action);
+    if shortcut.is_empty() {
+        label.to_owned()
+    } else {
+        format!("{label} ({shortcut})")
+    }
+}
+
+pub(crate) fn with_shortcut_label_excluding(
+    s: &State,
+    label: &str,
+    action: &str,
+    shadowed_by: &[&str],
+) -> String {
+    let prefs = s.settings.shared.borrow();
+    let platform = rune::KeyPlatform::current();
+    let blocked: Vec<_> = shadowed_by
+        .iter()
+        .flat_map(|other| catalog::resolve(&prefs, other))
+        .collect();
+    let visible: Vec<_> = catalog::resolve(&prefs, action)
+        .into_iter()
+        .filter(|chord| !blocked.iter().any(|other| chord.same_keys(other, platform)))
+        .collect();
+    let shortcut = format_chords(&visible);
     if shortcut.is_empty() {
         label.to_owned()
     } else {

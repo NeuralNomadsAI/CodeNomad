@@ -60,24 +60,42 @@ fn is_region_cycle(chord: &Chord, platform: KeyPlatform) -> bool {
     chord.same_keys(&f6, platform) || chord.same_keys(&f6.with(rune::ChordMod::Shift), platform)
 }
 
+fn is_valid_rule(rule: &Value) -> bool {
+    let Some(obj) = rule.as_object() else {
+        return false;
+    };
+    if !obj
+        .get("key")
+        .and_then(Value::as_str)
+        .is_some_and(|key| !key.trim().is_empty())
+    {
+        return false;
+    }
+    ["mod", "ctrl", "meta", "alt", "shift"]
+        .iter()
+        .all(|name| obj.get(*name).is_none_or(Value::is_boolean))
+}
+
 fn resolve_def(
     overrides: Option<&[Value]>,
     def: &Value,
     index: usize,
     platform: KeyPlatform,
 ) -> Vec<Chord> {
-    overrides
-        .filter(|rules| rules.len() <= 8)
-        .and_then(|rules| rules.iter().map(decode).collect::<Option<Vec<_>>>())
-        .unwrap_or_else(|| {
-            def["defaults"][index]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(decode)
-                .collect()
-        })
+    if let Some(rules) =
+        overrides.filter(|rules| rules.len() <= 8 && rules.iter().all(is_valid_rule))
+    {
+        return rules
+            .iter()
+            .filter_map(decode)
+            .filter(|chord| !is_region_cycle(chord, platform))
+            .collect();
+    }
+    def["defaults"][index]
+        .as_array()
         .into_iter()
+        .flatten()
+        .filter_map(decode)
         .filter(|chord| !is_region_cycle(chord, platform))
         .collect()
 }

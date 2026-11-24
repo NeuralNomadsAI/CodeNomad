@@ -228,7 +228,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if generation > 0 && generation % 2 == 0 {
                 relayed |= crate::workspace::set_detached_online(s, false);
             } else if generation % 2 == 1 {
-                if (previous > 0 && previous % 2 == 1) || overflow {
+                if generation > 1 || overflow {
                     relayed |= crate::workspace::set_detached_online(s, false);
                 }
                 relayed |= crate::workspace::set_detached_online(s, true);
@@ -327,7 +327,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 if l.next.is_none() {
                     l.check_omitted_visits();
                 }
-            } else if cfg!(target_os = "windows") {
+            } else if cfg!(not(target_arch = "wasm32")) {
                 l.apply_directory_refresh(rows, selected.as_deref());
                 crate::workspace::schedule_catalogue(s);
             } else {
