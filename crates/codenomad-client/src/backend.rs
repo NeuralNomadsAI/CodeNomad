@@ -31,19 +31,12 @@ pub(crate) fn send_transport_error(error: &reqwest::Error) -> crate::prompt::Pro
 }
 
 pub(crate) async fn classify_http_error(
-    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))] backend: &Backend,
+    _backend: &Backend,
     response: reqwest::Response,
 ) -> crate::prompt::PromptError {
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
-        #[cfg(not(target_arch = "wasm32"))]
         return crate::prompt::PromptError::AuthenticationRequired;
-        #[cfg(target_arch = "wasm32")]
-        return match backend.authentication_status().await {
-            // Valid browser pairing means upstream rejected synchronously; revoked/uncertain pairing may have detached.
-            Ok(true) => crate::prompt::PromptError::Rejected,
-            _ => crate::prompt::PromptError::Unconfirmed,
-        };
     }
     if status.is_client_error() {
         return crate::prompt::PromptError::Rejected;
@@ -58,7 +51,10 @@ pub(crate) async fn classify_http_error(
         }
         reqwest::StatusCode::BAD_GATEWAY => {
             if let Ok(body) = crate::prompt_receipt::read(response).await
-                && body["error"].as_str() == Some("session_environment_failed")
+                && matches!(
+                    body["error"].as_str(),
+                    Some("session_environment_failed" | "opencode_unavailable_before_send")
+                )
             {
                 return crate::prompt::PromptError::Rejected;
             }
@@ -167,14 +163,25 @@ impl Backend {
         input: &crate::prompt::Prompt,
     ) -> Result<crate::prompt::Acknowledgement> {
         let body = crate::prompt::encode(input)?;
-        let response = self
+        self.send_encoded_prompt(input.id.as_deref(), body).await
+    }
+    pub(crate) async fn send_encoded_prompt(
+        &self,
+        attempted_id: Option<&str>,
+        body: Vec<u8>,
+    ) -> Result<crate::prompt::Acknowledgement> {
+        let mut request = self
             .client
             .post(format!(
                 "{}workspaces/{}/instance/api/session/{}/prompt",
                 self.base, self.workspace, self.session
             ))
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(body)
+            .body(body);
+        if let Some(directory) = &self.session_directory {
+            request = request.query(&[("directory", directory.as_str())]);
+        }
+        let response = request
             .send()
             .await
             .map_err(|error| send_transport_error(&error))?;
@@ -195,8 +202,8 @@ impl Backend {
             return Err("prompt acknowledgement belongs to another session".into());
         }
         let id = match native.get("id") {
-            None | Some(Value::Null) => input.id.as_deref(),
-            Some(Value::String(id)) if id.is_empty() => input.id.as_deref(),
+            None | Some(Value::Null) => attempted_id,
+            Some(Value::String(id)) if id.is_empty() => attempted_id,
             Some(id) => id.as_str(),
         }
         .filter(|id| history::valid_id(id))

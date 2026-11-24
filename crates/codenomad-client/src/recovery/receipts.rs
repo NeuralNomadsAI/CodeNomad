@@ -13,7 +13,7 @@ pub(super) enum SlashReceipt {
     AuthenticationRequired { confirmed: bool },
 }
 
-pub(super) enum PromptReceipt {
+pub(crate) enum PromptReceipt {
     Outcome(PromptOutcome),
     AuthenticationRequired { confirmed: bool },
 }
@@ -40,8 +40,8 @@ pub(super) async fn slash(
                 {
                     return SlashReceipt::AuthenticationRequired { confirmed };
                 }
-                // Live CodeNomad session: the proxy did not detach on principal revocation, so upstream rejected synchronously.
-                PromptOutcome::Rejected
+                // Even if another tab re-paired, a 401 on an already-dispatched mutation cannot prove non-delivery.
+                PromptOutcome::Unconfirmed
             }
         }
     } else {
@@ -59,7 +59,7 @@ pub(super) async fn slash(
     SlashReceipt::Settled
 }
 
-pub(super) async fn prompt(
+pub(crate) async fn prompt(
     backend: &Backend,
     out: &Sender<Event>,
     wake: &Wake,
@@ -68,31 +68,43 @@ pub(super) async fn prompt(
     id: &str,
     prompt: &Prompt,
 ) -> PromptReceipt {
-    let outcome = if admitted {
-        match backend.prompt(prompt).await {
-            Ok(ack) => PromptOutcome::Confirmed(ack.id),
-            Err(error)
-                if error.downcast_ref()
-                    == Some(&crate::prompt::PromptError::AuthenticationRequired) =>
+    if !admitted {
+        return PromptReceipt::Outcome(PromptOutcome::Rejected);
+    }
+    let Ok(body) = crate::prompt::encode(prompt) else {
+        return PromptReceipt::Outcome(PromptOutcome::Rejected);
+    };
+    prompt_encoded(backend, out, wake, wire, id, body).await
+}
+
+pub(super) async fn prompt_encoded(
+    backend: &Backend,
+    out: &Sender<Event>,
+    wake: &Wake,
+    wire: &stream::State,
+    id: &str,
+    body: Vec<u8>,
+) -> PromptReceipt {
+    let outcome = match backend.send_encoded_prompt(Some(id), body).await {
+        Ok(ack) => PromptOutcome::Confirmed(ack.id),
+        Err(error)
+            if error.downcast_ref()
+                == Some(&crate::prompt::PromptError::AuthenticationRequired) =>
+        {
+            if let Some(confirmed) = rejected_by_authentication(backend, id, out, wake, wire).await
             {
-                if let Some(confirmed) =
-                    rejected_by_authentication(backend, id, out, wake, wire).await
-                {
-                    return PromptReceipt::AuthenticationRequired { confirmed };
-                }
-                // Live CodeNomad session: the proxy did not detach on principal revocation, so upstream rejected synchronously.
-                PromptOutcome::Rejected
+                return PromptReceipt::AuthenticationRequired { confirmed };
             }
-            Err(error)
-                if error.downcast_ref() == Some(&crate::prompt::PromptError::Rejected)
-                    || error.is::<crate::prompt::EncodeError>() =>
-            {
-                PromptOutcome::Rejected
-            }
-            Err(_) => PromptOutcome::Unconfirmed,
+            // Even if another tab re-paired, a 401 on an already-dispatched prompt cannot prove non-delivery.
+            PromptOutcome::Unconfirmed
         }
-    } else {
-        PromptOutcome::Rejected
+        Err(error)
+            if error.downcast_ref() == Some(&crate::prompt::PromptError::Rejected)
+                || error.is::<crate::prompt::EncodeError>() =>
+        {
+            PromptOutcome::Rejected
+        }
+        Err(_) => PromptOutcome::Unconfirmed,
     };
     PromptReceipt::Outcome(outcome)
 }

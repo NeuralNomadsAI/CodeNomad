@@ -216,6 +216,10 @@ pub fn upstream_error() -> Error {
     error(Status::BAD_GATEWAY, "Workspace instance proxy failed")
 }
 
+pub fn pre_dispatch_unavailable() -> Error {
+    error(Status::BAD_GATEWAY, "opencode_unavailable_before_send")
+}
+
 pub(crate) async fn read_bytes(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>, ()> {
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| ())? {

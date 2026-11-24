@@ -8,7 +8,7 @@ use wasm_bindgen::{JsCast, closure::Closure};
 #[derive(Default)]
 pub struct Recovery {
     required: bool,
-    retry_pending: bool,
+    retry_pending: Option<Option<String>>,
     result: Option<Receiver<Option<bool>>>,
     focus: Option<FocusCheck>,
 }
@@ -70,10 +70,19 @@ pub fn observe(s: &mut State) {
 }
 
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
-    if s.pairing.retry_pending && !s.pairing.required && !s.composer.pending() {
-        s.pairing.retry_pending = false;
-        crate::retry_connection(s, tx);
-        return true;
+    if let Some(target) = &s.pairing.retry_pending {
+        if let Some(key) = target.as_deref()
+            && !s.workspace.as_ref().is_some_and(|ui| ui.has_tab_key(key))
+        {
+            s.pairing.retry_pending = None;
+        } else if !s.pairing.required
+            && !s.composer.pending()
+            && s.workspace.as_ref().map(|ui| ui.active_key()) == target.as_deref()
+        {
+            s.pairing.retry_pending = None;
+            crate::retry_connection(s, tx);
+            return true;
+        }
     }
     if s.pairing.result.is_none()
         && s.pairing
@@ -94,7 +103,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     s.pairing.required = required;
     if required {
-        s.pairing.retry_pending = false;
+        s.pairing.retry_pending = None;
         if let Some(l) = s.screen.launcher_mut() {
             l.password = rune::edit::TextEdit::new("");
         }
@@ -115,11 +124,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     } else {
         s.pairing.focus = None;
         s.history_error = false;
-        s.pairing.retry_pending = true;
+        let active_tab = s.workspace.as_ref().map(|ui| ui.active_key().to_owned());
         crate::retry_connection(s, tx);
-        if !s.composer.pending() {
-            s.pairing.retry_pending = false;
-        }
+        s.pairing.retry_pending = s.composer.pending().then_some(active_tab);
     }
     true
 }

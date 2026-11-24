@@ -45,13 +45,21 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
     };
     let (current_files, current_bytes) = {
         let (draft_files, draft_bytes) = s.composer.draft.inline_usage();
+        let (sending_files, sending_bytes) = s
+            .composer
+            .sending_state()
+            .map_or((0, 0), |send| send.inline_usage());
         let (held_files, held_bytes) = s
             .composer
             .unconfirmed_state()
             .map_or((0, 0), |send| send.inline_usage());
         (
-            draft_files.saturating_add(held_files),
-            draft_bytes.saturating_add(held_bytes),
+            draft_files
+                .saturating_add(sending_files)
+                .saturating_add(held_files),
+            draft_bytes
+                .saturating_add(sending_bytes)
+                .saturating_add(held_bytes),
         )
     };
     let (files, bytes) = ui
@@ -118,21 +126,31 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
     super::super::encode(&snapshot).is_ok()
 }
 
+pub fn confirm_unconfirmed(s: &mut State, attempt_id: &str) {
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    let Some(item) = ui.entries.get(ui.active) else {
+        return;
+    };
+    let Tab::Workspace(saved) = &item.saved else {
+        return;
+    };
+    let Some(key) = saved.active_session_id.as_deref() else {
+        return;
+    };
+    let owns = item.binding.as_ref().is_some_and(|b| b.session == key);
+    if owns {
+        let saved = saved.clone();
+        let key = key.to_owned();
+        ui.forget_closed_unconfirmed(&saved, &key, attempt_id);
+    }
+}
+
 pub fn capture(s: &mut State) {
     let Some(mut ui) = s.workspace.take() else {
         return;
     };
-    let clear_closed = ui.entries.get(ui.active).and_then(|item| {
-        let Tab::Workspace(saved) = &item.saved else {
-            return None;
-        };
-        let key = saved.active_session_id.as_deref()?;
-        let owns = item.binding.as_ref().is_some_and(|b| b.session == key);
-        (owns && s.composer.unconfirmed_state().is_none()).then(|| (saved.clone(), key.to_owned()))
-    });
-    if let Some((saved, key)) = clear_closed {
-        ui.forget_closed_unconfirmed(&saved, &key);
-    }
     if ui
         .entries
         .get_mut(ui.active)

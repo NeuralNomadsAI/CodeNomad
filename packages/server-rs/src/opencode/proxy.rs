@@ -203,7 +203,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         None
     };
     let opened = workspace.location["directory"].as_str().ok_or_else(upstream_error)?;
-    let endpoint = app.native.endpoint().ok_or_else(upstream_error)?;
+    let endpoint = app
+        .native
+        .endpoint()
+        .ok_or_else(|| if send_input { super::pre_dispatch_unavailable() } else { upstream_error() })?;
     if dunce::canonicalize(opened).ok().as_ref() != Some(&workspace.path) {
         return Err(foreign());
     }
@@ -671,7 +674,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         return Err(not_found());
     }
     if !app.native.current(&endpoint) {
-        return Err(upstream_error());
+        return Err(if send_input { super::pre_dispatch_unavailable() } else { upstream_error() });
     }
     let permission_snapshot = if let Some(control) = control {
         control.pending(&app, &endpoint, session.ok_or_else(upstream_error)?).await?

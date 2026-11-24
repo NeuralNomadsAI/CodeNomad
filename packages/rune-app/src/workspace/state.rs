@@ -9,7 +9,7 @@ mod panel_state;
 mod polling;
 mod strip;
 
-pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
+pub use drafts::{attachment_draft_admissible, bound, capture, confirm_unconfirmed, draft_changed};
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
     observes_notification, open_notification, owns_notification, workspace_notification,
@@ -156,12 +156,24 @@ impl Ui {
             .find(|item| item.matches(workspace, session_id))
             .map(|item| item.attempt_id.as_str())
     }
-    pub(super) fn forget_closed_unconfirmed(&mut self, workspace: &Workspace, session_id: &str) {
+    pub(super) fn forget_closed_unconfirmed(
+        &mut self,
+        workspace: &Workspace,
+        session_id: &str,
+        attempt_id: &str,
+    ) {
         self.closed_unconfirmed
-            .retain(|item| !item.matches(workspace, session_id));
+            .retain(|item| !(item.matches(workspace, session_id) && item.attempt_id == attempt_id));
     }
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key
+    }
+    pub(crate) fn has_tab_key(&self, key: &str) -> bool {
+        self.entries.iter().any(|entry| entry.key == key)
+    }
+    #[cfg(test)]
+    pub(crate) fn set_ready_for_test(&mut self) {
+        self.ready = true;
     }
     pub fn new() -> Self {
         Self {

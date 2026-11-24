@@ -526,7 +526,9 @@ fn prompt_connection_refused_and_oversized_body_are_rejected_not_unconfirmed() {
         .await;
         assert!(matches!(
             outcome,
-            Some(crate::transport::PromptOutcome::Rejected)
+            crate::recovery::receipts::PromptReceipt::Outcome(
+                crate::transport::PromptOutcome::Rejected
+            )
         ));
     });
 }
@@ -786,11 +788,11 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
                 )
                 .await
                 .unwrap();
-            // Wait until the transport fills out with Opened's AgentHint(true) and parks on permission.updated.
+            // Wait deterministically until Opened's AgentHint(true) is consumed and permission.updated fills out.
+            assert!(matches!(events.recv().await.unwrap(), Event::AgentHint(true)));
             while events.is_empty() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
+                tokio::task::yield_now().await;
             }
-            tokio::time::sleep(Duration::from_millis(25)).await;
             let id = "msg_00000000000000000000000000000007";
             commands
                 .send(Command::Prompt(crate::prompt::Prompt {
@@ -970,10 +972,10 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
                 )
                 .await
                 .unwrap();
+            assert!(matches!(events.recv().await.unwrap(), Event::AgentHint(true)));
             while events.is_empty() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
+                tokio::task::yield_now().await;
             }
-            tokio::time::sleep(Duration::from_millis(25)).await;
             let id = "msg_00000000000000000000000000000009";
             commands
                 .send(Command::Prompt(crate::prompt::Prompt {
@@ -1102,17 +1104,18 @@ fn prompt_501_prototype_is_rejected_and_native_401_is_unconfirmed() {
                 },
             )
             .await;
-            assert!(settled.is_none());
+            assert!(matches!(
+                settled,
+                crate::recovery::receipts::PromptReceipt::AuthenticationRequired {
+                    confirmed: true
+                }
+            ));
             assert!(matches!(
                 events.recv().await.unwrap(),
                 Event::PromptAcknowledged {
                     attempted,
                     outcome: PromptOutcome::Unconfirmed,
                 } if attempted == id
-            ));
-            assert!(matches!(
-                events.recv().await.unwrap(),
-                Event::AuthenticationRequired(_)
             ));
             server.await.unwrap();
         })

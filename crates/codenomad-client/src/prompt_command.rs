@@ -12,13 +12,17 @@ impl Backend {
         {
             return Err(PromptError::Rejected);
         }
-        let response = self
+        let mut request = self
             .client
             .post(format!(
                 "{}workspaces/{}/instance/api/session/{}/command",
                 self.base, self.workspace, self.session
             ))
-            .json(&json!({"name":name,"text":text,"delivery":"steer"}))
+            .json(&json!({"name":name,"text":text,"delivery":"steer"}));
+        if let Some(directory) = &self.session_directory {
+            request = request.query(&[("directory", directory.as_str())]);
+        }
+        let response = request
             .send()
             .await
             .map_err(|error| crate::backend::send_transport_error(&error))?;

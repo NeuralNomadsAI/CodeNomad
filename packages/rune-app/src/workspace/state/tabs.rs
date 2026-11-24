@@ -188,7 +188,20 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         return;
     };
     let removed = ui.entries.remove(index);
+    let next_active = if index < ui.active {
+        ui.active - 1
+    } else {
+        ui.active.min(ui.entries.len().saturating_sub(1))
+    };
     s.notifications.forget_tab(id);
+    let mut propagate_to_active: Option<String> = None;
+    let active_matches = |ui: &Ui, saved: &Workspace, session_id: &str| {
+        !active
+            && ui.entries.get(next_active).is_some_and(|entry| {
+                matches!(&entry.saved, Tab::Workspace(current) if same_project(current, saved)
+                    && current.active_session_id.as_deref() == Some(session_id))
+            })
+    };
     if let Tab::Workspace(mut saved) = removed.saved {
         // Preserve unconfirmed attempt locks across tab closure without retaining inline attachment bytes.
         for (session_id, live) in &removed.live_drafts {
@@ -196,6 +209,9 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
                 && let Some(attempt_id) = live.unconfirmed_id()
             {
                 ui.remember_closed_unconfirmed(&saved, session_id.clone(), attempt_id.to_owned());
+                if active_matches(ui, &saved, session_id) {
+                    propagate_to_active = Some(attempt_id.to_owned());
+                }
             }
         }
         if let Some(session_id) = &saved.active_session_id
@@ -203,6 +219,9 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
             && let Some(attempt_id) = removed.cache.as_ref().and_then(Cache::unconfirmed_id)
         {
             ui.remember_closed_unconfirmed(&saved, session_id.clone(), attempt_id.to_owned());
+            if active_matches(ui, &saved, session_id) {
+                propagate_to_active = Some(attempt_id.to_owned());
+            }
         }
         // Undelivered copies still belong to their closed source.
         saved
@@ -243,6 +262,12 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         ui.active.min(ui.entries.len() - 1)
     };
     ui.changed();
+    if let Some(attempt_id) = propagate_to_active
+        && s.composer.unconfirmed_state().is_none()
+    {
+        s.composer
+            .restore_unconfirmed(crate::composer::PendingSend::locked(attempt_id));
+    }
     if active {
         activate(s, tx);
     } else {

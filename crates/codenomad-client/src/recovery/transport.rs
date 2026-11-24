@@ -96,15 +96,14 @@ fn can_admit_send(
     wire: &stream::State,
     reading: Option<&ReadingLane>,
     reader: &Reader,
-    opened: bool,
-    stream_gap: bool,
+    ever_opened: bool,
     out: &Sender<Event>,
 ) -> bool {
     !out.is_closed()
         && !wire.placement_closed()
         && !wire.auth_expired.load(SeqCst)
         && !reading.is_some_and(|lane| lane.revoked.load(SeqCst))
-        && (reading.is_some() || !reader.parked && !reader.historical && (opened || stream_gap))
+        && (reading.is_some() || !reader.parked && !reader.historical && ever_opened)
 }
 
 pub(crate) async fn run_with_reading(
@@ -147,6 +146,7 @@ pub(crate) async fn run_with_reading(
     let mut wire = make_wire();
     stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
     let mut opened = false;
+    let mut ever_opened = false;
     let mut stream_gap = false;
     let mut connection_lost = false;
     let mut connection_closed = false;
@@ -179,6 +179,7 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Opened(e)) if e == epoch => {
                 opened = true;
+                ever_opened = true;
                 publish(&out, &wake, Event::AgentHint(true)).await;
                 reader.dirty = true;
                 reader.parked = false;
@@ -218,22 +219,22 @@ pub(crate) async fn run_with_reading(
                 return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
-                // Upstream SSE unavailability is a stream gap, never a revocation of HTTP send authority.
-                stream_gap = opened && attempts == 0;
+                // Upstream SSE unavailability over an open backend SSE stream is always a stream gap,
+                // never a revocation of HTTP send authority. Always publish ConnectionLost so detached
+                // history also reflects stream_offline for pagination buttons.
+                stream_gap = opened;
                 ReadingLane::invalidate_connection(reading);
                 reader.dirty = true;
-                if reading.is_some() || !reader.historical {
-                    publish(
-                        &out,
-                        &wake,
-                        if stream_gap || reading.is_some() {
-                            Event::ConnectionLost
-                        } else {
-                            Event::Reconnecting
-                        },
-                    )
-                    .await;
-                }
+                publish(
+                    &out,
+                    &wake,
+                    if stream_gap || reading.is_some() || reader.historical {
+                        Event::ConnectionLost
+                    } else {
+                        Event::Reconnecting
+                    },
+                )
+                .await;
             }
             Some(Input::Available(e, v)) if e == epoch => {
                 if reading.is_some() {
@@ -321,7 +322,7 @@ pub(crate) async fn run_with_reading(
                 name,
                 text,
             })) => {
-                let admitted = can_admit_send(&wire, reading, &reader, opened, stream_gap, &out);
+                let admitted = can_admit_send(&wire, reading, &reader, ever_opened, &out);
                 if let receipts::SlashReceipt::AuthenticationRequired { confirmed } =
                     receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
                         .await
@@ -342,26 +343,34 @@ pub(crate) async fn run_with_reading(
             Some(Input::Command(Command::Prompt(prompt))) => {
                 let Some(id) = &prompt.id else { continue };
                 // The compose gesture owns one attempt even if its tab suspends before dispatch.
-                let admitted = can_admit_send(&wire, reading, &reader, opened, stream_gap, &out);
-                let outcome =
-                    match receipts::prompt(&backend, &out, &wake, &wire, admitted, id, &prompt)
-                        .await
-                    {
-                        receipts::PromptReceipt::Outcome(outcome) => outcome,
-                        receipts::PromptReceipt::AuthenticationRequired { confirmed } => {
-                            finish_authentication_required(
-                                &pending_commands,
-                                &rx,
-                                &forward_done,
-                                &out,
-                                &wake,
-                                &backend,
-                                confirmed,
-                            )
-                            .await;
-                            return Ok(());
+                let encoded = if can_admit_send(&wire, reading, &reader, ever_opened, &out) {
+                    crate::prompt::encode(&prompt).ok()
+                } else {
+                    None
+                };
+                // Re-check placement and revocation right after encoding, before dispatching the POST.
+                let outcome = match encoded {
+                    Some(body) if can_admit_send(&wire, reading, &reader, ever_opened, &out) => {
+                        match receipts::prompt_encoded(&backend, &out, &wake, &wire, id, body).await
+                        {
+                            receipts::PromptReceipt::Outcome(outcome) => outcome,
+                            receipts::PromptReceipt::AuthenticationRequired { confirmed } => {
+                                finish_authentication_required(
+                                    &pending_commands,
+                                    &rx,
+                                    &forward_done,
+                                    &out,
+                                    &wake,
+                                    &backend,
+                                    confirmed,
+                                )
+                                .await;
+                                return Ok(());
+                            }
                         }
-                    };
+                    }
+                    _ => PromptOutcome::Rejected,
+                };
                 if !matches!(outcome, PromptOutcome::Rejected)
                     && !reader.busy
                     && prompt.delivery != Some(crate::prompt::Delivery::Queue)

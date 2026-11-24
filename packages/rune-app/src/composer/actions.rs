@@ -35,17 +35,18 @@ impl Owner {
     pub(crate) fn unconfirmed_state(&self) -> Option<&PendingSend> {
         self.unconfirmed.as_ref()
     }
+    pub(crate) fn sending_state(&self) -> Option<&PendingSend> {
+        self.sending.as_ref()
+    }
     pub(crate) fn restore_unconfirmed(&mut self, pending: PendingSend) {
         self.unconfirmed = Some(pending);
     }
     pub(crate) fn mark_edited(&mut self) {
         if let Some(send) = &mut self.sending {
-            send.edited = true;
+            send.clear_retained();
         }
         if let Some(send) = &mut self.unconfirmed {
-            send.edited = true;
-            send.edit = TextEdit::default();
-            send.draft = Draft::default();
+            send.clear_retained();
         }
     }
     #[cfg(test)]
@@ -80,6 +81,11 @@ impl PendingSend {
     }
     pub(crate) fn inline_usage(&self) -> (usize, usize) {
         self.draft.inline_usage()
+    }
+    pub(crate) fn clear_retained(&mut self) {
+        self.edited = true;
+        self.edit = TextEdit::default();
+        self.draft = Draft::default();
     }
 }
 
@@ -334,7 +340,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
             super::recall::replace_edit(s, send.edit.clone());
             s.composer.draft = send.draft.clone();
         } else {
-            send.edited = true;
+            send.clear_retained();
         }
         s.composer.unconfirmed = Some(send);
         s.composer.restored = true;
@@ -412,6 +418,7 @@ pub fn reconcile(s: &mut State) {
         s.composer.draft = Draft::default();
     }
     if s.workspace.is_some() {
+        workspace::confirm_unconfirmed(s, &send.id);
         workspace::capture(s);
     }
 }
@@ -540,7 +547,10 @@ mod tests {
     fn unconfirmed_lock_persists_across_session_reopen_and_announces_uncertainty() {
         let (sender, receiver) = codenomad_client::bounded(2);
         let mut s = crate::init();
-        s.workspace = Some(workspace::Ui::new());
+        crate::gallery::shell::fixture(&mut s);
+        let mut ui = workspace::Ui::new();
+        ui.set_ready_for_test();
+        s.workspace = Some(ui);
         let mut first = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
         first.workspace = "ws".into();
         first.session = "ses-1".into();
@@ -550,6 +560,7 @@ mod tests {
             id: "ws".into(),
             path: "/tmp/ws".into(),
         };
+        s.screen.launcher_mut().unwrap().project = Some(project.clone());
         workspace::opened(&mut s, &project);
         workspace::bound(&mut s, &first);
         s.phase = Phase::Ready;
@@ -575,6 +586,11 @@ mod tests {
         // Closing the tab and reopening the project preserves the unconfirmed lock without retaining bytes.
         let tab_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
         rt.update(|s, tx| workspace::close(s, &tab_key, tx));
+        assert_ne!(
+            rt.state.workspace.as_ref().unwrap().active_key(),
+            tab_key.as_str(),
+            "closing the active tab must replace it with a fresh tab"
+        );
         workspace::opened(&mut rt.state, &project);
         let reopened_draft = workspace::bound(&mut rt.state, &first);
         rt.state.draft = TextEdit::new(reopened_draft);
