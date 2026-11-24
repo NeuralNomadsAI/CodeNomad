@@ -33,6 +33,7 @@ pub(super) struct Reader {
     pub(super) known: HashSet<String>,
     pub(super) owed: HashSet<(String, usize)>,
     pub(super) owed_tools: HashMap<(String, String), u8>,
+    pub(super) owed_synthetics: HashMap<String, u8>,
     pub(super) frozen_tools: HashMap<(String, String), u64>,
     pub(super) execution_settlement: u8,
     pub(super) execution_ended_at: Option<u64>,
@@ -62,6 +63,7 @@ impl Reader {
             known: HashSet::new(),
             owed: HashSet::new(),
             owed_tools: HashMap::new(),
+            owed_synthetics: HashMap::new(),
             frozen_tools: HashMap::new(),
             execution_settlement: 0,
             execution_ended_at: None,
@@ -97,6 +99,7 @@ impl Reader {
                 self.known = HashSet::new();
                 self.owed = HashSet::new();
                 self.owed_tools = HashMap::new();
+                self.owed_synthetics = HashMap::new();
                 self.frozen_tools = HashMap::new();
                 self.execution_settlement = 0;
                 self.execution_ended_at = None;
@@ -230,6 +233,29 @@ impl Reader {
                     if content::merge_page(&self.resident, &mut merged).is_ok() {
                         page.rows = merged;
                     }
+                    if !self.owed_synthetics.is_empty() && page.newer.is_none() {
+                        self.owed_synthetics
+                            .retain(|id, _| !page.rows.iter().any(|r| &r.id == id));
+                        let pending_rows: Vec<_> = self
+                            .resident
+                            .iter()
+                            .filter(|r| {
+                                r.role == "synthetic"
+                                    && self.owed_synthetics.contains_key(&r.id)
+                                    && !page.rows.iter().any(|p| p.id == r.id)
+                            })
+                            .cloned()
+                            .collect();
+                        for row in pending_rows {
+                            if page.rows.len() < history::MAX_ROWS {
+                                page.rows.push(row);
+                                if history::check(&page.rows).is_err() {
+                                    page.rows.pop();
+                                    break;
+                                }
+                            }
+                        }
+                    }
                     if !self.frozen_tools.is_empty() {
                         for row in &mut page.rows {
                             if !row.parts.iter().any(|p| {
@@ -284,6 +310,7 @@ impl Reader {
                     if self.historical {
                         self.execution_settlement = 0;
                         self.owed_tools.retain(|(id, _), _| self.known.contains(id));
+                        self.owed_synthetics.clear();
                     } else {
                         if self.execution_settlement > 0 && page.running {
                             self.execution_settlement -= 1;
@@ -305,6 +332,23 @@ impl Reader {
                                 }
                             });
                             if !self.owed_tools.is_empty() {
+                                self.dirty = true;
+                                self.quiet = Instant::now()
+                                    + Duration::from_millis(100 * u64::from(max_attempt));
+                            }
+                        }
+                        if !self.owed_synthetics.is_empty() {
+                            let mut max_attempt = 0u8;
+                            self.owed_synthetics.retain(|_, attempts| {
+                                *attempts = attempts.saturating_add(1);
+                                if *attempts <= 3 {
+                                    max_attempt = max_attempt.max(*attempts);
+                                    true
+                                } else {
+                                    false
+                                }
+                            });
+                            if !self.owed_synthetics.is_empty() {
                                 self.dirty = true;
                                 self.quiet = Instant::now()
                                     + Duration::from_millis(100 * u64::from(max_attempt));

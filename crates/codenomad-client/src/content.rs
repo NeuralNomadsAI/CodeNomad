@@ -12,8 +12,8 @@ mod user;
 pub use reasoning::{Reasoning, ReasoningEvent, apply_window as apply_reasoning};
 pub use subagent::SubagentReport;
 pub(crate) use subagent::decode as decode_subagent_report;
+pub(crate) use tool_live::Fit as ToolFit;
 pub use tool_live::install as install_tool;
-pub(crate) use tool_live::{Fit as ToolFit, apply_at as apply_tool};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolEventOutcome {
@@ -23,7 +23,7 @@ pub enum ToolEventOutcome {
 }
 
 pub fn apply_tool_event(
-    rows: &mut [crate::history::Row],
+    rows: &mut Vec<crate::history::Row>,
     message_id: Option<&str>,
     kind: &str,
     data: &Value,
@@ -42,8 +42,24 @@ pub fn apply_tool_event(
     } else {
         None
     };
-    let Some(idx) = idx else {
-        return ToolEventOutcome::Pending;
+    let idx = match idx {
+        Some(idx) => idx,
+        None if kind == "session.tool.input.started"
+            && rows.len() < crate::history::MAX_ROWS
+            && message_id.is_some_and(crate::history::valid_id) =>
+        {
+            let msg = message_id.unwrap_or_default();
+            rows.push(Arc::new(crate::Message {
+                id: msg.into(),
+                role: "assistant".into(),
+                completed: false,
+                body: String::new(),
+                usage: None,
+                parts: vec![],
+            }));
+            rows.len() - 1
+        }
+        None => return ToolEventOutcome::Pending,
     };
     let row = Arc::make_mut(&mut rows[idx]);
     match tool_live::apply_at(row, kind, data, at) {
@@ -51,6 +67,38 @@ pub fn apply_tool_event(
         ToolFit::Drop => ToolEventOutcome::Drop,
         ToolFit::Repair => ToolEventOutcome::Pending,
     }
+}
+
+pub(crate) fn apply_tool_checked(
+    resident: &mut [crate::history::Row],
+    row_idx: usize,
+    kind: &str,
+    data: &Value,
+    at: Option<u64>,
+) -> (ToolFit, bool) {
+    let call_id = data["id"].as_str().unwrap_or_default();
+    let prev_len = resident[row_idx].parts.len();
+    let prev_tool = resident[row_idx]
+        .parts
+        .iter()
+        .enumerate()
+        .find_map(|(j, part)| match part {
+            Part::Tool(tool) if tool.id == call_id => Some((j, tool.clone())),
+            _ => None,
+        });
+    let fit = tool_live::apply_at(Arc::make_mut(&mut resident[row_idx]), kind, data, at);
+    if matches!(fit, ToolFit::Applied(_) | ToolFit::Settled(_))
+        && crate::history::check(resident).is_err()
+    {
+        let row = Arc::make_mut(&mut resident[row_idx]);
+        if let Some((j, tool)) = prev_tool {
+            row.parts[j] = Part::Tool(tool);
+        } else {
+            row.parts.truncate(prev_len);
+        }
+        return (fit, false);
+    }
+    (fit, true)
 }
 pub use usage::{FAMILY_LIMIT, Family, FamilyChange, FamilyMember, FamilySnapshot, Usage};
 pub(crate) use user::digest as attachment_digest;

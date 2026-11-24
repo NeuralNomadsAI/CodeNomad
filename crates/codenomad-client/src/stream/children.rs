@@ -406,9 +406,13 @@ pub(super) fn observe(b: &Backend, event: &Value) {
                     Some("session.moved" | "session.deleted" | "session.revert.committed") => {
                         ChildSignal::Revoked
                     }
-                    Some(k @ ("session.tool.called" | "session.tool.progress")) => {
-                        tool_event(k).map_or(ChildSignal::Dirty, ChildSignal::ToolEvent)
-                    }
+                    Some(
+                        k @ ("session.tool.input.started"
+                        | "session.tool.input.delta"
+                        | "session.tool.input.ended"
+                        | "session.tool.called"
+                        | "session.tool.progress"),
+                    ) => tool_event(k).map_or(ChildSignal::Dirty, ChildSignal::ToolEvent),
                     Some(k @ ("session.tool.success" | "session.tool.failed")) => {
                         let end = event["data"]["id"]
                             .as_str()

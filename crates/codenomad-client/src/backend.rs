@@ -109,7 +109,7 @@ impl Backend {
         &self,
         target: Value,
     ) -> Result<(Vec<(String, Vec<Value>)>, Option<Value>)> {
-        let v = read_json_limited(
+        let mut v = read_json_limited(
             self.client
                 .post(format!(
                     "{}api/workspaces/{}/session-history/window",
@@ -129,27 +129,42 @@ impl Backend {
         if v["status"] != "window" {
             return Err("history unavailable or anchor changed".into());
         }
-        let newer = history::cursor(&v["cursors"]["newer"], "newer")?;
+        let newer = history::cursor(&v["newer"], "after")?;
+        if v["latest"].as_bool() != Some(newer.is_none()) {
+            return Err("inconsistent latest marker".into());
+        }
         let rows = v["messages"]
-            .as_array()
+            .as_array_mut()
             .filter(|rows| rows.len() <= 200)
             .ok_or("invalid history window")?;
         let mut out = Vec::new();
-        for row in rows {
+        for row in rows.iter_mut() {
             let row_id = row["id"]
                 .as_str()
                 .filter(|id| history::valid_id(id))
-                .ok_or("invalid history row id")?;
-            let Some(parts) = row["content"].as_array() else {
+                .ok_or("invalid history row id")?
+                .to_owned();
+            let Some(parts) = row["content"].as_array_mut() else {
                 continue;
             };
-            let tools: Vec<Value> = parts
-                .iter()
-                .filter(|part| part["type"] == "tool")
-                .cloned()
-                .collect();
+            let mut tools = Vec::new();
+            for part in parts.iter_mut() {
+                if part["type"] == "tool" {
+                    let mut raw = std::mem::take(part);
+                    if let Some(items) = raw["state"]["content"].as_array_mut() {
+                        for item in items.iter_mut() {
+                            if item["type"] == "image"
+                                && let Some(obj) = item.as_object_mut()
+                            {
+                                obj.remove("data");
+                            }
+                        }
+                    }
+                    tools.push(raw);
+                }
+            }
             if !tools.is_empty() {
-                out.push((row_id.to_owned(), tools));
+                out.push((row_id, tools));
             }
         }
         Ok((out, newer))

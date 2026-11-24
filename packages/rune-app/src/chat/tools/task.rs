@@ -408,6 +408,11 @@ pub(super) fn body(
                 .as_ref()
                 .and_then(|k| s.transcript_display.children.loaded_report(k));
             let shown_value = expanded_full.unwrap_or(value);
+            let pane_limit = if expanded_full.is_some() {
+                shown_value.encode_utf16().count().max(PANE_LIMIT)
+            } else {
+                PANE_LIMIT
+            };
             result = result.child(text(t(label)).text_role(TextRole::Label));
             if !shown_value.trim().is_empty() {
                 result = result.child(markdown::tool_pane(
@@ -418,7 +423,7 @@ pub(super) fn body(
                         format!("{key}-task-{section}"),
                         shown_value,
                         tool.status == "running" && section == "output",
-                        PANE_LIMIT,
+                        pane_limit,
                         section_query,
                     ),
                     true,
@@ -736,7 +741,9 @@ pub(super) fn body(
             .set_step_row_rects(&step_key, row_rects);
         let legacy_truncated = child_steps.is_empty() && legacy.len() > STEP_LIMIT;
         if step_count > STEP_LIMIT || live_truncated || budget_truncated {
-            let notice = if child_steps.is_empty() && live_truncated {
+            let notice = if (child_steps.is_empty() && live_truncated)
+                || (budget_truncated && rendered_steps == 0)
+            {
                 text(t("toolCall.output.tooLarge")).role("status")
             } else {
                 let shown_limit = if budget_truncated {

@@ -30,10 +30,9 @@ use sessions::attach;
 #[cfg(feature = "test-support")]
 pub use sessions::back;
 use sessions::{bind, dismiss_origin_panel, retire_session};
-pub(crate) use sessions::{bind_search, choose_destination};
+pub(crate) use sessions::{bind_search, choose_child_ticket, choose_destination};
 pub use sessions::{
-    can_change_session, can_open_child_session, can_visit, choose, choose_child, create, list,
-    visit,
+    can_change_session, can_open_child_session, can_visit, choose, create, list, visit,
 };
 use std::{collections::HashSet, future::Future};
 pub(crate) use visits::Visits;

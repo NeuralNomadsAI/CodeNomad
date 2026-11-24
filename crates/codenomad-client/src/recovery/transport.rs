@@ -335,6 +335,9 @@ pub(crate) async fn run_with_reading(
                             reader.resident.pop();
                             reader.known.remove(&row.id);
                         } else {
+                            if reader.owed_synthetics.len() < 16 {
+                                reader.owed_synthetics.entry(row.id.clone()).or_insert(0);
+                            }
                             reader_event(
                                 reading,
                                 reader.generation,
@@ -527,10 +530,10 @@ pub(crate) async fn run_with_reading(
                     }
                     kind if kind.starts_with("session.tool.") => {
                         let row_idx = reader.resident.iter().position(|row| row.id == id);
-                        let prior_row = row_idx.map(|i| reader.resident[i].clone());
-                        let fit = row_idx.map_or(content::ToolFit::Repair, |i| {
-                            content::apply_tool(
-                                Arc::make_mut(&mut reader.resident[i]),
+                        let (fit, ok) = row_idx.map_or((content::ToolFit::Repair, true), |i| {
+                            content::apply_tool_checked(
+                                &mut reader.resident,
+                                i,
                                 kind,
                                 &native["data"],
                                 native["created"].as_u64(),
@@ -541,10 +544,7 @@ pub(crate) async fn run_with_reading(
                                 if kind == "session.tool.called" {
                                     reader.execution_settlement = 0;
                                 }
-                                if history::check(&reader.resident).is_err() {
-                                    if let (Some(i), Some(prev)) = (row_idx, prior_row) {
-                                        reader.resident[i] = prev;
-                                    }
+                                if !ok {
                                     if !reader.dirty {
                                         reader.dirty = true;
                                         reader.quiet = Instant::now() + Duration::from_millis(100);
@@ -567,11 +567,7 @@ pub(crate) async fn run_with_reading(
                                         .entry((id.into(), tool.id.clone()))
                                         .or_insert(0);
                                 }
-                                if history::check(&reader.resident).is_err() {
-                                    if let (Some(i), Some(prev)) = (row_idx, prior_row) {
-                                        reader.resident[i] = prev;
-                                    }
-                                } else {
+                                if ok {
                                     reader_event(
                                         reading,
                                         reader.generation,

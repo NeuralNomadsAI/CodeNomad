@@ -21,6 +21,10 @@ pub(crate) fn note_clipboard_write() {
     CLIPBOARD_EPOCH.fetch_add(1, Ordering::SeqCst);
 }
 
+fn next_clipboard_epoch() -> u64 {
+    CLIPBOARD_EPOCH.fetch_add(1, Ordering::SeqCst) + 1
+}
+
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for &b in bytes {
@@ -36,7 +40,9 @@ const RETAINED_LIMIT: usize = 16;
 const WAITING_LIMIT: usize = 32;
 const STEP_BYTES: usize = 2 << 20;
 const MAX_COPY_PAGES: usize = 64;
-const MAX_COPY_BYTES: usize = 8 * 1024 * 1024;
+const MAX_COPY_BYTES: usize = 32 * 1024 * 1024;
+const MAX_EXPANDED_REPORTS: usize = 8;
+const MAX_EXPANDED_REPORT_BYTES: usize = 4 * 1024 * 1024;
 const COPY_BUDGET: Duration = Duration::from_secs(30);
 const MAX_PENDING_EVENTS: usize = 32;
 const MAX_PENDING_BYTES: usize = 256 * 1024;
@@ -147,28 +153,6 @@ impl Default for ReportCopy {
     }
 }
 
-enum ReportExpand {
-    Idle,
-    Loading {
-        key: ReportCopyKey,
-        _cancel: codenomad_client::Sender<()>,
-        rx: Receiver<Option<String>>,
-    },
-    Loaded {
-        key: ReportCopyKey,
-        text: String,
-    },
-    Failed {
-        key: ReportCopyKey,
-    },
-}
-
-impl Default for ReportExpand {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct Children {
     backend: Option<Backend>,
@@ -176,8 +160,20 @@ pub(crate) struct Children {
     unavailable: HashSet<ChildKey>,
     waiting: VecDeque<(ChildKey, String, Weak<()>)>,
     report_copy: ReportCopy,
-    expanded_report: ReportExpand,
-    pending_nav: Option<(ChildKey, codenomad_client::Sender<()>, Receiver<NavOutcome>)>,
+    expanded_reports: VecDeque<(ReportCopyKey, String)>,
+    expanded_report_bytes: usize,
+    loading_report: Option<(
+        ReportCopyKey,
+        codenomad_client::Sender<()>,
+        Receiver<Option<String>>,
+    )>,
+    failed_report: Option<ReportCopyKey>,
+    pending_nav: Option<(
+        ChildKey,
+        u64,
+        codenomad_client::Sender<()>,
+        Receiver<NavOutcome>,
+    )>,
 }
 
 struct Watcher {
@@ -215,7 +211,10 @@ impl Children {
         self.unavailable.clear();
         self.waiting.clear();
         self.report_copy = ReportCopy::Idle;
-        self.expanded_report = ReportExpand::Idle;
+        self.expanded_reports.clear();
+        self.expanded_report_bytes = 0;
+        self.loading_report = None;
+        self.failed_report = None;
         self.pending_nav = None;
     }
 
@@ -257,14 +256,14 @@ impl Children {
     }
 
     pub(super) fn loaded_report(&self, key: &ReportCopyKey) -> Option<&str> {
-        match &self.expanded_report {
-            ReportExpand::Loaded { key: current, text } if current == key => Some(text.as_str()),
-            _ => None,
-        }
+        self.expanded_reports
+            .iter()
+            .find(|(current, _)| current == key)
+            .map(|(_, text)| text.as_str())
     }
 
     pub(super) fn expand_failed(&self, key: &ReportCopyKey) -> bool {
-        matches!(&self.expanded_report, ReportExpand::Failed { key: current } if current == key)
+        self.failed_report.as_ref() == Some(key)
     }
 
     pub(super) fn release(s: &mut State, key: &str) {
@@ -309,14 +308,27 @@ impl Children {
         if clear_copy {
             children.report_copy = ReportCopy::Idle;
         }
-        let clear_expand = match &children.expanded_report {
-            ReportExpand::Loading { key: current, .. }
-            | ReportExpand::Loaded { key: current, .. }
-            | ReportExpand::Failed { key: current } => matches_card(&current.key),
-            ReportExpand::Idle => false,
-        };
-        if clear_expand {
-            children.expanded_report = ReportExpand::Idle;
+        children.expanded_reports.retain(|(current, text)| {
+            let drop = matches_card(&current.key);
+            if drop {
+                children.expanded_report_bytes =
+                    children.expanded_report_bytes.saturating_sub(text.len());
+            }
+            !drop
+        });
+        if children
+            .loading_report
+            .as_ref()
+            .is_some_and(|(current, _, _)| matches_card(&current.key))
+        {
+            children.loading_report = None;
+        }
+        if children
+            .failed_report
+            .as_ref()
+            .is_some_and(|current| matches_card(&current.key))
+        {
+            children.failed_report = None;
         }
         Self::promote_waiting(s);
     }
@@ -415,7 +427,7 @@ impl Children {
             s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
             return;
         };
-        let epoch = CLIPBOARD_EPOCH.load(Ordering::SeqCst);
+        let epoch = next_clipboard_epoch();
         let scope = s.input_scope.clone();
         let baseline = Rc::new(Cell::new(None));
         #[cfg(not(target_arch = "wasm32"))]
@@ -451,7 +463,7 @@ impl Children {
         };
         let (out, rx) = bounded(1);
         let (cancel, cancelled) = bounded(1);
-        let epoch = CLIPBOARD_EPOCH.load(Ordering::SeqCst);
+        let epoch = next_clipboard_epoch();
         let scope = s.input_scope.clone();
         let baseline = Rc::new(Cell::new(None));
         #[cfg(not(target_arch = "wasm32"))]
@@ -478,31 +490,53 @@ impl Children {
             crate::platform::reads::cancellable(&cancelled, async {
                 let expected_parent = key.parent.as_deref().unwrap_or(&backend.session);
                 let body = with_timeout(COPY_BUDGET, async {
-                    let _slot = reads.background(&cancelled).await?;
-                    let page = backend
-                        .child_page_under(&key.child, expected_parent)
-                        .await
-                        .ok()??;
-                    let tool = page
-                        .rows
-                        .iter()
-                        .find(|row| row.id == key.row_id)
-                        .and_then(|row| {
-                            row.parts.iter().find_map(|part| match part {
-                                Part::Tool(tool) if tool.id == key.call => Some(tool.as_ref()),
-                                _ => None,
-                            })
-                        })
-                        .or_else(|| {
-                            page.rows
-                                .iter()
-                                .rev()
-                                .flat_map(|row| row.parts.iter().rev())
-                                .find_map(|part| match part {
+                    let location = {
+                        let _slot = reads.background(&cancelled).await?;
+                        backend
+                            .child_ownership_token(&key.child, expected_parent)
+                            .await
+                            .ok()??
+                    };
+                    let page = {
+                        let _slot = reads.background(&cancelled).await?;
+                        backend
+                            .child_page_request(
+                                &key.child,
+                                serde_json::json!({"kind": "around", "messageID": key.row_id}),
+                            )
+                            .await
+                            .ok()
+                    };
+                    let page = match page {
+                        Some(page) => page,
+                        None => {
+                            let _slot = reads.background(&cancelled).await?;
+                            backend
+                                .child_page_under(&key.child, expected_parent)
+                                .await
+                                .ok()??
+                        }
+                    };
+                    let still_owned = {
+                        let _slot = reads.background(&cancelled).await?;
+                        backend
+                            .child_ownership_token(&key.child, expected_parent)
+                            .await
+                            .ok()?
+                    };
+                    if still_owned != Some(location) {
+                        return None;
+                    }
+                    let tool =
+                        page.rows
+                            .iter()
+                            .find(|row| row.id == key.row_id)
+                            .and_then(|row| {
+                                row.parts.iter().find_map(|part| match part {
                                     Part::Tool(tool) if tool.id == key.call => Some(tool.as_ref()),
                                     _ => None,
                                 })
-                        })?;
+                            })?;
                     match key.section {
                         0 => super::format::bounded_json(&tool.input, MAX_COPY_BYTES),
                         1 => {
@@ -556,7 +590,7 @@ impl Children {
         };
         let (out, rx) = bounded(1);
         let (cancel, cancelled) = bounded(1);
-        let epoch = CLIPBOARD_EPOCH.load(Ordering::SeqCst);
+        let epoch = next_clipboard_epoch();
         let scope = s.input_scope.clone();
         let baseline = Rc::new(Cell::new(None));
         #[cfg(not(target_arch = "wasm32"))]
@@ -602,10 +636,12 @@ impl Children {
         let Some(backend) = s.transcript_display.children.backend.clone() else {
             return;
         };
+        s.notifications.supersede_navigation();
+        let ticket = s.notifications.navigation_ticket();
         let ck = child_key(parent, child);
         let (out, rx) = bounded(1);
         let (cancel, cancelled) = bounded(1);
-        s.transcript_display.children.pending_nav = Some((ck, cancel, rx));
+        s.transcript_display.children.pending_nav = Some((ck, ticket, cancel, rx));
         let expected_parent = parent.map_or_else(|| backend.session.clone(), str::to_owned);
         let child = child.to_owned();
         let wake = s.wake.clone();
@@ -632,25 +668,33 @@ impl Children {
     }
 
     pub(super) fn expand_report(s: &mut State, key: ReportCopyKey) {
-        if matches!(&s.transcript_display.children.expanded_report, ReportExpand::Loading { key: current, .. } if current == &key)
+        if s.transcript_display
+            .children
+            .expanded_reports
+            .iter()
+            .any(|(current, _)| current == &key)
+            || s.transcript_display
+                .children
+                .loading_report
+                .as_ref()
+                .is_some_and(|(current, _, _)| current == &key)
         {
             return;
         }
+        if s.transcript_display.children.failed_report.as_ref() == Some(&key) {
+            s.transcript_display.children.failed_report = None;
+        }
         let Some((cancel, rx)) = Self::fetch_report(s, &key) else {
-            s.transcript_display.children.expanded_report = ReportExpand::Failed { key };
+            s.transcript_display.children.failed_report = Some(key);
             return;
         };
-        s.transcript_display.children.expanded_report = ReportExpand::Loading {
-            key,
-            _cancel: cancel,
-            rx,
-        };
+        s.transcript_display.children.loading_report = Some((key, cancel, rx));
     }
 
     pub(crate) fn poll_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
         let mut changed = Self::poll_copy(s, tx);
         let nav = match s.transcript_display.children.pending_nav.as_ref() {
-            Some((_, _, rx)) => match rx.try_recv() {
+            Some((_, _, _, rx)) => match rx.try_recv() {
                 Ok(outcome) => Some(outcome),
                 Err(error) if error.is_closed() => Some(NavOutcome::Error),
                 Err(_) => None,
@@ -658,26 +702,22 @@ impl Children {
             None => None,
         };
         if let Some(outcome) = nav {
-            let ck = s
-                .transcript_display
-                .children
-                .pending_nav
-                .take()
-                .map(|(ck, _, _)| ck);
+            let Some((ck, ticket, _, _)) = s.transcript_display.children.pending_nav.take() else {
+                return changed;
+            };
+            if ticket != s.notifications.navigation_ticket() {
+                return changed;
+            }
             match outcome {
                 NavOutcome::Verified(child_id) => {
-                    if let Some(ck) = ck {
-                        s.transcript_display.children.unavailable.remove(&ck);
-                    }
+                    s.transcript_display.children.unavailable.remove(&ck);
                     if crate::launcher::can_open_child_session(s) {
-                        crate::launcher::choose_child(s, child_id, tx);
+                        crate::launcher::choose_child_ticket(s, child_id, Some(ticket), tx);
                         changed = true;
                     }
                 }
                 NavOutcome::Missing => {
-                    if let Some(ck) = ck {
-                        s.transcript_display.children.mark_unavailable(ck);
-                    }
+                    s.transcript_display.children.mark_unavailable(ck);
                     crate::shell::notifications::emit_outcome(
                         s,
                         crate::shell::notifications::Category::Sessions,
@@ -1392,9 +1432,8 @@ impl Children {
                     }
                     if !last_settled
                         && !last_running
-                        && !last_failed
                         && pending_events.is_empty()
-                        && live_page.is_some()
+                        && (live_page.is_some() || last_failed)
                     {
                         if out.send(ChildUpdate::Settled).await.is_err() {
                             break;
@@ -1534,21 +1573,38 @@ impl Children {
                 }
             }
         }
-        let expand_outcome = match &self.expanded_report {
-            ReportExpand::Loading { rx, .. } => match rx.try_recv() {
+        let expand_outcome = match self.loading_report.as_ref() {
+            Some((_, _, rx)) => match rx.try_recv() {
                 Ok(body) => Some(body),
                 Err(error) if error.is_closed() => Some(None),
                 Err(_) => None,
             },
-            _ => None,
+            None => None,
         };
         if let Some(outcome) = expand_outcome
-            && let ReportExpand::Loading { key, .. } = std::mem::take(&mut self.expanded_report)
+            && let Some((key, _, _)) = self.loading_report.take()
         {
-            self.expanded_report = match outcome {
-                Some(text) => ReportExpand::Loaded { key, text },
-                None => ReportExpand::Failed { key },
-            };
+            match outcome {
+                Some(text) if text.len() <= MAX_EXPANDED_REPORT_BYTES => {
+                    while self.expanded_reports.len() >= MAX_EXPANDED_REPORTS
+                        || self.expanded_report_bytes.saturating_add(text.len())
+                            > MAX_EXPANDED_REPORT_BYTES
+                    {
+                        if let Some((_, dropped)) = self.expanded_reports.pop_front() {
+                            self.expanded_report_bytes =
+                                self.expanded_report_bytes.saturating_sub(dropped.len());
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expanded_report_bytes =
+                        self.expanded_report_bytes.saturating_add(text.len());
+                    self.expanded_reports.push_back((key, text));
+                }
+                _ => {
+                    self.failed_report = Some(key);
+                }
+            }
             changed = true;
         }
         changed

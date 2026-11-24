@@ -155,7 +155,7 @@ pub(in crate::chat) fn match_hidden_by_inputs(
 }
 
 pub(super) fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
-    let mut budget = super::children::STEP_LIMIT;
+    let mut budget = super::children::STEP_LIMIT * 3;
     render_nested(s, message, tool, key, &[], &mut budget)
 }
 
@@ -251,7 +251,7 @@ fn render_body(
         && has_output
         && !is_task
         && !skill
-        && tool.name != "apply_patch"
+        && (tool.name != "apply_patch" || !apply_patch::has_patch(tool))
         && !is_patch(tool)
         && result_list.is_none()
         && !rich_diff
@@ -507,7 +507,7 @@ fn render_body(
         {
             block = block.child(patch);
         }
-        if skill || (tool.name == "apply_patch" && has_output) {
+        if skill {
             let output_key = format!("{key}-tool_output");
             if probe {
                 if let Some(q) = query
@@ -520,6 +520,38 @@ fn render_body(
             } else {
                 block = block.child(markdown::tool_pane(
                     document::prose_search(s, message, key, output_key, parts[0], query),
+                    false,
+                ));
+            }
+        } else if tool.name == "apply_patch" && has_output {
+            let output_key = format!("{key}-tool_output");
+            if probe {
+                if let Some(q) = query
+                    && let Some(claimed) = q.claimed
+                    && !claimed.get()
+                    && document::bounded_prose_matches_for(
+                        s,
+                        key,
+                        &output_key,
+                        parts[0],
+                        TOOL_LIMIT,
+                        q,
+                    )
+                {
+                    claimed.set(true);
+                }
+            } else {
+                block = block.child(markdown::tool_pane(
+                    document::prose_pane_search(
+                        s,
+                        message,
+                        key,
+                        output_key,
+                        parts[0],
+                        tool.status == "running",
+                        TOOL_LIMIT,
+                        query,
+                    ),
                     false,
                 ));
             }

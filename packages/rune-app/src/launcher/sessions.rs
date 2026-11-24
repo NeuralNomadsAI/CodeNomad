@@ -177,8 +177,7 @@ pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
     choose_destination(s, id, None, tx);
 }
 
-pub fn choose_child(s: &mut State, id: String, tx: &mut Tx) {
-    s.notifications.supersede_navigation();
+pub(crate) fn choose_child_ticket(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())
         && s.phase != Phase::Failed
@@ -187,7 +186,13 @@ pub fn choose_child(s: &mut State, id: String, tx: &mut Tx) {
             s.shell.close_floating(tx);
         }
     } else {
-        choose_from_inner(s, vec![(id, None)], s.shell.floating_sessions(), None, true);
+        choose_from_inner(
+            s,
+            vec![(id, None)],
+            s.shell.floating_sessions(),
+            ticket,
+            true,
+        );
     }
 }
 

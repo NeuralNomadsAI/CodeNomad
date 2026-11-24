@@ -334,6 +334,7 @@ fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     let mut last = 0;
     let mut in_list_item = 0usize;
+    let mut quote_depth = 0usize;
     let mut result = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
         match &event {
@@ -343,6 +344,14 @@ fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
             }
             Event::End(pulldown_cmark::TagEnd::Item) => {
                 in_list_item = in_list_item.saturating_sub(1);
+                continue;
+            }
+            Event::Start(Tag::BlockQuote(_)) => {
+                quote_depth += 1;
+                continue;
+            }
+            Event::End(pulldown_cmark::TagEnd::BlockQuote(_)) => {
+                quote_depth = quote_depth.saturating_sub(1);
                 continue;
             }
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
@@ -355,6 +364,7 @@ fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
                     &source[line_start..range.start],
                     block,
                     in_list_item > 0,
+                    quote_depth,
                     truncated_end,
                 ) {
                     let start = range.start + word.start;
@@ -401,6 +411,7 @@ fn diagram_fence(
     line_prefix: &str,
     block: &str,
     in_list_item: bool,
+    quote_depth: usize,
     truncated_end: bool,
 ) -> Option<(std::ops::Range<usize>, &'static str)> {
     let kit_word = info.split(|c: char| c.is_whitespace() || c == ',').next()?;
@@ -417,7 +428,15 @@ fn diagram_fence(
     // Kit recognizes comma modifiers; Solid only admits a whitespace-delimited language.
     // Route both forms through the ordinary code frame, retaining Copy even for plain source.
     let replacement = if word.eq_ignore_ascii_case("mermaid") || word.eq_ignore_ascii_case("mmd") {
-        if !truncated_end && commonmark_closed(line_prefix, block, marker, fence_len, in_list_item)
+        if !truncated_end
+            && commonmark_closed(
+                line_prefix,
+                block,
+                marker,
+                fence_len,
+                in_list_item,
+                quote_depth,
+            )
         {
             "mmd"
         } else {
@@ -429,20 +448,19 @@ fn diagram_fence(
     Some((start..start + word.len(), replacement))
 }
 
-fn strip_blockquotes(mut s: &str, max: usize) -> (&str, usize) {
-    let mut depth = 0;
-    while depth < max {
+fn strip_blockquotes(mut s: &str, max: usize, max_leading_indent: usize) -> &str {
+    for i in 0..max {
         let trimmed = s.trim_start_matches(' ');
-        if s.len() - trimmed.len() <= 3
+        let limit = if i == 0 { max_leading_indent } else { 3 };
+        if s.len() - trimmed.len() <= limit
             && let Some(rest) = trimmed.strip_prefix('>')
         {
             s = rest.strip_prefix(' ').unwrap_or(rest);
-            depth += 1;
             continue;
         }
         break;
     }
-    (s, depth)
+    s
 }
 
 fn commonmark_closed(
@@ -451,6 +469,7 @@ fn commonmark_closed(
     marker: char,
     fence_len: usize,
     in_list_item: bool,
+    quote_depth: usize,
 ) -> bool {
     let mut lines = block.lines();
     if lines.next().is_none() {
@@ -459,17 +478,16 @@ fn commonmark_closed(
     let Some(last) = lines.last() else {
         return false;
     };
-    let (prefix_after_quotes, quote_depth) = strip_blockquotes(line_prefix, usize::MAX);
     let container_indent = if in_list_item
-        || prefix_after_quotes
+        || line_prefix
             .bytes()
-            .any(|b| !matches!(b, b' ' | b'\t'))
+            .any(|b| !matches!(b, b' ' | b'\t' | b'>'))
     {
-        prefix_after_quotes.chars().count()
+        line_prefix.chars().count()
     } else {
         0
     };
-    let (tail, _) = strip_blockquotes(last, quote_depth);
+    let tail = strip_blockquotes(last, quote_depth, container_indent + 3);
     let indent = tail.bytes().take_while(|&b| b == b' ').count();
     if indent > container_indent + 3 {
         return false;
