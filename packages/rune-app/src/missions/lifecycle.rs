@@ -133,8 +133,10 @@ impl Panel {
         );
     }
 
-    pub(crate) fn observe_cleanups(&self, owner: &mut Lifecycle) {
-        if let Some(scope) = self.cleanup_scope() {
+    pub(crate) fn observe_cleanups(&mut self, owner: &mut Lifecycle) {
+        if let Some(scope) = self.cleanup_scope()
+            && self.sync_observed_cleanups(owner.cleanup.state_gen())
+        {
             owner.cleanup.observe_cleanups(&scope, &self.cleanups);
         }
     }
@@ -424,11 +426,13 @@ impl Panel {
                     self.adopt_settled_cleanup(receipt.clone());
                 }
             }
-            owner.cleanup.retire_settled_cleanups(
-                &scope,
-                &self.cleanups,
-                self.covered(super::directory::Kind::Cleanups),
-            );
+            let covered = self.covered(super::directory::Kind::Cleanups);
+            if self.should_retire_cleanups(owner.cleanup.state_gen(), covered) {
+                owner
+                    .cleanup
+                    .retire_settled_cleanups(&scope, &self.cleanups, covered);
+                self.mark_retired_cleanups(owner.cleanup.state_gen(), covered);
+            }
             if settled.cleanup.refreshed_scopes.contains(&scope)
                 || settled.recovery.refreshed_scopes.contains(&scope)
             {
@@ -538,10 +542,6 @@ impl Lifecycle {
     #[cfg(test)]
     pub(crate) fn cleanup_error_for_test(&self, scope: &WorkspaceScope) -> Option<&'static str> {
         self.cleanup.cleanup_error(scope)
-    }
-
-    pub(crate) fn has_delete_intents_in_scope(&self, scope: &WorkspaceScope) -> bool {
-        self.cleanup.has_delete_intents_in_scope(scope)
     }
 
     #[cfg(test)]

@@ -61,9 +61,9 @@ pub(super) async fn session(app: &App, scope: &Scope, sid: &str) -> Result<Value
 }
 
 pub(super) async fn snapshot(app: &App, scope: &Scope) -> Result<Value, Error> {
-    let _slot = app.mission_read_slot.acquire().await.map_err(|_| held())?;
-    let (status, mut body) =
-        scope.call(app, "snapshot", &json!({}), 10, super::run::LARGE_MISSION_RPC_LIMIT).await?;
+    let slot = app.mission_read_slot.clone().acquire_owned().await.map_err(|_| held())?;
+    let (status, mut body, _slot) =
+        scope.call_holding(app, "snapshot", &json!({}), 10, super::run::LARGE_MISSION_RPC_LIMIT, slot).await?;
     let Some(s) = body.as_object_mut().and_then(|o| o.remove("output")) else {
         return Err(held());
     };

@@ -6,6 +6,7 @@ use codenomad_client::{Receiver, Sender, bounded, settings::info::metadata};
 struct Capabilities {
     local: bool,
     config_files: bool,
+    missions: bool,
 }
 
 #[derive(Default)]
@@ -43,6 +44,9 @@ impl HostSupport {
                                         items.iter().any(|capability| capability == "config-files")
                                     },
                                 ),
+                                missions: meta["capabilities"].as_array().is_some_and(|items| {
+                                    items.iter().any(|capability| capability == "missions")
+                                }),
                             },
                         );
                         if out.try_send(caps).is_ok() {
@@ -76,5 +80,9 @@ impl HostSupport {
 
     pub fn config_files(&self, prefs: &Preferences) -> bool {
         self.current(prefs) && self.capabilities.config_files
+    }
+
+    pub fn missions(&self, prefs: &Preferences) -> bool {
+        self.current(prefs) && self.capabilities.missions
     }
 }

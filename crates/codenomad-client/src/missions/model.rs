@@ -18,7 +18,7 @@ pub enum RunState {
     Stopped,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Summary {
     pub id: String,

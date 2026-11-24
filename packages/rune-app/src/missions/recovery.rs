@@ -86,7 +86,7 @@ pub(super) fn report_eligible(header: &MapHeader, task: &Task, observation: &Obs
     if !actor_known {
         return false;
     }
-    let activity = observation.actor_state(session_id);
+    let activity = observation.verified_actor_state(header, session_id);
     task.can_recover_report(activity)
         && activity.is_none_or(|state| {
             matches!(state, ActorState::Unknown | ActorState::IdleWithoutReport)
@@ -115,9 +115,11 @@ pub(super) fn coordinator_eligible(
     if !resuming {
         observation.interrupted(header, tasks)
     } else {
-        observation.actor_state(coordinator).is_none_or(|state| {
-            matches!(state, ActorState::Unknown | ActorState::IdleWithoutReport)
-        })
+        observation
+            .verified_actor_state(header, coordinator)
+            .is_none_or(|state| {
+                matches!(state, ActorState::Unknown | ActorState::IdleWithoutReport)
+            })
     }
 }
 

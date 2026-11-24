@@ -58,34 +58,69 @@ impl Http {
         request
     }
     pub async fn accept(&self) -> Request {
-        let (mut socket, _) = wait(self.listener.accept()).await.unwrap();
-        let mut bytes = Vec::new();
-        while !bytes.ends_with(b"\r\n\r\n") {
-            bytes.push(wait(socket.read_u8()).await.unwrap());
-            assert!(bytes.len() <= 32768);
-        }
-        let header = String::from_utf8(bytes).unwrap();
-        let length = header
-            .lines()
-            .find_map(|line| {
-                let (key, value) = line.split_once(':')?;
-                key.eq_ignore_ascii_case("content-length")
-                    .then(|| value.trim().parse::<usize>().unwrap())
-            })
-            .unwrap_or(0);
-        assert!(length <= 4096);
-        let mut body = vec![0; length];
-        wait(socket.read_exact(&mut body)).await.unwrap();
-        let body = if body.is_empty() {
-            serde_json::Value::Null
-        } else {
-            serde_json::from_slice(&body).unwrap()
-        };
-        Request {
-            socket,
-            header,
-            body,
-        }
+        wait(async {
+            loop {
+                let (mut socket, _) = self.listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let mut closed = false;
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    match socket.read_u8().await {
+                        Ok(byte) => {
+                            bytes.push(byte);
+                            assert!(bytes.len() <= 32768);
+                        }
+                        Err(err)
+                            if matches!(
+                                err.kind(),
+                                std::io::ErrorKind::UnexpectedEof
+                                    | std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::ConnectionAborted
+                            ) =>
+                        {
+                            closed = true;
+                            break;
+                        }
+                        Err(err) => panic!("unexpected fixture read error: {err:?}"),
+                    }
+                }
+                if closed {
+                    continue;
+                }
+                let header = String::from_utf8(bytes).unwrap();
+                let length = header
+                    .lines()
+                    .find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        key.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or(0);
+                assert!(length <= 4096);
+                let mut body = vec![0; length];
+                if let Err(err) = socket.read_exact(&mut body).await {
+                    if matches!(
+                        err.kind(),
+                        std::io::ErrorKind::UnexpectedEof
+                            | std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::ConnectionAborted
+                    ) {
+                        continue;
+                    }
+                    panic!("unexpected fixture body read error: {err:?}");
+                }
+                let body = if body.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::from_slice(&body).unwrap()
+                };
+                return Request {
+                    socket,
+                    header,
+                    body,
+                };
+            }
+        })
+        .await
     }
     pub async fn quiet(&self) {
         assert!(

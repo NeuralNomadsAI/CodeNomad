@@ -38,6 +38,7 @@ export function recoveryCleanupFixture(){
     }),
     alphaActorWindow:(order)=>({
       context:{id:'alpha',projectID:'fixture-project',revision:alphaRevision,status:'active',
+        runState:'running',
         coordinatorSessionId:'ses_existing',
         actors:[{sessionId:'ses_existing',title:'Coordinateur',location:{directory:'/fixture'},reportOwed:true,callOpen:false}],
         actorPage:{order,offset:0,end:1,total:1},

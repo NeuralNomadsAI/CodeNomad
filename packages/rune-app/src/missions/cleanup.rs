@@ -74,9 +74,7 @@ impl LiveFlag {
             cancel.close();
             return false;
         }
-        inner
-            .waiters
-            .retain(|(p, c)| p.load(Ordering::Acquire) == PHASE_PREFLIGHT && !c.is_closed());
+        inner.waiters.retain(|(_, c)| !c.is_closed());
         inner.waiters.push((phase, cancel));
         true
     }
@@ -279,9 +277,17 @@ pub(super) struct CleanupOwner {
     retry_errors: HashMap<WorkspaceScope, (String, String, &'static str)>,
     document_cleanups: HashSet<CleanupKey>,
     document_cleanup_order: VecDeque<CleanupKey>,
+    state_gen: u64,
 }
 
 impl CleanupOwner {
+    pub fn state_gen(&self) -> u64 {
+        self.state_gen
+    }
+
+    fn bump_state(&mut self) {
+        self.state_gen = self.state_gen.wrapping_add(1);
+    }
     fn record_document_cleanup(&mut self, key: CleanupKey) {
         if self.document_cleanups.contains(&key) {
             return;
@@ -341,12 +347,6 @@ impl CleanupOwner {
             .filter(|intent| intent.target == source.target && !intent.retired)?;
         (intent.flight.is_none() && intent.error.is_some())
             .then(|| intent.request.request_id.clone())
-    }
-
-    pub fn has_delete_intents_in_scope(&self, scope: &WorkspaceScope) -> bool {
-        self.deletes
-            .values()
-            .any(|intent| !intent.retired && &intent.scope == scope)
     }
 
     pub fn has_active_cleanup_retry(&self, scope: &WorkspaceScope, mission_id: &str) -> bool {
@@ -435,6 +435,10 @@ impl CleanupOwner {
                 intent.flight_live = None;
                 intent.flight_phase = None;
                 released = true;
+            } else if let Some(cancel) = intent.flight_cancel.take() {
+                // Already dispatched DELETE: close cancel so any post-DELETE reconciliation GET
+                // aborts immediately while keeping the intent until the flight reports.
+                cancel.close();
             }
         }
         released
@@ -494,6 +498,7 @@ impl CleanupOwner {
                 retired: false,
             },
         );
+        self.bump_state();
         platform::spawn(async move {
             let result = run_delete(
                 backend, target, request, false, false, None, None, None, None, None,
@@ -607,6 +612,7 @@ impl CleanupOwner {
                 && intent.flight.is_none()
         }) {
             self.deletes.remove(&key);
+            self.bump_state();
         }
     }
 
@@ -624,6 +630,7 @@ impl CleanupOwner {
                 && intent.flight.is_none()
         }) {
             self.deletes.remove(&key);
+            self.bump_state();
         }
     }
 
@@ -649,6 +656,7 @@ impl CleanupOwner {
         self.document_cleanups.retain(|key| &key.scope != scope);
         self.document_cleanup_order
             .retain(|key| &key.scope != scope);
+        self.bump_state();
     }
 
     pub fn observe_cleanups(&mut self, scope: &WorkspaceScope, cleanups: &[Cleanup]) {
@@ -657,16 +665,24 @@ impl CleanupOwner {
                 self.record_document_cleanup(CleanupKey::new(scope.clone(), row));
             }
         }
+        let has_intents = self.deletes.values().any(|intent| &intent.scope == scope);
+        if !has_intents || cleanups.is_empty() {
+            return;
+        }
+        let by_mission = group_cleanups_by_mission(cleanups);
         for intent in self.deletes.values_mut() {
             if &intent.scope != scope {
                 continue;
             }
-            if let WireCleanupMatch::Exact(row) = match_wire_cleanup(
+            let Some(rows) = by_mission.get(intent.target.mission.as_str()) else {
+                continue;
+            };
+            if let WireCleanupMatch::Exact(row) = match_wire_cleanup_refs(
                 &intent.target.mission,
                 &intent.request,
                 intent.deletion_id.as_deref(),
                 intent.created_at_bits,
-                cleanups,
+                rows,
             ) && row.document_pending == Some(true)
             {
                 intent.document_cleanup = true;
@@ -687,33 +703,42 @@ impl CleanupOwner {
                 self.record_document_cleanup(CleanupKey::new(scope.clone(), row));
             }
         }
-        self.deletes.retain(|_, intent| {
-            if &intent.scope != scope {
-                return true;
-            }
-            let WireCleanupMatch::Exact(row) = match_wire_cleanup(
-                &intent.target.mission,
-                &intent.request,
-                intent.deletion_id.as_deref(),
-                intent.created_at_bits,
-                cleanups,
-            ) else {
-                return true;
-            };
-            if row.document_pending == Some(true) {
-                intent.document_cleanup = true;
-            }
-            if intent.flight.is_some() {
-                return true;
-            }
-            if intent.deletion_id.is_none() {
-                intent.deletion_id = Some(row.deletion_id.clone());
-            }
-            if intent.created_at_bits.is_none() {
-                intent.created_at_bits = Some(row.created_at.to_bits());
-            }
-            !cleanup_settled_for(intent.document_cleanup, row)
-        });
+        let has_intents = self.deletes.values().any(|intent| &intent.scope == scope);
+        let before_deletes = self.deletes.len();
+        if has_intents && !cleanups.is_empty() {
+            let by_mission = group_cleanups_by_mission(cleanups);
+            self.deletes.retain(|_, intent| {
+                if &intent.scope != scope {
+                    return true;
+                }
+                let Some(rows) = by_mission.get(intent.target.mission.as_str()) else {
+                    return true;
+                };
+                let WireCleanupMatch::Exact(row) = match_wire_cleanup_refs(
+                    &intent.target.mission,
+                    &intent.request,
+                    intent.deletion_id.as_deref(),
+                    intent.created_at_bits,
+                    rows,
+                ) else {
+                    return true;
+                };
+                if row.document_pending == Some(true) {
+                    intent.document_cleanup = true;
+                }
+                if intent.flight.is_some() {
+                    return true;
+                }
+                if intent.deletion_id.is_none() {
+                    intent.deletion_id = Some(row.deletion_id.clone());
+                }
+                if intent.created_at_bits.is_none() {
+                    intent.created_at_bits = Some(row.created_at.to_bits());
+                }
+                !cleanup_settled_for(intent.document_cleanup, row)
+            });
+        }
+        let mut mutated = self.deletes.len() != before_deletes;
         if let Some((mission_id, deletion_id, _)) = self.retry_errors.get(scope) {
             let matching = cleanups
                 .iter()
@@ -724,7 +749,11 @@ impl CleanupOwner {
             };
             if clear {
                 self.retry_errors.remove(scope);
+                mutated = true;
             }
+        }
+        if mutated {
+            self.bump_state();
         }
     }
 
@@ -1055,6 +1084,9 @@ impl CleanupOwner {
             ));
             self.record_document_cleanup(key);
         }
+        if polled.changed {
+            self.bump_state();
+        }
         polled
     }
 
@@ -1218,6 +1250,9 @@ impl CleanupOwner {
                 }
             }
         }
+        if polled.changed {
+            self.bump_state();
+        }
         polled
     }
 
@@ -1251,12 +1286,55 @@ enum WireCleanupMatch<'a> {
     Exact(&'a Cleanup),
 }
 
+fn group_cleanups_by_mission<'a>(cleanups: &'a [Cleanup]) -> HashMap<&'a str, Vec<&'a Cleanup>> {
+    let mut grouped: HashMap<&'a str, Vec<&'a Cleanup>> = HashMap::new();
+    for row in cleanups {
+        grouped
+            .entry(row.mission_id.as_str())
+            .or_default()
+            .push(row);
+    }
+    grouped
+}
+
 fn match_wire_cleanup<'a>(
     mission_id: &str,
     request: &DeletionRequest,
     expected_deletion_id: Option<&str>,
     expected_created_at: Option<u64>,
     cleanups: &'a [Cleanup],
+) -> WireCleanupMatch<'a> {
+    match_wire_cleanup_iter(
+        mission_id,
+        request,
+        expected_deletion_id,
+        expected_created_at,
+        cleanups.iter(),
+    )
+}
+
+fn match_wire_cleanup_refs<'a>(
+    mission_id: &str,
+    request: &DeletionRequest,
+    expected_deletion_id: Option<&str>,
+    expected_created_at: Option<u64>,
+    cleanups: &[&'a Cleanup],
+) -> WireCleanupMatch<'a> {
+    match_wire_cleanup_iter(
+        mission_id,
+        request,
+        expected_deletion_id,
+        expected_created_at,
+        cleanups.iter().copied(),
+    )
+}
+
+fn match_wire_cleanup_iter<'a>(
+    mission_id: &str,
+    request: &DeletionRequest,
+    expected_deletion_id: Option<&str>,
+    expected_created_at: Option<u64>,
+    cleanups: impl IntoIterator<Item = &'a Cleanup>,
 ) -> WireCleanupMatch<'a> {
     let mut matched: Option<&'a Cleanup> = None;
     for row in cleanups {
@@ -1549,10 +1627,30 @@ async fn run_delete(
         outcome,
         DeletionOutcome::Failed(err) if err.status == 409
     );
-    match backend
-        .read_mission_reconciliation(&target.project, &target.mission)
+    let reconciled = if let Some(cancel) = cancel.as_ref() {
+        match until_closed(
+            cancel,
+            backend.read_mission_reconciliation(&target.project, &target.mission),
+        )
         .await
-    {
+        {
+            Some(result) => result,
+            None => {
+                return DeleteResult::Cancelled {
+                    dispatched: true,
+                    document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
+                    tombstoned,
+                };
+            }
+        }
+    } else {
+        backend
+            .read_mission_reconciliation(&target.project, &target.mission)
+            .await
+    };
+    match reconciled {
         Ok(ReconciliationOutcome::Snapshot(snapshot)) if !snapshot.cleanup_unavailable => {
             match match_wire_cleanup(
                 &target.mission,
@@ -1578,6 +1676,15 @@ async fn run_delete(
                         require_document_settled = true;
                     }
                     if cleanup_settled_for(require_document_settled, intent) {
+                        if live.is_some() && !still_live() {
+                            return DeleteResult::Cancelled {
+                                dispatched: true,
+                                document_cleanup: require_document_settled,
+                                deletion_id: expected_deletion_id,
+                                created_at_bits: expected_created_at,
+                                tombstoned,
+                            };
+                        }
                         return DeleteResult::Deleted {
                             receipt: Some(Box::new(intent.clone())),
                             dispatched: true,

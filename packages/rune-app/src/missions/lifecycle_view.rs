@@ -55,8 +55,9 @@ pub(crate) fn controls<S: 'static>(
     let mut row = layout::action_row();
     let button = |label, disabled: bool, gesture: fn() -> Gesture, key| {
         let origin = source.clone();
+        let live = panel.selection_live.clone();
         layout::button_tx(label, false, move |s: &mut S, tx| {
-            if !disabled {
+            if !disabled && live.is_live() {
                 act(s, &origin, gesture());
                 tx.instant();
             }
@@ -89,9 +90,10 @@ pub(crate) fn controls<S: 'static>(
             || recover_admitted
             || !owner.recovery.can_start(&recover_key);
         let origin = source.clone();
+        let live = panel.selection_live.clone();
         row = row.child(
             layout::button_tx(t("missionsPanel.action.recover"), false, move |s, tx| {
-                if !disabled {
+                if !disabled && live.is_live() {
                     act(s, &origin, Gesture::RecoverCoordinator(revision));
                     tx.instant();
                 }
@@ -112,9 +114,10 @@ pub(crate) fn controls<S: 'static>(
                 || recover_admitted
                 || !owner.recovery.can_start(&recover_key);
             let origin = source.clone();
+            let live = panel.selection_live.clone();
             row = row.child(
                 layout::button_tx(t("missionsPanel.action.recover"), false, move |s, tx| {
-                    if !disabled {
+                    if !disabled && live.is_live() {
                         act(s, &origin, Gesture::RecoverCoordinator(revision));
                         tx.instant();
                     }
@@ -134,9 +137,10 @@ pub(crate) fn controls<S: 'static>(
                 _ => (LifecycleAction::Pause, true, "missionsPanel.action.pause"),
             };
             let origin = source.clone();
+            let live = panel.selection_live.clone();
             row = row.child(
                 layout::button_tx(t(label), false, move |s, tx| {
-                    if !disabled {
+                    if !disabled && live.is_live() {
                         act(s, &origin, Gesture::New(action, graceful, revision));
                         tx.instant();
                     }
@@ -148,17 +152,20 @@ pub(crate) fn controls<S: 'static>(
         }
         if pausing {
             let origin = source.clone();
+            let live = panel.selection_live.clone();
             row = row.child(
                 layout::button_tx(
                     t("missionsPanel.action.interruptNow"),
                     disabled,
                     move |s, tx| {
-                        act(
-                            s,
-                            &origin,
-                            Gesture::New(LifecycleAction::Pause, false, revision),
-                        );
-                        tx.instant();
+                        if live.is_live() {
+                            act(
+                                s,
+                                &origin,
+                                Gesture::New(LifecycleAction::Pause, false, revision),
+                            );
+                            tx.instant();
+                        }
                     },
                 )
                 .key("mission-control-interrupt"),
@@ -170,10 +177,13 @@ pub(crate) fn controls<S: 'static>(
     {
         let disabled = !ready || delete_active || recovery_busy || !owner.can_stop(&source, header);
         let origin = source.clone();
+        let live = panel.selection_live.clone();
         row = row.child(
             layout::button_tx(t("missions.control.run.stop"), disabled, move |s, tx| {
-                act(s, &origin, Gesture::StopDialog(revision));
-                tx.instant();
+                if live.is_live() {
+                    act(s, &origin, Gesture::StopDialog(revision));
+                    tx.instant();
+                }
             })
             .key("mission-control-stop"),
         );
@@ -187,9 +197,13 @@ pub(crate) fn controls<S: 'static>(
             || delete_managed_sessions.is_none()
             || !owner.cleanup.can_delete(&source);
         let origin = source.clone();
+        let delete_live = panel.selection_live.clone();
         row = row.child(
             layout::button_tx(t("missionsPanel.picker.delete"), false, move |s, tx| {
-                if !disabled && let Some(delete_sessions) = delete_managed_sessions {
+                if !disabled
+                    && delete_live.is_live()
+                    && let Some(delete_sessions) = delete_managed_sessions
+                {
                     act(
                         s,
                         &origin,

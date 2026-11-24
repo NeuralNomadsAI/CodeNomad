@@ -73,7 +73,9 @@ pub(crate) async fn open(app: &crate::App, id: &str) -> Result<Opened, Response>
     let Some(canonical) = resolved["project"]["canonical"].as_str() else {
         return Err(unavailable(Status::OK, "workspace-unavailable"));
     };
-    active_plugin(app, &endpoint, &dir).await.map_err(|reason| unavailable(Status::OK, reason))?;
+    let slot = active_plugin_holding(app, &endpoint, &dir, slot)
+        .await
+        .map_err(|reason| unavailable(Status::OK, reason))?;
     Ok(Opened { slot, workspace, dir, project, initial, canonical: canonical.to_owned(), endpoint, display })
 }
 
@@ -82,18 +84,34 @@ pub(super) async fn active_plugin(
     endpoint: &crate::opencode::Endpoint,
     dir: &str,
 ) -> Result<(), &'static str> {
+    active_plugin_holding(app, endpoint, dir, ()).await
+}
+
+async fn active_plugin_holding<T: Send + 'static>(
+    app: &crate::App,
+    endpoint: &crate::opencode::Endpoint,
+    dir: &str,
+    hold: T,
+) -> Result<T, &'static str> {
     let off = "plugin-unavailable";
-    let plugins =
-        native_read(app, endpoint, Method::GET, "/api/plugin", dir, None, 512 * 1024).await.map_err(|_| off)?;
+    let (plugins, hold) =
+        native_read_holding(app, endpoint, Method::GET, "/api/plugin", dir, None, 512 * 1024, hold)
+            .await
+            .map_err(|_| off)?;
     let Some(plugin) = plugins["data"].as_array().and_then(|a| a.iter().find(|r| r["id"] == "codenomad.missions"))
     else {
         return Err(off);
     };
     match plugin["state"]["status"].as_str() {
-        Some("active") => Ok(()),
+        Some("active") => Ok(hold),
         Some("failed") => Err("plugin-failed"),
         _ => Err(off),
     }
+}
+
+enum NativeRpcError<T> {
+    Absent(T),
+    Failed,
 }
 
 async fn native_read(
@@ -105,10 +123,66 @@ async fn native_read(
     body: Option<Value>,
     max: usize,
 ) -> Result<Value, ()> {
-    let url = endpoint.url.join(path).map_err(|_| ())?;
-    let mut request = app
-        .native
-        .client
+    native_read_holding(app, endpoint, method, path, dir, body, max, ()).await.map(|(value, ())| value)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn native_read_holding<T: Send + 'static>(
+    app: &crate::App,
+    endpoint: &opencode::Endpoint,
+    method: Method,
+    path: &str,
+    dir: &str,
+    body: Option<Value>,
+    max: usize,
+    hold: T,
+) -> Result<(Value, T), ()> {
+    match native_read_rpc_holding(app, endpoint, method, path, dir, body, max, false, hold).await {
+        Ok(result) => Ok(result),
+        Err(_) => Err(()),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn native_read_rpc_holding<T: Send + 'static>(
+    app: &crate::App,
+    endpoint: &opencode::Endpoint,
+    method: Method,
+    path: &str,
+    dir: &str,
+    body: Option<Value>,
+    max: usize,
+    detect_missing_method: bool,
+    hold: T,
+) -> Result<(Value, T), NativeRpcError<T>> {
+    native_read_rpc_with_client(
+        &app.native.client,
+        endpoint,
+        method,
+        path,
+        dir,
+        body,
+        max,
+        detect_missing_method,
+        hold,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn native_read_rpc_with_client<T: Send + 'static>(
+    client: &reqwest::Client,
+    endpoint: &opencode::Endpoint,
+    method: Method,
+    path: &str,
+    dir: &str,
+    body: Option<Value>,
+    max: usize,
+    detect_missing_method: bool,
+    hold: T,
+) -> Result<(Value, T), NativeRpcError<T>> {
+    let url = endpoint.url.join(path).map_err(|_| NativeRpcError::Failed)?;
+    let mut request = client
         .request(method, url)
         .basic_auth("opencode", Some(&endpoint.password))
         .query(&[("location[directory]", dir)])
@@ -116,8 +190,19 @@ async fn native_read(
     if let Some(body) = body {
         request = request.json(&body);
     }
-    let response = request.send().await.map_err(|_| ())?.error_for_status().map_err(|_| ())?;
-    opencode::read_json(response, max).await
+    let response = request.send().await.map_err(|_| NativeRpcError::Failed)?;
+    let status = response.status();
+    if !status.is_success() {
+        if detect_missing_method && status == Status::BAD_REQUEST {
+            if let Ok(err_body) = opencode::read_json(response, 16 * 1024).await
+                && opencode::native_rpc_absent(&err_body, status)
+            {
+                return Err(NativeRpcError::Absent(hold));
+            }
+        }
+        return Err(NativeRpcError::Failed);
+    }
+    opencode::read_json_holding(response, max, hold).await.map_err(|_| NativeRpcError::Failed)
 }
 
 const LARGE_RESPONSE_THRESHOLD: usize = 4 * 1024 * 1024;
@@ -125,13 +210,22 @@ const LARGE_RESPONSE_CHUNK: usize = 64 * 1024;
 const LARGE_RESPONSE_BUDGET_UNITS: usize = 2048;
 const LARGE_RESPONSE_CHUNK_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub(super) async fn encode_json_bytes(value: Value, offload: bool) -> Result<Vec<u8>, ()> {
+pub(super) async fn encode_json_bytes_holding<T: Send + 'static>(
+    value: Value,
+    hold: T,
+    offload: bool,
+) -> Result<(Vec<u8>, T), ()> {
     if offload {
-        tokio::task::spawn_blocking(move || serde_json::to_vec(&value).map_err(|_| ()))
-            .await
-            .map_err(|_| ())?
+        tokio::task::spawn_blocking(move || {
+            let encoded = serde_json::to_vec(&value).map_err(|_| ());
+            drop(value);
+            encoded.map(|bytes| (bytes, hold))
+        })
+        .await
+        .map_err(|_| ())?
     } else {
-        serde_json::to_vec(&value).map_err(|_| ())
+        let bytes = serde_json::to_vec(&value).map_err(|_| ())?;
+        Ok((bytes, hold))
     }
 }
 
@@ -153,26 +247,28 @@ pub(super) fn stream_large_bytes(
 ) -> Response {
     use axum::http::{HeaderValue, header};
     let len = bytes.len();
-    let data = axum::body::Bytes::from(bytes);
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(2);
     tokio::spawn(async move {
-        let _budget = budget;
         let mut offset = 0usize;
-        while offset < data.len() {
-            let end = (offset + LARGE_RESPONSE_CHUNK).min(data.len());
-            let chunk = data.slice(offset..end);
+        while offset < bytes.len() {
+            let end = (offset + LARGE_RESPONSE_CHUNK).min(bytes.len());
+            // Copy each 64 KiB slice so queued/in-flight chunks never retain the full buffer
+            // after this task drops `bytes` and releases `budget`.
+            let chunk = axum::body::Bytes::copy_from_slice(&bytes[offset..end]);
             match tokio::time::timeout(chunk_timeout, tx.send(Ok(chunk))).await {
                 Ok(Ok(())) => offset = end,
-                Ok(Err(_)) => return,
+                Ok(Err(_)) => break,
                 Err(_) => {
                     let _ = tx.try_send(Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "Mission response delivery timed out",
                     )));
-                    return;
+                    break;
                 }
             }
         }
+        drop(bytes);
+        drop(budget);
     });
     let stream = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|item| (item, rx)) });
     let mut response = axum::body::Body::from_stream(stream).into_response();
@@ -192,13 +288,37 @@ pub(super) fn deliver_json_bytes(app: &crate::App, bytes: Vec<u8>) -> Result<Res
     Ok(stream_large_bytes(bytes, budget, LARGE_RESPONSE_CHUNK_TIMEOUT))
 }
 
+fn workspace_current(
+    app: &crate::App,
+    id: &str,
+    workspace: &crate::Workspace,
+    initial: &Option<String>,
+    endpoint: &Arc<opencode::Endpoint>,
+    display: &Arc<std::sync::atomic::AtomicBool>,
+) -> Result<(), Response> {
+    let Ok(after) = app.workspace(id) else {
+        return Err(unavailable(Status::NOT_FOUND, "workspace-unavailable"));
+    };
+    if after.path != workspace.path
+        || after.created_at != workspace.created_at
+        || after.location != workspace.location
+        || files::host_identity(&after.path).ok() != *initial
+        || !app.native.endpoint().is_some_and(|p| Arc::ptr_eq(&p, endpoint))
+        || !display.load(Ordering::Relaxed)
+    {
+        return Err(unavailable(Status::CONFLICT, "workspace-unavailable"));
+    }
+    Ok(())
+}
+
 async fn read(app: Shared, id: String, method: &'static str, input: Value, max: usize) -> Response {
     let Opened { slot, workspace, dir, project, canonical, initial, endpoint, display } = match open(&app, &id).await {
         Ok(opened) => opened,
         Err(refused) => return refused,
     };
+    let mut effective_method = method;
     let args = if method == "snapshot" { json!({}) } else { input.clone() };
-    let Ok(mut output) = native_read(
+    let (mut output, slot) = match native_read_rpc_holding(
         &app,
         &endpoint,
         Method::POST,
@@ -206,28 +326,43 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
         &dir,
         Some(json!({"input":args})),
         max + 256,
+        method == "mission",
+        slot,
     )
     .await
-    else {
-        return unavailable(Status::OK, "plugin-unavailable");
-    };
-    let Ok(after) = app.workspace(&id) else {
-        return unavailable(Status::NOT_FOUND, "workspace-unavailable");
-    };
-    if after.path != workspace.path
-        || after.created_at != workspace.created_at
-        || after.location != workspace.location
-        || files::host_identity(&after.path).ok() != initial
-        || !app.native.endpoint().is_some_and(|p| Arc::ptr_eq(&p, &endpoint))
-        || !display.load(Ordering::Relaxed)
     {
-        return unavailable(Status::CONFLICT, "workspace-unavailable");
+        Ok(result) => result,
+        Err(NativeRpcError::Absent(slot)) => {
+            if let Err(refused) = workspace_current(&app, &id, &workspace, &initial, &endpoint, &display) {
+                return refused;
+            }
+            effective_method = "snapshot";
+            let Ok(result) = native_read_holding(
+                &app,
+                &endpoint,
+                Method::POST,
+                "/api/rpc/codenomad.missions/snapshot",
+                &dir,
+                Some(json!({"input":{}})),
+                max + 256,
+                slot,
+            )
+            .await
+            else {
+                return unavailable(Status::OK, "plugin-unavailable");
+            };
+            result
+        }
+        Err(NativeRpcError::Failed) => return unavailable(Status::OK, "plugin-unavailable"),
+    };
+    if let Err(refused) = workspace_current(&app, &id, &workspace, &initial, &endpoint, &display) {
+        return refused;
     }
     let Some(mut result) = output.as_object_mut().and_then(|o| o.remove("output")) else {
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     };
     drop(output);
-    if method == "panelPage" && result["available"] == false {
+    if effective_method == "panelPage" && result["available"] == false {
         if result.as_object().is_some_and(|o| o.len() == 2)
             && matches!(
                 result["reason"].as_str(),
@@ -251,7 +386,7 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
         map["projectID"] == project
             && map["projectCanonical"].as_str().is_some_and(|p| fence::normalize(p) == fence::normalize(&canonical))
     };
-    let owned = match method {
+    let owned = match effective_method {
         "panelPage" => panel_scope(&input, &result),
         "mission" => result.get("mission").is_none_or(|map| map["id"] == input["missionID"] && owned_map(map)),
         "tasks" | "content" => result["missionID"] == input["missionID"],
@@ -261,17 +396,20 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
     if !scope || !owned {
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     }
-    let raw_limit = if method == "snapshot" {
+    let raw_limit = if effective_method == "snapshot" {
         result = admission_projection_owned(result, &input["missionID"]);
         max + 32
     } else {
         result["available"] = json!(true);
         max + 32
     };
-    let Ok(bytes) = encode_json_bytes(result, max >= LARGE_RESPONSE_THRESHOLD).await else {
+    let Ok((bytes, slot)) = encode_json_bytes_holding(result, slot, max >= LARGE_RESPONSE_THRESHOLD).await else {
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     };
     drop(slot);
+    if let Err(refused) = workspace_current(&app, &id, &workspace, &initial, &endpoint, &display) {
+        return refused;
+    }
     if bytes.len() > raw_limit {
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     }
@@ -508,6 +646,9 @@ mod tests {
         assert_eq!(collected, payload);
         tokio::task::yield_now().await;
         assert_eq!(budget.available_permits(), 4, "budget must release once body finishes");
+        // Chunks are copied into independent 64 KiB allocations, so holding `first` does not
+        // retain the full backing buffer.
+        assert_eq!(first.len(), LARGE_RESPONSE_CHUNK);
 
         // Stalled client: channel holds 2 chunks (128 KiB); chunk 3 blocks and times out cleanly.
         let stall_permit = budget.clone().try_acquire_many_owned(3).unwrap();
@@ -516,5 +657,70 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(120)).await;
         assert_eq!(budget.available_permits(), 4, "budget must release after stall timeout");
         drop(stalled);
+    }
+
+    #[tokio::test]
+    async fn encode_json_bytes_holding_keeps_permit_inside_blocking_task() {
+        let sem = Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = sem.clone().acquire_owned().await.unwrap();
+        assert_eq!(sem.available_permits(), 0);
+        let (bytes, returned) = encode_json_bytes_holding(json!({"ok": true}), permit, true).await.unwrap();
+        assert_eq!(sem.available_permits(), 0, "permit must stay held until caller drops it");
+        assert_eq!(bytes, br#"{"ok":true}"#);
+        drop(returned);
+        assert_eq!(sem.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn native_read_rpc_holding_detects_missing_method_and_returns_slot() {
+        use axum::{Router, routing::post};
+        let router = Router::new().route(
+            "/api/rpc/codenomad.missions/mission",
+            post(|| async {
+                (
+                    Status::BAD_REQUEST,
+                    Json(json!({
+                        "_tag": "RpcError",
+                        "type": "rpc.method_not_found",
+                        "message": "Unknown RPC method: mission"
+                    })),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        let endpoint = opencode::Endpoint {
+            url: reqwest::Url::parse(&format!("http://{addr}/")).unwrap(),
+            password: "secret".into(),
+            version: String::new(),
+            pid: 0,
+        };
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let sem = Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = sem.clone().acquire_owned().await.unwrap();
+        let res = native_read_rpc_with_client(
+            &client,
+            &endpoint,
+            Method::POST,
+            "/api/rpc/codenomad.missions/mission",
+            "/fixture",
+            Some(json!({"input": {"missionID": "msn_1"}})),
+            4096,
+            true,
+            permit,
+        )
+        .await;
+        match res {
+            Err(NativeRpcError::Absent(returned)) => {
+                assert_eq!(sem.available_permits(), 0);
+                drop(returned);
+                assert_eq!(sem.available_permits(), 1);
+            }
+            _ => panic!("expected NativeRpcError::Absent for rpc.method_not_found"),
+        }
+        server.abort();
     }
 }

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 
-export function actorWindow(missionID,revision,order){
+export function actorWindow(missionID,revision,order,runState){
   return {
     context:{id:missionID,projectID:'fixture-project',revision,status:'active',
+      ...(runState?{runState}:{}),
       coordinatorSessionId:'ses_existing',
       actors:[{sessionId:'ses_actor',title:'Acteur observé 🦀',location:{directory:'/fixture'},reportOwed:true,callOpen:false}],
       actorPage:{order,offset:0,end:1,total:1},

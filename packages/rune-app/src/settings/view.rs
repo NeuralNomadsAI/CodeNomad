@@ -293,7 +293,10 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 ),
             ]
             .into_iter()
-            .filter(|(key, _, _)| *key != "settings-stats" || super::stats::supported(&prefs))
+            .filter(|(key, _, _)| {
+                (*key != "settings-stats" || super::stats::supported(&prefs))
+                    && (*key != "settings-missions" || s.host_support.missions(&prefs))
+            })
             .chain(s.host_support.config_files(&prefs).then_some((
                 "settings-config-files",
                 config_label,
@@ -304,6 +307,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 if key == "settings-config-files"
                     && !s.host_support.config_files(&s.shared.borrow())
                 {
+                    return;
+                }
+                if key == "settings-missions" && !s.host_support.missions(&s.shared.borrow()) {
                     return;
                 }
                 if s.config_files.busy() {
@@ -317,7 +323,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 s.permissions.close();
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
-                    "settings-missions" => Section::Missions,
+                    "settings-missions" if s.host_support.missions(&s.shared.borrow()) => {
+                        Section::Missions
+                    }
                     "settings-conversation" => Section::Conversation,
                     "settings-notifications" => Section::Notifications,
                     "settings-providers" => Section::Providers,
@@ -465,13 +473,17 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ),
             Section::Missions => (
                 "missions",
-                super::missions::view(
-                    &prefs,
-                    |s: &mut Window, checked| {
-                        s.shared.borrow_mut().set_mission_delete_sessions(checked);
-                    },
-                    |s: &mut Window| s.shared.borrow_mut().retry_mission_delete_sessions(),
-                ),
+                if s.host_support.missions(&prefs) {
+                    super::missions::view(
+                        &prefs,
+                        |s: &mut Window, checked| {
+                            s.shared.borrow_mut().set_mission_delete_sessions(checked);
+                        },
+                        |s: &mut Window| s.shared.borrow_mut().retry_mission_delete_sessions(),
+                    )
+                } else {
+                    text(t("rune.loading")).role("status")
+                },
             ),
             Section::Advanced => (
                 "advanced",

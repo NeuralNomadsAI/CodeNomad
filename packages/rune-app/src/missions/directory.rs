@@ -86,8 +86,9 @@ pub(crate) struct Panel {
     deleted_missions: HashSet<String>,
     deleted_missions_order: VecDeque<String>,
     cleanup_meta: HashMap<(String, String), (String, u64, bool, u64)>,
-    pending_cleanup_set: HashSet<(String, String, String, u64, bool, u64, Option<bool>)>,
-    cleanups_dirty: bool,
+    pending_cleanup_set: HashSet<(String, String, String, u64, bool, u64)>,
+    observed_sync: Option<(u64, u64)>,
+    retired_sync: Option<(u64, u64, bool)>,
     cleanups_gen: u64,
     cleanups_rc: std::cell::RefCell<Option<(u64, std::rc::Rc<Vec<Cleanup>>)>>,
     #[cfg(test)]
@@ -141,7 +142,8 @@ impl Panel {
             deleted_missions_order: VecDeque::new(),
             cleanup_meta: HashMap::new(),
             pending_cleanup_set: HashSet::new(),
-            cleanups_dirty: false,
+            observed_sync: None,
+            retired_sync: None,
             cleanups_gen: 0,
             cleanups_rc: std::cell::RefCell::new(None),
             #[cfg(test)]
@@ -201,7 +203,7 @@ impl Panel {
         self.lanes[Kind::Cleanups as usize].failed.is_some()
     }
 
-    pub(crate) fn carry_document_pending_from(&mut self, old: &Self) {
+    pub(crate) fn carry_same_workspace_from(&mut self, old: &Self) {
         self.remembered_document_pending
             .clone_from(&old.remembered_document_pending);
         self.remembered_document_order
@@ -212,10 +214,33 @@ impl Panel {
         self.deleted_missions.clone_from(&old.deleted_missions);
         self.deleted_missions_order
             .clone_from(&old.deleted_missions_order);
+        self.summaries.clone_from(&old.summaries);
+        self.cleanups.clone_from(&old.cleanups);
+        self.rebuild_cleanup_indices();
     }
 
-    pub(crate) fn take_cleanups_dirty(&mut self) -> bool {
-        std::mem::take(&mut self.cleanups_dirty)
+    pub(super) fn sync_observed_cleanups(&mut self, owner_gen: u64) -> bool {
+        let key = (self.cleanups_gen, owner_gen);
+        if self.observed_sync == Some(key) {
+            return false;
+        }
+        self.observed_sync = Some(key);
+        true
+    }
+
+    pub(super) fn should_retire_cleanups(&self, owner_gen: u64, covered: bool) -> bool {
+        self.retired_sync != Some((self.cleanups_gen, owner_gen, covered))
+    }
+
+    pub(super) fn mark_retired_cleanups(&mut self, owner_gen: u64, covered: bool) {
+        self.retired_sync = Some((self.cleanups_gen, owner_gen, covered));
+    }
+
+    fn renew_cleanup_view(&mut self) {
+        self.cleanup_view_live.revoke();
+        if self.visible && self.online && !self.cleanups_unavailable() {
+            self.cleanup_view_live = LiveFlag::new(true);
+        }
     }
 
     pub(super) fn has_pending_cleanups(&self) -> bool {
@@ -255,7 +280,6 @@ impl Panel {
                 self.pending_cleanup_set.insert(pending_cleanup_tuple(row));
             }
         }
-        self.cleanups_dirty = true;
         self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
     }
 
@@ -446,6 +470,7 @@ impl Panel {
                 }
             }
         }
+        let pending_before = self.pending_cleanup_set.clone();
         let row_id = (receipt.mission_id.clone(), receipt.deletion_id.clone());
         let new_meta = (
             receipt.request_id.clone(),
@@ -475,8 +500,8 @@ impl Panel {
                     .insert(pending_cleanup_tuple(&receipt));
             }
             let lane_seen = &mut self.lanes[Kind::Cleanups as usize].seen;
-            // Cap only off-page adopted rows without evicting index 0 or legitimately
-            // paged current-order rows; order changes cap unvisited tails in merge_filtered.
+            // Cap only settled off-page adopted rows without evicting index 0, pending rows,
+            // or legitimately paged current-order rows.
             let max_rows = CLEANUP_DISPLAY_CAP.max(lane_seen.len().saturating_add(1));
             while self.cleanups.len() > max_rows {
                 let row_key =
@@ -485,23 +510,14 @@ impl Panel {
                 let Some(rel) = tail
                     .iter()
                     .rposition(|row| !row.is_pending() && !lane_seen.contains(&row_key(row)))
-                    .or_else(|| {
-                        tail.iter()
-                            .rposition(|row| !lane_seen.contains(&row_key(row)))
-                    })
                 else {
                     break;
                 };
                 let evicted = self.cleanups.remove(rel + 1);
                 self.cleanup_meta
                     .remove(&(evicted.mission_id.clone(), evicted.deletion_id.clone()));
-                if evicted.is_pending() {
-                    self.pending_cleanup_set
-                        .remove(&pending_cleanup_tuple(&evicted));
-                }
             }
         }
-        self.cleanups_dirty = true;
         self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
         if !receipt.is_pending() {
             self.remember_settled_cleanup(receipt.clone());
@@ -511,6 +527,9 @@ impl Panel {
             {
                 token.revoke();
             }
+        }
+        if self.pending_cleanup_set != pending_before {
+            self.renew_cleanup_view();
         }
     }
 
@@ -522,6 +541,7 @@ impl Panel {
         {
             token.revoke();
         }
+        let pending_before = self.pending_cleanup_set.clone();
         let mut updated = false;
         for row in &mut self.cleanups {
             if cleanup_identity(row) == *key && row.document_pending.is_none() {
@@ -536,8 +556,10 @@ impl Panel {
             }
         }
         if updated {
-            self.cleanups_dirty = true;
             self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
+            if self.pending_cleanup_set != pending_before {
+                self.renew_cleanup_view();
+            }
         }
     }
 
@@ -587,7 +609,7 @@ impl Panel {
             let keep = if self.cleanup_meta.contains_key(&(m.clone(), d.clone())) {
                 self.pending_cleanup_set
                     .iter()
-                    .any(|(del, mid, _, _, _, _, _)| mid == m && del == d)
+                    .any(|(del, mid, _, _, _, _)| mid == m && del == d)
             } else {
                 !covered
             };
@@ -929,7 +951,8 @@ impl Panel {
                 .find(|row| row.id == *id)
                 .map(|row| row.revision);
             let floor = self.detail.revision_floor(id, revision);
-            changed |= self.observation.settle(floor, self.now, &self.wake);
+            let header = self.detail.snapshot.as_ref().map(|s| &s.header);
+            changed |= self.observation.settle(floor, header, self.now, &self.wake);
             changed |= self.detail.poll(
                 &self.backend,
                 project,
@@ -1004,6 +1027,7 @@ impl Panel {
                     None,
                     |row| (row.id.clone(), None),
                     |row| !self.deleted_missions.contains(&row.id),
+                    |_| false,
                 ) {
                     return false;
                 }
@@ -1085,6 +1109,7 @@ impl Panel {
                     self.revoke_all_cleanup_tokens();
                     return false;
                 }
+                let pending_before = self.pending_cleanup_set.clone();
                 let lane = &mut self.lanes[kind as usize];
                 let had_tail = self.cleanups.len() > lane.prefix_len;
                 let before_len = self.cleanups.len();
@@ -1097,12 +1122,13 @@ impl Panel {
                     Some(CLEANUP_DISPLAY_CAP),
                     |row| (row.mission_id.clone(), Some(row.deletion_id.clone())),
                     |_| true,
+                    Cleanup::is_pending,
                 ) {
                     return false;
                 }
                 let covered = page.window.end == page.window.total;
                 let trimmed = self.cleanups.len() < before_len
-                    || (had_tail && self.cleanups.len() == CLEANUP_DISPLAY_CAP);
+                    || (had_tail && self.cleanups.len() >= CLEANUP_DISPLAY_CAP);
                 self.project = Some(page.project_id);
                 lane.window = Some(page.window);
                 if read == Read::Refresh || (covered && had_tail) || trimmed {
@@ -1114,7 +1140,6 @@ impl Panel {
                     for tuple in incoming_pending {
                         self.pending_cleanup_set.insert(tuple);
                     }
-                    self.cleanups_dirty = true;
                     self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
                 }
                 for (id, doc_pending) in &doc_updates {
@@ -1128,6 +1153,9 @@ impl Panel {
                 }
                 self.remember_document_pending_batch(&doc_updates);
                 self.sync_cleanup_tokens(covered);
+                if self.pending_cleanup_set != pending_before {
+                    self.renew_cleanup_view();
+                }
                 return true;
             }
             _ => return false,
@@ -1276,7 +1304,7 @@ pub(super) fn title(row: &Summary) -> &str {
         .unwrap_or(&row.objective)
 }
 
-fn pending_cleanup_tuple(row: &Cleanup) -> (String, String, String, u64, bool, u64, Option<bool>) {
+fn pending_cleanup_tuple(row: &Cleanup) -> (String, String, String, u64, bool, u64) {
     (
         row.deletion_id.clone(),
         row.mission_id.clone(),
@@ -1284,7 +1312,6 @@ fn pending_cleanup_tuple(row: &Cleanup) -> (String, String, String, u64, bool, u
         row.expected_revision,
         row.delete_managed_sessions,
         row.created_at.to_bits(),
-        row.document_pending,
     )
 }
 
@@ -1294,6 +1321,7 @@ impl Drop for Panel {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn merge_filtered<T>(
     display: &mut Vec<T>,
     lane: &mut Lane,
@@ -1303,6 +1331,7 @@ fn merge_filtered<T>(
     cap: Option<usize>,
     key: impl Fn(&T) -> (String, Option<String>),
     keep: impl Fn(&T) -> bool,
+    pin: impl Fn(&T) -> bool,
 ) -> bool {
     if read == Read::Refresh {
         lane.seen.clear();
@@ -1312,6 +1341,25 @@ fn merge_filtered<T>(
     }
     let incoming_keys: Vec<(String, Option<String>)> = rows.iter().map(&key).collect();
     let kept: Vec<T> = rows.into_iter().filter(&keep).collect();
+    let extend_tail =
+        |display: &mut Vec<T>, tail: Vec<T>, seen: &HashSet<(String, Option<String>)>| {
+            let filtered: Vec<T> = tail
+                .into_iter()
+                .filter(|row| keep(row) && !seen.contains(&key(row)))
+                .collect();
+            let pinned = filtered.iter().filter(|row| pin(row)).count();
+            let mut unpinned_budget = cap.map_or(usize::MAX, |max_len| {
+                max_len.saturating_sub(display.len().saturating_add(pinned))
+            });
+            for row in filtered {
+                if pin(&row) {
+                    display.push(row);
+                } else if unpinned_budget > 0 {
+                    unpinned_budget -= 1;
+                    display.push(row);
+                }
+            }
+        };
     if read == Read::More && lane.prefix_len > 0 && lane.prefix_len <= display.len() {
         // Fast path: display[..lane.prefix_len] is already the contiguous current-order prefix.
         let tail = display.split_off(lane.prefix_len);
@@ -1319,12 +1367,7 @@ fn merge_filtered<T>(
         display.extend(kept);
         lane.prefix_len = display.len();
         if window.end != window.total && !tail.is_empty() {
-            let remaining = cap.map_or(usize::MAX, |max_len| max_len.saturating_sub(display.len()));
-            display.extend(
-                tail.into_iter()
-                    .filter(|row| keep(row) && !lane.seen.contains(&key(row)))
-                    .take(remaining),
-            );
+            extend_tail(display, tail, &lane.seen);
         }
         return true;
     }
@@ -1348,13 +1391,7 @@ fn merge_filtered<T>(
     display.extend(kept);
     lane.prefix_len = display.len();
     if window.end != window.total {
-        let remaining = cap.map_or(usize::MAX, |max_len| max_len.saturating_sub(display.len()));
-        display.extend(
-            tail_rows
-                .into_iter()
-                .filter(|row| !lane.seen.contains(&key(row)))
-                .take(remaining),
-        );
+        extend_tail(display, tail_rows, &lane.seen);
     }
     true
 }

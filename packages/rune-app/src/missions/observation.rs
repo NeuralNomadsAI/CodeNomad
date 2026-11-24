@@ -80,6 +80,15 @@ impl Observation {
         })
     }
 
+    pub fn verified_actor_state(&self, header: &MapHeader, session_id: &str) -> Option<ActorState> {
+        let state = self.actor_state(session_id)?;
+        if state == ActorState::IdleWithoutReport && !self.complete_and_fresh_for(header) {
+            Some(ActorState::Unknown)
+        } else {
+            Some(state)
+        }
+    }
+
     pub fn has_actor(&self, session_id: &str) -> bool {
         self.pages.iter().any(|page| {
             page.actors
@@ -88,7 +97,7 @@ impl Observation {
         })
     }
 
-    pub fn complete_and_fresh(&self, revision: u64) -> bool {
+    pub fn complete_and_fresh_for(&self, header: &MapHeader) -> bool {
         // Separately observed windows never manufacture a whole-mission idle proof
         // (mirrors Solid mission-panel-inventory.ts).
         !self.disconnected
@@ -101,9 +110,11 @@ impl Observation {
                 let page = &self.pages[0];
                 page.window.total == page.actors.len() as u64
                     && self.current(page)
-                    && page.revision == revision
+                    && page.revision == header.root.revision
                     && page.coverage == Coverage::Observed
                     && page.requests == Coverage::Observed
+                    && page.family_observed
+                    && page_matches_header(page, header)
             }
     }
 
@@ -188,11 +199,11 @@ impl Observation {
     ) -> bool {
         header.root.status == Status::Active
             && header.root.run_state.unwrap_or(RunState::Running) == RunState::Running
-            && self.complete_and_fresh(header.root.revision)
+            && self.complete_and_fresh_for(header)
             && !self.has_mission_level_question(header, tasks)
             && !self.any_actor_running()
             && !self.any_live_actor_unknown(header, tasks)
-            && self.actor_state(&header.root.coordinator_session_id)
+            && self.verified_actor_state(header, &header.root.coordinator_session_id)
                 == Some(ActorState::IdleWithoutReport)
     }
 
@@ -229,7 +240,13 @@ impl Observation {
         }
     }
 
-    pub fn settle(&mut self, floor: Option<u64>, now: f64, wake: &Wake) -> bool {
+    pub fn settle(
+        &mut self,
+        floor: Option<u64>,
+        header: Option<&MapHeader>,
+        now: f64,
+        wake: &Wake,
+    ) -> bool {
         let advanced = floor > self.revision;
         if advanced {
             self.revision = floor;
@@ -249,7 +266,10 @@ impl Observation {
                 wake();
             }
             self.failed = match result {
-                Ok(page) if Some(page.revision) >= self.revision.max(floor) => {
+                Ok(page)
+                    if Some(page.revision) >= self.revision.max(floor)
+                        && header.is_none_or(|shown| page_matches_header(&page, shown)) =>
+                {
                     let revision = page.revision;
                     let previous_failure = self.failed.filter(|failed| offset == 0 && *failed != 0);
                     let same_order = self
@@ -431,6 +451,7 @@ impl Observation {
             || self.pages.iter().any(|page| {
                 page.coverage != Coverage::Observed
                     || page.requests != Coverage::Observed
+                    || !page.family_observed
                     || !self.current(page)
             });
         let mut view = col()
@@ -450,7 +471,12 @@ impl Observation {
                 let state = if !self.current(page) {
                     ActorState::Unknown
                 } else {
-                    actor.request.unwrap_or(actor.state)
+                    let raw = actor.request.unwrap_or(actor.state);
+                    if partial && raw == ActorState::IdleWithoutReport {
+                        ActorState::Unknown
+                    } else {
+                        raw
+                    }
                 };
                 list = list.child(
                     col()
@@ -497,6 +523,28 @@ impl Observation {
     }
 }
 
+fn page_matches_header(page: &Activity, header: &MapHeader) -> bool {
+    if page.coordinator_session_id != header.root.coordinator_session_id {
+        return false;
+    }
+    if page.revision == header.root.revision {
+        if page.status != header.root.status || page.run_state != header.root.run_state {
+            return false;
+        }
+        if let Some((total, order)) = header.actors_collection() {
+            if page.window.total != total {
+                return false;
+            }
+            if let Some(expected_order) = order
+                && page.window.order != expected_order
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -506,6 +554,10 @@ mod tests {
         Activity {
             revision,
             observed_at,
+            coordinator_session_id: "ses_coord".into(),
+            status: Status::Active,
+            run_state: Some(RunState::Running),
+            family_observed: true,
             window: Window {
                 order: "same".into(),
                 offset,
@@ -546,11 +598,56 @@ mod tests {
         state.invalidate(2.0);
         send.try_send(Ok(page(7, 100.0, 0, 2))).ok().unwrap();
         let wake: Wake = std::sync::Arc::new(|| {});
-        assert!(state.settle(Some(8), 3.0, &wake));
+        assert!(state.settle(Some(8), None, 3.0, &wake));
         assert!(state.pages.is_empty());
         assert_eq!(state.due, Some(8.0));
         state.cancel();
         assert!(state.due.is_none() && !state.busy());
+    }
+
+    #[test]
+    fn settle_rejects_activity_whose_context_disagrees_with_selected_header() {
+        let header: MapHeader = serde_json::from_value(serde_json::json!({
+            "root": {
+                "version": 1, "id": "msn-1", "projectID": "project", "projectCanonical": "/fixture",
+                "excerpt": "Fixture", "template": "custom", "status": "active", "runState": "running",
+                "coordinatorSessionId": "ses_coord", "revision": 7,
+                "createdAt": 1, "updatedAt": 1, "historyTruncated": false, "bodies": {}
+            },
+            "collections": {
+                "actors": {"characters": 10, "digest": "a".repeat(43), "total": 2, "array": true, "order": "expected-ord"}
+            },
+            "tasks": {"page": {"order": "", "offset": 0, "end": 0, "total": 0, "counts": {}, "reports": 0},
+                "pins": [], "reportPins": [], "version": ""},
+            "coordinator": null,
+            "control": null
+        }))
+        .unwrap();
+        let wake: Wake = std::sync::Arc::new(|| {});
+        let mut wrong_order = page(7, 100.0, 0, 2);
+        wrong_order.window.order = "other-ord".into();
+        let mut state = Observation::default();
+        let (send, inbox) = bounded(1);
+        state.active = Some((0, inbox));
+        send.try_send(Ok(wrong_order)).ok().unwrap();
+        assert!(state.settle(Some(7), Some(&header), 1.0, &wake));
+        assert!(
+            state.pages.is_empty(),
+            "mismatched actor order must be rejected"
+        );
+        assert_eq!(state.failed, Some(0));
+
+        let mut wrong_coord = page(7, 101.0, 0, 2);
+        wrong_coord.window.order = "expected-ord".into();
+        wrong_coord.coordinator_session_id = "ses_other".into();
+        let (send, inbox) = bounded(1);
+        state.active = Some((0, inbox));
+        send.try_send(Ok(wrong_coord)).ok().unwrap();
+        assert!(state.settle(Some(7), Some(&header), 2.0, &wake));
+        assert!(
+            state.pages.is_empty(),
+            "mismatched coordinator must be rejected"
+        );
     }
 }
 

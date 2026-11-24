@@ -339,6 +339,11 @@ impl MapHeader {
     pub fn has_coordinator_actor(&self) -> bool {
         self.coordinator.is_some()
     }
+
+    pub fn actors_collection(&self) -> Option<(u64, Option<&str>)> {
+        let actors = self.collections.get("actors")?;
+        Some((actors.total, actors.order.as_deref()))
+    }
 }
 
 pub struct DetailRead<T> {

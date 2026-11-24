@@ -69,6 +69,10 @@ fn obs_page(
     let page = Activity {
         revision,
         observed_at: 100.0,
+        coordinator_session_id: "ses_coord".into(),
+        status: Status::Active,
+        run_state: Some(RunState::Running),
+        family_observed: true,
         window: Window {
             order: "ord".into(),
             offset: 0,
@@ -214,6 +218,10 @@ fn separate_activity_windows_never_manufacture_idle_proof_and_sse_loss_persists_
     let page1 = Activity {
         revision: 7,
         observed_at: 100.0,
+        coordinator_session_id: "ses_coord".into(),
+        status: Status::Active,
+        run_state: Some(RunState::Running),
+        family_observed: true,
         window: Window {
             order: "ord-161".into(),
             offset: 0,
@@ -243,6 +251,10 @@ fn separate_activity_windows_never_manufacture_idle_proof_and_sse_loss_persists_
     let page2 = Activity {
         revision: 7,
         observed_at: 101.0,
+        coordinator_session_id: "ses_coord".into(),
+        status: Status::Active,
+        run_state: Some(RunState::Running),
+        family_observed: true,
         window: Window {
             order: "ord-161".into(),
             offset: 160,
@@ -294,6 +306,10 @@ fn separate_activity_windows_never_manufacture_idle_proof_and_sse_loss_persists_
     let single_idle = Activity {
         revision: 7,
         observed_at: 102.0,
+        coordinator_session_id: "ses_coord".into(),
+        status: Status::Active,
+        run_state: Some(RunState::Running),
+        family_observed: true,
         window: Window {
             order: "ord-1".into(),
             offset: 0,
@@ -812,6 +828,7 @@ fn task_report_recovery_eligibility_rendering_and_dispatch() {
             Default::default(),
             wake.clone(),
         );
+        panel.selection_live = super::super::cleanup::LiveFlag::new(true);
         panel.observation = obs;
         panel.detail.snapshot = Some(detail::Snapshot {
             header,
@@ -890,6 +907,152 @@ fn task_report_recovery_eligibility_rendering_and_dispatch() {
                 .owner
                 .recovery
                 .admitted(&RecoveryKey::report(&src, 7, "task-native"))
+        );
+    });
+}
+
+#[test]
+fn native_report_recovery_withholds_idle_proof_when_partial_or_refreshing_after_refusal() {
+    let header = header_value("msn-par", "active", Some("running"), 7, true, None);
+    let native_task: codenomad_client::missions::Task = serde_json::from_value(json!({
+        "id": "tsk-native", "key": "task-native", "title": "Native task", "status": "queued",
+        "blockedBy": [], "role": "specialist", "order": 0, "createdAt": 1, "updatedAt": 1,
+        "dependents": 0, "reportCount": 0, "outstandingExecution": false,
+        "actorSessionId": "ses_native",
+        "contractGeneration": 1,
+        "nativeBinding": {"generation": 1, "parentSessionID": "ses_coord", "parentMessageID": "msg_1", "toolCallID": "call_1"},
+        "nativeExecution": {"ended": "returned", "binding": {"generation": 1, "parentSessionID": "ses_coord", "parentMessageID": "msg_1", "toolCallID": "call_1"}}
+    }))
+    .unwrap();
+    let indep_task: codenomad_client::missions::Task = serde_json::from_value(json!({
+        "id": "tsk-indep", "key": "task-indep", "title": "Indep task", "status": "queued",
+        "blockedBy": [], "role": "specialist", "order": 1, "createdAt": 1, "updatedAt": 1,
+        "dependents": 0, "reportCount": 0, "outstandingExecution": false,
+        "actorSessionId": "ses_indep",
+        "admissionId": "adm-1"
+    }))
+    .unwrap();
+
+    // 1. Partial observation downgrades IdleWithoutReport -> Unknown: native blocked, independent allowed.
+    let partial = obs_page(
+        7,
+        Coverage::Partial,
+        Coverage::Observed,
+        3,
+        vec![
+            ("ses_native", ActorState::IdleWithoutReport, None),
+            ("ses_indep", ActorState::IdleWithoutReport, None),
+        ],
+    );
+    assert_eq!(
+        partial.verified_actor_state(&header, "ses_native"),
+        Some(ActorState::Unknown)
+    );
+    assert!(
+        !report_eligible(&header, &native_task, &partial),
+        "partial activity must not offer native report recovery"
+    );
+    assert!(
+        report_eligible(&header, &indep_task, &partial),
+        "independent report recovery remains allowed on unknown/partial activity"
+    );
+
+    // 2. While refreshing (e.g. after recovery-busy refusal), stale IdleWithoutReport is downgraded.
+    let mut refreshing = obs_page(
+        7,
+        Coverage::Observed,
+        Coverage::Observed,
+        2,
+        vec![
+            ("ses_coord", ActorState::Running, None),
+            ("ses_native", ActorState::IdleWithoutReport, None),
+        ],
+    );
+    assert!(report_eligible(&header, &native_task, &refreshing));
+    refreshing.refresh();
+    assert!(
+        !report_eligible(&header, &native_task, &refreshing),
+        "refreshing observation must withhold native report recovery until fresh data arrives"
+    );
+}
+
+#[test]
+fn stale_delete_button_after_selection_revocation_cannot_dispatch_delete() {
+    use super::super::{Lifecycle, Panel, detail, task_rows::TaskRows};
+    use rune::{Env, Runtime};
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let (wake, _) = witness();
+        let header = header_value("msn-del", "active", Some("running"), 7, true, None);
+        let mut panel = Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        panel.selection_live = super::super::cleanup::LiveFlag::new(true);
+        panel.detail.snapshot = Some(detail::Snapshot {
+            header,
+            tasks: std::rc::Rc::new(TaskRows::new(vec![])),
+            end: 0,
+            attention_end: 0,
+        });
+        struct Harness {
+            panel: Panel,
+            owner: Lifecycle,
+        }
+        let mut rt = Runtime::new(
+            Harness {
+                panel,
+                owner: Lifecycle::default(),
+            },
+            |h, _| {
+                crate::strings::with_locale("en", || {
+                    super::super::lifecycle_view::controls(
+                        &h.panel,
+                        &h.owner,
+                        "occ",
+                        Some(false),
+                        |s: &mut Harness, source, gesture| {
+                            s.panel.control("occ", &mut s.owner, source, gesture);
+                        },
+                    )
+                })
+            },
+            (480.0, 240.0),
+            Env::new(false, 1.0),
+        );
+        rt.frame(1.0 / 60.0);
+        let (dx, dy) = rt
+            .find("mission-control-delete")
+            .expect("delete button must render");
+        // Simulate A -> B -> A or hide/reauth revoking the rendered selection token before click.
+        rt.state.panel.selection_live.revoke();
+        rt.state.panel.selection_live = super::super::cleanup::LiveFlag::new(true);
+        // Click the stale rendered tree without re-rendering first.
+        rt.pointer_down(dx, dy);
+        rt.pointer_up(dx, dy);
+        http.quiet().await;
+        let src = Source::new(
+            "occ",
+            &http.backend,
+            &rt.state.panel.detail.snapshot.as_ref().unwrap().header,
+        )
+        .unwrap();
+        assert!(
+            rt.state.owner.cleanup.delete_state(&src).is_none(),
+            "stale Delete button must not start a new DELETE after selection_live revocation"
         );
     });
 }

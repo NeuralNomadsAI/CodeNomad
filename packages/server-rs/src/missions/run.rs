@@ -444,8 +444,8 @@ async fn mutate(
         if lifetime.is_cancelled() {
             return Err(plugin_unavailable());
         }
-        let (status, mut body) = scope
-            .call(&app, method, &input, 85, rpc_response_limit(method))
+        let (status, mut body, slot) = scope
+            .call_holding(&app, method, &input, 85, rpc_response_limit(method), slot)
             .await
             .map_err(|_| plugin_unavailable())?;
         if !status.is_success() {
@@ -467,10 +467,13 @@ async fn mutate(
         {
             return Err(plugin_unavailable());
         }
-        let bytes = super::reads::encode_json_bytes(result, method == "recover")
+        let (bytes, slot) = super::reads::encode_json_bytes_holding(result, slot, method == "recover")
             .await
             .map_err(|_| plugin_unavailable())?;
         drop(slot);
+        if !scope.current(&app) {
+            return Err(plugin_unavailable());
+        }
         super::reads::deliver_json_bytes(&app, bytes).map_err(|_| plugin_unavailable())
     })
     .await

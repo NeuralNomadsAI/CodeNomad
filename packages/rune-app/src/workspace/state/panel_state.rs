@@ -305,7 +305,7 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
             let mut panel =
                 missions::Panel::new(backend, carried_project, s.reads.clone(), s.wake.clone());
             if same_workspace && let Some(old) = entry.missions.as_ref() {
-                panel.carry_document_pending_from(old);
+                panel.carry_same_workspace_from(old);
             }
             if stream_offline {
                 panel.set_online(false);
@@ -342,13 +342,9 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
     }
     // Propagate passively observed documentPending: true into active delete intents BEFORE
     // polling delete completions so a same-poll bare {deleted: true} cannot drop the intent.
-    // Skip idle/parked tabs when neither cleanups nor active delete intents need observation.
+    // Panel::observe_cleanups skips unchanged (cleanups_gen, cleanup_owner_gen) pairs in O(1).
     for entry in &mut ui.entries {
-        if let Some(panel) = &mut entry.missions
-            && let Some(scope) = panel.cleanup_scope()
-            && (panel.take_cleanups_dirty()
-                || ui.mission_lifecycle.has_delete_intents_in_scope(&scope))
-        {
+        if let Some(panel) = &mut entry.missions {
             panel.observe_cleanups(&mut ui.mission_lifecycle);
         }
     }

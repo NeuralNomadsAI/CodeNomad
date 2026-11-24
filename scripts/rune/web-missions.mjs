@@ -21,6 +21,7 @@ const taskOrder=digest(tasks.map(task=>JSON.stringify(task.key)))
 const attention={counts:{notifications:0,blocked:1,failed:0,recovery:0},omitted:1,sequence:digest(['"task-50"'])}
 const taskPage=(offset,end)=>({order:taskOrder,offset,end,total:tasks.length,counts:{ready:51,'needs-input':1},reports:0,attention})
 const descriptor={digest:digest([]),characters:2,total:0,array:true}
+const actorsDescriptor={digest:digest([]),characters:2,total:1,array:true,order:taskOrder}
 
 export function missionsFixture({page,messages,artifact,project}){
   let summaries=initial, corrupt=false, held, gammaRevision=6
@@ -64,7 +65,7 @@ export function missionsFixture({page,messages,artifact,project}){
         version:1,id:missionID,projectID:'fixture-project',projectCanonical:'/fixture',title:`Fiche ${missionID}`,
         excerpt:'Objectif de la fiche 🦀',template:'custom',status:'active',revision:missionRevision,createdAt:1,updatedAt:1,
         coordinatorSessionId:'ses_existing',historyTruncated:false,bodies:{},
-      },collections:{actors:descriptor,history:descriptor,reports:descriptor},
+      },collections:{actors:actorsDescriptor,history:descriptor,reports:descriptor},
        tasks:{page:{...taskPage(0,50),attention:{...attention,keys:['task-50']}},pins:['tsk-51'],reportPins:[],version:taskOrder}}
       if(missionID!=='gamma'){
         header.tasks={page:{order:digest([]),offset:0,end:0,total:0,reports:0,counts:{}},pins:[],reportPins:[],version:digest([])}
@@ -79,7 +80,7 @@ export function missionsFixture({page,messages,artifact,project}){
       }
       const live=request.source==='activity'
       const row=request.header?header:live
-        ?(missionID==='alpha'?recovery.alphaActorWindow(taskOrder):actorWindow(missionID,missionRevision,taskOrder)):
+        ?(missionID==='alpha'?recovery.alphaActorWindow(taskOrder):actorWindow(missionID,missionRevision,taskOrder,header.root.runState)):
         task.attention===0?{taskPage:{...taskPage(0,0),attention:{...attention,offset:0,end:1}},tasks:[tasks[50]],reports:[]}:
         task.ids?{taskPage:taskPage(0,0),tasks:[tasks[51]],reports:[]}:
         {taskPage:taskPage(offset,Math.min(offset+50,tasks.length)),tasks:tasks.slice(offset,offset+50),reports:[]}

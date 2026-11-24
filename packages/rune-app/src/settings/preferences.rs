@@ -469,11 +469,16 @@ impl Preferences {
                 .memory
                 .poll_review(backend, self.provider_target.as_ref(), &main, &window)
             | install;
-        if self.config.take_auth_expired()
-            || self.state.take_auth_expired()
-            || self.server.take_auth_expired()
-        {
-            self.document_auth_expired = Some(backend.clone());
+        let auth_expired = [
+            self.config.take_auth_expired(),
+            self.state.take_auth_expired(),
+            self.server.take_auth_expired(),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|expired| expired.client.same_connection(&backend.client));
+        if let Some(expired) = auth_expired {
+            self.document_auth_expired = Some(expired);
             self.require_authentication();
             return true;
         }

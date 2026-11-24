@@ -187,6 +187,11 @@ impl Panel {
             prefs.memory.show(true);
             changed = true;
         }
+        if self.section == Section::Missions && !self.scope.missions(prefs) {
+            self.section = Section::General;
+            prefs.memory.show(true);
+            changed = true;
+        }
         changed
             | self.config_files.poll(
                 prefs,
@@ -308,6 +313,7 @@ pub(super) fn view(
     .filter(|section| match section {
         Section::OpenCode | Section::Remote => local,
         Section::ConfigFiles => panel.scope.config_files(prefs),
+        Section::Missions => panel.scope.missions(prefs),
         Section::Stats => super::stats::supported(prefs),
         _ => true,
     })
@@ -330,6 +336,7 @@ pub(super) fn view(
                 || (section == Section::Stats && !super::stats::supported(&prefs))
                 || (matches!(section, Section::OpenCode | Section::Remote) && !panel.local(&prefs))
                 || section == Section::ConfigFiles && !panel.scope.config_files(&prefs)
+                || section == Section::Missions && !panel.scope.missions(&prefs)
                 || panel.config_files.busy()
             {
                 return;
@@ -469,7 +476,7 @@ pub(super) fn view(
                     &mut s.settings.web.config_files
                 })
         }
-        Section::Missions => super::missions::view(
+        Section::Missions if panel.scope.missions(prefs) => super::missions::view(
             prefs,
             |s: &mut State, checked| {
                 s.settings
@@ -517,7 +524,9 @@ pub(super) fn view(
             },
             local.then_some(open_remote),
         ),
-        Section::OpenCode | Section::Remote | Section::ConfigFiles => rune::el(),
+        Section::OpenCode | Section::Remote | Section::ConfigFiles | Section::Missions => {
+            rune::el()
+        }
     };
     if let Some(editor) = prefs.memory.editor_view(
         &panel.memory_editor,

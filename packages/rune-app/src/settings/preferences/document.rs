@@ -205,6 +205,7 @@ enum DocumentReply {
 struct Flight {
     operation: Operation,
     reply: Receiver<DocumentReply>,
+    backend: Backend,
 }
 
 #[derive(Default)]
@@ -215,12 +216,12 @@ pub(super) struct Document {
     flight: Option<Flight>,
     barrier: Option<Flight>,
     notification_failure: bool,
-    auth_expired: bool,
+    auth_expired: Option<Backend>,
 }
 
 impl Document {
-    pub(super) fn take_auth_expired(&mut self) -> bool {
-        std::mem::take(&mut self.auth_expired)
+    pub(super) fn take_auth_expired(&mut self) -> Option<Backend> {
+        self.auth_expired.take()
     }
 
     pub(super) fn take_notification_failure(&mut self) -> bool {
@@ -247,6 +248,7 @@ impl Document {
             *self = Self::default();
             return;
         }
+        self.auth_expired = None;
         if let Some(flight) = self.flight.take() {
             match flight.operation {
                 Operation::Write(_) => self.barrier = Some(flight),
@@ -491,7 +493,9 @@ impl Document {
                     DocumentReply::Snapshot(v) => Some(v),
                     DocumentReply::Failed => None,
                     DocumentReply::AuthExpired => {
-                        self.auth_expired = true;
+                        if flight.backend.client.same_connection(&backend.client) {
+                            self.auth_expired = Some(flight.backend);
+                        }
                         None
                     }
                 };
@@ -508,7 +512,9 @@ impl Document {
                     DocumentReply::Snapshot(v) => Some(v),
                     DocumentReply::Failed => None,
                     DocumentReply::AuthExpired => {
-                        self.auth_expired = true;
+                        if flight.backend.client.same_connection(&backend.client) {
+                            self.auth_expired = Some(flight.backend);
+                        }
                         None
                     }
                 };
@@ -516,7 +522,7 @@ impl Document {
                 changed = true;
             }
         }
-        if self.auth_expired {
+        if self.auth_expired.is_some() {
             return changed;
         }
         let operation = if !self.write.retry.is_empty() {
@@ -568,7 +574,11 @@ impl Document {
             None
         };
         let (sender, reply) = bounded(1);
-        self.flight = Some(Flight { operation, reply });
+        self.flight = Some(Flight {
+            operation,
+            reply,
+            backend: backend.clone(),
+        });
         let (backend, main, window) = (backend.clone(), main.clone(), window.clone());
         platform::spawn(async move {
             let mut reply = DocumentReply::Failed;

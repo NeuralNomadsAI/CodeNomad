@@ -1369,15 +1369,16 @@ fn cleanup_retry_fences_selection_change_and_pending_row_set_change() {
         assert_eq!(polled.settled_cleanups.len(), 1);
         assert_eq!(polled.settled_cleanups[0].1.deletion_id, "del-1");
 
-        // 2. Loading/changing an unrelated pending cleanup row while GET is in flight must NOT cancel row_b's retry.
-        let mut row_c = cleanup_row(1, false);
-        row_c.mission_id = "third".into();
-        row_c.deletion_id = "del-3".into();
+        // 2a. Passive list reload keeping the same pending cleanup set (even with a new settled row)
+        // must preserve an in-flight explicit retry for row_b.
+        let mut settled_c = cleanup_row(0, false);
+        settled_c.mission_id = "third-settled".into();
+        settled_c.deletion_id = "del-3-settled".into();
         assert!(panel.accept_cleanups_for_test(vec![row_b.clone()]));
         panel.retry_cleanup(&mut lifecycle, &sc, row_b.clone());
         let get2 = http.accept().await;
         assert!(get2.header.starts_with("GET /api/workspaces/"));
-        assert!(panel.accept_cleanups_for_test(vec![row_b.clone(), row_c]));
+        assert!(panel.accept_cleanups_for_test(vec![row_b.clone(), settled_c]));
         let mut row_b_json = cleanup_json(1, false);
         row_b_json["missionID"] = json!("other");
         row_b_json["deletionID"] = json!("del-2");
@@ -1392,7 +1393,7 @@ fn cleanup_retry_fences_selection_change_and_pending_row_set_change() {
         let del2 = http.accept().await;
         assert!(
             del2.header.starts_with("DELETE /api/workspaces/"),
-            "unrelated cleanup row changes must preserve an explicit retry for an unchanged row"
+            "passive reload with unchanged pending set must preserve an explicit retry"
         );
         let mut settled_b = cleanup_json(0, false);
         settled_b["missionID"] = json!("other");
@@ -1403,6 +1404,38 @@ fn cleanup_retry_fences_selection_change_and_pending_row_set_change() {
         let polled = lifecycle.cleanup.poll();
         assert_eq!(polled.settled_cleanups.len(), 1);
         assert_eq!(polled.settled_cleanups[0].1.deletion_id, "del-2");
+
+        // 2b. Adding a new PENDING cleanup row changes the pending cleanup set and revokes
+        // cleanup_view_live (mirroring Solid MissionCleanupPanel captureView fence).
+        let mut row_d = cleanup_row(1, false);
+        row_d.mission_id = "fourth".into();
+        row_d.deletion_id = "del-4".into();
+        let mut row_e = cleanup_row(1, false);
+        row_e.mission_id = "fifth".into();
+        row_e.deletion_id = "del-5".into();
+        assert!(panel.accept_cleanups_for_test(vec![row_d.clone()]));
+        panel.retry_cleanup(&mut lifecycle, &sc, row_d.clone());
+        let get3 = http.accept().await;
+        assert!(get3.header.starts_with("GET /api/workspaces/"));
+        assert!(panel.accept_cleanups_for_test(vec![row_d, row_e]));
+        let mut row_d_json = cleanup_json(1, false);
+        row_d_json["missionID"] = json!("fourth");
+        row_d_json["deletionID"] = json!("del-4");
+        get3.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 3,
+                "cleanups": [row_d_json]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        http.quiet().await;
+        let polled = lifecycle.cleanup.poll();
+        assert!(
+            polled.settled_cleanups.is_empty(),
+            "new pending row must revoke cleanup view fence before DELETE"
+        );
     });
 }
 
@@ -3300,6 +3333,145 @@ fn remembered_document_pending_overflow_never_marks_journal_only_receipt_pending
         panel.adopt_settled_cleanup(journal_only);
         assert_eq!(panel.cleanups[0].document_pending, None);
         assert!(!panel.cleanups[0].is_pending());
+    });
+}
+
+#[test]
+fn revoked_direct_delete_post_delete_reconciliation_aborts_without_publishing_settled_receipt() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-post-del-cancel");
+        let mut owner = CleanupOwner::default();
+        owner.start_delete(
+            &src,
+            "PostDel".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let first = http.accept().await;
+        let request_id = first.body["requestId"].as_str().unwrap().to_owned();
+        first.reply(503, json!({})).await;
+        let rec1 = http.accept().await;
+        let pending_json = json!({
+            "missionID": "msn-post-del-cancel", "deletionID": "del-1", "requestID": request_id,
+            "expectedRevision": 7, "deleteManagedSessions": false,
+            "objective": "PostDel", "createdAt": 1, "removed": 0, "retained": 0,
+            "pending": 1, "reasons": [], "documentPending": false
+        });
+        rec1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [pending_json.clone()]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+        assert!(owner.delete_state(&src).is_some());
+
+        // Retry delete: preflight GET succeeds, DELETE returns 409, post-DELETE GET starts.
+        let view = live_flag();
+        owner.retry_delete(&src, &request_id, view.clone(), http.backend.clone(), wake);
+        let pre = http.accept().await;
+        pre.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": [pending_json]
+            }),
+        )
+        .await;
+        let del = http.accept().await;
+        assert!(del.header.starts_with("DELETE /api/workspaces/"));
+        del.reply(409, json!({"code": "request-conflict"})).await;
+        let _post_get = http.accept().await;
+
+        // Hide the view while the post-DELETE reconciliation GET is hung: cancel aborts it
+        // immediately without waiting for the hung socket, and publishes no settled receipt.
+        view.revoke();
+        wait(done.recv()).await.unwrap();
+        let polled = owner.poll_deletes();
+        assert!(
+            polled.settled_cleanups.is_empty(),
+            "revoked post-DELETE reconciliation must not publish a settled receipt"
+        );
+        assert!(
+            !matches!(owner.delete_state(&src), Some(DeleteState::Busy)),
+            "revoked post-DELETE reconciliation must release the busy flight immediately"
+        );
+    });
+}
+
+#[test]
+fn partial_cleanup_refresh_preserves_loaded_pending_rows_beyond_cap_and_reauth_carries_rows() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        let make_row = |prefix: &str, idx: u64, pending: u64| {
+            let mut r = cleanup_row(pending, false);
+            r.mission_id = format!("{prefix}-m-{idx}");
+            r.deletion_id = format!("{prefix}-d-{idx}");
+            r
+        };
+        // Load 2,000 rows where the very last row (index 1,999) is PENDING.
+        for page in 0..40u64 {
+            let offset = page * 50;
+            let rows = (0..50)
+                .map(|i| {
+                    let idx = offset + i;
+                    make_row("old", idx, u64::from(idx == 1_999))
+                })
+                .collect();
+            assert!(panel.accept_more_cleanups_for_test("order-old", offset, 2_000, rows));
+        }
+        assert_eq!(panel.cleanups.len(), 2_000);
+        // Partial refresh in a new order with 50 brand-new settled rows must NOT drop pending 1,999.
+        let new_page: Vec<Cleanup> = (0..50).map(|i| make_row("new", i, 0)).collect();
+        assert!(panel.accept_more_cleanups_for_test("order-new", 0, 2_050, new_page));
+        assert_eq!(panel.cleanups.len(), 2_000);
+        assert!(
+            panel
+                .cleanups
+                .iter()
+                .any(|row| row.deletion_id == "old-d-1999" && row.is_pending()),
+            "partial refresh in a new order must never drop already-loaded pending cleanup rows"
+        );
+
+        // Same-workspace reauth carries last known summaries and cleanups into the fresh Panel.
+        panel.summaries.push(codenomad_client::missions::Summary {
+            id: "msn-keep".into(),
+            title: Some("Keep".into()),
+            objective: "Keep".into(),
+            status: codenomad_client::missions::Status::Active,
+            run_state: None,
+            coordinator_session_id: "ses_coord".into(),
+            actor_count: 1,
+            updated_at: 1.0,
+            revision: 3,
+            finish_sequence: None,
+            task_count: None,
+        });
+        let mut reauthed = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        reauthed.carry_same_workspace_from(&panel);
+        assert_eq!(reauthed.summaries.len(), 1);
+        assert_eq!(reauthed.summaries[0].id, "msn-keep");
+        assert_eq!(reauthed.cleanups.len(), 2_000);
+        assert!(reauthed.has_pending_cleanups());
     });
 }
 

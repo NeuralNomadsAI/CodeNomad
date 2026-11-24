@@ -297,7 +297,19 @@ impl Scope {
         seconds: u64,
         max: usize,
     ) -> Result<(Status, Value), Error> {
-        self.request(
+        self.call_holding(app, method, input, seconds, max, ()).await.map(|(status, body, ())| (status, body))
+    }
+
+    pub async fn call_holding<T: Send + 'static>(
+        &self,
+        app: &App,
+        method: &str,
+        input: &Value,
+        seconds: u64,
+        max: usize,
+        hold: T,
+    ) -> Result<(Status, Value, T), Error> {
+        self.request_holding(
             app,
             Method::POST,
             &format!("/api/rpc/codenomad.missions/{method}"),
@@ -305,6 +317,7 @@ impl Scope {
             Some(&json!({"input":input})),
             seconds,
             max,
+            hold,
         )
         .await
     }
@@ -319,6 +332,23 @@ impl Scope {
         seconds: u64,
         max: usize,
     ) -> Result<(Status, Value), Error> {
+        self.request_holding(app, method, path, query, input, seconds, max, ())
+            .await
+            .map(|(status, body, ())| (status, body))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn request_holding<T: Send + 'static>(
+        &self,
+        app: &App,
+        method: Method,
+        path: &str,
+        query: &[(&str, &str)],
+        input: Option<&Value>,
+        seconds: u64,
+        max: usize,
+        hold: T,
+    ) -> Result<(Status, Value, T), Error> {
         let url = self.endpoint.url.join(path).map_err(|_| unavailable())?;
         if !self.current(app) {
             return Err(unavailable());
@@ -333,15 +363,15 @@ impl Scope {
         let request = if let Some(input) = input { request.json(input) } else { request };
         let res = request.send().await.map_err(|_| unavailable())?;
         let status = res.status();
-        let body = if status == Status::NO_CONTENT {
-            Value::Null
+        let (body, hold) = if status == Status::NO_CONTENT {
+            (Value::Null, hold)
         } else {
-            opencode::read_json(res, max).await.map_err(|_| unavailable())?
+            opencode::read_json_holding(res, max, hold).await.map_err(|_| unavailable())?
         };
         if !self.current(app) {
             return Err(unavailable());
         }
-        Ok((status, body))
+        Ok((status, body, hold))
     }
 }
 

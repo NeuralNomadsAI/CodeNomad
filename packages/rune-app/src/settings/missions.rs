@@ -618,4 +618,112 @@ mod tests {
             http.quiet().await;
         });
     }
+
+    #[test]
+    fn stale_barrier_401_does_not_expire_new_connection_and_dual_401_drains_both() {
+        platform::block_on(async {
+            let http = Http::new().await;
+            let mut prefs = Preferences::default();
+            prefs.bind(Some(http.backend.clone()));
+
+            // Both config and state return 401 in the same poll; both flags must drain without
+            // surviving into a fresh rebind.
+            prefs.poll();
+            let r1 = http.accept().await;
+            let r2 = http.accept().await;
+            r1.reply(401, json!({"error": "unauthorized"})).await;
+            r2.reply(401, json!({"error": "unauthorized"})).await;
+            // Two auth status probes follow.
+            let p1 = http.accept().await;
+            let p2 = http.accept().await;
+            p1.reply(200, json!({"authenticated": false})).await;
+            p2.reply(200, json!({"authenticated": false})).await;
+            // Give both background tasks a moment to deliver AuthExpired into their channels so
+            // both land before a single poll.
+            platform::sleep(Duration::from_millis(50)).await;
+            prefs.poll();
+            assert!(prefs.take_document_auth_expired().is_some());
+            assert!(!prefs.can_retry());
+
+            // Rebind to a fresh backend on the same address: no stale auth_expired
+            // may survive from the second document.
+            let fresh =
+                codenomad_client::backend::Backend::unauthenticated(&http.backend.base).unwrap();
+            prefs.bind(Some(fresh.clone()));
+            assert!(prefs.can_retry());
+            let (mut got_config, mut got_state) = (false, false);
+            while !(got_config && got_state) {
+                prefs.poll();
+                let req = http.accept().await;
+                if req.header.contains("/api/storage/config/ui") {
+                    req.reply(200, json!({"settings": {"missionDeleteSessions": false}}))
+                        .await;
+                    got_config = true;
+                } else {
+                    req.reply(200, json!({})).await;
+                    got_state = true;
+                }
+            }
+            wait_until(|| {
+                prefs.poll();
+                prefs.mission_delete_sessions() == Some(false)
+            })
+            .await;
+
+            // Start a write on `fresh`, then rebind to `newer` while the write is in flight so
+            // it becomes a `barrier` flight. A 401 from that old-connection barrier must NOT
+            // expire `newer`.
+            prefs.set_mission_delete_sessions(true);
+            prefs.poll();
+            let old_patch = http.accept().await;
+            assert!(
+                old_patch
+                    .header
+                    .starts_with("PATCH /api/storage/config/ui ")
+            );
+
+            let newer =
+                codenomad_client::backend::Backend::unauthenticated(&http.backend.base).unwrap();
+            prefs.bind(Some(newer));
+            assert!(prefs.can_retry());
+
+            // Now fail the old barrier write with 401 + auth probe unauthenticated.
+            old_patch
+                .reply(401, json!({"error": "old-cookie-expired"}))
+                .await;
+            let old_probe = http.accept().await;
+            assert!(old_probe.header.starts_with("GET /api/auth/status"));
+            old_probe.reply(200, json!({"authenticated": false})).await;
+
+            // Poll through barrier settlement + new connection reattach reads; auth must stay live!
+            let (mut new_config, mut new_state) = (false, false);
+            while !(new_config && new_state) {
+                prefs.poll();
+                assert!(
+                    prefs.take_document_auth_expired().is_none(),
+                    "401 from an old barrier connection must never expire the new connection"
+                );
+                assert!(prefs.can_retry());
+                if let Ok(req) =
+                    tokio::time::timeout(Duration::from_millis(20), http.accept()).await
+                {
+                    if req.header.contains("/api/storage/config/ui") {
+                        req.reply(200, json!({"settings": {"missionDeleteSessions": false}}))
+                            .await;
+                        new_config = true;
+                    } else if req.header.contains("/api/storage/state") {
+                        req.reply(200, json!({})).await;
+                        new_state = true;
+                    }
+                }
+            }
+            wait_until(|| {
+                prefs.poll();
+                prefs.mission_delete_sessions() == Some(false)
+            })
+            .await;
+            assert!(prefs.take_document_auth_expired().is_none());
+            assert!(prefs.can_retry());
+        });
+    }
 }

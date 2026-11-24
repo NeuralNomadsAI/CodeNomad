@@ -15,6 +15,7 @@ use std::{borrow::Cow, collections::HashMap, rc::Rc};
 pub(crate) struct TaskRecoveryView<S: 'static> {
     source: Source,
     revision: u64,
+    selection_live: super::cleanup::LiveFlag,
     act: fn(&mut S, &Source, Gesture),
     states: HashMap<String, TaskRecoveryState>,
 }
@@ -67,6 +68,7 @@ impl<S: 'static> TaskRecoveryView<S> {
         Some(Self {
             source,
             revision,
+            selection_live: panel.selection_live.clone(),
             act,
             states,
         })
@@ -225,13 +227,14 @@ impl TaskRows {
         {
             let source = ctx.source.clone();
             let revision = ctx.revision;
+            let selection_live = ctx.selection_live.clone();
             let task_key = task.key.clone();
             let act = ctx.act;
             let disabled = rec.disabled;
             let label = t("missions.recovery.report");
             row = row.child(
                 layout::button_tx(label, false, move |s: &mut S, tx| {
-                    if !disabled {
+                    if !disabled && selection_live.is_live() {
                         act(
                             s,
                             &source,

@@ -37,6 +37,10 @@ pub enum ActorState {
 pub struct Activity {
     pub revision: u64,
     pub observed_at: f64,
+    pub coordinator_session_id: String,
+    pub status: Status,
+    pub run_state: Option<RunState>,
+    pub family_observed: bool,
     pub window: Window,
     pub coverage: Coverage,
     pub requests: Coverage,
@@ -73,10 +77,8 @@ struct Context {
     #[serde(rename = "projectID")]
     project_id: String,
     revision: u64,
-    #[serde(rename = "status")]
-    _status: Status,
-    #[serde(rename = "runState")]
-    _run_state: Option<RunState>,
+    status: Status,
+    run_state: Option<RunState>,
     coordinator_session_id: String,
     actors: Vec<ContextActor>,
     actor_page: Window,
@@ -319,6 +321,10 @@ fn decode(page: Verified, mission: &str, offset: u64, order: Option<&str>) -> Re
     Ok(Activity {
         revision: ctx.revision,
         observed_at: page.observed_at.ok_or("missing Mission observation time")?,
+        coordinator_session_id: ctx.coordinator_session_id,
+        status: ctx.status,
+        run_state: ctx.run_state,
+        family_observed: row.activity.family.state == Coverage::Observed,
         window,
         coverage: row.coverage,
         requests: row.requests.state,

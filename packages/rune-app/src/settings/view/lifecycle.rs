@@ -50,6 +50,11 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         prefs.memory.show(true);
                         config_changed = true;
                     }
+                    if s.section == Section::Missions && !s.host_support.missions(&prefs) {
+                        s.section = Section::General;
+                        prefs.memory.show(true);
+                        config_changed = true;
+                    }
                     config_changed |= s.config_files.poll(
                         &prefs,
                         &wake,
