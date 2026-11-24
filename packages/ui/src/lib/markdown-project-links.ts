@@ -30,7 +30,9 @@ export function projectLinkPath(href: string): string | undefined {
   path = path.replace(/\\/g, "/")
   if (path.startsWith("//")) return undefined
   if (!WINDOWS_DRIVE.test(path) && SCHEME.test(path)) return undefined
-  // Trailing separators go, except a filesystem root's (`/`, `C:/`).
+  // Trailing separators go, except a filesystem root's (`/`, `C:/`); `./`
+  // alone names the base directory itself.
+  if (/^\.\/*$/.test(path)) return "."
   path = path.replace(/^(?:\.\/)+/, "").replace(/([^/:])\/+$/, "$1")
   return path || undefined
 }

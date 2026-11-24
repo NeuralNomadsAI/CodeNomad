@@ -643,28 +643,25 @@ fn is_local_disk_path(path: &Path) -> bool {
 
 /// Whether a file's first bytes read as text, as the file preview decides: no
 /// NUL byte and valid UTF-8 (a character cut at a full sample's end still counts).
-fn looks_like_text(path: &Path) -> bool {
+fn looks_like_text(path: &Path) -> std::io::Result<bool> {
     use std::io::Read;
     let mut sample = [0u8; 8192];
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
+    let mut file = std::fs::File::open(path)?;
     let mut length = 0;
     while length < sample.len() {
-        match file.read(&mut sample[length..]) {
-            Ok(0) => break,
-            Ok(read) => length += read,
-            Err(_) => return false,
+        match file.read(&mut sample[length..])? {
+            0 => break,
+            read => length += read,
         }
     }
     let bytes = &sample[..length];
     if bytes.contains(&0) {
-        return false;
+        return Ok(false);
     }
-    match std::str::from_utf8(bytes) {
+    Ok(match std::str::from_utf8(bytes) {
         Ok(_) => true,
         Err(error) => error.error_len().is_none() && length == sample.len(),
-    }
+    })
 }
 
 fn open_local_path_impl(path: &str, keep: &str) -> Result<bool, String> {
@@ -693,7 +690,10 @@ fn open_local_path_impl(path: &str, keep: &str) -> Result<bool, String> {
         }
         return Err("Only files and folders can be opened".into());
     }
-    if !folder && (keep == "files" || (keep == "text" && looks_like_text(&selected))) {
+    let text = !folder
+        && keep == "text"
+        && looks_like_text(&selected).map_err(|error| error.to_string())?;
+    if !folder && (keep == "files" || text) {
         return Ok(false);
     }
     let cwd = if folder {
@@ -732,9 +732,10 @@ mod tests {
         long.extend_from_slice("é".as_bytes());
         std::fs::write(workspace.path().join("long.txt"), long).unwrap();
         std::fs::write(workspace.path().join("clip.mp4"), [0, 0, 0, 24, 102, 116]).unwrap();
-        assert!(looks_like_text(&workspace.path().join("notes.txt")));
-        assert!(looks_like_text(&workspace.path().join("long.txt")));
-        assert!(!looks_like_text(&workspace.path().join("clip.mp4")));
+        assert!(looks_like_text(&workspace.path().join("notes.txt")).unwrap());
+        assert!(looks_like_text(&workspace.path().join("long.txt")).unwrap());
+        assert!(!looks_like_text(&workspace.path().join("clip.mp4")).unwrap());
+        assert!(looks_like_text(&workspace.path().join("missing")).is_err());
         for name in ["notes.txt", "missing"] {
             let path = workspace.path().join(name);
             assert_eq!(

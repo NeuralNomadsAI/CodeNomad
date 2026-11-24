@@ -64,12 +64,17 @@ export function sessionLinkBase(instanceId: string, sessionId: string): SessionL
   return { slug: worktree?.slug ?? "root", directory, serviceDirectory: worktree?.serviceDirectory, base: worktree?.serviceDirectory ?? directory }
 }
 
+/** The worktree-relative path an href names, written in the service's or the
+ * host's namespace (they differ for WSL worktrees), or undefined. */
+export const worktreeLinkPath = (href: string, base: SessionLinkBase) => resolveProjectLinkPath(href, base.base)
+  ?? (base.directory !== base.base ? resolveProjectLinkPath(href, base.directory) : undefined)
+
 /** The file-reader target a link href resolves to inside the session's
  * worktree, or undefined when it points anywhere else. */
 export function resolveSessionProjectLink(instanceId: string, sessionId: string, href: string): SessionProjectLink | undefined {
   const root = sessionLinkBase(instanceId, sessionId)
   if (root === undefined) return undefined
-  const path = resolveProjectLinkPath(href, root.base)
+  const path = worktreeLinkPath(href, root)
   if (path === undefined) return undefined
   return { slug: root.slug, directory: root.directory, serviceDirectory: root.serviceDirectory, path }
 }
@@ -91,7 +96,7 @@ export function localLinkPath(href: string, base: SessionLinkBase | undefined): 
   const url = localFileUrlPath(href)
   if (url !== undefined) return url
   const directory = base?.directory.replace(/[\\/]+$/, "")
-  const project = base && resolveProjectLinkPath(href, base.base)
+  const project = base && worktreeLinkPath(href, base)
   if (project !== undefined) return `${directory}/${project}`
   const path = projectLinkPath(href)
   if (path === undefined || /^(?:\/|[A-Za-z]:\/)/.test(path)) return path
@@ -182,7 +187,7 @@ export function decorateSessionLinks(container: ParentNode, titles: SessionLinkT
     const href = anchor.getAttribute("href") ?? ""
     const loopback = Boolean(previewTitle) && isLoopbackHttpUrl(href)
     const local = titles.local ? localLinkPath(href, base) : undefined
-    const file = Boolean(fileTitle) && !titles.local && resolveProjectLinkPath(href, base!.base) !== undefined
+    const file = Boolean(fileTitle) && !titles.local && worktreeLinkPath(href, base!) !== undefined
     const title = loopback ? previewTitle
       : local !== undefined ? `${displayPath(local)}\n${localFileUrlPath(href) !== undefined ? titles.system : titles.file}`
       : file ? titles.file : ""

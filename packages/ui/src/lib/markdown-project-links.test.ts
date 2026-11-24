@@ -25,6 +25,8 @@ describe("project-file link paths", () => {
     assert.equal(projectLinkPath("/%5Cfixture.invalid%5Cshare%5Cnotes.txt"), undefined)
     assert.equal(projectLinkPath("/"), "/")
     assert.equal(projectLinkPath("C:/"), "C:/")
+    assert.equal(projectLinkPath("./"), ".")
+    assert.equal(resolveProjectLinkPath("./", "/home/me/repo"), undefined)
   })
 
   it("reads local file URLs", () => {

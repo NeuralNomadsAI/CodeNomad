@@ -163,6 +163,10 @@ test("on the local desktop, local links open in the preview when it shows them, 
     const wsl = { slug: "root", directory: "C:/repo", serviceDirectory: "/mnt/c/repo", base: "/mnt/c/repo" }
     assert.deepEqual(await page.evaluate(base => ["/mnt/c/repo/clip.mp4", "./clip.mp4", "file:C:/x/y.txt"]
       .map(href => (window as any).fixture.localLinkPath(href, base)), wsl), ["C:/repo/clip.mp4", "C:/repo/clip.mp4", "C:/x/y.txt"])
+    // Host-side paths stay worktree paths, so their text files keep the preview; `./` names the directory.
+    assert.deepEqual(await page.evaluate(base => ["C:/repo/README.md", "/mnt/c/repo/README.md"]
+      .map(href => (window as any).fixture.worktreeLinkPath(href, base)), wsl), ["README.md", "README.md"])
+    assert.equal(await page.evaluate(base => (window as any).fixture.localLinkPath("./", base), wsl), "C:/repo/.")
     // Failures and missing targets explain themselves.
     await page.click('#main-root a[href="./locked"]')
     await page.click('#main-root a[href="./gone.md"]', { modifiers: ["Control"] })
