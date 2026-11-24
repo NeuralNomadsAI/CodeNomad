@@ -56,13 +56,19 @@ pub(super) async fn handle(
             ));
         }
     }
-    let bytes = to_bytes(body, delta).await.map_err(|_| {
-        crate::shared::fastify::error(
-            Status::PAYLOAD_TOO_LARGE,
-            "FST_ERR_CTP_BODY_TOO_LARGE",
-            "Request body is too large",
-        )
-    })?;
+    let bytes = tokio::select! {
+        biased;
+        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+        res = tokio::time::timeout(Duration::from_secs(15), to_bytes(body, delta)) => match res {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(_)) => return Err(crate::shared::fastify::error(
+                Status::PAYLOAD_TOO_LARGE,
+                "FST_ERR_CTP_BODY_TOO_LARGE",
+                "Request body is too large",
+            )),
+            Err(_) => return Err(error(Status::REQUEST_TIMEOUT, "Request body timed out")),
+        },
+    };
     let mut input: Value = match crate::shared::fastify::body(&parts.headers, &bytes)? {
         Some(crate::shared::fastify::Body::Json(value)) => value,
         Some(crate::shared::fastify::Body::Text(_)) | None => return Err(invalid()),
@@ -309,7 +315,16 @@ impl Scope<'_> {
         if !self.current() {
             return Err(None);
         }
-        if loc.get("workspaceID").is_some() || loc["directory"].as_str() != Some(directory) {
+        let Some(loc_dir) = loc.get("directory").and_then(Value::as_str).filter(|d| !d.trim().is_empty()) else {
+            // Invalid native `/api/location` payload shape -> `blocked/unavailable` (TS `session-history.ts:65-72, 109`).
+            return Err(None);
+        };
+        if let Some(ws) = loc.get("workspaceID") {
+            // Non-string `workspaceID` (including `null`) is a malformed native location payload
+            // -> `blocked/unavailable`; a string `workspaceID` is a foreign workspace -> `403`.
+            return if ws.is_string() { Err(Some(location_denied())) } else { Err(None) };
+        }
+        if loc_dir != directory {
             return Err(Some(location_denied()));
         }
         let rechecked = self.own(directory).await;

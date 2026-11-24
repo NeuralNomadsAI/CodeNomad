@@ -391,7 +391,7 @@ impl Placement {
             .await
             .ok()
             .flatten()
-            .is_some()
+            .is_some_and(|fresh| self.checkout.same_checkout(&fresh))
         } else {
             false
         };
@@ -780,6 +780,208 @@ fn process_window_payload(
     Ok(body.into())
 }
 
+fn valid_outline_payload(action: &str, raw: &str) -> bool {
+    const MAX_SAFE_INT: f64 = 9_007_199_254_740_991.0;
+    fn present_non_null<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+        T: serde::Deserialize<'de>,
+    {
+        T::deserialize(d).map(Some)
+    }
+    fn present_nullable<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+        T: serde::Deserialize<'de>,
+    {
+        <Option<T> as serde::Deserialize<'de>>::deserialize(d).map(Some)
+    }
+    struct JsonNum(f64);
+    impl<'de> serde::Deserialize<'de> for JsonNum {
+        fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> serde::de::Visitor<'de> for V {
+                type Value = JsonNum;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("a JSON number")
+                }
+                fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
+                    Ok(JsonNum(v as f64))
+                }
+                fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
+                    Ok(JsonNum(v as f64))
+                }
+                fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
+                    Ok(JsonNum(v))
+                }
+            }
+            d.deserialize_any(V)
+        }
+    }
+    let valid_int = |n: &JsonNum, min: f64| n.0.is_finite() && n.0.fract() == 0.0 && n.0 >= min && n.0 <= MAX_SAFE_INT;
+    let valid_blocked_reason = |r: &str| {
+        matches!(r, "unavailable" | "maintenance_required" | "conflict" | "not_deletable" | "unsupported_storage")
+    };
+    let utf16_len = |s: &str| s.encode_utf16().count();
+
+    if action == "outlinePreview" {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PreviewEntry {
+            id: String,
+            text: String,
+            tools: String,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PreviewDoc {
+            status: String,
+            #[serde(default, deserialize_with = "present_non_null")]
+            reason: Option<String>,
+            #[serde(default, deserialize_with = "present_non_null")]
+            entries: Option<Vec<PreviewEntry>>,
+        }
+        let Ok(doc) = serde_json::from_str::<PreviewDoc>(raw) else { return false };
+        return match doc.status.as_str() {
+            "blocked" => doc.entries.is_none() && doc.reason.as_deref().is_some_and(valid_blocked_reason),
+            "previews" => {
+                doc.reason.is_none()
+                    && doc.entries.as_ref().is_some_and(|entries| {
+                        entries.len() <= 12
+                            && entries.iter().all(|e| {
+                                let id_len = utf16_len(&e.id);
+                                (1..=256).contains(&id_len) && utf16_len(&e.text) <= 4096 && utf16_len(&e.tools) <= 4096
+                            })
+                    })
+            }
+            _ => false,
+        };
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Omitted {
+        reasoning: JsonNum,
+        text: JsonNum,
+        #[serde(rename = "continues")]
+        _continues: bool,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Entry {
+        id: String,
+        seq: JsonNum,
+        #[serde(rename = "type")]
+        kind: String,
+        tools: JsonNum,
+        reasoning: JsonNum,
+        #[serde(default, deserialize_with = "present_non_null")]
+        text: Option<JsonNum>,
+        #[serde(default, deserialize_with = "present_non_null")]
+        #[serde(rename = "toolName")]
+        tool_name: Option<String>,
+        #[serde(default, deserialize_with = "present_non_null")]
+        layout: Option<String>,
+        #[serde(default, deserialize_with = "present_non_null")]
+        omitted: Option<Omitted>,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Cursor {
+        after: JsonNum,
+        through: JsonNum,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Checkpoint {
+        after: JsonNum,
+        through: JsonNum,
+        digest: String,
+        #[serde(rename = "changed")]
+        _changed: bool,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct OutlineDoc {
+        status: String,
+        #[serde(default, deserialize_with = "present_non_null")]
+        reason: Option<String>,
+        #[serde(default, deserialize_with = "present_non_null")]
+        entries: Option<Vec<Entry>>,
+        #[serde(default, deserialize_with = "present_non_null")]
+        total: Option<JsonNum>,
+        #[serde(default, deserialize_with = "present_nullable")]
+        cursor: Option<Option<Cursor>>,
+        #[serde(default, deserialize_with = "present_non_null")]
+        checkpoints: Option<Vec<Checkpoint>>,
+    }
+    let Ok(doc) = serde_json::from_str::<OutlineDoc>(raw) else { return false };
+    match doc.status.as_str() {
+        "blocked" => {
+            doc.entries.is_none()
+                && doc.total.is_none()
+                && doc.cursor.is_none()
+                && doc.checkpoints.is_none()
+                && doc.reason.as_deref().is_some_and(valid_blocked_reason)
+        }
+        "outline" => {
+            if doc.reason.is_some() {
+                return false;
+            }
+            let (Some(entries), Some(total), Some(cursor), Some(checkpoints)) =
+                (&doc.entries, &doc.total, &doc.cursor, &doc.checkpoints)
+            else {
+                return false;
+            };
+            if entries.len() > 16_384 || checkpoints.len() > 512 || !valid_int(total, 0.0) {
+                return false;
+            }
+            if let Some(c) = cursor
+                && (!valid_int(&c.after, 0.0) || !valid_int(&c.through, 0.0))
+            {
+                return false;
+            }
+            let valid_layout = |s: &str| {
+                let markers =
+                    |p: &str, max: usize| p.len() <= max && p.bytes().all(|b| matches!(b, b'R' | b'T' | b'X'));
+                s.split_once('-').map_or_else(|| markers(s, 1000), |(a, b)| markers(a, 500) && markers(b, 500))
+            };
+            entries.iter().all(|e| {
+                let id_len = utf16_len(&e.id);
+                (1..=256).contains(&id_len)
+                    && valid_int(&e.seq, 0.0)
+                    && matches!(
+                        e.kind.as_str(),
+                        "user"
+                            | "assistant"
+                            | "system"
+                            | "synthetic"
+                            | "skill"
+                            | "shell"
+                            | "compaction"
+                            | "idle"
+                            | "agent-switched"
+                            | "model-switched"
+                            | "location-switched"
+                    )
+                    && valid_int(&e.tools, 0.0)
+                    && valid_int(&e.reasoning, 0.0)
+                    && e.text.as_ref().is_none_or(|t| valid_int(t, 0.0))
+                    && e.tool_name.as_deref().is_none_or(|n| utf16_len(n) <= 256)
+                    && e.layout.as_deref().is_none_or(valid_layout)
+                    && e.omitted.as_ref().is_none_or(|o| valid_int(&o.reasoning, 0.0) && valid_int(&o.text, 0.0))
+                    && (e.omitted.is_some() == e.layout.as_deref().is_some_and(|l| l.contains('-')))
+            }) && checkpoints.iter().all(|c| {
+                valid_int(&c.after, -1.0)
+                    && valid_int(&c.through, 0.0)
+                    && c.digest.len() == 64
+                    && c.digest.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
+            })
+        }
+        _ => false,
+    }
+}
+
 fn process_history_payload(
     status: Status,
     mut body: Vec<u8>,
@@ -799,26 +1001,15 @@ fn process_history_payload(
     let raw_bytes = raw.get().as_bytes();
     let offset = raw_bytes.as_ptr() as usize - body.as_ptr() as usize;
     let raw_range = offset..offset + raw_bytes.len();
-    // `outline` / `outlinePreview` schemas are strict flat lists (max 16,384 / 12 entries, max
-    // string 4096 UTF-16 units = <= 24,576 raw JSON bytes when fully escaped, no passthrough
-    // metadata). Capping both node count and per-string raw length keeps `serde_json`'s unescape
-    // scratch buffer <= 64 KiB and total peak RAM well within the 56 MiB History reservation.
+    // `outline` / `outlinePreview` deserialize directly into flat `#[serde(deny_unknown_fields)]`
+    // structs (zero `BTreeMap`s) after O(1)-memory node and per-string length checks, keeping peak
+    // RAM well below the 56 MiB History pool reservation even for adversarial 24 MiB payloads.
     const MAX_OUTLINE_NODES: usize = 400_000;
     const MAX_OUTLINE_STRING_BYTES: usize = 64 * 1024;
-    if !crate::sessions::media_stream::json_bounds_within(raw_bytes, MAX_OUTLINE_NODES, MAX_OUTLINE_STRING_BYTES) {
-        return Err(blocked("unavailable"));
-    }
-    let Ok(output) = serde_json::from_str::<Value>(raw.get()) else { return Err(blocked("unavailable")) };
     if !status.is_success()
-        || !crate::sessions::contracts::valid(crate::sessions::contracts::get(action, true), &output)
+        || !crate::sessions::media_stream::json_bounds_within(raw_bytes, MAX_OUTLINE_NODES, MAX_OUTLINE_STRING_BYTES)
+        || !valid_outline_payload(action, raw.get())
     {
-        return Err(blocked("unavailable"));
-    }
-    if output["entries"].as_array().is_some_and(|items| {
-        items.iter().any(|item| {
-            item.get("omitted").is_some() != item["layout"].as_str().is_some_and(|layout| layout.contains('-'))
-        })
-    }) {
         return Err(blocked("unavailable"));
     }
     Ok(detach_or_slice(body, raw_range))
@@ -854,13 +1045,19 @@ pub async fn handle(
             ));
         }
     }
-    let bytes = to_bytes(body, limit).await.map_err(|_| {
-        crate::shared::fastify::error(
-            Status::PAYLOAD_TOO_LARGE,
-            "FST_ERR_CTP_BODY_TOO_LARGE",
-            "Request body is too large",
-        )
-    })?;
+    let bytes = tokio::select! {
+        biased;
+        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+        res = tokio::time::timeout(Duration::from_secs(15), to_bytes(body, limit)) => match res {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(_)) => return Err(crate::shared::fastify::error(
+                Status::PAYLOAD_TOO_LARGE,
+                "FST_ERR_CTP_BODY_TOO_LARGE",
+                "Request body is too large",
+            )),
+            Err(_) => return Err(error(Status::REQUEST_TIMEOUT, "Request body timed out")),
+        },
+    };
     let parsed = match crate::shared::fastify::body(&parts.headers, &bytes)? {
         Some(crate::shared::fastify::Body::Json(value)) => Some(value),
         Some(crate::shared::fastify::Body::Text(_)) | None => None,
@@ -1030,15 +1227,15 @@ pub async fn handle(
             } else {
                 mem = None;
             }
-            let payload = match projected {
-                Ok(payload) => payload,
-                Err(invalid_response) => return invalid_response,
-            };
             match placement.current(&app, &id, session).await {
                 Recheck::Current => {}
                 Recheck::Conflict => return blocked("conflict"),
                 Recheck::Unavailable => return blocked("unavailable"),
             }
+            let payload = match projected {
+                Ok(payload) => payload,
+                Err(invalid_response) => return invalid_response,
+            };
             drop(slot);
             if principal.live().is_err() {
                 return crate::auth::unauthorized().into_response();

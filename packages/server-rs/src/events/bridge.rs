@@ -3,7 +3,6 @@
 //! `InstanceEventQueue` does, with its budget and the reference's session location cache.
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicI64, AtomicUsize, Ordering::Relaxed},
@@ -31,6 +30,37 @@ const ROUTING_BYTES: usize = 32 << 20;
 const ROUTING_TIMEOUT: Duration = Duration::from_secs(60);
 /// A session's directory from its last located event or native read (TS `sessionLocations`).
 const LOCATION_TTL: Duration = Duration::from_secs(2);
+
+/// Estimates the in-memory footprint of a retained `serde_json::Value` so dense numeric/object
+/// arrays cannot exceed `ROUTING_BYTES` even when their serialized JSON text is compact.
+fn value_bytes(value: &Value) -> usize {
+    let mut total = std::mem::size_of::<Value>();
+    let mut stack = vec![value];
+    while let Some(v) = stack.pop() {
+        match v {
+            Value::Null | Value::Bool(_) | Value::Number(_) => {}
+            Value::String(s) => total = total.saturating_add(s.capacity()),
+            Value::Array(items) => {
+                total = total.saturating_add(items.capacity().saturating_mul(std::mem::size_of::<Value>()));
+                for item in items {
+                    stack.push(item);
+                }
+            }
+            Value::Object(map) => {
+                // Account for `BTreeMap` node/entry overhead plus owned key strings.
+                total = total.saturating_add(map.len().saturating_mul(std::mem::size_of::<Value>() + 64));
+                for (k, val) in map {
+                    total = total.saturating_add(k.capacity());
+                    stack.push(val);
+                }
+            }
+        }
+        if total > ROUTING_BYTES {
+            return total;
+        }
+    }
+    total
+}
 
 fn status(app: &App, next: &'static str, reason: Option<&str>) {
     let mut store = app.inner.lock().unwrap();
@@ -358,11 +388,11 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                 }
                 const SDK_FRAME_UNITS: usize = 16 * 1024 * 1024;
                 let wire = event.to_string();
-                let mut bytes = wire.len();
+                let mut bytes = wire.len().max(value_bytes(&event));
                 if bytes > ROUTING_BYTES {
                     break;
                 }
-                if bytes > SDK_FRAME_UNITS && wire.encode_utf16().count() > SDK_FRAME_UNITS {
+                if wire.len() > SDK_FRAME_UNITS && wire.encode_utf16().count() > SDK_FRAME_UNITS {
                     drop(wire);
                     // Matches TS `native-event-stream.ts:30-38`: an oversized upstream SSE event
                     // fails the stream and invalidates the shared connection (`keep_connection = false`).
@@ -371,8 +401,10 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                     };
                     event["data"]["item"]["payload"]["files"] = files;
                     let projected = event.to_string();
-                    bytes = projected.len();
-                    if bytes > SDK_FRAME_UNITS && projected.encode_utf16().count() > SDK_FRAME_UNITS {
+                    bytes = projected.len().max(value_bytes(&event));
+                    if bytes > ROUTING_BYTES
+                        || (projected.len() > SDK_FRAME_UNITS && projected.encode_utf16().count() > SDK_FRAME_UNITS)
+                    {
                         break;
                     }
                 }
@@ -426,26 +458,25 @@ async fn route(
     let session_id = event["data"]["sessionID"].as_str();
     let session_id = session_id.filter(|s| *s != "global" && crate::opencode::valid_id(s)).map(str::to_owned);
     let mut recipients = Vec::new();
-    let mut inbox_proofs = HashMap::new();
-    let mut settled_rev = None;
-    // Match TS `instance-events.ts:293-328`: retry ownership resolution if `worktree.updated`
-    // invalidates inventories mid-check, and never publish an event using a stale revision.
-    for _ in 0..4 {
-        let rev = crate::worktrees::inventory_revision(app);
-        recipients.clear();
-        inbox_proofs.clear();
-        if kind == "session.moved"
-            && let Some(sid) = session_id.as_deref()
-            && let Some(destination) = event["data"]["location"]["directory"]
-                .as_str()
-                .filter(|_| event["data"]["location"].get("workspaceID").is_none())
-                .map(str::to_owned)
-        {
-            // Like native location subscriptions, a move reaches the
-            // source owner, earlier recipients and the destination owner.
-            let all = app.inner.lock().unwrap().workspaces.clone();
-            let mut moved = Vec::with_capacity(all.len());
-            for workspace in all {
+    // Match TS `instance-events.ts:288-328`: resolve ownership per workspace, retrying whenever
+    // `worktree.updated` bumps `inventory_revision` while the route stays current (bounded by the
+    // lane's `ROUTING_TIMEOUT`), never dropping an event or skipping remaining workspaces.
+    if kind == "session.moved"
+        && let Some(sid) = session_id.as_deref()
+        && let Some(destination) = event["data"]["location"]["directory"]
+            .as_str()
+            .filter(|_| event["data"]["location"].get("workspaceID").is_none())
+            .map(str::to_owned)
+    {
+        // Like native location subscriptions, a move reaches the
+        // source owner, earlier recipients and the destination owner.
+        let all = app.inner.lock().unwrap().workspaces.clone();
+        for workspace in all {
+            loop {
+                if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
+                    break;
+                }
+                let rev = crate::worktrees::inventory_revision(app);
                 let source = match directory.as_deref() {
                     Some(dir) if event["location"].get("workspaceID").is_none() => {
                         crate::worktrees::owns_event(app, &workspace, dir).await
@@ -453,101 +484,119 @@ async fn route(
                     _ => false,
                 };
                 let owns_destination = crate::worktrees::owns_event(app, &workspace, &destination).await;
-                moved.push((workspace, source, owns_destination));
-            }
-            if crate::worktrees::inventory_revision(app) != rev {
-                continue;
-            }
-            let mut held = routes.held.lock().unwrap();
-            for (workspace, source, owns_destination) in moved {
-                if owns_destination {
-                    held.remember(sid, workspace.id);
+                if crate::worktrees::inventory_revision(app) != rev {
+                    continue;
                 }
-                if held.has(sid, workspace.id) || source || owns_destination {
-                    if !owns_destination {
-                        held.forget(sid, workspace.id);
+                if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
+                    break;
+                }
+                let deliver = {
+                    let mut held = routes.held.lock().unwrap();
+                    if owns_destination {
+                        held.remember(sid, workspace.id);
                     }
+                    if held.has(sid, workspace.id) || source || owns_destination {
+                        if !owns_destination {
+                            held.forget(sid, workspace.id);
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if deliver {
+                    let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":event});
+                    app.emit(envelope);
                     recipients.push(workspace);
                 }
+                break;
             }
-        } else {
-            let candidates = {
-                let store = app.inner.lock().unwrap();
-                store
-                    .workspaces
-                    .iter()
-                    .filter(|workspace| {
-                        let native_dir = workspace.location["directory"].as_str().unwrap_or_default();
-                        directory.as_deref().map_or_else(
-                            || GLOBAL.split(' ').any(|g| g == kind) || kind == "session.deleted",
-                            |dir| dir == native_dir || Path::new(dir).starts_with(&app.scope) || receipt_event,
-                        ) && event["location"].get("workspaceID").is_none()
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>()
-            };
-            for workspace in candidates {
-                if let Some(dir) = directory.as_deref() {
+        }
+    } else if event["location"].get("workspaceID").is_none()
+        && (directory.is_some() || GLOBAL.split(' ').any(|g| g == kind) || kind == "session.deleted")
+    {
+        let candidates = app.inner.lock().unwrap().workspaces.clone();
+        for workspace in candidates {
+            loop {
+                if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
+                    break;
+                }
+                let rev = crate::worktrees::inventory_revision(app);
+                let mut inbox_proof = None;
+                let owned = if let Some(dir) = directory.as_deref() {
                     if inbox {
-                        let Some(physical) = crate::files::paths::canonical(&app.scope, dir) else { continue };
-                        let Ok(identity) = crate::files::host_identity(&physical) else { continue };
-                        let Some(proof) =
-                            crate::worktrees::ownership::capture_directory(app, &workspace, &physical).await
-                        else {
-                            continue;
+                        let resolved = {
+                            let scope = app.scope.clone();
+                            let dir = dir.to_owned();
+                            tokio::task::spawn_blocking(move || {
+                                let physical = crate::files::paths::canonical(&scope, &dir)?;
+                                let identity = crate::files::host_identity(&physical).ok()?;
+                                Some((physical, identity))
+                            })
+                            .await
+                            .ok()
+                            .flatten()
                         };
-                        inbox_proofs.insert(workspace.id, (physical, identity, proof));
-                    } else if !crate::worktrees::owns_event(app, &workspace, dir).await
-                        && !(receipt_event
-                            && crate::worktrees::ownership::owns_loaded(app, &workspace, &endpoint, dir).await)
-                    {
+                        if let Some((physical, identity)) = resolved
+                            && let Some(proof) =
+                                crate::worktrees::ownership::capture_directory(app, &workspace, &physical).await
+                        {
+                            inbox_proof = Some((physical, identity, proof));
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        crate::worktrees::owns_event(app, &workspace, dir).await
+                            || (receipt_event
+                                && crate::worktrees::ownership::owns_loaded(app, &workspace, &endpoint, dir).await)
+                    }
+                } else {
+                    true
+                };
+                if crate::worktrees::inventory_revision(app) != rev {
+                    continue;
+                }
+                if !owned {
+                    break;
+                }
+                if inbox {
+                    let Some((physical, identity, proof)) = inbox_proof else { break };
+                    let scope = app.scope.clone();
+                    let dir = directory.clone().unwrap_or_default();
+                    let still_live = tokio::task::spawn_blocking(move || {
+                        crate::files::paths::canonical(&scope, &dir).as_ref() == Some(&physical)
+                            && crate::files::host_identity(&physical).ok().as_ref() == Some(&identity)
+                            && proof.live(&physical)
+                    })
+                    .await
+                    .unwrap_or(false);
+                    if crate::worktrees::inventory_revision(app) != rev {
                         continue;
                     }
+                    if !still_live
+                        || !crate::sessions::permission_mode::workspace_current(app, &workspace)
+                        || !app.native.current(&endpoint)
+                    {
+                        break;
+                    }
+                } else if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
+                    break;
                 }
-                recipients.push(workspace);
-            }
-            if crate::worktrees::inventory_revision(app) != rev {
-                continue;
-            }
-            if let Some(sid) = session_id.as_deref() {
-                let mut held = routes.held.lock().unwrap();
-                for workspace in &recipients {
+                if let Some(sid) = session_id.as_deref() {
+                    let mut held = routes.held.lock().unwrap();
                     if kind == "session.deleted" || kind == "session.moved" {
                         held.forget(sid, workspace.id);
                     } else {
                         held.remember(sid, workspace.id);
                     }
                 }
-            }
-        }
-        settled_rev = Some(rev);
-        break;
-    }
-    if let Some(rev) = settled_rev {
-        for workspace in &recipients {
-            if crate::worktrees::inventory_revision(app) != rev {
+                let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":event});
+                app.emit(envelope);
+                recipients.push(workspace);
                 break;
             }
-            let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":event});
-            if inbox {
-                let Some((physical, identity, proof)) = inbox_proofs.get(&workspace.id) else { continue };
-                if !directory
-                    .as_deref()
-                    .is_some_and(|dir| crate::files::paths::canonical(&app.scope, dir).as_ref() == Some(physical))
-                    || !crate::sessions::permission_mode::workspace_current(app, workspace)
-                    || crate::files::host_identity(physical).ok().as_ref() != Some(identity)
-                    || !proof.live(physical)
-                    || !app.native.current(&endpoint)
-                {
-                    continue;
-                }
-            } else if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
-                continue;
-            }
-            app.emit(envelope);
         }
-    } else {
-        recipients.clear();
     }
     let sid = session_id.as_deref().or(event["data"]["session"]["id"].as_str()).or(event["data"]["id"].as_str());
     let (took, count, sid) = (routed.elapsed().as_millis(), recipients.len(), sid.unwrap_or("-"));

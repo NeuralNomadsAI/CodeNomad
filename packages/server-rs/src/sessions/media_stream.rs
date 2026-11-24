@@ -988,7 +988,7 @@ pub(super) fn validate_json_syntax(raw: &[u8]) -> bool {
     syntax.is_valid_eof()
 }
 
-pub(super) fn may_contain_image_uri(haystack: &[u8]) -> bool {
+pub(crate) fn may_contain_image_uri(haystack: &[u8]) -> bool {
     const NEEDLE: &[u8] = b"data:image";
     if haystack.len() < NEEDLE.len() {
         return false;
@@ -1705,13 +1705,18 @@ pub(crate) fn valid_reference_files(raw: &str, max_count: usize) -> bool {
                         ok = false;
                         return;
                     }
-                    let (mut fields, mut kind, mut sha) = (0usize, None, None);
+                    let (mut has_type, mut has_sha, mut kind, mut sha) = (false, false, None, None);
                     if for_each_json_object_field(vt, |sk, sv| {
-                        fields += 1;
                         let svt = sv.trim();
                         match sk {
-                            "type" => kind = parse_short_string(svt, 128),
-                            "sha256" => sha = parse_short_string(svt, 512),
+                            "type" => {
+                                has_type = true;
+                                kind = parse_short_string(svt, 128);
+                            }
+                            "sha256" => {
+                                has_sha = true;
+                                sha = parse_short_string(svt, 512);
+                            }
                             _ => ok = false,
                         }
                     })
@@ -1721,8 +1726,10 @@ pub(crate) fn valid_reference_files(raw: &str, max_count: usize) -> bool {
                         return;
                     }
                     let source_ok = match kind.as_deref() {
-                        Some("unavailable") => fields == 1,
-                        Some("deferred") => fields == 2 && sha.as_deref().is_some_and(super::user_files::valid_digest),
+                        Some("unavailable") => has_type && !has_sha,
+                        Some("deferred") => {
+                            has_type && has_sha && sha.as_deref().is_some_and(super::user_files::valid_digest)
+                        }
                         _ => false,
                     };
                     if source_ok {

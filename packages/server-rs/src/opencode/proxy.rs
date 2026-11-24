@@ -665,11 +665,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         target.set_query(head.uri.query());
     }
-    if !message_list
-        && (head.headers.contains_key("x-opencode-directory") || head.headers.contains_key("x-opencode-workspace"))
-    {
-        return Err(foreign());
-    }
     if let Some(context) = parsed_location_context {
         if send_input {
             let raw = super::prompt::context(&context)?;
@@ -1314,9 +1309,14 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 }
                 let mut pos = 0;
                 while let Some(pending) = stream.feed(&chunk, &mut pos).map_err(|_| interrupted())? {
-                    // Account for the transient peak inside `project_item` where `raw`, at most one
-                    // bounded `<= 8 MiB` decoded URI, and `UndoPatch` originals coexist.
-                    let item_peak = pending.bytes.capacity().saturating_mul(2).saturating_add(8 * 1024 * 1024);
+                    // Only reserve the 2x + 8 MiB projection/undo overhead when the item may
+                    // actually contain a deferrable image URI; image-free items pass through
+                    // zero-copy with zero undo patches, so pages up to `OUTPUT_LIMIT` succeed.
+                    let item_peak = if crate::sessions::media_stream::may_contain_image_uri(&pending.bytes) {
+                        pending.bytes.capacity().saturating_mul(2).saturating_add(8 * 1024 * 1024)
+                    } else {
+                        pending.bytes.capacity()
+                    };
                     stream.evict_undo_if_needed(item_peak);
                     let peak_bytes = stream.retained_bytes().saturating_add(item_peak);
                     if peak_bytes > crate::sessions::media_stream::OUTPUT_LIMIT {

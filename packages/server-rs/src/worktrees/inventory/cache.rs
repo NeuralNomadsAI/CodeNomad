@@ -80,7 +80,12 @@ impl InventoryCache {
         if self.entries.len() >= EVENT_ENTRIES * 2 {
             self.entries.retain(|_, e| e.loading.is_some() || e.at.elapsed() < EVENT_STALE_LIMIT);
         }
-        if self.entries.len() < EVENT_ENTRIES * 2 || self.entries.contains_key(&key) {
+        if let Some(entry) = self.entries.get_mut(&key) {
+            // Preserve any active `loading` flight so its waiters still receive its result.
+            entry.at = Instant::now();
+            entry.value = Some(value);
+            entry.endpoint = endpoint.clone();
+        } else if self.entries.len() < EVENT_ENTRIES * 2 {
             self.entries.insert(
                 key,
                 EventEntry { at: Instant::now(), value: Some(value), endpoint: endpoint.clone(), loading: None },
@@ -96,7 +101,9 @@ impl InventoryCache {
 const EVENT_FRESH: Duration = Duration::from_secs(4);
 const EVENT_STALE_LIMIT: Duration = Duration::from_secs(10);
 const EVENT_ENTRIES: usize = 64;
-/// Drops one workspace's inventory, or every one; a running refresh never stores after it.
+/// Drops one workspace's inventory, or invalidates every cached value while retaining active
+/// `loading` flights so post-invalidation callers serialize behind them instead of launching
+/// overlapping concurrent scans (TS `worktree-inventory.ts:45-54, 61-93`).
 fn drop_entries(app: &App, id: Option<Uuid>) {
     let mut cache = app.linked_events.lock().unwrap();
     match id {
@@ -108,7 +115,10 @@ fn drop_entries(app: &App, id: Option<Uuid>) {
             cache.serial += 1;
             cache.reset = cache.serial;
             cache.changed.clear();
-            cache.entries.clear();
+            cache.entries.retain(|_, entry| entry.loading.is_some());
+            for entry in cache.entries.values_mut() {
+                entry.value = None;
+            }
         }
     }
 }
@@ -152,42 +162,51 @@ async fn cached_catalogue(
     refresh_on_load: bool,
 ) -> Option<Arc<Catalogue>> {
     let key = (w.id, refresh_on_load);
-    let (epoch, loading) = {
-        let mut cache = app.linked_events.lock().unwrap();
-        if !app.native.current(endpoint) {
-            return None;
+    loop {
+        enum Step {
+            Hit(Option<Arc<Catalogue>>),
+            WaitPrevious(InventoryRead),
+            Join(u64, InventoryRead),
         }
-        let epoch = cache.stamp();
-        if cache.entries.get(&key).is_some_and(|e| !Arc::ptr_eq(&e.endpoint, endpoint)) {
-            cache.entries.remove(&key);
-        }
-        let mut background = None;
-        if let Some(entry) = cache.entries.get_mut(&key) {
-            let age = entry.at.elapsed();
-            if age < if for_event { EVENT_FRESH } else { EVENT_STALE_LIMIT }
-                && (entry.value.is_some() || entry.loading.is_none())
-            {
-                return entry.value.clone();
+        let step = {
+            let mut cache = app.linked_events.lock().unwrap();
+            if !app.native.current(endpoint) {
+                return None;
             }
-            if for_event && age < EVENT_STALE_LIMIT {
-                background = entry.value.clone();
+            let epoch = cache.stamp();
+            if cache.entries.get(&key).is_some_and(|e| !Arc::ptr_eq(&e.endpoint, endpoint) && e.loading.is_none()) {
+                cache.entries.remove(&key);
             }
-        }
-        if cache.entries.len() >= EVENT_ENTRIES * 2 {
-            cache.entries.retain(|_, e| e.loading.is_some() || e.at.elapsed() < EVENT_STALE_LIMIT);
-        }
-        let admitted = cache.entries.len() < EVENT_ENTRIES * 2 || cache.entries.contains_key(&key);
-        let loading = cache
-            .entries
-            .get(&key)
-            .and_then(|entry| {
-                entry
-                    .loading
-                    .as_ref()
-                    .filter(|(_, flight_epoch, _)| *flight_epoch == epoch)
-                    .map(|(_, _, read)| read.clone())
-            })
-            .unwrap_or_else(|| {
+            let mut background = None;
+            if let Some(entry) = cache.entries.get_mut(&key) {
+                if Arc::ptr_eq(&entry.endpoint, endpoint) {
+                    let age = entry.at.elapsed();
+                    if age < if for_event { EVENT_FRESH } else { EVENT_STALE_LIMIT }
+                        && (entry.value.is_some() || entry.loading.is_none())
+                    {
+                        return entry.value.clone();
+                    }
+                    if for_event && age < EVENT_STALE_LIMIT {
+                        background = entry.value.clone();
+                    }
+                }
+            }
+            if let Some((_, flight_epoch, read)) = cache.entries.get(&key).and_then(|e| e.loading.as_ref()) {
+                let same_endpoint = cache.entries.get(&key).is_some_and(|e| Arc::ptr_eq(&e.endpoint, endpoint));
+                if *flight_epoch == epoch && same_endpoint {
+                    if background.is_some() { Step::Hit(background) } else { Step::Join(epoch, read.clone()) }
+                } else if background.is_some() {
+                    Step::Hit(background)
+                } else {
+                    // Serialize behind the already-running invalidated flight before starting the
+                    // next scan (TS `worktree-inventory.ts:61-93`).
+                    Step::WaitPrevious(read.clone())
+                }
+            } else {
+                if cache.entries.len() >= EVENT_ENTRIES * 2 {
+                    cache.entries.retain(|_, e| e.loading.is_some() || e.at.elapsed() < EVENT_STALE_LIMIT);
+                }
+                let admitted = cache.entries.len() < EVENT_ENTRIES * 2 || cache.entries.contains_key(&key);
                 let (done, receive) = tokio::sync::oneshot::channel();
                 let loading = async move { receive.await.ok().flatten() }.boxed().shared();
                 let flight = Uuid::new_v4();
@@ -198,6 +217,7 @@ async fn cached_catalogue(
                         endpoint: endpoint.clone(),
                         loading: None,
                     });
+                    entry.endpoint = endpoint.clone();
                     entry.loading = Some((flight, epoch, loading.clone()));
                 }
                 let (app, w, endpoint) = (app.clone(), w.clone(), endpoint.clone());
@@ -228,32 +248,49 @@ async fn cached_catalogue(
                         || admitted && !owns_flight
                     {
                         if owns_flight {
-                            cache.entries.remove(&key);
+                            if let Some(entry) = cache.entries.get_mut(&key) {
+                                entry.loading = None;
+                                if entry.value.is_none() {
+                                    cache.entries.remove(&key);
+                                }
+                            }
                         }
                         return;
                     }
                     if admitted {
-                        if result.is_some() {
+                        if let Some(res) = result.clone() {
                             cache.entries.insert(
                                 key,
-                                EventEntry { at: Instant::now(), value: result.clone(), endpoint, loading: None },
+                                EventEntry { at: Instant::now(), value: Some(res), endpoint, loading: None },
                             );
-                        } else {
-                            cache.entries.remove(&key);
+                        } else if let Some(entry) = cache.entries.get_mut(&key) {
+                            entry.loading = None;
+                            if entry.value.is_none() {
+                                cache.entries.remove(&key);
+                            }
                         }
                     }
                     let _ = done.send(result);
                 });
-                loading
-            });
-        if background.is_some() {
-            return background;
+                if background.is_some() { Step::Hit(background) } else { Step::Join(epoch, loading) }
+            }
+        };
+        match step {
+            Step::Hit(val) => return val,
+            Step::WaitPrevious(prev) => {
+                let _ = prev.await;
+                continue;
+            }
+            Step::Join(epoch, loading) => {
+                let result = loading.await?;
+                if app.native.current(endpoint) && app.linked_events.lock().unwrap().valid(epoch, Some(&result.project))
+                {
+                    return Some(result);
+                }
+                return None;
+            }
         }
-        (epoch, loading)
-    };
-    let result = loading.await?;
-    (app.native.current(endpoint) && app.linked_events.lock().unwrap().valid(epoch, Some(&result.project)))
-        .then_some(result)
+    }
 }
 
 #[cfg(test)]

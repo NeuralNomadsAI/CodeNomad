@@ -30,8 +30,11 @@ pub(crate) struct DirectoryProof {
 
 impl DirectoryProof {
     pub(crate) fn same_checkout(&self, other: &Self) -> bool {
-        self.tree.as_ref().map(super::inventory::Tree::registered)
-            == other.tree.as_ref().map(super::inventory::Tree::registered)
+        match (&self.tree, &other.tree) {
+            (Some(a), Some(b)) => a.same_physical_checkout(b),
+            (None, None) => self.root == other.root,
+            _ => false,
+        }
     }
 
     pub(crate) fn live(&self, physical: &Path) -> bool {
@@ -614,6 +617,14 @@ async fn catalogue_proof_live_async(
     })
     .await
     .ok()?
+}
+
+pub(crate) async fn catalogue_owns_event(
+    catalogue: std::sync::Arc<super::inventory::Catalogue>,
+    path: PathBuf,
+    external: bool,
+) -> bool {
+    catalogue_proof_live_async(catalogue, path, external, None).await.is_some()
 }
 
 pub(crate) async fn media_directory(

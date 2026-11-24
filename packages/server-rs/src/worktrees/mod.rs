@@ -167,28 +167,24 @@ pub async fn list(
 }
 
 pub async fn owns_event(app: &Shared, w: &Workspace, directory: &str) -> bool {
-    if w.location["directory"] == directory {
-        let dir = directory.to_owned();
-        let expected = w.path.clone();
-        return tokio::task::spawn_blocking(move || dunce::canonicalize(&dir).ok().as_ref() == Some(&expected))
-            .await
-            .unwrap_or(false);
-    }
     let scope = app.scope.clone();
     let dir = directory.to_owned();
-    let in_scope = tokio::task::spawn_blocking(move || {
-        crate::files::paths::canonical(&scope, &dir).is_some_and(|p| p.starts_with(&scope))
-    })
-    .await
-    .unwrap_or(false);
-    if !in_scope {
+    let Some((path, _anchor)) =
+        tokio::task::spawn_blocking(move || ownership::resolve_media_path(&scope, &dir)).await.ok().flatten()
+    else {
         return false;
+    };
+    if path == w.path {
+        return true;
+    }
+    let external = !path.starts_with(&w.path);
+    if !external && matches!(root_only(w).await, Ok(Some(true))) {
+        return true;
     }
     let Some(catalogue) = crate::worktrees::linked::event_catalogue(app, w).await else {
         return false;
     };
-    let dir = directory.to_owned();
-    tokio::task::spawn_blocking(move || catalogue.by_directory(&dir).is_some()).await.unwrap_or(false)
+    ownership::catalogue_owns_event(catalogue, path, external).await
 }
 
 /// Owned session location with its list slug (TS `resolveLocationPlacement`).

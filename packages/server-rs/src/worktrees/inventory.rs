@@ -188,10 +188,18 @@ fn git_layout_gone(root: &Path) -> bool {
         Ok(_) => false,
     }
 }
-/// A readable Git checkout: the reference's strict ownership read reaches a
-/// verdict there, while a non-Git or unreadable folder only fails the read.
+/// A readable Git checkout or a verified non-Git local directory: TS `sharesGitCommonDirectory`
+/// (`strict: true`) proves departure (`false` -> `session_located_elsewhere`) for both another
+/// Git checkout and a readable non-Git folder, while throwing on unreadable/I/O errors.
 pub async fn readable_checkout(path: &Path) -> bool {
-    checkout(path).await.is_ok()
+    if checkout(path).await.is_ok() {
+        return true;
+    }
+    let _slot = crate::git::slot().await;
+    let mut cmd = crate::git::command(path, &["rev-parse", "--git-common-dir"]);
+    tokio::time::timeout(std::time::Duration::from_secs(3), cmd.output()).await.ok().and_then(Result::ok).is_some_and(
+        |out| !out.status.success() && String::from_utf8_lossy(&out.stderr).contains("not a git repository"),
+    )
 }
 
 fn linked_markers(root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 3], Error> {
@@ -356,6 +364,14 @@ pub struct Tree {
 impl Tree {
     pub fn registered(&self) -> &Path {
         &self.layout.root
+    }
+    pub(crate) fn same_physical_checkout(&self, other: &Self) -> bool {
+        self.layout.root == other.layout.root
+            && self.layout.root_id == other.layout.root_id
+            && self.layout.admin == other.layout.admin
+            && self.layout.admin_id == other.layout.admin_id
+            && self.layout.common == other.layout.common
+            && self.layout.common_id == other.layout.common_id
     }
     pub(super) fn target_root(&self) -> &Path {
         self.projected_link.as_ref().map_or(&self.layout.root, |link| link.2.root.as_path())

@@ -411,21 +411,26 @@ async fn connection_at(
     write_status(snapshot).await;
 }
 
-/// `DesktopPluginLifecycle.sync`: rewrite a lease whose request changed, else renew it off-thread
-/// with non-blocking POSIX opens so a replaced FIFO can never stall the Tokio thread or worker pool.
-async fn sync(app: &App, renew: bool) {
-    let plan: Vec<(usize, usize, std::path::PathBuf, Option<String>, bool, bool)> = {
+/// `DesktopPluginLifecycle.sync`: compute desired lease content and rewrite/renew off-thread
+/// with non-blocking POSIX opens so a replaced FIFO on `config.yaml` or a lease file can never
+/// stall the Tokio thread or worker pool.
+async fn sync(app: &Shared, renew: bool) {
+    let plan: Vec<(usize, usize, &'static str, std::path::PathBuf, String, bool, bool)> = {
         let state = STATE.lock().unwrap();
         let mut jobs = Vec::new();
         for (inst_idx, installation) in state.installations.iter().enumerate() {
             let check_ready_window = installation.since.elapsed() <= READY_WAIT;
             for (feat_idx, feature) in installation.features.iter().enumerate() {
-                let wanted = content(app, feature.feature);
-                let rewrite = (wanted != installation.written[feat_idx]).then_some(wanted);
                 let check_ready = check_ready_window && !installation.ready[feat_idx];
-                if rewrite.is_some() || renew || check_ready {
-                    jobs.push((inst_idx, feat_idx, feature.lease.clone(), rewrite, renew, check_ready));
-                }
+                jobs.push((
+                    inst_idx,
+                    feat_idx,
+                    feature.feature,
+                    feature.lease.clone(),
+                    installation.written[feat_idx].clone(),
+                    renew,
+                    check_ready,
+                ));
             }
         }
         jobs
@@ -433,9 +438,15 @@ async fn sync(app: &App, renew: bool) {
     if plan.is_empty() {
         return;
     }
+    let sync_app = app.clone();
     let results = tokio::task::spawn_blocking(move || {
         let mut out = Vec::with_capacity(plan.len());
-        for (inst_idx, feat_idx, lease, rewrite, do_renew, check_ready) in plan {
+        for (inst_idx, feat_idx, feature_name, lease, prev_written, do_renew, check_ready) in plan {
+            let wanted = content(&sync_app, feature_name);
+            let rewrite = (wanted != prev_written).then_some(wanted);
+            if rewrite.is_none() && !do_renew && !check_ready {
+                continue;
+            }
             let written = {
                 let _io = LEASE_IO.read().unwrap();
                 let still_registered = {
@@ -603,10 +614,11 @@ pub fn start(
             (owners, leases, snapshot)
         };
         let _ = tokio::time::timeout(Duration::from_secs(1), write_status(snapshot)).await;
-        // Close all presence owners concurrently so multiple namespaces never exceed shutdown
-        // budgets sequentially before lease disposal begins (TS `desktop-plugin-lifecycle.ts:169`).
+        // Close all presence owners concurrently, waiting up to 6 s (matching `Owner::close`'s
+        // pending-request drain window and TS `desktop-plugin-readiness.ts:174-182`) before
+        // removing leases so `.prepare` folders drain cleanly.
         let close_results = futures_util::future::join_all(owners.into_iter().flatten().map(|owner| async move {
-            match tokio::time::timeout(Duration::from_secs(1), owner.close()).await {
+            match tokio::time::timeout(Duration::from_secs(6), owner.close()).await {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(e)) => Err(e),
                 Err(_) => Err("Timed out closing plugin readiness owner during shutdown".into()),
