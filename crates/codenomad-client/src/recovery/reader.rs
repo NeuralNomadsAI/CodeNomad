@@ -33,7 +33,7 @@ pub(super) struct Reader {
     pub(super) known: HashSet<String>,
     pub(super) owed: HashSet<(String, usize)>,
     pub(super) owed_tools: HashMap<(String, String), u8>,
-    pub(super) owed_synthetics: HashMap<String, u8>,
+    pub(super) owed_synthetics: HashMap<String, (u8, usize)>,
     pub(super) frozen_tools: HashMap<(String, String), u64>,
     pub(super) execution_settlement: u8,
     pub(super) execution_ended_at: Option<u64>,
@@ -234,9 +234,12 @@ impl Reader {
                         page.rows = merged;
                     }
                     if !self.owed_synthetics.is_empty() && page.newer.is_none() {
-                        self.owed_synthetics.retain(|id, _| {
+                        self.owed_synthetics.retain(|id, (_, prior_matches)| {
                             if page.rows.iter().any(|r| &r.id == id) {
                                 return false;
+                            }
+                            if id.starts_with("msg_") {
+                                return true;
                             }
                             let Some(resident_row) = self
                                 .resident
@@ -245,10 +248,12 @@ impl Reader {
                             else {
                                 return true;
                             };
-                            !page
+                            let page_matches = page
                                 .rows
                                 .iter()
-                                .any(|p| same_synthetic_report(p, resident_row))
+                                .filter(|p| same_synthetic_report(p, resident_row))
+                                .count();
+                            page_matches <= *prior_matches
                         });
                         let pending_rows: Vec<_> = self
                             .resident
@@ -256,10 +261,7 @@ impl Reader {
                             .filter(|r| {
                                 r.role == "synthetic"
                                     && self.owed_synthetics.contains_key(&r.id)
-                                    && !page
-                                        .rows
-                                        .iter()
-                                        .any(|p| p.id == r.id || same_synthetic_report(p, r))
+                                    && !page.rows.iter().any(|p| p.id == r.id)
                             })
                             .cloned()
                             .collect();
@@ -356,7 +358,7 @@ impl Reader {
                         }
                         if !self.owed_synthetics.is_empty() {
                             let mut max_attempt = 0u8;
-                            self.owed_synthetics.retain(|_, attempts| {
+                            self.owed_synthetics.retain(|_, (attempts, _)| {
                                 *attempts = attempts.saturating_add(1);
                                 if *attempts <= 3 {
                                     max_attempt = max_attempt.max(*attempts);
@@ -587,23 +589,18 @@ pub(super) fn can_restart(row: &crate::Message) -> bool {
         matches!(part,Part::Text(text) if text.text.is_empty() && text.provenance==TextProvenance::Live))
 }
 
-fn same_synthetic_report(a: &crate::history::Row, b: &crate::history::Row) -> bool {
+pub(super) fn same_synthetic_report(a: &crate::Message, b: &crate::Message) -> bool {
     if a.role != "synthetic" || b.role != "synthetic" {
         return false;
     }
-    fn report(row: &crate::history::Row) -> Option<&crate::content::SubagentReport> {
+    fn report(row: &crate::Message) -> Option<&crate::content::SubagentReport> {
         row.parts.iter().find_map(|part| match part {
             Part::SubagentReport(r) => Some(r),
             _ => None,
         })
     }
     match (report(a), report(b)) {
-        (Some(ra), Some(rb)) => {
-            ra.child == rb.child
-                && ra.state == rb.state
-                && ra.body == rb.body
-                && ra.created.abs_diff(rb.created) <= 60_000
-        }
+        (Some(ra), Some(rb)) => ra.child == rb.child && ra.state == rb.state && ra.body == rb.body,
         _ => false,
     }
 }

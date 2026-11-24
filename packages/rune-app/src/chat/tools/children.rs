@@ -83,10 +83,33 @@ pub(super) enum CopyKey {
     },
 }
 
+impl CopyKey {
+    fn touches_child(&self, id: &str) -> bool {
+        match self {
+            Self::Report(k) => k.parent == id || k.child == id,
+            Self::ToolSection(k) => k.child == id || k.parent.as_deref() == Some(id),
+            Self::Steps { parent, child, .. } => child == id || parent.as_deref() == Some(id),
+        }
+    }
+}
+
 enum NavOutcome {
     Verified(String),
+    VerifiedInTab(String, String),
     Missing,
     Error,
+}
+
+struct CopyRevocation {
+    _rx: Receiver<()>,
+    settlement: Arc<codenomad_client::stream::ChildSettlement>,
+    rev_before: u64,
+}
+
+impl CopyRevocation {
+    fn is_revoked(&self) -> bool {
+        self.settlement.revocation_gen() != self.rev_before
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -127,6 +150,7 @@ enum ReportCopy {
         scope: Rc<()>,
         baseline: Rc<Cell<Option<u64>>>,
         lease: Option<Weak<()>>,
+        revocation: CopyRevocation,
         _cancel: codenomad_client::Sender<()>,
         rx: Receiver<Option<String>>,
     },
@@ -135,6 +159,7 @@ enum ReportCopy {
         key: CopyKey,
         epoch: u64,
         text: String,
+        revocation: CopyRevocation,
         rx: Receiver<bool>,
     },
     #[allow(dead_code)]
@@ -190,6 +215,7 @@ pub(crate) struct Children {
         codenomad_client::Sender<()>,
         Receiver<NavOutcome>,
     )>,
+    background_pending: Option<(codenomad_client::Sender<()>, Receiver<bool>)>,
 }
 
 struct Watcher {
@@ -232,6 +258,7 @@ impl Children {
         self.loading_report = None;
         self.failed_report = None;
         self.pending_nav = None;
+        self.background_pending = None;
     }
 
     pub(super) fn unavailable(&self, parent: Option<&str>, id: &str) -> bool {
@@ -397,6 +424,7 @@ impl Children {
     fn fetch_report(
         s: &State,
         key: &ReportCopyKey,
+        shared: Option<(Arc<codenomad_client::stream::ChildSettlement>, u64)>,
     ) -> Option<(codenomad_client::Sender<()>, Receiver<Option<String>>)> {
         let backend = s.transcript_display.children.backend.clone()?;
         let (out, rx) = bounded(1);
@@ -412,8 +440,14 @@ impl Children {
         crate::platform::spawn(async move {
             crate::platform::reads::cancellable(&cancelled, async {
                 let body = with_timeout(COPY_BUDGET, async {
-                    let (_watch_rx, settlement) = backend.watch_child(&parent)?;
-                    let rev_before = settlement.revocation_gen();
+                    let (_owned_rx, settlement, rev_before) = match shared {
+                        Some((settlement, rev_before)) => (None, settlement, rev_before),
+                        None => {
+                            let (rx, settlement) = backend.watch_child(&parent)?;
+                            let rev = settlement.revocation_gen();
+                            (Some(rx), settlement, rev)
+                        }
+                    };
                     let _slot = reads.background(&cancelled).await?;
                     let page = backend.child_page(&parent).await.ok().flatten()?;
                     if settlement.revocation_gen() != rev_before {
@@ -454,6 +488,7 @@ impl Children {
     fn fetch_tool_section(
         s: &State,
         key: &ToolCopyKey,
+        shared: Option<(Arc<codenomad_client::stream::ChildSettlement>, u64)>,
     ) -> Option<(codenomad_client::Sender<()>, Receiver<Option<String>>)> {
         let backend = s.transcript_display.children.backend.clone()?;
         let (out, rx) = bounded(1);
@@ -465,8 +500,14 @@ impl Children {
             crate::platform::reads::cancellable(&cancelled, async {
                 let expected_parent = key.parent.as_deref().unwrap_or(&backend.session);
                 let body = with_timeout(COPY_BUDGET, async {
-                    let (_watch_rx, settlement) = backend.watch_child(&key.child)?;
-                    let rev_before = settlement.revocation_gen();
+                    let (_owned_rx, settlement, rev_before) = match shared {
+                        Some((settlement, rev_before)) => (None, settlement, rev_before),
+                        None => {
+                            let (rx, settlement) = backend.watch_child(&key.child)?;
+                            let rev = settlement.revocation_gen();
+                            (Some(rx), settlement, rev)
+                        }
+                    };
                     let location = {
                         let _slot = reads.background(&cancelled).await?;
                         backend
@@ -548,9 +589,27 @@ impl Children {
     pub(super) fn copy_report(s: &mut State, key: ReportCopyKey, tx: &mut rune::Tx) {
         let lease = s.transcript_display.children.card_lease(&key.key);
         let copy_key = CopyKey::Report(key.clone());
-        let Some((cancel, rx)) = Self::fetch_report(s, &key) else {
+        let Some((watch_rx, settlement)) = s
+            .transcript_display
+            .children
+            .backend
+            .as_ref()
+            .and_then(|b| b.watch_child(&key.parent))
+        else {
             s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
             return;
+        };
+        let rev_before = settlement.revocation_gen();
+        let Some((cancel, rx)) =
+            Self::fetch_report(s, &key, Some((settlement.clone(), rev_before)))
+        else {
+            s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
+            return;
+        };
+        let revocation = CopyRevocation {
+            _rx: watch_rx,
+            settlement,
+            rev_before,
         };
         let epoch = next_clipboard_epoch();
         let scope = s.input_scope.clone();
@@ -570,6 +629,7 @@ impl Children {
             scope,
             baseline,
             lease,
+            revocation,
             _cancel: cancel,
             rx,
         };
@@ -582,9 +642,27 @@ impl Children {
         {
             return;
         }
-        let Some((cancel, rx)) = Self::fetch_tool_section(s, &key) else {
+        let Some((watch_rx, settlement)) = s
+            .transcript_display
+            .children
+            .backend
+            .as_ref()
+            .and_then(|b| b.watch_child(&key.child))
+        else {
             s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
             return;
+        };
+        let rev_before = settlement.revocation_gen();
+        let Some((cancel, rx)) =
+            Self::fetch_tool_section(s, &key, Some((settlement.clone(), rev_before)))
+        else {
+            s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
+            return;
+        };
+        let revocation = CopyRevocation {
+            _rx: watch_rx,
+            settlement,
+            rev_before,
         };
         let epoch = next_clipboard_epoch();
         let scope = s.input_scope.clone();
@@ -604,6 +682,7 @@ impl Children {
             scope,
             baseline,
             lease,
+            revocation,
             _cancel: cancel,
             rx,
         };
@@ -630,6 +709,17 @@ impl Children {
             s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
             return;
         };
+        let Some((watch_rx, settlement)) = backend.watch_child(&child) else {
+            s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
+            return;
+        };
+        let rev_before = settlement.revocation_gen();
+        let task_settlement = settlement.clone();
+        let revocation = CopyRevocation {
+            _rx: watch_rx,
+            settlement,
+            rev_before,
+        };
         let (out, rx) = bounded(1);
         let (cancel, cancelled) = bounded(1);
         let epoch = next_clipboard_epoch();
@@ -650,6 +740,7 @@ impl Children {
             scope,
             baseline,
             lease,
+            revocation,
             _cancel: cancel,
             rx,
         };
@@ -660,10 +751,40 @@ impl Children {
                 let expected_parent = parent.as_deref().unwrap_or(&backend.session);
                 let body = with_timeout(
                     COPY_BUDGET,
-                    copy_child_steps_bounded(&backend, &reads, &cancelled, &child, expected_parent),
+                    copy_child_steps_bounded(
+                        &backend,
+                        &reads,
+                        &cancelled,
+                        &child,
+                        expected_parent,
+                        &task_settlement,
+                        rev_before,
+                    ),
                 )
                 .await;
                 if out.send(body).await.is_ok() {
+                    wake();
+                }
+            })
+            .await;
+        });
+    }
+
+    pub(super) fn background_session(s: &mut State) {
+        if s.transcript_display.children.background_pending.is_some() {
+            return;
+        }
+        let Some(backend) = s.transcript_display.children.backend.clone() else {
+            return;
+        };
+        let (out, rx) = bounded(1);
+        let (cancel, cancelled) = bounded(1);
+        s.transcript_display.children.background_pending = Some((cancel, rx));
+        let wake = s.wake.clone();
+        crate::platform::spawn(async move {
+            crate::platform::reads::cancellable(&cancelled, async {
+                let ok = backend.background().await.is_ok();
+                if out.send(ok).await.is_ok() {
                     wake();
                 }
             })
@@ -678,6 +799,7 @@ impl Children {
         let Some(backend) = s.transcript_display.children.backend.clone() else {
             return;
         };
+        let fallback_tab = crate::workspace::open_session_tab_target(s, &backend, child);
         s.notifications.supersede_navigation();
         let ticket = s.notifications.navigation_ticket();
         let ck = child_key(parent, child);
@@ -698,7 +820,21 @@ impl Children {
                     .await
                 {
                     Ok(Some(_)) => NavOutcome::Verified(child),
-                    Ok(None) => NavOutcome::Missing,
+                    Ok(None) => {
+                        if let Some((tab_key, mut tab_backend)) = fallback_tab {
+                            tab_backend.session = expected_parent.clone();
+                            match tab_backend
+                                .child_ownership_token(&child, &expected_parent)
+                                .await
+                            {
+                                Ok(Some(_)) => NavOutcome::VerifiedInTab(tab_key, child),
+                                Ok(None) => NavOutcome::Missing,
+                                Err(_) => NavOutcome::Error,
+                            }
+                        } else {
+                            NavOutcome::Missing
+                        }
+                    }
                     Err(_) => NavOutcome::Error,
                 };
                 if out.send(outcome).await.is_ok() {
@@ -727,7 +863,7 @@ impl Children {
         if s.transcript_display.children.failed_report.as_ref() == Some(&expand_key) {
             s.transcript_display.children.failed_report = None;
         }
-        let Some((cancel, rx)) = Self::fetch_report(s, &key) else {
+        let Some((cancel, rx)) = Self::fetch_report(s, &key, None) else {
             s.transcript_display.children.failed_report = Some(expand_key);
             return;
         };
@@ -752,7 +888,7 @@ impl Children {
         if s.transcript_display.children.failed_report.as_ref() == Some(&expand_key) {
             s.transcript_display.children.failed_report = None;
         }
-        let Some((cancel, rx)) = Self::fetch_tool_section(s, &key) else {
+        let Some((cancel, rx)) = Self::fetch_tool_section(s, &key, None) else {
             s.transcript_display.children.failed_report = Some(expand_key);
             return;
         };
@@ -761,6 +897,27 @@ impl Children {
 
     pub(crate) fn poll_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
         let mut changed = Self::poll_copy(s, tx);
+        let bg = match s.transcript_display.children.background_pending.as_ref() {
+            Some((_, rx)) => match rx.try_recv() {
+                Ok(ok) => Some(ok),
+                Err(error) if error.is_closed() => Some(false),
+                Err(_) => None,
+            },
+            None => None,
+        };
+        if let Some(ok) = bg {
+            s.transcript_display.children.background_pending = None;
+            if !ok {
+                crate::shell::notifications::emit_outcome(
+                    s,
+                    crate::shell::notifications::Category::Sessions,
+                    None,
+                    crate::strings::t("promptInput.background.error.message"),
+                    true,
+                );
+                changed = true;
+            }
+        }
         let cat_gen = s.screen.launcher().map_or(0, |l| l.catalogue_generation);
         if s.transcript_display.children.unavailable_catalogue_gen != cat_gen {
             s.transcript_display.children.unavailable_catalogue_gen = cat_gen;
@@ -789,6 +946,12 @@ impl Children {
                     s.transcript_display.children.unavailable.remove(&ck);
                     if crate::launcher::can_open_child_session(s) {
                         crate::launcher::choose_child_ticket(s, child_id, Some(ticket), tx);
+                        changed = true;
+                    }
+                }
+                NavOutcome::VerifiedInTab(tab_key, child_id) => {
+                    s.transcript_display.children.unavailable.remove(&ck);
+                    if crate::workspace::switch_tab_for_child(s, &tab_key, child_id, ticket, tx) {
                         changed = true;
                     }
                 }
@@ -824,8 +987,13 @@ impl Children {
         #[cfg(target_arch = "wasm32")]
         {
             let write_outcome = match &s.transcript_display.children.report_copy {
-                ReportCopy::Writing { epoch, rx, .. } => {
-                    if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != *epoch {
+                ReportCopy::Writing {
+                    epoch,
+                    revocation,
+                    rx,
+                    ..
+                } => {
+                    if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != *epoch || revocation.is_revoked() {
                         s.transcript_display.children.report_copy = ReportCopy::Idle;
                         return false;
                     }
@@ -839,10 +1007,14 @@ impl Children {
             };
             if let Some(copied) = write_outcome {
                 if let ReportCopy::Writing {
-                    key, epoch, text, ..
+                    key,
+                    epoch,
+                    text,
+                    revocation,
+                    ..
                 } = std::mem::take(&mut s.transcript_display.children.report_copy)
                 {
-                    if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch {
+                    if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch || revocation.is_revoked() {
                         return false;
                     }
                     if copied {
@@ -860,11 +1032,13 @@ impl Children {
                 epoch,
                 scope,
                 lease,
+                revocation,
                 rx,
                 ..
             } => {
                 if !s.current_scope(scope)
                     || lease.as_ref().is_some_and(|w| w.strong_count() == 0)
+                    || revocation.is_revoked()
                     || CLIPBOARD_EPOCH.load(Ordering::SeqCst) != *epoch
                 {
                     s.transcript_display.children.report_copy = ReportCopy::Idle;
@@ -878,7 +1052,7 @@ impl Children {
             }
             _ => return false,
         };
-        let (key, epoch, scope, baseline, lease) =
+        let (key, epoch, scope, baseline, lease, revocation) =
             match std::mem::take(&mut s.transcript_display.children.report_copy) {
                 ReportCopy::Loading {
                     key,
@@ -886,12 +1060,14 @@ impl Children {
                     scope,
                     baseline,
                     lease,
+                    revocation,
                     ..
-                } => (key, epoch, scope, baseline, lease),
+                } => (key, epoch, scope, baseline, lease, revocation),
                 _ => return false,
             };
         if !s.current_scope(&scope)
             || lease.as_ref().is_some_and(|w| w.strong_count() == 0)
+            || revocation.is_revoked()
             || CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch
         {
             return false;
@@ -904,6 +1080,7 @@ impl Children {
                     tx.read_clipboard(move |s: &mut State, current, tx| {
                         if !s.current_scope(&scope)
                             || lease.as_ref().is_some_and(|w| w.strong_count() == 0)
+                            || revocation.is_revoked()
                             || CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch
                         {
                             return;
@@ -931,12 +1108,22 @@ impl Children {
                         key,
                         epoch,
                         text,
+                        revocation,
                         rx,
                     };
                 }
                 true
             }
             _ => {
+                if matches!(key, CopyKey::ToolSection(_)) {
+                    crate::shell::notifications::emit_outcome(
+                        s,
+                        crate::shell::notifications::Category::Sessions,
+                        None,
+                        crate::strings::t("sessionList.reload.error"),
+                        true,
+                    );
+                }
                 s.transcript_display.children.report_copy = ReportCopy::Failed { key };
                 true
             }
@@ -1207,7 +1394,7 @@ impl Children {
                 let mut frozen_ends: HashMap<(Option<String>, String), u64> = HashMap::new();
                 let mut pending_events = Vec::new();
                 let mut pending_bytes = 0usize;
-                let mut owed_synthetics: Vec<(u8, crate::history::Row)> = Vec::new();
+                let mut owed_synthetics: Vec<(u8, usize, crate::history::Row)> = Vec::new();
                 let mut synthetic_owed = 0u8;
                 let mut execution_owed = 0u8;
                 let mut last_exec_end: Option<u64> = None;
@@ -1255,19 +1442,20 @@ impl Children {
                                 synthetic_owed = 3;
                             }
                             for row in drain.synthetics {
+                                let prior_matches = live_page.as_ref().map_or(0, |page| {
+                                    page.rows
+                                        .iter()
+                                        .filter(|p| same_synthetic_report(p, &row))
+                                        .count()
+                                });
                                 if owed_synthetics.len() < 16
-                                    && !owed_synthetics.iter().any(|(_, r)| {
-                                        r.id == row.id || same_synthetic_report(r, &row)
-                                    })
+                                    && !owed_synthetics.iter().any(|(_, _, r)| r.id == row.id)
                                 {
-                                    owed_synthetics.push((0, row.clone()));
+                                    owed_synthetics.push((0, prior_matches, row.clone()));
                                 }
                                 if let Some(page) = live_page.as_mut()
                                     && page.rows.len() < codenomad_client::history::MAX_ROWS
-                                    && !page
-                                        .rows
-                                        .iter()
-                                        .any(|p| p.id == row.id || same_synthetic_report(p, &row))
+                                    && !page.rows.iter().any(|p| p.id == row.id)
                                 {
                                     page.rows.push(row);
                                     if codenomad_client::history::check(&page.rows).is_err() {
@@ -1464,17 +1652,23 @@ impl Children {
                                 }
                             }
                             if !owed_synthetics.is_empty() && page.newer.is_none() {
-                                owed_synthetics.retain(|(_, r)| {
-                                    !page
+                                owed_synthetics.retain(|(_, prior_matches, r)| {
+                                    if page.rows.iter().any(|p| p.id == r.id) {
+                                        return false;
+                                    }
+                                    if r.id.starts_with("msg_") {
+                                        return true;
+                                    }
+                                    let page_matches = page
                                         .rows
                                         .iter()
-                                        .any(|p| p.id == r.id || same_synthetic_report(p, r))
+                                        .filter(|p| same_synthetic_report(p, r))
+                                        .count();
+                                    page_matches <= *prior_matches
                                 });
-                                for (_, row) in &owed_synthetics {
+                                for (_, _, row) in &owed_synthetics {
                                     if page.rows.len() < codenomad_client::history::MAX_ROWS
-                                        && !page.rows.iter().any(|p| {
-                                            p.id == row.id || same_synthetic_report(p, row)
-                                        })
+                                        && !page.rows.iter().any(|p| p.id == row.id)
                                     {
                                         page.rows.push(row.clone());
                                         if codenomad_client::history::check(&page.rows).is_err() {
@@ -1565,7 +1759,7 @@ impl Children {
                             false
                         }
                     });
-                    owed_synthetics.retain_mut(|(attempts, _)| {
+                    owed_synthetics.retain_mut(|(attempts, _, _)| {
                         *attempts = attempts.saturating_add(1);
                         if *attempts <= 3 {
                             max_attempt = max_attempt.max(*attempts);
@@ -1625,6 +1819,7 @@ impl Children {
         let mut to_requeue: Vec<(ChildKey, String, Weak<()>)> = Vec::new();
         let mut mark_unavailable: Vec<ChildKey> = Vec::new();
         let mut clear_unavailable: Vec<ChildKey> = Vec::new();
+        let mut revoked_children: Vec<String> = Vec::new();
         for (ck, entry) in self.entries.iter_mut() {
             match &mut entry.watch {
                 WatchState::Active(watcher) => {
@@ -1653,6 +1848,7 @@ impl Children {
                             }
                             ChildUpdate::Unverified => {
                                 clear_unavailable.push(ck.clone());
+                                revoked_children.push(ck.1.clone());
                                 changed |= entry.load_error
                                     || entry.settled
                                     || entry.snapshot != Snapshot::default();
@@ -1690,6 +1886,7 @@ impl Children {
                     }
                     if revoked {
                         clear_unavailable.push(ck.clone());
+                        revoked_children.push(ck.1.clone());
                         changed |= entry.load_error || entry.snapshot != Snapshot::default();
                         entry.snapshot = Snapshot::default();
                         entry.load_error = false;
@@ -1713,6 +1910,24 @@ impl Children {
         }
         for ck in clear_unavailable {
             changed |= self.unavailable.remove(&ck);
+        }
+        if !revoked_children.is_empty() {
+            let cancel_copy = match &self.report_copy {
+                ReportCopy::Loading { key, .. }
+                | ReportCopy::Ready { key, .. }
+                | ReportCopy::Failed { key } => {
+                    revoked_children.iter().any(|id| key.touches_child(id))
+                }
+                #[cfg(target_arch = "wasm32")]
+                ReportCopy::Writing { key, .. } => {
+                    revoked_children.iter().any(|id| key.touches_child(id))
+                }
+                ReportCopy::Idle => false,
+            };
+            if cancel_copy {
+                self.report_copy = ReportCopy::Idle;
+                changed = true;
+            }
         }
         for ck in mark_unavailable {
             if !self.unavailable.contains(&ck) {
@@ -2027,6 +2242,8 @@ async fn copy_child_steps_bounded(
     cancelled: &Receiver<()>,
     child: &str,
     expected_parent: &str,
+    settlement: &codenomad_client::stream::ChildSettlement,
+    rev_before: u64,
 ) -> Option<String> {
     use std::{collections::HashSet, io};
     struct Limited(Vec<u8>, usize);
@@ -2043,8 +2260,6 @@ async fn copy_child_steps_bounded(
         }
     }
     let deadline = runtime::Instant::now() + COPY_BUDGET;
-    let (_watch_rx, settlement) = backend.watch_child(child)?;
-    let rev_before = settlement.revocation_gen();
     let location = {
         let _slot = reads.background(cancelled).await?;
         backend
@@ -2128,12 +2343,7 @@ fn same_synthetic_report(a: &crate::history::Row, b: &crate::history::Row) -> bo
         })
     }
     match (report(a), report(b)) {
-        (Some(ra), Some(rb)) => {
-            ra.child == rb.child
-                && ra.state == rb.state
-                && ra.body == rb.body
-                && ra.created.abs_diff(rb.created) <= 60_000
-        }
+        (Some(ra), Some(rb)) => ra.child == rb.child && ra.state == rb.state && ra.body == rb.body,
         _ => false,
     }
 }

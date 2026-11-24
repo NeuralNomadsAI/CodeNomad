@@ -157,10 +157,12 @@ impl Backend {
                         .and_then(Value::as_array_mut)
                     {
                         for item in items.iter_mut() {
-                            if item["type"] == "image"
+                            if matches!(item["type"].as_str(), Some("image" | "file"))
                                 && let Some(obj) = item.as_object_mut()
                             {
                                 obj.remove("data");
+                                obj.remove("uri");
+                                obj.remove("url");
                             }
                         }
                     }
@@ -173,6 +175,18 @@ impl Backend {
         }
         Ok((out, newer))
     }
+    pub async fn background(&self) -> Result<()> {
+        self.client
+            .post(format!(
+                "{}workspaces/{}/instance/api/session/{}/background",
+                self.base, self.workspace, self.session
+            ))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
     pub async fn empty(&self) -> Result<Page> {
         let page = self.page(json!({"kind":"latest"})).await?;
         if !page.rows.is_empty() {

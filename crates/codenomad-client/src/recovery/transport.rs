@@ -330,13 +330,21 @@ pub(crate) async fn run_with_reading(
                         && reader.resident.len() < history::MAX_ROWS
                         && reader.known.insert(row.id.clone())
                     {
+                        let prior_matches = reader
+                            .resident
+                            .iter()
+                            .filter(|existing| super::reader::same_synthetic_report(existing, &row))
+                            .count();
                         reader.resident.push(row.clone().into());
                         if history::check(&reader.resident).is_err() {
                             reader.resident.pop();
                             reader.known.remove(&row.id);
                         } else {
                             if reader.owed_synthetics.len() < 16 {
-                                reader.owed_synthetics.entry(row.id.clone()).or_insert(0);
+                                reader
+                                    .owed_synthetics
+                                    .entry(row.id.clone())
+                                    .or_insert((0, prior_matches));
                             }
                             reader_event(
                                 reading,

@@ -69,6 +69,7 @@ pub(in crate::chat) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
             "",
             "-tool_input",
             "-tool_output",
+            "-tool_output_section",
             "-wrap",
             "-error",
             "-diagnostics",
@@ -317,11 +318,51 @@ fn render_body(
             .disabled(unavailable || !crate::launcher::can_open_child_session(s)),
         );
     }
+    let owner_parent = ancestors.len().checked_sub(2).map(|i| ancestors[i]);
+    let tool_expand_key = message
+        .strip_prefix("child:")
+        .and_then(|v| v.split_once(':'))
+        .and_then(|(child, row_id)| {
+            s.transcript_display
+                .children
+                .tool_truncated(owner_parent, child, row_id, &tool.id)
+                .then(|| super::children::ToolCopyKey {
+                    key: format!("copy-{key}-output"),
+                    parent: owner_parent.map(str::to_owned),
+                    child: child.to_owned(),
+                    row_id: row_id.to_owned(),
+                    call: tool.id.clone(),
+                    section: 1,
+                })
+        });
+    let expanded_tool_output = tool_expand_key
+        .as_ref()
+        .and_then(|k| s.transcript_display.children.loaded_tool_output(k));
+    let is_tool_truncated = tool_expand_key.is_some();
+    let backgroundable = !nested
+        && tool.status == "running"
+        && matches!(
+            tool.name.to_ascii_lowercase().as_str(),
+            "bash" | "shell" | "task" | "subagent"
+        );
+    if backgroundable {
+        header = header.child(
+            layout::button(
+                t("promptInput.background.title"),
+                false,
+                screen::action(&s.input_scope, |s| {
+                    super::children::Children::background_session(s);
+                }),
+            )
+            .key(format!("background-{key}")),
+        );
+    }
     if shared_wrap {
         header = header.child(wrap_control(s, &wrap_key, wrap));
     }
     if has_output
         || report_truncated
+        || is_tool_truncated
         || !pending && tool.name == "apply_patch" && apply_patch::has_patch(tool)
         || tool.name == "todowrite"
             && tool.metadata["todos"]
@@ -513,7 +554,8 @@ fn render_body(
         && tool.status == "completed"
         && !apply_patch::has_patch(tool)
         && !parts[0].trim().is_empty();
-    let has_collapsible_output = has_apply_patch_body || skill || (has_output && !specialized_task);
+    let has_collapsible_output =
+        has_apply_patch_body || skill || ((has_output || is_tool_truncated) && !specialized_task);
     let output_section_key = format!("{key}-tool_output_section");
     let output_expanded = if input_visible && has_collapsible_output && !active {
         let expanded = s.transcript_display.expanded(&output_section_key, true);
@@ -561,7 +603,7 @@ fn render_body(
                         false,
                     ));
                 }
-            } else if tool.name == "apply_patch" && has_output {
+            } else if tool.name == "apply_patch" && has_output && !is_tool_truncated {
                 let output_key = format!("{key}-tool_output");
                 if probe {
                     if let Some(q) = query
@@ -593,27 +635,7 @@ fn render_body(
                         false,
                     ));
                 }
-            } else if has_output && !specialized_task {
-                let owner_parent = ancestors.len().checked_sub(2).map(|i| ancestors[i]);
-                let tool_expand_key = message
-                    .strip_prefix("child:")
-                    .and_then(|v| v.split_once(':'))
-                    .and_then(|(child, row_id)| {
-                        s.transcript_display
-                            .children
-                            .tool_truncated(owner_parent, child, row_id, &tool.id)
-                            .then(|| super::children::ToolCopyKey {
-                                key: format!("copy-{key}-output"),
-                                parent: owner_parent.map(str::to_owned),
-                                child: child.to_owned(),
-                                row_id: row_id.to_owned(),
-                                call: tool.id.clone(),
-                                section: 1,
-                            })
-                    });
-                let expanded_tool_output = tool_expand_key
-                    .as_ref()
-                    .and_then(|k| s.transcript_display.children.loaded_tool_output(k));
+            } else if (has_output || is_tool_truncated) && !specialized_task {
                 let structured_out = if expanded_tool_output.is_some() {
                     None
                 } else {
@@ -636,66 +658,76 @@ fn render_body(
                             )
                         };
                     let (parts, lang) = if let Some(full) = expanded_tool_output {
-                        ([full, "", "", ""], lang)
+                        (
+                            [full, "", "", ""],
+                            if tool.name == "apply_patch" {
+                                "diff"
+                            } else {
+                                lang
+                            },
+                        )
                     } else if let Some(formatted) = formatted.as_deref() {
                         ([formatted, "", "", ""], formatted_lang)
                     } else {
                         (parts, lang)
                     };
-                    let terminal =
-                        shell::matches(tool) && parts.iter().any(|text| ansi::present(text));
-                    let highlight = tool.status != "running"
-                        && (lang != "diff"
-                            || parts
-                                .iter()
-                                .flat_map(|text| text.encode_utf16())
-                                .nth(TOOL_LIMIT)
-                                .is_none());
                     let output_key = format!("{key}-tool_output");
-                    let fallback = || {
-                        col()
-                            .full_width()
-                            .separate(Space::Sm)
-                            .children((!shared_wrap).then(|| {
-                                layout::action_row()
-                                    .child(wrap_control(s, &wrap_key, wrap))
-                                    .child(text(lang).text_role(TextRole::Label))
-                            }))
-                            .child(markdown::tool_pane(
-                                window(
-                                    s,
-                                    output_key.clone(),
-                                    &parts,
-                                    document::search_limit_for(s, key, query),
-                                    |shown, units| {
-                                        if !probe
-                                            && tool.status == "running"
-                                            && shell::matches(tool)
-                                        {
-                                            s.transcript_display.live_ansi(key, shown, wrap, query)
-                                        } else if terminal {
-                                            ansi::search_code(shown, wrap, query)
-                                        } else {
-                                            markdown::search_code(
-                                                shown,
-                                                lang,
-                                                highlight && units <= HIGHLIGHT_LIMIT,
-                                                wrap,
-                                                query,
-                                            )
-                                        }
-                                    },
-                                ),
-                                matches!(tool.name.as_str(), "edit" | "write"),
-                            ))
-                    };
-                    block = block.child(if let Some(results) = result_list {
-                        results
-                    } else if rich_diff {
-                        tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
-                    } else {
-                        fallback()
-                    });
+                    if has_output || expanded_tool_output.is_some() {
+                        let terminal =
+                            shell::matches(tool) && parts.iter().any(|text| ansi::present(text));
+                        let highlight = tool.status != "running"
+                            && (lang != "diff"
+                                || parts
+                                    .iter()
+                                    .flat_map(|text| text.encode_utf16())
+                                    .nth(TOOL_LIMIT)
+                                    .is_none());
+                        let fallback = || {
+                            col()
+                                .full_width()
+                                .separate(Space::Sm)
+                                .children((!shared_wrap).then(|| {
+                                    layout::action_row()
+                                        .child(wrap_control(s, &wrap_key, wrap))
+                                        .child(text(lang).text_role(TextRole::Label))
+                                }))
+                                .child(markdown::tool_pane(
+                                    window(
+                                        s,
+                                        output_key.clone(),
+                                        &parts,
+                                        document::search_limit_for(s, key, query),
+                                        |shown, units| {
+                                            if !probe
+                                                && tool.status == "running"
+                                                && shell::matches(tool)
+                                            {
+                                                s.transcript_display
+                                                    .live_ansi(key, shown, wrap, query)
+                                            } else if terminal {
+                                                ansi::search_code(shown, wrap, query)
+                                            } else {
+                                                markdown::search_code(
+                                                    shown,
+                                                    lang,
+                                                    highlight && units <= HIGHLIGHT_LIMIT,
+                                                    wrap,
+                                                    query,
+                                                )
+                                            }
+                                        },
+                                    ),
+                                    matches!(tool.name.as_str(), "edit" | "write"),
+                                ))
+                        };
+                        block = block.child(if let Some(results) = result_list {
+                            results
+                        } else if rich_diff {
+                            tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
+                        } else {
+                            fallback()
+                        });
+                    }
                     if let Some(expand_key) = tool_expand_key
                         && expanded_tool_output.is_none()
                     {

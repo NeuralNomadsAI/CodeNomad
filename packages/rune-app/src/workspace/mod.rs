@@ -16,7 +16,8 @@ pub(crate) use state::native_window_store;
 pub(crate) use state::set_files_tab;
 pub(crate) use state::{
     Activation, can_switch_for_notification, check_notification, notification_target,
-    observes_notification, open_notification, owns_notification, workspace_notification,
+    observes_notification, open_notification, open_session_tab_target, owns_notification,
+    switch_tab_for_child, workspace_notification,
 };
 pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,

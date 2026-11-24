@@ -274,14 +274,19 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
                     matches!(p, Part::Tool(t) if matches!(t.status.as_str(), "streaming" | "running"))
                 })
             {
+                let live_tools: std::collections::HashMap<&str, &std::sync::Arc<Tool>> = prior
+                    .parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        Part::Tool(t) => Some((t.id.as_str(), t)),
+                        _ => None,
+                    })
+                    .collect();
                 let row = std::sync::Arc::make_mut(row);
                 for part in &mut row.parts {
                     if let Part::Tool(fetched) = part
                         && matches!(fetched.status.as_str(), "streaming" | "running")
-                        && let Some(Part::Tool(live_tool)) = prior
-                            .parts
-                            .iter()
-                            .find(|p| matches!(p, Part::Tool(t) if t.id == fetched.id))
+                        && let Some(live_tool) = live_tools.get(fetched.id.as_str())
                     {
                         tool_live::merge(live_tool, fetched);
                     }

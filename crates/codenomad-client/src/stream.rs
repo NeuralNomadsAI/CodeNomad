@@ -20,6 +20,7 @@ mod notifications;
 mod routing;
 mod sessions;
 pub use catalogue::{AttentionHint, CatalogueChanges, CatalogueWatch};
+pub use children::ChildSettlement;
 pub(crate) use children::Children;
 use notifications::session_attention;
 use routing::dispatch;

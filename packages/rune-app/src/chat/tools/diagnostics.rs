@@ -87,14 +87,13 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
             selected.push((candidate, entries));
         }
     }
-    if selected.is_empty() {
-        return None;
-    }
+    let mut truncated = false;
     let mut flat: Vec<(&str, &Value, &str)> = Vec::new();
     let mut scanned = 0usize;
     for (path, entries) in &selected {
         for entry in entries.iter() {
             if scanned >= SCAN_LIMIT {
+                truncated = true;
                 break;
             }
             scanned += 1;
@@ -106,29 +105,96 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
             break;
         }
     }
-    if flat.is_empty() {
+    let mut has_any_message = !flat.is_empty();
+    let mut scanned_keys = 0usize;
+    for (candidate, value) in files.iter() {
+        scanned_keys += 1;
+        if scanned_keys > SCAN_LIMIT {
+            truncated = true;
+            break;
+        }
+        if selected.iter().any(|(p, _)| *p == candidate) {
+            continue;
+        }
+        let Some(entries) = value.as_array() else {
+            continue;
+        };
+        for entry in entries.iter() {
+            if scanned >= SCAN_LIMIT {
+                truncated = true;
+                break;
+            }
+            scanned += 1;
+            if entry["message"].is_string() {
+                has_any_message = true;
+                truncated = true;
+                break;
+            }
+        }
+        if truncated && has_any_message {
+            break;
+        }
+    }
+    if !has_any_message {
         return None;
     }
+    truncated |= flat.len() > ENTRY_LIMIT;
     let key = format!("{key}-diagnostics");
     let expanded = s.transcript_display.expanded(&key, mode == "expanded");
     let toggle = key.clone();
     let label = t("toolCall.diagnostics.title");
+    let mut header = layout::action_row().child(
+        layout::button(
+            label,
+            false,
+            screen::action(&s.input_scope, move |s| {
+                Display::set_expanded(s, &toggle, !expanded);
+            }),
+        )
+        .key(format!("toggle-{key}"))
+        .expanded(expanded),
+    );
+    if truncated {
+        header = header.child(text(t("toolCall.output.truncated")).role("status"));
+    }
     let mut pane = col()
         .key(key.clone())
         .full_width()
         .separate(Space::Sm)
-        .child(
-            layout::button(
-                label,
-                false,
-                screen::action(&s.input_scope, move |s| {
-                    Display::set_expanded(s, &toggle, !expanded);
-                }),
-            )
-            .key(format!("toggle-{key}"))
-            .expanded(expanded),
-        );
+        .child(header);
     if expanded {
+        let payload = tool.metadata["diagnostics"].clone();
+        let copy_row = layout::action_row()
+            .child(
+                text(t(if truncated {
+                    "toolCall.output.truncated"
+                } else {
+                    "toolCall.diagnostics.title"
+                }))
+                .role("status"),
+            )
+            .child(
+                markdown::copy_button(
+                    t("toolCall.io.copyOutputAriaLabel"),
+                    screen::action_tx(&s.input_scope, move |s, tx| {
+                        s.transcript_display.children.cancel_copy();
+                        if let Some(source) =
+                            super::format::bounded_json(&payload, super::children::MAX_COPY_BYTES)
+                        {
+                            tx.copy(source);
+                        } else {
+                            crate::shell::notifications::emit_outcome(
+                                s,
+                                crate::shell::notifications::Category::Sessions,
+                                None,
+                                t("sessionList.reload.error"),
+                                true,
+                            );
+                        }
+                    }),
+                )
+                .key(format!("copy-{key}")),
+            );
         let rendered = (0..3)
             .flat_map(|rank| {
                 flat.iter()
@@ -166,7 +232,7 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
                         },
                     ))
             });
-        pane = pane.child(markdown::tool_pane(
+        pane = pane.child(copy_row).child(markdown::tool_pane(
             col().full_width().separate(Space::Sm).children(rendered),
             false,
         ));
