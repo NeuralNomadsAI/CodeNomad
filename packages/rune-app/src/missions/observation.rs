@@ -29,6 +29,7 @@ pub(super) struct Observation {
     failed: Option<u64>,
     due: Option<f64>,
     settled_at: Option<f64>,
+    disconnected: bool,
 }
 
 impl Observation {
@@ -73,17 +74,41 @@ impl Observation {
     }
 
     pub fn complete_and_fresh(&self, revision: u64) -> bool {
-        !self.pages.is_empty()
+        let Some(first) = self.pages.first() else {
+            return false;
+        };
+        let total = first.window.total;
+        let loaded: u64 = self.pages.iter().map(|page| page.actors.len() as u64).sum();
+        !self.disconnected
             && !self.busy()
             && self.due.is_none()
             && self.failed.is_none()
             && self.more_offset().is_none()
+            && loaded == total
             && self.pages.iter().all(|page| {
+                let expected = if page.window.total > page.actors.len() as u64 {
+                    Coverage::Partial
+                } else {
+                    Coverage::Observed
+                };
                 self.current(page)
                     && page.revision == revision
-                    && page.coverage == Coverage::Observed
-                    && page.requests == Coverage::Observed
+                    && page.coverage == expected
+                    && page.requests == expected
+                    && page
+                        .actors
+                        .iter()
+                        .all(|actor| actor.state != ActorState::Unknown)
             })
+    }
+
+    pub fn set_online(&mut self, online: bool) {
+        if !online {
+            self.disconnected = true;
+            self.cancel();
+        } else if std::mem::replace(&mut self.disconnected, false) {
+            self.refresh();
+        }
     }
 
     pub fn interrupted(&self, header: &MapHeader) -> bool {

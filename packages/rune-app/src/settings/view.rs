@@ -369,7 +369,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                         s.shared.borrow_mut().retry_general();
                     },
                 ))
-        } else if prefs.saved(Owner::Config).is_none() {
+        } else if prefs.saved(Owner::Config).is_none()
+            && !(s.section == Section::Missions && prefs.mission_delete_sessions_error().is_some())
+        {
             text(t("rune.loading")).role("status")
         } else {
             rune::el()

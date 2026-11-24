@@ -249,7 +249,10 @@ impl PreferencesWatch {
                             async {
                                 while let Ok(event) = events.recv().await {
                                     let flag = match event {
-                                        Input::Opened(e) => if e > 1 { 11 | 16 | 32 } else { 11 | 32 },
+                                        Input::Opened(e) => {
+                                            notices.fetch_and(!64, SeqCst);
+                                            if e > 1 { 11 | 16 | 32 | 128 } else { 11 | 32 | 128 }
+                                        }
                                         Input::Preferences(Owner::Config) => 1,
                                         Input::Preferences(Owner::State) => 2,
                                         Input::Preferences(Owner::Server) => 32,
@@ -276,6 +279,10 @@ impl PreferencesWatch {
                             },
                         )
                         .await;
+                        notices.fetch_and(!128, SeqCst);
+                        if notices.fetch_or(64, SeqCst) & 64 == 0 {
+                            wake();
+                        }
                         if result
                             .as_ref()
                             .is_err_and(crate::http::authentication_expired)
@@ -326,6 +333,17 @@ impl PreferencesWatch {
             reconnect,
             std::mem::take(&mut *self.missions.lock().unwrap()),
         )
+    }
+
+    pub fn take_stream_state(&self) -> Option<bool> {
+        let bits = self.dirty.fetch_and(!(64 | 128), SeqCst);
+        if bits & 64 != 0 {
+            Some(false)
+        } else if bits & 128 != 0 {
+            Some(true)
+        } else {
+            None
+        }
     }
 
     pub fn project(&self) -> Option<&str> {

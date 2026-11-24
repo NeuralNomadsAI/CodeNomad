@@ -27,7 +27,7 @@ pub(crate) use state::{
 pub(crate) use state::{active_workspace, poll_cached_notifications};
 pub(crate) use state::{
     mission_confirmation, mission_event, mission_observation_project, mission_panel,
-    mission_supported, right_panel_tab, set_right_panel_tab, suspend_missions,
+    mission_supported, missions_online, right_panel_tab, set_right_panel_tab, suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;

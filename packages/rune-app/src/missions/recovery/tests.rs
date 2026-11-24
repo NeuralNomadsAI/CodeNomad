@@ -184,6 +184,135 @@ fn coordinator_eligibility_requires_complete_fresh_interrupted_active_or_resumab
 }
 
 #[test]
+fn coordinator_eligibility_handles_161_actors_across_two_pages_and_revokes_on_sse_disconnect() {
+    let active = header_value("msn", "active", Some("running"), 7, true, None);
+    let page1 = Activity {
+        revision: 7,
+        observed_at: 100.0,
+        window: Window {
+            order: "ord-161".into(),
+            offset: 0,
+            end: 160,
+            total: 161,
+        },
+        coverage: Coverage::Partial,
+        requests: Coverage::Partial,
+        actors: (0..160)
+            .map(|i| codenomad_client::missions::Actor {
+                session_id: if i == 0 {
+                    "ses_coord".into()
+                } else {
+                    format!("ses_w_{i}")
+                },
+                title: format!("Actor {i}"),
+                state: if i == 0 {
+                    ActorState::IdleWithoutReport
+                } else {
+                    ActorState::Missing
+                },
+                request: None,
+            })
+            .collect(),
+    };
+    let mut obs = Observation::default();
+    obs.observe(7);
+    assert!(obs.adopt_page(0, page1));
+    assert!(
+        !coordinator_eligible(&active, &obs),
+        "first page alone cannot prove all 161 actors are idle"
+    );
+
+    // Loading page 2 with an Unknown actor still withholds Recover.
+    let unknown_page2 = Activity {
+        revision: 7,
+        observed_at: 101.0,
+        window: Window {
+            order: "ord-161".into(),
+            offset: 160,
+            end: 161,
+            total: 161,
+        },
+        coverage: Coverage::Partial,
+        requests: Coverage::Partial,
+        actors: vec![codenomad_client::missions::Actor {
+            session_id: "ses_w_160".into(),
+            title: "Actor 160".into(),
+            state: ActorState::Unknown,
+            request: None,
+        }],
+    };
+    let mut obs_unknown = Observation::default();
+    obs_unknown.observe(7);
+    assert!(
+        obs_unknown.adopt_page(
+            0,
+            Activity {
+                revision: 7,
+                observed_at: 100.0,
+                window: Window {
+                    order: "ord-161".into(),
+                    offset: 0,
+                    end: 160,
+                    total: 161,
+                },
+                coverage: Coverage::Partial,
+                requests: Coverage::Partial,
+                actors: (0..160)
+                    .map(|i| codenomad_client::missions::Actor {
+                        session_id: if i == 0 {
+                            "ses_coord".into()
+                        } else {
+                            format!("ses_w_{i}")
+                        },
+                        title: format!("Actor {i}"),
+                        state: if i == 0 {
+                            ActorState::IdleWithoutReport
+                        } else {
+                            ActorState::Missing
+                        },
+                        request: None,
+                    })
+                    .collect(),
+            }
+        )
+    );
+    assert!(obs_unknown.adopt_page(160, unknown_page2));
+    assert!(!coordinator_eligible(&active, &obs_unknown));
+
+    // Loading a clean page 2 unlocks Recover for a 161-actor mission.
+    let page2 = Activity {
+        revision: 7,
+        observed_at: 101.0,
+        window: Window {
+            order: "ord-161".into(),
+            offset: 160,
+            end: 161,
+            total: 161,
+        },
+        coverage: Coverage::Partial,
+        requests: Coverage::Partial,
+        actors: vec![codenomad_client::missions::Actor {
+            session_id: "ses_w_160".into(),
+            title: "Actor 160".into(),
+            state: ActorState::Missing,
+            request: None,
+        }],
+    };
+    assert!(obs.adopt_page(160, page2));
+    assert!(
+        coordinator_eligible(&active, &obs),
+        "loading both real partial pages at revision 7 must enable Recover"
+    );
+
+    // Losing the SSE stream revokes Recover immediately even without a revision change.
+    obs.set_online(false);
+    assert!(!coordinator_eligible(&active, &obs));
+    // Reconnecting marks a refresh pending, so Recover stays unavailable until fresh pages load.
+    obs.set_online(true);
+    assert!(!coordinator_eligible(&active, &obs));
+}
+
+#[test]
 fn recovery_guard_prevents_duplicate_admission_refreshes_on_refusal_and_allows_retry() {
     crate::platform::block_on(async {
         let http = Http::new().await;

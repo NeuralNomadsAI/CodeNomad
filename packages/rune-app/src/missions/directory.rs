@@ -12,7 +12,7 @@ use codenomad_client::{
 };
 use rune::edit::TextEdit;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -61,6 +61,8 @@ pub(crate) struct Panel {
     now: f64,
     pub(super) scope: std::rc::Rc<()>,
     pub(super) view_live: Arc<AtomicBool>,
+    pub(super) selection_live: Arc<AtomicBool>,
+    cleanup_tokens: HashMap<(String, String), Arc<AtomicBool>>,
     supported: Option<bool>,
     capability: Option<Receiver<Option<bool>>>,
     probe_attempted: bool,
@@ -93,6 +95,8 @@ impl Panel {
             now: 0.0,
             scope: std::rc::Rc::new(()),
             view_live: Arc::new(AtomicBool::new(false)),
+            selection_live: Arc::new(AtomicBool::new(false)),
+            cleanup_tokens: HashMap::new(),
             supported: None,
             capability: None,
             probe_attempted: false,
@@ -113,8 +117,11 @@ impl Panel {
         }
         self.visible = show;
         self.view_live.store(false, Ordering::Release);
+        self.selection_live.store(false, Ordering::Release);
+        self.revoke_all_cleanup_tokens();
         if show {
             self.view_live = Arc::new(AtomicBool::new(true));
+            self.selection_live = Arc::new(AtomicBool::new(true));
             self.refresh();
         } else {
             self.refresh_due = None;
@@ -128,6 +135,62 @@ impl Panel {
                 lane.owed = false;
             }
         }
+    }
+
+    pub(crate) fn set_online(&mut self, online: bool) {
+        self.observation.set_online(online);
+        if online && self.visible {
+            (self.wake)();
+        }
+    }
+
+    pub(super) fn cleanup_row_live(
+        &mut self,
+        mission_id: &str,
+        deletion_id: &str,
+    ) -> Arc<AtomicBool> {
+        let key = (mission_id.to_owned(), deletion_id.to_owned());
+        if let Some(token) = self.cleanup_tokens.get(&key) {
+            return token.clone();
+        }
+        if self.cleanup_tokens.len() >= 64 {
+            self.cleanup_tokens.retain(|(m, d), token| {
+                let alive = self
+                    .cleanups
+                    .iter()
+                    .any(|row| row.is_pending() && row.mission_id == *m && row.deletion_id == *d);
+                if !alive {
+                    token.store(false, Ordering::Release);
+                }
+                alive
+            });
+        }
+        let token = Arc::new(AtomicBool::new(true));
+        self.cleanup_tokens.insert(key, token.clone());
+        token
+    }
+
+    fn revoke_all_cleanup_tokens(&mut self) {
+        for (_, token) in self.cleanup_tokens.drain() {
+            token.store(false, Ordering::Release);
+        }
+    }
+
+    fn sync_cleanup_tokens(&mut self, covered: bool) {
+        self.cleanup_tokens.retain(|(m, d), token| {
+            let matching = self
+                .cleanups
+                .iter()
+                .find(|row| row.mission_id == *m && row.deletion_id == *d);
+            let keep = match matching {
+                Some(row) => row.is_pending(),
+                None => !covered,
+            };
+            if !keep {
+                token.store(false, Ordering::Release);
+            }
+            keep
+        });
     }
 
     pub(super) fn refresh(&mut self) {
@@ -153,11 +216,15 @@ impl Panel {
         } else {
             // A reconnect retires publication authority while keeping the display.
             self.view_live.store(false, Ordering::Release);
+            self.selection_live.store(false, Ordering::Release);
+            self.revoke_all_cleanup_tokens();
             if self.visible {
                 self.view_live = Arc::new(AtomicBool::new(true));
+                self.selection_live = Arc::new(AtomicBool::new(true));
             }
             self.detail.cancel();
             self.observation.cancel();
+            self.observation.set_online(true);
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
                     cancel.close();
@@ -469,6 +536,10 @@ impl Panel {
                         .as_ref()
                         .is_some_and(|id| !self.summaries.iter().any(|row| &row.id == id))
                 {
+                    self.selection_live.store(false, Ordering::Release);
+                    if self.visible {
+                        self.selection_live = Arc::new(AtomicBool::new(true));
+                    }
                     self.selected = None;
                 }
             }
@@ -486,6 +557,11 @@ impl Panel {
                 }) {
                     return false;
                 }
+                let covered = page.window.end == page.window.total;
+                self.project = Some(page.project_id);
+                lane.window = Some(page.window);
+                self.sync_cleanup_tokens(covered);
+                return true;
             }
             _ => return false,
         }
@@ -496,11 +572,35 @@ impl Panel {
 
     pub(super) fn select(&mut self, id: &str) {
         if self.selected.as_deref() != Some(id) && self.summaries.iter().any(|row| row.id == id) {
+            self.selection_live.store(false, Ordering::Release);
+            if self.visible {
+                self.selection_live = Arc::new(AtomicBool::new(true));
+            }
             self.control_fields.cancel();
             self.detail.clear();
             self.observation = Observation::default();
             self.selected = Some(id.into());
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn accept_cleanups_for_test(&mut self, rows: Vec<Cleanup>) -> bool {
+        let len = rows.len() as u64;
+        self.accept(
+            Kind::Cleanups,
+            Read::Refresh,
+            DirectoryPage {
+                project_id: self.project.clone().unwrap_or_else(|| "project".into()),
+                finish_high_water: None,
+                window: Window {
+                    order: "test-order".into(),
+                    offset: 0,
+                    end: len,
+                    total: len,
+                },
+                rows: DirectoryRows::Cleanups(rows),
+            },
+        )
     }
 
     pub(super) fn shown_rows(&self) -> impl Iterator<Item = &Summary> {

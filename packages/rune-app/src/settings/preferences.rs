@@ -334,6 +334,12 @@ impl Preferences {
             .map_or_else(Default::default, PreferencesWatch::take_missions)
     }
 
+    pub(super) fn mission_stream_state(&self) -> Option<bool> {
+        self.stream
+            .as_ref()
+            .and_then(PreferencesWatch::take_stream_state)
+    }
+
     pub fn invalidate(&mut self, owner: Owner) {
         if owner != Owner::Server || self.show_server {
             self.doc_mut(owner).invalidate();
@@ -529,6 +535,16 @@ impl Preferences {
         self.config.choice_failed(Choice::MissionDeleteSessions)
     }
 
+    pub(super) fn mission_delete_sessions_error(&self) -> Option<&'static str> {
+        if self.authentication_required || self.config.read_failed() {
+            Some("rune.connect_error")
+        } else if self.mission_delete_sessions_failed() {
+            Some("settings.preferenceSaveFailed")
+        } else {
+            None
+        }
+    }
+
     pub(super) fn set_mission_delete_sessions(&mut self, value: bool) {
         if self.can_retry()
             && !self.mission_delete_sessions_pending()
@@ -716,6 +732,16 @@ impl Preferences {
             state["appearancePreferences"]["mode"] = json!(mode);
             self.revision += 1;
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_mission_delete_sessions(&mut self, enabled: bool) {
+        let config = self
+            .config
+            .snapshot
+            .get_or_insert_with(|| json!({"settings": {}}));
+        config["settings"]["missionDeleteSessions"] = json!(enabled);
+        self.revision += 1;
     }
 
     #[cfg(any(test, feature = "test-support"))]

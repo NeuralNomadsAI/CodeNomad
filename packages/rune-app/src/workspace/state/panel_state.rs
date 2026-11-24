@@ -311,6 +311,14 @@ pub(crate) fn suspend_missions(s: &mut State) {
     }
 }
 
+pub(crate) fn missions_online(s: &mut State, online: bool) {
+    if let Some(ui) = &mut s.workspace
+        && let Some(panel) = &mut ui.entries[ui.active].missions
+    {
+        panel.set_online(online);
+    }
+}
+
 pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
     // No observer may grant demand; the real mounted occurrence owns it.
     if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {

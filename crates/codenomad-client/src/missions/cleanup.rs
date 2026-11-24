@@ -145,15 +145,25 @@ impl Backend {
         &self,
         mission_id: &str,
         request: &DeletionRequest,
+        expected_deletion_id: Option<&str>,
     ) -> Result<DeletionOutcome> {
         request.validate()?;
+        if expected_deletion_id.is_some_and(|id| !panel_id(id)) {
+            return Err("invalid Mission deletion identifier".into());
+        }
         let url = mission_url(self, mission_id)?;
         let response = delete_request(self, url, request).send().await?;
         let status = response.status();
         let body = read_json_limited(response, 4 * 1024 * 1024)
             .await
             .unwrap_or(serde_json::Value::Null);
-        Ok(settle_deletion(status, &body, mission_id, request))
+        Ok(settle_deletion(
+            status,
+            &body,
+            mission_id,
+            request,
+            expected_deletion_id,
+        ))
     }
 }
 
@@ -189,6 +199,7 @@ fn settle_deletion(
     body: &serde_json::Value,
     mission_id: &str,
     request: &DeletionRequest,
+    expected_deletion_id: Option<&str>,
 ) -> DeletionOutcome {
     if !status.is_success() {
         let code = body["code"].as_str().and_then(DeletionCode::parse);
@@ -200,18 +211,21 @@ fn settle_deletion(
     if body["deleted"] != true {
         return DeletionOutcome::Unconfirmed;
     }
+    let require_cleanup = expected_deletion_id.is_some() || request.delete_managed_sessions;
     match body.get("cleanup") {
-        None | Some(serde_json::Value::Null) => DeletionOutcome::Deleted,
-        Some(value) => match serde_json::from_value::<Cleanup>(value.clone()) {
+        None | Some(serde_json::Value::Null) if !require_cleanup => DeletionOutcome::Deleted,
+        Some(value) if !value.is_null() => match serde_json::from_value::<Cleanup>(value.clone()) {
             Ok(cleanup)
                 if valid_cleanup(&cleanup)
                     && request.matches_cleanup(mission_id, &cleanup)
-                    && !cleanup.is_pending() =>
+                    && !cleanup.is_pending()
+                    && expected_deletion_id.is_none_or(|id| cleanup.deletion_id == id) =>
             {
                 DeletionOutcome::Deleted
             }
             _ => DeletionOutcome::Unconfirmed,
         },
+        _ => DeletionOutcome::Unconfirmed,
     }
 }
 
@@ -247,6 +261,9 @@ fn parse_reconciliation(
             .map_err(|_| "invalid Mission reconciliation cleanups")?,
         _ => return Err("missing Mission reconciliation cleanups".into()),
     };
+    if mission_revision.is_some() && !cleanups.is_empty() {
+        return Err("contradictory Mission reconciliation payload".into());
+    }
     let mut deletion_ids = std::collections::HashSet::with_capacity(cleanups.len());
     if cleanups.iter().any(|item| {
         !valid_cleanup(item)
@@ -329,6 +346,7 @@ mod tests {
                 &code.map_or_else(|| json!({}), |c| json!({"code": c})),
                 "msn-1",
                 &request,
+                None,
             );
             assert_eq!(outcome.error_key(), expected, "{status} {code:?}");
         }
@@ -338,6 +356,7 @@ mod tests {
                 &json!({"deleted": true}),
                 "msn-1",
                 &request,
+                None,
             ),
             DeletionOutcome::Deleted
         );
@@ -347,6 +366,7 @@ mod tests {
                 &json!({"deleted": false}),
                 "msn-1",
                 &request,
+                None,
             ),
             DeletionOutcome::Unconfirmed
         );
@@ -362,8 +382,44 @@ mod tests {
                 &json!({"deleted": true, "cleanup": settled_cleanup}),
                 "msn-1",
                 &request,
+                Some("del-1"),
             ),
             DeletionOutcome::Deleted
+        );
+        assert_eq!(
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": true}),
+                "msn-1",
+                &request,
+                Some("del-1"),
+            ),
+            DeletionOutcome::Unconfirmed
+        );
+        assert_eq!(
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": true, "cleanup": settled_cleanup}),
+                "msn-1",
+                &request,
+                Some("del-other"),
+            ),
+            DeletionOutcome::Unconfirmed
+        );
+        let managed = DeletionRequest {
+            expected_revision: 5,
+            request_id: "req-1".into(),
+            delete_managed_sessions: true,
+        };
+        assert_eq!(
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": true}),
+                "msn-1",
+                &managed,
+                None,
+            ),
+            DeletionOutcome::Unconfirmed
         );
         let mut wrong_req = settled_cleanup.clone();
         wrong_req["requestID"] = json!("other-req");
@@ -373,6 +429,7 @@ mod tests {
                 &json!({"deleted": true, "cleanup": wrong_req}),
                 "msn-1",
                 &request,
+                None,
             ),
             DeletionOutcome::Unconfirmed
         );
@@ -384,6 +441,7 @@ mod tests {
                 &json!({"deleted": true, "cleanup": still_pending}),
                 "msn-1",
                 &request,
+                None,
             ),
             DeletionOutcome::Unconfirmed
         );
@@ -391,12 +449,24 @@ mod tests {
 
     #[test]
     fn reconciliation_read_validates_project_mission_and_cleanups() {
-        let valid = json!({
+        let live = json!({
             "available": true,
             "version": 1,
             "projectID": "proj",
             "generatedAt": 1,
             "mission": {"id": "msn-1", "projectID": "proj", "revision": 5},
+            "cleanups": []
+        });
+        let read = parse_reconciliation(&live, "proj", "msn-1").unwrap();
+        assert_eq!(read.mission_revision, Some(5));
+        assert!(!read.cleanup_unavailable);
+        assert!(read.cleanups.is_empty());
+
+        let tombstoned = json!({
+            "available": true,
+            "version": 1,
+            "projectID": "proj",
+            "generatedAt": 1,
             "cleanups": [{
                 "missionID": "msn-1", "deletionID": "del-1", "requestID": "req-1",
                 "expectedRevision": 5, "deleteManagedSessions": false,
@@ -404,27 +474,31 @@ mod tests {
                 "pending": 0, "reasons": ["children"], "documentPending": true
             }]
         });
-        let read = parse_reconciliation(&valid, "proj", "msn-1").unwrap();
-        assert_eq!(read.mission_revision, Some(5));
+        let read = parse_reconciliation(&tombstoned, "proj", "msn-1").unwrap();
+        assert_eq!(read.mission_revision, None);
         assert!(!read.cleanup_unavailable);
         assert_eq!(read.cleanups.len(), 1);
         assert!(read.cleanups[0].is_pending());
 
-        assert!(parse_reconciliation(&valid, "other", "msn-1").is_err());
-        assert!(parse_reconciliation(&valid, "proj", "other").is_err());
-        let mut unavailable = valid.clone();
+        let mut contradictory = tombstoned.clone();
+        contradictory["mission"] = json!({"id": "msn-1", "projectID": "proj", "revision": 5});
+        assert!(parse_reconciliation(&contradictory, "proj", "msn-1").is_err());
+
+        assert!(parse_reconciliation(&live, "other", "msn-1").is_err());
+        assert!(parse_reconciliation(&live, "proj", "other").is_err());
+        let mut unavailable = live.clone();
         unavailable["available"] = json!(false);
         assert!(parse_reconciliation(&unavailable, "proj", "msn-1").is_err());
 
-        let mut bad_flag = valid.clone();
+        let mut bad_flag = tombstoned.clone();
         bad_flag["cleanupUnavailable"] = json!("yes");
         assert!(parse_reconciliation(&bad_flag, "proj", "msn-1").is_err());
 
-        let mut foreign_cleanup = valid.clone();
+        let mut foreign_cleanup = tombstoned.clone();
         foreign_cleanup["cleanups"][0]["missionID"] = json!("msn-foreign");
         assert!(parse_reconciliation(&foreign_cleanup, "proj", "msn-1").is_err());
 
-        let mut dup = valid;
+        let mut dup = tombstoned;
         let row = dup["cleanups"][0].clone();
         dup["cleanups"].as_array_mut().unwrap().push(row);
         assert!(parse_reconciliation(&dup, "proj", "msn-1").is_err());

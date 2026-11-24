@@ -138,7 +138,20 @@ fn mission_delete_freezes_intent_reconciles_lost_ack_and_reuses_exact_request_on
         assert_eq!(second.body["requestId"], request_id);
         assert_eq!(second.body["expectedRevision"], 7);
         assert_eq!(second.body["deleteManagedSessions"], true);
-        second.reply(200, json!({"deleted": true})).await;
+        second
+            .reply(
+                200,
+                json!({
+                    "deleted": true,
+                    "cleanup": {
+                        "missionID": "msn-del", "deletionID": "del-9", "requestID": request_id,
+                        "expectedRevision": 7, "deleteManagedSessions": true,
+                        "objective": "Obj", "createdAt": 2, "removed": 1, "retained": 0,
+                        "pending": 0, "reasons": [], "documentPending": false
+                    }
+                }),
+            )
+            .await;
         wait(done.recv()).await.unwrap();
         let polled = owner.poll();
         assert_eq!(polled.refreshed_missions.len(), 1);
@@ -218,7 +231,15 @@ fn hiding_view_during_reconciliation_cancels_both_retry_paths_before_sending_del
         let sc = scope();
         let row = cleanup_row(0, true);
         let live2 = live_flag();
-        owner.start_cleanup_retry(sc.clone(), row, live2.clone(), http.backend.clone(), wake);
+        let row_live = live_flag();
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row,
+            live2.clone(),
+            row_live,
+            http.backend.clone(),
+            wake,
+        );
         let held_cleanup_get = http.accept().await;
         assert!(held_cleanup_get.header.starts_with("GET /api/workspaces/"));
         live2.store(false, Ordering::Release);
@@ -333,7 +354,7 @@ fn cleanup_retry_reconciles_before_delete_settles_409_and_retires_matching_delet
         // Seed a failed DeleteIntent matching the exact same saved cleanup intent.
         let old_src = source("old");
         owner.deletes.insert(
-            old_src.mission.clone(),
+            (sc.clone(), old_src.mission.clone()),
             DeleteIntent {
                 scope: sc.clone(),
                 title: "Old mission".into(),
@@ -341,6 +362,7 @@ fn cleanup_retry_reconciles_before_delete_settles_409_and_retires_matching_delet
                 request: DeletionRequest::from_cleanup(&row).unwrap(),
                 flight: None,
                 error: Some("missions.cleanup.documentPending"),
+                retired: false,
             },
         );
         assert!(!owner.can_delete(&old_src));
@@ -349,6 +371,7 @@ fn cleanup_retry_reconciles_before_delete_settles_409_and_retires_matching_delet
         owner.start_cleanup_retry(
             sc.clone(),
             row.clone(),
+            live_flag(),
             live_flag(),
             http.backend.clone(),
             wake.clone(),
@@ -375,6 +398,7 @@ fn cleanup_retry_reconciles_before_delete_settles_409_and_retires_matching_delet
         owner.start_cleanup_retry(
             sc.clone(),
             row.clone(),
+            live_flag(),
             live_flag(),
             http.backend.clone(),
             wake.clone(),
@@ -448,7 +472,7 @@ fn cleanup_view_keeps_tombstoned_delete_reachable_and_fences_stale_scope_retry()
     // Tombstoned mission: not selected and not in summaries or cleanups, yet Retry/Cancel remain reachable.
     let gone = source("tombstoned");
     owner.deletes.insert(
-        gone.mission.clone(),
+        (sc.clone(), gone.mission.clone()),
         DeleteIntent {
             scope: sc.clone(),
             title: "Gone mission".into(),
@@ -456,6 +480,7 @@ fn cleanup_view_keeps_tombstoned_delete_reachable_and_fences_stale_scope_retry()
             request: DeletionRequest::new(7, false).unwrap(),
             flight: None,
             error: Some("missions.cleanup.error.unconfirmed"),
+            retired: false,
         },
     );
 
@@ -506,9 +531,14 @@ fn cleanup_view_keeps_tombstoned_delete_reachable_and_fences_stale_scope_retry()
 
     rt.update(|(panel, owner), _| {
         let key = CleanupKey::new(sc.clone(), &panel.cleanups[0]);
-        owner
-            .retries
-            .insert(sc.clone(), CleanupRetry { key, flight: inbox });
+        owner.retries.insert(
+            sc.clone(),
+            CleanupRetry {
+                key,
+                flight: inbox,
+                retired: false,
+            },
+        );
     });
     rt.frame(1.0 / 60.0);
     let busy_tree = rt.accessibility_json();
@@ -518,6 +548,303 @@ fn cleanup_view_keeps_tombstoned_delete_reachable_and_fences_stale_scope_retry()
         "mission-cleanup-retry-old-del-1",
         "disabled"
     ));
+}
+
+#[test]
+fn selected_delete_retry_cancels_when_user_switches_mission_during_reconciliation() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let mut panel = Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        panel.selection_live = live_flag();
+        let make_summary = |id: &str| codenomad_client::missions::Summary {
+            id: id.into(),
+            title: Some(id.into()),
+            objective: id.into(),
+            status: codenomad_client::missions::Status::Active,
+            run_state: None,
+            coordinator_session_id: "ses_c".into(),
+            actor_count: 1,
+            updated_at: 1.0,
+            revision: 7,
+            finish_sequence: None,
+            task_count: None,
+        };
+        panel.summaries = vec![make_summary("msn-a"), make_summary("msn-b")];
+        panel.selected = Some("msn-a".into());
+
+        let src_a = source("msn-a");
+        let mut owner = CleanupOwner::default();
+        owner.start_delete(
+            &src_a,
+            "Mission A".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let first = http.accept().await;
+        first.reply(503, json!({})).await;
+        let rec1 = http.accept().await;
+        rec1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "mission": {"id": "msn-a", "projectID": "project", "revision": 7},
+                "cleanups": []
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+
+        // Start retry fenced with panel.selection_live, then switch selection to B while GET is held.
+        owner.retry_delete(
+            &src_a,
+            panel.selection_live.clone(),
+            http.backend.clone(),
+            wake,
+        );
+        let held_get = http.accept().await;
+        assert!(held_get.header.starts_with("GET /api/workspaces/"));
+        panel.select("msn-b");
+        assert_eq!(panel.selected.as_deref(), Some("msn-b"));
+        held_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "mission": {"id": "msn-a", "projectID": "project", "revision": 7},
+                    "cleanups": []
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+        http.quiet().await;
+    });
+}
+
+#[test]
+fn delete_intent_stays_isolated_to_its_origin_workspace_scope() {
+    crate::platform::block_on(async {
+        let http_a = Http::new().await;
+        let http_b = Http::new().await;
+        let (wake, done) = witness();
+        let src_a = source("msn-shared");
+        let mut src_b = source("msn-shared");
+        src_b.workspace = "ws-other".into();
+        let mut owner = CleanupOwner::default();
+
+        owner.start_delete(
+            &src_a,
+            "Shared".into(),
+            7,
+            false,
+            http_a.backend.clone(),
+            wake.clone(),
+        );
+        let first = http_a.accept().await;
+        first.reply(503, json!({})).await;
+        let rec = http_a.accept().await;
+        rec.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "mission": {"id": "msn-shared", "projectID": "project", "revision": 7},
+                "cleanups": []
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+
+        assert!(owner.delete_state(&src_a).is_some());
+        assert_eq!(owner.delete_state(&src_b), None);
+        owner.cancel_delete(&src_b);
+        assert!(
+            owner.delete_state(&src_a).is_some(),
+            "workspace B cannot cancel workspace A's delete intent"
+        );
+        owner.retry_delete(&src_b, live_flag(), http_b.backend.clone(), wake);
+        http_b.quiet().await;
+        http_a.quiet().await;
+    });
+}
+
+#[test]
+fn orphaned_delete_and_cleanup_row_retries_exclude_each_other_and_row_settlement_cancels_get() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let sc = scope();
+        let row = cleanup_row(0, true);
+        let old_src = source("old");
+        let mut owner = CleanupOwner::default();
+        owner.deletes.insert(
+            (sc.clone(), old_src.mission.clone()),
+            DeleteIntent {
+                scope: sc.clone(),
+                title: "Old".into(),
+                target: old_src.target.clone(),
+                request: DeletionRequest::from_cleanup(&row).unwrap(),
+                flight: None,
+                error: Some("missions.cleanup.documentPending"),
+                retired: false,
+            },
+        );
+
+        // Hold orphaned-delete retry GET; cleanup-row retry must refuse to start concurrently.
+        owner.retry_delete_in_scope(
+            &sc,
+            &old_src.mission,
+            live_flag(),
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let held_get = http.accept().await;
+        assert!(owner.has_active_delete_flight(&sc, "old"));
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row.clone(),
+            live_flag(),
+            live_flag(),
+            http.backend.clone(),
+            wake.clone(),
+        );
+        assert!(!owner.cleanup_busy(&sc));
+        held_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                    "cleanups": [cleanup_json(0, true)]
+                }),
+            )
+            .await;
+        let del = http.accept().await;
+        del.reply(503, json!({"code": "cleanup-pending"})).await;
+        let rec_after = http.accept().await;
+        rec_after
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "cleanups": [cleanup_json(0, true)]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+
+        // Now start cleanup-row retry with a real per-row token, verify orphaned retry is blocked,
+        // and settle the row while GET is in flight -> DELETE must not be sent.
+        let mut panel = Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        panel.cleanups = vec![row.clone()];
+        let row_live = panel.cleanup_row_live(&row.mission_id, &row.deletion_id);
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row.clone(),
+            live_flag(),
+            row_live,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let held_cleanup_get = http.accept().await;
+        owner.retry_delete_in_scope(
+            &sc,
+            &old_src.mission,
+            live_flag(),
+            http.backend.clone(),
+            wake,
+        );
+        assert!(!owner.has_active_delete_flight(&sc, "old"));
+
+        // Panel receives a refresh marking the row settled while panel stays open.
+        assert!(panel.accept_cleanups_for_test(vec![cleanup_row(0, false)]));
+        held_cleanup_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 3,
+                    "cleanups": [cleanup_json(0, true)]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+        http.quiet().await;
+    });
+}
+
+#[test]
+fn closing_workspaces_retires_failed_delete_intents_and_bounds_cleanup_errors() {
+    let mut owner = CleanupOwner::default();
+    for i in 0..CAPACITY {
+        let mut src = source(&format!("msn-{i}"));
+        src.workspace = format!("ws-{i}");
+        let sc = src.workspace_scope();
+        owner.deletes.insert(
+            (sc.clone(), src.mission.clone()),
+            DeleteIntent {
+                scope: sc,
+                title: format!("Mission {i}"),
+                target: src.target.clone(),
+                request: DeletionRequest::new(1, false).unwrap(),
+                flight: None,
+                error: Some("missions.cleanup.error.unconfirmed"),
+                retired: false,
+            },
+        );
+    }
+    let mut fresh = source("msn-fresh");
+    fresh.workspace = "ws-fresh".into();
+    assert!(!owner.can_delete(&fresh));
+
+    for i in 0..CAPACITY {
+        let sc = WorkspaceScope {
+            server: "server".into(),
+            workspace: format!("ws-{i}"),
+            project: "project".into(),
+        };
+        owner.retire_scope(&sc);
+    }
+    assert!(owner.deletes.is_empty());
+    assert!(owner.can_delete(&fresh));
+
+    // Retry error map stays strictly bounded to CAPACITY across closed scopes.
+    for i in 0..(CAPACITY + 10) {
+        let sc = WorkspaceScope {
+            server: "server".into(),
+            workspace: format!("ws-err-{i}"),
+            project: "project".into(),
+        };
+        let (out, inbox) = bounded(1);
+        out.try_send(CleanupRetryResult::Failed(
+            "missions.cleanup.error.unconfirmed",
+        ))
+        .unwrap();
+        owner.retries.insert(
+            sc.clone(),
+            CleanupRetry {
+                key: CleanupKey::new(sc, &cleanup_row(0, true)),
+                flight: inbox,
+                retired: false,
+            },
+        );
+        owner.poll();
+    }
+    assert!(owner.retry_errors.len() <= CAPACITY);
 }
 
 fn has_state(tree: &serde_json::Value, key: &str, state: &str) -> bool {

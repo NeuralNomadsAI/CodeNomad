@@ -232,7 +232,11 @@ pub(crate) fn controls(
             ));
         }
         Some(DeleteState::Failed(key)) => {
-            let retry_disabled = owner.busy(&source) || recovery_busy;
+            let retry_disabled = owner.busy(&source)
+                || recovery_busy
+                || owner
+                    .cleanup
+                    .has_active_cleanup_retry(&source.workspace_scope(), &source.target.mission);
             let retry_origin = source.clone();
             let cancel_origin = source.clone();
             view = view.child(theme::note(t(key), "alert")).child(

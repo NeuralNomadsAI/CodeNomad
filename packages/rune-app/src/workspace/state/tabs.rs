@@ -184,6 +184,21 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         return;
     };
     let removed = ui.entries.remove(index);
+    if let Some(scope) = removed
+        .missions
+        .as_ref()
+        .and_then(crate::missions::Panel::cleanup_scope)
+        && !ui.entries.iter().any(|entry| {
+            entry
+                .missions
+                .as_ref()
+                .and_then(crate::missions::Panel::cleanup_scope)
+                .as_ref()
+                == Some(&scope)
+        })
+    {
+        ui.mission_lifecycle.retire_scope(&scope);
+    }
     s.notifications.forget_tab(id);
     if let Tab::Workspace(mut saved) = removed.saved {
         // Undelivered copies still belong to their closed source.

@@ -88,6 +88,20 @@ pub(super) struct RecoveryPolled {
 }
 
 impl Recovery {
+    pub fn retire_scope(&mut self, scope: &WorkspaceScope) {
+        self.attempts.retain(|key, attempt| {
+            let same_scope = key.server == scope.server && key.workspace == scope.workspace;
+            !same_scope || matches!(attempt, Attempt::Pending { .. })
+        });
+        if self
+            .error
+            .as_ref()
+            .is_some_and(|(key, _)| key.server == scope.server && key.workspace == scope.workspace)
+        {
+            self.error = None;
+        }
+    }
+
     pub fn pending(&self, key: &RecoveryKey) -> bool {
         matches!(self.attempts.get(key), Some(Attempt::Pending { .. }))
     }

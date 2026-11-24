@@ -152,7 +152,7 @@ export function missionsFixture({page,messages,artifact,project}){
     assert.equal(await page.getByText(messages['missionsPanel.picker.noMatch'],{exact:true}).count(),0)
     await page.getByText('Nettoyage vérifié',{exact:true}).waitFor()
     await page.getByText(messages['missions.cleanup.documentPending'],{exact:true}).waitFor()
-    await checkCleanupRetry(page,messages)
+    await checkCleanupRetry(page,messages,recovery.counts)
     await press(more)
     await page.getByText(messages['missionsPanel.picker.noMatch'],{exact:true}).waitFor()
     await filter('Bêta')

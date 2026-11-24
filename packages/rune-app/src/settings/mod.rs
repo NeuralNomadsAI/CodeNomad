@@ -69,7 +69,7 @@ pub(crate) struct Host {
     contrast: Option<web_contrast::Watch>,
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
-    last_display: Option<([&'static str; 6], bool)>,
+    last_display: Option<([&'static str; 6], bool, Option<bool>)>,
     memory_cleanup: Option<memory::cleanup::Run>,
 }
 
@@ -211,8 +211,11 @@ pub(crate) fn poll(s: &mut State) -> bool {
             shared.usage_visibility(false),
         ],
         awaiting_appearance(s, &shared),
+        shared.mission_delete_sessions(),
     ));
-    if s.settings.last_display.map(|last| last.0[5]) != display.map(|next| next.0[5]) {
+    if s.settings.last_display.map(|last| (last.0[5], last.2))
+        != display.map(|next| (next.0[5], next.2))
+    {
         s.revision += 1;
     }
     #[cfg(target_arch = "wasm32")]
@@ -230,6 +233,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
+    let stream_state = shared.mission_stream_state();
     let (reconnected, missions) = shared.mission_changes();
     let locale = shared.locale().unwrap_or_else(strings::locale);
     let notify_failure = shared.take_notification_failure();
@@ -259,6 +263,9 @@ pub(crate) fn poll(s: &mut State) -> bool {
         s.show_launcher();
         crate::workspace::suspend_missions(s);
     } else {
+        if let Some(online) = stream_state {
+            crate::workspace::missions_online(s, online);
+        }
         if reconnected {
             crate::workspace::mission_event(s, None);
         }

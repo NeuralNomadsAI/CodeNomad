@@ -86,7 +86,7 @@ impl Panel {
         Some((source, header))
     }
 
-    pub(super) fn cleanup_scope(&self) -> Option<WorkspaceScope> {
+    pub(crate) fn cleanup_scope(&self) -> Option<WorkspaceScope> {
         Some(WorkspaceScope {
             server: self.backend.client.server_identity()?.into(),
             workspace: self.backend.workspace.clone(),
@@ -106,10 +106,12 @@ impl Panel {
         if !self.cleanups.iter().any(|row| row.matches_saved(&cleanup)) {
             return;
         }
+        let row_live = self.cleanup_row_live(&cleanup.mission_id, &cleanup.deletion_id);
         owner.cleanup.start_cleanup_retry(
             scope.clone(),
             cleanup,
             self.view_live.clone(),
+            row_live,
             self.backend.clone(),
             self.wake.clone(),
         );
@@ -291,7 +293,7 @@ impl Panel {
             Gesture::RetryDelete if !owner.busy(source) && !recovery_busy => {
                 owner.cleanup.retry_delete(
                     source,
-                    self.view_live.clone(),
+                    self.selection_live.clone(),
                     self.backend.clone(),
                     self.wake.clone(),
                 );
@@ -431,6 +433,11 @@ impl Intent {
 }
 
 impl Lifecycle {
+    pub(crate) fn retire_scope(&mut self, scope: &WorkspaceScope) {
+        self.cleanup.retire_scope(scope);
+        self.recovery.retire_scope(scope);
+    }
+
     pub(super) fn busy_mission(&self, mission: &MissionKey) -> bool {
         self.intents
             .get(mission)
