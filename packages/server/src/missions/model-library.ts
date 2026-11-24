@@ -1,4 +1,4 @@
-import { parseMissionProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
+import { parseMissionProfiles, sameMissionProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
 import type { MissionTemplateId } from "./model"
 import type { MissionTaskMode } from "./task-execution-mode"
 import { MISSION_TITLE_MAX } from "./mission-title"
@@ -61,4 +61,11 @@ export function removeMissionModelRecord(current: readonly UserMissionModel[], i
 /** Match the editor's title prefill without changing the saved name. */
 export function missionConfigurationTitle(name: string): string {
   return name.replace(/\s+/g, " ").trim().slice(0, MISSION_TITLE_MAX).replace(/[\uD800-\uDBFF]$/, "").trimEnd()
+}
+
+export function sameMissionModel(left?: UserMissionModel, right?: UserMissionModel): boolean {
+  if (!left || !right) return left === right
+  return left.version === right.version && left.id === right.id && left.name === right.name
+    && left.objective === right.objective && left.notes === right.notes && left.template === right.template
+    && left.taskMode === right.taskMode && sameMissionProfiles(left.profiles, right.profiles)
 }
