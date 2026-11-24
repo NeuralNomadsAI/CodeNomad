@@ -2,7 +2,7 @@
 use crate::State;
 use std::{
     cell::RefCell,
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
 };
 
 const RENDER_INTERVAL: f64 = 0.2;
@@ -41,7 +41,7 @@ struct SessionDisplay {
     revealed: HashMap<String, usize>,
     search_revealed: VecDeque<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
-    diagram_sources: HashMap<String, BTreeSet<usize>>,
+    diagram_sources: HashMap<String, BTreeMap<usize, bool>>,
     compact_diffs: (u64, HashSet<String>),
 }
 impl Display {
@@ -194,7 +194,9 @@ impl Display {
     }
 
     pub fn poll(s: &mut State, changed: bool, now: f64, tx: &mut rune::Tx) -> bool {
-        let clock = if matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming) {
+        let clock = if !s.history_detached
+            && matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming)
+        {
             let bounds = s.tool_diff_preferences.history_bounds.get();
             s.transcript_display.tool_clock.poll(now, bounds, tx)
         } else {
@@ -240,7 +242,7 @@ impl Display {
         s.revision += 1;
     }
 
-    pub(super) fn diagram_sources(&self, key: &str) -> BTreeSet<usize> {
+    pub(super) fn diagram_sources(&self, key: &str) -> BTreeMap<usize, bool> {
         self.active
             .diagram_sources
             .get(key)
@@ -248,8 +250,13 @@ impl Display {
             .unwrap_or_default()
     }
 
-    pub(super) fn toggle_diagram_source(s: &mut State, key: &str, index: usize) {
-        toggle_index(&mut s.transcript_display.active.diagram_sources, key, index);
+    pub(super) fn set_diagram_source(s: &mut State, key: &str, index: usize, source_only: bool) {
+        s.transcript_display
+            .active
+            .diagram_sources
+            .entry(key.into())
+            .or_default()
+            .insert(index, source_only);
         s.revision += 1;
     }
 

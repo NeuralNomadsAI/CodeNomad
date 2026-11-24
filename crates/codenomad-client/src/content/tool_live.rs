@@ -97,7 +97,8 @@ pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u
     else {
         return Fit::Repair;
     };
-    if row.role != "assistant" || row.completed {
+    let terminal = matches!(kind, "session.tool.success" | "session.tool.failed");
+    if row.role != "assistant" || (row.completed && !terminal) {
         return Fit::Drop;
     }
     let prior = row.parts.iter_mut().find_map(|part| match part {
@@ -522,5 +523,22 @@ mod tests {
             })
             .expect("merged tool c");
         assert_eq!(merged_c.ended, Some(11_000));
+
+        // A terminal SSE event still settles a running tool on a completed assistant row.
+        let mut done_row = crate::history::decode_message(&json!({
+            "id":"done","type":"assistant","time":{"completed":12_000},"content":[
+                {"type":"tool","id":"late","name":"bash","time":{"ran":10_000},"state":{"status":"running","input":{"command":"sleep 1"}}}
+            ]
+        }))
+        .unwrap();
+        let Fit::Settled(late) = apply_at(
+            &mut done_row,
+            "session.tool.success",
+            &json!({"id":"late"}),
+            Some(13_000),
+        ) else {
+            panic!("expected Settled on completed row")
+        };
+        assert_eq!(late.ended, Some(13_000));
     }
 }

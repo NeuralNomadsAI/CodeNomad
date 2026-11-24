@@ -157,7 +157,18 @@ fn prose_ranges(
                 map.push((r_start, rendered.len(), s_start, s_end, verbatim));
             }
             Event::SoftBreak | Event::HardBreak => rendered.push(' '),
-            Event::End(
+            Event::Start(
+                Tag::Paragraph
+                | Tag::Heading { .. }
+                | Tag::List(_)
+                | Tag::Item
+                | Tag::CodeBlock(_)
+                | Tag::BlockQuote(_)
+                | Tag::Table(_)
+                | Tag::TableRow
+                | Tag::TableCell,
+            )
+            | Event::End(
                 pulldown_cmark::TagEnd::Paragraph
                 | pulldown_cmark::TagEnd::Heading(_)
                 | pulldown_cmark::TagEnd::Item
@@ -410,4 +421,14 @@ fn prose_search_bounds_matches_and_skips_link_destinations() {
     let many_blocks = "hit\n\n".repeat(2_000);
     let capped = prose_ranges(&many_blocks, bold_query, 512);
     assert!(!capped.is_empty() && capped.len() <= 16);
+
+    let tight_list = "- foo\n  - bar\n";
+    let merged_terms = vec!["foobar".into()];
+    let merged_query = crate::timeline::search::Query {
+        terms: &merged_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert!(!prose_has_match(tight_list, merged_query));
 }

@@ -510,6 +510,14 @@ pub(crate) async fn run_with_reading(
                             }
                             content::ToolFit::Drop => {}
                             content::ToolFit::Repair => {
+                                if matches!(kind, "session.tool.success" | "session.tool.failed")
+                                    && let Some(call) = native["data"]["id"]
+                                        .as_str()
+                                        .filter(|c| !c.is_empty() && c.len() <= 256)
+                                {
+                                    reader.owed_tools.insert((id.into(), call.into()));
+                                    reader.tool_settlement_reads = 0;
+                                }
                                 reader.dirty = true;
                                 reader.quiet = Instant::now() + Duration::from_millis(100);
                             }

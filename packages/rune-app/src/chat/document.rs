@@ -179,13 +179,15 @@ fn prose_for(
                             }
                             .matches(frame.source)
                         });
+                        let source_only =
+                            diagram_sources.get(&index).copied().unwrap_or(search_hit);
                         return mermaid::frame(
                             frame.open || streaming,
-                            diagram_sources.contains(&index) || search_hit,
+                            source_only,
                             frame.source,
                             format!("{group}-code-{index}"),
                             screen::action(&scope, move |s| {
-                                Display::toggle_diagram_source(s, &group, index)
+                                Display::set_diagram_source(s, &group, index, !source_only)
                             }),
                             card,
                             wrap,

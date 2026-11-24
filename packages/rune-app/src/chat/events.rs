@@ -62,9 +62,6 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
-                    if s.history_detached {
-                        s.transcript_display.tool_clock.resume();
-                    }
                     s.transcript_display.messages.refresh();
                     s.status_permissions.online(true);
                     workspace::mission_event(s, None);
@@ -210,7 +207,6 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
             Event::Sync(page) | Event::ReaderSync { page, .. } => {
-                s.transcript_display.tool_clock.resume();
                 if s.reader.is_none() {
                     // Direct startup also uses Reconnecting to stage a fresh transcript read.
                     s.status_permissions.synchronized();
@@ -237,6 +233,11 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.messages = page.rows;
                 crate::timeline::restore_search(s);
                 s.history_detached = s.reader.is_some() && page.newer.is_some();
+                if s.history_detached {
+                    s.transcript_display.tool_clock.pause();
+                } else {
+                    s.transcript_display.tool_clock.resume();
+                }
                 composer::reconcile(s);
                 s.can_older = page.older.is_some();
                 // An earlier snapshot may already have been queued before the gesture.
@@ -395,11 +396,22 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 }
             }
             Event::Tool(id, tool) => {
-                if let Some(row) = s
-                    .messages
-                    .iter_mut()
-                    .find(|row| row.id == id && !row.completed)
-                {
+                if let Some(row) = s.messages.iter_mut().find(|row| {
+                    row.id == id
+                        && (!row.completed
+                            || (tool.ended.is_some()
+                                && row.parts.iter().any(|part| {
+                                    matches!(
+                                        part,
+                                        content::Part::Tool(existing)
+                                            if existing.id == tool.id
+                                                && matches!(
+                                                    existing.status.as_str(),
+                                                    "streaming" | "running"
+                                                )
+                                    )
+                                })))
+                }) {
                     let inserted = !row.parts.iter().any(|part| matches!(part, content::Part::Tool(existing) if existing.id == tool.id));
                     content::install_tool(std::sync::Arc::make_mut(row), tool);
                     if inserted {

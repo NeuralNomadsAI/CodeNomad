@@ -22,9 +22,8 @@ pub(super) fn decode(native: &Value) -> Option<SubagentReport> {
     let mut child = None;
     let mut state = None;
     let mut kind = None;
-    let mut cursor = attrs;
+    let mut cursor = attrs.trim();
     while !cursor.is_empty() {
-        cursor = cursor.trim_start();
         let (name, after_name) = cursor.split_once("=\"")?;
         let (value, tail) = after_name.split_once('"')?;
         match name {
@@ -33,7 +32,7 @@ pub(super) fn decode(native: &Value) -> Option<SubagentReport> {
             "kind" => kind = Some(value),
             _ => {}
         }
-        cursor = tail;
+        cursor = tail.trim_start();
     }
     if closing == "\n</background-result>" && kind != Some("subagent") {
         return None;
@@ -57,7 +56,7 @@ mod tests {
     fn decodes_subagent_and_background_result_reports_with_matching_closing_tags() {
         let legacy = decode(&json!({
             "time": { "created": 100 },
-            "text": "<subagent sessionID=\"child1\" state=\"completed\">\nDone\n</subagent>"
+            "text": "<subagent sessionID=\"child1\" state=\"completed\" >\nDone\n</subagent>"
         }))
         .unwrap();
         assert_eq!(legacy.child, "child1");

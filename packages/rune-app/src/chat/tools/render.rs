@@ -221,14 +221,9 @@ fn render_body(
         && result_list.is_none()
         && !rich_diff
         && !matches!(tool.name.as_str(), "question" | "todowrite");
-    let timing = if is_task && tool.status == "completed" && tool.metadata["status"] == "running" {
-        let ended = report
-            .filter(|r| r.state != "running" && r.created > 0)
-            .map(|r| r.created)
-            .or_else(|| {
-                task_status.and_then(|(_, running, ended)| (!running).then_some(ended).flatten())
-            });
-        let running = ended.is_none() && task_status.is_some_and(|(_, running, _)| running);
+    // Per dev-docs/TRANSCRIPT.md, latestChildState drives both status and end time
+    // across every launch/continuation card of the same background child.
+    let timing = if let Some((_, running, ended)) = task_status {
         if running {
             tool.started.map(|start| (start, None))
         } else {
@@ -452,7 +447,7 @@ fn render_body(
                             &parts,
                             document::search_limit_for(s, key, query),
                             |shown, units| {
-                                if tool.status == "running" && shell::matches(tool) {
+                                if !probe && tool.status == "running" && shell::matches(tool) {
                                     s.transcript_display.live_ansi(key, shown, wrap, query)
                                 } else if terminal {
                                     ansi::search_code(shown, wrap, query)

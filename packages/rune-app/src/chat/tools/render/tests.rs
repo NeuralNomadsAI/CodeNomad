@@ -615,7 +615,8 @@ fn task_duration_runs_for_foreground_and_follows_background_reports() {
     rt.frame(2.1);
     assert!(rt.wake_deadline().is_none());
 
-    // Relaunching the same child with a <background-result kind="subagent"> report must keep the first launch's 9s duration.
+    // Relaunching the same child with a <background-result kind="subagent"> report drives
+    // both launch cards' status and end time from the newest round (TRANSCRIPT.md).
     let bg_second = crate::history::decode_message(&json!({
         "type":"assistant","id":"bg2","time":{"completed":start + 15_500},"content":[
             {"type":"tool","id":"call2","name":"subagent","time":{"ran":start + 15_000,"completed":start + 15_500},
@@ -636,7 +637,7 @@ fn task_duration_runs_for_foreground_and_follows_background_reports() {
     rt.frame(2.2);
     let tree = rt.accessibility_json().to_string();
     assert!(
-        tree.contains("\"9s\"") && tree.contains("\"6s\"") && !tree.contains("\"21s\""),
+        tree.contains("\"21s\"") && tree.contains("\"6s\""),
         "{tree}"
     );
 }
@@ -688,5 +689,15 @@ fn skill_search_hit_inside_mermaid_fence_reveals_source_with_match_anchor() {
         rt.accessibility_json()
             .to_string()
             .contains("MERMAID_SEARCH_NEEDLE")
+    );
+    let skill_key = super::tool_key("mmd", "sk");
+    let toggle = format!("{skill_key}-tool_output-code-0-diagram-toggle");
+    let (x, y) = rt.find(&toggle).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(
+        rt.find(&format!("{skill_key}-tool_output-code-0-diagram"))
+            .is_some()
     );
 }

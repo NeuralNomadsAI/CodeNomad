@@ -68,7 +68,7 @@ impl Clock {
         self.generation
     }
 
-    pub(super) fn clip_rect(&self, key: &str) -> Rc<DrawnRect> {
+    pub(in crate::chat) fn clip_rect(&self, key: &str) -> Rc<DrawnRect> {
         let mut clips = self.clips.borrow_mut();
         clips.retain(|_, rect| rect.strong_count() > 0);
         if let Some(rect) = clips.get(key).and_then(Weak::upgrade) {
@@ -79,7 +79,11 @@ impl Clock {
         rect
     }
 
-    pub(super) fn with_clip<T>(&self, clip: &Rc<DrawnRect>, render: impl FnOnce() -> T) -> T {
+    pub(in crate::chat) fn with_clip<T>(
+        &self,
+        clip: &Rc<DrawnRect>,
+        render: impl FnOnce() -> T,
+    ) -> T {
         struct Restore<'a>(&'a RefCell<Option<Rc<Clip>>>, Option<Rc<Clip>>);
         impl Drop for Restore<'_> {
             fn drop(&mut self) {
@@ -216,6 +220,7 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
         .on_drawn_layout_tx(move |s: &mut State, _, tx| {
             let clock = &s.transcript_display.tool_clock;
             if s.current_scope(&layout_scope)
+                && !s.history_detached
                 && online(&s.phase)
                 && !clock.paused
                 && clock.next.is_none()
@@ -247,6 +252,7 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
                         )
                         .is_none();
                     if added
+                        && !s.history_detached
                         && online(&s.phase)
                         && !clock.paused
                         && in_bounds(visible_drawn.get(), bounds, visible_clip.as_deref())
