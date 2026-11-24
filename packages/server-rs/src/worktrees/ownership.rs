@@ -49,18 +49,20 @@ impl DirectoryProof {
                 (absent(&path.join("commondir")) && (absent(&path.join("objects")) || absent(&path.join("refs"))))
                     || head_cannot_name_repository(&path.join("HEAD"))
             };
-            within(root, path)
-                && path.ancestors().take_while(|ancestor| !within(ancestor, root)).all(|ancestor| {
-                    let marker = ancestor.join(".git");
-                    let marker_clear = match std::fs::symlink_metadata(&marker) {
-                        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
-                        // Git skips incomplete layouts. The external target's
-                        // Git common directory is also checked at admission.
-                        Ok(meta) if meta.is_dir() => no_repository(&marker),
-                        _ => false,
-                    };
-                    marker_clear && no_repository(ancestor)
-                })
+            path.starts_with(root)
+                && path.ancestors().take_while(|ancestor| *ancestor != root && ancestor.starts_with(root)).all(
+                    |ancestor| {
+                        let marker = ancestor.join(".git");
+                        let marker_clear = match std::fs::symlink_metadata(&marker) {
+                            Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+                            // Git skips incomplete layouts. The external target's
+                            // Git common directory is also checked at admission.
+                            Ok(meta) if meta.is_dir() => no_repository(&marker),
+                            _ => false,
+                        };
+                        marker_clear && no_repository(ancestor)
+                    },
+                )
         };
         self.source
             .as_ref()
@@ -155,7 +157,7 @@ pub(crate) async fn media_directory(
     if !crate::files::paths::under(&app.scope, path) {
         return Ok(None);
     }
-    let external = !within(&workspace.path, path);
+    let external = !path.starts_with(&workspace.path);
     if path == workspace.path {
         let proof = DirectoryProof { tree: None, source: None, external, media: true };
         return Ok(proof.live(path).then_some(proof));
@@ -329,7 +331,7 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
         }));
     }
     if let Some(t) = &target
-        && !within(root, t)
+        && !t.starts_with(root)
         && !shares_common_directory(root, t).await?
     {
         return Ok(None);

@@ -224,13 +224,25 @@ pub async fn session_record(app: &App, id: &str) -> Result<Value, Error> {
 }
 
 pub async fn session_record_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
+    if !valid_id(id) {
+        return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
+    }
+    session_record_segment_at(app, endpoint, id).await
+}
+
+/// Variant for opaque media/history-media session IDs (TS `session-media-contract.ts`).
+pub async fn session_record_media_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
     if id.is_empty()
-        || id.len() > 514
+        || id.encode_utf16().nth(256).is_some()
         || matches!(id, "." | "..")
-        || id.bytes().any(|b| b.is_ascii_control() || matches!(b, b'/' | b'\\' | b'?' | b'#'))
+        || id.bytes().any(|b| b.is_ascii_control())
     {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
+    session_record_segment_at(app, endpoint, id).await
+}
+
+async fn session_record_segment_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
     let mut url = endpoint.url.clone();
     url.path_segments_mut().map_err(|_| upstream_error())?.clear().extend(["api", "session", id]);
     let response = app

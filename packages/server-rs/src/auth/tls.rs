@@ -2,10 +2,7 @@
 //! connection admission and serving.
 use axum::{Router, http::Request};
 use hyper::server::conn::http1;
-use hyper_util::{
-    rt::{TokioIo, TokioTimer},
-    service::TowerToHyperService,
-};
+use hyper_util::rt::{TokioIo, TokioTimer};
 use rcgen::{BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose};
 use rustls::pki_types::CertificateDer;
 use sha2::{Digest, Sha256};
@@ -303,7 +300,7 @@ impl Listener {
                     // Also bounds the wait for a request's first byte, after the
                     // handshake and between keep-alive requests (hyper 1.x).
                     .header_read_timeout(IDLE)
-                    .serve_connection(TokioIo::new(io), TowerToHyperService::new(service))
+                    .serve_connection(TokioIo::new(io), crate::shared::abortable_service(service))
                     .with_upgrades();
                 tokio::select! { _=lifetime.cancelled()=>{}, _=connection=>{} }
                 lifetime.cancel();

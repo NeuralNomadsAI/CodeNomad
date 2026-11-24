@@ -128,6 +128,7 @@ fn extract_media(
     part_index: usize,
     item_index: usize,
     digest: &str,
+    initial_revert: Option<&str>,
     revert_boundary: Option<&str>,
     raw: &[u8],
 ) -> Result<(&'static str, Vec<u8>), Error> {
@@ -137,6 +138,7 @@ fn extract_media(
     let message = envelope.get("data").filter(|message| message.is_object()).ok_or_else(unavailable)?;
     if message["id"] != message_id
         || message["type"] != "assistant"
+        || initial_revert.is_some_and(|boundary| message_id >= boundary)
         || revert_boundary.is_some_and(|boundary| message_id >= boundary)
     {
         return Err(missing());
@@ -165,20 +167,33 @@ pub(super) async fn route(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response, Error> {
     static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+    principal.live()?;
     let invalid = || error(Status::BAD_REQUEST, "Invalid media reference");
     let reference = uri.query().is_none().then(|| parse(uri.path())).flatten().ok_or_else(invalid)?;
     let missing = || error(Status::NOT_FOUND, "Media not found");
     let unavailable = || error(Status::BAD_GATEWAY, "Media unavailable");
+    // Verify workspace existence before arming the close watcher so a missing
+    // workspace returns 404 (TS `session-media.ts:45-46`).
+    let initial_workspace = app.workspace(&reference.workspace).map_err(|_| missing())?;
     let request = async {
         let r = &reference;
-        if app.workspace(&r.workspace).is_err() {
-            return Err(missing());
+        // Acquire the concurrency slot before ownership/native reads so waiting
+        // requests neither spawn Git probes nor hold open native responses.
+        let slot = SLOTS.acquire().await.map_err(|_| unavailable())?;
+        if app.workspace(&r.workspace).ok().as_ref().map(|w| w.id) != Some(initial_workspace.id) {
+            return Ok(crate::shared::abort_response());
         }
-        let placement = Placement::capture_with_media(&app, &r.workspace, &r.session, true, false)
-            .await
-            .map_err(|failure| if failure.0 == Status::FORBIDDEN { failure } else { unavailable() })?;
+        let placement = match Placement::capture_with_media(&app, &r.workspace, &r.session, true, false).await {
+            Ok(placement) => placement,
+            Err((Status::GONE, _)) => return Ok(crate::shared::abort_response()),
+            Err(failure) if failure.0 == Status::FORBIDDEN => return Err(failure),
+            Err(_) if app.workspace(&r.workspace).ok().as_ref().map(|w| w.id) != Some(initial_workspace.id) => {
+                return Ok(crate::shared::abort_response());
+            }
+            Err(_) => return Err(unavailable()),
+        };
         if !placement.operation_current(&app, &r.workspace) {
-            return Err(unavailable());
+            return Ok(crate::shared::abort_response());
         }
         if !placement.live(&app, &r.workspace) {
             return Err(error(Status::CONFLICT, "Session location changed"));
@@ -199,38 +214,57 @@ pub(super) async fn route(
             .send()
             .await
             .map_err(|_| unavailable())?;
-        if !response.status().is_success() {
-            return Err(unavailable());
-        }
         if !placement.operation_current(&app, &r.workspace) {
+            return Ok(crate::shared::abort_response());
+        }
+        if !response.status().is_success() {
             return Err(unavailable());
         }
         if !placement.live(&app, &r.workspace) {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
-        let slot = SLOTS.acquire().await.map_err(|_| unavailable())?;
         let raw = crate::opencode::read_bytes(response, MESSAGE_LIMIT).await.map_err(|_| unavailable())?;
-        let newest = placement
-            .latest(&app, &r.workspace, &r.session)
-            .await
-            .map_err(|failure| if failure.0 == Status::CONFLICT { failure } else { unavailable() })?;
+        if !placement.operation_current(&app, &r.workspace) {
+            return Ok(crate::shared::abort_response());
+        }
+        // Matches TS `session-media.ts:61-76` (3 native GETs: session1, message, session2).
+        // Checking both initial and latest revert boundaries catches staged-then-committed undos;
+        // a full stage+commit strictly between `message` and `session2` needs a native existence
+        // check without re-reading the up-to-16 MiB message (shared TS/Rust limit).
+        let newest = match placement.latest(&app, &r.workspace, &r.session).await {
+            Ok(newest) => newest,
+            Err(_) if !placement.operation_current(&app, &r.workspace) => {
+                return Ok(crate::shared::abort_response());
+            }
+            Err(failure) if failure.0 == Status::CONFLICT => return Err(failure),
+            Err(_) => return Err(unavailable()),
+        };
+        let initial_revert = placement.revert_boundary().map(str::to_owned);
         let revert = newest["revert"]["messageID"].as_str().map(str::to_owned);
         let (mime, bytes) = if raw.len() > INLINE_LIMIT {
             let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.to_owned());
             tokio::task::spawn_blocking(move || {
                 let _slot = slot;
-                extract_media(&message_id, part, index, &digest, revert.as_deref(), &raw)
+                extract_media(&message_id, part, index, &digest, initial_revert.as_deref(), revert.as_deref(), &raw)
             })
             .await
             .map_err(|_| unavailable())??
         } else {
-            let decoded = extract_media(&r.message, r.part, r.index, r.digest, revert.as_deref(), &raw);
+            let decoded = extract_media(
+                &r.message,
+                r.part,
+                r.index,
+                r.digest,
+                initial_revert.as_deref(),
+                revert.as_deref(),
+                &raw,
+            );
             drop(slot);
             decoded?
         };
         principal.live()?;
         if !placement.operation_current(&app, &r.workspace) {
-            return Err(unavailable());
+            return Ok(crate::shared::abort_response());
         }
         if !placement.live(&app, &r.workspace) {
             return Err(error(Status::CONFLICT, "Session location changed"));
@@ -249,7 +283,7 @@ pub(super) async fn route(
     let closed = async {
         loop {
             let notified = app.workspace_closed.notified();
-            if app.workspace(&reference.workspace).is_err() {
+            if app.workspace(&reference.workspace).ok().as_ref().map(|w| w.id) != Some(initial_workspace.id) {
                 return;
             }
             notified.await;
@@ -258,8 +292,10 @@ pub(super) async fn route(
     tokio::select! {
         biased;
         _ = principal.0.cancelled() => Err(crate::auth::unauthorized()),
-        _ = closed => Err(unavailable()),
-        result = tokio::time::timeout(Duration::from_secs(30), request) => result.unwrap_or_else(|_| Err(unavailable())),
+        _ = closed => Ok(crate::shared::abort_response()),
+        result = tokio::time::timeout(Duration::from_secs(30), request) => {
+            result.unwrap_or_else(|_| Ok(crate::shared::abort_response()))
+        }
     }
 }
 
@@ -418,9 +454,12 @@ mod tests {
             }
         }))
         .unwrap();
-        let (mime, bytes) = extract_media("msg_1", 0, 0, &digest, None, &raw).unwrap();
+        let (mime, bytes) = extract_media("msg_1", 0, 0, &digest, None, None, &raw).unwrap();
         assert_eq!(mime, "image/png");
         assert_eq!(bytes, png);
+        // Staged-before-read undo that committed during read is rejected even when latest revert is null.
+        assert_eq!(extract_media("msg_1", 0, 0, &digest, Some("msg_1"), None, &raw).unwrap_err().0, Status::NOT_FOUND);
+        assert_eq!(extract_media("msg_1", 0, 0, &digest, None, Some("msg_1"), &raw).unwrap_err().0, Status::NOT_FOUND);
 
         let upper_uri = format!("DATA:IMAGE/PNG;BASE64,{}", STANDARD.encode(png));
         let upper_digest = user_files::digest(upper_uri.as_bytes());
@@ -435,6 +474,36 @@ mod tests {
             }
         }))
         .unwrap();
-        assert_eq!(extract_media("msg_1", 0, 0, &upper_digest, None, &upper_raw).unwrap_err().0, Status::NOT_FOUND);
+        assert_eq!(
+            extract_media("msg_1", 0, 0, &upper_digest, None, None, &upper_raw).unwrap_err().0,
+            Status::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn abort_response_drops_tcp_connection_without_sending_bytes() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = axum::Router::new()
+            .route("/abort", axum::routing::get(|| async { crate::shared::abort_response() }))
+            .route("/ok", axum::routing::get(|| async { "ok" }));
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let server = tokio::spawn(crate::shared::serve_local(listener, router, shutdown.clone(), || {}));
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream.write_all(b"GET /abort HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut out = Vec::new();
+        let _ = stream.read_to_end(&mut out).await;
+        assert!(out.is_empty(), "aborted response must send 0 bytes, got {:?}", String::from_utf8_lossy(&out));
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream.write_all(b"GET /ok HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut out = Vec::new();
+        stream.read_to_end(&mut out).await.unwrap();
+        assert!(String::from_utf8_lossy(&out).starts_with("HTTP/1.1 200 OK"));
+
+        shutdown.cancel();
+        server.await.unwrap().unwrap();
     }
 }

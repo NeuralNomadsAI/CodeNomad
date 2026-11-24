@@ -200,7 +200,7 @@ impl Tree {
     }
 
     pub(super) fn contains_media(&self, dir: &Path) -> bool {
-        super::ownership::within(&self.path, dir)
+        dir.starts_with(&self.path)
             && self.layout.live()
             && if self.nested_missing {
                 std::fs::symlink_metadata(&self.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)

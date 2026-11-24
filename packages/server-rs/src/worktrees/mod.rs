@@ -36,7 +36,11 @@ fn probe_error() -> Error {
 }
 async fn git(workspace: &Workspace, args: &[&str]) -> Result<std::process::Output, std::io::Error> {
     let mut git = crate::git::command(&workspace.path, args);
-    tokio::time::timeout(Duration::from_secs(3), git.output()).await?
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let _slot = crate::git::slot().await;
+        git.output().await
+    })
+    .await?
 }
 
 pub async fn root_only(workspace: &Workspace) -> Result<Option<bool>, Error> {

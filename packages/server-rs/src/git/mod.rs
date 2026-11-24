@@ -34,6 +34,9 @@ use tokio::{process::Command, sync::Semaphore};
 
 const TWO_MIB: usize = 2 * 1024 * 1024;
 static SLOTS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
+pub(crate) async fn slot() -> tokio::sync::SemaphorePermit<'static> {
+    SLOTS.acquire().await.unwrap()
+}
 pub fn bad(s: &str) -> Error {
     error(Status::BAD_REQUEST, s)
 }

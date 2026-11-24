@@ -71,11 +71,15 @@ impl Placement {
                 && displays.iter().all(|d| d.load(Relaxed))
         };
         if media && !current(&displays) {
-            return Err(crate::opencode::upstream_error());
+            return Err(error(Status::GONE, "Media operation stale"));
         }
-        let source = crate::opencode::session_record_at(app, &endpoint, session).await?;
+        let source = if media {
+            crate::opencode::session_record_media_at(app, &endpoint, session).await?
+        } else {
+            crate::opencode::session_record_at(app, &endpoint, session).await?
+        };
         if media && !current(&displays) {
-            return Err(crate::opencode::upstream_error());
+            return Err(error(Status::GONE, "Media operation stale"));
         }
         // Reference: `ownsLocation(id, session.location)`, linked worktrees included.
         let forbidden = || error(Status::FORBIDDEN, "Session does not belong to workspace");
@@ -100,13 +104,22 @@ impl Placement {
             .await
             .map_err(|_| crate::opencode::upstream_error())?;
         if media && !current(&displays) {
-            return Err(crate::opencode::upstream_error());
+            return Err(error(Status::GONE, "Media operation stale"));
         }
         let checkout = Some(proof.ok_or_else(forbidden)?);
         Ok(Self { workspace, endpoint, source, path, anchor, physical, workspace_physical, checkout, displays, media })
     }
-    async fn current(&self, app: &App, id: &str, session: &str) -> bool {
-        self.latest(app, id, session).await.is_ok_and(|newest| newest["revert"] == self.source["revert"])
+    pub(super) fn revert_boundary(&self) -> Option<&str> {
+        self.source["revert"]["messageID"].as_str()
+    }
+
+    async fn current(&self, app: &App, id: &str, session: &str) -> Recheck {
+        match self.latest(app, id, session).await {
+            Ok(newest) if newest["revert"] == self.source["revert"] => Recheck::Current,
+            Ok(_) => Recheck::Conflict,
+            Err((Status::CONFLICT, _)) => Recheck::Conflict,
+            Err(_) => Recheck::Unavailable,
+        }
     }
 
     pub(super) fn operation_current(&self, app: &App, id: &str) -> bool {
@@ -123,7 +136,11 @@ impl Placement {
         if !self.live(app, id) {
             return Err(changed());
         }
-        let newest = crate::opencode::session_record_at(app, &self.endpoint, session).await?;
+        let newest = if self.media {
+            crate::opencode::session_record_media_at(app, &self.endpoint, session).await?
+        } else {
+            crate::opencode::session_record_at(app, &self.endpoint, session).await?
+        };
         if !self.operation_current(app, id) {
             return Err(crate::opencode::upstream_error());
         }
@@ -168,26 +185,39 @@ impl Placement {
             && self.displays.iter().all(|display| display.load(Relaxed))
     }
 
-    async fn ready(&self, app: &App, id: &str, session: &str) -> Option<&str> {
-        let directory = self.source["location"]["directory"].as_str()?;
+    async fn ready(&self, app: &App, id: &str, session: &str) -> Result<&str, Recheck> {
+        let directory = self.source["location"]["directory"].as_str().ok_or(Recheck::Unavailable)?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         if self.media {
-            let url = self.endpoint.url.join("/api/plugin").ok()?;
+            let url = self.endpoint.url.join("/api/plugin").map_err(|_| Recheck::Unavailable)?;
             super::pending::await_plugin_with(super::pending::SESSION_PRUNING_PLUGIN, directory, deadline, || {
                 self.live(app, id)
                     .then(|| app.native.client.get(url.clone()).basic_auth("opencode", Some(&self.endpoint.password)))
             })
             .await
-            .ok()?;
-            if !self.live(app, id) {
-                return None;
+            .map_err(|_| Recheck::Unavailable)?;
+            if !self.operation_current(app, id) {
+                return Err(Recheck::Unavailable);
             }
-            crate::extensions::lifecycle::ready(directory, deadline).await.ok()?;
+            if !self.live(app, id) {
+                return Err(Recheck::Conflict);
+            }
+            crate::extensions::lifecycle::ready(directory, deadline).await.map_err(|_| Recheck::Unavailable)?;
         } else {
-            prepare(app, directory, deadline).await?;
+            prepare(app, directory, deadline).await.ok_or(Recheck::Unavailable)?;
         }
-        self.current(app, id, session).await.then_some(directory)
+        match self.current(app, id, session).await {
+            Recheck::Current => Ok(directory),
+            other => Err(other),
+        }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Recheck {
+    Current,
+    Conflict,
+    Unavailable,
 }
 
 fn same_identity(path: &std::path::Path, expected: Option<&same_file::Handle>) -> bool {
@@ -349,12 +379,18 @@ pub async fn handle(
             Err((Status::FORBIDDEN, body)) => return (Status::FORBIDDEN, body).into_response(),
             Err(_) => return blocked("unavailable"),
         };
-        if !placement.current(&app, &id, session).await {
-            return blocked("conflict");
+        match placement.current(&app, &id, session).await {
+            Recheck::Current => {}
+            Recheck::Conflict => return blocked("conflict"),
+            Recheck::Unavailable => return blocked("unavailable"),
         }
         // Reference: `desktopPluginsReady` for the session's own Location, which
         // may be a linked worktree the plugin has not served yet.
-        let Some(directory) = placement.ready(&app, &id, session).await else { return blocked("unavailable") };
+        let directory = match placement.ready(&app, &id, session).await {
+            Ok(directory) => directory,
+            Err(Recheck::Conflict) => return blocked("conflict"),
+            Err(_) => return blocked("unavailable"),
+        };
         static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
         let slot = if defer {
             let Ok(permit) = DEFER_SLOTS.acquire().await else { return blocked("unavailable") };
@@ -374,8 +410,10 @@ pub async fn handle(
                 envelope.tag.as_deref() == Some("RpcError") && envelope.kind.as_deref() == Some("rpc.method_not_found")
             });
             if fallback {
-                if !placement.current(&app, &id, session).await {
-                    return blocked("conflict");
+                match placement.current(&app, &id, session).await {
+                    Recheck::Current => {}
+                    Recheck::Conflict => return blocked("conflict"),
+                    Recheck::Unavailable => return blocked("unavailable"),
                 }
                 let Ok(fallback) = rpc(&app, &placement.endpoint, directory, "outline", &input).await else {
                     return blocked("unavailable");
@@ -383,10 +421,10 @@ pub async fn handle(
                 (status, body) = fallback;
             }
         }
-        let _slot = slot;
         let response = if defer && body.len() > 32 * 1024 {
             let (action, id, session) = (action.clone(), id.clone(), session.to_owned());
             match tokio::task::spawn_blocking(move || {
+                let _slot = slot;
                 project_history_response(status, body, &action, &id, &session, reference, defer)
             })
             .await
@@ -395,10 +433,14 @@ pub async fn handle(
                 Err(_) => return blocked("unavailable"),
             }
         } else {
-            project_history_response(status, body, &action, &id, session, reference, defer)
+            let response = project_history_response(status, body, &action, &id, session, reference, defer);
+            drop(slot);
+            response
         };
-        if !placement.current(&app, &id, session).await {
-            return blocked("conflict");
+        match placement.current(&app, &id, session).await {
+            Recheck::Current => {}
+            Recheck::Conflict => return blocked("conflict"),
+            Recheck::Unavailable => return blocked("unavailable"),
         }
         if principal.live().is_err() {
             return crate::auth::unauthorized().into_response();
@@ -433,10 +475,17 @@ pub async fn attachment(
         let placement = Placement::capture(&app, &id, &session, true)
             .await
             .map_err(|e| if e.0 == Status::FORBIDDEN { e } else { missing() })?;
+        if !placement.operation_current(&app, &id) {
+            return Err(missing());
+        }
         if !placement.live(&app, &id) {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
-        let directory = placement.ready(&app, &id, &session).await.ok_or_else(missing)?;
+        let directory = match placement.ready(&app, &id, &session).await {
+            Ok(directory) => directory,
+            Err(Recheck::Conflict) => return Err(error(Status::CONFLICT, "Session location changed")),
+            Err(_) => return Err(missing()),
+        };
         let mut input = json!({"sessionID":session,"messageID":message,"fileIndex":index,"sha256":sha});
         let (status, body) =
             rpc(&app, &placement.endpoint, directory, "sessionAttachment", &input).await.map_err(|_| missing())?;
@@ -445,8 +494,10 @@ pub async fn attachment(
         }
         let output: Value = serde_json::from_slice(&body).map_err(|_| missing())?;
         let output = &output["output"];
-        if !placement.current(&app, &id, &session).await {
-            return Err(error(Status::CONFLICT, "Session location changed"));
+        match placement.current(&app, &id, &session).await {
+            Recheck::Current => {}
+            Recheck::Conflict => return Err(error(Status::CONFLICT, "Session location changed")),
+            Recheck::Unavailable => return Err(missing()),
         }
         if output["status"] == "too_large" {
             return Err(error(Status::PAYLOAD_TOO_LARGE, "Attachment exceeds the size limit"));
@@ -464,6 +515,9 @@ pub async fn attachment(
             return Err(missing());
         }
         principal.live()?;
+        if !placement.operation_current(&app, &id) {
+            return Err(missing());
+        }
         if !placement.live(&app, &id) {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }

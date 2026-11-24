@@ -259,8 +259,58 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         });
     let defer_media =
         (message_list && crate::sessions::media::wants_deferred(&head.headers)).then_some(session).flatten();
+    let resolve_media_path = |raw: &str| {
+        if !crate::files::paths::local_absolute(raw) {
+            return None;
+        }
+        let normalized = crate::files::node_path::Style::host().normalize(raw);
+        if !crate::files::paths::under(&app.scope, std::path::Path::new(&normalized)) {
+            return None;
+        }
+        let resolved =
+            crate::worktrees::ownership::resolve_exact_directory(raw).filter(|p| p.starts_with(&app.scope))?;
+        let mut cur = resolved.as_path();
+        let anchor = loop {
+            match std::fs::symlink_metadata(cur) {
+                Ok(meta) => break meta.is_dir().then(|| cur.to_path_buf())?,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => cur = cur.parent()?,
+                Err(_) => return None,
+            }
+        };
+        Some((resolved, anchor))
+    };
+    let allow_subfolder = send_input || message_list;
+    // TS checks every client-supplied directory before session lookup or relay (`http-server.ts:1248-1264`).
+    let mut requested_checkout = None;
+    if let Some(req) = requested.as_deref() {
+        if message_list {
+            let Some((resolved, anchor)) = resolve_media_path(req) else {
+                return Err(foreign());
+            };
+            let proof = crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor)
+                .await
+                .ok()
+                .flatten()
+                .ok_or_else(foreign)?;
+            requested_checkout = Some(proof);
+        } else if send_input {
+            let Some(physical) = crate::files::paths::canonical(&app.scope, req) else {
+                return Err(foreign());
+            };
+            let proof = crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, &physical, true)
+                .await
+                .ok_or_else(foreign)?;
+            requested_checkout = Some(proof);
+        } else if !crate::worktrees::owns(&app, &workspace, req).await {
+            return Err(foreign());
+        }
+    }
     let actual = if let Some(session) = session {
-        Some(super::session_record_at(&app, &endpoint, session).await?)
+        Some(if message_list {
+            super::session_record_media_at(&app, &endpoint, session).await?
+        } else {
+            super::session_record_at(&app, &endpoint, session).await?
+        })
     } else {
         None
     };
@@ -269,24 +319,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let identity_now = || {
         let raw = native_directory?;
         let (resolved, anchor) = if message_list {
-            if !crate::files::paths::local_absolute(raw) {
-                return None;
-            }
-            let normalized = crate::files::node_path::Style::host().normalize(raw);
-            if !crate::files::paths::under(&app.scope, std::path::Path::new(&normalized)) {
-                return None;
-            }
-            let resolved =
-                crate::worktrees::ownership::resolve_exact_directory(raw).filter(|p| p.starts_with(&app.scope))?;
-            let mut cur = resolved.as_path();
-            let anchor = loop {
-                match std::fs::symlink_metadata(cur) {
-                    Ok(meta) => break meta.is_dir().then(|| cur.to_path_buf())?,
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => cur = cur.parent()?,
-                    Err(_) => return None,
-                }
-            };
-            (resolved, anchor)
+            resolve_media_path(raw)?
         } else {
             let path = crate::files::paths::canonical(&app.scope, raw)?;
             (path.clone(), path)
@@ -294,19 +327,22 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let identity = crate::files::host_identity(&anchor).ok()?;
         Some((resolved, anchor, identity))
     };
-    let allow_subfolder = send_input || message_list;
     let initial_identity = allow_subfolder.then(&identity_now).flatten();
-    let input_checkout = match &initial_identity {
-        Some((resolved, anchor, _)) if message_list => {
-            crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor)
-                .await
-                .ok()
-                .flatten()
+    let input_checkout = if allow_subfolder && requested.as_deref().is_some_and(|req| Some(req) == native_directory) {
+        requested_checkout.take()
+    } else {
+        match &initial_identity {
+            Some((resolved, anchor, _)) if message_list => {
+                crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor)
+                    .await
+                    .ok()
+                    .flatten()
+            }
+            Some((_, physical, _)) => {
+                crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, physical, true).await
+            }
+            None => None,
         }
-        Some((_, physical, _)) => {
-            crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, physical, true).await
-        }
-        None => None,
     };
     // TS checks the session's own location first and names a proven
     // departure, so the UI can drop a conversation moved out of the project.
@@ -575,7 +611,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     };
     if send_input {
         let session = session.ok_or_else(upstream_error)?;
-        let url = endpoint.url.join(&format!("/api/session/{session}/environment")).map_err(|_| upstream_error())?;
+        let mut url = endpoint.url.clone();
+        url.path_segments_mut().map_err(|_| upstream_error())?.clear().extend([
+            "api",
+            "session",
+            session,
+            "environment",
+        ]);
         let unavailable = super::session_environment::unavailable;
         let variables = super::session_environment::snapshot(app.settings.location.config.clone()).await?;
         if command && let Some(Value::Object(input)) = &input {
@@ -792,7 +834,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         && response.status().is_success()
         && is_json_content_type(response.headers())
     {
-        let (deadline, _slot) = defer_guard.ok_or_else(interrupted)?;
+        let (deadline, slot) = defer_guard.ok_or_else(interrupted)?;
         let status = response.status();
         let headers: Vec<(&'static str, axum::http::HeaderValue)> =
             ["content-type", "cache-control", "etag", "last-modified"]
@@ -814,18 +856,22 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 rewritten = tokio::time::timeout_at(
                     deadline,
-                    tokio::task::spawn_blocking(move || defer_message_list(&id, &session, bytes)),
+                    tokio::task::spawn_blocking(move || {
+                        let _slot = slot;
+                        defer_message_list(&id, &session, bytes)
+                    }),
                 ) => {
                     rewritten.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                 }
             }
         } else {
+            drop(slot);
             (Body::from(bytes), false)
         };
         let fresh = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            record = tokio::time::timeout_at(deadline, super::session_record_at(&app, &endpoint, session)) => {
+            record = tokio::time::timeout_at(deadline, super::session_record_media_at(&app, &endpoint, session)) => {
                 record.map_err(|_| interrupted())??
             }
         };

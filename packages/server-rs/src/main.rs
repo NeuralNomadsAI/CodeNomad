@@ -214,13 +214,11 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         println!("{local_url}");
     }
     let done = shutdown.clone();
-    let served = axum::serve(listener, local)
-        .with_graceful_shutdown(async move {
-            done.cancelled().await;
-            // Event streams end, as `closeSseClients` does, so the drain can finish.
-            state.events.shutdown.cancel();
-        })
-        .await;
+    let served = shared::serve_local(listener, local, done, || {
+        // Event streams end, as `closeSseClients` does, so the drain can finish.
+        state.events.shutdown.cancel();
+    })
+    .await;
     shutdown.cancel();
     for task in [plugins, bridge].into_iter().flatten() {
         let _ = task.await;
