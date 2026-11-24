@@ -245,8 +245,10 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
     }
     tokio::spawn(async move {
         let _admitted = admitted;
-        let root = user_command::run_paths(&w.path, &["rev-parse", "--show-toplevel"]).await?.ok()?;
-        if dunce::canonicalize(root.text().trim()).as_deref().ok() != Some(tree.registered())
+        let root = user_command::run(&w.path, &["rev-parse", "--show-toplevel"]).await?;
+        if root.code != 0
+            || dunce::canonicalize(root.text().trim_end_matches(['\r', '\n'])).as_deref().ok()
+                != Some(tree.registered())
             || !tree.contains_live(&w.path)
             || app.workspace(&id).is_err()
         {
@@ -254,7 +256,7 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
         }
         let mut args = if stage {
             vec!["add", "--"]
-        } else if user_command::run_paths(&w.path, &["rev-parse", "--verify", "HEAD"]).await?.code == 0 {
+        } else if user_command::run(&w.path, &["rev-parse", "--verify", "HEAD"]).await?.code == 0 {
             vec!["restore", "--staged", "--"]
         } else {
             vec!["rm", "--cached", "--quiet", "--"]
@@ -263,7 +265,7 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
             return Err(conflict("Worktree changed"));
         }
         args.extend(validated.iter().map(String::as_str));
-        user_command::run_paths(&w.path, &args).await?.mutation()?;
+        user_command::run(&w.path, &args).await?.mutation()?;
         notify(&app, &w);
         Ok(Json(json!({"ok":true})))
     })
