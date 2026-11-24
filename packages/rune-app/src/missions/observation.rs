@@ -96,10 +96,6 @@ impl Observation {
                     && page.revision == revision
                     && page.coverage == Coverage::Observed
                     && page.requests == Coverage::Observed
-                    && page
-                        .actors
-                        .iter()
-                        .all(|actor| actor.state != ActorState::Unknown)
             }
     }
 

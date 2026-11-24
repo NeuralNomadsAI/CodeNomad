@@ -89,15 +89,15 @@ pub struct DeletionError {
     pub code: Option<DeletionCode>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DeletionOutcome {
-    Deleted,
+    Deleted(Option<Box<Cleanup>>),
     Failed(DeletionError),
     Unconfirmed,
 }
 
 impl DeletionOutcome {
-    pub fn error_key(self) -> &'static str {
+    pub fn error_key(&self) -> &'static str {
         match self {
             Self::Failed(DeletionError {
                 status: 503,
@@ -218,7 +218,7 @@ fn settle_deletion(
         || request.delete_managed_sessions
         || require_document_settled;
     match body.get("cleanup") {
-        None | Some(serde_json::Value::Null) if !require_cleanup => DeletionOutcome::Deleted,
+        None | Some(serde_json::Value::Null) if !require_cleanup => DeletionOutcome::Deleted(None),
         Some(value) if !value.is_null() => match serde_json::from_value::<Cleanup>(value.clone()) {
             Ok(cleanup)
                 if valid_cleanup(&cleanup)
@@ -227,7 +227,7 @@ fn settle_deletion(
                     && (!require_document_settled || cleanup.document_pending == Some(false))
                     && expected_deletion_id.is_none_or(|id| cleanup.deletion_id == id) =>
             {
-                DeletionOutcome::Deleted
+                DeletionOutcome::Deleted(Some(Box::new(cleanup)))
             }
             _ => DeletionOutcome::Unconfirmed,
         },
@@ -366,7 +366,7 @@ mod tests {
                 None,
                 false,
             ),
-            DeletionOutcome::Deleted
+            DeletionOutcome::Deleted(None)
         );
         assert_eq!(
             settle_deletion(
@@ -385,7 +385,7 @@ mod tests {
             "objective": "Obj", "createdAt": 1, "removed": 1, "retained": 0,
             "pending": 0, "reasons": [], "documentPending": false
         });
-        assert_eq!(
+        assert!(matches!(
             settle_deletion(
                 reqwest::StatusCode::OK,
                 &json!({"deleted": true, "cleanup": settled_cleanup}),
@@ -394,8 +394,8 @@ mod tests {
                 Some("del-1"),
                 true,
             ),
-            DeletionOutcome::Deleted
-        );
+            DeletionOutcome::Deleted(Some(ref cleanup)) if cleanup.deletion_id == "del-1" && cleanup.removed == 1
+        ));
         let mut omitted_doc_pending = settled_cleanup.clone();
         omitted_doc_pending
             .as_object_mut()

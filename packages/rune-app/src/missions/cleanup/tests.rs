@@ -362,6 +362,7 @@ fn cleanup_retry_reconciles_before_delete_settles_409_and_retires_matching_delet
                 request: DeletionRequest::from_cleanup(&row).unwrap(),
                 flight: None,
                 error: Some("missions.cleanup.documentPending"),
+                document_cleanup: true,
                 retired: false,
             },
         );
@@ -480,6 +481,7 @@ fn cleanup_view_keeps_tombstoned_delete_reachable_and_fences_stale_scope_retry()
             request: DeletionRequest::new(7, false).unwrap(),
             flight: None,
             error: Some("missions.cleanup.error.unconfirmed"),
+            document_cleanup: false,
             retired: false,
         },
     );
@@ -695,6 +697,7 @@ fn orphaned_delete_and_cleanup_row_retries_exclude_each_other_and_row_settlement
                 request: DeletionRequest::from_cleanup(&row).unwrap(),
                 flight: None,
                 error: Some("missions.cleanup.documentPending"),
+                document_cleanup: true,
                 retired: false,
             },
         );
@@ -803,6 +806,7 @@ fn closing_workspaces_retires_failed_delete_intents_and_bounds_cleanup_errors() 
                 request: DeletionRequest::new(1, false).unwrap(),
                 flight: None,
                 error: Some("missions.cleanup.error.unconfirmed"),
+                document_cleanup: false,
                 retired: false,
             },
         );
@@ -873,6 +877,7 @@ fn sse_loss_and_view_revocation_abort_retry_before_and_after_delete() {
                 request: DeletionRequest::new(7, false).unwrap(),
                 flight: None,
                 error: Some("missions.cleanup.error.unconfirmed"),
+                document_cleanup: false,
                 retired: false,
             },
         );
@@ -1050,16 +1055,142 @@ fn confirmed_delete_and_settled_cleanup_update_paginated_panel_immediately() {
         assert!(panel.selected.is_none());
         assert!(!panel.summaries.iter().any(|row| row.id == "msn-0"));
 
-        // Confirmed cleanup immediately clears pending state and blocks stale callback.
-        let mut row = cleanup_row(0, true);
+        // Confirmed cleanup immediately adopts authoritative receipt (counts + reasons),
+        // cancels any in-flight cleanups read, and blocks stale callbacks.
+        let mut row = cleanup_row(1, true);
         row.mission_id = "old".into();
+        row.retained = 0;
+        row.reasons.clear();
         panel.cleanups = vec![row.clone()];
-        panel.mark_cleanup_settled("old", "del-1");
+        let mut settled = cleanup_row(0, false);
+        settled.mission_id = "old".into();
+        settled.retained = 1;
+        settled.reasons = vec!["children".into()];
+        panel.adopt_settled_cleanup(settled);
         assert!(!panel.cleanups[0].is_pending());
+        assert_eq!(panel.cleanups[0].retained, 1);
+        assert_eq!(panel.cleanups[0].reasons, vec!["children".to_string()]);
         let mut lifecycle = super::super::Lifecycle::default();
         panel.retry_cleanup(&mut lifecycle, &sc, row);
         assert!(!lifecycle.cleanup.cleanup_busy(&sc));
         http.quiet().await;
+    });
+}
+
+#[test]
+fn delete_intent_persists_document_cleanup_requirement_across_retries() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-doc");
+        let mut owner = CleanupOwner::default();
+
+        owner.start_delete(
+            &src,
+            "Doc".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let first = http.accept().await;
+        let request_id = first.body["requestId"].as_str().unwrap().to_owned();
+        first.reply(503, json!({"code": "cleanup-pending"})).await;
+        let rec1 = http.accept().await;
+        rec1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [{
+                    "missionID": "msn-doc", "deletionID": "del-doc", "requestID": request_id,
+                    "expectedRevision": 7, "deleteManagedSessions": false,
+                    "objective": "Doc", "createdAt": 1, "removed": 0, "retained": 0,
+                    "pending": 0, "reasons": [], "documentPending": true
+                }]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+        assert_eq!(
+            owner.delete_state(&src),
+            Some(DeleteState::Failed("missions.cleanup.documentPending"))
+        );
+
+        // Retry gets a row with pending:0 but omitted documentPending -> must stay unconfirmed.
+        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake);
+        let rec2 = http.accept().await;
+        rec2.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": [{
+                    "missionID": "msn-doc", "deletionID": "del-doc", "requestID": request_id,
+                    "expectedRevision": 7, "deleteManagedSessions": false,
+                    "objective": "Doc", "createdAt": 1, "removed": 0, "retained": 0,
+                    "pending": 0, "reasons": []
+                }]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+        assert_eq!(
+            owner.delete_state(&src),
+            Some(DeleteState::Failed("missions.cleanup.error.unconfirmed"))
+        );
+        http.quiet().await;
+    });
+}
+
+#[test]
+fn revoking_view_during_post_409_get_releases_busy_without_settling_or_refreshing() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let sc = scope();
+        let row = cleanup_row(0, true);
+        let view_live = live_flag();
+        let mut owner = CleanupOwner::default();
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row,
+            view_live.clone(),
+            live_flag(),
+            http.backend.clone(),
+            wake,
+        );
+        let pre_get = http.accept().await;
+        pre_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                    "cleanups": [cleanup_json(0, true)]
+                }),
+            )
+            .await;
+        let del = http.accept().await;
+        del.reply(409, json!({"code": "request-conflict"})).await;
+        let post_get = http.accept().await;
+        assert!(post_get.header.starts_with("GET /api/workspaces/"));
+        // Revoke the view while post-409 GET is held, then return a settled row.
+        view_live.store(false, Ordering::Release);
+        post_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "cleanups": [cleanup_json(0, false)]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        let polled = owner.poll();
+        assert!(!owner.cleanup_busy(&sc));
+        assert_eq!(owner.cleanup_error(&sc), None);
+        assert!(polled.settled_cleanups.is_empty());
+        assert!(polled.refreshed_scopes.is_empty());
     });
 }
 

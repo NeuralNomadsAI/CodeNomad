@@ -158,6 +158,18 @@ fn coordinator_eligibility_requires_complete_fresh_interrupted_active_or_resumab
     let unknown_coord = obs_with(7, vec![("ses_coord", ActorState::Unknown, None)]);
     assert!(!coordinator_eligible(&active, &unknown_coord));
 
+    let quiet_reported_specialist = obs_with(
+        7,
+        vec![
+            ("ses_coord", ActorState::IdleWithoutReport, None),
+            ("ses_done_specialist", ActorState::Unknown, None),
+        ],
+    );
+    assert!(
+        coordinator_eligible(&active, &quiet_reported_specialist),
+        "a quiet specialist projecting Unknown in a fully Observed window does not block Recover"
+    );
+
     let worker_running = obs_with(
         7,
         vec![

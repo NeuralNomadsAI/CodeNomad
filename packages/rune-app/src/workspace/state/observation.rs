@@ -2,6 +2,7 @@ use super::{Cache, State, Tx, Ui, drafts, notification};
 
 pub(super) fn poll_cached(s: &mut State, ui: &mut Ui, now: Option<f64>, tx: &mut Tx) -> bool {
     let active = Cache::take(s);
+    let was_polling_cached = std::mem::replace(&mut s.polling_cached, true);
     let mut changed = false;
     let mut drafts_changed = false;
     for item in &mut ui.entries {
@@ -28,6 +29,7 @@ pub(super) fn poll_cached(s: &mut State, ui: &mut Ui, now: Option<f64>, tx: &mut
             item.cache = Some(Cache::take(s));
         }
     }
+    s.polling_cached = was_polling_cached;
     active.apply(s);
     if drafts_changed {
         ui.changed();

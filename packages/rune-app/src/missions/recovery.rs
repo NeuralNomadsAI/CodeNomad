@@ -159,6 +159,7 @@ impl Recovery {
             .count()
     }
 
+    #[cfg(test)]
     pub fn error(&self, key: &RecoveryKey) -> Option<RecoveryError> {
         let scope = RecoveryErrorScope::from_key(key);
         self.error

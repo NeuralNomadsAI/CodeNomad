@@ -334,9 +334,9 @@ impl Panel {
                     owner.recovery.clear_error_for(&scope, mission_id);
                 }
             }
-            for (settled_scope, mission_id, deletion_id) in &settled.cleanup.settled_cleanups {
+            for (settled_scope, receipt) in &settled.cleanup.settled_cleanups {
                 if settled_scope == &scope {
-                    self.mark_cleanup_settled(mission_id, deletion_id);
+                    self.adopt_settled_cleanup(receipt.clone());
                 }
             }
             owner

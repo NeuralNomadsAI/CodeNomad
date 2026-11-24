@@ -34,7 +34,7 @@ pub struct Summary {
     pub task_count: Option<u64>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Cleanup {
     #[serde(rename = "missionID")]

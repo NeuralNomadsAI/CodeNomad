@@ -157,7 +157,16 @@ impl Panel {
         }
     }
 
+    fn cancel_lane(&mut self, kind: Kind) {
+        self.serial = self.serial.wrapping_add(1);
+        let lane = &mut self.lanes[kind as usize];
+        if let Some((_, cancel)) = lane.active.take() {
+            cancel.close();
+        }
+    }
+
     pub(super) fn forget_deleted_mission(&mut self, mission_id: &str) {
+        self.cancel_lane(Kind::Summaries);
         self.summaries.retain(|row| row.id != mission_id);
         if self.selected.as_deref() == Some(mission_id) {
             self.selection_live.store(false, Ordering::Release);
@@ -171,18 +180,18 @@ impl Panel {
         }
     }
 
-    pub(super) fn mark_cleanup_settled(&mut self, mission_id: &str, deletion_id: &str) {
-        for row in &mut self.cleanups {
-            if row.mission_id == mission_id && row.deletion_id == deletion_id {
-                row.pending = 0;
-                if row.document_pending == Some(true) {
-                    row.document_pending = Some(false);
-                }
-            }
+    pub(super) fn adopt_settled_cleanup(&mut self, receipt: Cleanup) {
+        self.cancel_lane(Kind::Cleanups);
+        if let Some(existing) = self.cleanups.iter_mut().find(|row| {
+            row.mission_id == receipt.mission_id && row.deletion_id == receipt.deletion_id
+        }) {
+            *existing = receipt.clone();
+        } else {
+            self.cleanups.insert(0, receipt.clone());
         }
         if let Some(token) = self
             .cleanup_tokens
-            .remove(&(mission_id.to_owned(), deletion_id.to_owned()))
+            .remove(&(receipt.mission_id, receipt.deletion_id))
         {
             token.store(false, Ordering::Release);
         }
@@ -322,11 +331,17 @@ impl Panel {
             && self.backend.client.same_connection(&backend.client)
     }
 
+    pub(crate) fn same_workspace_target(&self, backend: &Backend) -> bool {
+        self.backend.workspace == backend.workspace
+            && self.backend.client.server_identity().is_some()
+            && self.backend.client.server_identity() == backend.client.server_identity()
+    }
+
     pub(crate) fn supported(&self) -> bool {
         self.supported == Some(true)
     }
 
-    pub(super) fn project(&self) -> Option<&str> {
+    pub(crate) fn project(&self) -> Option<&str> {
         self.project.as_deref()
     }
 

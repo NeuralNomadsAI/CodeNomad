@@ -277,11 +277,13 @@ pub(crate) fn poll(s: &mut State) -> bool {
         if let Some(online) = stream_state {
             crate::workspace::missions_online(s, online);
         }
-        if reconnected {
+        if reconnected && stream_state != Some(false) {
             crate::workspace::mission_event(s, None);
         }
-        for event in &missions {
-            crate::workspace::mission_event(s, Some(event));
+        if stream_state != Some(false) {
+            for event in &missions {
+                crate::workspace::mission_event(s, Some(event));
+            }
         }
     }
     changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))

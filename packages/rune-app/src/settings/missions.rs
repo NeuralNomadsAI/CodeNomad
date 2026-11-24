@@ -258,4 +258,20 @@ mod tests {
             .await;
         });
     }
+
+    #[test]
+    fn staging_mission_delete_sessions_immediately_withholds_stale_value_before_poll() {
+        let mut prefs = Preferences::default();
+        prefs.fixture();
+        prefs.fixture_mission_delete_sessions(true);
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:1/").unwrap());
+        assert_eq!(prefs.mission_delete_sessions(), Some(true));
+        prefs.set_mission_delete_sessions(false);
+        assert_eq!(
+            prefs.mission_delete_sessions(),
+            None,
+            "staging a toggle must immediately withhold the stale confirmed value before poll()"
+        );
+    }
 }

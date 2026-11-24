@@ -79,6 +79,7 @@ struct State {
     paging: bool,
     history_error: bool,
     history_detached: bool,
+    polling_cached: bool,
 }
 #[derive(PartialEq)]
 enum Phase {
@@ -133,6 +134,7 @@ fn init() -> State {
         paging: false,
         history_error: false,
         history_detached: false,
+        polling_cached: false,
     }
 }
 fn setup(s: &mut State, wake: rune::Waker) {

@@ -279,7 +279,7 @@ impl PreferencesWatch {
                             },
                         )
                         .await;
-                        notices.fetch_and(!128, SeqCst);
+                        notices.fetch_and(!(16 | 128), SeqCst);
                         if notices.fetch_or(64, SeqCst) & 64 == 0 {
                             wake();
                         }

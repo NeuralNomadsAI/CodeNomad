@@ -502,7 +502,13 @@ impl Preferences {
     }
 
     pub fn mission_delete_sessions(&self) -> Option<bool> {
-        if self.authentication_required || self.stream_offline {
+        if self.authentication_required
+            || self.stream_offline
+            || self
+                .config
+                .requested(Choice::MissionDeleteSessions)
+                .is_some()
+        {
             return None;
         }
         let doc = self.config.confirmed()?;

@@ -302,7 +302,13 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
         {
             ui.mission_lifecycle.retain_checks_for(None);
             ui.mission_lifecycle.confirmation = None;
-            let mut panel = missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone());
+            let carried_project = entry.missions.as_ref().and_then(|old| {
+                old.same_workspace_target(&backend)
+                    .then(|| old.project().map(str::to_owned))
+                    .flatten()
+            });
+            let mut panel =
+                missions::Panel::new(backend, carried_project, s.reads.clone(), s.wake.clone());
             panel.selected.clone_from(&saved.view.selected_mission);
             if let Some(old) = entry.missions.replace(panel) {
                 retired_panels.push(old);
