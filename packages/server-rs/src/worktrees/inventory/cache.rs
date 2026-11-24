@@ -12,6 +12,7 @@ use uuid::Uuid;
 struct ActiveFlight {
     id: Uuid,
     epoch: u64,
+    sse_gen: u64,
     endpoint: Arc<crate::opencode::Endpoint>,
     read: InventoryRead,
 }
@@ -30,6 +31,7 @@ pub struct InventoryCache {
     serial: u64,
     reset: u64,
     changed: HashMap<String, u64>,
+    sse_generation: HashMap<Uuid, u64>,
     /// Keyed by `(workspace_id, refreshed)` so SSE/receipt routing (`false`, no refresh) and
     /// history search (`true`, refreshes on cold/invalidated load) never mix entries or flights.
     entries: HashMap<(Uuid, bool), EventEntry>,
@@ -81,14 +83,27 @@ impl InventoryCache {
         }
     }
 
-    fn invalidate_sse_if_changed(&mut self, id: Uuid, latest: &Catalogue) {
-        let sse_key = (id, false);
-        let changed = self
+    fn sse_gen(&self, id: Uuid) -> u64 {
+        self.sse_generation.get(&id).copied().unwrap_or(0)
+    }
+
+    fn invalidate_sse_if_changed(&mut self, id: Uuid, endpoint: &Arc<crate::opencode::Endpoint>, latest: &Catalogue) {
+        let http_changed = self
             .entries
-            .get(&sse_key)
+            .get(&(id, true))
+            .filter(|e| Arc::ptr_eq(&e.endpoint, endpoint))
             .and_then(|e| e.value.as_ref())
-            .is_some_and(|old| old.response() != latest.response());
-        if changed {
+            .is_some_and(|old| !old.same_snapshot(latest));
+        let sse_differs = self
+            .entries
+            .get(&(id, false))
+            .filter(|e| Arc::ptr_eq(&e.endpoint, endpoint))
+            .and_then(|e| e.value.as_ref())
+            .is_some_and(|old| !old.same_snapshot(latest));
+        if http_changed || sse_differs {
+            let generation = self.sse_generation.entry(id).or_insert(0);
+            *generation = generation.wrapping_add(1);
+            let sse_key = (id, false);
             if let Some(sse) = self.entries.get_mut(&sse_key) {
                 sse.value = None;
                 if sse.loading.is_none() {
@@ -98,7 +113,7 @@ impl InventoryCache {
         }
     }
 
-    pub(in crate::worktrees) fn store_if_current(
+    fn store_entry(
         &mut self,
         id: Uuid,
         refresh: bool,
@@ -110,7 +125,7 @@ impl InventoryCache {
             return;
         }
         if refresh {
-            self.invalidate_sse_if_changed(id, &value);
+            self.invalidate_sse_if_changed(id, endpoint, &value);
         }
         let key = (id, refresh);
         if self.entries.len() >= EVENT_ENTRIES * 2 {
@@ -137,6 +152,21 @@ impl InventoryCache {
         }
     }
 }
+
+pub(in crate::worktrees) fn store_if_current(
+    app: &App,
+    id: Uuid,
+    refresh: bool,
+    endpoint: &Arc<crate::opencode::Endpoint>,
+    revision: u64,
+    value: Arc<Catalogue>,
+) {
+    let mut cache = app.linked_events.lock().unwrap();
+    if !app.native.current(endpoint) {
+        return;
+    }
+    cache.store_entry(id, refresh, endpoint, revision, value);
+}
 /// Event routing reuses an inventory for 4 s, then refreshes it in the
 /// background while still serving it, up to the TS worktree cache TTL
 /// (`WORKTREE_CACHE_TTL_MS`). A blocking refresh stalled the ordered event
@@ -154,6 +184,7 @@ fn drop_entries(app: &App, id: Option<Uuid>) {
         Some(id) => {
             cache.entries.remove(&(id, false));
             cache.entries.remove(&(id, true));
+            cache.sse_generation.remove(&id);
         }
         None => {
             cache.serial += 1;
@@ -210,7 +241,7 @@ async fn cached_catalogue(
         enum Step {
             Hit(Option<Arc<Catalogue>>),
             WaitPrevious(InventoryRead),
-            Join(u64, InventoryRead),
+            Join(u64, u64, InventoryRead),
         }
         let step = {
             let mut cache = app.linked_events.lock().unwrap();
@@ -218,6 +249,7 @@ async fn cached_catalogue(
                 return None;
             }
             let epoch = cache.stamp();
+            let sse_gen = if refresh_on_load { 0 } else { cache.sse_gen(w.id) };
             if cache.entries.get(&key).is_some_and(|e| !Arc::ptr_eq(&e.endpoint, endpoint)) {
                 // `endpoint` is verified current above, so any entry bound to another endpoint is
                 // retired: drop it wholesale so neither its snapshot nor its flight can leak to `endpoint`.
@@ -240,8 +272,12 @@ async fn cached_catalogue(
             if let Some(flight) = cache.entries.get(&key).and_then(|e| e.loading.as_ref())
                 && Arc::ptr_eq(&flight.endpoint, endpoint)
             {
-                if flight.epoch == epoch {
-                    if background.is_some() { Step::Hit(background) } else { Step::Join(epoch, flight.read.clone()) }
+                if flight.epoch == epoch && (refresh_on_load || flight.sse_gen == sse_gen) {
+                    if background.is_some() {
+                        Step::Hit(background)
+                    } else {
+                        Step::Join(epoch, sse_gen, flight.read.clone())
+                    }
                 } else if background.is_some() {
                     Step::Hit(background)
                 } else {
@@ -275,8 +311,13 @@ async fn cached_catalogue(
                     endpoint: endpoint.clone(),
                     loading: None,
                 });
-                entry.loading =
-                    Some(ActiveFlight { id: flight, epoch, endpoint: endpoint.clone(), read: loading.clone() });
+                entry.loading = Some(ActiveFlight {
+                    id: flight,
+                    epoch,
+                    sse_gen,
+                    endpoint: endpoint.clone(),
+                    read: loading.clone(),
+                });
                 let (app, w, endpoint) = (app.clone(), w.clone(), endpoint.clone());
                 tokio::spawn(async move {
                     let started = Instant::now();
@@ -298,6 +339,7 @@ async fn cached_catalogue(
                     let owns_flight =
                         cache.entries.get(&key).and_then(|e| e.loading.as_ref()).is_some_and(|f| f.id == flight);
                     if !cache.valid(epoch, result.as_ref().map(|c| c.project.as_str()))
+                        || (!refresh_on_load && cache.sse_gen(w.id) != sse_gen)
                         || !app.native.current(&endpoint)
                         || !owns_flight
                     {
@@ -313,7 +355,7 @@ async fn cached_catalogue(
                     }
                     if let Some(res) = result.clone() {
                         if refresh_on_load {
-                            cache.invalidate_sse_if_changed(w.id, &res);
+                            cache.invalidate_sse_if_changed(w.id, &endpoint, &res);
                         }
                         if cache.entries.len() > EVENT_ENTRIES * 2 {
                             cache.entries.remove(&key);
@@ -331,7 +373,7 @@ async fn cached_catalogue(
                     }
                     let _ = done.send(result);
                 });
-                if background.is_some() { Step::Hit(background) } else { Step::Join(epoch, loading) }
+                if background.is_some() { Step::Hit(background) } else { Step::Join(epoch, sse_gen, loading) }
             }
         };
         match step {
@@ -344,9 +386,12 @@ async fn cached_catalogue(
                 }
                 continue;
             }
-            Step::Join(epoch, loading) => {
+            Step::Join(epoch, sse_gen, loading) => {
                 let result = loading.await?;
-                if app.native.current(endpoint) && app.linked_events.lock().unwrap().valid(epoch, Some(&result.project))
+                let cache = app.linked_events.lock().unwrap();
+                if app.native.current(endpoint)
+                    && cache.valid(epoch, Some(&result.project))
+                    && (refresh_on_load || cache.sse_gen(w.id) == sse_gen)
                 {
                     return Some(result);
                 }

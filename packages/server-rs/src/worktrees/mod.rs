@@ -176,7 +176,8 @@ pub async fn list(
             }
             // Store under `(workspace.id, fresh)` only so `fresh = true` scans never populate
             // the separate non-refresh SSE routing cache `(workspace.id, false)` (TS `manager.ts:467-503`).
-            app.linked_events.lock().unwrap().store_if_current(
+            inventory::store_if_current(
+                &app,
                 workspace.id,
                 fresh,
                 &endpoint,

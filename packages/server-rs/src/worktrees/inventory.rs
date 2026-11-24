@@ -4,7 +4,7 @@ use super::linked::{conflict, git, missing, native, native_error, physical};
 use crate::{App, Error, Workspace, files};
 use axum::http::Method;
 pub use cache::{EventCache, event_catalogue, forget, invalidate};
-pub(super) use cache::{history_catalogue, receipt_catalogue, revision};
+pub(super) use cache::{history_catalogue, receipt_catalogue, revision, store_if_current};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -508,6 +508,21 @@ impl Catalogue {
     }
     pub fn response(&self) -> Value {
         json!({"isGitRepo":true,"defaultDirectory":self.parent,"worktrees":self.trees.iter().map(Tree::public).collect::<Vec<_>>()})
+    }
+    pub(super) fn same_snapshot(&self, other: &Self) -> bool {
+        self.project == other.project
+            && self.parent == other.parent
+            && self.trees.len() == other.trees.len()
+            && self.trees.iter().zip(&other.trees).all(|(a, b)| {
+                a.slug == b.slug
+                    && a.path == b.path
+                    && a.service == b.service
+                    && a.branch == b.branch
+                    && a.head == b.head
+                    && a.locked == b.locked
+                    && a.removable == b.removable
+                    && a.nested_missing == b.nested_missing
+            })
     }
 }
 pub fn scope(mut w: Workspace, tree: &Tree) -> Workspace {

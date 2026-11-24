@@ -302,6 +302,12 @@ pub async fn create(
                     #[cfg(unix)]
                     {
                         use cap_std::fs::MetadataExt;
+                        let expected_info_path = common_canon.join(info_comp);
+                        if dunce::canonicalize(&expected_info_path).ok().as_deref()
+                            != Some(expected_info_path.as_path())
+                        {
+                            return Ok(());
+                        }
                         let Ok(opened_meta) = info.dir_metadata() else { return Ok(()) };
                         if opened_meta.dev() != info_meta.dev() || opened_meta.ino() != info_meta.ino() {
                             return Ok(());

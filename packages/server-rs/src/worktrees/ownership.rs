@@ -809,7 +809,7 @@ pub(crate) async fn media_directory_with_slot(
         }
         // Keep refreshed HTTP inventories strictly separate from the non-refresh SSE routing cache
         // (`(workspace.id, false)`), matching TS `manager.ts:467-503`.
-        app.linked_events.lock().unwrap().store_if_current(workspace.id, true, endpoint, revision, catalogue);
+        super::inventory::store_if_current(app, workspace.id, true, endpoint, revision, catalogue);
         return Ok(proof);
     }
     Err(native_error())
