@@ -7,7 +7,7 @@ import { createNativeCodexUsage } from "../../usage/native-codex"
 import { claudeCodeAuthEntry, claudeCodeCredential, type ClaudeCodeHost } from "../../usage/claude-credential"
 import { readUsageCredentials } from "../../usage/native-credentials"
 import { readUsageProviderSettings } from "../../usage/native-settings"
-import { readPluginProviderUsage, unavailable as pluginUsageUnavailable } from "../../usage/plugin-usage"
+import { pluginUsageRpcId, readPluginProviderUsage, unavailable as pluginUsageUnavailable } from "../../usage/plugin-usage"
 import { getProviderUsage, resolveUsageProvider } from "../../usage/service"
 import { isOpenCodeFreeModel } from "../../usage/opencode-free-estimate"
 import type { OpenCodeFreeUsage } from "../../usage/opencode-free-usage"
@@ -66,7 +66,9 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       // since the Codex fallback shares one upstream read across clients.
       const closed = new AbortController()
       const abortOnClose = () => { if (!reply.raw.writableFinished) closed.abort() }
-      if (!resolvedProvider && !isOpenCodeFreeModel(params.data.providerId, modelId)) reply.raw.once("close", abortOnClose)
+      const pluginPhase = !resolvedProvider && !isOpenCodeFreeModel(params.data.providerId, modelId)
+        && pluginUsageRpcId(params.data.providerId) !== null
+      if (pluginPhase) reply.raw.once("close", abortOnClose)
       let consoleTimeout: ((publicationSignal: AbortSignal) => Promise<unknown>) | undefined
       try {
         return await boundedRead(async () => {
@@ -105,13 +107,13 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           const free = isOpenCodeFreeModel(params.data.providerId, modelId)
           const provider = free ? null : resolveUsageProvider(params.data.providerId)
           let plugin: ProviderUsageResponse | null = null
-          if (!free && !provider) {
+          if (pluginPhase) {
             // Plugin code receives the Location: confirm the session did not move during the ownership check.
             const rpcSignal = AbortSignal.any([signal, closed.signal])
             const rpcQuotaSignal = AbortSignal.any([quotaSignal, closed.signal])
             let confirmed = false
             try {
-              const current = readLocationRef((await connection.client.session.get({ sessionID: sessionId }, { signal: rpcQuotaSignal })).location)
+              const current = readLocationRef((await boundedRead(() => connection.client.session.get({ sessionID: sessionId }, { signal: rpcQuotaSignal }), rpcQuotaSignal)).location)
               if (current.directory !== location.directory || current.workspaceID !== undefined || !assertCurrentWorkspace(rpcSignal)) {
                 return reply.code(403).send({ error: "Session does not belong to workspace" })
               }

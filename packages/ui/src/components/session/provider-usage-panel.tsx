@@ -228,7 +228,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                     return (
                       <div>
                         <div class="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 text-[11px] text-primary">
-                          <span class="max-w-full shrink-0 font-medium">{windowLabel(label)}</span>
+                          <span class="min-w-0 max-w-full font-medium [overflow-wrap:anywhere]">{windowLabel(label)}</span>
                           <div class="ms-auto flex min-w-0 max-w-full flex-wrap items-baseline justify-end gap-1.5 text-end">
                             <span class="min-w-0 font-medium [overflow-wrap:anywhere]">{displayValue(window())}</span>
                             <Show when={resetLabel(window().resetAt)}>
