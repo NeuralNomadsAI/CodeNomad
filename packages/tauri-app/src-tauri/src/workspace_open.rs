@@ -691,8 +691,10 @@ fn open_local_path_impl(path: &str, keep: &str) -> Result<&'static str, String> 
         }
         return Err("Only files and folders can be opened".into());
     }
+    // The file reader shows text up to the server's 5 MiB read limit.
     let text = !folder
         && keep == "text"
+        && metadata.len() <= 5 * 1024 * 1024
         && looks_like_text(&selected).map_err(|error| error.to_string())?;
     if !folder && (keep == "files" || text) {
         return Ok("kept");

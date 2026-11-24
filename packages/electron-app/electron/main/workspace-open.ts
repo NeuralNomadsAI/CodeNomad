@@ -235,7 +235,9 @@ export async function openLocalPath(path: string, keep: LocalPathKeep, dependenc
     if (keep !== "none") return "kept"
     throw new Error("Only files and folders can be opened")
   }
-  if (!folder && (keep === "files" || (keep === "text" && await looksLikeText(selectedPath)))) return "kept"
+  // The file reader shows text up to the server's 5 MiB read limit.
+  const text = !folder && keep === "text" && stats.size <= 5 * 1024 * 1024 && await looksLikeText(selectedPath)
+  if (!folder && (keep === "files" || text)) return "kept"
   await openDefault(selectedPath, folder ? selectedPath : resolve(selectedPath, ".."), dependencies)
   return "opened"
 }

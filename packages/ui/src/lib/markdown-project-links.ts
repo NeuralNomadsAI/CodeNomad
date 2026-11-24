@@ -40,7 +40,7 @@ export function projectLinkPath(href: string): string | undefined {
 // A local `file:` URL (`file:/p`, `file:///p`, `file://localhost/p`, and the
 // drive forms browsers accept, `file:C:/p` and `file://C:/p`), never a remote
 // share.
-const LOCAL_FILE_URL = /^file:(?:\/\/(?:localhost)?)?(?=\/|[A-Za-z]:\/)/i
+const LOCAL_FILE_URL = /^file:(?:\/\/(?:localhost)?)?(?=\/|[A-Za-z]:[\\/])/i
 
 /** The absolute local path a `file:` URL names (`file:///C:/x` → `C:/x`), or
  * undefined for any other href or an encoded separator, which is invalid in a
