@@ -71,8 +71,9 @@ Les brouillons sont un état de travail côté client, pas des messages natifs p
 ## Ouvrir des fichiers depuis les réponses {#open-files-from-replies}
 
 1. Les réponses de l’agent lient des fichiers du projet par des chemins relatifs et absolus.
-2. Un clic simple ouvre le fichier lié dans l’aperçu du fichier, lu depuis le worktree de la conversation.
-3. Les clics modifiés (Ctrl/⌘-clic, Maj-clic, clic milieu) et les liens hors du worktree de la session conservent le comportement normal des liens.
+2. Un chemin écrit en texte simple devient aussi un lien dès que le fichier existe dans le worktree de la conversation ; les chemins inexistants restent en texte simple.
+3. Un clic simple ouvre le fichier lié dans l’aperçu du fichier, lu depuis le worktree de la conversation.
+4. Les clics modifiés (Ctrl/⌘-clic, Maj-clic, clic milieu) et les liens hors du worktree de la session conservent le comportement normal des liens.
 
 ## Commandes et mode shell {#commands-shell}
 

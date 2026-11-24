@@ -71,8 +71,9 @@ Drafts are client-side working state, not shared native messages. Startup restor
 ## Open files from replies {#open-files-from-replies}
 
 1. Agent replies link project files with relative and absolute paths.
-2. A plain click opens the linked file in the file preview, read from the conversation’s worktree.
-3. Modified clicks (Ctrl/Cmd-click, Shift-click, middle-click) and links outside the session’s worktree keep normal link behavior.
+2. A path written as plain text becomes a link too once the file exists in the conversation's worktree; paths that do not exist stay plain text.
+3. A plain click opens the linked file in the file preview, read from the conversation’s worktree.
+4. Modified clicks (Ctrl/Cmd-click, Shift-click, middle-click) and links outside the session’s worktree keep normal link behavior.
 
 ## Commands and Shell mode {#commands-shell}
 
