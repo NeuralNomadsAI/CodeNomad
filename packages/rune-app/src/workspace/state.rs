@@ -61,10 +61,9 @@ pub(super) struct Entry {
     pending_drafts: HashSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
 }
-#[cfg(target_arch = "wasm32")]
 pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
     let ui = s.workspace.as_ref()?;
-    let entry = &ui.entries[ui.active];
+    let entry = ui.entries.get(ui.active)?;
     let Tab::Workspace(saved) = &entry.saved else {
         return None;
     };

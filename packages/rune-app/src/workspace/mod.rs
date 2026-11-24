@@ -7,11 +7,14 @@ mod save_snapshot;
 mod snapshot_budget;
 mod state;
 pub(crate) use persistence::finish;
+pub(crate) use state::active_workspace;
 pub(crate) use state::contains_project;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use state::evict_for_probe;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use state::native_window_store;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::poll_cached_notifications;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use state::set_files_tab;
 pub(crate) use state::{
@@ -24,8 +27,6 @@ pub(crate) use state::{
     new_tab, opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume,
     retry, schedule_catalogue, select, status, strip, toggle_file_wrap, unselect_missing,
 };
-#[cfg(target_arch = "wasm32")]
-pub(crate) use state::{active_workspace, poll_cached_notifications};
 pub(crate) use state::{
     mission_confirmation, mission_event, mission_observation_project, mission_panel,
     mission_supported, right_panel_tab, set_right_panel_tab, suspend_missions,

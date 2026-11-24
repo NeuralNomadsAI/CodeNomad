@@ -20,6 +20,7 @@ pub mod permission_mode;
 pub mod prompt;
 pub mod prompt_catalogue;
 mod prompt_command;
+pub mod prompt_history;
 mod prompt_receipt;
 pub mod provider_usage;
 pub mod recovery;

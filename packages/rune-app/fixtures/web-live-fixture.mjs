@@ -21,6 +21,12 @@ export function webLiveFixture({stores, project, streams, compare}) {
   }
   return {
     get held() { if(held)rejectedReconnect?.();return held },
+    menuLive(record) {
+      assert.equal(record.id,sessionID)
+      assert.equal(phase,'live')
+      record.time.busy=Date.now()
+      startReply('Mobile menu live reply')
+    },
     androidTurn(record,body){
       assert.equal(phase,'live')
       assert.equal(record.id,sessionID)

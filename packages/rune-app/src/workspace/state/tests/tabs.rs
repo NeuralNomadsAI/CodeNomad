@@ -454,6 +454,80 @@ fn two_occurrences_keep_their_drafts_when_the_user_selects_another_tab() {
 }
 
 #[test]
+fn six_tabs_leave_only_the_fresh_draft_when_a_large_recall_is_suspended() {
+    use crate::composer::draft::{Attachment, MAX_FILE};
+    use crate::transport::{Command, PromptOutcome};
+    use std::sync::{Arc, Weak};
+
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries.clear();
+    let (send, requests) = bounded(1);
+    for i in 0..6 {
+        let session = format!("session-{i}");
+        let fresh = format!("fresh-{i}");
+        let mut item = entry(
+            format!("tab-{i}"),
+            Tab::Workspace(workspace(&session, &fresh)),
+        );
+        item.binding = Some(backend(&session));
+        let mut state = init();
+        state.phase = Phase::Ready;
+        state.commands = Some(send.clone());
+        state.draft = TextEdit::new(&fresh);
+        state.composer.picker.set_attachments_supported(true);
+        item.cache = Some(Cache::take(&mut state));
+        ui.entries.push(item);
+    }
+    ui.entries[0].cache.take().unwrap().apply(&mut s);
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    let mut first: Option<Weak<[u8]>> = None;
+    for i in 0..6 {
+        rt.update(|s, tx| select(s, &format!("tab-{i}"), tx));
+        rt.update(|s, tx| {
+            s.draft.replace_text(format!("attempt-{i}"));
+            for file in 0..3 {
+                let bytes: Arc<[u8]> = Arc::from(vec![i as u8; MAX_FILE]);
+                if i == 0 && file == 0 {
+                    first = Some(Arc::downgrade(&bytes));
+                }
+                assert!(s.composer.draft.attach(Attachment::Device {
+                    name: format!("file-{file}"),
+                    mime: "application/octet-stream".into(),
+                    bytes,
+                    token: None,
+                }));
+            }
+            crate::composer::send(s, tx, false);
+        });
+        let Command::Prompt(prompt) = requests.try_recv().unwrap() else {
+            panic!("expected prompt")
+        };
+        let id = prompt.id.unwrap();
+        rt.update(|s, tx| {
+            crate::composer::acknowledge(s, &id, PromptOutcome::Confirmed(id.clone()));
+            s.draft.replace_text(format!("fresh-{i}"));
+            draft_changed(s, tx);
+            assert!(crate::composer::recall::step(s, true, true, tx));
+            assert_eq!(s.draft.text, format!("attempt-{i}"));
+            assert_eq!(s.composer.draft.inline_usage().1, 3 * MAX_FILE);
+        });
+    }
+    assert!(
+        first.unwrap().upgrade().is_none(),
+        "inactive recall pinned an evicted payload"
+    );
+    for i in 0..6 {
+        rt.update(|s, tx| select(s, &format!("tab-{i}"), tx));
+        assert!(rt.state.composer.recall.is_none());
+        assert_eq!(rt.state.draft.text, format!("fresh-{i}"));
+        assert!(rt.state.composer.draft.attachments.is_empty());
+    }
+}
+
+#[test]
 fn hidden_tab_drains_events_without_changing_active_conversation() {
     let mut s = init();
     s.phase = Phase::Ready;

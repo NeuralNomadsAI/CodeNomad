@@ -3,6 +3,20 @@ use crate::{Phase, init, poll_chat};
 use rune::{Env, Runtime};
 
 #[test]
+fn recall_hydration_can_follow_only_an_installed_visible_window() {
+    let (mut reader, _) = Reader::open();
+    assert!(!reader.has_visible_window());
+    reader.install(false);
+    assert!(reader.has_visible_window());
+    reader.stop_content();
+    assert!(!reader.has_visible_window());
+    reader.resume(Bookmark::Latest);
+    assert!(!reader.has_visible_window());
+    reader.install(false);
+    assert!(reader.has_visible_window());
+}
+
+#[test]
 fn receipt_updates_the_bookmark_of_a_hidden_optimistic_row() {
     let mut state = init();
     let (mut reader, lane) = Reader::open();

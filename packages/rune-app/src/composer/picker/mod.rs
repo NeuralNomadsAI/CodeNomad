@@ -63,6 +63,10 @@ impl Item {
 }
 
 impl Picker {
+    pub(crate) fn backend(&self) -> Option<&Backend> {
+        self.backend.as_ref()
+    }
+
     pub fn bind(&mut self, backend: Backend) {
         let intent = self.commands.intent.take();
         *self = Self {

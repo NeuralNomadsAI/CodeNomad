@@ -22,6 +22,7 @@ pub(crate) struct Reader {
     connection: Arc<AtomicU64>,
     generation: u64,
     bookmark: Bookmark,
+    installed: bool,
     hidden: bool,
     resume_pending: bool,
     pending_scroll: bool,
@@ -43,6 +44,7 @@ impl Reader {
                 connection: connection.clone(),
                 generation: 0,
                 bookmark: Bookmark::Latest,
+                installed: false,
                 hidden: false,
                 resume_pending: false,
                 pending_scroll: false,
@@ -86,6 +88,10 @@ impl Reader {
         self.hidden || self.resume_pending || self.gap || self.parked || self.settling
     }
 
+    pub(crate) fn has_visible_window(&self) -> bool {
+        self.installed && !self.hidden && !self.resume_pending
+    }
+
     pub(crate) fn needs_latest(&self) -> bool {
         self.gap || self.resume_pending
     }
@@ -112,6 +118,7 @@ impl Reader {
     }
 
     pub(crate) fn install(&mut self, gap: bool) {
+        self.installed = true;
         self.gap = gap;
         self.parked = false;
         self.pending_scroll |= self.resume_pending;

@@ -1,4 +1,4 @@
-use super::{can_send, device, picker::Item, send};
+use super::{can_send, picker::Item, send};
 use crate::{Phase, State, platform, screen, strings::t};
 use rune::{El, Key, KeyEvent, Tx, col, text};
 use rune_theme_codenomad::{
@@ -6,7 +6,7 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
 };
 
-pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
+pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
     let scope = s.input_scope.clone();
     let stop = s.phase == Phase::Streaming && s.agent.is_some();
     let editor = editor(s, compact);
@@ -63,6 +63,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
             false,
             screen::action_tx(&scope, crate::latest),
         ))
+        .child(more)
         .child(
             layout::button_tx(
                 t("promptInput.overlay.send"),
@@ -172,26 +173,6 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
             .key("refresh-command-catalogue"),
         );
     }
-    if !s.composer.picker.attachments_supported() {
-        actions = actions.child(
-            layout::button(
-                t("promptInput.attachFiles.ariaLabel"),
-                true,
-                |_: &mut State| {},
-            )
-            .key("attachments-disabled")
-            .description_static(t("rune.attachments_unavailable")),
-        );
-    } else {
-        actions = actions.child(
-            layout::button_tx(
-                t("promptInput.attachFiles.ariaLabel"),
-                !device::available(s) || s.composer.device.busy(),
-                screen::action_tx(&scope, platform::device_picker::choose),
-            )
-            .key("attach-device-files"),
-        );
-    }
     if s.composer.attachments_missing {
         actions = actions.child(
             layout::button_tx(
@@ -229,23 +210,21 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
                 .then(|| text(t("promptInput.send.errorTitle")).role("alert")),
         )
         .children(
-            (s.composer.unconfirmed_id().is_some() || s.composer.command_unconfirmed.is_some())
+            (s.composer.unconfirmed_id().is_some() || super::actions::command_held(s))
                 .then(|| text(t("missionsPanel.action.requestUpdateUncertain")).role("alert")),
         )
 }
 
 fn editor(s: &State, compact: bool) -> El {
-    let editable = !s.composer.pending();
     #[cfg(not(target_arch = "wasm32"))]
     let input_key = "input";
     #[cfg(target_arch = "wasm32")]
     let input_key = format!("input-{}", s.web_composer_input_epoch);
     let input = layout::composer_input(&s.draft, t("promptInput.placeholder.default"))
         .key(input_key)
-        .label(t("rune.prompt"))
-        .disabled(!editable);
-    if !editable {
-        return layout::composer_field(input, compact, false).key("composer");
+        .label(t("rune.prompt"));
+    if s.composer.editing_locked() {
+        return layout::composer_field(input.disabled(true), compact, false).key("composer");
     }
     let scope = s.input_scope.clone();
     let key_scope = scope.clone();
@@ -257,7 +236,7 @@ fn editor(s: &State, compact: bool) -> El {
             s.current_scope(&key_scope) && key(s, event, tx)
         })
         .on_input_paste(move |s: &mut State, content, tx| {
-            if !s.current_scope(&paste_scope) || s.composer.pending() {
+            if !s.current_scope(&paste_scope) || s.composer.editing_locked() {
                 return true;
             }
             #[cfg(target_arch = "wasm32")]
@@ -386,6 +365,7 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 }
 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    use super::shortcuts::Action;
     #[cfg(not(target_arch = "wasm32"))]
     if event.edit_command() == Some('v') {
         super::clipboard::request(s, tx);
@@ -425,20 +405,29 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
     }
-    if event.key == Key::Enter && event.mods == rune::Mods::default() {
-        send(s, tx, false);
-        true
-    } else if event.key == Key::Enter
-        && (!cfg!(target_os = "macos")
-            && event.mods.alt
-            && !event.mods.ctrl
-            && !event.mods.cmd
-            && !event.mods.logo
-            || event.mods.shift && event.mods.cmd && !event.mods.alt)
+    if event.mods == rune::Mods::default() && matches!(event.key, Key::Up | Key::Down | Key::Escape)
     {
+        if event.key == Key::Escape && s.composer.recall.is_some() && !s.composer.device.busy() {
+            super::recall::restore(s);
+            s.composer.picker.reset();
+            return true;
+        }
+    }
+    for (action, older) in [(Action::PreviousPrompt, true), (Action::NextPrompt, false)] {
+        if action.matches(s, event, tx) && super::recall::step(s, older, false, tx) {
+            return true;
+        }
+    }
+    if Action::Clear.matches(s, event, tx) {
+        super::menu::clear(s, tx);
+        true
+    } else if Action::Alternate.matches(s, event, tx) {
         send(s, tx, true);
         true
+    } else if event.key == Key::Enter && event.mods == rune::Mods::default() {
+        send(s, tx, false);
+        true
     } else {
-        false
+        super::menu::jump_key(s, event, tx)
     }
 }

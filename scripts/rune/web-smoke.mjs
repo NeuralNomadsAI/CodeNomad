@@ -9,7 +9,7 @@ import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreat
 import {activateControl,launchChromium} from './web-chromium.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
 import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
-import {focusRing, longPaste} from './web-paste.mjs'
+import {focusRing, longPaste, mobileMoreActions, menuPrompt} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
 import {historySearch} from './web-history-search.mjs'
 import {markerFilters} from './web-marker-filters.mjs'
@@ -18,7 +18,7 @@ import {checkGitImages, gitImageReadAllowed} from './web-git-images.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'},'history-return-only':{type:'boolean'},'more-actions-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -27,6 +27,10 @@ else url.searchParams.set('scene', values['paste-only'] ? 'synthetic-paste' : 's
 if(values.mobile)assert(values.connected && url.protocol==='https:')
 const searchOnly=values['mobile-session-search']
 assert(!searchOnly||values.mobile)
+const historyReturnOnly = values['history-return-only']
+const moreActionsOnly = values['more-actions-only']
+const recallScene = historyReturnOnly || moreActionsOnly
+if(recallScene)assert(values.mobile)
 if(values['paste-only'])assert(!values.connected)
 if(values.missions)assert(values.connected&&!values.mobile&&url.protocol==='http:')
 if(values['git-images'])assert(values.connected&&!values.mobile&&!values.missions)
@@ -57,10 +61,10 @@ try {
   const android=mobileContext(browser)
   const sizes=values.missions||values['git-images']?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
-  for (const [name, width, height, touch] of sizes) {
+  for (const [name, width, height, touch] of moreActionsOnly ? sizes.slice(0,1) : sizes) {
     const control=name==='phone-dpr1-control'
     if(searchOnly&&control)continue
-    for (const colorScheme of control||searchOnly?['light']:['light','dark']) {
+    for (const colorScheme of control||searchOnly||moreActionsOnly?['light']:['light','dark']) {
       const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch, colorScheme,
         ...(values.mobile?{...android,ignoreHTTPSErrors:true,...(control?{deviceScaleFactor:1}:{})}:{}),
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
@@ -76,7 +80,7 @@ try {
       })
       const missions=values.missions?missionsFixture({page,messages,artifact:path.join(out,`missions-${colorScheme}`),project:values.project}):null
       if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
-      const errors = [], forbiddenRequests = [], routes=[], history=[]
+      const errors = [], forbiddenRequests = [], routes=[], history=[], settlements=[], streamEvents=[], clientDiagnostics=[]
       let holdOlder
       let holdAnchor
       let holdPreview
@@ -85,38 +89,51 @@ try {
         if(meta)lastPress={...meta,x,y,requestedAt:Date.now()}
         return page.touchscreen.tap(x,y)
       }
-      const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,mobilePreferences:values.mobile===true,markerFilters:values.timeline})
+      const policy=values.connected?workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,mobilePreferences:values.mobile===true,markerFilters:values.timeline,menuPrompt:moreActionsOnly?menuPrompt:undefined}):null
       let eventSource=0
       let releaseLinked
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
       let markLinked
       const linkedRequested=values.mobile?new Promise(resolve=>{markLinked=resolve}):null
-      const failLinkedPage=values.mobile&&!control&&colorScheme==='light'
+      const failLinkedPage=values.mobile&&!recallScene&&!control&&colorScheme==='light'
       const linkedReads=[]
       let linkedContinuationRecovered
       let linkedAcrossSwitch
+      let holdRecall = false, releaseRecall, markRecall
+      const recallHeld = new Promise(resolve => { markRecall = resolve })
+      const recallGate = new Promise(resolve => { releaseRecall = resolve })
+      let transcriptWhileRecallHeld = false
       page.on('response',async response=>{
         if(!values.connected)return
         const request=response.request(),pathname=new URL(response.url()).pathname
         if(pathname==='/api/events'&&response.status()===200&&request.resourceType()==='eventsource')eventSource++
         if(pathname.endsWith('/session-history/window')&&response.ok())history.push({input:request.postDataJSON(),body:await response.json().catch(()=>null)})
+        if(/\/(?:storage\/instances\/[^/]+|instance\/api\/session\/[^/]+|session-history\/window)$/.test(pathname))
+          settlements.push({at:performance.now(),path:pathname,status:response.status()})
+      })
+      page.on('requestfailed',request=>{
+        if(values.connected)settlements.push({at:performance.now(),path:new URL(request.url()).pathname,error:request.failure()?.errorText})
       })
       page.on('pageerror', error => errors.push({name: error.name, message: error.message}))
-      if(values['history-search'])page.on('console', message=>{
-        if(message.type()==='error'&&/panic|token|panicked/i.test(message.text()))errors.push({name:'Rune',message:message.text()})
+      page.on('console', message=>{
+        if(values['history-search']&&message.type()==='error'&&/panic|token|panicked/i.test(message.text()))errors.push({name:'Rune',message:message.text()})
+        if(values.connected&&message.type()==='error'&&clientDiagnostics.length<64)
+          clientDiagnostics.push({at:performance.now(),message:message.text().slice(0,256)})
       })
       // Connected scenes admit only their private creations; synthetic scenes refuse all API access.
       await context.route('**/*', async route => {
         const requested = new URL(route.request().url())
         const req=route.request(),p=requested.pathname
         const protectedRoute=/^\/(api|workspaces)(?:\/|$)/.test(p)
-        if (!await policy.request(req,{allowApi:values.connected===true})) {
+        const allowed=policy?await policy.request(req,{allowApi:values.connected}):requested.origin===url.origin&&
+          ['GET','HEAD'].includes(req.method())&&assets.has(p)
+        if (!allowed) {
           forbiddenRequests.push({origin: requested.origin, path: requested.pathname})
           return route.abort('blockedbyclient')
         }
         if(protectedRoute){
           assert(routes.length<4000,'Protected browser request bound')
-          const entry={method:req.method(),path:p,query:requested.search,cookie:true};routes.push(entry)
+          const entry={at:performance.now(),method:req.method(),path:p,query:requested.search,cookie:true};routes.push(entry)
           if(req.method()==='POST'&&p==='/api/workspaces'){
             try{Object.assign(entry,await fulfillWorkspaceCreation(route,policy));return}
             catch{errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'});return route.abort('blockedbyclient')}
@@ -144,6 +161,14 @@ try {
           const held=holdPreview;holdPreview=undefined
           await held.promise
         }
+        if(holdRecall&&req.method()==='GET'&&p.startsWith('/api/storage/instances/')){
+          const response = await route.fetch({maxRedirects:0})
+          markRecall(response.status())
+          await recallGate
+          return moreActionsOnly&&response.ok()
+            ? route.fulfill({response,json:{messageHistory:[menuPrompt],agentModelSelections:{}}})
+            : route.fulfill({response})
+        }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/instance/api/session')&&
           requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')){
           const cursor=requested.searchParams.get('cursor')
@@ -165,6 +190,14 @@ try {
         let network
          if(values.mobile){
           const cdp=await mobileClientHints(page,browser)
+          await cdp.send('Network.enable')
+          cdp.on('Network.eventSourceMessageReceived',({requestId,eventName,data})=>{
+            if(streamEvents.length>=512)return
+            let envelope
+            try{envelope=JSON.parse(data)}catch{return}
+            streamEvents.push({at:performance.now(),requestId,eventName,type:envelope.type,
+              status:envelope.status,reason:envelope.reason,native:envelope.event?.type,session:envelope.event?.data?.sessionID})
+          })
           if(colorScheme==='dark'){
             network=cdp
             await cdp.send('Network.emulateNetworkConditions',{
@@ -180,10 +213,18 @@ try {
         if(network)await network.send('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1})
         assert.equal(await page.locator('html').getAttribute('lang'), values.locale)
         assert.equal(await page.locator('html').getAttribute('dir'), values.locale === 'he' ? 'rtl' : 'ltr')
-        if(values.connected){
+         if(values.connected){
+          const present=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+          if(values.mobile)await page.waitForFunction(()=>['web.handover.done','web.gpu.failed','web.handover.failed']
+            .some(name=>performance.getEntriesByName(name).length))
           const press=async (label,role='button')=>{
-            const button=page.getByRole(role,{name:label,exact:true});await button.waitFor({state:'attached'})
-            await button.scrollIntoViewIfNeeded()
+            const match=page.getByRole(role,{name:label,exact:true})
+            // The same fixture directory can appear both in Browse and in Recent.
+            const button=role==='button'&&label===values.project
+              ? match.and(page.locator(':not([disabled]):not([aria-disabled=true])')).first() : match
+            await button.waitFor({state:'attached'})
+             await button.scrollIntoViewIfNeeded()
+             if(values.mobile)await present()
             const box=await button.boundingBox()
             assert(box&&box.width>0&&box.height>0&&box.x>=-1&&box.y>=-1&&box.x+box.width<=width+1&&box.y+box.height<=height+1,`Connected control outside viewport: ${label}`)
             if(values.mobile)await tap(box.x+box.width/2,box.y+box.height/2,{label,role})
@@ -194,22 +235,27 @@ try {
           const openSessions=async()=>{
             const toggle=page.getByRole('button',{name:left,exact:true})
             await toggle.waitFor()
-            await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+             await present()
             if(await toggle.getAttribute('aria-expanded')!=='true')await press(left)
             await sessions.waitFor()
           }
           const row=name=>sessions.getByRole('listitem',{name,exact:true})
           const select=async(name,id)=>{
             await openSessions()
-            const window=page.waitForResponse(res=>res.url().endsWith('/session-history/window')&&res.ok()&&res.request().postDataJSON()?.sessionID===id)
-            await press(name,'listitem')
-            assert.equal((await (await window).json()).status,'window')
-            await page.getByRole('heading',{name,exact:true}).waitFor()
+            try {
+              const window=page.waitForResponse(res=>res.url().endsWith('/session-history/window')&&res.ok()&&res.request().postDataJSON()?.sessionID===id)
+              void window.catch(()=>{})
+              await press(name,'listitem')
+              assert.equal((await (await window).json()).status,'window')
+              await page.getByRole('heading',{name,exact:true}).waitFor()
+            } catch(error) {
+              throw new Error(`Selecting ${name}: ${error.message}`,{cause:error})
+            }
           }
           const reading=async()=>await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history')&&document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing answer'),undefined,{timeout:30000})
           await press(messages['folderSelection.servers.dialog.connect'])
           await press(values.project)
-          if (values.mobile) {
+          if (values.mobile && !recallScene) {
             const right = messages['window.menu.rightPanel']
             const drawer = page.getByRole('region', {name:right, exact:true})
             const toggle = page.getByRole('button', {name:right, exact:true})
@@ -244,9 +290,11 @@ try {
             await permission.waitFor({state:'detached'})
             await writeFile(path.join(out, `${name}-${colorScheme}-tab-bar.json`),
               JSON.stringify({tabBar, permissionOnlyInPreferences:true}, null, 2))
+          } else if (values.mobile) {
+            await page.getByRole('tab',{name:values.project,exact:true,selected:true}).waitFor()
           }
           await openSessions()
-          if(values.mobile){
+          if(values.mobile&&!recallScene){
             await row('Existing history').waitFor()
             if(colorScheme==='dark'){
               await linkedRequested
@@ -297,14 +345,33 @@ try {
             await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
           }
            if(!values['history-search']){
+           releaseLinked?.()
            await press(messages['rune.more'])
           if(values.mobile){
             await row('Another session').waitFor()
-            await select('Linked checkout next page','ses_linked_next')
-            await page.getByText('Linked checkout answer',{exact:true}).waitFor()
+            if(!recallScene){
+              await select('Linked checkout next page','ses_linked_next')
+              await page.getByText('Linked checkout answer',{exact:true}).waitFor()
+            }
+          }
+          if(recallScene){
+            await select('Existing history','ses_existing')
+            await reading()
           }
            await select('Another session','ses_another')
            await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
+           if(recallScene){
+             holdRecall = true
+             const composer=page.getByRole('group',{name:messages['rune.prompt'],exact:true})
+             await present()
+             const field=await composer.boundingBox()
+             await page.touchscreen.tap(field.x+field.width/2,field.y+20)
+             await page.locator('textarea:focus').waitFor({state:'attached'})
+             let timer
+             try{
+               assert.equal(await Promise.race([recallHeld,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('The focused composer did not request project history')),15000)})]),200)
+             }finally{clearTimeout(timer)}
+           }
            }
           await select('Existing history','ses_existing');await reading()
           if(values['touch-history']){
@@ -508,6 +575,19 @@ try {
           }
           if(missions)await missions.check(press)
           if(values['git-images'])await checkGitImages(page,messages,press,path.join(out,`git-images-${colorScheme}`))
+          if(holdRecall){
+            transcriptWhileRecallHeld = true
+            holdRecall = false
+            releaseRecall()
+          }
+          if(recallScene){
+            assert(transcriptWhileRecallHeld && eventSource)
+            const menu=moreActionsOnly?await mobileMoreActions(page,messages,press):undefined
+            assert.deepEqual(forbiddenRequests,[])
+            assert.deepEqual(errors,[])
+            records.push({name,colorScheme,transcriptWhileRecallHeld,menu,routes,history,pass:true})
+            continue
+          }
          }else{
         // The DOM editing proxy is ready before the browser presents the GPU handover.
         // Start the synthetic interactions on the canvas that will be sampled.
@@ -663,10 +743,10 @@ try {
       } catch (error) {
         await flushTouches()
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
-        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot(),
+        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,settlements,streamEvents,clientDiagnostics,measured,mirror:await page.locator('body').ariaSnapshot(),
           touches,lastPress,marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))}, null, 2))
         throw error
-       } finally {missions?.release();releaseLinked?.();await context.close()}
+       } finally {missions?.release();releaseRecall();releaseLinked?.();await context.close()}
     }
   }
 } finally {
