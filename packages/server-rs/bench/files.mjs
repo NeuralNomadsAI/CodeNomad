@@ -3,7 +3,7 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { spawnFixtureChild as spawn } from "../../../scripts/native-fixture-guards.mjs"
-import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises"
+import { chmod, link, lstat, mkdir, readFile, rename, rm, rmdir, stat, symlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { promisify } from "node:util"
 import { randomUUID } from "node:crypto"
@@ -101,6 +101,7 @@ export async function pair(...hosts){
       }
       return bodies
     }
+    await qualifySaves(hosts, check)
     const g="/worktrees/root/git-"
     const list=entries=>entries.filter(e=>e.name!==".git").map(({name,path,type,size})=>({name,path,type,size})).sort((a,b)=>a.name.localeCompare(b.name))
     const content=({workspaceId,version,...body})=>body
@@ -133,7 +134,12 @@ export async function pair(...hosts){
     await check("stage conflict resolution",g+"stage",{init:json({paths:["conflict.txt"]})})
     const commits=await check("commit resolved index",g+"commit",{init:json({message:"Resolve fixture index"}),normalize:({commitSha,...body})=>body})
     for(const {commitSha} of commits)assert.match(commitSha,/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
-    const qualified=await Promise.all(hosts.map(h=>userCommit(h,g)))
+    // Complete both fixture-owned commands before starting cleanup if one fails.
+    const settled = await Promise.allSettled(hosts.map(h=>userCommit(h,g)))
+    const failures = settled.flatMap((result, index) =>
+      result.status === "rejected" ? [`${index === 0 ? "TypeScript" : "Rust"}: ${result.reason?.stack ?? result.reason}`] : [])
+    if (failures.length) throw new Error(failures.join("\n"))
+    const qualified = settled.map(result => result.value)
     assert.deepEqual(qualified[0],qualified[1])
     rows.push({name:"commit honors the hook and signing configuration; a second project can Stop", ...qualified[0]})
     const initStatuses=[]
@@ -211,6 +217,46 @@ export async function pair(...hosts){
   }finally{for(const close of cleanup)await close()}
 }
 
+async function qualifySaves(hosts, check) {
+  await check("save creates a missing file", "/files/content?path=new-save.txt", {
+    init: json({ contents: "new file\n" }, "PUT"), codes: [204, 204],
+  })
+  for (const host of hosts) {
+    const created = path.join(host.root, "new-save.txt")
+    assert.equal(await readFile(created, "utf8"), "new file\n")
+    await rm(created)
+    const target = path.join(host.root, "saved-target")
+    await mkdir(target)
+    const file = path.join(target, "note.txt")
+    await writeFile(file, "original contents\n")
+    if (process.platform !== "win32") await chmod(file, 0o750)
+    await symlink(target, path.join(host.root, "save-alias"), process.platform === "win32" ? "junction" : "dir")
+  }
+  await check("save through a link", "/files/content?path=save-alias%2Fnote.txt", {
+    init: json({ contents: "shorter\n" }, "PUT"), codes: [204, 204],
+  })
+  for (const host of hosts) {
+    assert((await lstat(path.join(host.root, "save-alias"))).isSymbolicLink())
+    const file = path.join(host.root, "saved-target", "note.txt")
+    assert.equal(await readFile(file, "utf8"), "shorter\n")
+    if (process.platform !== "win32") assert.equal((await stat(file)).mode & 0o777, 0o750)
+    await link(file, path.join(host.root, "hard-save-alias.txt"))
+  }
+  await check("save through a hard link", "/files/content?path=hard-save-alias.txt", {
+    init: json({ contents: "tiny\n" }, "PUT"), codes: [204, 204],
+  })
+  for (const host of hosts) {
+    const file = path.join(host.root, "saved-target", "note.txt")
+    const alias = path.join(host.root, "hard-save-alias.txt")
+    assert.equal((await stat(file)).nlink, 2)
+    assert.equal((await stat(alias)).ino, (await stat(file)).ino)
+    assert.equal(await readFile(alias, "utf8"), "tiny\n")
+    assert.equal(await readFile(file, "utf8"), "tiny\n")
+    await Promise.all([alias, path.join(host.root, "save-alias"), file].map(name => rm(name)))
+    await rmdir(path.dirname(file))
+  }
+}
+
 async function userCommit(host, gitRoute) {
   const local = name => path.join(host.root, ".git", name)
   await writeFile(local("hooks/pre-commit"), `#!/bin/sh
@@ -230,14 +276,23 @@ exit 1
   const stage = await host.call(host.base + gitRoute + "stage", json({ paths }))
   assert.equal(stage.status, 200, await stage.text())
   const commit = host.call(host.base + gitRoute + "commit", {
-    ...json({ message: "Commit with a waiting fixture hook" }), signal: AbortSignal.timeout(65_000),
+    ...json({ message: "Commit with a waiting fixture hook" }), signal: AbortSignal.timeout(120_000),
   })
   let settled = false
   void commit.then(() => { settled = true }, () => { settled = true })
   try {
-    for (const end = Date.now() + 10_000;; await delay(35)) {
-      if (await readFile(local("cn-hook-ran"), "utf8").catch(() => null) === "ran\n") break
-      assert(!settled && Date.now() < end, "git commit did not run the user's pre-commit hook")
+    // Git startup (index and worktree scans) is independent of the hook hold below.
+    for (const end = performance.now() + 45_000;; await delay(35)) {
+      const marker = await readFile(local("cn-hook-ran"), "utf8").catch(err => {
+        if (err.code !== "ENOENT") throw err
+        return null
+      })
+      if (marker === "ran\n") break
+      if (settled) {
+        const response = await commit
+        assert.fail(`commit returned HTTP ${response.status} before the hook's marker: ${await response.text()}`)
+      }
+      if (performance.now() >= end) assert.equal(marker, "ran\n", `pre-commit marker after 45 s: ${JSON.stringify(marker)}`)
     }
     const opened = await host.call(`${host.noneProxy}/api/session`, json({ title: "Independent project" }))
     assert.equal(opened.status, 200, await opened.clone().text())

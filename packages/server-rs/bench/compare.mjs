@@ -495,7 +495,7 @@ try {
     const settings = `server:\n  opencodeBinary: ${JSON.stringify(exe)}\n${seeded}ui:\n  settings:\n    multiBackend: true\n    locale: en\n`
     await writeFile(path.join(local.root, "ts.yaml"), settings)
     if (mode === "host" || bench?.configure) await writeFile(path.join(remote.root, "rust.yaml"), settings)
-    let ts, rs
+    let ts, rs, sequenceFailed = false
     try {
       rs = await start("rs", remote, rsRoot, password)
       ts = await start("ts", local, tsRoot, password, missionServe ? undefined : path.join(remote.root, "rust.data", "tls", "ca-cert.pem"))
@@ -516,7 +516,17 @@ try {
         { ...hosts[0], fixture: local, folder: "Local Project", root: tsRoot, other: path.join(tsRoot, "No Repository"), pid: ts.pid, native: ts.native },
         { ...hosts[1], fixture: remote, folder: "Rust Project", root: rsRoot, other: path.join(rsRoot, "No Repository"), pid: rs.pid, native: rs.native, data: path.join(remote.root, "rust.data") },
       ])
-    } finally { await Promise.all([ts?.close(), rs?.close(), bench?.close?.()]) }
+    } catch (error) {
+      sequenceFailed = true
+      throw error
+    } finally {
+      const cleanup = (await Promise.allSettled([ts?.close(), rs?.close(), bench?.close?.()]))
+        .filter(item => item.status === "rejected").map(item => item.reason?.stack ?? String(item.reason))
+      if (cleanup.length) {
+        result.cleanupErrors = cleanup
+        if (!sequenceFailed) throw new Error(cleanup.join("\n"))
+      }
+    }
     assert(!result.leaks, "A server logged a synthetic provider credential")
   }, runtime), runtime)
 } catch (error) {
