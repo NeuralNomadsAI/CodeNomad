@@ -349,7 +349,8 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
         }
     }
     // Phase 1: apply direct deletion completions first so any resulting selection clear revokes
-    // `cleanup_view_live` before cleanup-row retries evaluate their publication fences.
+    // `selection_live` before phase 2 evaluates its publication fences, while preserving unrelated
+    // cleanup-row settlements.
     let deletes = ui.mission_lifecycle.poll_deletes();
     if let Some(expired) = deletes.auth_expired() {
         ui.mission_auth_expired = Some(expired);
@@ -428,10 +429,14 @@ pub(crate) fn suspend_missions(s: &mut State) {
 }
 
 pub(crate) fn missions_online(s: &mut State, online: bool) {
-    if let Some(ui) = &mut s.workspace
-        && let Some(panel) = &mut ui.entries[ui.active].missions
-    {
-        panel.set_online(online);
+    if let Some(ui) = &mut s.workspace {
+        if !online {
+            ui.mission_lifecycle.confirmation = None;
+            ui.mission_lifecycle.retain_checks_for(None);
+        }
+        if let Some(panel) = &mut ui.entries[ui.active].missions {
+            panel.set_online(online);
+        }
     }
 }
 

@@ -4,6 +4,7 @@ pub mod activity;
 mod bridge;
 pub mod calendar;
 mod cleanup;
+mod compact;
 pub mod configuration;
 pub mod creation_admission;
 pub mod family;

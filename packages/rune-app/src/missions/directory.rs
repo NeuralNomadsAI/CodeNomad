@@ -87,6 +87,9 @@ pub(crate) struct Panel {
     deleted_missions_order: VecDeque<String>,
     cleanup_meta: HashMap<(String, String), (String, u64, bool, u64)>,
     pending_cleanup_set: HashSet<(String, String, String, u64, bool, u64)>,
+    pending_cleanup_ids: HashSet<(String, String)>,
+    dirty_cleanups: Vec<Cleanup>,
+    dirty_cleanups_full: bool,
     observed_sync: Option<(u64, u64)>,
     retired_sync: Option<(u64, u64, bool)>,
     cleanups_gen: u64,
@@ -142,6 +145,9 @@ impl Panel {
             deleted_missions_order: VecDeque::new(),
             cleanup_meta: HashMap::new(),
             pending_cleanup_set: HashSet::new(),
+            pending_cleanup_ids: HashSet::new(),
+            dirty_cleanups: Vec::new(),
+            dirty_cleanups_full: false,
             observed_sync: None,
             retired_sync: None,
             cleanups_gen: 0,
@@ -219,13 +225,27 @@ impl Panel {
         self.rebuild_cleanup_indices();
     }
 
-    pub(super) fn sync_observed_cleanups(&mut self, owner_gen: u64) -> bool {
+    /// Returns `None` when nothing changed, `Some(Some(delta))` for an incremental
+    /// page/row update, or `Some(None)` when a full scan of `self.cleanups` is required.
+    pub(super) fn prepare_observed_cleanups(
+        &mut self,
+        owner_gen: u64,
+    ) -> Option<Option<Vec<Cleanup>>> {
         let key = (self.cleanups_gen, owner_gen);
         if self.observed_sync == Some(key) {
-            return false;
+            return None;
         }
+        let owner_changed = self
+            .observed_sync
+            .is_none_or(|(_, prev_owner)| prev_owner != owner_gen);
         self.observed_sync = Some(key);
-        true
+        if owner_changed || self.dirty_cleanups_full {
+            self.dirty_cleanups.clear();
+            self.dirty_cleanups_full = false;
+            Some(None)
+        } else {
+            Some(Some(std::mem::take(&mut self.dirty_cleanups)))
+        }
     }
 
     pub(super) fn should_retire_cleanups(&self, owner_gen: u64, covered: bool) -> bool {
@@ -263,12 +283,14 @@ impl Panel {
         rc
     }
 
-    fn rebuild_cleanup_indices(&mut self) {
+    fn rebuild_cleanup_indices(&mut self) -> bool {
+        let prev = std::mem::take(&mut self.pending_cleanup_set);
         self.cleanup_meta.clear();
-        self.pending_cleanup_set.clear();
+        self.pending_cleanup_ids.clear();
         for row in &self.cleanups {
+            let row_id = (row.mission_id.clone(), row.deletion_id.clone());
             self.cleanup_meta.insert(
-                (row.mission_id.clone(), row.deletion_id.clone()),
+                row_id.clone(),
                 (
                     row.request_id.clone(),
                     row.expected_revision,
@@ -278,9 +300,25 @@ impl Panel {
             );
             if row.is_pending() {
                 self.pending_cleanup_set.insert(pending_cleanup_tuple(row));
+                self.pending_cleanup_ids.insert(row_id);
             }
         }
+        self.dirty_cleanups.clear();
+        self.dirty_cleanups_full = true;
         self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
+        self.pending_cleanup_set != prev
+    }
+
+    fn note_dirty_cleanup(&mut self, row: Cleanup) {
+        if self.dirty_cleanups_full {
+            return;
+        }
+        if self.dirty_cleanups.len() >= 256 {
+            self.dirty_cleanups.clear();
+            self.dirty_cleanups_full = true;
+        } else {
+            self.dirty_cleanups.push(row);
+        }
     }
 
     fn remember_deleted_mission(&mut self, mission_id: &str) {
@@ -470,7 +508,7 @@ impl Panel {
                 }
             }
         }
-        let pending_before = self.pending_cleanup_set.clone();
+        let mut pending_changed = false;
         let row_id = (receipt.mission_id.clone(), receipt.deletion_id.clone());
         let new_meta = (
             receipt.request_id.clone(),
@@ -481,23 +519,34 @@ impl Panel {
         if let Some(existing) = self.cleanups.iter_mut().find(|row| {
             row.mission_id == receipt.mission_id && row.deletion_id == receipt.deletion_id
         }) {
-            if existing.is_pending() {
-                let old_tuple = pending_cleanup_tuple(existing);
-                self.pending_cleanup_set.remove(&old_tuple);
-            }
+            let old_pending = existing
+                .is_pending()
+                .then(|| pending_cleanup_tuple(existing));
             *existing = receipt.clone();
-            if existing.is_pending() {
-                let new_tuple = pending_cleanup_tuple(existing);
-                self.pending_cleanup_set.insert(new_tuple);
+            let new_pending = existing
+                .is_pending()
+                .then(|| pending_cleanup_tuple(existing));
+            if old_pending != new_pending {
+                if let Some(old) = old_pending {
+                    pending_changed |= self.pending_cleanup_set.remove(&old);
+                }
+                if let Some(new) = new_pending {
+                    pending_changed |= self.pending_cleanup_set.insert(new);
+                    self.pending_cleanup_ids.insert(row_id.clone());
+                } else {
+                    self.pending_cleanup_ids.remove(&row_id);
+                }
             }
             self.cleanup_meta.insert(row_id, new_meta);
         } else {
             self.cleanups.insert(0, receipt.clone());
             self.lanes[Kind::Cleanups as usize].prefix_len = 0;
-            self.cleanup_meta.insert(row_id, new_meta);
+            self.cleanup_meta.insert(row_id.clone(), new_meta);
             if receipt.is_pending() {
-                self.pending_cleanup_set
+                pending_changed |= self
+                    .pending_cleanup_set
                     .insert(pending_cleanup_tuple(&receipt));
+                self.pending_cleanup_ids.insert(row_id);
             }
             let lane_seen = &mut self.lanes[Kind::Cleanups as usize].seen;
             // Cap only settled off-page adopted rows without evicting index 0, pending rows,
@@ -518,6 +567,7 @@ impl Panel {
                     .remove(&(evicted.mission_id.clone(), evicted.deletion_id.clone()));
             }
         }
+        self.note_dirty_cleanup(receipt.clone());
         self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
         if !receipt.is_pending() {
             self.remember_settled_cleanup(receipt.clone());
@@ -528,7 +578,7 @@ impl Panel {
                 token.revoke();
             }
         }
-        if self.pending_cleanup_set != pending_before {
+        if pending_changed {
             self.renew_cleanup_view();
         }
     }
@@ -541,23 +591,32 @@ impl Panel {
         {
             token.revoke();
         }
-        let pending_before = self.pending_cleanup_set.clone();
-        let mut updated = false;
+        let mut pending_changed = false;
+        let mut updated_rows = Vec::new();
         for row in &mut self.cleanups {
             if cleanup_identity(row) == *key && row.document_pending.is_none() {
-                if row.is_pending() {
-                    self.pending_cleanup_set.remove(&pending_cleanup_tuple(row));
-                }
+                let old_pending = row.is_pending().then(|| pending_cleanup_tuple(row));
                 row.document_pending = Some(true);
-                if row.is_pending() {
-                    self.pending_cleanup_set.insert(pending_cleanup_tuple(row));
+                let new_pending = row.is_pending().then(|| pending_cleanup_tuple(row));
+                if old_pending != new_pending {
+                    if let Some(old) = old_pending {
+                        pending_changed |= self.pending_cleanup_set.remove(&old);
+                    }
+                    if let Some(new) = new_pending {
+                        pending_changed |= self.pending_cleanup_set.insert(new);
+                        self.pending_cleanup_ids
+                            .insert((row.mission_id.clone(), row.deletion_id.clone()));
+                    }
                 }
-                updated = true;
+                updated_rows.push(row.clone());
             }
         }
-        if updated {
+        if !updated_rows.is_empty() {
+            for row in updated_rows {
+                self.note_dirty_cleanup(row);
+            }
             self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
-            if self.pending_cleanup_set != pending_before {
+            if pending_changed {
                 self.renew_cleanup_view();
             }
         }
@@ -606,10 +665,9 @@ impl Panel {
 
     fn sync_cleanup_tokens(&mut self, covered: bool) {
         self.cleanup_tokens.retain(|(m, d), token| {
-            let keep = if self.cleanup_meta.contains_key(&(m.clone(), d.clone())) {
-                self.pending_cleanup_set
-                    .iter()
-                    .any(|(del, mid, _, _, _, _)| mid == m && del == d)
+            let key = (m.clone(), d.clone());
+            let keep = if self.cleanup_meta.contains_key(&key) {
+                self.pending_cleanup_ids.contains(&key)
             } else {
                 !covered
             };
@@ -1102,17 +1160,27 @@ impl Panel {
                 let incoming_pending: Vec<_> = rows
                     .iter()
                     .filter(|row| row.is_pending())
-                    .map(pending_cleanup_tuple)
+                    .map(|row| {
+                        (
+                            (row.mission_id.clone(), row.deletion_id.clone()),
+                            pending_cleanup_tuple(row),
+                        )
+                    })
                     .collect();
                 if contradictory {
                     self.cleanup_view_live.revoke();
                     self.revoke_all_cleanup_tokens();
                     return false;
                 }
-                let pending_before = self.pending_cleanup_set.clone();
                 let lane = &mut self.lanes[kind as usize];
                 let had_tail = self.cleanups.len() > lane.prefix_len;
                 let before_len = self.cleanups.len();
+                let incoming_for_observe: Vec<Cleanup> =
+                    if read == Read::More && !self.dirty_cleanups_full {
+                        rows.clone()
+                    } else {
+                        Vec::new()
+                    };
                 if !merge_filtered(
                     &mut self.cleanups,
                     lane,
@@ -1131,17 +1199,23 @@ impl Panel {
                     || (had_tail && self.cleanups.len() >= CLEANUP_DISPLAY_CAP);
                 self.project = Some(page.project_id);
                 lane.window = Some(page.window);
-                if read == Read::Refresh || (covered && had_tail) || trimmed {
-                    self.rebuild_cleanup_indices();
+                let pending_changed = if read == Read::Refresh || (covered && had_tail) || trimmed {
+                    self.rebuild_cleanup_indices()
                 } else {
+                    let mut changed = false;
                     for (k, meta) in incoming_meta {
                         self.cleanup_meta.insert(k, meta);
                     }
-                    for tuple in incoming_pending {
-                        self.pending_cleanup_set.insert(tuple);
+                    for (row_id, tuple) in incoming_pending {
+                        changed |= self.pending_cleanup_set.insert(tuple);
+                        self.pending_cleanup_ids.insert(row_id);
+                    }
+                    for row in incoming_for_observe {
+                        self.note_dirty_cleanup(row);
                     }
                     self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
-                }
+                    changed
+                };
                 for (id, doc_pending) in &doc_updates {
                     if *doc_pending == Some(true)
                         && !self.remembered_document_pending.contains(id)
@@ -1153,7 +1227,7 @@ impl Panel {
                 }
                 self.remember_document_pending_batch(&doc_updates);
                 self.sync_cleanup_tokens(covered);
-                if self.pending_cleanup_set != pending_before {
+                if pending_changed {
                     self.renew_cleanup_view();
                 }
                 return true;

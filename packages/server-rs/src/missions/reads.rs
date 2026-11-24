@@ -43,12 +43,12 @@ pub(crate) struct Opened {
     pub display: Arc<std::sync::atomic::AtomicBool>,
 }
 pub(crate) async fn open(app: &crate::App, id: &str) -> Result<Opened, Response> {
-    if !app.mission_reads {
-        return Err(unavailable(Status::OK, "host-unavailable"));
-    }
     let Ok(workspace) = app.workspace(id) else {
         return Err(unavailable(Status::NOT_FOUND, "workspace-unavailable"));
     };
+    if !app.mission_reads {
+        return Err(unavailable(Status::OK, "host-unavailable"));
+    }
     let Some(dir) = workspace.location["directory"].as_str().map(str::to_owned) else {
         return Err(unavailable(Status::OK, "workspace-unavailable"));
     };
@@ -195,7 +195,7 @@ async fn native_read_rpc_with_client<T: Send + 'static>(
     if !status.is_success() {
         if detect_missing_method && status == Status::BAD_REQUEST {
             if let Ok(err_body) = opencode::read_json(response, 16 * 1024).await
-                && opencode::native_rpc_absent(&err_body, status)
+                && opencode::native_rpc_method_not_found(&err_body, status)
             {
                 return Err(NativeRpcError::Absent(hold));
             }
@@ -211,22 +211,23 @@ const LARGE_RESPONSE_BUDGET_UNITS: usize = 2048;
 const LARGE_RESPONSE_CHUNK_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) async fn encode_json_bytes_holding<T: Send + 'static>(
-    value: Value,
+    mut value: Value,
     hold: T,
     offload: bool,
+    compact_mission: bool,
 ) -> Result<(Vec<u8>, T), ()> {
-    if offload {
-        tokio::task::spawn_blocking(move || {
-            let encoded = serde_json::to_vec(&value).map_err(|_| ());
-            drop(value);
-            encoded.map(|bytes| (bytes, hold))
-        })
-        .await
-        .map_err(|_| ())?
-    } else {
-        let bytes = serde_json::to_vec(&value).map_err(|_| ())?;
-        Ok((bytes, hold))
-    }
+    let encode = move || {
+        if compact_mission
+            && let Some(obj) = value.as_object_mut()
+            && let Some(map) = obj.remove("mission")
+        {
+            obj.insert("mission".to_owned(), super::compact::compact_mission_map(map));
+        }
+        let encoded = serde_json::to_vec(&value).map_err(|_| ());
+        drop(value);
+        encoded.map(|bytes| (bytes, hold))
+    };
+    if offload { tokio::task::spawn_blocking(encode).await.map_err(|_| ())? } else { encode() }
 }
 
 fn json_bytes_response(bytes: Vec<u8>) -> Response {
@@ -286,6 +287,19 @@ pub(super) fn deliver_json_bytes(app: &crate::App, bytes: Vec<u8>) -> Result<Res
     let units = bytes.len().div_ceil(LARGE_RESPONSE_CHUNK).min(LARGE_RESPONSE_BUDGET_UNITS) as u32;
     let budget = app.mission_large_response_budget.clone().try_acquire_many_owned(units).map_err(|_| ())?;
     Ok(stream_large_bytes(bytes, budget, LARGE_RESPONSE_CHUNK_TIMEOUT))
+}
+
+/// Deliver an already-admitted mutation response, holding its own control slot until streaming finishes
+/// so read-budget saturation cannot turn an admitted mutation into a 503.
+pub(super) fn deliver_admitted_json_bytes(
+    bytes: Vec<u8>,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> Response {
+    if bytes.len() <= LARGE_RESPONSE_THRESHOLD {
+        drop(permit);
+        return json_bytes_response(bytes);
+    }
+    stream_large_bytes(bytes, permit, LARGE_RESPONSE_CHUNK_TIMEOUT)
 }
 
 fn workspace_current(
@@ -396,6 +410,7 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
     if !scope || !owned {
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     }
+    let compact_single_mission = method == "mission";
     let raw_limit = if effective_method == "snapshot" {
         result = admission_projection_owned(result, &input["missionID"]);
         max + 32
@@ -403,7 +418,9 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
         result["available"] = json!(true);
         max + 32
     };
-    let Ok((bytes, slot)) = encode_json_bytes_holding(result, slot, max >= LARGE_RESPONSE_THRESHOLD).await else {
+    let Ok((bytes, slot)) =
+        encode_json_bytes_holding(result, slot, max >= LARGE_RESPONSE_THRESHOLD, compact_single_mission).await
+    else {
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     };
     drop(slot);
@@ -502,8 +519,10 @@ pub async fn mission(
     State(app): State<Shared>,
     Path((id, mission)): Path<(String, String)>,
 ) -> Result<Response, Error> {
-    if !valid(&mission, 100) {
-        return Err(bad("Invalid mission ID"));
+    let id = crate::shared::js_trim(&id).to_owned();
+    let mission = crate::shared::js_trim(&mission);
+    if !valid(&id, 200) || !valid(mission, 100) {
+        return Err(bad("Invalid mission read request"));
     }
     Ok(read(app, id, "mission", json!({"missionID":mission}), super::run::LARGE_MISSION_RPC_LIMIT).await)
 }
@@ -512,8 +531,9 @@ pub async fn admission(
     State(app): State<Shared>,
     Path((id, mission)): Path<(String, String)>,
 ) -> Result<Response, Error> {
+    let id = crate::shared::js_trim(&id).to_owned();
     let mission = crate::shared::js_trim(&mission);
-    if !valid(mission, 100) {
+    if !valid(&id, 200) || !valid(mission, 100) {
         return Err(bad("Invalid mission read request"));
     }
     Ok(read(app, id, "snapshot", json!({"missionID":mission}), super::run::LARGE_MISSION_RPC_LIMIT).await)
@@ -664,7 +684,7 @@ mod tests {
         let sem = Arc::new(tokio::sync::Semaphore::new(1));
         let permit = sem.clone().acquire_owned().await.unwrap();
         assert_eq!(sem.available_permits(), 0);
-        let (bytes, returned) = encode_json_bytes_holding(json!({"ok": true}), permit, true).await.unwrap();
+        let (bytes, returned) = encode_json_bytes_holding(json!({"ok": true}), permit, true, false).await.unwrap();
         assert_eq!(sem.available_permits(), 0, "permit must stay held until caller drops it");
         assert_eq!(bytes, br#"{"ok":true}"#);
         drop(returned);
@@ -672,21 +692,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_read_rpc_holding_detects_missing_method_and_returns_slot() {
+    async fn native_read_rpc_holding_detects_missing_method_only_and_rejects_rpc_unavailable() {
         use axum::{Router, routing::post};
-        let router = Router::new().route(
-            "/api/rpc/codenomad.missions/mission",
-            post(|| async {
-                (
-                    Status::BAD_REQUEST,
-                    Json(json!({
-                        "_tag": "RpcError",
-                        "type": "rpc.method_not_found",
-                        "message": "Unknown RPC method: mission"
-                    })),
-                )
-            }),
-        );
+        let router = Router::new()
+            .route(
+                "/api/rpc/codenomad.missions/mission",
+                post(|| async {
+                    (
+                        Status::BAD_REQUEST,
+                        Json(json!({
+                            "_tag": "RpcError",
+                            "type": "rpc.method_not_found",
+                            "message": "Unknown RPC method: mission"
+                        })),
+                    )
+                }),
+            )
+            .route(
+                "/api/rpc/codenomad.missions/unavailable",
+                post(|| async {
+                    (
+                        Status::BAD_REQUEST,
+                        Json(json!({
+                            "_tag": "RpcError",
+                            "type": "rpc.unavailable",
+                            "message": "Plugin temporarily unavailable"
+                        })),
+                    )
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -721,6 +755,21 @@ mod tests {
             }
             _ => panic!("expected NativeRpcError::Absent for rpc.method_not_found"),
         }
+        let permit = sem.clone().acquire_owned().await.unwrap();
+        let res = native_read_rpc_with_client(
+            &client,
+            &endpoint,
+            Method::POST,
+            "/api/rpc/codenomad.missions/unavailable",
+            "/fixture",
+            Some(json!({"input": {"missionID": "msn_1"}})),
+            4096,
+            true,
+            permit,
+        )
+        .await;
+        assert!(matches!(res, Err(NativeRpcError::Failed)), "rpc.unavailable must not fall back to snapshot");
+        assert_eq!(sem.available_permits(), 1);
         server.abort();
     }
 }

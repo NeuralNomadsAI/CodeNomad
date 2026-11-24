@@ -478,17 +478,30 @@ pub(super) fn view(
         }
         Section::Missions if panel.scope.missions(prefs) => super::missions::view(
             prefs,
-            |s: &mut State, checked| {
-                s.settings
-                    .shared
-                    .borrow_mut()
-                    .set_mission_delete_sessions(checked);
+            |s: &mut State, owner, checked| {
+                let mut prefs = s.settings.shared.borrow_mut();
+                let panel = &s.settings.web;
+                if panel.shown
+                    && panel.section == Section::Missions
+                    && panel.scope.missions(&prefs)
+                    && prefs.mission_delete_sessions_editable()
+                    && owner.is_some()
+                    && prefs.backend.as_ref().map(|b| b.client_id.as_str()) == owner
+                {
+                    prefs.set_mission_delete_sessions(checked);
+                }
             },
-            |s: &mut State| {
-                s.settings
-                    .shared
-                    .borrow_mut()
-                    .retry_mission_delete_sessions();
+            |s: &mut State, owner| {
+                let mut prefs = s.settings.shared.borrow_mut();
+                let panel = &s.settings.web;
+                if panel.shown
+                    && panel.section == Section::Missions
+                    && panel.scope.missions(&prefs)
+                    && prefs.can_retry()
+                    && prefs.backend.as_ref().map(|b| b.client_id.as_str()) == owner
+                {
+                    prefs.retry_mission_delete_sessions();
+                }
             },
         ),
         Section::Advanced => col()

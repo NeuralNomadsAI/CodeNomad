@@ -476,10 +476,31 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 if s.host_support.missions(&prefs) {
                     super::missions::view(
                         &prefs,
-                        |s: &mut Window, checked| {
-                            s.shared.borrow_mut().set_mission_delete_sessions(checked);
+                        |s: &mut Window, owner, checked| {
+                            let mut prefs = s.shared.borrow_mut();
+                            if s.section == Section::Missions
+                                && !s.closing
+                                && !s.confirm_close
+                                && s.host_support.missions(&prefs)
+                                && prefs.mission_delete_sessions_editable()
+                                && owner.is_some()
+                                && prefs.backend.as_ref().map(|b| b.client_id.as_str()) == owner
+                            {
+                                prefs.set_mission_delete_sessions(checked);
+                            }
                         },
-                        |s: &mut Window| s.shared.borrow_mut().retry_mission_delete_sessions(),
+                        |s: &mut Window, owner| {
+                            let mut prefs = s.shared.borrow_mut();
+                            if s.section == Section::Missions
+                                && !s.closing
+                                && !s.confirm_close
+                                && s.host_support.missions(&prefs)
+                                && prefs.can_retry()
+                                && prefs.backend.as_ref().map(|b| b.client_id.as_str()) == owner
+                            {
+                                prefs.retry_mission_delete_sessions();
+                            }
+                        },
                     )
                 } else {
                     text(t("rune.loading")).role("status")

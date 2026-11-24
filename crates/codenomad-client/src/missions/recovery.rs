@@ -2,7 +2,7 @@ use super::{
     LifecycleTarget,
     directory::panel_id,
     lifecycle::{CONTROL_TIMEOUT, MAX_REVISION},
-    stream_json::read_filtered_json,
+    stream_json::read_filtered_json_for_coordinator,
 };
 use crate::{
     backend::Backend,
@@ -199,10 +199,11 @@ impl Backend {
         {
             return Ok(RecoveryOutcome::AuthenticationRequired);
         }
-        let body: RecoveryBody = read_filtered_json(
+        let body: RecoveryBody = read_filtered_json_for_coordinator(
             response,
             RECOVERY_ROOT_KEYS,
             RECOVERY_MISSION_KEYS,
+            Some(target.coordinator.as_str()),
             RECOVERY_KEPT_LIMIT,
         )
         .await

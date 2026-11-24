@@ -238,6 +238,14 @@ pub fn native_rpc_absent(body: &Value, status: Status) -> bool {
         && body["message"].as_str().is_some_and(|s| !s.is_empty() && s.len() <= 4096)
 }
 
+pub fn native_rpc_method_not_found(body: &Value, status: Status) -> bool {
+    status == Status::BAD_REQUEST
+        && body.as_object().is_some_and(|o| o.len() == 3)
+        && body["_tag"] == "RpcError"
+        && body["type"].as_str() == Some("rpc.method_not_found")
+        && body["message"].as_str().is_some_and(|s| !s.is_empty() && s.len() <= 4096)
+}
+
 pub async fn session_record(app: &App, id: &str) -> Result<Value, Error> {
     let endpoint = app.native.endpoint().ok_or_else(upstream_error)?;
     session_record_at(app, &endpoint, id).await

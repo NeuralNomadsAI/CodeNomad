@@ -12,6 +12,8 @@ use serde::de::DeserializeOwned;
 const MAX_NESTING: usize = 128;
 const MAX_KEY_BYTES: usize = 128;
 const MAX_TOTAL_BYTES: usize = 128 * 1024 * 1024 + 256;
+const ACTOR_FILTER_KEYS: &[&str] = &["kind", "sessionId", "location"];
+const ACTOR_FIELD_LIMIT: usize = 64 * 1024;
 
 pub(crate) async fn read_filtered_json<T: DeserializeOwned>(
     response: Response,
@@ -19,7 +21,18 @@ pub(crate) async fn read_filtered_json<T: DeserializeOwned>(
     mission_keys: &[&str],
     kept_limit: usize,
 ) -> Result<T> {
-    let mut parser = FilterParser::new(root_keys, mission_keys, kept_limit);
+    read_filtered_json_for_coordinator(response, root_keys, mission_keys, None, kept_limit).await
+}
+
+pub(crate) async fn read_filtered_json_for_coordinator<T: DeserializeOwned>(
+    response: Response,
+    root_keys: &[&str],
+    mission_keys: &[&str],
+    coordinator_session_id: Option<&str>,
+    kept_limit: usize,
+) -> Result<T> {
+    let mut parser = FilterParser::new(root_keys, mission_keys, kept_limit)
+        .with_actor_filter(coordinator_session_id);
     let mut chunks = response.bytes_stream();
     while let Some(chunk) = chunks.next().await {
         let chunk = chunk?;
@@ -27,6 +40,13 @@ pub(crate) async fn read_filtered_json<T: DeserializeOwned>(
     }
     let assembled = parser.finish()?;
     Ok(serde_json::from_slice(&assembled)?)
+}
+
+#[derive(serde::Deserialize)]
+struct ActorFilterProbe {
+    kind: Option<String>,
+    #[serde(rename = "sessionId")]
+    session_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +66,8 @@ enum ValueMode {
     CaptureRoot,
     CaptureMission,
     CaptureMissionRaw,
+    CaptureActor,
+    SkipActorElem,
     Skip,
 }
 
@@ -235,6 +257,10 @@ enum State {
     ExpectColon,
     ExpectValue,
     MissionValueStart,
+    MissionActorsStart,
+    ActorsArrayStart,
+    ActorsArrayValue,
+    ActorsArrayCommaOrEnd,
     ValueString {
         mode: ValueMode,
     },
@@ -259,12 +285,14 @@ enum MissionField {
 struct FilterParser<'a> {
     root_keys: &'a [&'a str],
     mission_keys: &'a [&'a str],
+    actor_filter: Option<&'a str>,
     kept_limit: usize,
     kept_bytes: usize,
     total_limit: usize,
     total_bytes: usize,
     state: State,
     in_mission: bool,
+    in_actor: bool,
     key_raw: Vec<u8>,
     key_overflow: bool,
     current_key: Option<String>,
@@ -274,6 +302,10 @@ struct FilterParser<'a> {
     composite_stack: Vec<CompositeExpect>,
     root_fields: Vec<(String, Vec<u8>)>,
     mission: MissionField,
+    actors_out: Vec<u8>,
+    actors_has_any: bool,
+    actor_fields: Vec<(String, Vec<u8>)>,
+    actor_kept_bytes: usize,
 }
 
 impl<'a> FilterParser<'a> {
@@ -281,12 +313,14 @@ impl<'a> FilterParser<'a> {
         Self {
             root_keys,
             mission_keys,
+            actor_filter: None,
             kept_limit,
             kept_bytes: 0,
             total_limit: MAX_TOTAL_BYTES,
             total_bytes: 0,
             state: State::ExpectRootOpen,
             in_mission: false,
+            in_actor: false,
             key_raw: Vec::new(),
             key_overflow: false,
             current_key: None,
@@ -296,7 +330,16 @@ impl<'a> FilterParser<'a> {
             composite_stack: Vec::new(),
             root_fields: Vec::new(),
             mission: MissionField::Absent,
+            actors_out: Vec::new(),
+            actors_has_any: false,
+            actor_fields: Vec::new(),
+            actor_kept_bytes: 0,
         }
+    }
+
+    fn with_actor_filter(mut self, coordinator_session_id: Option<&'a str>) -> Self {
+        self.actor_filter = coordinator_session_id;
+        self
     }
 
     #[cfg(test)]
@@ -328,7 +371,7 @@ impl<'a> FilterParser<'a> {
                     if is_ws(b) {
                         i += 1;
                     } else if b == b'}' {
-                        self.close_filtered_object();
+                        self.close_filtered_object()?;
                         i += 1;
                     } else if b == b'"' {
                         self.begin_key();
@@ -377,6 +420,12 @@ impl<'a> FilterParser<'a> {
                             && self.current_key.as_deref() == Some("mission")
                         {
                             self.state = State::MissionValueStart;
+                        } else if self.in_mission
+                            && !self.in_actor
+                            && self.actor_filter.is_some()
+                            && self.current_key.as_deref() == Some("actors")
+                        {
+                            self.state = State::MissionActorsStart;
                         } else {
                             self.state = State::ExpectValue;
                         }
@@ -402,18 +451,88 @@ impl<'a> FilterParser<'a> {
                         i += 1;
                     }
                 }
+                State::MissionActorsStart => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b'[' {
+                        self.actors_out.clear();
+                        self.actors_out.push(b'[');
+                        self.actors_has_any = false;
+                        self.current_key = None;
+                        self.state = State::ActorsArrayStart;
+                        i += 1;
+                    } else {
+                        self.start_value(ValueMode::CaptureMission, b)?;
+                        i += 1;
+                    }
+                }
+                State::ActorsArrayStart => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b']' {
+                        self.finish_actors_array()?;
+                        i += 1;
+                    } else if b == b'{' {
+                        self.in_actor = true;
+                        self.actor_fields.clear();
+                        self.actor_kept_bytes = 0;
+                        self.current_key = None;
+                        self.state = State::ObjectStart;
+                        i += 1;
+                    } else {
+                        self.start_value(ValueMode::SkipActorElem, b)?;
+                        i += 1;
+                    }
+                }
+                State::ActorsArrayValue => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b'{' {
+                        self.in_actor = true;
+                        self.actor_fields.clear();
+                        self.actor_kept_bytes = 0;
+                        self.current_key = None;
+                        self.state = State::ObjectStart;
+                        i += 1;
+                    } else {
+                        self.start_value(ValueMode::SkipActorElem, b)?;
+                        i += 1;
+                    }
+                }
+                State::ActorsArrayCommaOrEnd => {
+                    if is_ws(b) {
+                        i += 1;
+                    } else if b == b',' {
+                        self.state = State::ActorsArrayValue;
+                        i += 1;
+                    } else if b == b']' {
+                        self.finish_actors_array()?;
+                        i += 1;
+                    } else {
+                        return Err("expected ',' or ']' in actors array".into());
+                    }
+                }
                 State::ExpectValue => {
                     if is_ws(b) {
                         i += 1;
                     } else {
-                        let mode = match (self.in_mission, self.current_key.as_deref()) {
-                            (false, Some(k)) if self.root_keys.contains(&k) => {
-                                ValueMode::CaptureRoot
+                        let mode = if self.in_actor {
+                            match self.current_key.as_deref() {
+                                Some(k) if ACTOR_FILTER_KEYS.contains(&k) => {
+                                    ValueMode::CaptureActor
+                                }
+                                _ => ValueMode::Skip,
                             }
-                            (true, Some(k)) if self.mission_keys.contains(&k) => {
-                                ValueMode::CaptureMission
+                        } else {
+                            match (self.in_mission, self.current_key.as_deref()) {
+                                (false, Some(k)) if self.root_keys.contains(&k) => {
+                                    ValueMode::CaptureRoot
+                                }
+                                (true, Some(k)) if self.mission_keys.contains(&k) => {
+                                    ValueMode::CaptureMission
+                                }
+                                _ => ValueMode::Skip,
                             }
-                            _ => ValueMode::Skip,
                         };
                         self.start_value(mode, b)?;
                         i += 1;
@@ -437,11 +556,16 @@ impl<'a> FilterParser<'a> {
                     }
                 }
                 State::ValuePrimitive { mode } => {
-                    if is_ws(b) || b == b',' || b == b'}' {
+                    let delim = if mode == ValueMode::SkipActorElem {
+                        is_ws(b) || b == b',' || b == b']'
+                    } else {
+                        is_ws(b) || b == b',' || b == b'}'
+                    };
+                    if delim {
                         validate_primitive(&self.prim_buf)?;
                         self.prim_buf.clear();
                         self.finish_value(mode)?;
-                        // Re-process delimiter in ObjectCommaOrClose without advancing `i`.
+                        // Re-process delimiter without advancing `i`.
                     } else {
                         self.push_prim(b)?;
                         self.capture_byte(mode, b)?;
@@ -455,7 +579,7 @@ impl<'a> FilterParser<'a> {
                         self.state = State::ObjectAfterComma;
                         i += 1;
                     } else if b == b'}' {
-                        self.close_filtered_object();
+                        self.close_filtered_object()?;
                         i += 1;
                     } else {
                         return Err("expected ',' or '}' in JSON object".into());
@@ -723,8 +847,17 @@ impl<'a> FilterParser<'a> {
     }
 
     fn capture_byte(&mut self, mode: ValueMode, b: u8) -> Result<()> {
-        if mode == ValueMode::Skip {
-            return Ok(());
+        match mode {
+            ValueMode::Skip | ValueMode::SkipActorElem => return Ok(()),
+            ValueMode::CaptureActor => {
+                if self.actor_kept_bytes >= ACTOR_FIELD_LIMIT {
+                    return Err("oversized actor fields in filtered JSON response".into());
+                }
+                self.actor_kept_bytes += 1;
+                self.current_buf.push(b);
+                return Ok(());
+            }
+            ValueMode::CaptureRoot | ValueMode::CaptureMission | ValueMode::CaptureMissionRaw => {}
         }
         if self.kept_bytes >= self.kept_limit {
             return Err("oversized filtered JSON response".into());
@@ -755,6 +888,18 @@ impl<'a> FilterParser<'a> {
                 let val = std::mem::take(&mut self.current_buf);
                 self.mission = MissionField::Raw(val);
             }
+            ValueMode::CaptureActor => {
+                if let Some(key) = self.current_key.take() {
+                    let val = std::mem::take(&mut self.current_buf);
+                    upsert_field(&mut self.actor_fields, key, val);
+                }
+            }
+            ValueMode::SkipActorElem => {
+                self.current_key = None;
+                self.current_buf.clear();
+                self.state = State::ActorsArrayCommaOrEnd;
+                return Ok(());
+            }
             ValueMode::Skip => {
                 self.current_key = None;
                 self.current_buf.clear();
@@ -764,13 +909,63 @@ impl<'a> FilterParser<'a> {
         Ok(())
     }
 
-    fn close_filtered_object(&mut self) {
-        if self.in_mission {
+    fn finish_actors_array(&mut self) -> Result<()> {
+        self.actors_out.push(b']');
+        if self.kept_bytes.saturating_add(2) > self.kept_limit {
+            return Err("oversized filtered JSON response".into());
+        }
+        self.kept_bytes += 2;
+        let val = std::mem::take(&mut self.actors_out);
+        if let MissionField::Object(fields) = &mut self.mission {
+            upsert_field(fields, "actors".to_owned(), val);
+        }
+        self.state = State::ObjectCommaOrClose;
+        Ok(())
+    }
+
+    fn close_filtered_object(&mut self) -> Result<()> {
+        if self.in_actor {
+            self.in_actor = false;
+            let fields = std::mem::take(&mut self.actor_fields);
+            self.actor_kept_bytes = 0;
+            let mut elem = Vec::with_capacity(256);
+            elem.push(b'{');
+            for (idx, (key, val)) in fields.iter().enumerate() {
+                if idx > 0 {
+                    elem.push(b',');
+                }
+                elem.extend_from_slice(
+                    serde_json::to_string(key)
+                        .map_err(|_| "invalid actor key")?
+                        .as_bytes(),
+                );
+                elem.push(b':');
+                elem.extend_from_slice(val);
+            }
+            elem.push(b'}');
+            if let Ok(probe) = serde_json::from_slice::<ActorFilterProbe>(&elem)
+                && probe.kind.as_deref() == Some("coordinator")
+                && probe.session_id.as_deref() == self.actor_filter
+            {
+                let added = elem.len() + usize::from(self.actors_has_any);
+                if self.kept_bytes.saturating_add(added) > self.kept_limit {
+                    return Err("oversized filtered JSON response".into());
+                }
+                self.kept_bytes += added;
+                if self.actors_has_any {
+                    self.actors_out.push(b',');
+                }
+                self.actors_out.extend_from_slice(&elem);
+                self.actors_has_any = true;
+            }
+            self.state = State::ActorsArrayCommaOrEnd;
+        } else if self.in_mission {
             self.in_mission = false;
             self.state = State::ObjectCommaOrClose;
         } else {
             self.state = State::Done;
         }
+        Ok(())
     }
 
     fn finish(self) -> Result<Vec<u8>> {
@@ -998,5 +1193,33 @@ mod tests {
         let mut ws = FilterParser::new(&["admitted"], &[], 4096).with_total_limit(32);
         ws.feed(br#"{"admitted":true}"#).unwrap();
         assert!(ws.feed(&vec![b' '; 32]).is_err());
+    }
+
+    #[test]
+    fn coordinator_actor_filter_streams_past_oversized_actors_in_constant_kept_memory() {
+        let mut p = FilterParser::new(&["admitted"], &["id", "actors"], 4096)
+            .with_actor_filter(Some("ses_coord"));
+        p.feed(br#"{"admitted":true,"mission":{"id":"msn_1","actors":["#)
+            .unwrap();
+        let worker_blob = format!(
+            r#"{{"kind":"specialist","sessionId":"ses_w","location":{{"directory":"/repo"}},"title":"{}"}},"#,
+            "w".repeat(4096)
+        );
+        // Feed > 8 MiB of non-coordinator actors under a 4 KiB kept-byte ceiling.
+        for _ in 0..2100 {
+            p.feed(worker_blob.as_bytes()).unwrap();
+        }
+        let coord = format!(
+            r#"{{"kind":"coordinator","sessionId":"ses_coord","location":{{"directory":"/repo"}},"title":"{}"}}"#,
+            "c".repeat(16_384)
+        );
+        p.feed(coord.as_bytes()).unwrap();
+        p.feed(br#"]}}"#).unwrap();
+        let val: Value = serde_json::from_slice(&p.finish().unwrap()).unwrap();
+        assert_eq!(val["admitted"], json!(true));
+        assert_eq!(
+            val["mission"]["actors"],
+            json!([{"kind": "coordinator", "sessionId": "ses_coord", "location": {"directory": "/repo"}}])
+        );
     }
 }

@@ -801,8 +801,8 @@ fn parked_tab_preserves_active_retry_error_and_reauth_carries_document_pending_a
                 .accept_cleanups_for_test(vec![pending_b.clone(), doc_only.clone()])
         );
 
-        // 2. Direct delete A clearing selection in phase 1 revokes cleanup retry B's GET-only
-        // settlement in phase 2 of the SAME poll_missions cycle.
+        // 2. Direct delete A clearing selection in phase 1 leaves unrelated cleanup retry B's
+        // GET-only settlement live in phase 2 of the SAME poll_missions cycle.
         ui.mission_lifecycle.start_delete_for_test(
             "tab-active",
             &http.backend,

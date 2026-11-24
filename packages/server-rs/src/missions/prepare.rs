@@ -1,5 +1,5 @@
 use super::{
-    bridge::{self, dir, session, snapshot},
+    bridge::{dir, session, with_snapshot},
     configuration,
     creation_admission::{self, Attempt, Scope},
     run::{creation_profiles, document_capabilities, token},
@@ -148,10 +148,40 @@ struct Prepare {
     observe_only: Option<bool>,
 }
 
+struct ActorMembership {
+    mission_id: String,
+    active: bool,
+    updated_at: Option<u64>,
+    location: Value,
+}
+
 /// The actual author may be an ordinary descendant; the source is the nearest
 /// proven Mission membership, not a user-supplied ancestor or a graph edge.
 async fn source(app: &App, scope: &Scope, author: &Value) -> Result<Option<String>, Error> {
-    let s = snapshot(app, scope).await?;
+    // Project only the actor-to-mission membership table while holding `mission_read_slot`,
+    // dropping the full snapshot before awaiting ancestor session lookups.
+    let by_session = with_snapshot(app, scope, |s| {
+        let mut index: std::collections::HashMap<String, Vec<ActorMembership>> = std::collections::HashMap::new();
+        for m in s["missions"].as_array().into_iter().flatten() {
+            let Some(mission_id) = m["id"].as_str() else { continue };
+            let active = m["status"] == "active";
+            let updated_at = m["updatedAt"].as_u64();
+            let mut seen_actors = HashSet::new();
+            for actor in m["actors"].as_array().into_iter().flatten() {
+                let Some(sid) = actor["sessionId"].as_str() else { continue };
+                if seen_actors.insert(sid) {
+                    index.entry(sid.to_owned()).or_default().push(ActorMembership {
+                        mission_id: mission_id.to_owned(),
+                        active,
+                        updated_at,
+                        location: actor["location"].clone(),
+                    });
+                }
+            }
+        }
+        Ok(index)
+    })
+    .await?;
     let mut who = author.clone();
     let mut seen = HashSet::new();
     for _ in 0..=32 {
@@ -163,8 +193,10 @@ async fn source(app: &App, scope: &Scope, author: &Value) -> Result<Option<Strin
         {
             return Err(refusal(REFUSED));
         }
-        let memberships = s["missions"].as_array().unwrap().iter().filter(|m| bridge::recorded(m, &who));
-        let mut active = memberships.clone().filter(|m| m["status"] == "active");
+        let dir_ok = dir(&who).is_ok();
+        let entries = by_session.get(id).map(Vec::as_slice).unwrap_or(&[]);
+        let memberships = entries.iter().filter(|m| dir_ok && m.location == who["location"]);
+        let mut active = memberships.clone().filter(|m| m.active);
         let primary = active.next();
         if active.next().is_some() {
             return Err(refusal(REFUSED));
@@ -174,11 +206,11 @@ async fn source(app: &App, scope: &Scope, author: &Value) -> Result<Option<Strin
             return Err(refusal(REFUSED));
         }
         let selected = primary
-            .map(|m| &m["id"])
-            .or_else(|| marker.map(|m| &m["missionID"]))
-            .or_else(|| memberships.max_by_key(|m| m["updatedAt"].as_u64()).map(|m| &m["id"]));
+            .map(|m| m.mission_id.as_str())
+            .or_else(|| marker.and_then(|m| m["missionID"].as_str()))
+            .or_else(|| memberships.max_by_key(|m| m.updated_at).map(|m| m.mission_id.as_str()));
         if let Some(mid) = selected {
-            return Ok(Some(mid.as_str().ok_or_else(|| refusal(REFUSED))?.to_owned()));
+            return Ok(Some(mid.to_owned()));
         }
         if who["parentID"].is_null() {
             return Ok(None);

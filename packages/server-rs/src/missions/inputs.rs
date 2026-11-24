@@ -1,5 +1,5 @@
 use super::{
-    bridge::{self, current_root, dir, find, matches_execution, mission, recorded, running, send, session, snapshot},
+    bridge::{self, current_root, dir, find, matches_execution, mission, recorded, running, send, session, with_snapshot},
     creation_admission::{Scope, derived_session},
     recovery,
     run::{bad, foreign, held, id, token},
@@ -124,18 +124,21 @@ pub(super) async fn admit(app: &Shared, mut scope: Scope, co: Value, kind: &str,
         scope.refresh(app).await?;
         let latest = current_root(app, &scope, &co).await?;
         let current = current_root(app, &scope, &target).await?;
-        let s = snapshot(app, &scope).await?;
-        if metadata["kind"] == "report" && s["notificationUnavailable"] == true {
-            return Err(held());
-        }
-        let m = mission(&s, mid, &latest)?;
-        let (wanted, execution) = expected(m, kind, metadata)?;
-        if wanted != input
-            || !recorded(m, &current)
-            || execution.as_ref().is_some_and(|p| !matches_execution(p, &current))
-        {
-            return Err(foreign());
-        }
+        with_snapshot(app, &scope, |s| {
+            if metadata["kind"] == "report" && s["notificationUnavailable"] == true {
+                return Err(held());
+            }
+            let m = mission(&s, mid, &latest)?;
+            let (wanted, execution) = expected(m, kind, metadata)?;
+            if wanted != input
+                || !recorded(m, &current)
+                || execution.as_ref().is_some_and(|p| !matches_execution(p, &current))
+            {
+                return Err(foreign());
+            }
+            Ok(())
+        })
+        .await?;
         Ok::<_, Error>(current)
     };
     let initial = check().await?;
@@ -162,23 +165,25 @@ pub(super) async fn admit(app: &Shared, mut scope: Scope, co: Value, kind: &str,
 
 async fn managed_contract(app: &App, scope: &Scope, co: &Value, mid: &str, key: &str) -> Result<(Value, Value), Error> {
     let co = current_root(app, scope, co).await?;
-    let s = snapshot(app, scope).await?;
-    let m = mission(&s, mid, &co)?;
-    let task = find(m, "tasks", "key", key).ok_or_else(foreign)?;
-    let sid = identity(task, "actorSessionId", 240)?;
-    let actor = find(m, "actors", "sessionId", sid).ok_or_else(foreign)?;
-    let task_id = task["id"].as_str().ok_or_else(foreign)?;
-    if !running(m)
-        || task["status"] != "dispatching"
-        || task["executionMode"]["kind"] == "native"
-        || actor["kind"] != "specialist"
-        || actor["managed"] != true
-        || actor["location"] != co["location"]
-        || !derived_session(sid, &format!("{mid}\0task\0{task_id}"))
-    {
-        return Err(foreign());
-    }
-    Ok((task.clone(), actor.clone()))
+    with_snapshot(app, scope, |s| {
+        let m = mission(&s, mid, &co)?;
+        let task = find(m, "tasks", "key", key).ok_or_else(foreign)?;
+        let sid = identity(task, "actorSessionId", 240)?;
+        let actor = find(m, "actors", "sessionId", sid).ok_or_else(foreign)?;
+        let task_id = task["id"].as_str().ok_or_else(foreign)?;
+        if !running(m)
+            || task["status"] != "dispatching"
+            || task["executionMode"]["kind"] == "native"
+            || actor["kind"] != "specialist"
+            || actor["managed"] != true
+            || actor["location"] != co["location"]
+            || !derived_session(sid, &format!("{mid}\0task\0{task_id}"))
+        {
+            return Err(foreign());
+        }
+        Ok((task.clone(), actor.clone()))
+    })
+    .await
 }
 
 pub(super) async fn create_root(app: &App, scope: Scope, co: Value, request: Value) -> Result<Value, Error> {

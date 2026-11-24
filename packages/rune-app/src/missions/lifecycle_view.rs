@@ -69,14 +69,14 @@ pub(crate) fn controls<S: 'static>(
     if owner.unresolved(&source, header) || owner.busy(&source) {
         row = row.child(button(
             t("missionsPanel.action.checkStatus"),
-            owner.busy(&source) || delete_active || recovery_busy,
+            !panel.online() || owner.busy(&source) || delete_active || recovery_busy,
             || Gesture::Check,
             "mission-control-primary",
         ));
         if owner.replayable(&source, revision) {
             row = row.child(button(
                 t("missions.control.refreshResend"),
-                !ready || delete_active || recovery_busy,
+                !ready || !panel.online() || delete_active || recovery_busy,
                 || Gesture::Replay,
                 "mission-control-replay",
             ));
@@ -105,7 +105,11 @@ pub(crate) fn controls<S: 'static>(
     } else if header.root.status == Status::Active
         && header.root.run_state != Some(RunState::Stopped)
     {
-        let disabled = !ready || delete_active || recovery_busy || !owner.idle(&source, header);
+        let disabled = !ready
+            || !panel.online()
+            || delete_active
+            || recovery_busy
+            || !owner.idle(&source, header);
         let pause_slot = matches!(header.root.run_state, None | Some(RunState::Running));
         if pause_slot && recover_eligible {
             let disabled = disabled
@@ -175,7 +179,11 @@ pub(crate) fn controls<S: 'static>(
     if Lifecycle::allow(header, LifecycleAction::Stop, false, false)
         && (owner.can_stop(&source, header) || owner.busy(&source))
     {
-        let disabled = !ready || delete_active || recovery_busy || !owner.can_stop(&source, header);
+        let disabled = !ready
+            || !panel.online()
+            || delete_active
+            || recovery_busy
+            || !owner.can_stop(&source, header);
         let origin = source.clone();
         let live = panel.selection_live.clone();
         row = row.child(

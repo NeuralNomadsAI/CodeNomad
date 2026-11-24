@@ -237,3 +237,53 @@ fn owed_refresh_restarts_even_when_the_inflight_read_fails() {
         panel.show(false);
     });
 }
+
+#[test]
+fn paginated_pending_cleanups_emit_incremental_observation_deltas() {
+    let mut panel = panel();
+    let total = 250u64;
+    let make_page = |offset: u64, count: u64| DirectoryPage {
+        project_id: "project".into(),
+        finish_high_water: None,
+        window: Window {
+            order: "ord".into(),
+            offset,
+            end: offset + count,
+            total,
+        },
+        rows: DirectoryRows::Cleanups(
+            (offset..offset + count)
+                .map(|i| Cleanup {
+                    mission_id: format!("msn-{i}"),
+                    deletion_id: format!("del-{i}"),
+                    request_id: format!("req-{i}"),
+                    expected_revision: 1,
+                    delete_managed_sessions: true,
+                    objective: String::new(),
+                    created_at: i as f64 + 1.0,
+                    removed: 0,
+                    retained: 0,
+                    pending: 1,
+                    reasons: Vec::new(),
+                    document_pending: None,
+                })
+                .collect(),
+        ),
+    };
+    assert!(panel.accept(Kind::Cleanups, Read::Refresh, make_page(0, 50)));
+    // Initial refresh requests a full scan.
+    assert!(matches!(panel.prepare_observed_cleanups(1), Some(None)));
+    assert!(panel.prepare_observed_cleanups(1).is_none());
+
+    // Each subsequent page emits only its 50-row incremental delta, not all accumulated rows.
+    for page_idx in 1..5u64 {
+        assert!(panel.accept(Kind::Cleanups, Read::More, make_page(page_idx * 50, 50)));
+        let delta = panel.prepare_observed_cleanups(1);
+        match delta {
+            Some(Some(rows)) => assert_eq!(rows.len(), 50),
+            other => panic!("expected 50-row incremental delta on page {page_idx}, got {other:?}"),
+        }
+        assert!(panel.prepare_observed_cleanups(1).is_none());
+    }
+    assert_eq!(panel.cleanups.len(), 250);
+}

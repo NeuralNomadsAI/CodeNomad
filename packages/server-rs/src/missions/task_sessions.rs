@@ -1,5 +1,5 @@
 use super::{
-    bridge::{current_root, find, mission, snapshot},
+    bridge::{current_root, find, mission, with_snapshot},
     creation_admission::Scope,
     run::{bad, foreign, held, id},
 };
@@ -45,18 +45,21 @@ pub(super) async fn observe(app: &App, scope: Scope, co: Value, input: Value) ->
     if input.as_object().is_none_or(|o| o.len() != 2) {
         return Err(bad());
     }
-    let s = snapshot(app, &scope).await?;
-    let m = mission(&s, mid, &co)?;
-    let task = find(m, "tasks", "key", key).ok_or_else(foreign)?;
-    let mode = &task["executionMode"];
-    if mode["kind"] != "native" || mode.get("parentTaskKey") != Some(&Value::Null) {
-        return Err((
-            Status::CONFLICT,
-            Json(
-                json!({"code":"task-sessions-unavailable","error":"Only native tasks launched by the coordinator have observable conversations"}),
-            ),
-        ));
-    }
+    with_snapshot(app, &scope, |s| {
+        let m = mission(&s, mid, &co)?;
+        let task = find(m, "tasks", "key", key).ok_or_else(foreign)?;
+        let mode = &task["executionMode"];
+        if mode["kind"] != "native" || mode.get("parentTaskKey") != Some(&Value::Null) {
+            return Err((
+                Status::CONFLICT,
+                Json(
+                    json!({"code":"task-sessions-unavailable","error":"Only native tasks launched by the coordinator have observable conversations"}),
+                ),
+            ));
+        }
+        Ok(())
+    })
+    .await?;
     let sid = co["id"].as_str().ok_or_else(foreign)?;
     let mut cursor = None::<String>;
     let mut cursors = HashSet::new();

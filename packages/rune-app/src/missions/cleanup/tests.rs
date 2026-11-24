@@ -78,6 +78,7 @@ fn mission_delete_freezes_intent_reconciles_lost_ack_and_reuses_exact_request_on
             "Delete target".into(),
             7,
             true,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -180,6 +181,7 @@ fn hiding_view_during_reconciliation_cancels_both_retry_paths_before_sending_del
             "Fenced".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -281,6 +283,7 @@ fn retry_delete_stops_without_sending_when_reconciliation_shows_revision_conflic
             "Conflict".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -617,6 +620,7 @@ fn selected_delete_retry_cancels_when_user_switches_mission_during_reconciliatio
             "Mission A".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -648,8 +652,8 @@ fn selected_delete_retry_cancels_when_user_switches_mission_during_reconciliatio
         assert!(held_get.header.starts_with("GET /api/workspaces/"));
         panel.select("msn-b");
         assert_eq!(panel.selected.as_deref(), Some("msn-b"));
-        held_get
-            .reply(
+        let _ = held_get
+            .try_reply(
                 200,
                 json!({
                     "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
@@ -680,6 +684,7 @@ fn delete_intent_stays_isolated_to_its_origin_workspace_scope() {
             "Shared".into(),
             7,
             false,
+            LiveFlag::new(true),
             http_a.backend.clone(),
             wake.clone(),
         );
@@ -1148,6 +1153,7 @@ fn delete_intent_persists_document_cleanup_requirement_across_retries() {
             "Doc".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -1570,6 +1576,7 @@ fn delete_intent_pins_observed_deletion_id_across_retry_and_passive_retirement()
             "Pin target".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -1945,6 +1952,7 @@ fn pinned_tombstone_refuses_delete_when_reconciliation_returns_live_mission() {
             "Live contradiction".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -2010,6 +2018,7 @@ fn ambiguous_cleanup_rows_never_settle_or_authorize_delete() {
             "Ambiguous".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -2093,6 +2102,7 @@ fn revoked_delete_retry_view_never_publishes_readonly_settlement() {
             "Revoked".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -2398,6 +2408,7 @@ fn revoked_delete_retry_never_publishes_readonly_failure() {
             "Revoked fail".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -2935,6 +2946,7 @@ fn document_pending_observed_during_delete_flight_blocks_bare_retry_settlement()
             "Doc flight".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -3020,6 +3032,7 @@ fn pinned_deletion_id_does_not_hide_ambiguous_wire_matches() {
             "Pin amb".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -3160,6 +3173,7 @@ fn revoked_post_409_get_settlement_neither_publishes_nor_retires_delete_intent()
             "Old".into(),
             1,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -3348,6 +3362,7 @@ fn revoked_direct_delete_post_delete_reconciliation_aborts_without_publishing_se
             "PostDel".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -3490,6 +3505,7 @@ fn cleanup_retry_blocks_settlement_after_direct_delete_learned_document_pending(
             "Cross".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -3573,6 +3589,7 @@ fn stale_retry_and_cancel_callbacks_cannot_act_on_a_replacement_delete_intent() 
             "Intent A".into(),
             7,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -3596,6 +3613,7 @@ fn stale_retry_and_cancel_callbacks_cannot_act_on_a_replacement_delete_intent() 
             "Intent B".into(),
             7,
             true,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -3792,6 +3810,7 @@ fn offline_cancel_discards_selected_and_orphaned_delete_intents_while_retry_stay
             "Offline mission".into(),
             3,
             false,
+            LiveFlag::new(true),
             http.backend.clone(),
             wake.clone(),
         );
@@ -3940,4 +3959,94 @@ fn has_state(tree: &serde_json::Value, key: &str, state: &str) -> bool {
     tree["children"]
         .as_array()
         .is_some_and(|children| children.iter().any(|child| has_state(child, key, state)))
+}
+
+#[test]
+fn direct_delete_revoked_view_skips_post_failure_reconciliation_and_keeps_retryable_intent() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-fenced-direct");
+        let live = LiveFlag::new(true);
+        let mut owner = CleanupOwner::default();
+
+        owner.start_delete(
+            &src,
+            "Direct fenced".into(),
+            7,
+            false,
+            live.clone(),
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let del = http.accept().await;
+        assert!(del.header.starts_with("DELETE "));
+        // Revoke the originating selection before the DELETE failure settles.
+        live.revoke();
+        del.reply(503, json!({"error": "unavailable"})).await;
+
+        wait(done.recv()).await.unwrap();
+        // No reconciliation GET may be sent after the originating view was revoked.
+        let unexpected =
+            tokio::time::timeout(std::time::Duration::from_millis(80), http.accept()).await;
+        assert!(
+            unexpected.is_err(),
+            "revoked direct delete must not issue post-failure reconciliation GET"
+        );
+        let polled = owner.poll_deletes();
+        assert!(polled.changed);
+        assert_eq!(
+            owner.delete_state(&src),
+            Some(DeleteState::Failed("missions.cleanup.error.unconfirmed"))
+        );
+    });
+}
+
+#[test]
+fn offline_panel_blocks_confirm_stop_and_readback_resend() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        let mut lifecycle = super::super::Lifecycle::default();
+        let hdr = serde_json::from_value::<codenomad_client::missions::MapHeader>(json!({
+            "root":{"version":1,"id":"msn-offline-stop","projectID":"project","projectCanonical":"/fixture",
+                "excerpt":"Fixture","template":"custom","status":"active","runState":"running",
+                "coordinatorSessionId":"session","revision":7,"createdAt":1,"updatedAt":1,
+                "historyTruncated":false,"bodies":{}},
+            "collections":{},
+            "coordinator":{"kind":"coordinator","sessionId":"session","location":{"directory":"/fixture"}},
+            "tasks":{"page":{"order":"","offset":0,"end":0,"total":0,"counts":{},"reports":0},
+                "pins":[],"reportPins":[],"version":""},
+        }))
+        .unwrap();
+        panel.detail.snapshot = Some(super::super::detail::Snapshot {
+            header: hdr,
+            tasks: std::rc::Rc::new(super::super::task_rows::TaskRows::new(vec![])),
+            end: 0,
+            attention_end: 0,
+        });
+        panel.set_online(false);
+        let mut src = source("msn-offline-stop");
+        src.occurrence = "occ".into();
+        src.workspace = http.backend.workspace.clone();
+        lifecycle.confirmation = Some((src.clone(), 7));
+        panel.control(
+            "occ",
+            &mut lifecycle,
+            &src,
+            super::super::Gesture::ConfirmStop(true),
+        );
+        let unexpected =
+            tokio::time::timeout(std::time::Duration::from_millis(60), http.accept()).await;
+        assert!(
+            unexpected.is_err(),
+            "offline ConfirmStop must never send Stop"
+        );
+    });
 }

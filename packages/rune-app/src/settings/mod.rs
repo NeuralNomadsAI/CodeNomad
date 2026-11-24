@@ -298,6 +298,10 @@ pub(crate) fn poll(s: &mut State) -> bool {
         crate::workspace::suspend_missions(s);
     } else {
         if let Some(online) = stream_state {
+            #[cfg(target_arch = "wasm32")]
+            if !online && !crate::platform::pairing::required(s) {
+                crate::platform::pairing::observe(s);
+            }
             crate::workspace::missions_online(s, online);
         } else if still_offline {
             crate::workspace::missions_online(s, false);

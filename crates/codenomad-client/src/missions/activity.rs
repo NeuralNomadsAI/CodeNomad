@@ -269,6 +269,7 @@ fn decode(page: Verified, mission: &str, offset: u64, order: Option<&str>) -> Re
         .map(|member| (member.session_id.as_str(), member.actor_session_id.as_str()))
         .collect();
     if states.len() != row.activity.actors.len()
+        || states.len() != roots.len()
         || states.keys().any(|id| !roots.contains(id))
         || members.len() != row.activity.family.members.len()
         || row

@@ -349,6 +349,7 @@ fn symmetric_mutation_guards_block_competing_lifecycle_recovery_and_delete_gestu
 
         let (wake, done) = witness();
         let mut panel = Panel::new(backend, Some("project".into()), Default::default(), wake);
+        panel.selection_live = super::super::cleanup::LiveFlag::new(true);
         let hdr = serde_json::from_value::<MapHeader>(json!({
             "root":{"version":1,"id":"mission","projectID":"project","projectCanonical":"/fixture",
                 "excerpt":"Fixture","template":"custom","status":"failed","runState":"running",

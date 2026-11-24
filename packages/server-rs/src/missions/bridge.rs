@@ -60,11 +60,17 @@ pub(super) async fn session(app: &App, scope: &Scope, sid: &str) -> Result<Value
     Ok(row.clone())
 }
 
-pub(super) async fn snapshot(app: &App, scope: &Scope) -> Result<Value, Error> {
+pub(super) async fn with_snapshot<T>(
+    app: &App,
+    scope: &Scope,
+    project: impl FnOnce(Value) -> Result<T, Error>,
+) -> Result<T, Error> {
     let slot = app.mission_read_slot.clone().acquire_owned().await.map_err(|_| held())?;
-    let (status, mut body, _slot) =
+    let (status, mut body, slot) =
         scope.call_holding(app, "snapshot", &json!({}), 10, super::run::LARGE_MISSION_RPC_LIMIT, slot).await?;
     let Some(s) = body.as_object_mut().and_then(|o| o.remove("output")) else {
+        drop(body);
+        drop(slot);
         return Err(held());
     };
     drop(body);
@@ -74,9 +80,13 @@ pub(super) async fn snapshot(app: &App, scope: &Scope) -> Result<Value, Error> {
         || s["discardedEvents"] != 0
         || s["controlUnavailable"] == true
     {
+        drop(s);
+        drop(slot);
         return Err(held());
     }
-    Ok(s)
+    let projected = project(s);
+    drop(slot);
+    projected
 }
 
 pub(super) fn take_mission(mut s: Value, mid: &str, co: &Value) -> Result<Value, Error> {

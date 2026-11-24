@@ -1,6 +1,9 @@
 use super::Preferences;
 use crate::platform;
 use codenomad_client::{Receiver, Sender, bounded, settings::info::metadata};
+use std::time::Duration;
+
+const RETRY_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Default)]
 struct Capabilities {
@@ -12,8 +15,20 @@ struct Capabilities {
 #[derive(Default)]
 pub(super) struct HostSupport {
     owner: Option<String>,
-    flight: Option<(Sender<()>, Receiver<Capabilities>)>,
+    flight: Option<(Sender<()>, Receiver<Result<Capabilities, ()>>)>,
     capabilities: Capabilities,
+}
+
+fn parse_capabilities(meta: &serde_json::Value) -> Capabilities {
+    Capabilities {
+        local: meta["localRequest"] == true,
+        config_files: meta["capabilities"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|capability| capability == "config-files")),
+        missions: meta["capabilities"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|capability| capability == "missions")),
+    }
 }
 
 impl HostSupport {
@@ -32,34 +47,43 @@ impl HostSupport {
                 self.flight = Some((cancel, reply));
                 let (backend, wake) = (backend.clone(), wake.clone());
                 platform::spawn(async move {
-                    if let Some(meta) =
+                    let Some(first) =
                         platform::reads::cancellable(&cancelled, metadata(&backend)).await
-                    {
-                        let caps = meta.map_or_else(
-                            |_| Capabilities::default(),
-                            |meta| Capabilities {
-                                local: meta["localRequest"] == true,
-                                config_files: meta["capabilities"].as_array().is_some_and(
-                                    |items| {
-                                        items.iter().any(|capability| capability == "config-files")
-                                    },
-                                ),
-                                missions: meta["capabilities"].as_array().is_some_and(|items| {
-                                    items.iter().any(|capability| capability == "missions")
-                                }),
-                            },
-                        );
-                        if out.try_send(caps).is_ok() {
-                            wake();
+                    else {
+                        return;
+                    };
+                    let resolved = match first {
+                        Ok(meta) => Ok(parse_capabilities(&meta)),
+                        Err(_) => {
+                            if platform::reads::cancellable(
+                                &cancelled,
+                                platform::sleep(RETRY_DELAY),
+                            )
+                            .await
+                            .is_none()
+                            {
+                                return;
+                            }
+                            let Some(second) =
+                                platform::reads::cancellable(&cancelled, metadata(&backend)).await
+                            else {
+                                return;
+                            };
+                            second.map(|meta| parse_capabilities(&meta)).map_err(|_| ())
                         }
+                    };
+                    if out.try_send(resolved).is_ok() {
+                        wake();
                     }
                 });
             }
             return true;
         }
-        if let Some(capabilities) = self.flight.as_ref().and_then(|(_, rx)| rx.try_recv().ok()) {
+        if let Some(result) = self.flight.as_ref().and_then(|(_, rx)| rx.try_recv().ok()) {
             self.flight = None;
-            self.capabilities = capabilities;
+            if let Ok(capabilities) = result {
+                self.capabilities = capabilities;
+            }
             return true;
         }
         false
@@ -84,5 +108,56 @@ impl HostSupport {
 
     pub fn missions(&self, prefs: &Preferences) -> bool {
         self.current(prefs) && self.capabilities.missions
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use crate::files::test_http::Http;
+    use serde_json::json;
+
+    #[test]
+    fn host_support_recovers_from_transient_meta_failure() {
+        platform::block_on(async {
+            let http = Http::new().await;
+            let mut prefs = Preferences::default();
+            prefs.bind(Some(http.backend.clone()));
+            let mut support = HostSupport::default();
+            let wake: rune::Waker = std::sync::Arc::new(|| {});
+            assert!(support.poll(&prefs, &wake, true));
+            assert!(!support.missions(&prefs));
+
+            // First /api/meta call fails transiently; ignore background config/state reads if any.
+            let mut failed_once = false;
+            let mut succeeded = false;
+            while !succeeded {
+                let req = http.accept().await;
+                if req.header.starts_with("GET /api/meta ") {
+                    if !failed_once {
+                        failed_once = true;
+                        req.reply(503, json!({"error": "transient"})).await;
+                    } else {
+                        req.reply(
+                            200,
+                            json!({"localRequest": true, "capabilities": ["missions", "config-files"]}),
+                        )
+                        .await;
+                        succeeded = true;
+                    }
+                } else {
+                    req.reply(200, json!({})).await;
+                }
+            }
+            for _ in 0..100 {
+                support.poll(&prefs, &wake, true);
+                if support.missions(&prefs) {
+                    break;
+                }
+                platform::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(support.missions(&prefs));
+            assert!(support.config_files(&prefs));
+        });
     }
 }

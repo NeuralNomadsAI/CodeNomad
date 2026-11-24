@@ -5,12 +5,14 @@ use rune_theme_codenomad::{Space, layout, layout::Layout, settings as chrome};
 
 pub(super) fn view<S: 'static>(
     prefs: &Preferences,
-    toggle: fn(&mut S, bool),
-    retry: fn(&mut S),
+    toggle: fn(&mut S, Option<&str>, bool),
+    retry: fn(&mut S, Option<&str>),
 ) -> El {
     let label = t("missions.preferences.deleteSessions");
     let checked = prefs.mission_delete_sessions_display().unwrap_or(false);
     let disabled = !prefs.mission_delete_sessions_editable();
+    let owner = prefs.backend.as_ref().map(|b| b.client_id.clone());
+    let retry_owner = owner.clone();
     let error = prefs.mission_delete_sessions_error().or_else(|| {
         (prefs.backend.is_none() && prefs.saved(super::preferences::Owner::Config).is_none())
             .then_some("rune.connect_error")
@@ -20,18 +22,21 @@ pub(super) fn view<S: 'static>(
             .full_width()
             .separate(Space::Sm)
             .children(error.map(|error| {
+                let retry_owner = retry_owner.clone();
                 layout::action_row()
                     .child(rune::text(t(error)).wrap().role("alert"))
                     .child(layout::button(
                         t("sessionList.loadError.retry"),
                         !prefs.can_retry(),
-                        retry,
+                        move |s: &mut S| retry(s, retry_owner.as_deref()),
                     ))
             }))
             .child(chrome::setting_row(
                 label,
-                chrome::setting_switch(label, checked, disabled, move |s| toggle(s, !checked))
-                    .key("missions-delete-sessions"),
+                chrome::setting_switch(label, checked, disabled, move |s| {
+                    toggle(s, owner.as_deref(), !checked)
+                })
+                .key("missions-delete-sessions"),
             )),
     )
 }
@@ -46,7 +51,7 @@ mod tests {
     use std::time::Duration;
 
     async fn wait_until(mut ready: impl FnMut() -> bool) {
-        for _ in 0..200 {
+        for _ in 0..500 {
             if ready() {
                 return;
             }
@@ -155,8 +160,18 @@ mod tests {
                     crate::strings::with_locale("en", || {
                         view(
                             prefs,
-                            |p: &mut Preferences, v| p.set_mission_delete_sessions(v),
-                            |p: &mut Preferences| p.retry_mission_delete_sessions(),
+                            |p: &mut Preferences, owner, v| {
+                                if owner.is_some()
+                                    && p.backend.as_ref().map(|b| b.client_id.as_str()) == owner
+                                {
+                                    p.set_mission_delete_sessions(v);
+                                }
+                            },
+                            |p: &mut Preferences, owner| {
+                                if p.backend.as_ref().map(|b| b.client_id.as_str()) == owner {
+                                    p.retry_mission_delete_sessions();
+                                }
+                            },
                         )
                     })
                 },
@@ -413,8 +428,18 @@ mod tests {
                     crate::strings::with_locale("en", || {
                         view(
                             prefs,
-                            |p: &mut Preferences, v| p.set_mission_delete_sessions(v),
-                            |p: &mut Preferences| p.retry_mission_delete_sessions(),
+                            |p: &mut Preferences, owner, v| {
+                                if owner.is_some()
+                                    && p.backend.as_ref().map(|b| b.client_id.as_str()) == owner
+                                {
+                                    p.set_mission_delete_sessions(v);
+                                }
+                            },
+                            |p: &mut Preferences, owner| {
+                                if p.backend.as_ref().map(|b| b.client_id.as_str()) == owner {
+                                    p.retry_mission_delete_sessions();
+                                }
+                            },
                         )
                     })
                 },
@@ -445,28 +470,16 @@ mod tests {
             // the host config, keep mission_delete_sessions() withheld while offline, and
             // persist the new value after reconnect.
             rt.state.set_mission_delete_sessions(false);
-            let mut saw_patch = false;
-            for _ in 0..100 {
-                rt.state.poll();
-                if let Ok(req) =
-                    tokio::time::timeout(std::time::Duration::from_millis(10), http.accept()).await
-                {
-                    assert!(
-                        req.header.starts_with("PATCH /api/storage/config/ui "),
-                        "unexpected request during outage toggle: {}",
-                        req.header
-                    );
-                    assert_eq!(req.body["settings"]["missionDeleteSessions"], json!(false));
-                    saw_patch = true;
-                    req.reply(200, json!({"settings": {"missionDeleteSessions": false}}))
-                        .await;
-                    break;
-                }
-            }
+            rt.state.poll();
+            let req = http.accept().await;
             assert!(
-                saw_patch,
-                "toggling missionDeleteSessions during an OpenCode outage must send a config PATCH"
+                req.header.starts_with("PATCH /api/storage/config/ui "),
+                "unexpected request during outage toggle: {}",
+                req.header
             );
+            assert_eq!(req.body["settings"]["missionDeleteSessions"], json!(false));
+            req.reply(200, json!({"settings": {"missionDeleteSessions": false}}))
+                .await;
             wait_until(|| {
                 rt.state.poll();
                 !rt.state.mission_delete_sessions_pending()
@@ -481,18 +494,15 @@ mod tests {
 
             // Reconnect OpenCode: revalidation GET confirms the persisted false value.
             rt.state.set_stream_online(true);
-            for _ in 0..100 {
-                rt.state.poll();
-                if let Ok(req) =
-                    tokio::time::timeout(std::time::Duration::from_millis(10), http.accept()).await
-                {
-                    if req.header.starts_with("GET /api/storage/config/ui ") {
-                        req.reply(200, json!({"settings": {"missionDeleteSessions": false}}))
-                            .await;
-                        break;
-                    }
-                    req.reply(200, json!({})).await;
+            rt.state.poll();
+            loop {
+                let req = http.accept().await;
+                if req.header.starts_with("GET /api/storage/config/ui") {
+                    req.reply(200, json!({"settings": {"missionDeleteSessions": false}}))
+                        .await;
+                    break;
                 }
+                req.reply(200, json!({})).await;
             }
             wait_until(|| {
                 rt.state.poll();

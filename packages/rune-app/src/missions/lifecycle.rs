@@ -134,10 +134,15 @@ impl Panel {
     }
 
     pub(crate) fn observe_cleanups(&mut self, owner: &mut Lifecycle) {
-        if let Some(scope) = self.cleanup_scope()
-            && self.sync_observed_cleanups(owner.cleanup.state_gen())
-        {
-            owner.cleanup.observe_cleanups(&scope, &self.cleanups);
+        let Some(scope) = self.cleanup_scope() else {
+            return;
+        };
+        let Some(delta) = self.prepare_observed_cleanups(owner.cleanup.state_gen()) else {
+            return;
+        };
+        match delta {
+            Some(rows) => owner.cleanup.observe_cleanups(&scope, &rows),
+            None => owner.cleanup.observe_cleanups(&scope, &self.cleanups),
         }
     }
 
@@ -192,6 +197,7 @@ impl Panel {
         let recovery_busy = owner.recovery.any_pending_for(source);
         let allowed = |action, graceful| {
             ready
+                && self.online()
                 && !delete_active
                 && !recovery_busy
                 && (if action == LifecycleAction::Stop {
@@ -235,6 +241,7 @@ impl Panel {
                     .as_ref()
                     .is_some_and(|(_, expected)| *expected == revision)
                     && ready
+                    && self.online()
                     && !delete_active
                     && !recovery_busy
                     && owner.can_stop(source, header)
@@ -253,7 +260,8 @@ impl Panel {
                 }
             }
             Gesture::Check
-                if !delete_active
+                if self.online()
+                    && !delete_active
                     && !recovery_busy
                     && owner.unresolved(source, header)
                     && !owner.busy(source) =>
@@ -265,6 +273,7 @@ impl Panel {
             }
             Gesture::Replay
                 if ready
+                    && self.online()
                     && !delete_active
                     && !recovery_busy
                     && owner.replayable(source, revision) =>
@@ -346,6 +355,7 @@ impl Panel {
                     title,
                     revision,
                     delete_managed_sessions,
+                    self.selection_live.clone(),
                     self.backend.clone(),
                     self.wake.clone(),
                 );
@@ -457,7 +467,8 @@ impl Panel {
                 (self.wake)();
                 refreshed = true;
             }
-        } else if !self.detail.busy()
+        } else if self.online()
+            && !self.detail.busy()
             && let Some(request) = owner.readback(
                 &source,
                 self.detail
@@ -615,6 +626,7 @@ impl Lifecycle {
             mission_id.into(),
             revision,
             false,
+            super::cleanup::LiveFlag::new(true),
             backend.clone(),
             wake,
         );

@@ -468,6 +468,7 @@ impl CleanupOwner {
         title: String,
         revision: u64,
         delete_managed_sessions: bool,
+        live: LiveFlag,
         backend: Backend,
         wake: Wake,
     ) {
@@ -478,6 +479,11 @@ impl CleanupOwner {
             return;
         };
         let (out, inbox) = bounded(1);
+        let (cancel_tx, cancel_rx) = bounded(1);
+        let phase = Arc::new(AtomicU8::new(PHASE_DISPATCHED));
+        if !live.register(phase.clone(), cancel_rx.clone()) {
+            return;
+        }
         let target = source.target.clone();
         let scope = source.workspace_scope();
         self.deletes.insert(
@@ -488,9 +494,9 @@ impl CleanupOwner {
                 target: target.clone(),
                 request: request.clone(),
                 flight: Some(inbox),
-                flight_live: None,
-                flight_cancel: None,
-                flight_phase: None,
+                flight_live: Some(live.clone()),
+                flight_cancel: Some(cancel_rx),
+                flight_phase: Some(phase.clone()),
                 error: None,
                 document_cleanup: false,
                 deletion_id: None,
@@ -501,7 +507,16 @@ impl CleanupOwner {
         self.bump_state();
         platform::spawn(async move {
             let result = run_delete(
-                backend, target, request, false, false, None, None, None, None, None,
+                backend,
+                target,
+                request,
+                false,
+                false,
+                None,
+                None,
+                Some(live),
+                Some(cancel_tx),
+                Some(phase),
             )
             .await;
             if out.send(result).await.is_ok() {
@@ -1003,6 +1018,9 @@ impl CleanupOwner {
                 } => {
                     if !dispatched && view_revoked {
                         return true;
+                    }
+                    if dispatched && intent.error.is_none() {
+                        intent.error = Some("missions.cleanup.error.unconfirmed");
                     }
                     intent.document_cleanup |= document_cleanup;
                     if intent.deletion_id.is_none() {

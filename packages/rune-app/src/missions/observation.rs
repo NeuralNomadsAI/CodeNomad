@@ -90,11 +90,14 @@ impl Observation {
     }
 
     pub fn has_actor(&self, session_id: &str) -> bool {
-        self.pages.iter().any(|page| {
-            page.actors
-                .iter()
-                .any(|actor| actor.session_id == session_id)
-        })
+        self.pages
+            .iter()
+            .filter(|page| self.current(page))
+            .any(|page| {
+                page.actors
+                    .iter()
+                    .any(|actor| actor.session_id == session_id)
+            })
     }
 
     pub fn complete_and_fresh_for(&self, header: &MapHeader) -> bool {
@@ -582,6 +585,18 @@ mod tests {
         assert!(
             !state.current(&state.pages[1]),
             "same revision is not the same observation cycle"
+        );
+        state.pages[1]
+            .actors
+            .push(codenomad_client::missions::Actor {
+                session_id: "ses_stale".into(),
+                title: "Stale".into(),
+                state: ActorState::IdleWithoutReport,
+                request: None,
+            });
+        assert!(
+            !state.has_actor("ses_stale"),
+            "stale activity page must not prove actor presence for recovery"
         );
         assert_eq!(state.more_offset(), Some(1));
         assert!(state.adopt(1, page(7, 201.0, 1, 2)));

@@ -467,14 +467,19 @@ async fn mutate(
         {
             return Err(plugin_unavailable());
         }
-        let (bytes, slot) = super::reads::encode_json_bytes_holding(result, slot, method == "recover")
+        let (bytes, slot) = super::reads::encode_json_bytes_holding(result, slot, method == "recover", false)
             .await
             .map_err(|_| plugin_unavailable())?;
-        drop(slot);
         if !scope.current(&app) {
+            drop(slot);
             return Err(plugin_unavailable());
         }
-        super::reads::deliver_json_bytes(&app, bytes).map_err(|_| plugin_unavailable())
+        if method == "recover" {
+            Ok(super::reads::deliver_admitted_json_bytes(bytes, slot))
+        } else {
+            drop(slot);
+            super::reads::deliver_json_bytes(&app, bytes).map_err(|_| plugin_unavailable())
+        }
     })
     .await
     .map_err(|_| plugin_unavailable())?
@@ -577,7 +582,7 @@ pub async fn dispatch(State(app): State<Shared>, request: axum::extract::Request
 }
 
 async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> Result<Value, Error> {
-    use super::bridge::{self, current_root, dir, find, recorded, session, snapshot};
+    use super::bridge::{self, current_root, dir, find, session, with_snapshot};
     let life: Life = serde_json::from_value(input).map_err(|_| bad())?;
     if !id(&life.mid, 100)
         || !id(&life.operation, 100)
@@ -586,17 +591,64 @@ async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> R
     {
         return Err(bad());
     }
-    let s = snapshot(app, &scope).await?;
-    let m = bridge::take_mission(s, &life.mid, &co)?;
-    let op = &m["control"];
-    let action = op["action"].as_str().ok_or_else(held)?;
-    let is_coordinator = co["id"] == life.sid;
-    let location = &find(op, "targets", "sessionID", &life.sid).ok_or_else(foreign)?["location"];
-    if location.get("workspaceID").is_some()
-        || !find(&m, "actors", "sessionId", &life.sid).is_some_and(|a| a["location"] == *location)
-    {
-        return Err(foreign());
+    struct LifecycleView {
+        op: Value,
+        action: String,
+        location: Value,
+        run_state: Value,
+        status: Value,
+        first_play: Value,
+        target_executions: Vec<Value>,
+        paused_tasks: Value,
     }
+    let view = with_snapshot(app, &scope, |s| {
+        let m = bridge::take_mission(s, &life.mid, &co)?;
+        let op = m["control"].clone();
+        let action = op["action"].as_str().ok_or_else(held)?.to_owned();
+        let location = find(&op, "targets", "sessionID", &life.sid).ok_or_else(foreign)?["location"].clone();
+        if location.get("workspaceID").is_some()
+            || !find(&m, "actors", "sessionId", &life.sid).is_some_and(|a| a["location"] == location)
+        {
+            return Err(foreign());
+        }
+        let target_executions = m["tasks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|t| t["actorSessionId"] == life.sid && t["status"] != "withdrawn" && t["report"].is_null())
+            .map(|t| t["execution"].clone())
+            .collect();
+        let paused_sessions: std::collections::HashSet<&str> = op["pausedDescendants"]["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        let paused_tasks = Value::Array(
+            m["tasks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|t| t["actorSessionId"].as_str().is_some_and(|sid| paused_sessions.contains(sid)))
+                .map(|t| json!({"actorSessionId": t["actorSessionId"], "key": t["key"]}))
+                .collect(),
+        );
+        Ok(LifecycleView {
+            op,
+            action,
+            location,
+            run_state: m["runState"].clone(),
+            status: m["status"].clone(),
+            first_play: m["document"]["firstPlay"].clone(),
+            target_executions,
+            paused_tasks,
+        })
+    })
+    .await?;
+    let op = &view.op;
+    let action = view.action.as_str();
+    let is_coordinator = co["id"] == life.sid;
+    let location = &view.location;
     scope.add_location(app, location["directory"].as_str().ok_or_else(foreign)?).await?;
     let _permit = scope.permit().ok_or_else(held)?;
     let shared = |s: &Value| {
@@ -611,27 +663,29 @@ async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> R
     let authority = || async {
         scope.refresh(app).await?;
         let co = current_root(app, &scope, &co).await?;
-        let latest = snapshot(app, &scope).await?;
-        let fresh = bridge::mission(&latest, &life.mid, &co)?;
-        let next = &fresh["control"];
-        if next["id"] != life.operation
-            || ["action", "requestID", "expectedRevision", "targets"].iter().any(|k| next[*k] != op[*k])
-            || !next["pending"].as_array().is_some_and(|p| p.iter().any(|id| id == &life.sid))
-            || fresh["runState"] != m["runState"]
-            || fresh["status"] != m["status"]
-            || fresh["document"]["firstPlay"] != m["document"]["firstPlay"]
-            || !find(fresh, "actors", "sessionId", &life.sid).is_some_and(|a| a["location"] == *location)
-        {
-            return Err(held());
-        }
-        Ok(shared(&latest))
+        with_snapshot(app, &scope, |latest| {
+            let fresh = bridge::mission(&latest, &life.mid, &co)?;
+            let next = &fresh["control"];
+            if next["id"] != life.operation
+                || ["action", "requestID", "expectedRevision", "targets"].iter().any(|k| next[*k] != op[*k])
+                || !next["pending"].as_array().is_some_and(|p| p.iter().any(|id| id == &life.sid))
+                || fresh["runState"] != view.run_state
+                || fresh["status"] != view.status
+                || fresh["document"]["firstPlay"] != view.first_play
+                || !find(fresh, "actors", "sessionId", &life.sid).is_some_and(|a| a["location"] == *location)
+            {
+                return Err(held());
+            }
+            Ok(shared(&latest))
+        })
+        .await
     };
     let mut ack = json!({"missionID":life.mid,"operationID":life.operation,"sessionID":life.sid,"action":action});
-    let can_start = action == "start" && m["runState"] == "running" && m["status"] == "active";
+    let can_start = action == "start" && view.run_state == "running" && view.status == "active";
     let can_interrupt = matches!(action, "pause" | "stop")
         && life.start_text.is_none()
-        && m["runState"] == if action == "pause" { "paused" } else { "stopped" }
-        && (action == "stop" || m["status"] == "active");
+        && view.run_state == if action == "pause" { "paused" } else { "stopped" }
+        && (action == "stop" || view.status == "active");
     if !can_start && !can_interrupt {
         return Err(foreign());
     }
@@ -653,17 +707,10 @@ async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> R
     };
     let verify_target = |row: &Value| {
         row["parentID"].is_null()
-            && recorded(&m, row)
+            && row["id"] == life.sid
+            && dir(row).is_ok()
             && row["location"] == *location
-            && (!can_start
-                || !m["tasks"].as_array().is_some_and(|tasks| {
-                    tasks.iter().any(|t| {
-                        t["actorSessionId"] == life.sid
-                            && t["status"] != "withdrawn"
-                            && t["report"].is_null()
-                            && !bridge::matches_execution(&t["execution"], row)
-                    })
-                }))
+            && (!can_start || view.target_executions.iter().all(|exec| bridge::matches_execution(exec, row)))
     };
     if !verify_target(&row) || dir(&row)? != location["directory"] {
         return Err(foreign());
@@ -675,7 +722,7 @@ async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> R
         Ok(())
     };
     if can_start {
-        let frozen = &m["document"]["firstPlay"];
+        let frozen = &view.first_play;
         let first = is_coordinator && frozen["operationID"] == life.operation;
         if crate::bench::family_trace() {
             eprintln!(
@@ -694,7 +741,7 @@ async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> R
                 return Err(foreign());
             }
             let paused =
-                crate::missions::family::paused_context(app, &co, &m["tasks"], &op["pausedDescendants"]).await?;
+                crate::missions::family::paused_context(app, &co, &view.paused_tasks, &op["pausedDescendants"]).await?;
             format!(
                 "Start or resume existing mission {}. Inspect its map and playbook, use saved results, and continue coordination autonomously. Do not create a replacement mission. Resume existing queued assignments rather than duplicate them.{}",
                 life.mid, paused
