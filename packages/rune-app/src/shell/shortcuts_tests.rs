@@ -758,7 +758,16 @@ fn authentication_required_git_ime_f11_override_and_repeat_consumption() {
     crate::git::fixture_commit_preedit(&mut rt.state, "");
     assert!(!crate::git::is_composing(&rt.state));
 
-    // Repeat consumes matching global shortcuts without executing, and leaves unmatched keys alone.
+    // Repeat consumes non-repeatable lifecycle shortcuts without executing, repeats tab cycling like Solid, and leaves unmatched keys alone.
+    LAST_HANDLED.store(false, Ordering::SeqCst);
+    rt.repeat_key(KeyEvent {
+        key: Key::Command('n'),
+        mods: primary_mods(false),
+    });
+    settle(&mut rt);
+    assert!(LAST_HANDLED.load(Ordering::SeqCst));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 2);
+
     LAST_HANDLED.store(false, Ordering::SeqCst);
     rt.repeat_key(KeyEvent {
         key: Key::Command(']'),
@@ -766,6 +775,12 @@ fn authentication_required_git_ime_f11_override_and_repeat_consumption() {
     });
     settle(&mut rt);
     assert!(LAST_HANDLED.load(Ordering::SeqCst));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+    rt.repeat_key(KeyEvent {
+        key: Key::Command('['),
+        mods: primary_mods(false),
+    });
+    settle(&mut rt);
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
 
     LAST_HANDLED.store(true, Ordering::SeqCst);

@@ -316,6 +316,13 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
             .messages
             .fixture_confirmation(&scope, None);
 
+        // History search scope dropdown blocks global shortcuts.
+        rt.state.transcript_display.timeline.backend = Some(bound.clone());
+        crate::timeline::search::fixture_scope_open(&mut rt.state, true);
+        send_key(&mut rt, Key::Command(']'), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+        crate::timeline::search::fixture_scope_open(&mut rt.state, false);
+
         // Multi-binding override with one unsupported key keeps the valid alternative instead of reverting to default.
         settings::fixture_shortcuts(
             &rt.state,
@@ -326,24 +333,118 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         send_key(&mut rt, Key::Function(8), Mods::default());
         assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
 
-        // Return to the bound project tab and verify session-new shadowing hides Ctrl+N on the + tab button.
+        // Return to the bound project tab; Solid's " " Space override is accepted instead of reverting to default.
         send_key(&mut rt, Key::Command('1'), primary_mods(false));
         assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+        settings::fixture_shortcuts(
+            &rt.state,
+            json!({"instance-next": [{"key": " ", "mod": true}]}),
+        );
+        assert!(
+            settings::with_shortcut_label(&rt.state, "Next", "instance-next").contains("Space")
+        );
+        send_key(&mut rt, Key::Command(']'), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+        send_key(&mut rt, Key::Command(' '), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+
+        // Return to the bound project tab and verify session-new / new-instance shadowing hides overridden tooltips.
+        send_key(&mut rt, Key::Command('1'), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+        settings::fixture_shortcuts(
+            &rt.state,
+            json!({
+                "session-new": [{"key": "n", "mod": true}],
+                "new-instance": [{"key": "f8"}],
+                "close-instance": [{"key": "f8"}]
+            }),
+        );
+        rt.update(|s, _| s.revision += 1);
+        settle(&mut rt);
+        let help_of = |rt: &Runtime<State>, key: &str| {
+            rt.elements()
+                .into_iter()
+                .find(|el| el.key.as_deref() == Some(key))
+                .and_then(|el| el.help)
+                .unwrap()
+        };
+        assert!(
+            !help_of(&rt, "c-tab-0").contains('('),
+            "unexpected shadowed close hint: {}",
+            help_of(&rt, "c-tab-0")
+        );
         settings::fixture_shortcuts(
             &rt.state,
             json!({"session-new": [{"key": "n", "mod": true}]}),
         );
         rt.update(|s, _| s.revision += 1);
         settle(&mut rt);
-        let new_help = rt
-            .elements()
-            .into_iter()
-            .find(|el| el.key.as_deref() == Some("project-tabs-new"))
-            .and_then(|el| el.help)
-            .unwrap();
+        let new_help = help_of(&rt, "project-tabs-new");
         assert!(
             !new_help.contains('('),
             "unexpected shadowed hint: {new_help}"
         );
+
+        // Closing and rebinding a session in the same project preserves the Files tree expanded folders.
+        let mut files = crate::files::Ui::new(
+            bound.clone(),
+            "/repo".into(),
+            rt.state.reads.clone(),
+            rt.state.wake.clone(),
+        );
+        files.tree.select("src".into());
+        files.tree.toggle("src");
+        assert!(files.tree.expanded("src"));
+        assert_eq!(files.tree.selected(), Some("src"));
+        rt.state.files = Some(files);
+        rt.update(|s, tx| {
+            assert!(crate::launcher::close_session(s, tx));
+        });
+        assert!(rt.state.files.as_ref().unwrap().tree.expanded("src"));
+        assert_eq!(
+            rt.state.files.as_ref().unwrap().tree.selected(),
+            Some("src")
+        );
+        crate::files::bind(&mut rt.state, &bound);
+        assert!(rt.state.files.as_ref().unwrap().tree.expanded("src"));
+        assert_eq!(
+            rt.state.files.as_ref().unwrap().tree.selected(),
+            Some("src")
+        );
+
+        // Creating an untitled session whose directory matches the project root under different casing/slashes
+        // omits ?directory= and sends the project's canonical root path in the body.
+        let canonical_project = Project {
+            id: "proj-win".into(),
+            path: r"D:\Repo".into(),
+        };
+        let create_task = tokio::spawn({
+            let backend = http.backend.clone();
+            let project = canonical_project.clone();
+            async move {
+                backend
+                    .create_untitled_session(&project, "d:/repo")
+                    .await
+                    .unwrap()
+            }
+        });
+        let req = http.accept().await;
+        assert!(
+            req.header
+                .starts_with("POST /workspaces/proj-win/instance/api/session "),
+            "unexpected query on root match: {}",
+            req.header
+        );
+        assert!(
+            req.body.contains(r#""directory":"D:\\Repo""#),
+            "expected canonical root path in body: {}",
+            req.body
+        );
+        req.reply(
+            200,
+            json!({"data":{"id":"s-root","title":"","location":{"directory":r"D:\Repo"}}}),
+        )
+        .await;
+        assert_eq!(create_task.await.unwrap().id, "s-root");
     });
 }

@@ -172,6 +172,12 @@ impl Ui {
         self.close_reader();
         self.backend.session.clear();
     }
+    pub fn rebind_session(&mut self, backend: &Backend) {
+        self.close_reader();
+        self.backend = backend.clone();
+        self.reader.rebind_session(backend);
+        self.document.rebind_session(backend);
+    }
     pub fn online(&mut self, online: bool) {
         if !online {
             self.pictures.suspend();

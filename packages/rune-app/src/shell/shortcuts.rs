@@ -37,6 +37,7 @@ fn overlay_open(s: &State) -> bool {
     s.composer.picker.open()
         || s.agent.as_ref().is_some_and(|a| a.picker)
         || crate::git::overlay_open(s)
+        || crate::timeline::search::overlay_open(s)
         || (!s.screen.is_launcher() && s.transcript_display.messages.menu_open())
 }
 
@@ -199,7 +200,15 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     }) else {
         return false;
     };
-    if tx.key_repeat() {
+    if tx.key_repeat()
+        && !matches!(
+            action,
+            Action::InstancePrev
+                | Action::InstanceNext
+                | Action::SessionPrev
+                | Action::SessionNext
+        )
+    {
         return true;
     }
     match action {

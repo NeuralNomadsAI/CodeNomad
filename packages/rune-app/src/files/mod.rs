@@ -61,6 +61,14 @@ pub(crate) fn poll(s: &mut crate::State, now: f64, tx: &mut rune::Tx) -> bool {
 }
 
 pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {
+    if let Some(ui) = s.files.as_mut().filter(|ui| {
+        ui.backend.workspace == backend.workspace
+            && ui.uses_connection(backend)
+            && ui.backend.session.is_empty()
+    }) {
+        ui.rebind_session(backend);
+        return;
+    }
     s.files = s.screen.launcher().and_then(|launcher| {
         let project = launcher
             .project

@@ -373,22 +373,28 @@ impl Backend {
         project: &Project,
         directory: &str,
     ) -> Result<Session> {
+        let same_root = crate::server_path::same(&project.path, directory);
+        let location = if same_root {
+            project.path.as_str()
+        } else {
+            directory
+        };
         let mut request = self.client.post(format!(
             "{}workspaces/{}/instance/api/session",
             self.base, project.id
         ));
-        if !crate::server_path::same(&project.path, directory) {
-            request = request.query(&[("directory", directory)]);
+        if !same_root {
+            request = request.query(&[("directory", location)]);
         }
         let data = read_json(
             request
-                .json(&json!({"location":{"directory":directory}}))
+                .json(&json!({"location":{"directory":location}}))
                 .send()
                 .await?
                 .error_for_status()?,
         )
         .await?;
-        session_at(&data["data"], directory)
+        session_at(&data["data"], location)
     }
 }
 fn server_id(data: &Value) -> Result<String> {

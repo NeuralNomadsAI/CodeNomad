@@ -83,6 +83,21 @@ pub(crate) fn is_composing(s: &State) -> bool {
     is_open(s) && s.transcript_display.timeline.search.query.is_composing()
 }
 
+pub(crate) fn overlay_open(s: &State) -> bool {
+    is_open(s) && s.transcript_display.timeline.search.scope_open
+}
+
+pub(crate) fn cancel_destination(s: &mut State) {
+    state(s).destination = None;
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_scope_open(s: &mut State, open: bool) {
+    let model = state(s);
+    model.open = open;
+    model.scope_open = open;
+}
+
 pub(crate) fn close(s: &mut State) {
     clear_selection(s);
     *state(s) = Search::default();
@@ -205,6 +220,7 @@ pub(crate) fn settle_destination(s: &mut State, tx: &mut Tx) -> bool {
         state(s).destination = None;
         if let Ok((backend, title, slug, mut hit, row)) = destination
             && crate::launcher::can_change_session(s)
+            && !s.screen.launcher().is_some_and(|l| l.pending)
         {
             match hit.landing(s, &row, 0) {
                 Landing::Visible(..) => {
@@ -373,7 +389,7 @@ fn select(s: &mut State, index: usize, tx: &mut Tx) {
 }
 
 fn open_result(s: &mut State, _: &mut Tx) {
-    if !crate::launcher::can_change_session(s) {
+    if !crate::launcher::can_change_session(s) || s.screen.launcher().is_some_and(|l| l.pending) {
         return;
     }
     let model = state(s);

@@ -447,6 +447,22 @@ mod tests {
         assert_eq!(events.len(), 256);
         watch.signals.reconnected();
         assert_eq!(watch.take_workspace_events().0, 3);
+        watch.signals.observe(&json!({
+            "type": "instance.eventStatus",
+            "instanceId": "proj-1",
+            "status": "disconnected"
+        }));
+        assert!(watch.take_workspace_events().2.is_empty());
+        watch.signals.observe(&json!({
+            "type": "instance.eventStatus",
+            "instanceId": "proj-1",
+            "status": "connected"
+        }));
+        let (_, _, events) = watch.take_workspace_events();
+        assert!(matches!(
+            events.front(),
+            Some(WorkspaceEvent::WorktreesChanged { workspace_id }) if workspace_id == "proj-1"
+        ));
     }
 
     #[test]

@@ -56,6 +56,9 @@ impl Reader {
             due: 0.0,
         }
     }
+    pub fn rebind_session(&mut self, backend: &Backend) {
+        self.backend = backend.clone();
+    }
     pub fn target(&self) -> Option<&Target> {
         self.target.as_ref()
     }

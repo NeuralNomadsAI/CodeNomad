@@ -165,6 +165,10 @@ pub fn create_blank(s: &mut State) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
+    crate::timeline::search::cancel_destination(s);
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
     // A create request is never automatically retried. Refresh reconciles a lost response.
     l.job("rune.create_error", async move {
         let directory = match target {
@@ -199,6 +203,10 @@ pub fn create(s: &mut State, _: &mut Tx) {
         return;
     };
     let title = l.title.text.clone();
+    crate::timeline::search::cancel_destination(s);
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
     // A create request is never automatically retried. Refresh reconciles a lost response.
     l.job("rune.create_error", async move {
         let session = b.create_session(&p, &title).await?;
@@ -247,6 +255,10 @@ fn choose_from(
     if l.pending {
         return;
     }
+    crate::timeline::search::cancel_destination(s);
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
     l.selection_ticket = ticket;
     l.job("sessionList.reload.error", async move {
         let mut missing = Vec::new();
@@ -357,10 +369,11 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
         return false;
     }
     s.notifications.supersede_navigation();
+    crate::timeline::search::cancel_destination(s);
     clear_conversation_only(s);
     s.show_launcher();
     crate::git::detach_session(s);
-    list(s, false);
+    crate::workspace::schedule_catalogue(s);
     tx.instant();
     true
 }

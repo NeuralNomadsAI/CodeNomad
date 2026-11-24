@@ -42,27 +42,28 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         .chain(std::iter::once(crate::shell::notifications::history_entry(
             s, touch,
         )));
-    let shadowed: &[&str] = if crate::platform::folder_picker_available()
-        && crate::shell::launcher_replaces_project(s)
-    {
-        &["browse-folder"]
-    } else if !crate::shell::launcher_replaces_project(s)
-        && s.screen.launcher().is_some_and(|l| l.project.is_some())
-    {
-        &["session-new"]
-    } else {
-        &[]
-    };
+    let (new_shadowed, close_shadowed): (&[&str], &[&str]) =
+        if crate::platform::folder_picker_available() && crate::shell::launcher_replaces_project(s)
+        {
+            (&["browse-folder"], &["browse-folder", "new-instance"])
+        } else if !crate::shell::launcher_replaces_project(s)
+            && s.screen.launcher().is_some_and(|l| l.project.is_some())
+        {
+            (&["session-new"], &["session-new", "new-instance"])
+        } else {
+            (&[], &["new-instance"])
+        };
     let new_help = crate::settings::with_shortcut_label_excluding(
         s,
         strings::t("instanceTabs.new.title"),
         "new-instance",
-        shadowed,
+        new_shadowed,
     );
-    let active_close_help = crate::settings::with_shortcut_label(
+    let active_close_help = crate::settings::with_shortcut_label_excluding(
         s,
         strings::t("instanceTab.actions.close.ariaLabel"),
         "close-instance",
+        close_shadowed,
     );
     rune_theme_codenomad::tabs::strip_with_help(
         touch,
