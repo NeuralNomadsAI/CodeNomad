@@ -37,6 +37,8 @@ enum State {
 pub(crate) struct MessageListStream {
     state: State,
     key_buf: Vec<u8>,
+    segments: std::collections::VecDeque<axum::body::Bytes>,
+    segments_bytes: usize,
     out: Vec<u8>,
     item: Vec<u8>,
     changed: bool,
@@ -61,6 +63,8 @@ impl MessageListStream {
         Self {
             state,
             key_buf: Vec::new(),
+            segments: std::collections::VecDeque::new(),
+            segments_bytes: 0,
             out: Vec::new(),
             item: Vec::new(),
             changed: false,
@@ -74,11 +78,15 @@ impl MessageListStream {
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
-        self.out.capacity().saturating_add(self.item.capacity())
+        self.segments_bytes.saturating_add(self.out.capacity()).saturating_add(self.item.capacity())
+    }
+
+    fn total_len(&self) -> usize {
+        self.segments_bytes.saturating_add(self.out.len()).saturating_add(self.item.len())
     }
 
     fn push_out(&mut self, byte: u8) -> Result<(), ()> {
-        let total = self.out.len().saturating_add(self.item.len());
+        let total = self.total_len();
         if total >= OUTPUT_LIMIT {
             return Err(());
         }
@@ -91,7 +99,7 @@ impl MessageListStream {
     }
 
     fn extend_out(&mut self, bytes: &[u8]) -> Result<(), ()> {
-        let total = self.out.len().saturating_add(self.item.len()).saturating_add(bytes.len());
+        let total = self.total_len().saturating_add(bytes.len());
         if total > OUTPUT_LIMIT {
             return Err(());
         }
@@ -103,7 +111,7 @@ impl MessageListStream {
     }
 
     fn push_item(&mut self, byte: u8) -> Result<(), ()> {
-        let total = self.out.len().saturating_add(self.item.len());
+        let total = self.total_len();
         if self.item.len() >= ITEM_LIMIT || total >= OUTPUT_LIMIT {
             return Err(());
         }
@@ -112,6 +120,24 @@ impl MessageListStream {
             self.item.reserve_exact(rem.min(4 * 1024 * 1024).max(1));
         }
         self.item.push(byte);
+        Ok(())
+    }
+
+    fn push_segment(&mut self, mut bytes: Vec<u8>) -> Result<(), ()> {
+        if self.total_len().saturating_add(bytes.len()) > OUTPUT_LIMIT {
+            return Err(());
+        }
+        if !bytes.is_empty() {
+            if !self.out.is_empty() {
+                let mut prefix = std::mem::take(&mut self.out);
+                prefix.shrink_to_fit();
+                self.segments_bytes += prefix.len();
+                self.segments.push_back(axum::body::Bytes::from(prefix));
+            }
+            bytes.shrink_to_fit();
+            self.segments_bytes += bytes.len();
+            self.segments.push_back(axum::body::Bytes::from(bytes));
+        }
         Ok(())
     }
 
@@ -287,19 +313,24 @@ impl MessageListStream {
 
     pub(crate) fn commit_item(&mut self, projected: Vec<u8>, changed: bool, delimiter: u8) -> Result<(), ()> {
         self.changed |= changed;
-        self.extend_out(&projected)?;
+        self.push_segment(projected)?;
         self.push_out(delimiter)?;
         self.state = if delimiter == b',' { State::DataArrayNext } else { State::Passthrough };
         Ok(())
     }
 
-    pub(crate) fn finish(mut self) -> Result<(axum::body::Bytes, bool), ()> {
+    pub(crate) fn finish(mut self) -> Result<(std::collections::VecDeque<axum::body::Bytes>, usize, bool), ()> {
         if !self.item.is_empty() {
             let item = std::mem::take(&mut self.item);
-            self.extend_out(&item)?;
+            self.push_segment(item)?;
         }
-        self.out.shrink_to_fit();
-        Ok((axum::body::Bytes::from(self.out), self.changed))
+        if !self.out.is_empty() {
+            let mut tail = std::mem::take(&mut self.out);
+            tail.shrink_to_fit();
+            self.segments_bytes += tail.len();
+            self.segments.push_back(axum::body::Bytes::from(tail));
+        }
+        Ok((self.segments, self.segments_bytes, self.changed))
     }
 }
 
@@ -533,7 +564,13 @@ mod tests {
                 stream.commit_item(out, changed, pending.delimiter).unwrap();
             }
         }
-        stream.finish().unwrap()
+        let (segments, total, changed) = stream.finish().unwrap();
+        let mut flat = Vec::with_capacity(total);
+        for seg in segments {
+            flat.extend_from_slice(&seg);
+        }
+        assert_eq!(flat.len(), total);
+        (axum::body::Bytes::from(flat), changed)
     }
 
     #[test]

@@ -214,7 +214,19 @@ pub async fn reserve_response_memory(
 }
 
 pub fn permit_body(
-    mut bytes: axum::body::Bytes,
+    bytes: axum::body::Bytes,
+    mem: Option<tokio::sync::OwnedSemaphorePermit>,
+    abort: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
+) -> axum::body::Body {
+    let mut chunks = std::collections::VecDeque::with_capacity(1);
+    if !bytes.is_empty() {
+        chunks.push_back(bytes);
+    }
+    permit_body_chunks(chunks, mem, abort)
+}
+
+pub fn permit_body_chunks(
+    mut chunks: std::collections::VecDeque<axum::body::Bytes>,
     mut mem: Option<tokio::sync::OwnedSemaphorePermit>,
     mut abort: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
 ) -> axum::body::Body {
@@ -226,18 +238,24 @@ pub fn permit_body(
         if std::future::Future::poll(abort.as_mut(), cx).is_ready() {
             done = true;
             drop(mem.take());
-            bytes.clear();
+            chunks.clear();
             return std::task::Poll::Ready(Some(Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 "response stream aborted",
             ))));
         }
-        if bytes.is_empty() {
+        while chunks.front().is_some_and(axum::body::Bytes::is_empty) {
+            chunks.pop_front();
+        }
+        let Some(front) = chunks.front_mut() else {
             done = true;
             drop(mem.take());
             return std::task::Poll::Ready(None);
+        };
+        let chunk = front.split_to(front.len().min(RESPONSE_CHUNK));
+        if front.is_empty() {
+            chunks.pop_front();
         }
-        let chunk = bytes.split_to(bytes.len().min(RESPONSE_CHUNK));
         std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(chunk)))
     }))
 }

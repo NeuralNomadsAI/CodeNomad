@@ -1090,8 +1090,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     held_units = needed;
                 }
             }
-            let (payload, changed) = stream.finish().map_err(|_| interrupted())?;
-            let final_units = crate::shared::response_memory_units(crate::shared::ResponsePool::List, payload.len());
+            let (payload, payload_len, changed) = stream.finish().map_err(|_| interrupted())?;
+            let final_units = crate::shared::response_memory_units(crate::shared::ResponsePool::List, payload_len);
             if final_units > held_units {
                 let extra = tokio::select! {
                     biased;
@@ -1177,7 +1177,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             principal.live()?;
             // Drop the upstream strong ETag only when the JSON body was actually rewritten
             // (RFC 9110: never reuse the original validator for a modified representation).
-            let length = axum::http::HeaderValue::from(payload.len());
+            let length = axum::http::HeaderValue::from(payload_len);
             let abort = crate::shared::stream_abort(
                 app.clone(),
                 id.to_owned(),
@@ -1201,7 +1201,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return builder
                 .extension(NativeBody)
                 .extension(crate::shared::CancelWrite::new(write_abort))
-                .body(crate::shared::permit_body(payload, Some(mem), abort))
+                .body(crate::shared::permit_body_chunks(payload, Some(mem), abort))
                 .map_err(|_| upstream_error());
         }
         drop(slot);

@@ -243,9 +243,9 @@ impl Placement {
         let newest = if self.strict_media {
             crate::opencode::session_record_media_raw_at(app, &self.endpoint, session).await?
         } else if self.media {
-            crate::opencode::session_record_media_at(app, &self.endpoint, session).await?
+            crate::opencode::session_record_media_raw_at(app, &self.endpoint, session).await?
         } else {
-            crate::opencode::session_record_with_timeout_at(app, &self.endpoint, session, Duration::from_secs(15))
+            crate::opencode::session_record_with_timeout_raw_at(app, &self.endpoint, session, Duration::from_secs(15))
                 .await?
         };
         if !self.operation_current(app, id).await {

@@ -52,6 +52,8 @@ struct State {
     /// Deduplicated in-flight `prepare()` task for a given endpoint so concurrent or timed-out
     /// callers share one flight instead of piling tasks behind `SERIAL`.
     preparing: Option<(Arc<crate::opencode::Endpoint>, Arc<Notify>)>,
+    /// Lifecycle shutdown token so detached `prepare()` flights cancel discovery immediately on stop.
+    stop: Option<CancellationToken>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -121,16 +123,16 @@ async fn prepare_inner(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) 
     if !app.native.current(endpoint) {
         return;
     }
-    let features = {
+    let (features, stop) = {
         let state = STATE.lock().unwrap();
         if !state.active
             || (state.current.is_some() && state.prepared.as_ref().is_some_and(|p| Arc::ptr_eq(p, endpoint)))
         {
             return;
         }
-        state.features.clone()
+        (state.features.clone(), state.stop.clone())
     };
-    connection_at(app, Some(endpoint), &features, None).await;
+    connection_at(app, Some(endpoint), &features, stop.as_ref()).await;
     let mut state = STATE.lock().unwrap();
     if state.active && app.native.current(endpoint) && state.current.is_some() {
         state.prepared = Some(endpoint.clone());
@@ -236,63 +238,78 @@ async fn connection_at(
             match known {
                 Some(index) => Ok((index, false)),
                 None => {
-                    let contents: Vec<String> = features.iter().map(|f| content(app, f)).collect();
-                    let (target, chosen, written) = (paths.clone(), features.to_vec(), contents.clone());
-                    let installed = tokio::task::spawn_blocking(move || {
-                        let mut done = Vec::new();
-                        for (feature, lease) in chosen.into_iter().zip(&written) {
-                            let result = provision::payloads(feature)
-                                .and_then(|(b, p)| provision::install(feature, &b, p.as_deref(), &target, lease));
-                            match result {
-                                Ok(i) => done.push(i),
-                                // A failed attempt relinquishes only its own new leases.
-                                Err(e) => {
-                                    provision::dispose(&done);
-                                    return Err(format!(
-                                        "Failed to provision bundled desktop plugins for the current connection: {e}"
-                                    ));
+                    if endpoint.is_some_and(|ep| !app.native.current(ep))
+                        || stop.is_some_and(CancellationToken::is_cancelled)
+                    {
+                        Err("OpenCode connection replaced before plugin installation".into())
+                    } else {
+                        let contents: Vec<String> = features.iter().map(|f| content(app, f)).collect();
+                        let (target, chosen, written) = (paths.clone(), features.to_vec(), contents.clone());
+                        let app_check = app.clone();
+                        let ep_check = endpoint.cloned();
+                        let stop_check = stop.cloned();
+                        let installed = tokio::task::spawn_blocking(move || {
+                            let still_current = || {
+                                !stop_check.as_ref().is_some_and(CancellationToken::is_cancelled)
+                                    && ep_check.as_ref().is_none_or(|ep| app_check.native.current(ep))
+                            };
+                            let mut done = Vec::new();
+                            for (feature, lease) in chosen.into_iter().zip(&written) {
+                                let result = provision::payloads(feature).and_then(|(b, p)| {
+                                    provision::install_checked(feature, &b, p.as_deref(), &target, lease, still_current)
+                                });
+                                match result {
+                                    Ok(i) => done.push(i),
+                                    // A failed attempt relinquishes only its own new leases.
+                                    Err(e) => {
+                                        provision::dispose(&done);
+                                        return Err(format!(
+                                            "Failed to provision bundled desktop plugins for the current connection: {e}"
+                                        ));
+                                    }
                                 }
                             }
-                        }
-                        Ok(done)
-                    })
-                    .await
-                    .unwrap_or_else(|_| Err("Provisioning task failed".into()));
-                    match installed {
-                        Err(err) => Err(err),
-                        Ok(done) => {
-                            let registered = {
-                                let mut state = STATE.lock().unwrap();
-                                if !state.active
-                                    || stop.is_some_and(CancellationToken::is_cancelled)
-                                    || endpoint.is_some_and(|ep| !app.native.current(ep))
-                                {
-                                    Err(done)
-                                } else {
-                                    let readiness = done
-                                        .iter()
-                                        .find(|i| i.feature == "session-pruning")
-                                        .map(|i| Arc::new(Owner::new(i.lease.clone())));
-                                    for i in &done {
-                                        println!("plugin-provision {} {}", i.feature, i.sha256);
+                            Ok(done)
+                        })
+                        .await
+                        .unwrap_or_else(|_| Err("Provisioning task failed".into()));
+                        match installed {
+                            Err(err) => Err(err),
+                            Ok(done) => {
+                                let registered = {
+                                    let mut state = STATE.lock().unwrap();
+                                    if !state.active
+                                        || stop.is_some_and(CancellationToken::is_cancelled)
+                                        || endpoint.is_some_and(|ep| !app.native.current(ep))
+                                    {
+                                        Err(done)
+                                    } else {
+                                        let readiness = done
+                                            .iter()
+                                            .find(|i| i.feature == "session-pruning")
+                                            .map(|i| Arc::new(Owner::new(i.lease.clone())));
+                                        for i in &done {
+                                            println!("plugin-provision {} {}", i.feature, i.sha256);
+                                        }
+                                        let ready = vec![false; done.len()];
+                                        state.installations.push(Installation {
+                                            paths,
+                                            features: done,
+                                            written: contents,
+                                            readiness,
+                                            ready,
+                                            since: tokio::time::Instant::now(),
+                                        });
+                                        Ok((state.installations.len() - 1, true))
                                     }
-                                    let ready = vec![false; done.len()];
-                                    state.installations.push(Installation {
-                                        paths,
-                                        features: done,
-                                        written: contents,
-                                        readiness,
-                                        ready,
-                                        since: tokio::time::Instant::now(),
-                                    });
-                                    Ok((state.installations.len() - 1, true))
-                                }
-                            };
-                            match registered {
-                                Ok(pair) => Ok(pair),
-                                Err(stale_done) => {
-                                    let _ = tokio::task::spawn_blocking(move || provision::dispose(&stale_done)).await;
-                                    Err("OpenCode connection replaced during plugin provisioning".into())
+                                };
+                                match registered {
+                                    Ok(pair) => Ok(pair),
+                                    Err(stale_done) => {
+                                        let _ =
+                                            tokio::task::spawn_blocking(move || provision::dispose(&stale_done)).await;
+                                        Err("OpenCode connection replaced during plugin provisioning".into())
+                                    }
                                 }
                             }
                         }
@@ -373,6 +390,7 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
         state.active = true;
         state.expected = features.len();
         state.features = features.clone();
+        state.stop = Some(stop.clone());
     }
     let app = app.clone();
     Ok(Some(tokio::spawn(async move {
@@ -409,6 +427,14 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
                 _ = CONNECTED.notified() => {
                     let _serial = SERIAL.lock().await;
                     let endpoint = app.native.endpoint();
+                    let already_prepared = endpoint.as_ref().is_some_and(|ep| {
+                        let state = STATE.lock().unwrap();
+                        state.current.is_some()
+                            && state.prepared.as_ref().is_some_and(|prepared| Arc::ptr_eq(prepared, ep))
+                    });
+                    if already_prepared {
+                        continue;
+                    }
                     connection_at(&app, endpoint.as_ref(), &features, Some(&stop)).await;
                     if let Some(endpoint) = endpoint
                         && app.native.current(&endpoint)

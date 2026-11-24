@@ -192,6 +192,7 @@ pub fn legacy_automation(source: &str) -> bool {
 }
 
 /// `lease` is the backend's current lease content (empty when it requests nothing).
+#[cfg(test)]
 pub fn install(
     feature: &'static str,
     bundle: &[u8],
@@ -199,7 +200,21 @@ pub fn install(
     paths: &Paths,
     lease_content: &str,
 ) -> io::Result<Installed> {
+    install_checked(feature, bundle, provider, paths, lease_content, || true)
+}
+
+pub fn install_checked(
+    feature: &'static str,
+    bundle: &[u8],
+    provider: Option<&[u8]>,
+    paths: &Paths,
+    lease_content: &str,
+    still_current: impl Fn() -> bool,
+) -> io::Result<Installed> {
     let fail = |m: String| io::Error::other(m);
+    if !still_current() {
+        return Err(fail("OpenCode connection replaced before plugin installation".into()));
+    }
     if provider.is_some() && feature != "missions" {
         return Err(fail("Local carrier provider requires Missions".into()));
     }
@@ -260,10 +275,16 @@ pub fn install(
         Ok(())
     };
     assert_payloads(&mut runtime_id, &mut provider_id)?;
+    if !still_current() {
+        return Err(fail("OpenCode connection replaced before writing plugin lease".into()));
+    }
     let lease = leases.join(format!("{}.lease", uuid::Uuid::new_v4()));
     artifact::write_replacing(&lease, lease_content.as_bytes())?;
     let published = (|| {
         if existing.as_deref() != Some(&source) {
+            if !still_current() {
+                return Err(fail("OpenCode connection replaced before writing plugin entry".into()));
+            }
             assert_payloads(&mut runtime_id, &mut provider_id)?;
             artifact::write_replacing(&entry, source.as_bytes())?;
         }

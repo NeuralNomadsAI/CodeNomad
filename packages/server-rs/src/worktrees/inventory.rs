@@ -49,7 +49,7 @@ fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
     }
 }
 fn identity(path: &Path) -> Result<String, Error> {
-    files::host_identity(path).map_err(|_| native_error())
+    files::directory_identity(path).map_err(|_| native_error())
 }
 fn small(path: &Path) -> Result<Vec<u8>, Error> {
     use std::io::Read;

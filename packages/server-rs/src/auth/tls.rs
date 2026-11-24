@@ -326,9 +326,12 @@ impl Listener {
                 lifetime.cancel();
             });
         }
-        let _ = tokio::time::timeout(DRAIN, async { while tasks.join_next().await.is_some() {} }).await;
+        let drained = tokio::time::timeout(DRAIN, async { while tasks.join_next().await.is_some() {} }).await;
         tasks.abort_all();
-        Ok(())
+        match drained {
+            Ok(()) => Ok(()),
+            Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "remote server shutdown drain timed out")),
+        }
     }
 }
 
