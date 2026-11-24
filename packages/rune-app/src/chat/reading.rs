@@ -161,8 +161,11 @@ pub(crate) fn jump_user(s: &mut State, previous: bool, tx: &mut Tx) -> bool {
     crate::platform::spawn(async move {
         use codenomad_client::timeline::{Kind, OutlineRevision};
         let revision = OutlineRevision::default();
-        let outline =
-            codenomad_client::runtime::until_closed(&send, backend.read_outline(&revision)).await;
+        let outline = codenomad_client::runtime::until_closed(
+            &send,
+            backend.read_outline_cached(&revision, None, None, |_| ()),
+        )
+        .await;
         let id = if let Some(Ok(outline)) = outline {
             let position = current
                 .as_ref()
@@ -362,6 +365,7 @@ mod tests {
                     body: id.into(),
                     completed: true,
                     parts: Vec::new(),
+                    usage: None,
                 }
                 .into()
             })
