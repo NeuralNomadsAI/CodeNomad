@@ -170,7 +170,7 @@ pub(super) fn preview_button(
         format!("{} · {}", t("filesPanel.viewer"), target.path),
         disabled,
         Some(active),
-        run(s, move |s, _| {
+        run(s, move |s, tx| {
             let was_open = crate::git::has_preview(s);
             let opened = s
                 .git
@@ -182,6 +182,8 @@ pub(super) fn preview_button(
             }
             if opened && let Some(files) = &mut s.files {
                 files.close_reader();
+            } else {
+                crate::git::restore_reading_if_closed(s, was_open, tx);
             }
         }),
     )

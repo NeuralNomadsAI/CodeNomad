@@ -27,6 +27,134 @@ enum Result {
 pub fn navigation_blocked(s: &crate::State) -> bool {
     s.agent.as_ref().is_some_and(Ui::navigation_blocked)
 }
+
+pub(crate) fn focused_field_key(s: &crate::State) -> Option<(String, Option<String>)> {
+    let a = s.agent.as_ref()?;
+    if a.picker && a.search.focused {
+        return Some(("model-search".into(), None));
+    }
+    if let Some(p) = a.permissions.iter().find(|p| p.id == a.selected)
+        && a.reasons.get(&p.id).is_some_and(|e| e.focused)
+    {
+        return Some((
+            format!("reason-{}", p.id),
+            Some(format!("pending-content-{}", p.id)),
+        ));
+    }
+    if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
+        let values = agent_forms::values(f, &a.drafts);
+        let region = format!("pending-content-{}", f.id);
+        for field in f
+            .fields
+            .iter()
+            .filter(|field| field["hidden"] != true && agent_forms::active(field, &values))
+        {
+            let Some(key) = field["key"].as_str() else {
+                continue;
+            };
+            let Some(d) = a.drafts.get(&(f.id.clone(), key.to_string())) else {
+                continue;
+            };
+            if d.edit.focused {
+                return Some((format!("field-{key}"), Some(region)));
+            }
+            if d.custom.focused {
+                return Some((format!("custom-{key}"), Some(region)));
+            }
+        }
+    }
+    None
+}
+pub(crate) fn focused_control_key(
+    s: &crate::State,
+    focused: Option<&str>,
+) -> Option<(String, Option<String>)> {
+    if let Some(field) = focused_field_key(s) {
+        return Some(field);
+    }
+    let key = focused?;
+    let a = s.agent.as_ref()?;
+    if a.picker
+        && a.models
+            .iter()
+            .any(|model| format!("model-{}", model.reference) == key)
+    {
+        return Some((key.to_string(), Some("model-list".into())));
+    }
+    if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
+        let values = agent_forms::values(f, &a.drafts);
+        let region = format!("pending-content-{}", f.id);
+        for field in f
+            .fields
+            .iter()
+            .filter(|field| field["hidden"] != true && agent_forms::active(field, &values))
+        {
+            let Some(field_key) = field["key"].as_str() else {
+                continue;
+            };
+            let matched = match field["type"].as_str() {
+                Some("boolean") => {
+                    key == format!("bool-{field_key}-true")
+                        || key == format!("bool-{field_key}-false")
+                }
+                Some("string") => field["options"].as_array().is_some_and(|options| {
+                    options.iter().take(64).any(|option| {
+                        option["value"]
+                            .as_str()
+                            .is_some_and(|value| format!("option-{field_key}-{value}") == key)
+                    })
+                }),
+                Some("multiselect") => field["options"].as_array().is_some_and(|options| {
+                    options.iter().take(64).any(|option| {
+                        option["value"]
+                            .as_str()
+                            .is_some_and(|value| format!("multi-{field_key}-{value}") == key)
+                    })
+                }),
+                _ => false,
+            };
+            if matched {
+                return Some((key.to_string(), Some(region)));
+            }
+        }
+    }
+    None
+}
+pub(crate) fn focused_field_edit(s: &crate::State) -> Option<&rune::TextEdit> {
+    let a = s.agent.as_ref()?;
+    if a.picker && a.search.focused {
+        return Some(&a.search);
+    }
+    if let Some(p) = a.permissions.iter().find(|p| p.id == a.selected)
+        && let Some(edit) = a.reasons.get(&p.id)
+        && edit.focused
+    {
+        return Some(edit);
+    }
+    if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
+        let values = agent_forms::values(f, &a.drafts);
+        for field in f
+            .fields
+            .iter()
+            .filter(|field| field["hidden"] != true && agent_forms::active(field, &values))
+        {
+            let Some(key) = field["key"].as_str() else {
+                continue;
+            };
+            let Some(d) = a.drafts.get(&(f.id.clone(), key.to_string())) else {
+                continue;
+            };
+            if d.edit.focused {
+                return Some(&d.edit);
+            }
+            if d.custom.focused {
+                return Some(&d.custom);
+            }
+        }
+    }
+    None
+}
+
 pub struct Handle {
     connection: Option<codenomad_client::http::Http>,
     jobs: Sender<Job>,

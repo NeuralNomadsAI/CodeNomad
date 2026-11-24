@@ -6,10 +6,15 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
 };
 
-pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
+pub fn view(
+    s: &State,
+    bounds: rune_theme_codenomad::interruption::SessionLayout,
+    caret_pins: crate::chat::ComposerCaretPins,
+    worktree: Option<El>,
+) -> El {
     let scope = s.input_scope.clone();
     let stop = s.phase == Phase::Streaming && s.agent.is_some();
-    let editor = editor(s, compact);
+    let editor = editor(s, bounds, caret_pins);
     let retry = s.reader.as_ref().is_some_and(|reader| reader.can_retry());
     let mut actions = layout::action_row()
         .children(worktree)
@@ -225,7 +230,11 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
         )
 }
 
-fn editor(s: &State, compact: bool) -> El {
+fn editor(
+    s: &State,
+    bounds: rune_theme_codenomad::interruption::SessionLayout,
+    caret_pins: crate::chat::ComposerCaretPins,
+) -> El {
     let editable = !s.composer.pending();
     #[cfg(not(target_arch = "wasm32"))]
     let input_key = "input";
@@ -235,8 +244,19 @@ fn editor(s: &State, compact: bool) -> El {
         .key(input_key)
         .label(t("rune.prompt"))
         .disabled(!editable);
+    let scroll = s.tool_diff_preferences.composer_scroll.clone();
     if !editable {
-        return layout::composer_field(input, compact, false).key("composer");
+        return layout::composer_field(
+            input,
+            bounds,
+            false,
+            move |y, max| {
+                scroll.set((y, max));
+            },
+            None,
+            None,
+        )
+        .key("composer");
     }
     let scope = s.input_scope.clone();
     let key_scope = scope.clone();
@@ -281,7 +301,25 @@ fn editor(s: &State, compact: bool) -> El {
                 }
             })
     };
-    layout::composer_field(input, compact, s.draft.focused).key("composer")
+    layout::composer_field(
+        input,
+        bounds,
+        s.draft.focused,
+        move |y, max| {
+            scroll.set((y, max));
+        },
+        caret_pins.inner,
+        caret_pins.stack,
+    )
+    .key("composer")
+    .drawn_rect_into(&s.tool_diff_preferences.composer_bounds)
+    .on_layout_tx(|s: &mut State, rect, tx| {
+        if !s.screen.is_launcher() {
+            crate::chat::ToolDiffPreferences::composer_field_layout(s, rect, tx);
+        } else {
+            tx.live_only();
+        }
+    })
 }
 
 pub fn overlays(s: &State, layer: &mut Vec<El>) {

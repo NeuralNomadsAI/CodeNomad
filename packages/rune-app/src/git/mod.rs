@@ -8,13 +8,13 @@ mod preview;
 mod refresh;
 mod request;
 mod view;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) use binding::poll_notices;
 pub(crate) use binding::{
     Binding, PlacementHold, can_place, close_preview, connected, connected_placed,
     diff_preferences, event, files_checkout, has_preview, hold_placement, mode, online, placeable,
     placement, placement_hold, placement_unconfirmed, poll, project_opened, release_placement,
-    set_diff_preferences, set_mode, show,
+    restore_reading_if_closed, set_diff_preferences, set_mode, show,
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};

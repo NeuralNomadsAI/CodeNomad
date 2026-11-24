@@ -7,6 +7,10 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
+    poll_chat_for_window(s, limit, false)
+}
+
+pub(crate) fn poll_chat_for_window(s: &mut State, limit: usize, defer_reader_sync: bool) -> bool {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
     if changed
         && s.reader
@@ -27,7 +31,13 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
     for _ in 0..limit {
         let observation = s.incoming.as_ref().and_then(|r| r.try_recv().ok());
         let content = observation.is_none();
-        let event = observation.or_else(|| s.reader.as_ref().and_then(chat::reader::Reader::next));
+        let event = observation.or_else(|| {
+            let history_bounds = s.tool_diff_preferences.history_bounds.get();
+            let reading = s.transcript_display.reading();
+            s.reader
+                .as_mut()
+                .and_then(|reader| reader.take_next(defer_reader_sync, reading, history_bounds))
+        });
         let Some(event) = event else { break };
         let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
             if s.reader.as_ref().is_some_and(|reader| reader.activity_after(*version)));
@@ -170,7 +180,11 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
             Event::Sync(page) | Event::ReaderSync { page, .. } => {
-                chat::reader::reconcile_bookmark(s, &page.rows);
+                if chat::reader::reconcile_bookmark(s, &page) {
+                    s.revision += 1;
+                    changed = true;
+                    continue;
+                }
                 if let Some(reader) = &mut s.reader {
                     reader.install(page.newer.is_some());
                     reader.sync_activity(stale_activity);

@@ -43,6 +43,10 @@ impl Display {
         self.children.clear();
         self.usage_family.close();
     }
+    pub(super) fn reading(&self) -> &super::reading::Reading {
+        &self.active.reading
+    }
+
     pub(super) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
     }
@@ -59,7 +63,8 @@ impl Display {
                 ..Self::default()
             };
         } else if self.session != session {
-            let next = self.saved.remove(session).unwrap_or_default();
+            let mut next = self.saved.remove(session).unwrap_or_default();
+            next.reading.clear_row_guard();
             self.saved.insert(
                 std::mem::replace(&mut self.session, session.into()),
                 std::mem::replace(&mut self.active, next),

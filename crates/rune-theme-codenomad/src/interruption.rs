@@ -1,18 +1,148 @@
 //! Session dock bounds follow interruption-dock.css and its measured usable minimum.
 use crate::{
-    Length, Space, TextRole,
+    Space, TextRole,
     layout::{self, Layout},
     tokens,
 };
 use rune::{Cx, El, ScrollSpec};
 
-pub fn session_surface(expanded: bool) -> El {
+const DEFAULT_COMPOSER_MIN: f32 = 104.0;
+const MIN_COMPOSER_HEIGHT: f32 = 44.0;
+const MIN_COMPOSER_HEIGHT_RATIO: f32 = 0.08;
+const MAX_COMPOSER_HEIGHT: f32 = 320.0;
+const TRANSCRIPT_RESERVE: f32 = 64.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SessionLayout {
+    pub(crate) scroll_stack: bool,
+    pub(crate) history_min: f32,
+    pub(crate) composer_min: f32,
+    pub(crate) composer_max: f32,
+}
+
+impl SessionLayout {
+    pub fn scrolls_stack(self) -> bool {
+        self.scroll_stack
+    }
+}
+
+impl Default for SessionLayout {
+    fn default() -> Self {
+        Self {
+            scroll_stack: false,
+            history_min: 0.0,
+            composer_min: DEFAULT_COMPOSER_MIN,
+            composer_max: MAX_COMPOSER_HEIGHT,
+        }
+    }
+}
+
+fn finite_positive(value: f32) -> Option<f32> {
+    (value.is_finite() && value > 0.0).then_some(value)
+}
+
+fn finite_non_negative(value: f32) -> Option<f32> {
+    (value.is_finite() && value >= 0.0).then_some(value)
+}
+
+fn composer_minimum_for_viewport(visible: f32) -> f32 {
+    finite_positive(visible).map_or(DEFAULT_COMPOSER_MIN, |h| {
+        MIN_COMPOSER_HEIGHT
+            .max((h * MIN_COMPOSER_HEIGHT_RATIO).floor())
+            .min(MAX_COMPOSER_HEIGHT)
+    })
+}
+
+fn scrolled_history_min(stack_h: f32, touch_handle: f32) -> f32 {
+    TRANSCRIPT_RESERVE.min((stack_h - touch_handle).max(0.0))
+}
+
+fn non_expanded_layout(
+    stack_h: f32,
+    viewport_h: f32,
+    field_space: f32,
+    touch_handle: f32,
+) -> SessionLayout {
+    let reserve = TRANSCRIPT_RESERVE.min(stack_h);
+    let scroll_stack = field_space < MIN_COMPOSER_HEIGHT;
+    let composer_max = (field_space - reserve).clamp(MIN_COMPOSER_HEIGHT, MAX_COMPOSER_HEIGHT);
+    let default_min = composer_minimum_for_viewport(viewport_h);
+    SessionLayout {
+        scroll_stack,
+        history_min: if scroll_stack {
+            scrolled_history_min(stack_h, touch_handle)
+        } else {
+            (field_space - composer_max).clamp(0.0, reserve)
+        },
+        composer_min: default_min.min(composer_max),
+        composer_max,
+    }
+}
+
+pub fn session_layout<S>(
+    cx: &Cx<S>,
+    expanded: bool,
+    has_agent: bool,
+    has_attachment_error: bool,
+    reference_height: Option<f32>,
+) -> SessionLayout {
+    let t = tokens(layout::dark());
+    let control = t.metric("button", "minHeight").px();
+    let stack_h = cx
+        .layout_size("session-stack")
+        .and_then(|size| finite_positive(size[1]));
+    let viewport_h = cx
+        .layout_size("session-shell")
+        .and_then(|size| finite_positive(size[1]))
+        .or(stack_h);
+    if expanded {
+        let composer_h = viewport_h.map_or(MIN_COMPOSER_HEIGHT, composer_minimum_for_viewport);
+        return SessionLayout {
+            scroll_stack: true,
+            history_min: stack_h.map_or(TRANSCRIPT_RESERVE, |h| scrolled_history_min(h, control)),
+            composer_min: composer_h,
+            composer_max: composer_h,
+        };
+    }
+    let Some(stack_h) = stack_h else {
+        return SessionLayout::default();
+    };
+    let gap = t.space(Space::Sm).px();
+    let pad = t.space(Space::Md).px();
+    let agent_h = if has_agent {
+        measured(cx, "agent-panel", control + gap * 2.0)
+    } else {
+        0.0
+    };
+    let error_h = if has_attachment_error {
+        measured(cx, "attachment-error", t.text(TextRole::Body).line_px())
+    } else {
+        0.0
+    };
+    let chrome = match (
+        cx.layout_size("session-composer")
+            .and_then(|size| finite_positive(size[1])),
+        cx.layout_size("composer")
+            .and_then(|size| finite_positive(size[1])),
+    ) {
+        (Some(outer), Some(field)) if outer > field => outer - field,
+        _ => pad * 2.0 + gap + control,
+    };
+    let field_space = stack_h - agent_h - error_h - chrome;
+    let reference_h = reference_height
+        .and_then(finite_positive)
+        .or(viewport_h)
+        .unwrap_or(stack_h);
+    non_expanded_layout(stack_h, reference_h, field_space, control)
+}
+
+pub fn session_surface(layout: SessionLayout) -> El {
     let root = rune::col()
         .key("session-stack")
         .w_full()
         .h_full()
         .reading_surface();
-    if expanded {
+    if layout.scroll_stack {
         root.scroll(ScrollSpec {
             stick_bottom: false,
         })
@@ -20,17 +150,13 @@ pub fn session_surface(expanded: bool) -> El {
         root
     }
 }
-pub fn history(expanded: bool) -> El {
+pub fn history(layout: SessionLayout) -> El {
     let area = rune::col().key("history").w_full().grow(1.0);
-    area.min_h(history_minimum(expanded))
+    area.min_h(finite_non_negative(layout.history_min).unwrap_or(0.0))
         .scroll(ScrollSpec { stick_bottom: true })
 }
-pub(crate) fn history_minimum(expanded: bool) -> f32 {
-    if expanded {
-        tokens(layout::dark()).length(Length::TouchTarget).px()
-    } else {
-        0.0
-    }
+pub(crate) fn history_minimum(reserve: bool) -> f32 {
+    if reserve { TRANSCRIPT_RESERVE } else { 0.0 }
 }
 fn input_minimum() -> f32 {
     let t = tokens(layout::dark());
@@ -46,9 +172,18 @@ pub fn scroll_region() -> El {
         })
 }
 fn measured<S>(cx: &Cx<S>, key: &str, fallback: f32) -> f32 {
-    cx.layout_size(key).map_or(fallback, |size| size[1])
+    cx.layout_size(key)
+        .and_then(|size| finite_non_negative(size[1]))
+        .unwrap_or(fallback)
 }
-pub fn panel<S>(cx: &Cx<S>, picker: bool, pending: bool) -> El {
+pub fn panel<S>(
+    cx: &Cx<S>,
+    picker: bool,
+    pending: bool,
+    multiple_pending: bool,
+    has_error: bool,
+    layout_viewport_height: Option<f32>,
+) -> El {
     let t = tokens(layout::dark());
     let gap = t.space(Space::Sm).px();
     let control = t.metric("button", "minHeight").px();
@@ -62,7 +197,12 @@ pub fn panel<S>(cx: &Cx<S>, picker: bool, pending: bool) -> El {
         return root;
     }
     let header = measured(cx, "agent-actions", control);
-    let navigation = if pending {
+    let error = if has_error {
+        measured(cx, "agent-error", t.text(TextRole::Body).line_px())
+    } else {
+        0.0
+    };
+    let navigation = if pending && multiple_pending {
         measured(cx, "pending-navigation", control)
     } else {
         0.0
@@ -78,17 +218,24 @@ pub fn panel<S>(cx: &Cx<S>, picker: bool, pending: bool) -> El {
         0.0
     };
     let regions = usize::from(picker) + usize::from(pending);
-    let sections = 1 + usize::from(pending) * 3 + usize::from(picker) * 2;
+    let sections = 1
+        + usize::from(has_error)
+        + usize::from(pending) * (2 + usize::from(multiple_pending))
+        + usize::from(picker) * 2;
     let minimum = header
+        + error
         + navigation
         + footer
         + search
         + input_minimum() * regions as f32
         + gap * (sections + 1) as f32;
-    let viewport = measured(cx, "session-stack", minimum);
-    let session = (viewport - measured(cx, "session-header", control)).max(0.0);
+    let session = measured(cx, "session-stack", minimum);
+    let shell = measured(cx, "application-shell", session);
+    let window = layout_viewport_height
+        .filter(|height| height.is_finite() && *height > 0.0)
+        .map_or(shell, |height| height.max(shell));
     // .interruption-dock max-height:min(60%,45vh), with the measured minimum winning.
-    let bound = (session * 0.60).min(viewport * 0.45).max(minimum);
+    let bound = dock_bound(session, window, minimum);
     let natural_fields = if pending {
         measured(cx, "pending-fields", input_minimum())
     } else {
@@ -105,13 +252,138 @@ pub fn panel<S>(cx: &Cx<S>, picker: bool, pending: bool) -> El {
     root
 }
 
+fn dock_bound(session: f32, window: f32, minimum: f32) -> f32 {
+    (session * 0.60).min(window * 0.45).max(minimum)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn dock_bound_tracks_the_shared_css_contract() {
         let css = include_str!("../../../packages/ui/src/styles/components/interruption-dock.css");
         assert!(css.contains("max-height: min(60%, 45vh)"));
         assert!(css.contains("overflow-y: auto"));
         assert!(css.contains("flex-shrink: 0"));
+        let prompt =
+            include_str!("../../../packages/ui/src/components/prompt-input/usePromptViewport.ts");
+        let prompt_input = include_str!("../../../packages/ui/src/components/prompt-input.tsx");
+        let height_state =
+            include_str!("../../../packages/ui/src/components/prompt-input/height-state.ts");
+        assert_eq!(TRANSCRIPT_RESERVE, 64.0);
+        assert_eq!(MIN_COMPOSER_HEIGHT, 44.0);
+        assert_eq!(DEFAULT_COMPOSER_MIN, 104.0);
+        assert!(prompt.contains("const TRANSCRIPT_RESERVE = 64"));
+        assert!(prompt_input.contains("const MIN_PROMPT_FIELD_HEIGHT = 44"));
+        assert!(prompt_input.contains("const DEFAULT_PROMPT_FIELD_HEIGHT = 104"));
+        assert!(height_state.contains("export const MIN_PROMPT_FIELD_HEIGHT_RATIO = 0.08"));
+        assert_eq!(composer_minimum_for_viewport(316.0), 44.0);
+        assert_eq!(composer_minimum_for_viewport(740.0), 59.0);
+        // 45vh uses the layout viewport height (e.g. 844 px) rather than visualViewport (514 px),
+        // matching Solid min(60% of 410 = 246 px, 45% of 844 = 379.8 px) = 246 px.
+        assert!((dock_bound(410.0, 844.0, 120.0) - 246.0).abs() < 0.01);
+        assert!((dock_bound(410.0, 514.0, 120.0) - 231.3).abs() < 0.01);
+        assert_eq!(scrolled_history_min(56.0, 27.0), 29.0);
+        assert_eq!(scrolled_history_min(20.0, 27.0), 0.0);
+        assert_eq!(scrolled_history_min(111.0, 27.0), 64.0);
+        // Solid parity without interruption: fieldSpace < 44 triggers crowding, and empty
+        // composer floor follows minimumForViewport(viewport_h) rather than forcing 104px.
+        assert_eq!(
+            non_expanded_layout(260.0, 500.0, 160.0, 27.0),
+            SessionLayout {
+                scroll_stack: false,
+                history_min: 64.0,
+                composer_min: 44.0,
+                composer_max: 96.0,
+            }
+        );
+        assert_eq!(
+            non_expanded_layout(200.0, 420.0, 90.0, 27.0),
+            SessionLayout {
+                scroll_stack: false,
+                history_min: 46.0,
+                composer_min: 44.0,
+                composer_max: 44.0,
+            }
+        );
+        assert_eq!(
+            non_expanded_layout(240.0, 740.0, 110.0, 27.0),
+            SessionLayout {
+                scroll_stack: false,
+                history_min: 64.0,
+                composer_min: 46.0,
+                composer_max: 46.0,
+            }
+        );
+        assert_eq!(
+            non_expanded_layout(600.0, 740.0, 400.0, 27.0),
+            SessionLayout {
+                scroll_stack: false,
+                history_min: 64.0,
+                composer_min: 59.0,
+                composer_max: 320.0,
+            }
+        );
+        assert_eq!(
+            non_expanded_layout(160.0, 400.0, 44.0, 27.0),
+            SessionLayout {
+                scroll_stack: false,
+                history_min: 0.0,
+                composer_min: 44.0,
+                composer_max: 44.0,
+            }
+        );
+        assert_eq!(
+            non_expanded_layout(140.0, 320.0, 30.0, 27.0),
+            SessionLayout {
+                scroll_stack: true,
+                history_min: 64.0,
+                composer_min: 44.0,
+                composer_max: 44.0,
+            }
+        );
+        assert_eq!(
+            non_expanded_layout(56.0, 160.0, -40.0, 27.0),
+            SessionLayout {
+                scroll_stack: true,
+                history_min: 29.0,
+                composer_min: 44.0,
+                composer_max: 44.0,
+            }
+        );
+        // Visual-viewport keyboard occlusion with larger unoccluded reference height matches Solid.
+        assert_eq!(
+            non_expanded_layout(450.0, 800.0, 350.0, 27.0),
+            SessionLayout {
+                scroll_stack: false,
+                history_min: 64.0,
+                composer_min: 64.0,
+                composer_max: 286.0,
+            }
+        );
+        assert_eq!(
+            non_expanded_layout(180.0, 800.0, 90.0, 27.0),
+            SessionLayout {
+                scroll_stack: false,
+                history_min: 46.0,
+                composer_min: 44.0,
+                composer_max: 44.0,
+            }
+        );
+        assert_eq!(finite_positive(f32::NAN), None);
+        assert_eq!(finite_positive(f32::INFINITY), None);
+        assert_eq!(finite_positive(0.0), None);
+        assert_eq!(finite_non_negative(-1.0), None);
+        assert_eq!(finite_non_negative(0.0), Some(0.0));
+        let dock_layout =
+            include_str!("../../../packages/ui/src/components/interruption-dock-layout.ts");
+        assert!(dock_layout.contains(".form-request-error, .tool-call-permission-error"));
+        // 60% of session wins when tighter than 45% of window.
+        assert!((dock_bound(500.0, 900.0, 120.0) - 300.0).abs() < 1e-3);
+        // 45% of window wins when tighter than 60% of session.
+        assert!((dock_bound(700.0, 800.0, 120.0) - 360.0).abs() < 1e-3);
+        // Measured usable minimum wins over both percentage bounds on short viewports.
+        assert!((dock_bound(200.0, 320.0, 180.0) - 180.0).abs() < 1e-3);
     }
 }

@@ -47,8 +47,15 @@ fn launch(s: &mut crate::State, startup: Startup) {
     let reading = match &startup {
         Startup::Bound(_) => {
             let (mut reader, lane) = super::reader::Reader::open();
+            let width = s.tool_diff_preferences.history_width();
+            let history_bounds = s.tool_diff_preferences.history_bounds.get();
             if let Some(previous) = &s.reader {
-                reader.resume(previous.bookmark(s.transcript_display.reading_mut()));
+                reader.resume_from(
+                    previous,
+                    s.transcript_display.reading_mut(),
+                    width,
+                    history_bounds,
+                );
             }
             s.reader = Some(reader);
             Some(lane)

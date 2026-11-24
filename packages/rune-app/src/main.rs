@@ -201,16 +201,39 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 }
 
 fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let chat = poll_chat(s, 64);
-    shell::notifications::collect(s, workspace::notification_target);
-    if !s.screen.is_launcher()
+    let defer_reader_sync = !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)
-        && let Some(reader) = &mut s.reader
+        && !s.messages.is_empty();
+    let chat = chat::events::poll_chat_for_window(s, 64, defer_reader_sync);
+    shell::notifications::collect(s, workspace::notification_target);
+    if s.reader
+        .as_ref()
+        .is_some_and(chat::reader::Reader::has_deferred_sync)
     {
-        reader.renderer_ready(tx);
+        tx.wake_after(std::time::Duration::ZERO);
     }
-    let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
+    let wait_manual_probe = !s.screen.is_launcher()
+        && !git::has_preview(s)
+        && !files::has_preview(s)
+        && s.reader
+            .as_mut()
+            .is_some_and(chat::reader::Reader::take_manual_probe_wait);
+    if wait_manual_probe {
+        tx.wake_after(std::time::Duration::ZERO);
+    }
+    let restored = !wait_manual_probe
+        && !s.screen.is_launcher()
+        && !git::has_preview(s)
+        && !files::has_preview(s)
+        && (!s
+            .reader
+            .as_ref()
+            .is_some_and(chat::reader::Reader::awaits_history_width)
+            || s.tool_diff_preferences.history_width() > 0.0)
+        && chat::reader::renderer_ready(s, tx);
+    let mut changed = chat | restored | transcript_state::Display::poll(s, chat, now, tx);
+    changed |= chat::ToolDiffPreferences::sync_focused_agent_control(s, tx.focused());
     changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);

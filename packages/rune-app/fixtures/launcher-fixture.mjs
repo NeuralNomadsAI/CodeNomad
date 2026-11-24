@@ -28,8 +28,10 @@ assert(!useTs||solid&&compare,'The TS restart control runs the same Solid build 
 const sameOriginPairing=process.argv.includes('--same-origin-pairing')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webFileWrap=process.argv.includes('--web-file-wrap')
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap,web=process.argv.includes('--web')||webRestore||webMobile||webMissions,root=path.resolve(import.meta.dirname,'../../..')
+const webKeyboard=process.argv.includes('--web-keyboard-viewport')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webKeyboard,web=process.argv.includes('--web')||webRestore||webMobile||webMissions,root=path.resolve(import.meta.dirname,'../../..')
 assert(!webFileWrap||(!webPending&&!webMobile),'File wrap uses the loopback Chromium restoration fixture')
+assert(!webKeyboard||(!webPending&&!webFileWrap&&!webMobile&&!process.argv.includes('--web-restore')),'Keyboard viewport uses its own loopback Chromium fixture mode')
 assert(!webMissions||!webRestore&&!webMobile)
 if(!web)requireTestSupport()
 const gitPanel=process.argv.includes('--git-panel'),gitOutput=gitPanel?process.env.RUNE_TEST_GIT_OUTPUT:undefined
@@ -170,8 +172,10 @@ function add(id,title,directory=project) {
 }
 add('ses_existing','Existing history')
 if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
+if(webKeyboard)for(let i=0;i<36;i++)stores.get('ses_existing').append('assistant',`Keyboard passage ${i} — enough prose to wrap across narrow portrait viewports.`)
 stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
 add('ses_another','Another session',gitPanel&&!placeWorktree?review:project)
+if(webKeyboard)for(let i=0;i<36;i++)stores.get('ses_another').append('assistant',`Question passage ${i} — enough prose to wrap across narrow portrait viewports.`)
 if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
 if(placeWorktree){
   add('ses_child','Child session').parentID='ses_existing'
@@ -184,6 +188,7 @@ if(linked){
   stores.get('ses_linked_next').append('assistant','Linked checkout answer')
 }
 const mobile=webMobile?webLiveFixture({stores,project,streams,compare}):null
+let keyboardPermissionSettled=false,keyboardFormSettled=false
 if(withTools)stores.get('ses_existing').rows[1].content.push({type:'tool',id:'historical-read',name:'read',state:{status:'completed',input:{file:'synthetic.rs'},content:[{type:'text',text:'fn historical() {}'}]}})
 const control=controls?controlsFixture({records,stores,streams,project,stats}):null
 const upstream=createServer(async(req,res)=>{
@@ -198,7 +203,25 @@ const upstream=createServer(async(req,res)=>{
       assert(!(url.pathname.endsWith('/interrupt')||url.pathname.endsWith('/prompt')&&!webAndroid)&&
         !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits one Android prompt only')
       if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
-      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:compare?[fixtureModel]:[]})
+      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:compare?[fixtureModel]:webKeyboard?[{...fixtureModel,enabled:true}]:[]})
+      if(webKeyboard){
+        const keyboardPermission={id:'permission-keyboard',sessionID:'ses_existing',action:'edit',
+          resources:Array.from({length:12},(_,i)=>`/synthetic/keyboard-${i}.rs`),message:'Approve synthetic edit'}
+        const keyboardForm={id:'form-keyboard',sessionID:'ses_another',title:'Synthetic keyboard question',
+          fields:Array.from({length:8},(_,i)=>({key:`q${i}`,type:'string',title:`Question field ${i}`}))}
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_existing/permission')return json({data:keyboardPermissionSettled?[]:[keyboardPermission]})
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_existing/permission/permission-keyboard'){
+          if(keyboardPermissionSettled){res.statusCode=404;return json({_tag:'PermissionNotFoundError',requestID:'permission-keyboard',message:'Permission is no longer pending for this session'})}
+          return json({data:keyboardPermission})
+        }
+        if(req.method==='POST'&&url.pathname==='/api/session/ses_existing/permission/permission-keyboard/reply'){keyboardPermissionSettled=true;return json({data:{}})}
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_another/form')return json({data:keyboardFormSettled?[]:[keyboardForm]})
+        if(req.method==='GET'&&url.pathname==='/api/session/ses_another/form/form-keyboard'){
+          if(keyboardFormSettled){res.statusCode=404;return json({_tag:'FormNotFoundError',id:'form-keyboard',message:'Question is no longer pending for this session'})}
+          return json({data:{...keyboardForm,state:{status:'pending'}}})
+        }
+        if(req.method==='DELETE'&&url.pathname==='/api/session/ses_another/form/form-keyboard'){keyboardFormSettled=true;return json({data:{}})}
+      }
       if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})
     }
     if(control&&await control.route(req,url,raw,json,res))return
@@ -447,13 +470,20 @@ try{
     staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,backend:ts?'ts':'rust',serverBinary:ts?.args[0]??serverBinary,ui:solid||ui,paired}
     const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
     const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
+    if(webKeyboard)args.push('--keyboard-viewport')
     const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
     if(webAndroid){
       androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
       deviceLease=androidLease(androidDevice(androidEnv),uiOrigin)
       await deviceLease.open()
     }
-    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
+    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile||webKeyboard?['ipc']:[])]})
+    if(webKeyboard)client.on('message',action=>{
+      if(action==='reset-keyboard'){
+        keyboardPermissionSettled=false;keyboardFormSettled=false
+        if(client.connected)client.send({ok:true},()=>{})
+      }
+    })
     if(webAndroid)clientClosed=new Promise(resolve=>client.once('close',resolve))
     const handleMobileAction=async action=>{
       try{
