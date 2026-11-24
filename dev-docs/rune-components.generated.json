@@ -21367,9 +21367,9 @@
     "packages/ui/src/components/session/conversation-permissions.tsx": "56f370e8d73450033bce4911127bfb973bd8511fc762b1c36b2207ffb31b47ca",
     "packages/ui/src/components/session/provider-usage-console.tsx": "b37d053d6db4f19171f2854820fd35039c922f51529f6895d8e49d0e0e090f6b",
     "packages/ui/src/components/session/provider-usage-panel.test.ts": "54713aebc02756187dc0b1c1ff7d5637a092167c10054b45a3ef9ddd6c11450b",
-    "packages/ui/src/components/session/provider-usage-panel.tsx": "b06cd9eb5ba897580f3b3dbc8c196c923680c04eebf107c098a367ded9efad31",
-    "packages/ui/src/components/session/provider-usage-state.test.ts": "8de62dde4fb9536b5026d5168b663bbf3f3fc3aa1bb6ab39fcbab466566bcea6",
-    "packages/ui/src/components/session/provider-usage-state.ts": "b87659c28a43ac56cc4772c4d3573f6d00e513271e98940c756f9f3104a0980a",
+    "packages/ui/src/components/session/provider-usage-panel.tsx": "a3ff0ea2b03933d9f7d0f57c4b1ad283eef28c197ed8efb771c62fa75cfe3fad",
+    "packages/ui/src/components/session/provider-usage-state.test.ts": "b49e15bcd42c407eba99d749b6ecb9628e941b7ee713f27aa3787f0366f80f7c",
+    "packages/ui/src/components/session/provider-usage-state.ts": "ebeb19b49f7f3ea5c1d25d4b12f3cc9ea2a13b99b4d6302fd8732869f71e749e",
     "packages/ui/src/components/session/session-bottom-pin-intent.test.ts": "08a96704f41628272efc9782714d7497534b812d2155d1d6fb973a7b9122e814",
     "packages/ui/src/components/session/session-bottom-pin-intent.ts": "438cfc3112b8f3006579e2a684cae5184368e983e1925b54431305fdda43caa4",
     "packages/ui/src/components/session/session-goal-line.tsx": "bb4052e8272378b2ba8e25f2f2550fec70df6ea25ad7f2772820fed60fb914d9",
@@ -25651,7 +25651,7 @@
     {
       "source": "packages/ui/src/components/session/provider-usage-console.tsx",
       "sheet": "target/rune-inventory/components__session__provider-usage-console.json",
-      "sheetSha256": "4ff05926db6da2722d2e8f211f9094063221f440fbeae8aea90ff4738d5e521a",
+      "sheetSha256": "20f1eb5af51c6a4995d97103fdb61dbf97d6e240f311567f6a15585408a86b01",
       "components": [
         {
           "id": "packages/ui/src/components/session/provider-usage-console.tsx#ProviderUsageConsole",
@@ -25664,7 +25664,7 @@
     {
       "source": "packages/ui/src/components/session/provider-usage-panel.tsx",
       "sheet": "target/rune-inventory/components__session__provider-usage-panel.json",
-      "sheetSha256": "17f2396f5fa774705aed3154384e27c32c2adb4257ba419bc83b41c3ba99b77e",
+      "sheetSha256": "a98f2d28c72ff2ed278410cb879783307d4e5d519ad7f20db23f816b7d8e860c",
       "components": [
         {
           "id": "packages/ui/src/components/session/provider-usage-panel.tsx#ProviderUsagePanel",
