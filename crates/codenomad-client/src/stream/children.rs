@@ -1,10 +1,21 @@
 //! Child transcript readers reuse the parent's multiplexed connection.
 use crate::{Receiver, Sender, backend::Backend, history, http::Http};
 use serde_json::Value;
-use std::sync::Mutex;
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
+
+const MAX_INVALIDATED_IDS: usize = 64;
 
 #[derive(Default)]
-pub(crate) struct Children(Mutex<Vec<Watch>>);
+pub(crate) struct Children(Mutex<Watches>);
+
+#[derive(Default)]
+struct Watches {
+    per_child: Vec<Watch>,
+    sessions: Vec<SessionWatch>,
+}
 
 struct Watch {
     workspace: String,
@@ -13,33 +24,98 @@ struct Watch {
     dirty: Sender<()>,
 }
 
+struct SessionWatch {
+    workspace: String,
+    root: String,
+    queue: Arc<Mutex<Invalidations>>,
+    notify: Sender<()>,
+}
+
+#[derive(Default)]
+struct Invalidations {
+    all: bool,
+    ids: HashSet<String>,
+}
+
+#[derive(Clone)]
+pub struct ChildInvalidations(Arc<Mutex<Invalidations>>);
+
+impl ChildInvalidations {
+    pub fn drain(&self) -> (bool, Vec<String>) {
+        let Ok(mut guard) = self.0.lock() else {
+            return (false, Vec::new());
+        };
+        let all = std::mem::replace(&mut guard.all, false);
+        let ids = guard.ids.drain().collect();
+        (all, ids)
+    }
+}
+
 impl Children {
     pub(crate) fn invalidate(&self, b: &Backend, child: Option<&str>) {
         if let Ok(mut watches) = self.0.lock() {
-            watches.retain(|watch| !watch.dirty.is_closed());
-            for watch in watches.iter().filter(|watch| {
+            watches.per_child.retain(|watch| !watch.dirty.is_closed());
+            for watch in watches.per_child.iter().filter(|watch| {
                 watch.workspace == b.workspace
                     && watch.root == b.session
                     && child.is_none_or(|id| watch.child == id)
             }) {
                 let _ = watch.dirty.try_send(());
             }
+            watches.sessions.retain(|watch| !watch.notify.is_closed());
+            for watch in watches
+                .sessions
+                .iter()
+                .filter(|watch| watch.workspace == b.workspace && watch.root == b.session)
+            {
+                if let Ok(mut queue) = watch.queue.lock() {
+                    match child {
+                        None => {
+                            queue.all = true;
+                            queue.ids.clear();
+                        }
+                        Some(_) if queue.all => {}
+                        Some(_) if queue.ids.len() >= MAX_INVALIDATED_IDS => {
+                            queue.all = true;
+                            queue.ids.clear();
+                        }
+                        Some(id) => {
+                            queue.ids.insert(id.to_owned());
+                        }
+                    }
+                }
+                let _ = watch.notify.try_send(());
+            }
         }
     }
 }
 
 impl Backend {
+    pub fn watch_children(&self) -> Option<(ChildInvalidations, Receiver<()>)> {
+        let mut watches = self.client.children().0.lock().ok()?;
+        watches.sessions.retain(|watch| !watch.notify.is_closed());
+        let queue = Arc::new(Mutex::new(Invalidations::default()));
+        let (notify, rx) = crate::bounded(1);
+        watches.sessions.push(SessionWatch {
+            workspace: self.workspace.clone(),
+            root: self.session.clone(),
+            queue: queue.clone(),
+            notify,
+        });
+        Some((ChildInvalidations(queue), rx))
+    }
+
     pub fn watch_child(&self, child: &str) -> Option<Receiver<()>> {
         if child == self.session || !history::valid_id(child) {
             return None;
         }
         let mut watches = self.client.children().0.lock().ok()?;
-        watches.retain(|watch| !watch.dirty.is_closed());
-        if watches.len() >= 32 {
+        watches.per_child.retain(|watch| !watch.dirty.is_closed());
+        if watches.per_child.len() >= 32 {
             return None;
         }
         let (dirty, rx) = crate::bounded(1);
-        watches.push(Watch {
+        watches.per_child.push(Watch {
             workspace: self.workspace.clone(),
             root: self.session.clone(),
             child: child.into(),

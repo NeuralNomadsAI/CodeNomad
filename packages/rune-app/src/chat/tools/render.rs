@@ -150,14 +150,15 @@ fn render_body(
     query: Option<Query<'_>>,
 ) -> El {
     let active = query.is_some_and(|q| q.active);
+    let nested = message.starts_with("child:");
     let expanded = active
         || s.transcript_display.expanded(
             key,
-            tool.status == "error"
-                || settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) == "expanded",
+            !nested
+                && (tool.status == "error"
+                    || settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) == "expanded"),
         );
     let is_task = task::is_task(tool);
-    let nested = message.starts_with("child:");
     let delivery = is_task.then(|| task::delivery(s, message, tool)).flatten();
     let task_status = delivery.map(|d| d.status);
     let status = task_status
@@ -206,6 +207,12 @@ fn render_body(
         && result_list.is_none()
         && !rich_diff
         && !matches!(tool.name.as_str(), "question" | "todowrite");
+    let status_el = text(t(status)).text_role(TextRole::Label);
+    let status_el = if expanded && is_task {
+        task::observe_status(s, message, key, tool, status_el)
+    } else {
+        status_el
+    };
     let mut header = layout::action_row()
         .child(
             layout::button(
@@ -225,7 +232,7 @@ fn render_body(
             .key(format!("toggle-{key}"))
             .expanded(expanded),
         )
-        .child(text(t(status)).text_role(TextRole::Label));
+        .child(status_el);
     let timing = if let Some(override_status) = task_status {
         if override_status.running {
             tool.started.map(|start| (start, None))
@@ -439,7 +446,7 @@ fn render_body(
     let block = block
         .children(media::tool(s, key, &tool.pictures))
         .children(diagnostics());
-    if is_task {
+    if is_task && !nested {
         task::observe(s, message, key, tool, block)
     } else {
         block

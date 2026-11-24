@@ -33,7 +33,7 @@ fn report_row(id: &str, at: u64, state: &str, text: &str) -> crate::Message {
     .unwrap()
 }
 
-fn child_steps_page_from(
+pub(super) fn child_steps_page_from(
     start_id: usize,
     count: usize,
     older: bool,
@@ -62,7 +62,7 @@ fn child_steps_page_from(
     .unwrap()
 }
 
-fn child_steps_page(count: usize, older: bool, payload: &str) -> history::Page {
+pub(super) fn child_steps_page(count: usize, older: bool, payload: &str) -> history::Page {
     child_steps_page_from(0, count, older, payload)
 }
 
@@ -371,8 +371,28 @@ fn nested_subagent_stops_duration_from_child_snapshot_report() {
     assert!(
         tree.contains("Inner agent")
             && tree.contains("\"1m 04s\"")
+            && !tree.contains("grandchild.rs"),
+        "nested subagent cards must start collapsed by default: {tree}"
+    );
+    let outer_key = super::super::tool_key("parent", "outer");
+    let inner_key = super::super::tool_key(
+        &format!("{outer_key}-task-steps-child:child_a:a_msg_1"),
+        "inner",
+    );
+    let (ix, iy) = rt
+        .find(&format!("toggle-{inner_key}"))
+        .expect("nested subagent toggle");
+    rt.pointer_down(ix, iy);
+    rt.pointer_up(ix, iy);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.contains("Inner agent")
+            && tree.contains("\"1m 04s\"")
             && tree.contains("grandchild.rs"),
-        "{tree}"
+        "expanding nested subagent must reveal grandchild steps: {tree}"
     );
 
     // Even when a nested report body exceeds the 2 MiB body budget, its terminal state and timestamp still stop the clock.
@@ -523,473 +543,6 @@ fn child_step_truncation_reports_proven_limits_and_preserves_legacy_on_empty_pag
 }
 
 #[test]
-fn detached_reader_keeps_its_step_anchored_when_newer_steps_arrive() {
-    let parent = history::decode_message(&json!({
-        "id": "parent", "type": "assistant", "time": {"completed": 1}, "content": [{
-            "type": "tool", "id": "launch", "name": "subagent", "state": {
-                "status": "completed",
-                "metadata": {"sessionID": "child", "status": "running"}
-            }
-        }]
-    }))
-    .unwrap();
-    let mut state = init();
-    state.phase = Phase::Ready;
-    crate::settings::fixture_transcript(
-        &mut state,
-        json!({"toolCallExpansionDefaults": {"tools": {"task": "expanded", "read": "collapsed"}}}),
-    );
-    state.messages.push(parent.into());
-    let mut rt = Runtime::new(
-        state,
-        |s, cx| with_locale("en", || crate::view(s, cx)),
-        (1160.0, 900.0),
-        Env::new(false, 1.0),
-    );
-    let task_key = super::super::tool_key("parent", "launch");
-    let step_key = format!("{task_key}-task-steps");
-    let scroll_key = format!("{step_key}-scroll");
-    let step0_key = super::super::tool_key(&format!("{step_key}-child:child:child_msg"), "step_0");
-    let mut lease = None;
-    rt.update(|s, _| {
-        lease = Some(
-            s.transcript_display
-                .children
-                .install("child", child_steps_page(30, false, "ok")),
-        );
-        assert!(crate::chat::events::poll_chat(s, 1));
-    });
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    // While following bottom, anchors are inactive.
-    assert!(
-        rt.state
-            .transcript_display
-            .task_anchors(&step_key)
-            .is_empty()
-    );
-
-    // Detach to the top of the steps viewport so step 0 is anchored.
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    let before_y = rt
-        .elements()
-        .into_iter()
-        .find(|e| !e.exiting && e.key.as_deref() == Some(step0_key.as_str()))
-        .expect("step 0 mounted at top")
-        .rect[1];
-    assert_eq!(
-        rt.state
-            .transcript_display
-            .task_anchors(&step_key)
-            .first()
-            .map(String::as_str),
-        Some("child_msg:step_0")
-    );
-
-    // Append 5 newer steps past INITIAL_STEPS (30): the window must not evict step 0.
-    rt.update(|s, _| {
-        lease = Some(
-            s.transcript_display
-                .children
-                .install("child", child_steps_page(35, false, "ok")),
-        );
-        assert!(crate::chat::events::poll_chat(s, 2));
-    });
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    let after = rt
-        .elements()
-        .into_iter()
-        .find(|e| !e.exiting && e.key.as_deref() == Some(step0_key.as_str()))
-        .expect("step 0 must remain mounted while detached");
-    assert!((before_y - after.rect[1]).abs() < 1.0);
-    assert!(rt.find(&format!("reveal-{step_key}")).is_none());
-
-    // Returning to the bottom immediately trims back to 30 without waiting for a new page.
-    rt.update(|_, tx| tx.scroll_to_bottom_instant(scroll_key.clone()));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    assert!(
-        rt.state
-            .transcript_display
-            .task_anchors(&step_key)
-            .is_empty()
-    );
-    assert!(
-        rt.elements()
-            .into_iter()
-            .all(|e| e.exiting || e.key.as_deref() != Some(step0_key.as_str())),
-        "returning to bottom must evict step 0 immediately"
-    );
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    assert!(rt.accessibility_json().to_string().contains("Show 5 more"));
-
-    // Mid-list detach when "Show more" appears must keep the read row stable.
-    rt.update(|_, tx| tx.scroll_to_bottom_instant(scroll_key.clone()));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|s, _| {
-        lease = Some(
-            s.transcript_display
-                .children
-                .install("child", child_steps_page(30, false, "ok")),
-        );
-        assert!(crate::chat::events::poll_chat(s, 3));
-    });
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 360.0));
-    for _ in 0..30 {
-        rt.frame(1.0 / 60.0);
-    }
-    let read_anchor = rt
-        .state
-        .transcript_display
-        .task_anchors(&step_key)
-        .first()
-        .cloned()
-        .expect("detached mid-list anchor");
-    let read_id = read_anchor.split_once(':').unwrap().1;
-    assert_ne!(read_id, "step_0", "must detach past index 5: {read_anchor}");
-    let read_key = super::super::tool_key(&format!("{step_key}-child:child:child_msg"), read_id);
-    let mid_before_y = rt
-        .elements()
-        .into_iter()
-        .find(|e| !e.exiting && e.key.as_deref() == Some(read_key.as_str()))
-        .expect("mid-list row mounted")
-        .rect[1];
-    rt.update(|s, _| {
-        lease = Some(
-            s.transcript_display
-                .children
-                .install("child", child_steps_page(35, false, "ok")),
-        );
-        assert!(crate::chat::events::poll_chat(s, 4));
-    });
-    for _ in 0..30 {
-        rt.frame(1.0 / 60.0);
-    }
-    let mid_after_y = rt
-        .elements()
-        .into_iter()
-        .find(|e| !e.exiting && e.key.as_deref() == Some(read_key.as_str()))
-        .expect("mid-list row remains mounted")
-        .rect[1];
-    assert!(
-        (mid_before_y - mid_after_y).abs() < 1.0,
-        "appearing reveal shifted row {read_anchor}: before={mid_before_y} after={mid_after_y}"
-    );
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    assert!(rt.accessibility_json().to_string().contains("Show 5 more"));
-    let _ = lease;
-}
-
-#[test]
-fn reveal_uses_effective_start_and_survives_anchor_eviction() {
-    let parent = history::decode_message(&json!({
-        "id": "parent", "type": "assistant", "time": {"completed": 1}, "content": [{
-            "type": "tool", "id": "launch", "name": "subagent", "state": {
-                "status": "completed",
-                "metadata": {"sessionID": "child", "status": "running"}
-            }
-        }]
-    }))
-    .unwrap();
-    let mut state = init();
-    state.phase = Phase::Ready;
-    crate::settings::fixture_transcript(
-        &mut state,
-        json!({"toolCallExpansionDefaults": {"tools": {"task": "expanded", "read": "collapsed"}}}),
-    );
-    state.messages.push(parent.into());
-    let mut rt = Runtime::new(
-        state,
-        |s, cx| with_locale("en", || crate::view(s, cx)),
-        (1160.0, 900.0),
-        Env::new(false, 1.0),
-    );
-    let task_key = super::super::tool_key("parent", "launch");
-    let step_key = format!("{task_key}-task-steps");
-    let scroll_key = format!("{step_key}-scroll");
-    let mut lease = None;
-
-    // 80 steps mounted at 50..80; detach to top (anchor at step_50), then grow to 200 steps.
-    // "Show 50 more" must reveal 0..50 on the first click even though desired is 170.
-    rt.update(|s, _| {
-        lease = Some(
-            s.transcript_display
-                .children
-                .install("child", child_steps_page(80, false, "ok")),
-        );
-        assert!(crate::chat::events::poll_chat(s, 1));
-    });
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    assert_eq!(
-        rt.state
-            .transcript_display
-            .task_anchors(&step_key)
-            .first()
-            .map(String::as_str),
-        Some("child_msg:step_50")
-    );
-    rt.update(|s, _| {
-        lease = Some(
-            s.transcript_display
-                .children
-                .install("child", child_steps_page(200, false, "ok")),
-        );
-        assert!(crate::chat::events::poll_chat(s, 2));
-    });
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    assert!(rt.accessibility_json().to_string().contains("Show 50 more"));
-    let (x, y) = rt
-        .find(&format!("reveal-{step_key}"))
-        .expect("reveal button");
-    rt.pointer_down(x, y);
-    rt.pointer_up(x, y);
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    let step0_key = super::super::tool_key(&format!("{step_key}-child:child:child_msg"), "step_0");
-    assert!(
-        rt.elements()
-            .into_iter()
-            .any(|e| !e.exiting && e.key.as_deref() == Some(step0_key.as_str())),
-        "first click must actually mount step_0"
-    );
-    assert!(
-        rt.find(&format!("reveal-{step_key}")).is_none(),
-        "first click must reveal all 50 promised steps"
-    );
-
-    // 190 steps -> reveal 100 -> read at step_60 -> 71 newer steps evict step_60 at the 200-step cap.
-    // The next visible row (step_61) must stay mounted in place with no scroll jump.
-    rt.update(|_, tx| tx.scroll_to_bottom_instant(scroll_key.clone()));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|s, _| {
-        s.transcript_display.bind("srv", "ws", "other");
-        s.transcript_display.bind("srv", "ws", "fresh");
-        lease = Some(
-            s.transcript_display
-                .children
-                .install("child", child_steps_page(190, false, "ok")),
-        );
-        assert!(crate::chat::events::poll_chat(s, 3));
-    });
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    let (rx, ry) = rt
-        .find(&format!("reveal-{step_key}"))
-        .expect("reveal 100 button");
-    rt.pointer_down(rx, ry);
-    rt.pointer_up(rx, ry);
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..30 {
-        rt.frame(1.0 / 60.0);
-    }
-    assert_eq!(
-        rt.state
-            .transcript_display
-            .task_anchors(&step_key)
-            .first()
-            .map(String::as_str),
-        Some("child_msg:step_60")
-    );
-    let step61_key =
-        super::super::tool_key(&format!("{step_key}-child:child:child_msg"), "step_61");
-    assert!(
-        rt.elements()
-            .into_iter()
-            .any(|e| !e.exiting && e.key.as_deref() == Some(step61_key.as_str())),
-        "step_61 visible before eviction"
-    );
-    rt.update(|s, _| {
-        lease = Some(
-            s.transcript_display
-                .children
-                .install("child", child_steps_page_from(61, 200, false, "ok")),
-        );
-        assert!(crate::chat::events::poll_chat(s, 4));
-    });
-    for _ in 0..30 {
-        rt.frame(1.0 / 60.0);
-    }
-    assert!(
-        rt.elements()
-            .into_iter()
-            .any(|e| !e.exiting && e.key.as_deref() == Some(step61_key.as_str())),
-        "surviving visible step_61 must stay mounted immediately without scrolling"
-    );
-    assert!(rt.find(&format!("reveal-{step_key}")).is_none());
-
-    // A focused step stays mounted even after returning to bottom when newer steps arrive.
-    rt.update(|_, tx| tx.scroll_to_bottom_instant(scroll_key.clone()));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|s, _| {
-        s.transcript_display.bind("srv", "ws", "focus-a");
-        s.transcript_display.bind("srv", "ws", "focus-b");
-        lease = Some(
-            s.transcript_display
-                .children
-                .install("child", child_steps_page(30, false, "ok")),
-        );
-        assert!(crate::chat::events::poll_chat(s, 5));
-    });
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    let step0_toggle = format!("toggle-{step0_key}");
-    rt.update(|_, tx| tx.focus(step0_toggle.clone(), true));
-    rt.frame(1.0 / 60.0);
-    rt.update(|s, tx| {
-        Display::poll(s, false, 0.1, tx);
-        tx.scroll_to_bottom_instant(scroll_key.clone());
-    });
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|s, _| {
-        lease = Some(
-            s.transcript_display
-                .children
-                .install("child", child_steps_page(35, false, "ok")),
-        );
-        assert!(crate::chat::events::poll_chat(s, 6));
-    });
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    assert!(
-        rt.elements()
-            .into_iter()
-            .any(|e| !e.exiting && e.focused && e.key.as_deref() == Some(step0_toggle.as_str())),
-        "focused step_0 control must stay mounted and focused after returning to bottom"
-    );
-    assert!(rt.find(&format!("reveal-{step_key}")).is_none());
-
-    // Descendant copy and show-input keys match their row, and active selection protects the row at bottom.
-    assert!(super::key_matches_row(
-        &format!("copy-{step0_key}-output"),
-        &step0_key
-    ));
-    assert!(super::key_matches_row(
-        &format!("toggle-{step0_key}-tool_input"),
-        &step0_key
-    ));
-    rt.update(|s, tx| {
-        tx.focus(format!("toggle-{task_key}"), true);
-        s.transcript_display
-            .set_task_selected(&step_key, vec![step0_key.clone()]);
-        s.revision += 1;
-    });
-    rt.frame(1.0 / 60.0);
-    rt.update(|s, tx| {
-        Display::poll(s, false, 0.2, tx);
-        tx.scroll_to_bottom_instant(scroll_key.clone());
-    });
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|s, _| {
-        lease = Some(
-            s.transcript_display
-                .children
-                .install("child", child_steps_page(40, false, "ok")),
-        );
-        assert!(crate::chat::events::poll_chat(s, 7));
-    });
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..8 {
-        rt.frame(1.0 / 60.0);
-    }
-    assert!(
-        rt.elements()
-            .into_iter()
-            .any(|e| !e.exiting && e.key.as_deref() == Some(step0_key.as_str())),
-        "selected step_0 must stay mounted even at bottom"
-    );
-
-    // Collapsing the task card clears its stored step anchor.
-    let (tx, ty) = rt.find(&format!("toggle-{task_key}")).expect("task toggle");
-    rt.pointer_down(tx, ty);
-    rt.pointer_up(tx, ty);
-    for _ in 0..4 {
-        rt.frame(1.0 / 60.0);
-    }
-    assert!(
-        rt.state
-            .transcript_display
-            .task_anchors(&step_key)
-            .is_empty()
-    );
-
-    // Disambiguated legacy step identities stay stable when an earlier duplicate slides past 200.
-    let mut legacy = vec![json!({"id": "dup", "tool": "read"})];
-    for _ in 0..199 {
-        legacy.push(json!({"tool": "read"}));
-    }
-    let dup_key_before = super::legacy_identities(&legacy, 0)[0].clone();
-    legacy.push(json!({"id": "dup", "tool": "read"}));
-    let ids_after = super::legacy_identities(&legacy, 1);
-    assert_ne!(
-        ids_after.last().unwrap(),
-        &dup_key_before,
-        "second duplicate must not inherit the evicted first duplicate's key"
-    );
-    assert!(ids_after[0].starts_with("idx:1"));
-    let _ = lease;
-}
-
-#[test]
 fn mutual_child_references_non_transitive_times_untimed_reports_and_late_session_id() {
     // 1. Mutual references between two direct root children must never recurse or reuse cross-parent snapshots.
     let mut state = init();
@@ -1036,9 +589,51 @@ fn mutual_child_references_non_transitive_times_untimed_reports_and_late_session
     for _ in 0..4 {
         rt.frame(1.0 / 60.0);
     }
+    assert!(
+        rt.state
+            .transcript_display
+            .children
+            .snapshot(Some("child_a"), "child_b")
+            .is_none()
+            && rt
+                .state
+                .transcript_display
+                .children
+                .snapshot(Some("child_b"), "child_a")
+                .is_none(),
+        "root snapshots must never be reused under another parent"
+    );
+    rt.update(|s, _| {
+        leases.push(
+            s.transcript_display
+                .children
+                .install_refused(Some("child_a"), "child_b"),
+        );
+        crate::chat::events::poll_chat(s, 2);
+    });
+    assert!(
+        rt.state
+            .transcript_display
+            .children
+            .is_refused(Some("child_a"), "child_b")
+            && rt.state.transcript_display.children.in_flight_count() == 0
+            && rt
+                .state
+                .transcript_display
+                .children
+                .snapshot(Some("child_a"), "child_b")
+                .is_none(),
+        "refused cross-parent edge must release its slot and store no snapshot"
+    );
 
-    // 2. Non-transitive timestamps [30, None, 10] never panic, and missing/zero-timestamp terminal reports settle status without fabricating duration.
+    // 2. Non-transitive timestamps, unrelated-tool isolation, and nested same-timestamp native order.
     let mut s2 = init();
+    let unrelated_tool = history::decode_message(&json!({
+        "id": "m_other", "type": "assistant", "time": {"created": 30_000},
+        "content": [{"type": "tool", "id": "other_read", "name": "read", "time": {"ran": 30_000},
+            "state": {"status": "completed", "input": {"filePath": "a.rs"}}}]
+    }))
+    .unwrap();
     let untimed_launch = history::decode_message(&json!({
         "id": "m_mid", "type": "assistant", "time": {},
         "content": [{"type": "tool", "id": "call", "name": "subagent", "state": {
@@ -1058,7 +653,7 @@ fn mutual_child_references_non_transitive_times_untimed_reports_and_late_session
     .unwrap();
     s2.messages = vec![
         launch("m_30", 30_000, 30_100).into(),
-        untimed_launch.into(),
+        untimed_launch.clone().into(),
         launch("m_10", 10_000, 10_100).into(),
         missing_ts_report.into(),
         zero_ts_report.into(),
@@ -1070,8 +665,53 @@ fn mutual_child_references_non_transitive_times_untimed_reports_and_late_session
         let d = super::delivery(&s2, msg_id, tool).expect("delivery");
         assert!(!d.status.running && d.status.ended.is_none());
     }
+    // Unrelated tool at t=30_000 must not pollute an untimed launch whose report is at t=20_000.
+    let mut s_iso = init();
+    s_iso.messages = vec![
+        unrelated_tool.into(),
+        untimed_launch.into(),
+        report_row("r_20", 20_000, "completed", "Isolated result").into(),
+    ];
+    let crate::content::Part::Tool(iso_tool) = &s_iso.messages[1].parts[0] else {
+        panic!("expected tool");
+    };
+    let d_iso = super::delivery(&s_iso, "m_mid", iso_tool).expect("isolated delivery");
+    assert!(!d_iso.status.running && d_iso.body == Some("Isolated result"));
+    // Two nested reports with identical timestamps between the same steps preserve native order.
+    let mut s_nested = init();
+    let nested_page = history::decode(json!({
+        "status": "window", "latest": true, "messages": [
+            {"id": "n1", "type": "assistant", "time": {"created": 100}, "content": [
+                {"type": "tool", "id": "sub", "name": "subagent", "time": {"ran": 100}, "state": {
+                    "status": "completed", "metadata": {"sessionId": "grand", "status": "running"}
+                }}
+            ]},
+            {"id": "z_first", "type": "synthetic", "time": {"created": 200},
+                "text": "<subagent sessionID=\"grand\" state=\"running\">\nFirst\n</subagent>"},
+            {"id": "a_second", "type": "synthetic", "time": {"created": 200},
+                "text": "<subagent sessionID=\"grand\" state=\"completed\">\nSecond wins\n</subagent>"}
+        ]
+    }))
+    .unwrap();
+    let _nested_lease = s_nested
+        .transcript_display
+        .children
+        .install("parent_child", nested_page);
+    crate::chat::events::poll_chat(&mut s_nested, 1);
+    let nested_tool = s_nested
+        .transcript_display
+        .children
+        .steps(None, "parent_child")[0]
+        .1
+        .clone();
+    let d_nested = super::delivery(&s_nested, "child:parent_child:n1", &nested_tool)
+        .expect("nested same-ts delivery");
+    assert!(
+        !d_nested.status.running && d_nested.body == Some("Second wins"),
+        "later native report must beat earlier report with same timestamp even if its row id sorts earlier"
+    );
 
-    // 3. Late sessionID on an already-visible card triggers demand with no scroll and keeps focus on the card toggle, including across completion.
+    // 3. Late and changed sessionID (A -> B) on an already-visible card trigger demand without scroll and preserve focus.
     let start = 5_000_000_u64;
     let mut s3 = init();
     s3.phase = Phase::Ready;
@@ -1134,10 +774,35 @@ fn mutual_child_references_non_transitive_times_untimed_reports_and_late_session
         "focus must remain on task toggle after sessionId arrives"
     );
     rt3.update(|s, _| {
+        s.messages[0] = history::decode_message(&json!({
+            "id": "late", "type": "assistant", "time": {"created": start},
+            "content": [{"type": "tool", "id": "c1", "name": "subagent", "time": {"ran": start, "completed": start + 100},
+                "state": {"status": "completed", "input": {"description": "Late child"}, "metadata": {"sessionId": "child_next", "status": "running"}}}]
+        }))
+        .unwrap()
+        .into();
+        s.revision += 1;
+    });
+    rt3.frame(0.07);
+    rt3.frame(0.075);
+    assert!(
+        rt3.state
+            .transcript_display
+            .children
+            .has_demand(None, "child_next"),
+        "replacing sessionId A -> B must trigger demand for child_next without scrolling"
+    );
+    assert!(
+        rt3.elements()
+            .into_iter()
+            .any(|e| !e.exiting && e.focused && e.key.as_deref() == Some(late_toggle.as_str())),
+        "focus must remain on task toggle when sessionId changes from A to B"
+    );
+    rt3.update(|s, _| {
         s.messages.push(
             history::decode_message(&json!({
                 "id": "late_done", "type": "synthetic", "time": {"created": start + 8_000},
-                "text": "<subagent sessionID=\"child_late\" state=\"completed\">\nDone\n</subagent>"
+                "text": "<subagent sessionID=\"child_next\" state=\"completed\">\nDone\n</subagent>"
             }))
             .unwrap()
             .into(),
@@ -1156,4 +821,107 @@ fn mutual_child_references_non_transitive_times_untimed_reports_and_late_session
     let null_heavy = json!(vec![serde_json::Value::Null; 100_000]);
     assert!(super::json_bytes(&null_heavy) > super::STEP_BYTES);
     let _ = leases;
+}
+
+#[test]
+fn child_queue_promotes_all_visible_demands_preserves_lru_cache_and_allows_deep_nesting() {
+    let mut s = init();
+    let mut leases = Vec::new();
+    for i in 0..20 {
+        let id = format!("child_{i:02}");
+        let card = format!("card_{i:02}");
+        let lease = std::rc::Rc::default();
+        super::Children::demand(&mut s, None, &id, &card, &lease, true);
+        leases.push((id, lease));
+    }
+    for (id, _) in &leases {
+        assert!(
+            s.transcript_display.children.has_demand(None, id),
+            "every visible demand past 16 must be queued: {id}"
+        );
+    }
+
+    // Drain all 20 visible demands in batches of at most 4 without starvation.
+    let mut dispatched = Vec::new();
+    let mut tick = 1usize;
+    loop {
+        let batch = s.transcript_display.children.dispatch_test_slots();
+        if batch.is_empty() {
+            break;
+        }
+        assert!(batch.len() <= 4 && s.transcript_display.children.in_flight_count() <= 4);
+        for key in &batch {
+            let page = if key.1 == "child_03" {
+                None
+            } else {
+                Some(child_steps_page(1, false, "ok"))
+            };
+            s.transcript_display.children.complete_test_slot(key, page);
+            dispatched.push(key.1.clone());
+        }
+        crate::chat::events::poll_chat(&mut s, tick);
+        tick += 1;
+    }
+    assert_eq!(dispatched.len(), 20);
+    assert_eq!(dispatched[0], "child_00");
+    assert_eq!(dispatched[19], "child_19");
+    assert!(s.transcript_display.children.is_refused(None, "child_03"));
+    assert!(
+        s.transcript_display
+            .children
+            .snapshot(None, "child_03")
+            .is_none()
+    );
+    assert_eq!(s.transcript_display.children.in_flight_count(), 0);
+
+    // Dropping a card's lease removes its live demand while retaining its cached snapshot.
+    leases.remove(0);
+    crate::chat::events::poll_chat(&mut s, tick);
+    assert!(!s.transcript_display.children.has_demand(None, "child_00"));
+    assert!(
+        s.transcript_display
+            .children
+            .snapshot(None, "child_00")
+            .is_some(),
+        "unmounted card snapshot must survive in bounded cache"
+    );
+
+    // Cache stays bounded at 32 entries across 35 distinct children.
+    let mut extra_leases = Vec::new();
+    for i in 20..40 {
+        let id = format!("child_{i:02}");
+        extra_leases.push(
+            s.transcript_display
+                .children
+                .install(&id, child_steps_page(1, false, "ok")),
+        );
+    }
+    crate::chat::events::poll_chat(&mut s, tick + 1);
+    assert_eq!(s.transcript_display.children.snapshot_count(), 32);
+
+    // 4-level nesting chain is allowed when its parent snapshot exists, while ancestor cycles stay blocked.
+    let l1 = s
+        .transcript_display
+        .children
+        .install("a", child_steps_page(1, false, "ok"));
+    let l2 = s.transcript_display.children.install_under(
+        Some("a"),
+        "b",
+        child_steps_page(1, false, "ok"),
+    );
+    let l3 = s.transcript_display.children.install_under(
+        Some("b"),
+        "c",
+        child_steps_page(1, false, "ok"),
+    );
+    crate::chat::events::poll_chat(&mut s, tick + 2);
+    assert!(
+        s.transcript_display.children.can_watch(Some("a>b>c"), "d"),
+        "nesting deeper than 3 levels must be allowed when parent snapshot is verified"
+    );
+    assert!(
+        !s.transcript_display.children.can_watch(Some("a>b>c"), "a"),
+        "ancestor cycles must still be blocked at any depth"
+    );
+    let _ = (leases, extra_leases, l1, l2, l3);
 }

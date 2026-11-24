@@ -19,6 +19,7 @@ mod native;
 mod routing;
 mod sessions;
 pub use catalogue::{CatalogueChanges, CatalogueWatch};
+pub use children::ChildInvalidations;
 pub(crate) use children::Children;
 use routing::dispatch;
 #[cfg(target_arch = "wasm32")]

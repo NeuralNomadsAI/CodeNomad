@@ -1,3 +1,5 @@
+mod delivery;
+
 use super::{
     Display, Tool,
     children::{Children, STEP_BYTES, STEP_LIMIT, split_chain},
@@ -7,12 +9,14 @@ use crate::{
     State, screen,
     strings::{locale, t},
 };
+pub(super) use delivery::{delivery, output, report_body};
 use rune::{El, col, text};
 use rune_theme_codenomad::{
     Space, TextRole, catalogue,
     layout::{self, Layout},
     markdown,
 };
+use std::{borrow::Cow, rc::Rc, sync::Arc};
 
 const PANE_LIMIT: usize = 20_000;
 const INITIAL_STEPS: usize = 30;
@@ -37,268 +41,15 @@ pub(super) fn detail(tool: &Tool) -> String {
     }
 }
 
-fn child(tool: &Tool) -> &str {
+pub(self) fn child(tool: &Tool) -> &str {
     string(&tool.metadata, &["sessionId", "sessionID"])
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct HeaderStatus {
-    pub status: &'static str,
-    pub running: bool,
-    pub ended: Option<u64>,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct Delivery<'a> {
-    pub status: HeaderStatus,
-    pub body: Option<&'a str>,
-}
-
-#[derive(Clone, Copy)]
-struct Launch<'a> {
-    order: (u64, usize),
-    row_id: &'a str,
-    call_id: &'a str,
-}
-
-#[derive(Clone, Copy)]
-struct ReportEntry<'a> {
-    order: (u64, usize),
-    row_id: &'a str,
-    state: &'a str,
-    created: u64,
-    body: Option<&'a str>,
-}
-
-fn launch_time(tool: &Tool) -> Option<u64> {
-    tool.started.or(tool.message_created).filter(|&at| at > 0)
-}
-
-fn child_chain(message: &str) -> Option<&str> {
+pub(self) fn child_chain(message: &str) -> Option<&str> {
     message
         .strip_prefix("child:")
         .and_then(|rest| rest.split_once(':'))
         .map(|(chain, _)| chain)
-}
-
-fn message_row_id(message: &str) -> &str {
-    message
-        .strip_prefix("child:")
-        .and_then(|rest| rest.split_once(':'))
-        .map_or(message, |(_, id)| id)
-}
-
-fn launches_and_reports<'a>(
-    s: &'a State,
-    message: &str,
-    child_id: &str,
-) -> (Vec<Launch<'a>>, Vec<ReportEntry<'a>>) {
-    use crate::content::Part;
-    let mut launches = Vec::new();
-    let mut reports = Vec::new();
-    let mut floor = 0u64;
-    if let Some(chain) = child_chain(message) {
-        let (parent, owner) = split_chain(chain);
-        if let Some(snap) = s.transcript_display.children.snapshot(parent, owner) {
-            let mut next_report = 0usize;
-            for (index, (row_id, other)) in snap.steps.iter().enumerate() {
-                while next_report < snap.reports.len()
-                    && snap.reports[next_report].after_steps <= index
-                {
-                    let report = &snap.reports[next_report];
-                    if report.created > 0 {
-                        floor = floor.max(report.created);
-                    }
-                    if report.child == child_id {
-                        let effective = if report.created > 0 {
-                            report.created
-                        } else {
-                            floor
-                        };
-                        reports.push(ReportEntry {
-                            order: (effective, report.after_steps * 2),
-                            row_id: report.row_id.as_str(),
-                            state: report.state.as_str(),
-                            created: report.created,
-                            body: report.body.as_deref(),
-                        });
-                    }
-                    next_report += 1;
-                }
-                let at = launch_time(other);
-                if let Some(t) = at {
-                    floor = floor.max(t);
-                }
-                if is_task(other) && child(other) == child_id {
-                    launches.push(Launch {
-                        order: (at.unwrap_or(floor), index * 2 + 1),
-                        row_id: row_id.as_str(),
-                        call_id: other.id.as_str(),
-                    });
-                }
-            }
-            for report in &snap.reports[next_report..] {
-                if report.created > 0 {
-                    floor = floor.max(report.created);
-                }
-                if report.child == child_id {
-                    let effective = if report.created > 0 {
-                        report.created
-                    } else {
-                        floor
-                    };
-                    reports.push(ReportEntry {
-                        order: (effective, report.after_steps * 2),
-                        row_id: report.row_id.as_str(),
-                        state: report.state.as_str(),
-                        created: report.created,
-                        body: report.body.as_deref(),
-                    });
-                }
-            }
-        }
-        return (launches, reports);
-    }
-    let mut pos = 0usize;
-    for row in &s.messages[s.messages.len().saturating_sub(500)..] {
-        for part in &row.parts {
-            match part {
-                Part::Tool(other) => {
-                    let at = launch_time(other);
-                    if let Some(t) = at {
-                        floor = floor.max(t);
-                    }
-                    if is_task(other) && child(other) == child_id {
-                        launches.push(Launch {
-                            order: (at.unwrap_or(floor), pos),
-                            row_id: row.id.as_str(),
-                            call_id: other.id.as_str(),
-                        });
-                    }
-                }
-                Part::SubagentReport(report) => {
-                    if report.created > 0 {
-                        floor = floor.max(report.created);
-                    }
-                    if report.child == child_id {
-                        let effective = if report.created > 0 {
-                            report.created
-                        } else {
-                            floor
-                        };
-                        reports.push(ReportEntry {
-                            order: (effective, pos),
-                            row_id: row.id.as_str(),
-                            state: report.state.as_str(),
-                            created: report.created,
-                            body: Some(report.body.as_str()),
-                        });
-                    }
-                }
-                _ => {}
-            }
-            pos += 1;
-        }
-    }
-    (launches, reports)
-}
-
-pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<Delivery<'a>> {
-    if tool.status != "completed" || tool.metadata["status"] != "running" {
-        return None;
-    }
-    let child_id = child(tool);
-    if child_id.is_empty() {
-        return Some(Delivery {
-            status: HeaderStatus {
-                status: "toolCall.status.running",
-                running: true,
-                ended: None,
-            },
-            body: None,
-        });
-    }
-    let row_id = message_row_id(message);
-    let (launches, reports) = launches_and_reports(s, message, child_id);
-    let current = launches
-        .iter()
-        .copied()
-        .find(|launch| launch.row_id == row_id && launch.call_id == tool.id)
-        .or_else(|| {
-            launch_time(tool).map(|at| Launch {
-                order: (at, 0),
-                row_id: "",
-                call_id: "",
-            })
-        });
-    let body = current.and_then(|current| {
-        let mut later: Vec<_> = launches
-            .iter()
-            .copied()
-            .filter(|other| other.order > current.order)
-            .collect();
-        later.sort_unstable_by_key(|launch| launch.order);
-        let first = reports
-            .iter()
-            .copied()
-            .filter(|report| report.order >= current.order)
-            .min_by_key(|report| (report.order, report.row_id))?;
-        let boundary = later
-            .into_iter()
-            .find(|other| other.order > first.order)
-            .map(|other| other.order);
-        reports
-            .iter()
-            .copied()
-            .filter(|report| {
-                report.order >= current.order && boundary.is_none_or(|end| report.order < end)
-            })
-            .max_by_key(|report| (report.order, report.row_id))
-            .and_then(|report| report.body)
-    });
-    let latest = current.and_then(|current| {
-        let newest = launches
-            .iter()
-            .map(|launch| launch.order)
-            .max()
-            .map_or(current.order, |max| max.max(current.order));
-        reports
-            .iter()
-            .copied()
-            .filter(|report| report.order >= newest)
-            .max_by_key(|report| (report.order, report.row_id))
-            .map(|report| (report.created, report.state))
-    });
-    let status = match latest {
-        Some((created, "completed")) => HeaderStatus {
-            status: "toolCall.status.completed",
-            running: false,
-            ended: (created > 0).then_some(created),
-        },
-        Some((created, "error" | "cancelled")) => HeaderStatus {
-            status: "toolCall.status.error",
-            running: false,
-            ended: (created > 0).then_some(created),
-        },
-        _ => HeaderStatus {
-            status: "toolCall.status.running",
-            running: true,
-            ended: None,
-        },
-    };
-    Some(Delivery { status, body })
-}
-
-pub(super) fn report_body<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<&'a str> {
-    delivery(s, message, tool).and_then(|d| d.body)
-}
-
-pub(super) fn output<'a>(tool: &'a Tool, report: Option<&'a str>) -> &'a str {
-    if tool.status == "completed" && tool.metadata["status"] == "running" {
-        report.unwrap_or("")
-    } else {
-        &tool.output
-    }
 }
 
 fn fnv64(text: &str) -> u64 {
@@ -346,14 +97,80 @@ fn legacy_identities(legacy_all: &[serde_json::Value], legacy_base: usize) -> Ve
 }
 
 fn key_matches_row(focused: &str, row_key: &str) -> bool {
-    let rest = focused
-        .strip_prefix("toggle-")
-        .or_else(|| focused.strip_prefix("copy-"))
-        .unwrap_or(focused);
-    rest == row_key
-        || rest
-            .strip_prefix(row_key)
-            .is_some_and(|tail| tail.starts_with('-'))
+    let bytes = focused.as_bytes();
+    let mut offset = 0;
+    while let Some(pos) = focused[offset..].find(row_key) {
+        let start = offset + pos;
+        let end = start + row_key.len();
+        let before_ok = start == 0 || matches!(bytes[start - 1], b'-' | b':');
+        let after_ok = end == bytes.len() || bytes[end] == b'-';
+        if before_ok && after_ok {
+            return true;
+        }
+        offset = start + 1;
+    }
+    false
+}
+
+enum StepItems {
+    Child {
+        next_chain: String,
+        steps: Vec<(String, Arc<Tool>)>,
+    },
+    Legacy {
+        entries: Vec<serde_json::Value>,
+    },
+}
+
+fn render_legacy_row(s: &State, step: &serde_json::Value, key: &str) -> El {
+    let status = string(step, &["status"]);
+    let status = if status.is_empty() {
+        string(&step["state"], &["status"])
+    } else {
+        status
+    };
+    let status = match status {
+        "pending" => "toolCall.status.pending",
+        "running" => "toolCall.status.running",
+        "completed" => "toolCall.status.completed",
+        "error" => "toolCall.status.error",
+        _ => "toolCall.status.unknown",
+    };
+    let name: String = string(step, &["title", "tool"]).chars().take(250).collect();
+    let input = step.get("input").or_else(|| step["state"].get("input"));
+    let expanded = s.transcript_display.toggled(key);
+    let label = if input.is_some_and(|input| input.is_object()) {
+        let toggle = key.to_owned();
+        layout::button(
+            &name,
+            false,
+            screen::action(&s.input_scope, move |s| Display::toggle(s, &toggle)),
+        )
+        .key(format!("toggle-{key}"))
+        .expanded(expanded)
+    } else {
+        text(name)
+    };
+    let mut row = col()
+        .key(key.to_owned())
+        .role("listitem")
+        .child(layout::action_row().child(label).child(text(t(status))));
+    if expanded && let Some(input) = input {
+        row = row.child(
+            if let Some(input) = input_json(input, super::TOOL_LIMIT, false) {
+                window(
+                    s,
+                    format!("{key}-input"),
+                    &[&input],
+                    PANE_LIMIT,
+                    |shown, _| markdown::code(shown, "json", true, true),
+                )
+            } else {
+                text(t("toolCall.output.tooLarge"))
+            },
+        );
+    }
+    row
 }
 
 pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &str) -> Option<El> {
@@ -561,111 +378,69 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
                 .min();
             let start = desired.min(boundary.unwrap_or(usize::MAX));
             let has_reveal = start > 0;
-            let mut mounted_ids = Vec::with_capacity(step_count.saturating_sub(start));
-            let mut step_rows =
-                Vec::with_capacity(step_count.saturating_sub(start) + usize::from(has_reveal));
-            if has_reveal {
-                let toggle = step_key.clone();
-                let reveal_count = start.min(REVEAL);
-                let next_extra = step_count
-                    .saturating_sub(start.saturating_sub(reveal_count))
-                    .saturating_sub(INITIAL_STEPS);
-                let label = catalogue::format(
-                    locale(),
-                    "messageBlock.hiddenParts.show",
-                    &[("count", &reveal_count.to_string())],
-                );
-                step_rows.push(
-                    col()
-                        .key(format!("reveal-row-{step_key}"))
-                        .role("listitem")
-                        .child(
-                            layout::button(
-                                &label,
-                                false,
-                                screen::action(&s.input_scope, move |s| {
-                                    Display::reveal_at_least(s, &toggle, next_extra);
-                                }),
-                            )
-                            .key(format!("reveal-{step_key}")),
-                        ),
-                );
-            }
-            if let Some(next_chain) = next_chain.as_deref().filter(|_| use_child) {
-                for ((message, step), child_key) in
-                    visible_steps.into_iter().zip(row_keys.iter()).skip(start)
-                {
-                    mounted_ids.push(format!("{message}:{}", step.id));
-                    let owner = format!("child:{next_chain}:{message}");
-                    step_rows.push(
-                        col()
-                            .key(child_key.clone())
-                            .role("listitem")
-                            .child(super::render::render(s, &owner, step, child_key)),
-                    );
-                }
-            }
-            for ((step, identity), key) in legacy
-                .iter()
-                .zip(legacy_ids.iter())
-                .zip(row_keys.iter())
-                .skip(start)
-                .filter(|_| !use_child)
-            {
-                mounted_ids.push(identity.clone());
-                let status = string(step, &["status"]);
-                let status = if status.is_empty() {
-                    string(&step["state"], &["status"])
-                } else {
-                    status
-                };
-                let status = match status {
-                    "pending" => "toolCall.status.pending",
-                    "running" => "toolCall.status.running",
-                    "completed" => "toolCall.status.completed",
-                    "error" => "toolCall.status.error",
-                    _ => "toolCall.status.unknown",
-                };
-                let name: String = string(step, &["title", "tool"]).chars().take(250).collect();
-                let input = step.get("input").or_else(|| step["state"].get("input"));
-                let expanded = s.transcript_display.toggled(key);
-                let label = if input.is_some_and(|input| input.is_object()) {
-                    let toggle = key.clone();
-                    layout::button(
-                        &name,
-                        false,
-                        screen::action(&s.input_scope, move |s| Display::toggle(s, &toggle)),
-                    )
-                    .key(format!("toggle-{key}"))
-                    .expanded(expanded)
-                } else {
-                    text(name)
-                };
-                let mut row = col()
-                    .key(key.clone())
-                    .role("listitem")
-                    .child(layout::action_row().child(label).child(text(t(status))));
-                if expanded && let Some(input) = input {
-                    row = row.child(
-                        if let Some(input) = input_json(input, super::TOOL_LIMIT, false) {
-                            window(
-                                s,
-                                format!("{key}-input"),
-                                &[&input],
-                                PANE_LIMIT,
-                                |shown, _| markdown::code(shown, "json", true, true),
-                            )
-                        } else {
-                            text(t("toolCall.output.tooLarge"))
-                        },
-                    );
-                }
-                step_rows.push(row);
-            }
             let offset = usize::from(has_reveal);
+            let reveal_count = start.min(REVEAL);
+            let next_extra = step_count
+                .saturating_sub(start.saturating_sub(reveal_count))
+                .saturating_sub(INITIAL_STEPS);
+            let mut virtual_keys = Vec::with_capacity(step_count.saturating_sub(start) + offset);
+            if has_reveal {
+                virtual_keys.push(format!("reveal-row-{step_key}"));
+            }
+            virtual_keys.extend(row_keys.into_iter().skip(start));
+            let mounted_ids: Vec<String> = if use_child {
+                visible_steps
+                    .iter()
+                    .skip(start)
+                    .map(|(message, step)| format!("{message}:{}", step.id))
+                    .collect()
+            } else {
+                legacy_ids.into_iter().skip(start).collect()
+            };
+            let nested_targets: Vec<Option<(String, String)>> = if use_child {
+                visible_steps
+                    .iter()
+                    .skip(start)
+                    .enumerate()
+                    .map(|(idx, (_, step))| {
+                        is_task(step)
+                            .then(|| watched_child(step))
+                            .flatten()
+                            .map(|id| (id.to_owned(), virtual_keys[offset + idx].clone()))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let items = Rc::new(if let Some(next_chain) = next_chain.filter(|_| use_child) {
+                StepItems::Child {
+                    next_chain,
+                    steps: visible_steps
+                        .into_iter()
+                        .skip(start)
+                        .map(|(message, step)| (message.clone(), step.clone()))
+                        .collect(),
+                }
+            } else {
+                StepItems::Legacy {
+                    entries: legacy.iter().skip(start).cloned().collect(),
+                }
+            });
+            let row_count = virtual_keys.len();
+            let virtual_keys = Rc::new(virtual_keys);
+            let key_source = virtual_keys.clone();
+            let build_keys = virtual_keys;
+            let build_step_key = step_key.clone();
+            let active_locale = locale();
+            let version = s.revision.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                ^ s.transcript_display.tool_clock.epoch().wrapping_mul(31)
+                ^ fnv64(active_locale)
+                ^ ((row_count as u64) << 16)
+                ^ (start as u64);
             let anchor_key = step_key.clone();
             let bottom_key = step_key.clone();
             let sel_key = step_key.clone();
+            let parent_for_nested = child_id.filter(|_| use_child).map(str::to_owned);
             let list_segment = format!("/{step_key}-scroll-list/");
             let scope = s.input_scope.clone();
             let bottom_scope = scope.clone();
@@ -673,7 +448,46 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
             result = result.child(markdown::steps_pane(
                 format!("{step_key}-scroll"),
                 t("toolCall.task.sections.steps"),
-                step_rows,
+                row_count,
+                version,
+                move |_: &State, index| Cow::Owned(key_source[index].clone()),
+                move |s: &State, index| {
+                    crate::strings::with_locale(active_locale, || {
+                        if has_reveal && index == 0 {
+                            let toggle = build_step_key.clone();
+                            let label = catalogue::format(
+                                active_locale,
+                                "messageBlock.hiddenParts.show",
+                                &[("count", &reveal_count.to_string())],
+                            );
+                            return col().key(build_keys[0].clone()).role("listitem").child(
+                                layout::button(
+                                    &label,
+                                    false,
+                                    screen::action(&s.input_scope, move |s| {
+                                        Display::reveal_at_least(s, &toggle, next_extra);
+                                    }),
+                                )
+                                .key(format!("reveal-{build_step_key}")),
+                            );
+                        }
+                        let item_index = index - offset;
+                        let row_key = &build_keys[index];
+                        match items.as_ref() {
+                            StepItems::Child { next_chain, steps } => {
+                                let (message, step) = &steps[item_index];
+                                let owner = format!("child:{next_chain}:{message}");
+                                col()
+                                    .key(row_key.clone())
+                                    .role("listitem")
+                                    .child(super::render::render(s, &owner, step, row_key))
+                            }
+                            StepItems::Legacy { entries } => {
+                                render_legacy_row(s, &entries[item_index], row_key)
+                            }
+                        }
+                    })
+                },
                 move |s: &mut State, range| {
                     if s.current_scope(&scope) {
                         let vis_start = range.start.saturating_sub(offset);
@@ -687,6 +501,19 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
                                     .cloned()
                                     .collect(),
                             );
+                        }
+                        if let Some(owner) = parent_for_nested.as_deref() {
+                            for (idx, target) in nested_targets.iter().enumerate() {
+                                if let Some((child_id, card_key)) = target {
+                                    Children::set_card_visible(
+                                        s,
+                                        owner,
+                                        child_id,
+                                        card_key,
+                                        idx >= vis_start && idx < vis_end,
+                                    );
+                                }
+                            }
                         }
                     }
                     false
@@ -738,6 +565,31 @@ fn watched_child(tool: &Tool) -> Option<&str> {
     .then_some(id)
 }
 
+pub(super) fn observe_status(s: &State, message: &str, key: &str, tool: &Tool, status: El) -> El {
+    let chain = child_chain(message).map(str::to_owned);
+    let parent = chain.as_deref().map(|c| split_chain(c).1);
+    let child_id = watched_child(tool).filter(|id| {
+        s.transcript_display
+            .children
+            .can_watch(chain.as_deref(), id)
+    });
+    let Some(id) = child_id else {
+        return status;
+    };
+    let lease = s.transcript_display.children.lease(parent, id, key);
+    let scope_id = Rc::as_ptr(&s.input_scope) as usize;
+    let watch_key = format!("{key}-status-watch-{id}-{scope_id:x}");
+    let (id, key, scope) = (id.to_owned(), key.to_owned(), s.input_scope.clone());
+    status
+        .key(watch_key)
+        .on_visible(move |s: &mut State, visible, tx| {
+            if visible && s.current_scope(&scope) {
+                Children::demand(s, chain.as_deref(), &id, &key, &lease, true);
+            }
+            tx.live_only();
+        })
+}
+
 pub(super) fn observe(s: &State, message: &str, key: &str, tool: &Tool, card: El) -> El {
     let chain = child_chain(message).map(str::to_owned);
     let parent = chain.as_deref().map(|c| split_chain(c).1);
@@ -759,5 +611,7 @@ pub(super) fn observe(s: &State, message: &str, key: &str, tool: &Tool, card: El
     })
 }
 
+#[cfg(test)]
+mod anchor_tests;
 #[cfg(test)]
 mod tests;

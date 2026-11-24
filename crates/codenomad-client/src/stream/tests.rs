@@ -100,3 +100,48 @@ fn a_matching_move_cancels_the_body_before_waiting_for_queue_space() {
             assert!(matches!(inbox.try_recv().unwrap(), Input::Native(1, _, _)));
         });
 }
+
+#[test]
+fn watch_children_queues_distinct_ids_and_collapses_overflow_to_all() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut backend = Backend::connect("http://127.0.0.1:9/", "").await.unwrap();
+            backend.workspace = "project".into();
+            backend.session = "root".into();
+            let (invalidations, rx) = backend.watch_children().expect("watch_children");
+            children::observe(
+                &backend,
+                &json!({"type":"session.tool.success","data":{"sessionID":"child_1"}}),
+            );
+            children::observe(
+                &backend,
+                &json!({"type":"session.synthetic","data":{"sessionID":"child_2"}}),
+            );
+            children::observe(
+                &backend,
+                &json!({"type":"session.tool.success","data":{"sessionID":"root"}}),
+            );
+            assert!(rx.try_recv().is_ok());
+            let (all, mut ids) = invalidations.drain();
+            ids.sort();
+            assert!(!all && ids == vec!["child_1", "child_2"]);
+
+            for i in 0..70 {
+                children::observe(
+                    &backend,
+                    &json!({"type":"session.tool.progress","data":{"sessionID":format!("child_{i}")}}),
+                );
+            }
+            assert!(rx.try_recv().is_ok());
+            let (all, ids) = invalidations.drain();
+            assert!(all && ids.is_empty());
+
+            children::observe(&backend, &json!({"type":"server.connected"}));
+            assert!(rx.try_recv().is_ok());
+            let (all, ids) = invalidations.drain();
+            assert!(all && ids.is_empty());
+        });
+}
