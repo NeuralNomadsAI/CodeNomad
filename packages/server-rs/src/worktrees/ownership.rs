@@ -77,7 +77,9 @@ impl DirectoryProof {
                         tree.contains_media(physical)
                     } else {
                         tree.contains_live(physical)
-                    }) && (!(self.external || history_root.is_some()) || no_nested_git(physical, tree.registered()))
+                    }) && (!(self.external || history_root.is_some())
+                        || (self.media && std::fs::symlink_metadata(physical).is_err())
+                        || no_nested_git(physical, tree.target_root()))
                 }
                 None => {
                     self.root.as_ref().is_none_or(|(root, id)| {
@@ -338,7 +340,10 @@ pub(crate) async fn media_directory(
         };
         return Ok(proof_live_async(proof, path.to_path_buf()).await);
     }
-    if external && !shares_common_directory(&workspace.path, anchor).await.map_err(|_| native_error())? {
+    if external
+        && path == anchor
+        && !shares_common_directory(&workspace.path, anchor).await.map_err(|_| native_error())?
+    {
         if !current() {
             return Err(native_error());
         }

@@ -182,18 +182,22 @@ pub struct Tree {
     pub(super) removable: bool,
     layout: Physical,
     identity: Option<String>,
-    /// When a sibling worktree's projected subfolder is a symlink into the same checkout,
-    /// stores `(link_path, resolved_target)` so cached lookups re-verify the link target.
-    projected_link: Option<(PathBuf, PathBuf)>,
+    /// When a sibling worktree's projected subfolder is a symlink into a verified worktree of
+    /// the same repository, stores `(link_path, resolved_target, target_worktree_root)` so
+    /// cached lookups re-verify the link target and nested-Git checks anchor on the target root.
+    projected_link: Option<(PathBuf, PathBuf, PathBuf)>,
 }
 impl Tree {
     pub fn registered(&self) -> &Path {
         &self.layout.root
     }
+    pub(super) fn target_root(&self) -> &Path {
+        self.projected_link.as_ref().map_or(&self.layout.root, |(_, _, root)| root.as_path())
+    }
     fn link_live(&self) -> bool {
         self.projected_link
             .as_ref()
-            .is_none_or(|(link, target)| dunce::canonicalize(link).ok().as_ref() == Some(target))
+            .is_none_or(|(link, target, _)| dunce::canonicalize(link).ok().as_ref() == Some(target))
     }
     pub(super) fn public(&self) -> Value {
         let label = self.branch.clone().unwrap_or_else(|| {
@@ -499,7 +503,7 @@ async fn catalogue_in_at(
             let scope = app.scope.clone();
             let repo_roots = repo_roots.clone();
             match tokio::task::spawn_blocking(
-                move || -> Result<Option<(Physical, PathBuf, Option<String>, Option<(PathBuf, PathBuf)>)>, Error> {
+                move || -> Result<Option<(Physical, PathBuf, Option<String>, Option<(PathBuf, PathBuf, PathBuf)>)>, Error> {
                     if !check.live() {
                         return Ok(None);
                     }
@@ -512,15 +516,22 @@ async fn catalogue_in_at(
                         // TS resolves a sibling worktree's symlinked projected subfolder and admits it
                         // when its physical target stays inside any verified worktree of the same repo
                         // (`manager.ts:582-605`, `worktree-directory.ts:248-278`).
-                        Ok(real)
-                            if !opened
-                                && real.is_dir()
-                                && real.starts_with(&scope)
-                                && repo_roots.iter().any(|repo_root| real.starts_with(repo_root)) =>
-                        {
-                            match identity(&real) {
-                                Ok(value) => (real.clone(), Some(value), Some((projected, real))),
-                                Err(_) => return Ok(None),
+                        Ok(real) if !opened && real.is_dir() && real.starts_with(&scope) => {
+                            if let Some(target_root) = repo_roots
+                                .iter()
+                                .filter(|repo_root| real.starts_with(repo_root))
+                                .max_by_key(|repo_root| repo_root.as_os_str().len())
+                            {
+                                match identity(&real) {
+                                    Ok(value) => {
+                                        (real.clone(), Some(value), Some((projected, real, target_root.clone())))
+                                    }
+                                    Err(_) => return Ok(None),
+                                }
+                            } else if !root.starts_with(&scope) {
+                                (projected, None, None)
+                            } else {
+                                return Ok(None);
                             }
                         }
                         Ok(real) if !opened && ((real == projected && real.is_file()) || !root.starts_with(&scope)) => {

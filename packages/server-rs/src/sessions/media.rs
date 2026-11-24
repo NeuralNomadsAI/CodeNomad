@@ -327,7 +327,7 @@ pub(super) async fn route(
                 Err(_) => return Err(unavailable()),
             };
             let revert = newest["revert"]["messageID"].as_str().map(str::to_owned);
-            let (mime, bytes, slot) = if raw_len > INLINE_LIMIT {
+            let (mime, mut bytes, slot) = if raw_len > INLINE_LIMIT {
                 let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.to_owned());
                 let (decoded, slot) = tokio::task::spawn_blocking(move || {
                     let decoded =
@@ -343,6 +343,7 @@ pub(super) async fn route(
                     extract_media_from_envelope(&r.message, r.part, r.index, r.digest, revert.as_deref(), &envelope)?;
                 (mime, bytes, slot)
             };
+            bytes.shrink_to_fit();
             drop(slot);
             principal.live()?;
             if !placement.operation_current(&app, &r.workspace).await {

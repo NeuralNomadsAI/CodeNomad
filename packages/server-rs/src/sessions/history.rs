@@ -455,10 +455,11 @@ fn finalize_history_payload(
         if referenced {
             validated.output["userFiles"] = user_files::REFERENCE.into();
         }
-        let Ok(projected) = serde_json::to_vec(&validated.output) else { return Err(blocked("unavailable")) };
+        let Ok(mut projected) = serde_json::to_vec(&validated.output) else { return Err(blocked("unavailable")) };
         if referenced && projected.len() > 24 * 1024 * 1024 {
             return Err(blocked("unsupported_storage"));
         }
+        projected.shrink_to_fit();
         projected.into()
     } else {
         validated.body.slice(validated.raw_range)

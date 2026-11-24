@@ -977,16 +977,25 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     expected_id.clone(),
                     checkout.clone(),
                 );
-                tokio::task::spawn_blocking(move || {
-                    crate::worktrees::ownership::resolve_media_path(&scope, &raw).is_some_and(|(cur_res, cur_anc)| {
-                        cur_res == resolved
-                            && cur_anc == anchor
-                            && crate::files::host_identity(&cur_anc).ok() == Some(expected_id)
-                            && checkout.live(&cur_res)
-                    })
-                })
-                .await
-                .unwrap_or(false)
+                tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    _ = workspace_closed() => return Err(not_found()),
+                    res = tokio::time::timeout_at(
+                        list_deadline,
+                        tokio::task::spawn_blocking(move || {
+                            crate::worktrees::ownership::resolve_media_path(&scope, &raw).is_some_and(
+                                |(cur_res, cur_anc)| {
+                                    cur_res == resolved
+                                        && cur_anc == anchor
+                                        && crate::files::host_identity(&cur_anc).ok() == Some(expected_id)
+                                        && checkout.live(&cur_res)
+                                },
+                            )
+                        }),
+                    ) => res.map_err(|_| interrupted())?.unwrap_or(false),
+                }
             } else {
                 false
             };

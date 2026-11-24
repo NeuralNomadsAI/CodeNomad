@@ -275,6 +275,7 @@ impl MessageListStream {
             let item = std::mem::take(&mut self.item);
             self.extend_out(&item)?;
         }
+        self.out.shrink_to_fit();
         Ok((axum::body::Bytes::from(self.out), self.changed))
     }
 }
@@ -504,6 +505,34 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_mix/0/0/")
+        );
+
+        let escaped_slash = format!(
+            "{{\"id\":\"msg_esc\",\"type\":\"assistant\",\"content\":[{{\"type\":\"tool\",\"state\":{{\"content\":[{{\"type\":\"file\",\"mime\":\"image/png\",\"uri\":\"data:image\\/png;base64,{}\"}}]}}}}]}}",
+            "A".repeat(40 * 1024)
+        );
+        let (out, changed) = project_item("ws_1", "ses_1", escaped_slash.into_bytes());
+        assert!(changed);
+        let parsed: Value = serde_json::from_slice(&out).unwrap();
+        assert!(
+            parsed["content"][0]["state"]["content"][0]["uri"]
+                .as_str()
+                .unwrap()
+                .starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_esc/0/0/")
+        );
+
+        let escaped_unicode = format!(
+            "{{\"id\":\"msg_uni\",\"type\":\"assistant\",\"content\":[{{\"type\":\"tool\",\"state\":{{\"content\":[{{\"type\":\"file\",\"mime\":\"image/png\",\"uri\":\"\\u0064ata:image/png;base64,{}\"}}]}}}}]}}",
+            "A".repeat(40 * 1024)
+        );
+        let (out, changed) = project_item("ws_1", "ses_1", escaped_unicode.into_bytes());
+        assert!(changed);
+        let parsed: Value = serde_json::from_slice(&out).unwrap();
+        assert!(
+            parsed["content"][0]["state"]["content"][0]["uri"]
+                .as_str()
+                .unwrap()
+                .starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_uni/0/0/")
         );
     }
 }

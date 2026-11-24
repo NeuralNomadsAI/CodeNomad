@@ -65,8 +65,18 @@ pub fn connected() {
 
 /// `OpenCodeSharedService.connect`: a new connection is provisioned before its first use (a
 /// workspace opening, the event stream) returns; a failed attempt leaves it usable and the next
-/// acquisition tries again.
+/// acquisition tries again. Runs in a detached task so a caller timing out never orphans
+/// in-flight plugin leases or releases `SERIAL` before registration finishes.
 pub async fn prepare(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) {
+    let app = app.clone();
+    let endpoint = endpoint.clone();
+    let _ = tokio::spawn(async move {
+        prepare_inner(&app, &endpoint).await;
+    })
+    .await;
+}
+
+async fn prepare_inner(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) {
     let _serial = SERIAL.lock().await;
     let features = {
         let state = STATE.lock().unwrap();
