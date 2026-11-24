@@ -9,9 +9,9 @@ pub(crate) mod draft_storage;
 pub(crate) mod literal;
 mod long_paste;
 pub(crate) mod menu;
-mod shortcuts;
 mod picker;
 pub(crate) mod recall;
+mod shortcuts;
 mod tokens;
 pub(crate) mod view;
 #[cfg(all(not(target_arch = "wasm32"), feature = "test-support"))]
