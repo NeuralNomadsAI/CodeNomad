@@ -4,6 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { spawnFixtureChild, stopFixtureChild } from "../native-fixture-guards.mjs"
 import { fixtureFetch, redactSecrets, resolveLocalExecutable, withoutFixtureProxy } from "../native-fixture-http.mjs"
+import { registerFixtureChild } from "../../packages/rune-app/fixtures/fixture-host.mjs"
 import { privatePath } from "./isolation.mjs"
 import { sleep } from "./lib.mjs"
 import assert from "node:assert/strict"
@@ -29,6 +30,8 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
     CODENOMAD_REMOTE_CONTROL: "disabled" }), cwd: root, detached: group, windowsHide: true, stdio: [resolvedRust ? "pipe" : "ignore", "pipe", "pipe"] })
   const startedBy = new Date()
   const stopped = new Promise(resolve => child.once("close", resolve))
+  const untrack = registerFixtureChild(() => stopFixtureChild(child, stopped, 1_000, 2_000, { group, startedBy }))
+  void stopped.finally(untrack)
   let output = "", spawnError, completed = false
   const sanitize = text => redactSecrets(text, [password, daemon.password])
   child.on("error", error => { spawnError = error })

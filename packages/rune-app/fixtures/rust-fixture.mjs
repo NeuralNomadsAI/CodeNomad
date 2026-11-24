@@ -23,7 +23,7 @@ const linked = process.argv.includes('--history-worktree') ? path.join(path.dirn
 if(linked) {
   assert(history)
   const gitEnv={...env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig'),GIT_TEMPLATE_DIR:''}
-  const git = (...args) => execFileSync('git',['-c','core.hooksPath=',...args],{cwd:project,env:gitEnv,windowsHide:true})
+  const git = (...args) => execFileSync('git',['-c','core.hooksPath=',...args],{cwd:project,env:gitEnv,windowsHide:true,timeout:30000})
   git('init','--quiet','--template=')
   git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','--quiet','--allow-empty','-m','fixture')
   git('worktree','add','--quiet','--detach',linked,'HEAD')

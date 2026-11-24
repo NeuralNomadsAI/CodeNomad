@@ -3,7 +3,9 @@ import assert from "node:assert/strict"
 import { register } from "node:module"
 import { pathToFileURL, fileURLToPath } from "node:url"
 import { privatePath } from "./isolation.mjs"
-import { fixtureFetch } from "../native-fixture-http.mjs"
+import { fixtureFetch, resolveWorktreePackage } from "../native-fixture-http.mjs"
+
+const { Agent, setGlobalDispatcher } = await import(resolveWorktreePackage("undici"))
 
 const config = process.argv[process.argv.indexOf("--config") + 1]
 assert.equal(config, process.env.CLI_CONFIG)
@@ -23,11 +25,25 @@ rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "in
 OpenCodeCliService.prototype.discover = async () => endpoint
 for (const action of ["ensure", "restart"]) OpenCodeCliService.prototype[action] = async () => { throw Error(`Bench forbids service ${action}`) }
 const entry = new URL("index.js", dist)
+const allowedOrigin = url.origin
+const innerDispatcher = new Agent()
+setGlobalDispatcher({
+  dispatch(opts, handler) {
+    const origin = typeof opts.origin === "string" ? opts.origin : opts.origin?.origin
+    if (origin !== allowedOrigin) {
+      handler.onError?.(Error(`Benchmark server cannot contact external origin: ${origin}`))
+      return false
+    }
+    return innerDispatcher.dispatch(opts, handler)
+  },
+  close: () => innerDispatcher.close(),
+  destroy: err => innerDispatcher.destroy(err),
+})
 const baseFetch = globalThis.fetch
-globalThis.fetch = (input, init) => {
+globalThis.fetch = (input, init = {}) => {
   const target = new URL(input instanceof Request ? input.url : String(input))
-  assert.equal(target.hostname, "127.0.0.1", `Benchmark server cannot contact external host: ${target.origin}`)
-  return baseFetch(input, init)
+  assert.equal(target.origin, allowedOrigin, `Benchmark server cannot contact external origin: ${target.origin}`)
+  return baseFetch(input, { ...init, redirect: "error" })
 }
 process.argv[1] = fileURLToPath(entry)
 await import(entry)

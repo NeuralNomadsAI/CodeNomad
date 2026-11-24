@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict'
 import {existsSync,realpathSync} from 'node:fs'
 import {Agent as HttpAgent} from 'node:http'
-import {createRequire} from 'node:module'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 
 const repoRoot=path.resolve(fileURLToPath(new URL('..',import.meta.url)))
 const worktreeNodeModules=path.join(repoRoot,'node_modules')
-const requireLocal=createRequire(import.meta.url)
 
 function packageNameOf(specifier){
   const parts=specifier.split('/')
@@ -16,11 +14,18 @@ function packageNameOf(specifier){
 
 export function resolveWorktreePackage(specifier,nodeModulesDir=worktreeNodeModules){
   assert(existsSync(nodeModulesDir),'Worktree node_modules is required; parent checkout dependencies are forbidden')
+  const rootReal=realpathSync(nodeModulesDir)
   const pkg=packageNameOf(specifier)
   const pkgDir=path.join(nodeModulesDir,...pkg.split('/'))
   assert(existsSync(path.join(pkgDir,'package.json')),
     `Worktree node_modules is missing ${pkg}; parent checkout dependencies are forbidden`)
-  return requireLocal.resolve(specifier,{paths:[nodeModulesDir]})
+  const resolvedUrl=import.meta.resolve(specifier)
+  assert(resolvedUrl.startsWith('file://'),`Dependency ${specifier} must resolve to a local file`)
+  const resolvedPath=realpathSync(fileURLToPath(resolvedUrl))
+  const rel=path.relative(rootReal,resolvedPath)
+  assert(rel&&!path.isAbsolute(rel)&&rel.split(path.sep)[0]!=='..',
+    `Dependency ${specifier} resolved outside worktree node_modules: ${resolvedPath}`)
+  return resolvedUrl
 }
 
 const isUnc=value=>typeof value==='string'&&(/^[\\/]{2}/.test(value)||/^[\\/]{2}/.test(path.normalize(value)))
@@ -44,7 +49,7 @@ export function redactSecrets(text,secrets=[]){
   return value
 }
 
-const {Agent,fetch:undiciFetch}=requireLocal(resolveWorktreePackage('undici'))
+const {Agent,fetch:undiciFetch}=await import(resolveWorktreePackage('undici'))
 
 const dispatcher=new Agent()
 export const fixtureHttpAgent=new HttpAgent({keepAlive:true,proxyEnv:{}})

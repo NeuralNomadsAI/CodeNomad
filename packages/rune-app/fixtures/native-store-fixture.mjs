@@ -5,19 +5,19 @@ import {mkdir,copyFile,readFile,writeFile} from 'node:fs/promises'
 import {createServer,request} from 'node:http'
 import path from 'node:path'
 import {parseArgs} from 'node:util'
-import {pathToFileURL} from 'node:url'
 import {privateEnvironment} from './private-profile.mjs'
 import {clientBinary,serverBinary,requireTestSupport} from './fixture-binaries.mjs'
 import {preparePruning} from '../../../scripts/perf/pruning.mjs'
 import {privatePath} from '../../../scripts/perf/isolation.mjs'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {attestNative} from './live-access.mjs'
+import {assertNoSystemOpenCodeConfig,attestNative} from './live-access.mjs'
 import {fixtureFetch,fixtureHttpAgent,redactSecrets,relayTarget,resolveLocalExecutable,resolveWorktreePackage,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
-import {rustOrigin} from './fixture-host.mjs'
+import {registerFixtureChild,rustOrigin} from './fixture-host.mjs'
 
-const {OpenCode}=await import(pathToFileURL(resolveWorktreePackage('@opencode/client')).href)
+const {OpenCode}=await import(resolveWorktreePackage('@opencode/client'))
 const {values}=parseArgs({options:{opencode:{type:'string'}}})
 const opencodeExecutable=resolveLocalExecutable(values.opencode,'OpenCode binary')
+await assertNoSystemOpenCodeConfig()
 const repository=path.resolve(import.meta.dirname,'../../..')
 const root=privatePath(path.join(repository,'scripts/perf/run',`trial-rune-store-${randomUUID()}`))
 await mkdir(root,{recursive:true})
@@ -25,13 +25,15 @@ const project=path.join(root,'project'),config=path.join(root,'opencode-config')
 await mkdir(project);await mkdir(config)
 const suffix=process.platform==='win32'?'.exe':''
 const rune=path.join(root,`rune${suffix}`),rust=path.join(root,`codenomad-rs${suffix}`)
-await copyFile(clientBinary,rune);await copyFile(serverBinary,rust)
+await copyFile(resolveLocalExecutable(clientBinary,'Rune client binary'),rune)
+await copyFile(resolveLocalExecutable(serverBinary,'Rust server binary'),rust)
 requireTestSupport(rune)
 const permissions=[{action:'*',resource:'*',effect:'deny'}]
 const env={...await privateEnvironment(root),OPENCODE_TEST_HOME:path.join(root,'home'),
   OPENCODE_CONFIG_DIR:config,OPENCODE_DB:path.join(root,'opencode.db'),
   OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FFF:'1',OPENCODE_DISABLE_AUTOUPDATE:'true',
   OPENCODE_SERVER_PASSWORD:randomUUID(),OPENCODE_CONFIG_CONTENT:'{}',
+  GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(root,'empty.gitconfig'),GIT_TEMPLATE_DIR:'',GIT_CEILING_DIRECTORIES:root,
   ProgramData:path.join(root,'ProgramData'),npm_config_userconfig:path.join(root,'npmrc'),
   npm_config_globalconfig:path.join(root,'global-npmrc'),npm_config_cache:path.join(root,'npm-cache')}
 await mkdir(env.ProgramData)
@@ -45,6 +47,8 @@ function launch(name,binary,args,childEnv){
   const child=spawnFixtureChild(binary,args,{cwd:root,env:withoutFixtureProxy(childEnv),detached:group,windowsHide:true,stdio:['pipe','pipe','pipe']})
   const entry={name,child,error:null,stopped:null,startedBy:new Date()};logs[name]=''
   entry.stopped=new Promise(resolve=>{child.once('close',resolve);child.once('error',error=>{entry.error=error;resolve()})})
+  const untrack=registerFixtureChild(()=>stopFixtureChild(child,entry.stopped,1_000,2_000,{group,startedBy:entry.startedBy}))
+  void entry.stopped.finally(untrack)
   for(const pipe of [child.stdout,child.stderr])pipe.on('data',data=>{logs[name]=(logs[name]+data).slice(-1048576)})
   children.push(entry);return entry
 }
@@ -59,7 +63,7 @@ async function origin(entry){
   }
 }
 const forbidden=route=>/(?:^|\/)(?:prompt|command|generate|synthetic|shell)(?:\/|$)/i.test(route)
-const createsSession=route=>/^\/api\/session\/?$/i.test(route)||/^\/workspaces\/[^/]+\/instance\/api\/session\/?$/i.test(route)
+const createsSession=route=>/(?:^|\/)(?:experimental\/)?session(?:\/(?:import|[^/]+\/fork))?\/?$/i.test(route)
 async function auditedProxy(base,lane){
   const proxy=createServer((req,res)=>{
     const url=relayTarget(req,res,base)
@@ -166,7 +170,7 @@ try{
   }
   assert(!requests.some(r=>r.blocked),'No generation, tool dispatch or native session creation during app restoration')
   proof.result='ok'
-}catch(error){failure=error;proof.error=error.message}
+}catch(error){failure=error;proof.error=redactSecrets(error?.message??String(error),[env.OPENCODE_SERVER_PASSWORD,rustPassword])}
 finally{
   const errors=[]
   if(client&&client.child.exitCode===null&&client.child.signalCode===null)try{await stopFixtureChild(client.child,client.stopped,1_000,2_000,{group,startedBy:client.startedBy})}catch(error){errors.push(error)}
@@ -188,9 +192,10 @@ finally{
   for(const proxy of proxies){proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve))}
   const secrets=[env.OPENCODE_SERVER_PASSWORD,rustPassword].filter(Boolean)
   for(const [name,log]of Object.entries(logs))await writeFile(path.join(root,`${name}.log`),redactSecrets(log,secrets))
-  if(errors.length){proof.result='failed';proof.cleanupErrors=errors.map(error=>error.message);failure??=new AggregateError(errors,'Owned fixture cleanup failed')}
+  if(proof.error)proof.error=redactSecrets(proof.error,secrets)
+  if(errors.length){proof.result='failed';proof.cleanupErrors=errors.map(error=>redactSecrets(error.message,secrets));failure??=Error(`Owned fixture cleanup failed: ${proof.cleanupErrors.join('; ')}`)}
   proof.children=await Promise.all(children.map(async ({name,child})=>({name,pid:await fixtureChildPid(child),exitCode:child.exitCode,signal:child.signalCode})))
   await writeFile(path.join(root,'proof.json'),JSON.stringify(proof,null,2)+'\n')
 }
 console.log(JSON.stringify({type:'native-store-fixture',result:proof.result,root,stages:stages.map(s=>s.stage),rows:600,ownedSessions:ownedIDs.length}))
-if(failure)throw failure
+if(failure)throw Error(redactSecrets(failure.message??String(failure),[env.OPENCODE_SERVER_PASSWORD,rustPassword]))

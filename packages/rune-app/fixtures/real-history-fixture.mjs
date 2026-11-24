@@ -7,7 +7,6 @@ import path from 'node:path'
 import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
 import {fixtureFetch,fixtureHttpAgent,relayTarget} from '../../../scripts/native-fixture-http.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
-import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
 const manifest=await privateManifest(args[0])

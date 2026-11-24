@@ -4,26 +4,26 @@ import {writeFile} from 'node:fs/promises'
 import {randomUUID} from 'node:crypto'
 import path from 'node:path'
 import {setTimeout as delay} from 'node:timers/promises'
-import {OpenCode} from '@opencode/client'
-import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 import {fixtureTarget,requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
-import {fixtureFetch} from '../../../scripts/native-fixture-http.mjs'
+import {fixtureFetch,redactSecrets,resolveWorktreePackage} from '../../../scripts/native-fixture-http.mjs'
 
+const {OpenCode}=await import(resolveWorktreePackage('@opencode/client'))
 requirePrivateCli();requireTestSupport()
 await withNative(async native=>{
 const {profile:root,project,password}=native
+const secrets=[password,'fixture-rune-native-pending']
 const env=native.runtimeEnv,proof={root,project,native:true,ui:'Rune Runtime, offscreen',modelCalls:0,tools:0,requests:[],events:[],stages:[],visible:[],cases:[],cleaned:false,result:1}
 let rust,ui,client,observer,watch,session,origin,cookie,uiLines='',protocolError
 const ids=['once','always','reject'].map(decision=>`per_rune_live_${decision}_${randomUUID().replaceAll('-','')}`),forms=new Map()
 const expected=['once','always','reject','typed-question','cancel-question'];let position=0,awaiting='ready',protocol=Promise.resolve()
 const post=body=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
-async function until(check,label){for(const end=Date.now()+30000;Date.now()<end;await delay(30)){if(protocolError)throw protocolError;const value=await check();if(value)return value}throw Error(`Timeout: ${label}`)}
-async function relay(route,init={}){
+async function until(check,label){const end=Date.now()+30000;while(Date.now()<end){if(protocolError)throw protocolError;const remaining=Math.max(100,end-Date.now());const value=await Promise.race([Promise.resolve().then(()=>check(remaining)),delay(remaining,null,{ref:false})]);if(value)return value;await delay(Math.min(30,Math.max(0,end-Date.now())))}throw Error(`Timeout: ${label}`)}
+async function relay(route,init={},timeoutMs=15000){
   const target=fixtureTarget(route,origin)
   assert(target,'Foreign fixture origin forbidden')
-  const response=await fixtureFetch(target,{...init,headers:{cookie,...init.headers},signal:AbortSignal.timeout(15000)})
+  const response=await fixtureFetch(target,{...init,headers:{cookie,...init.headers},signal:AbortSignal.timeout(timeoutMs)})
   const text=await response.text(),body=text?JSON.parse(text):null;proof.requests.push({host:'rust',method:init.method??'GET',path:route,status:response.status});return{status:response.status,body}
 }
 async function stage(event){
@@ -55,11 +55,11 @@ try{
   origin=await rust.ready(rustOrigin)
   const login=await fixtureFetch(`${origin}/api/auth/login`,{...post({username:'codenomad',password:'fixture-rune-native-pending'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await relay('/api/workspaces',post({path:project,requestId:`rune-native-ui-${randomUUID()}`}));assert.equal(opened.status,201);assert.equal(path.resolve(opened.body.path),project);proof.workspace=opened.body.id
-  await until(async()=>{
+  await until(async remaining=>{
     const window=await relay(`/api/workspaces/${proof.workspace}/session-history/window`,{
       ...post({sessionID:session.id,target:{kind:'latest'}}),
       headers:{'content-type':'application/json','x-codenomad-user-files':'reference-v1'},
-    })
+    },Math.min(15000,remaining))
     proof.historyStatus={status:window.status,kind:window.body?.status,reason:window.body?.reason}
     return window.body?.status==='window'
   },'native history window ready')
@@ -69,19 +69,19 @@ try{
     if(uiLines.length>=65536){protocolError??=Error('Pending probe stdout exceeded 64 KiB');ui.child.kill();return}
     for(let at;(at=uiLines.indexOf('\n'))>=0;){const line=uiLines.slice(0,at);uiLines=uiLines.slice(at+1);let value;try{value=JSON.parse(line)}catch{continue}protocol=protocol.then(()=>stage(value)).catch(error=>{protocolError??=error;ui.child.kill()})}
   })
-  const code=await Promise.race([ui.closed,delay(60000,124,{ref:false})]);await protocol;if(protocolError)throw protocolError;assert.equal(code,0);assert.equal(position,5);assert.equal(proof.visible.length,5);assert(proof.complete)
-  const receipts=await until(async()=>{const r=await relay(`/api/workspaces/${proof.workspace}/sessions/${session.id}/permission-receipts?unanchored=true`);return r.body?.receipts?.length===3?r.body.receipts:null},'three UI permission receipts')
+  const code=await Promise.race([ui.closed.then(async exit=>{await protocol;return exit}),delay(60000,124,{ref:false})]);if(code===124)await ui.stop();if(protocolError)throw protocolError;assert.equal(code,0);assert.equal(position,5);assert.equal(proof.visible.length,5);assert(proof.complete)
+  const receipts=await until(async remaining=>{const r=await relay(`/api/workspaces/${proof.workspace}/sessions/${session.id}/permission-receipts?unanchored=true`,{},Math.min(15000,remaining));return r.body?.receipts?.length===3?r.body.receipts:null},'three UI permission receipts')
   proof.receipts=receipts.map(r=>({decision:r.decision,reason:r.reason,origin:r.origin})).sort((a,b)=>a.decision.localeCompare(b.decision));assert.deepEqual(proof.receipts,['always','once','reject'].map(decision=>({decision,reason:`Motif réel Rune ${decision} 🦀`,origin:'codenomad'})))
   const history=await relay(`/api/workspaces/${proof.workspace}/session-history/window`,post({sessionID:session.id,target:{kind:'latest'}}))
   assert.equal(history.body?.status,'window');assert.deepEqual(history.body.messages,[])
   assert(!proof.events.some(e=>e.type.startsWith('session.tool.')||e.type.startsWith('session.execution.')))
   assert.equal(proof.events.filter(e=>e.type==='permission.asked').length,3);assert.equal(proof.events.filter(e=>e.type==='form.created').length,2)
   proof.result=0
-}catch(error){proof.error=String(error?.stack??error);process.exitCode=1}
+}catch(error){proof.error=redactSecrets(String(error?.stack??error),secrets);process.exitCode=1}
 finally{
   observer?.abort();if(watch)await Promise.race([watch.catch(()=>{}),delay(2000,undefined,{ref:false})])
   try{await ui?.stop();if(client&&session){await client.session.remove({sessionID:session.id});proof.cleaned=true;assert(!(await client.session.list({location:{directory:project}})).data.some(s=>s.id===session.id))}}
-  catch(error){proof.result=1;proof.cleanupError=String(error);process.exitCode=1}
+  catch(error){proof.result=1;proof.cleanupError=redactSecrets(String(error),secrets);process.exitCode=1}
   finally{await rust?.stop();proof.rustExit=rust?.child.exitCode??null
     if(rust&&proof.rustExit!==0){proof.result=1;proof.cleanupError??='Rust did not stop cleanly';process.exitCode=1}
     await writeFile(path.join(root,'proof.json'),JSON.stringify(proof,null,2));await writeFile(path.join(root,'rust.log'),rust?.output()??'');await writeFile(path.join(root,'rune.log'),ui?.output()??'')

@@ -57,7 +57,7 @@ test("Windows job still owns a grandchild after both ancestors exit", windows, a
   `)
   const stopped = once(root, "close")
   try {
-    const [data] = await once(root.stdout, "data")
+    const [data] = await once(root.stdout, "data", { signal: AbortSignal.timeout(10_000) })
     const [middle, leaf] = JSON.parse(data.toString())
     const inner = await fixtureChildPid(root)
     assert.equal(alive(middle), false)
@@ -79,7 +79,7 @@ test("Windows job teardown leaves a foreign PID alone even when the fixture adve
     const root = own(`console.log(process.argv[1]); setInterval(() => {}, 1000)`, String(foreign.pid))
     const stopped = once(root, "close")
     try {
-      const [data] = await once(root.stdout, "data")
+      const [data] = await once(root.stdout, "data", { signal: AbortSignal.timeout(10_000) })
       assert.equal(Number(String(data).trim()), foreign.pid)
       await stopFixtureChild(root, stopped)
       assert.equal(alive(foreign.pid), true)
@@ -112,7 +112,7 @@ test("Windows enclosing bench job keeps its daemon across backend exits but kill
   `)
   const stopped = once(root, "close")
   try {
-    const [data] = await once(root.stdout, "data")
+    const [data] = await once(root.stdout, "data", { signal: AbortSignal.timeout(10_000) })
     const [backendExit, daemon] = JSON.parse(String(data))
     assert.equal(backendExit, 0)
     assert.equal(alive(daemon), true)
@@ -186,7 +186,7 @@ test("private Git setup cannot commit an inherited repository or index", t => {
   fs.writeFileSync(environment.GIT_CONFIG_GLOBAL, "")
   const git = (directory, args, env = environment) => execFileSync("git", ["-C", directory,
     "-c", "user.name=Private Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
-    "-c", `core.hooksPath=${hooks}`, ...args], { env, encoding: "utf8", stdio: "pipe", windowsHide: true }).trim()
+    "-c", `core.hooksPath=${hooks}`, ...args], { env, encoding: "utf8", stdio: "pipe", windowsHide: true, timeout: 15_000 }).trim()
   git(caller, ["init"])
   git(caller, ["commit", "--allow-empty", "-m", "caller"])
   fs.writeFileSync(path.join(caller, "staged.txt"), "preserved")

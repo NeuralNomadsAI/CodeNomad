@@ -5,6 +5,8 @@ import {mkdir, mkdtemp, realpath, rm, writeFile} from 'node:fs/promises'
 import {createServer} from 'node:http'
 import path from 'node:path'
 import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
+import {redactSecrets} from '../../../scripts/native-fixture-http.mjs'
+import {assertNoSystemOpenCodeConfig} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
 
@@ -53,6 +55,7 @@ async function modelServer(project, marker) {
 }
 
 export async function withJourneyHost({cli,rust,web,mode},report,run){
+  await assertNoSystemOpenCodeConfig()
   await mkdir(runDirectory,{recursive:true})
   const profile=await mkdtemp(privatePath(path.join(runDirectory,'trial-rune-journey-')))
   const project=path.join(profile,'project')
@@ -90,7 +93,7 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
           settings:{baseURL:`http://127.0.0.1:${model.port}/v1`,apiKey:marker},models:{journey:{}}}},
       }),
     }
-    native=launchFixture(await realpath(cli),['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env:assertPrivateChild({
+    native=launchFixture(await realpath(cli),['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,redact:[privatePassword,password,marker],env:assertPrivateChild({
       ...env,ProgramData:programData,
       npm_config_userconfig:path.join(profile,'empty.npmrc'),npm_config_globalconfig:path.join(profile,'empty-global.npmrc'),
       npm_config_cache:path.join(profile,'npm-cache'),
@@ -113,7 +116,7 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
     report.openCodePID=pid
     await pruning.activate({project,url:daemon,authorization},()=>assert.equal(native.child.exitCode,null))
     const ownedRust={CNRS_FIXTURE_PASSWORD:privatePassword,CNRS_SERVER_PASSWORD:password}
-    server=launchFixture(rust,[profile,path.join(profile,'backend.json'),'0','fixture-only'],{cwd:profile,shutdown:'shutdown\n',env:assertPrivateChild({
+    server=launchFixture(rust,[profile,path.join(profile,'backend.json'),'0','fixture-only'],{cwd:profile,shutdown:'shutdown\n',redact:[privatePassword,password,marker],env:assertPrivateChild({
       ...env,...ownedRust,CNRS_FIXTURE_URL:daemon,CNRS_FIXTURE_STDIN_STOP:'1',
       ...(mode==='web'?{CNRS_FIXTURE_UI_DIR:web}:{}),
     },ownedRust)})
@@ -136,7 +139,7 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
       await settle(()=>model?.close())
       for(const [name,process] of [['rust',server],['opencode',native]]){
         if(process)await settle(()=>writeFile(path.join(report.output,`${name}.log`),
-          process.output().replaceAll(privatePassword,'<private>').replaceAll(password,'<private>').replaceAll(marker,'<private>')))
+          redactSecrets(process.output(),[privatePassword,password,marker])))
       }
     }finally{
       await settle(async()=>{

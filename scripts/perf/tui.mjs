@@ -1,5 +1,6 @@
 import { createRequire } from "node:module"
 import { withoutFixtureProxy } from "../native-fixture-http.mjs"
+import { registerFixtureChild } from "../../packages/rune-app/fixtures/fixture-host.mjs"
 import { MARKER, now } from "./lib.mjs"
 
 const require = createRequire(import.meta.url)
@@ -13,6 +14,11 @@ export async function withTui(cli, daemon, session, run) {
     env: withoutFixtureProxy({ ...daemon.env, TERM: "xterm-256color", COLORTERM: "truecolor" }),
   })
   const exited = new Promise(resolve => p.onExit(resolve))
+  const untrack = registerFixtureChild(() => {
+    try { p.kill() } catch {}
+    return Promise.race([exited, new Promise(resolve => setTimeout(resolve, 3000))])
+  })
+  void exited.finally(untrack)
   const term = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 0 })
   let screen = "", seen, waiter
   const data = p.onData(raw => {

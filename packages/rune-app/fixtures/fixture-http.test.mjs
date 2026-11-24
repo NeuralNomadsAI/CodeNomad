@@ -3,7 +3,8 @@ import {execFile} from 'node:child_process'
 import {Agent,createServer,request} from 'node:http'
 import {test} from 'node:test'
 import {promisify} from 'node:util'
-import {relayTarget,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {fixtureFetch,relayTarget,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {sseReader} from '../../../scripts/perf/lib.mjs'
 
 async function listen(t,handler){
   const server=createServer(handler)
@@ -71,4 +72,20 @@ test('an active environment proxy cannot see fixture authentication or redirects
   assert.equal(proxyHits,1)
   assert.equal(targetHits,3)
   assert.deepEqual(withoutFixtureProxy({Path:'x',http_proxy:'a',HTTPS_PROXY:'b',No_Proxy:'c',ALL_PROXY:'d',NODE_USE_ENV_PROXY:'1'}),{Path:'x'})
+})
+
+test('sseReader bounds silent opens and cancels an idle open SSE body cleanly',{timeout:15000},async t=>{
+  const silent=await listen(t,(_req,_res)=>{})
+  const sendSilent=(route,init)=>fixtureFetch(new URL(route,silent.origin),init)
+  await assert.rejects(sseReader(sendSilent,()=>{},250),/AbortError|SSE open timed out/)
+
+  let received=0
+  const idle=await listen(t,(_req,res)=>{
+    res.writeHead(200,{'content-type':'text/event-stream'})
+    res.write('data: {"type":"server.connected"}\n\n')
+  })
+  const sendIdle=(route,init)=>fixtureFetch(new URL(route,idle.origin),init)
+  const stop=await sseReader(sendIdle,()=>{received++},5000)
+  await stop()
+  assert(received<=1)
 })

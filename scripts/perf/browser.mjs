@@ -1,38 +1,69 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { createServer, request as httpRequest } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromium } from "playwright"
+import { fixtureHttpAgent } from "../native-fixture-http.mjs"
 import { privatePath } from "./isolation.mjs"
 import { now } from "./lib.mjs"
 import { withBackend } from "./stacks.mjs"
+
+async function originGuardProxy(localOrigin) {
+  const server = createServer((req, res) => {
+    let target
+    try { target = new URL(req.url, localOrigin) } catch { res.writeHead(403); res.end(); return }
+    if (target.origin !== localOrigin) { res.writeHead(403); res.end("Foreign browser origin forbidden"); return }
+    const headers = { ...req.headers }
+    delete headers["proxy-connection"]
+    const upstream = httpRequest(target, { agent: fixtureHttpAgent, method: req.method, headers: { ...headers, host: target.host } }, response => {
+      const location = response.headers.location
+      if (response.statusCode >= 300 && response.statusCode < 400 && location) {
+        let redirected
+        try { redirected = new URL(location, target) } catch {}
+        if (!redirected || redirected.origin !== localOrigin) {
+          response.resume()
+          res.writeHead(403); res.end("Cross-origin browser redirect forbidden")
+          return
+        }
+      }
+      res.writeHead(response.statusCode, response.headers)
+      response.pipe(res)
+    })
+    upstream.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end() })
+    req.on("aborted", () => upstream.destroy())
+    res.on("close", () => upstream.destroy())
+    req.pipe(upstream)
+  })
+  server.on("connect", (_req, socket) => socket.end("HTTP/1.1 403 Forbidden\r\n\r\n"))
+  server.on("upgrade", (_req, socket) => socket.end("HTTP/1.1 403 Forbidden\r\n\r\n"))
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve) })
+  return {
+    port: server.address().port,
+    close: () => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)) },
+  }
+}
 
 export async function withBrowser(daemon, tree, root, followLongReplies, run) {
   return withBackend(daemon, tree, root, followLongReplies, async (url, cookie) => {
     const profile = privatePath(path.join(root, "chromium"))
     // Chromium puts its Linux singleton socket under TMPDIR; keep it short.
     const socketDir = process.platform === "linux" ? await mkdtemp(path.join(os.tmpdir(), "cn-perf-")) : undefined
+    const localOrigin = new URL(url).origin
+    const guard = await originGuardProxy(localOrigin)
     let context
     try {
       context = await chromium.launchPersistentContext(profile, {
         headless: true, channel: "chromium", env: { ...daemon.env, ...(socketDir && { TMPDIR: socketDir }) },
-        args: ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--disable-background-networking", "--no-proxy-server"],
+        args: [
+          "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
+          `--proxy-server=http://127.0.0.1:${guard.port}`,
+          "--proxy-bypass-list=<-loopback>",
+          "--disable-background-networking",
+        ],
         viewport: { width: 1440, height: 1440 }, locale: "en-US", serviceWorkers: "block",
       })
       await context.addInitScript({ path: fileURLToPath(new URL("./page-probe.js", import.meta.url)) })
-      const localOrigin = new URL(url).origin
-      await context.route("**/*", async route => {
-        const target = new URL(route.request().url())
-        if (target.origin !== localOrigin) return route.abort("blockedbyclient")
-        if (target.pathname === "/api/events") return route.continue()
-        const response = await route.fetch({ maxRedirects: 0 })
-        const location = response.headers().location
-        if (response.status() >= 300 && response.status() < 400 && location) {
-          const redirected = new URL(location, target)
-          if (redirected.origin !== localOrigin) return route.abort("blockedbyclient")
-        }
-        return route.fulfill({ response })
-      })
       await context.addCookies([{ name: "codenomad_session", value: cookie, url }])
       const page = context.pages()[0] ?? await context.newPage()
       page.setDefaultTimeout(60_000)
@@ -102,7 +133,9 @@ export async function withBrowser(daemon, tree, root, followLongReplies, run) {
       })
     } finally {
       try { await context?.close() } finally {
-        if (socketDir) await rm(socketDir, { recursive: true, force: true })
+        try { await guard.close() } finally {
+          if (socketDir) await rm(socketDir, { recursive: true, force: true })
+        }
       }
     }
   })

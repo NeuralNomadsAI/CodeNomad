@@ -6,13 +6,14 @@ import { createServer } from "node:http"
 import path from "node:path"
 import { fixtureEnvironment } from "../native-product-fixture.mjs"
 import { launchFixture } from "../../packages/rune-app/fixtures/fixture-host.mjs"
-import { attestNative } from "../../packages/rune-app/fixtures/live-access.mjs"
+import { assertNoSystemOpenCodeConfig, attestNative } from "../../packages/rune-app/fixtures/live-access.mjs"
 import { fixtureFetch, redactSecrets, resolveLocalExecutable } from "../native-fixture-http.mjs"
 import { privatePath } from "./isolation.mjs"
 import { json, now, sleep } from "./lib.mjs"
 
 export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnabled = false} = {}) {
   cli = resolveLocalExecutable(cli, "OpenCode binary")
+  await assertNoSystemOpenCodeConfig()
   root = privatePath(root)
   const project = privatePath(path.join(root, "project"))
   await mkdir(project, { recursive: true })
@@ -25,10 +26,11 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
     OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
     OPENCODE_DISABLE_AUTOUPDATE: "true", OPENCODE_SERVER_PASSWORD: password,
+    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(root, "empty.gitconfig"), GIT_TEMPLATE_DIR: "",
+    GIT_CEILING_DIRECTORIES: root,
   })
   await mkdir(env.OPENCODE_CONFIG_DIR)
-  const gitEnv = { ...env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(root, "empty.gitconfig"), GIT_TEMPLATE_DIR: "" }
-  const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=", ...args], { cwd: project, env: gitEnv, windowsHide: true })
+  const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=", ...args], { cwd: project, env, windowsHide: true, timeout: 30_000 })
   git("init", "-q", "--template=")
   git("add", ".")
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@invalid", "commit", "-qm", "fixture")

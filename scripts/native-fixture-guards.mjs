@@ -14,7 +14,7 @@ export function spawnFixtureChild(command, args, options) {
   if (process.platform !== "win32") return spawn(command, args, options)
   const root = fileURLToPath(new URL("../", import.meta.url))
   const rawExe = process.env.CODENOMAD_FIXTURE_JOB_EXE
-    ?? path.resolve(root, process.env.CARGO_TARGET_DIR || "target", "debug", "codenomad-fixture-job.exe")
+    || path.resolve(root, process.env.CARGO_TARGET_DIR || "target", "debug", "codenomad-fixture-job.exe")
   let exe
   try {
     if (!isLocalAbsolutePath(rawExe)) throw new Error("Expected an absolute local path")
@@ -26,7 +26,8 @@ export function spawnFixtureChild(command, args, options) {
   if (options?.shell || options?.windowsVerbatimArguments || options?.stdio?.includes("ipc")) {
     throw new Error("The Windows fixture launcher accepts executable arguments and standard streams only")
   }
-  const child = spawn(exe, [command, ...args], { ...options, windowsHide: true })
+  const env = { ...(options?.env ?? process.env), CODENOMAD_FIXTURE_PARENT_PID: String(process.pid) }
+  const child = spawn(exe, [command, ...args], { ...options, env, windowsHide: true })
   if (!child.stderr) {
     jobs.set(child, Promise.resolve(undefined))
     return child

@@ -9,7 +9,6 @@ import {launchFixture,rustOrigin} from './fixture-host.mjs'
 import {fixtureFetch} from '../../../scripts/native-fixture-http.mjs'
 import {prepareRealHistory} from './real-history-prepare.mjs'
 import {seedRealHistory} from './real-history-seed.mjs'
-import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
 assert.equal(args.length,0,'Usage: interactive-live.mjs --opencode <absolute executable>; external sessions are forbidden')
@@ -62,6 +61,7 @@ try{
         }
       }
     }
+    if(!stopped)guardError??=Error('Interactive SSE observer ended unexpectedly')
   }
   watchTask=watch().catch(error=>{if(!stopped&&error.name!=='AbortError'){guardError??=error;console.error('observer:',error.message)}})
   guardTask=(async()=>{
@@ -81,9 +81,20 @@ try{
   })()
   await save();await writeFile(path.join(profile,'session.json'),JSON.stringify({profile,directory,sourceID:source.id,longID:fork.id,longTitle,newTitle}))
   child=launchFixture(clientBinary,[],{cwd:profile,redact:[native.password,'interactive-rune-owned-backend'],env:{...native.runtimeEnv,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
-  child.child.stderr.on('data',d=>console.error(child.redact(String(d).trim())))
+  let stderrBuffer=''
+  child.child.stderr.on('data',d=>{
+    stderrBuffer+=d
+    for(let at;(at=stderrBuffer.indexOf('\n'))>=0;){
+      const line=stderrBuffer.slice(0,at).trim();stderrBuffer=stderrBuffer.slice(at+1)
+      if(line)console.error(child.redact(line))
+    }
+  })
   console.log(JSON.stringify({type:'INTERACTIVE_READY',profile,directory,longTitle,newTitle,pid:await child.pid()}))
-  assert.equal(await child.closed,0,child.output())
+  const exitCode=await child.closed
+  if(stderrBuffer.trim())console.error(child.redact(stderrBuffer.trim()))
+  stopped=true;observer.abort();void stream?.body?.cancel?.().catch(()=>{})
+  await Promise.race([Promise.allSettled([watchTask,guardTask].filter(Boolean)),delay(2000,undefined,{ref:false})])
+  assert.equal(exitCode,0,child.output())
   if(guardError)throw guardError
   assert.equal(stats.tools,0,'Interactive fixture must not execute tools')
 }finally{

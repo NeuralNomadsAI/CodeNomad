@@ -6,7 +6,6 @@ import path from 'node:path'
 import {requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
 import {fixtureFetch} from '../../../scripts/native-fixture-http.mjs'
-import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
 await withNative(async native=>{

@@ -140,6 +140,20 @@ test('resumed profiles reject unattested config files, Git hooks and parent pack
     await writeFile(persistedConfig,'server: {}')
     await assert.rejects(validatePrivateTree(profile),/persisted config file/)
     await rm(persistedConfig)
+    const commondir=path.join(profile,'project','.git','commondir')
+    await writeFile(commondir,'../../outside')
+    await assert.rejects(validatePrivateTree(profile),/forbidden Git redirection/)
+    await rm(commondir)
+    const worktreeCfg=path.join(profile,'project','.git','config.worktree')
+    await writeFile(worktreeCfg,'[core]\n\tworktree = /tmp/outside\n')
+    await assert.rejects(validatePrivateTree(profile),/forbidden Git redirection/)
+    await rm(worktreeCfg)
+    const dotGitFile=path.join(profile,'project','sub')
+    await mkdir(dotGitFile)
+    await writeFile(path.join(dotGitFile,'.git'),'gitdir: /tmp/outside\n')
+    await assert.rejects(validatePrivateTree(profile),/forbidden Git pointer/)
+    await rm(dotGitFile,{recursive:true})
+    assert(resolveWorktreePackage('@opencode/client').startsWith('file://'))
     const emptyModules=path.join(root,'empty-node_modules')
     await mkdir(emptyModules)
     assert.throws(()=>resolveWorktreePackage('undici',emptyModules),/missing undici/)
@@ -148,6 +162,44 @@ test('resumed profiles reject unattested config files, Git hooks and parent pack
     const redacted=redactSecrets(`pw=${secret} header=Basic ${basic}`,[secret])
     assert.equal(redacted.includes(secret),false)
     assert.equal(redacted.includes(basic),false)
+  }finally{await rm(temp,{recursive:true,force:true})}
+})
+
+test('signal teardown closes admission, stops owned children and removes running.lock',{timeout:20000},async()=>{
+  const temp=await mkdtemp(path.join(os.tmpdir(),'rune-live-signal-'))
+  try{
+    const root=await realpath(temp),lock=path.join(root,'running.lock')
+    const hostUrl=new URL('./fixture-host.mjs',import.meta.url).href
+    const script=`
+      import {open,unlink} from 'node:fs/promises'
+      import {launchFixture,onFixtureSignal} from ${JSON.stringify(hostUrl)}
+      const lockPath=process.argv[1]
+      const fh=await open(lockPath,'wx')
+      const child=launchFixture(process.execPath,['-e','console.log("child-ready:"+process.pid);setInterval(()=>{},1000)'],{
+        cwd:process.cwd(),env:{PATH:process.env.PATH},redact:['secret-token']
+      })
+      const line=await child.ready(out=>out.match(/^child-ready:(\\d+)/m)?.[1])
+      onFixtureSignal(async()=>{await fh.close();await unlink(lockPath)})
+      console.log('RUNNER_READY:'+line)
+      if(process.platform==='win32'){setTimeout(()=>process.emit('SIGTERM','SIGTERM'),50)}
+      else{setInterval(()=>{},1000)}
+    `
+    const runnerEnv={PATH:process.env.PATH}
+    if(process.env.CARGO_TARGET_DIR)runnerEnv.CARGO_TARGET_DIR=process.env.CARGO_TARGET_DIR
+    if(process.env.CODENOMAD_FIXTURE_JOB_EXE)runnerEnv.CODENOMAD_FIXTURE_JOB_EXE=process.env.CODENOMAD_FIXTURE_JOB_EXE
+    const runner=launchFixture(process.execPath,['--input-type=module','-e',script,lock],{
+      cwd:process.cwd(),env:runnerEnv,
+    })
+    try{
+      const childPid=Number(await runner.ready(out=>out.match(/^RUNNER_READY:(\d+)/m)?.[1]))
+      if(process.platform!=='win32')process.kill(runner.child.pid,'SIGTERM')
+      const code=await runner.closed
+      assert.equal(code,143)
+      let lockExists=true
+      try{await readFile(lock)}catch(e){if(e.code==='ENOENT')lockExists=false}
+      assert.equal(lockExists,false,'running.lock must be removed by signal cleanup')
+      assert.throws(()=>process.kill(childPid,0),'Owned child must be stopped by signal teardown')
+    }finally{await runner.stop()}
   }finally{await rm(temp,{recursive:true,force:true})}
 })
 

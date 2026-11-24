@@ -4,6 +4,7 @@ import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {spawnFixtureChild,stopFixtureChild} from '../native-fixture-guards.mjs'
 import {fixtureFetch,redactSecrets,resolveLocalExecutable,withoutFixtureProxy} from '../native-fixture-http.mjs'
+import {registerFixtureChild} from '../../packages/rune-app/fixtures/fixture-host.mjs'
 import {MARKER, now, sleep} from './lib.mjs'
 import {withBackend} from './stacks.mjs'
 
@@ -53,6 +54,8 @@ export async function withRune(binary, rustBinary, daemon, session, root, run) {
     let serial = 0, buffer = '', stderr = '', failure
     const rejectAll = error => {failure ??= error; for (const task of pending.values()) task.reject(error); pending.clear()}
     const stopped = new Promise(resolve => {child.once('error', error => {rejectAll(error); resolve()}); child.once('close', code => {rejectAll(Error(`Rune latency probe exited (${code})`)); resolve(code)})})
+    const untrack = registerFixtureChild(() => stopFixtureChild(child, stopped, 1_000, 2_000, {group, startedBy}))
+    void stopped.finally(untrack)
     child.stderr.on('data', chunk => {stderr = (stderr + chunk).slice(-64 * 1024)})
     child.stdout.on('data', chunk => {
       buffer += chunk

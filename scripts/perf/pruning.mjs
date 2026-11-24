@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import {mkdir, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {fileURLToPath, pathToFileURL} from 'node:url'
+import {fileURLToPath} from 'node:url'
 import {createHash} from 'node:crypto'
 import {nativePluginBuild} from '../../packages/server/scripts/native-plugin-build.mjs'
 import {fixtureFetch, fixtureTarget, resolveWorktreePackage} from '../native-fixture-http.mjs'
@@ -10,9 +10,9 @@ import {privatePath} from './isolation.mjs'
 
 export async function preparePruning(root, config) {
   const [{build},{OpenCode},{tsImport}]=await Promise.all([
-    import(pathToFileURL(resolveWorktreePackage('esbuild')).href),
-    import(pathToFileURL(resolveWorktreePackage('@opencode/client')).href),
-    import(pathToFileURL(resolveWorktreePackage('tsx/esm/api')).href),
+    import(resolveWorktreePackage('esbuild')),
+    import(resolveWorktreePackage('@opencode/client')),
+    import(resolveWorktreePackage('tsx/esm/api')),
   ])
   root=privatePath(root);config=privatePath(config)
   const folder=privatePath(path.join(root,'pruning-build'))

@@ -1,4 +1,5 @@
-export { setTimeout as sleep } from "node:timers/promises"
+import { setTimeout as sleep } from "node:timers/promises"
+export { sleep }
 
 export const now = () => performance.timeOrigin + performance.now()
 export const MARKER = /MK[A-Z]{2}\d{6}K/g
@@ -13,10 +14,20 @@ export async function json(send, route, { method = "GET", headers, body } = {}) 
   return text ? JSON.parse(text) : undefined
 }
 
-export async function sseReader(send, onFrame) {
+export async function sseReader(send, onFrame, openTimeoutMs = 15_000) {
   const controller = new AbortController()
-  const response = await send("/api/event", { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(360_000)]) })
-  if (!response.ok || !response.headers.get("content-type")?.startsWith("text/event-stream")) throw Error("Expected SSE from the attested daemon")
+  const openTimer = setTimeout(() => controller.abort(Error("SSE open timed out")), openTimeoutMs)
+  let response
+  try {
+    response = await send("/api/event", { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(360_000)]) })
+  } finally {
+    clearTimeout(openTimer)
+  }
+  if (!response.ok || !response.headers.get("content-type")?.startsWith("text/event-stream")) {
+    controller.abort()
+    void response.body?.cancel?.().catch(() => {})
+    throw Error("Expected SSE from the attested daemon")
+  }
   let failure
   const reading = (async () => {
     const decoder = new TextDecoder()

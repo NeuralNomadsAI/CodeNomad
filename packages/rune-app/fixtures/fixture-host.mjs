@@ -5,32 +5,44 @@ import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scrip
 import {redactSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 
 const activeChildren=new Set()
+const signalAborts=new Set()
 const signalCleanups=new Set()
 let cleaningSignals=false,signalHooked=false
 function updateSignalHooks(){
-  const active=activeChildren.size+signalCleanups.size>0
+  const active=activeChildren.size+signalAborts.size+signalCleanups.size>0
   if(active&&!signalHooked){signalHooked=true;process.on('SIGINT',onSignal);process.on('SIGTERM',onSignal)}
   else if(!active&&signalHooked){signalHooked=false;process.off('SIGINT',onSignal);process.off('SIGTERM',onSignal)}
 }
 function onSignal(signal){
   if(cleaningSignals)return
   cleaningSignals=true
+  for(const abort of [...signalAborts])try{abort()}catch{}
   const teardown=(async()=>{
-    await Promise.allSettled([...activeChildren].map(stop=>stop()))
+    while(activeChildren.size>0){
+      const batch=[...activeChildren]
+      for(const stop of batch)activeChildren.delete(stop)
+      await Promise.allSettled(batch.map(stop=>stop()))
+    }
     await Promise.allSettled([...signalCleanups].map(cleanup=>cleanup()))
   })()
   Promise.race([teardown,delay(10000,undefined,{ref:false})])
     .finally(()=>process.exit(signal==='SIGINT'?130:143))
 }
-function trackChild(stop){
+export function fixtureShuttingDown(){return cleaningSignals}
+export function registerFixtureChild(stop){
+  if(cleaningSignals){
+    void Promise.resolve().then(stop).catch(()=>{})
+    throw Error('Fixture shutting down')
+  }
   activeChildren.add(stop)
   updateSignalHooks()
   return ()=>{activeChildren.delete(stop);updateSignalHooks()}
 }
-export function onFixtureSignal(cleanup){
+export function onFixtureSignal(cleanup,abort){
+  if(abort)signalAborts.add(abort)
   signalCleanups.add(cleanup)
   updateSignalHooks()
-  return ()=>{signalCleanups.delete(cleanup);updateSignalHooks()}
+  return ()=>{if(abort)signalAborts.delete(abort);signalCleanups.delete(cleanup);updateSignalHooks()}
 }
 
 export async function until(check,label,ms=20000){
@@ -45,6 +57,7 @@ export async function until(check,label,ms=20000){
 
 export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000,redact=[]}){
   assert(env,'An explicit fixture environment is required')
+  assert(!cleaningSignals,'Fixture shutting down')
   const group=process.platform!=='win32'
   const child=spawnFixtureChild(binary,args,{cwd,env:withoutFixtureProxy(env),detached:group,windowsHide:true,stdio:[shutdown?'pipe':'ignore','pipe','pipe']})
   const startedBy=new Date()
@@ -62,7 +75,7 @@ export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000,redact=
     })()
     return stopping
   }
-  const untrack=trackChild(()=>stop())
+  const untrack=registerFixtureChild(()=>stop())
   void closed.finally(untrack)
   child.stdout.on('data',data=>{stdout=(stdout+data).slice(-1048576)})
   for(const stream of [child.stdout,child.stderr])stream.on('data',data=>{output=(output+data).slice(-1048576)})
