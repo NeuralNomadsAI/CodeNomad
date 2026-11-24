@@ -34,6 +34,7 @@ pub struct State {
     pub alive: AtomicBool,
     pub running: AtomicBool,
     pub upstream: AtomicBool,
+    pub(crate) auth_expired: AtomicBool,
     pub(crate) history_revision: AtomicU64,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     catalogue: Option<Arc<catalogue::Signals>>,
@@ -143,6 +144,9 @@ pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>
         let expired = result
             .as_ref()
             .is_err_and(crate::http::authentication_expired);
+        if expired {
+            state.auth_expired.store(true, SeqCst);
+        }
         if result.is_err() {
             eprintln!("Rune event stream unavailable");
         }

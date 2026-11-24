@@ -92,6 +92,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.password = rune::edit::TextEdit::new("");
         }
         s.renew_scope();
+        if let Some(commands) = s.commands.take() {
+            commands.close();
+        }
+        s.incoming = None;
+        crate::composer::settle_pending(s, codenomad_client::transport::PromptOutcome::Unconfirmed);
+        s.composer.picker.set_attachments_supported(false);
+        s.phase = crate::Phase::Failed;
         s.pairing.focus = FocusCheck::new(s.wake.clone());
     } else {
         s.pairing.focus = None;

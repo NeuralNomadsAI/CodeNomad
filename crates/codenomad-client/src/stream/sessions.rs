@@ -154,11 +154,13 @@ pub(super) async fn relay(
         ) {
             state.history_revision.fetch_add(1, SeqCst);
         }
-        if native["type"] == "session.moved"
-            && native["data"]["sessionID"] == b.session
+        if matches!(
+            native["type"].as_str(),
+            Some("session.moved" | "session.deleted")
+        ) && native["data"]["sessionID"] == b.session
             && let Some((cancel, _)) = &state.placement
         {
-            // Closing the signal fences the current body and every later read on this wire.
+            // Closing the signal fences the current body and every later read or send on this wire.
             cancel.close();
         }
         out.send(Input::Native(epoch, version, native.clone()))

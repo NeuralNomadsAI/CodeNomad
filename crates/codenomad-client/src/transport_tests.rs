@@ -331,7 +331,7 @@ fn prompt_during_stream_gap(with_reading: bool) {
             if with_reading {
                 stream.get_mut().write_all(b"data: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"disconnected\"}\n\n")
                     .await.unwrap();
-                while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
+                while !matches!(events.recv().await.unwrap(), Event::ConnectionLost) {}
             } else {
                 while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
                 drop(stream);
@@ -822,5 +822,356 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
         })
         .await
         .expect("session.moved must reject queued prompts without hanging");
+    });
+}
+
+#[test]
+fn upstream_event_outage_in_direct_mode_emits_connection_lost_and_allows_prompt() {
+    use crate::transport::{Command, Event, PromptOutcome};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut backend =
+                Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+                    .await
+                    .unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let (out, events) = bounded(8);
+            let (commands, input) = bounded(2);
+            let task = tokio::spawn(crate::transport::run_backend(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+            ));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .get_mut()
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"disconnected\"}\n\n",
+                )
+                .await
+                .unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::ConnectionLost) {}
+            let id = "msg_00000000000000000000000000000008";
+            commands
+                .send(Command::Prompt(crate::prompt::Prompt {
+                    id: Some(id.into()),
+                    text: "upstream sse down".into(),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut prompt = BufReader::new(socket);
+            let mut first = String::new();
+            prompt.read_line(&mut first).await.unwrap();
+            assert!(first.starts_with("POST /workspaces/workspace/instance/api/session/session/prompt "));
+            let mut len = 0usize;
+            loop {
+                let mut line = String::new();
+                assert!(prompt.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(rest) = line
+                    .strip_prefix("content-length:")
+                    .or_else(|| line.strip_prefix("Content-Length:"))
+                {
+                    len = rest.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut discard = vec![0; len];
+            prompt.read_exact(&mut discard).await.unwrap();
+            let ack = format!(r#"{{"id":"{id}"}}"#);
+            prompt
+                .get_mut()
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{ack}",
+                        ack.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            assert!(matches!(
+                events.recv().await.unwrap(),
+                Event::PromptAcknowledged {
+                    attempted,
+                    outcome: PromptOutcome::Confirmed(confirmed),
+                } if attempted == id && confirmed == id
+            ));
+            drop(commands);
+            drop(stream);
+            task.await.unwrap().unwrap();
+        })
+        .await
+        .expect("upstream SSE drop must stay in ConnectionLost and permit direct HTTP send");
+    });
+}
+
+#[test]
+fn session_deleted_rejects_queued_prompt_without_http_post() {
+    use crate::transport::{Command, Event, PromptOutcome};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut backend =
+                Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+                    .await
+                    .unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let (out, events) = bounded(1);
+            let (commands, input) = bounded(4);
+            let task = tokio::spawn(crate::transport::run_backend(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+            ));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .get_mut()
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"permission.updated\",\"data\":{\"sessionID\":\"session\"}}}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"session\"}}}\n\n",
+                )
+                .await
+                .unwrap();
+            while events.is_empty() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            let id = "msg_00000000000000000000000000000009";
+            commands
+                .send(Command::Prompt(crate::prompt::Prompt {
+                    id: Some(id.into()),
+                    text: "after delete".into(),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
+            let mut saw_rejected = false;
+            let mut saw_invalidated = false;
+            while let Ok(event) = events.recv().await {
+                match event {
+                    Event::PromptAcknowledged {
+                        attempted,
+                        outcome: PromptOutcome::Rejected,
+                    } if attempted == id => saw_rejected = true,
+                    Event::PromptAcknowledged { .. } => {
+                        panic!("prompt racing with session.deleted must be Rejected")
+                    }
+                    Event::HistoryInvalidated => saw_invalidated = true,
+                    _ => {}
+                }
+                if saw_rejected && saw_invalidated {
+                    break;
+                }
+            }
+            assert!(saw_rejected, "queued prompt must receive an explicit Rejected receipt");
+            assert!(saw_invalidated, "session.deleted must publish HistoryInvalidated");
+            assert!(task.await.unwrap().is_err());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                    .await
+                    .is_err(),
+                "no HTTP POST may be sent after session.deleted"
+            );
+        })
+        .await
+        .expect("session.deleted must reject queued prompts without HTTP POST");
+    });
+}
+
+#[test]
+fn prompt_501_prototype_is_rejected_and_native_401_is_unconfirmed() {
+    use crate::transport::{Event, PromptOutcome};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut backend =
+                Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+                    .await
+                    .unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let server = tokio::spawn(async move {
+                let responses = [
+                    (
+                        "501 Not Implemented",
+                        r#"{"error":"Route not implemented in this prototype"}"#,
+                    ),
+                    ("401 Unauthorized", r#"{"error":"unauthorized"}"#),
+                    ("200 OK", r#"{"authenticated":false}"#),
+                ];
+                for (status, body) in responses {
+                    let (socket, _) = listener.accept().await.unwrap();
+                    let mut req = BufReader::new(socket);
+                    let mut len = 0usize;
+                    loop {
+                        let mut line = String::new();
+                        assert!(req.read_line(&mut line).await.unwrap() > 0);
+                        if line == "\r\n" {
+                            break;
+                        }
+                        if let Some(rest) = line
+                            .strip_prefix("content-length:")
+                            .or_else(|| line.strip_prefix("Content-Length:"))
+                        {
+                            len = rest.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if len > 0 {
+                        let mut discard = vec![0; len];
+                        req.read_exact(&mut discard).await.unwrap();
+                    }
+                    req.get_mut()
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .await
+                        .unwrap();
+                }
+            });
+            let first = backend
+                .prompt(&crate::prompt::Prompt {
+                    id: Some("msg_00000000000000000000000000000010".into()),
+                    text: "prototype 501".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(
+                first.downcast_ref::<crate::prompt::PromptError>(),
+                Some(&crate::prompt::PromptError::Rejected)
+            );
+            let (out, events) = bounded(4);
+            let wake: crate::Wake = Arc::new(|| {});
+            let wire = crate::stream::State::default();
+            let id = "msg_00000000000000000000000000000011";
+            let settled = crate::recovery::receipts::prompt(
+                &backend,
+                &out,
+                &wake,
+                &wire,
+                true,
+                id,
+                &crate::prompt::Prompt {
+                    id: Some(id.into()),
+                    text: "detached 401".into(),
+                    ..Default::default()
+                },
+            )
+            .await;
+            assert!(settled.is_none());
+            assert!(matches!(
+                events.recv().await.unwrap(),
+                Event::PromptAcknowledged {
+                    attempted,
+                    outcome: PromptOutcome::Unconfirmed,
+                } if attempted == id
+            ));
+            assert!(matches!(
+                events.recv().await.unwrap(),
+                Event::AuthenticationRequired(_)
+            ));
+            server.await.unwrap();
+        })
+        .await
+        .expect("501 prototype rejection and 401 unconfirmed settlement must complete");
+    });
+}
+
+#[test]
+fn unsynced_reconnect_headers_do_not_reset_attempts_and_escalate_to_reconnecting() {
+    use crate::transport::Event;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut backend =
+                Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+                    .await
+                    .unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let (out, events) = bounded(16);
+            let (commands, input) = bounded(2);
+            let task = tokio::spawn(crate::transport::run_backend(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+            ));
+            // Initial stream opens and closes immediately -> stream_gap (ConnectionLost only).
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut s1 = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                assert!(s1.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            s1.get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
+            drop(s1);
+            while !matches!(events.recv().await.unwrap(), Event::ConnectionLost) {}
+
+            // Reconnect accepts SSE 200 headers but drops before any sync -> must escalate to Reconnecting.
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut s2 = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                assert!(s2.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            s2.get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
+            drop(s2);
+            while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
+            drop(commands);
+            task.await.unwrap().unwrap();
+        })
+        .await
+        .expect("unsynced reconnect drop must escalate to Reconnecting");
     });
 }

@@ -30,10 +30,7 @@ pub(crate) fn send_transport_error(error: &reqwest::Error) -> crate::prompt::Pro
     crate::prompt::PromptError::Unconfirmed
 }
 
-pub(crate) async fn classify_http_error(
-    response: reqwest::Response,
-    accept_not_implemented: bool,
-) -> crate::prompt::PromptError {
+pub(crate) async fn classify_http_error(response: reqwest::Response) -> crate::prompt::PromptError {
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return if cfg!(not(target_arch = "wasm32")) {
@@ -46,18 +43,22 @@ pub(crate) async fn classify_http_error(
     if status.is_client_error() {
         return crate::prompt::PromptError::Rejected;
     }
-    if accept_not_implemented
-        && status == reqwest::StatusCode::NOT_IMPLEMENTED
-        && let Ok(body) = crate::prompt_receipt::read(response).await
-        && body["error"].as_str() == Some("Route not implemented in this prototype")
-    {
-        return crate::prompt::PromptError::Rejected;
-    }
-    if status == reqwest::StatusCode::BAD_GATEWAY
-        && let Ok(body) = crate::prompt_receipt::read(response).await
-        && body["error"].as_str() == Some("session_environment_failed")
-    {
-        return crate::prompt::PromptError::Rejected;
+    match status {
+        reqwest::StatusCode::NOT_IMPLEMENTED => {
+            if let Ok(body) = crate::prompt_receipt::read(response).await
+                && body["error"].as_str() == Some("Route not implemented in this prototype")
+            {
+                return crate::prompt::PromptError::Rejected;
+            }
+        }
+        reqwest::StatusCode::BAD_GATEWAY => {
+            if let Ok(body) = crate::prompt_receipt::read(response).await
+                && body["error"].as_str() == Some("session_environment_failed")
+            {
+                return crate::prompt::PromptError::Rejected;
+            }
+        }
+        _ => {}
     }
     crate::prompt::PromptError::Unconfirmed
 }
@@ -173,7 +174,7 @@ impl Backend {
             .await
             .map_err(|error| send_transport_error(&error))?;
         if !response.status().is_success() {
-            return Err(classify_http_error(response, false).await.into());
+            return Err(classify_http_error(response).await.into());
         }
         let response = crate::prompt_receipt::read(response)
             .await

@@ -28,7 +28,7 @@ pub(super) async fn slash(
                 if rejected_by_authentication(backend, &attempt, out, wake, wire).await {
                     return false;
                 }
-                PromptOutcome::Rejected
+                PromptOutcome::Unconfirmed
             }
         }
     } else {
@@ -65,7 +65,7 @@ pub(crate) async fn prompt(
                 if rejected_by_authentication(backend, id, out, wake, wire).await {
                     return None;
                 }
-                PromptOutcome::Rejected
+                PromptOutcome::Unconfirmed
             }
             Err(error)
                 if error.downcast_ref() == Some(&crate::prompt::PromptError::Rejected)

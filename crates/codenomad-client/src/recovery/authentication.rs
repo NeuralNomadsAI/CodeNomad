@@ -47,12 +47,13 @@ pub(super) async fn rejected_by_authentication(
         return false;
     }
     close_for_authentication(wire, out).await;
+    // A native proxy mutation is detached before revocation, so a 401 response cannot prove it was not transmitted.
     publish(
         out,
         wake,
         Event::PromptAcknowledged {
             attempted: attempted.into(),
-            outcome: PromptOutcome::Rejected,
+            outcome: PromptOutcome::Unconfirmed,
         },
     )
     .await;

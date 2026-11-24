@@ -77,16 +77,12 @@ fn can_admit_send(
     reader: &Reader,
     opened: bool,
     stream_gap: bool,
+    out: &Sender<Event>,
 ) -> bool {
-    !wire.placement_closed()
-        && (reading.is_some()
-            || !reader.parked
-                && !reader.historical
-                && if opened {
-                    wire.upstream.load(SeqCst)
-                } else {
-                    stream_gap
-                })
+    !out.is_closed()
+        && !wire.placement_closed()
+        && !wire.auth_expired.load(SeqCst)
+        && (reading.is_some() || !reader.parked && !reader.historical && (opened || stream_gap))
 }
 
 pub(crate) async fn run_with_reading(
@@ -161,7 +157,6 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Opened(e)) if e == epoch => {
                 opened = true;
-                attempts = 0;
                 publish(&out, &wake, Event::AgentHint(true)).await;
                 reader.dirty = true;
                 reader.parked = false;
@@ -169,7 +164,7 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Closed(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
-                stream_gap = opened && wire.upstream.load(SeqCst);
+                stream_gap = opened && attempts == 0 && wire.upstream.load(SeqCst);
                 opened = false;
                 connection_closed = true;
                 connection_lost = true;
@@ -193,11 +188,20 @@ pub(crate) async fn run_with_reading(
                 return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
-                stream_gap = false;
+                stream_gap = opened && attempts == 0;
                 ReadingLane::invalidate_connection(reading);
                 reader.dirty = true;
                 if reading.is_some() || !reader.historical {
-                    publish(&out, &wake, Event::Reconnecting).await;
+                    publish(
+                        &out,
+                        &wake,
+                        if stream_gap || reading.is_some() {
+                            Event::ConnectionLost
+                        } else {
+                            Event::Reconnecting
+                        },
+                    )
+                    .await;
                 }
             }
             Some(Input::Available(e, v)) if e == epoch => {
@@ -273,7 +277,7 @@ pub(crate) async fn run_with_reading(
                 name,
                 text,
             })) => {
-                let admitted = can_admit_send(&wire, reading, &reader, opened, stream_gap);
+                let admitted = can_admit_send(&wire, reading, &reader, opened, stream_gap, &out);
                 if !receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
                     .await
                 {
@@ -285,7 +289,7 @@ pub(crate) async fn run_with_reading(
             Some(Input::Command(Command::Prompt(prompt))) => {
                 let Some(id) = &prompt.id else { continue };
                 // The compose gesture owns one attempt even if its tab suspends before dispatch.
-                let admitted = can_admit_send(&wire, reading, &reader, opened, stream_gap);
+                let admitted = can_admit_send(&wire, reading, &reader, opened, stream_gap, &out);
                 let Some(outcome) =
                     receipts::prompt(&backend, &out, &wake, &wire, admitted, id, &prompt).await
                 else {
@@ -365,6 +369,8 @@ pub(crate) async fn run_with_reading(
                     publish(&out, &wake, Event::HistoryInvalidated).await;
                     if kind == "session.deleted" {
                         wire.cancelled.store(true, SeqCst);
+                        close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
+                            .await;
                         return Err("session scope changed".into());
                     }
                     reader.clear_window_on_revert();
@@ -624,7 +630,8 @@ pub(crate) async fn run_with_reading(
         ) {
             return Ok(());
         }
-        if opened && !reader.dirty {
+        if opened && wire.upstream.load(SeqCst) && !reader.dirty {
+            attempts = 0;
             stream_gap = false;
         }
     }
