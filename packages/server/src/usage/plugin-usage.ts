@@ -301,6 +301,8 @@ export async function readPluginProviderUsage(
     if (response.status === 400) {
       const json = await readBoundedJson(response, quotaSignal)
       signal.throwIfAborted()
+      // Past the quota deadline no fallback read may start.
+      if (quotaSignal.aborted) return unavailable(target.providerId, target.modelId)
       const body = json.ok ? asRecord(json.value) : null
       if (absentRpcErrorSchema.safeParse(body).success) return null
       if (registeredRpcErrorSchema.safeParse(body).success) return unavailable(target.providerId, target.modelId)
@@ -310,6 +312,7 @@ export async function readPluginProviderUsage(
     if (response.status === 404) {
       const json = await readBoundedJson(response, quotaSignal)
       signal.throwIfAborted()
+      if (quotaSignal.aborted) return unavailable(target.providerId, target.modelId)
       if (!json.ok) {
         if (json.reason === "non-json") return null
         throw new Error("Plugin usage 404 body unreadable")

@@ -357,6 +357,29 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     ),
   )
 
+  // A quota deadline that expires right after an absent-RPC body is read never reads as "absent",
+  // so no fallback starts past the deadline.
+  for (const status of [400, 404]) {
+    const quota = new AbortController()
+    const bytes = new TextEncoder().encode(JSON.stringify({ _tag: "RpcError", type: "rpc.unavailable", message: "missing" }))
+    let sent = false
+    // The deadline fires once the body is fully read (on releaseLock), before classification.
+    const reader = {
+      read: async () => sent ? { done: true, value: undefined } : (sent = true, { done: false, value: bytes }),
+      cancel: async () => {},
+      releaseLock: () => quota.abort(),
+    }
+    const response = { status, headers: new Headers({ "content-type": "application/json" }), body: { getReader: () => reader, cancel: async () => {} } } as unknown as Response
+    const late = await readPluginProviderUsage(
+      makeConnection(async () => response),
+      { providerId: "agy-agent", location: { directory: "/repo" } },
+      new AbortController().signal,
+      quota.signal,
+    )
+    assert.equal(late?.supported, true, String(status))
+    assert.equal(late?.ok, false, String(status))
+  }
+
   // An outer abort independent of the quota deadline stops dispatch and a stalled RPC.
   let outerDispatched = 0
   await assert.rejects(readPluginProviderUsage(

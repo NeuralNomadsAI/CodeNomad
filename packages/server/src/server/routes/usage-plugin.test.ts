@@ -525,7 +525,9 @@ test("a client disconnect during the Codex fallback leaves the shared read to ot
   const released = new Promise<void>(resolve => { release = resolve })
   let upstream!: () => void
   const upstreamStarted = new Promise<void>(resolve => { upstream = resolve })
+  let upstreamCalls = 0
   t.mock.method(globalThis, "fetch", async (_input: unknown, init?: RequestInit) => {
+    upstreamCalls++
     upstream()
     await Promise.race([released, new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }))])
     return Response.json(codexBody())
@@ -553,5 +555,6 @@ test("a client disconnect during the Codex fallback leaves the shared read to ot
     const result = await second.body
     assert.equal(result.status, 200, result.text)
     assert.equal(JSON.parse(result.text).ok, true)
+    assert.equal(upstreamCalls, 1, "both clients share one upstream Codex read")
   } finally { await app.close() }
 })
