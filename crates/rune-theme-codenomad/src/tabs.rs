@@ -145,6 +145,21 @@ pub fn tab<S: 'static>(
     on_select: impl Fn(&mut S, &str, &mut Tx) + 'static,
     on_close: impl Fn(&mut S, &str, &mut Tx) + 'static,
 ) -> El {
+    let close_help = catalogue::message(locale, "instanceTab.actions.close.ariaLabel").unwrap();
+    tab_with_help(
+        locale, tab, selected, first, close_help, on_select, on_close,
+    )
+}
+
+fn tab_with_help<S: 'static>(
+    locale: &str,
+    tab: &ProjectTab<'_>,
+    selected: bool,
+    first: bool,
+    close_help: &str,
+    on_select: impl Fn(&mut S, &str, &mut Tx) + 'static,
+    on_close: impl Fn(&mut S, &str, &mut Tx) + 'static,
+) -> El {
     let t = tokens(layout::dark());
     let mut theme = kit(layout::dark()).clone();
     let metric = move |key| t.metric("tabActive", key).px();
@@ -306,6 +321,7 @@ pub fn tab<S: 'static>(
                 .build(&theme)
                 .key(close_key.clone())
                 .label(label)
+                .help(close_help)
                 .size(glyph + padding * 2.0, glyph + padding * 2.0)
                 .padding(padding)
                 .radius(metric("borderRadius"))
@@ -328,6 +344,34 @@ pub fn strip<S: 'static>(
     on_new: impl Fn(&mut S, &mut Tx) + 'static,
     actions: impl IntoIterator<Item = El>,
 ) -> El {
+    let word = |key| catalogue::message(locale, key).expect("generated tab catalogue key");
+    strip_with_help(
+        touch,
+        locale,
+        tabs,
+        active,
+        word("instanceTabs.new.title"),
+        word("instanceTab.actions.close.ariaLabel"),
+        on_select,
+        on_close,
+        on_new,
+        actions,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn strip_with_help<S: 'static>(
+    touch: bool,
+    locale: &str,
+    tabs: &[ProjectTab<'_>],
+    active: Option<&str>,
+    new_help: &str,
+    active_close_help: &str,
+    on_select: impl Fn(&mut S, &str, &mut Tx) + 'static,
+    on_close: impl Fn(&mut S, &str, &mut Tx) + 'static,
+    on_new: impl Fn(&mut S, &mut Tx) + 'static,
+    actions: impl IntoIterator<Item = El>,
+) -> El {
     let dark = layout::dark();
     let t = tokens(dark);
     let word = |key| catalogue::message(locale, key).expect("generated tab catalogue key");
@@ -339,21 +383,28 @@ pub fn strip<S: 'static>(
     let new = bar_button(
         &PLUS,
         word("instanceTabs.new.ariaLabel"),
-        word("instanceTabs.new.title"),
+        new_help,
         new_size,
         on_new,
     )
     .key("project-tabs-new");
     let select = Rc::new(on_select);
     let close = Rc::new(on_close);
+    let close_label = word("instanceTab.actions.close.ariaLabel");
     let height = t.metric("tabActive", "height").px().max(new_size);
     let items = tabs.iter().enumerate().map(|(i, descriptor)| {
         let (select, close) = (select.clone(), close.clone());
-        tab(
+        let selected = active == Some(descriptor.id);
+        tab_with_help(
             locale,
             descriptor,
-            active == Some(descriptor.id),
+            selected,
             i == 0,
+            if selected {
+                active_close_help
+            } else {
+                close_label
+            },
             move |s, id, tx| select(s, id, tx),
             move |s, id, tx| close(s, id, tx),
         )

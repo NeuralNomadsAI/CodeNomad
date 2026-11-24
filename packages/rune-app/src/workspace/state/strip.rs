@@ -42,11 +42,23 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         .chain(std::iter::once(crate::shell::notifications::history_entry(
             s, touch,
         )));
-    rune_theme_codenomad::tabs::strip(
+    let new_help = crate::settings::with_shortcut_label(
+        s,
+        strings::t("instanceTabs.new.title"),
+        "new-instance",
+    );
+    let active_close_help = crate::settings::with_shortcut_label(
+        s,
+        strings::t("instanceTab.actions.close.ariaLabel"),
+        "close-instance",
+    );
+    rune_theme_codenomad::tabs::strip_with_help(
         touch,
         strings::locale(),
         &tabs,
         ui.entries.get(ui.active).map(|e| e.key.as_str()),
+        &new_help,
+        &active_close_help,
         select,
         close,
         new_tab,

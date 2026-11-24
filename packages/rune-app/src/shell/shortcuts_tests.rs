@@ -440,6 +440,13 @@ fn browse_folder_wins_on_home_outside_inputs_and_defers_to_new_instance_otherwis
     assert!(rt.file_dialog().is_none());
     assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 2);
 
+    // Focus in the tab strip on Home defers Ctrl+N to new-instance, not browse-folder.
+    rt.update(|_, tx| tx.focus("project-tabs-new", true));
+    settle(&mut rt);
+    send_key(&mut rt, Key::Command('n'), primary_mods(false));
+    assert!(rt.file_dialog().is_none());
+    assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 3);
+
     // Custom override separates browse-folder from new-instance.
     rt.update(|_, tx| tx.focus("browse", true));
     settle(&mut rt);
@@ -457,6 +464,41 @@ fn browse_folder_wins_on_home_outside_inputs_and_defers_to_new_instance_otherwis
     send_key(&mut project_rt, Key::Command('n'), primary_mods(false));
     assert!(project_rt.file_dialog().is_none());
     assert_eq!(project_rt.state.workspace.as_ref().unwrap().tab_count(), 2);
+}
+
+#[test]
+fn tab_strip_tooltips_reflect_active_close_and_new_instance_overrides() {
+    let mut rt = project_runtime(workspace_state(2));
+    let help_of = |rt: &Runtime<State>, key: &str| {
+        rt.elements()
+            .into_iter()
+            .find(|el| el.key.as_deref() == Some(key))
+            .and_then(|el| el.help)
+            .unwrap_or_default()
+    };
+
+    let new_help = help_of(&rt, "project-tabs-new");
+    let active_close = help_of(&rt, "c-tab-0");
+    let inactive_close = help_of(&rt, "c-tab-1");
+    assert!(new_help.contains('('), "expected shortcut in {new_help:?}");
+    assert!(
+        active_close.contains('('),
+        "expected shortcut in active close tooltip {active_close:?}"
+    );
+    assert!(
+        !inactive_close.is_empty() && !inactive_close.contains('('),
+        "inactive close tooltip must omit shortcut: {inactive_close:?}"
+    );
+
+    settings::fixture_shortcuts(
+        &rt.state,
+        json!({"new-instance": [{"key": "f8"}], "close-instance": []}),
+    );
+    rt.update(|s, _| s.revision += 1);
+    settle(&mut rt);
+
+    assert!(help_of(&rt, "project-tabs-new").contains("F8"));
+    assert!(!help_of(&rt, "c-tab-0").contains('('));
 }
 
 #[test]

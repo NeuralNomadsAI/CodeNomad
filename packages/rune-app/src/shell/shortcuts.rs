@@ -109,10 +109,19 @@ fn has_active_session(s: &State) -> bool {
         && (s.workspace.is_none() || workspace::active_session(s).is_some())
 }
 
+fn home_focus_allows_browse(tx: &Tx) -> bool {
+    match tx.focused() {
+        None => true,
+        Some("browse" | "open-folder") => true,
+        Some(key) => key.starts_with("project-") && !key.starts_with("project-tabs-"),
+    }
+}
+
 fn can_browse_home(s: &State, tx: &Tx) -> bool {
     crate::platform::folder_picker_available()
         && launcher_replaces_project(s)
         && !focused_text_field(s, tx)
+        && home_focus_allows_browse(tx)
         && s.screen
             .launcher()
             .is_some_and(|l| l.connection.is_some() && !l.authentication_required)
@@ -243,7 +252,10 @@ fn select_relative_session(s: &mut State, next: bool, tx: &mut Tx) {
         return;
     }
     let current = (!s.screen.is_launcher())
-        .then(|| workspace::active_session(s))
+        .then(|| {
+            workspace::active_session(s)
+                .or_else(|| s.screen.launcher().and_then(|l| l.visits.current()))
+        })
         .flatten();
     let current_index = current.and_then(|id| ids.iter().position(|row| row == id));
     let target = if next {
