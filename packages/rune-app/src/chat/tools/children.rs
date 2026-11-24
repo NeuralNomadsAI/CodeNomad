@@ -66,12 +66,35 @@ impl Default for ReportCopy {
     }
 }
 
+enum ReportExpand {
+    Idle,
+    Loading {
+        key: ReportCopyKey,
+        _cancel: codenomad_client::Sender<()>,
+        rx: Receiver<Option<String>>,
+    },
+    Loaded {
+        key: ReportCopyKey,
+        text: String,
+    },
+    Failed {
+        key: ReportCopyKey,
+    },
+}
+
+impl Default for ReportExpand {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Children {
     backend: Option<Backend>,
     entries: HashMap<String, Entry>,
-    waiting: VecDeque<(String, String, Weak<()>)>,
+    waiting: VecDeque<(String, Option<String>, String, Weak<()>)>,
     report_copy: ReportCopy,
+    expanded_report: ReportExpand,
 }
 
 struct Entry {
@@ -91,6 +114,7 @@ impl Children {
         self.entries.clear();
         self.waiting.clear();
         self.report_copy = ReportCopy::Idle;
+        self.expanded_report = ReportExpand::Idle;
     }
 
     pub(crate) fn cancel_copy(&mut self) {
@@ -117,6 +141,17 @@ impl Children {
         matches!(&self.report_copy, ReportCopy::Ready { key: current, .. } if current == key)
     }
 
+    pub(super) fn loaded_report(&self, key: &ReportCopyKey) -> Option<&str> {
+        match &self.expanded_report {
+            ReportExpand::Loaded { key: current, text } if current == key => Some(text.as_str()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn expand_failed(&self, key: &ReportCopyKey) -> bool {
+        matches!(&self.expanded_report, ReportExpand::Failed { key: current } if current == key)
+    }
+
     pub(super) fn release(s: &mut State, key: &str) {
         let prefix = format!("{key}-");
         let children = &mut s.transcript_display.children;
@@ -128,15 +163,31 @@ impl Children {
         });
         children
             .waiting
-            .retain(|(_, card, _)| card != key && !card.starts_with(&prefix));
+            .retain(|(_, _, card, _)| card != key && !card.starts_with(&prefix));
+        let matches_card = |report_key: &ReportCopyKey| {
+            report_key
+                .key
+                .strip_prefix("copy-")
+                .and_then(|rest| rest.strip_suffix("-output"))
+                .is_some_and(|card| card == key || card.starts_with(&prefix))
+        };
+        let clear_expand = match &children.expanded_report {
+            ReportExpand::Loading { key: current, .. }
+            | ReportExpand::Loaded { key: current, .. }
+            | ReportExpand::Failed { key: current } => matches_card(current),
+            ReportExpand::Idle => false,
+        };
+        if clear_expand {
+            children.expanded_report = ReportExpand::Idle;
+        }
         Self::promote_waiting(s);
     }
 
-    pub(super) fn copy_report(s: &mut State, key: ReportCopyKey) {
-        let Some(backend) = s.transcript_display.children.backend.clone() else {
-            s.transcript_display.children.report_copy = ReportCopy::Failed { key };
-            return;
-        };
+    fn fetch_report(
+        s: &State,
+        key: &ReportCopyKey,
+    ) -> Option<(codenomad_client::Sender<()>, Receiver<Option<String>>)> {
+        let backend = s.transcript_display.children.backend.clone()?;
         let (out, rx) = bounded(1);
         let (cancel, cancelled) = bounded(1);
         let (parent, row_id, part_index, child) = (
@@ -145,11 +196,6 @@ impl Children {
             key.part_index,
             key.child.clone(),
         );
-        s.transcript_display.children.report_copy = ReportCopy::Loading {
-            key,
-            _cancel: cancel,
-            rx,
-        };
         let wake = s.wake.clone();
         let reads = s.reads.clone();
         crate::platform::spawn(async move {
@@ -193,6 +239,35 @@ impl Children {
             })
             .await;
         });
+        Some((cancel, rx))
+    }
+
+    pub(super) fn copy_report(s: &mut State, key: ReportCopyKey) {
+        let Some((cancel, rx)) = Self::fetch_report(s, &key) else {
+            s.transcript_display.children.report_copy = ReportCopy::Failed { key };
+            return;
+        };
+        s.transcript_display.children.report_copy = ReportCopy::Loading {
+            key,
+            _cancel: cancel,
+            rx,
+        };
+    }
+
+    pub(super) fn expand_report(s: &mut State, key: ReportCopyKey) {
+        if matches!(&s.transcript_display.children.expanded_report, ReportExpand::Loading { key: current, .. } if current == &key)
+        {
+            return;
+        }
+        let Some((cancel, rx)) = Self::fetch_report(s, &key) else {
+            s.transcript_display.children.expanded_report = ReportExpand::Failed { key };
+            return;
+        };
+        s.transcript_display.children.expanded_report = ReportExpand::Loading {
+            key,
+            _cancel: cancel,
+            rx,
+        };
     }
 
     pub(crate) fn poll_copy(&mut self, tx: &mut rune::Tx) -> bool {
@@ -236,13 +311,20 @@ impl Children {
             .or_else(|| {
                 self.waiting
                     .iter()
-                    .find(|(wid, wkey, _)| wid == id && wkey == key)
-                    .and_then(|(_, _, lease)| lease.upgrade())
+                    .find(|(wid, _, wkey, _)| wid == id && wkey == key)
+                    .and_then(|(_, _, _, lease)| lease.upgrade())
             })
             .unwrap_or_default()
     }
 
-    pub(super) fn demand(s: &mut State, id: &str, key: &str, lease: &Rc<()>, visible: bool) {
+    pub(super) fn demand(
+        s: &mut State,
+        id: &str,
+        parent: Option<&str>,
+        key: &str,
+        lease: &Rc<()>,
+        visible: bool,
+    ) {
         let children = &mut s.transcript_display.children;
         let freed = children.prune();
         if !visible {
@@ -256,7 +338,7 @@ impl Children {
             }
             children
                 .waiting
-                .retain(|(wid, wkey, _)| !(wid == id && wkey == key));
+                .retain(|(wid, _, wkey, _)| !(wid == id && wkey == key));
             if freed || removed {
                 Self::promote_waiting(s);
             }
@@ -270,44 +352,55 @@ impl Children {
             return;
         }
         if children.entries.len() >= CHILD_LIMIT {
-            children.waiting.retain(|(_, _, w)| w.strong_count() > 0);
+            children.waiting.retain(|(_, _, _, w)| w.strong_count() > 0);
             if let Some(existing) = children
                 .waiting
                 .iter_mut()
-                .find(|(wid, wkey, _)| wid == id && wkey == key)
+                .find(|(wid, _, wkey, _)| wid == id && wkey == key)
             {
-                existing.2 = Rc::downgrade(lease);
+                existing.1 = parent.map(str::to_owned);
+                existing.3 = Rc::downgrade(lease);
             } else if children.waiting.len() < WAITING_LIMIT {
-                children
-                    .waiting
-                    .push_back((id.into(), key.into(), Rc::downgrade(lease)));
+                children.waiting.push_back((
+                    id.into(),
+                    parent.map(str::to_owned),
+                    key.into(),
+                    Rc::downgrade(lease),
+                ));
             }
             return;
         }
-        Self::start_entry(s, id, key, lease);
+        Self::start_entry(s, id, parent, key, lease);
     }
 
     fn promote_waiting(s: &mut State) {
         while s.transcript_display.children.entries.len() < CHILD_LIMIT {
             let next = loop {
-                let Some((id, key, weak)) = s.transcript_display.children.waiting.pop_front()
+                let Some((id, parent, key, weak)) =
+                    s.transcript_display.children.waiting.pop_front()
                 else {
                     return;
                 };
                 if let Some(lease) = weak.upgrade() {
-                    break (id, key, lease);
+                    break (id, parent, key, lease);
                 }
             };
-            let (id, key, lease) = next;
+            let (id, parent, key, lease) = next;
             if let Some(entry) = s.transcript_display.children.entries.get_mut(&id) {
                 entry.cards.insert(key, Rc::downgrade(&lease));
-            } else if !Self::start_entry(s, &id, &key, &lease) {
+            } else if !Self::start_entry(s, &id, parent.as_deref(), &key, &lease) {
                 break;
             }
         }
     }
 
-    fn start_entry(s: &mut State, id: &str, key: &str, lease: &Rc<()>) -> bool {
+    fn start_entry(
+        s: &mut State,
+        id: &str,
+        parent: Option<&str>,
+        key: &str,
+        lease: &Rc<()>,
+    ) -> bool {
         let children = &mut s.transcript_display.children;
         let Some(backend) = children.backend.clone() else {
             return false;
@@ -327,6 +420,7 @@ impl Children {
             },
         );
         let child = id.to_owned();
+        let expected_parent = parent.map(str::to_owned);
         let wake = s.wake.clone();
         let reads = s.reads.clone();
         crate::platform::spawn(async move {
@@ -335,8 +429,9 @@ impl Children {
                     HashMap::new();
                 let mut frozen_ends: HashMap<(Option<String>, String), u64> = HashMap::new();
                 let mut execution_owed = 0u8;
+                let mut last_exec_end: Option<u64> = None;
                 loop {
-                    let (ended_calls, exec_ended) = settlement.take();
+                    let (ended_calls, exec_ended, exec_ended_at) = settlement.take();
                     for end in ended_calls {
                         let key = (end.message, end.call);
                         if let Some(ts) = end.ended
@@ -353,12 +448,15 @@ impl Children {
                     }
                     if exec_ended {
                         execution_owed = 3;
+                        last_exec_end =
+                            exec_ended_at.or(Some(crate::platform::storage::unix_millis()));
                     }
                     let fetched = {
                         let Some(_slot) = reads.background(&cancelled).await else {
                             break;
                         };
-                        backend.child_page(&child).await
+                        let parent_id = expected_parent.as_deref().unwrap_or(&backend.session);
+                        backend.child_page_under(&child, parent_id).await
                     };
                     let snap = match fetched {
                         Ok(Some(page)) => {
@@ -369,12 +467,12 @@ impl Children {
                                 !child_tool_settled(&page.rows, msg.as_deref(), call)
                             });
                             if execution_owed > 0 {
+                                let turn_start = page
+                                    .rows
+                                    .iter()
+                                    .rposition(|r| r.role == "user")
+                                    .map_or(0, |idx| idx + 1);
                                 if !page.running {
-                                    let turn_start = page
-                                        .rows
-                                        .iter()
-                                        .rposition(|r| r.role == "user")
-                                        .map_or(0, |idx| idx + 1);
                                     for row in &page.rows[turn_start..] {
                                         for part in &row.parts {
                                             if let Part::Tool(tool) = part
@@ -382,17 +480,54 @@ impl Children {
                                                     tool.status.as_str(),
                                                     "pending" | "streaming" | "running"
                                                 )
-                                                && owed_calls.len() < 64
                                             {
-                                                owed_calls
-                                                    .entry((Some(row.id.clone()), tool.id.clone()))
-                                                    .or_insert((0, None));
+                                                let k = (Some(row.id.clone()), tool.id.clone());
+                                                if let Some(ts) = last_exec_end
+                                                    && (frozen_ends.contains_key(&k)
+                                                        || frozen_ends.len() < 128)
+                                                {
+                                                    let ts = tool
+                                                        .started
+                                                        .map_or(ts, |start| ts.max(start));
+                                                    frozen_ends.entry(k.clone()).or_insert(ts);
+                                                }
+                                                if owed_calls.len() < 64 {
+                                                    owed_calls
+                                                        .entry(k)
+                                                        .or_insert((0, last_exec_end));
+                                                }
                                             }
                                         }
                                     }
                                     execution_owed = 0;
+                                    last_exec_end = None;
                                 } else {
+                                    if let Some(ts) = last_exec_end {
+                                        for row in &page.rows[turn_start..] {
+                                            for part in &row.parts {
+                                                if let Part::Tool(tool) = part
+                                                    && matches!(
+                                                        tool.status.as_str(),
+                                                        "streaming" | "running"
+                                                    )
+                                                {
+                                                    let k = (Some(row.id.clone()), tool.id.clone());
+                                                    if frozen_ends.contains_key(&k)
+                                                        || frozen_ends.len() < 128
+                                                    {
+                                                        let ts = tool
+                                                            .started
+                                                            .map_or(ts, |start| ts.max(start));
+                                                        frozen_ends.entry(k).or_insert(ts);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                     execution_owed -= 1;
+                                    if execution_owed == 0 {
+                                        last_exec_end = None;
+                                    }
                                 }
                             }
                             let mut snap = snapshot(page);
@@ -420,11 +555,15 @@ impl Children {
                             owed_calls.clear();
                             frozen_ends.clear();
                             execution_owed = 0;
+                            last_exec_end = None;
                             Some(Snapshot::default())
                         }
                         Err(_) => {
                             if execution_owed > 0 {
                                 execution_owed -= 1;
+                                if execution_owed == 0 {
+                                    last_exec_end = None;
+                                }
                             }
                             None
                         }
@@ -475,6 +614,23 @@ impl Children {
                 changed |= entry.snapshot != next;
                 entry.snapshot = next;
             }
+        }
+        let expand_outcome = match &self.expanded_report {
+            ReportExpand::Loading { rx, .. } => match rx.try_recv() {
+                Ok(body) => Some(body),
+                Err(error) if error.is_closed() => Some(None),
+                Err(_) => None,
+            },
+            _ => None,
+        };
+        if let Some(outcome) = expand_outcome
+            && let ReportExpand::Loading { key, .. } = std::mem::take(&mut self.expanded_report)
+        {
+            self.expanded_report = match outcome {
+                Some(text) => ReportExpand::Loaded { key, text },
+                None => ReportExpand::Failed { key },
+            };
+            changed = true;
         }
         changed
     }

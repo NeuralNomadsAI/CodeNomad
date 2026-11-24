@@ -49,11 +49,16 @@ impl SearchHit {
         }
     }
 
-    pub(super) fn text_query(&self) -> Query<'_> {
+    pub(super) fn text_query(&self, part_index: Option<usize>) -> Query<'_> {
+        let active = match self.part {
+            None => true,
+            Some((Kind::Text, target)) => part_index.is_none_or(|idx| idx == target),
+            Some(_) => false,
+        };
         Query {
             terms: &self.terms,
             ranked: self.ranked,
-            active: self.part.is_none_or(|(kind, _)| kind == Kind::Text),
+            active,
             claimed: None,
         }
     }
@@ -63,6 +68,32 @@ impl SearchHit {
             return Landing::Filtered;
         }
         if self.part.is_none_or(|(kind, _)| kind == Kind::Text) {
+            if let Some((Kind::Text, target)) = self.part
+                && row.role == "assistant"
+                && !row.parts.is_empty()
+            {
+                let mut ordinal = 0usize;
+                for (i, part) in row.parts.iter().enumerate() {
+                    if let Part::Text(body) = part {
+                        let frag = ordinal;
+                        ordinal += 1;
+                        if body.part_index == Some(target) {
+                            if body.text.trim().is_empty() {
+                                return Landing::Missing;
+                            }
+                            let (head, tail) =
+                                super::transcript::part_window(row.parts.len(), steps);
+                            let step = super::transcript::PART_LIMIT;
+                            let reveal = if (head..tail).contains(&i) {
+                                (i - step / 2) / step + 1
+                            } else {
+                                0
+                            };
+                            return Landing::Visible(format!("fragment-{}:{frag}", row.id), reveal);
+                        }
+                    }
+                }
+            }
             return Landing::Visible(
                 super::anchors::context(row).map_or_else(|| row.id.clone(), |(key, _)| key),
                 0,

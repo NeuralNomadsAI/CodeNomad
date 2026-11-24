@@ -66,7 +66,9 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
                                 None
                             }
                         } else if let Some(value) = super::format::structured_output(tool) {
-                            if let Some((source, _)) = super::format::format_unknown(value, None) {
+                            if let super::format::Formatted::Text(source, _) =
+                                super::format::format_unknown(value, None)
+                            {
                                 tx.copy(source);
                             }
                             None

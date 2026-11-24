@@ -139,7 +139,7 @@ impl Reader {
             .await;
             return;
         }
-        if let Some((page, stamp)) = jump
+        if let Some((page, raw_rows, stamp)) = jump
             .offer(backend, &self.resident, wire, async |event| {
                 reader_event(reading, self.generation, out, wake, event).await
             })
@@ -154,11 +154,10 @@ impl Reader {
             self.resident = page.rows;
             self.owed.retain(|(id, _)| self.known.contains(id));
             self.owed_tools.retain(|(id, call), _| {
-                self.known.contains(id) && !tool_settled(&self.resident, id, call)
+                self.known.contains(id) && !tool_settled(&raw_rows, id, call)
             });
-            self.failed_tools.retain(|(id, call)| {
-                self.known.contains(id) && !tool_settled(&self.resident, id, call)
-            });
+            self.failed_tools
+                .retain(|(id, call)| self.known.contains(id) && !tool_settled(&raw_rows, id, call));
             self.anchored = None;
             self.parked = false;
             if !self.historical && !self.owed_tools.is_empty() {

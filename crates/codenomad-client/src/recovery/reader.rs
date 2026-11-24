@@ -445,10 +445,19 @@ async fn read_page(
             None => Some(page.await),
         }
     };
-    let result = futures_lite::future::race(content, async {
-        wire.placement_changed().await;
-        None
-    })
+    let result = futures_lite::future::race(
+        content,
+        futures_lite::future::race(
+            async {
+                wire.placement_changed().await;
+                None
+            },
+            async {
+                wire.stream_closed().await;
+                None
+            },
+        ),
+    )
     .await;
     result
         .filter(|_| reading.is_none_or(|reading| reading.demand.current().generation == generation))
@@ -537,6 +546,7 @@ mod diagnostic_tests {
                 .unwrap();
         assert!(super::can_restart(&row));
         row.parts.push(Part::Text(Text {
+            part_index: None,
             text: String::new(),
             provenance: TextProvenance::Live,
         }));
@@ -545,6 +555,7 @@ mod diagnostic_tests {
         assert!(!super::can_restart(&row));
         row.completed = false;
         row.parts[0] = Part::Text(Text {
+            part_index: None,
             text: "already painted".into(),
             provenance: TextProvenance::Live,
         });

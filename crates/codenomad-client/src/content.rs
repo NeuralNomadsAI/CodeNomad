@@ -33,6 +33,7 @@ pub enum TextProvenance {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Text {
+    pub part_index: Option<usize>,
     pub text: String,
     pub provenance: TextProvenance,
 }
@@ -114,6 +115,7 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
             return Err("live text budget reached".into());
         }
         row.parts.push(Part::Text(Text {
+            part_index: None,
             text: String::new(),
             provenance: TextProvenance::Live,
         }));
@@ -166,7 +168,12 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
     if bytes > 256 * 1024 {
         return Err("live text budget reached".into());
     }
-    row.parts[index] = Part::Text(Text { text, provenance });
+    let part_index = prior.part_index;
+    row.parts[index] = Part::Text(Text {
+        part_index,
+        text,
+        provenance,
+    });
     row.body = text_body(&row.parts);
     Ok(fit)
 }
@@ -216,7 +223,9 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
                     && live.text.starts_with(&fetched.text)
                     && live.text != fetched.text
                 {
+                    let index = fetched.part_index;
                     *fetched = (*live).clone();
+                    fetched.part_index = index;
                 }
             }
             ordinal += 1;
@@ -241,8 +250,12 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
                 }
                 continue;
             }
-            if matches!(part, Part::Tool(tool) if !matches!(tool.status.as_str(), "streaming" | "running"))
-            {
+            if matches!(
+                part,
+                Part::Tool(tool)
+                    if !matches!(tool.status.as_str(), "streaming" | "running")
+                        && tool.part_index.is_some()
+            ) {
                 continue;
             }
             let after = source_keys[..i]
@@ -343,6 +356,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                     || !part["native"].is_null()
                     || !part["state"].is_null();
                 result.push(Part::Text(Text {
+                    part_index: Some(index),
                     text: text.into(),
                     provenance: if closed {
                         TextProvenance::Closed

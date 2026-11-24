@@ -550,19 +550,24 @@ pub(crate) async fn run_with_reading(
                             }
                             content::ToolFit::Drop => {}
                             content::ToolFit::Repair => {
-                                if matches!(kind, "session.tool.success" | "session.tool.failed")
-                                    && reader.known.contains(id)
-                                    && reader.owed_tools.len() < 64
-                                    && let Some(call) = native["data"]["id"]
-                                        .as_str()
-                                        .filter(|c| !c.is_empty() && c.len() <= 256)
-                                {
-                                    reader
-                                        .owed_tools
-                                        .entry((id.into(), call.into()))
-                                        .or_insert(0);
-                                }
-                                if !reader.dirty {
+                                if matches!(kind, "session.tool.success" | "session.tool.failed") {
+                                    if reader.known.contains(id)
+                                        && reader.owed_tools.len() < 64
+                                        && let Some(call) = native["data"]["id"]
+                                            .as_str()
+                                            .filter(|c| !c.is_empty() && c.len() <= 256)
+                                    {
+                                        reader
+                                            .owed_tools
+                                            .entry((id.into(), call.into()))
+                                            .or_insert(0);
+                                    }
+                                    if !reader.dirty {
+                                        reader.dirty = true;
+                                        reader.quiet = Instant::now() + Duration::from_millis(100);
+                                    }
+                                } else if !reader.dirty && reader.repairs < 3 {
+                                    reader.repairs += 1;
                                     reader.dirty = true;
                                     reader.quiet = Instant::now() + Duration::from_millis(100);
                                 }

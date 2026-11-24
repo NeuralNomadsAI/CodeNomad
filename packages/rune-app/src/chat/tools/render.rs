@@ -282,11 +282,6 @@ fn render_body(
     {
         header = header.child(copy(s, message, &tool.id, Section::Output));
     }
-    let header = if !probe && expanded && can_watch_child {
-        task::observe(s, key, tool, header)
-    } else {
-        header
-    };
     let mut block = col()
         .full_width()
         .pad(Space::Sm)
@@ -483,19 +478,20 @@ fn render_body(
         } else if has_output && !specialized_task {
             let structured_out =
                 structured.map(|value| super::format::format_unknown(value, Some(TOOL_LIMIT)));
-            if matches!(structured_out, Some(None)) {
+            if matches!(structured_out, Some(super::format::Formatted::TooLarge)) {
                 block = block.child(text(t("toolCall.output.tooLarge")));
-            } else {
-                let (formatted, formatted_lang) = if let Some(Some((text, lang))) = structured_out {
-                    (Some(text), lang)
-                } else {
-                    (
-                        (tool.name == "execute" && tool.status == "completed")
-                            .then(|| execute::formatted_output(parts[0]))
-                            .flatten(),
-                        "json",
-                    )
-                };
+            } else if !matches!(structured_out, Some(super::format::Formatted::Empty)) {
+                let (formatted, formatted_lang) =
+                    if let Some(super::format::Formatted::Text(text, lang)) = structured_out {
+                        (Some(text), lang)
+                    } else {
+                        (
+                            (tool.name == "execute" && tool.status == "completed")
+                                .then(|| execute::formatted_output(parts[0]))
+                                .flatten(),
+                            "json",
+                        )
+                    };
                 let (parts, lang) = if let Some(formatted) = formatted.as_deref() {
                     ([formatted, "", "", ""], formatted_lang)
                 } else {
@@ -558,9 +554,14 @@ fn render_body(
     if tool.name == "execute" {
         block = block.children(execute::notice(tool));
     }
-    block
+    let block = block
         .children(media::tool(s, key, &tool.pictures))
-        .children(diagnostics())
+        .children(diagnostics());
+    if !probe && can_watch_child {
+        task::observe(s, key, task::parent_child(message), tool, block)
+    } else {
+        block
+    }
 }
 
 fn wrap_control(s: &State, key: &str, wrap: bool) -> El {

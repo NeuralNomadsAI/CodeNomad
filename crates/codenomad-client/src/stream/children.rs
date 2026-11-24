@@ -26,6 +26,7 @@ pub struct ChildSettlement(Mutex<SettlementState>);
 struct SettlementState {
     calls: HashMap<(Option<String>, String), Option<u64>>,
     execution_ended: bool,
+    execution_ended_at: Option<u64>,
 }
 
 impl ChildSettlement {
@@ -41,15 +42,21 @@ impl ChildSettlement {
                     state.calls.insert(key, end.ended);
                 }
             }
-            ChildSignal::ToolEnded(None) | ChildSignal::ExecutionEnded => {
+            ChildSignal::ToolEnded(None) => {
                 state.execution_ended = true;
+            }
+            ChildSignal::ExecutionEnded(at) => {
+                state.execution_ended = true;
+                if at.is_some() {
+                    state.execution_ended_at = *at;
+                }
             }
         }
     }
 
-    pub fn take(&self) -> (Vec<ChildToolEnd>, bool) {
+    pub fn take(&self) -> (Vec<ChildToolEnd>, bool, Option<u64>) {
         let Ok(mut state) = self.0.lock() else {
-            return (Vec::new(), false);
+            return (Vec::new(), false, None);
         };
         let calls = state
             .calls
@@ -61,14 +68,15 @@ impl ChildSettlement {
             })
             .collect();
         let execution_ended = std::mem::take(&mut state.execution_ended);
-        (calls, execution_ended)
+        let execution_ended_at = state.execution_ended_at.take();
+        (calls, execution_ended, execution_ended_at)
     }
 }
 
 pub(crate) enum ChildSignal {
     Dirty,
     ToolEnded(Option<ChildToolEnd>),
-    ExecutionEnded,
+    ExecutionEnded(Option<u64>),
 }
 
 #[derive(Default)]
@@ -125,6 +133,25 @@ impl Backend {
     }
 
     pub async fn child_page(&self, child: &str) -> history::Result<Option<history::Page>> {
+        self.child_page_checked(child, None).await
+    }
+
+    pub async fn child_page_under(
+        &self,
+        child: &str,
+        expected_parent: &str,
+    ) -> history::Result<Option<history::Page>> {
+        if !history::valid_id(expected_parent) {
+            return Err("invalid task child".into());
+        }
+        self.child_page_checked(child, Some(expected_parent)).await
+    }
+
+    async fn child_page_checked(
+        &self,
+        child: &str,
+        expected_parent: Option<&str>,
+    ) -> history::Result<Option<history::Page>> {
         if child == self.session || !history::valid_id(child) {
             return Err("invalid task child".into());
         }
@@ -141,7 +168,7 @@ impl Backend {
             let mut current = child.to_owned();
             let mut visited = HashSet::new();
             let mut leaf_location = None;
-            for _ in 0..MAX_ANCESTOR_HOPS {
+            for hop in 0..MAX_ANCESTOR_HOPS {
                 let now = Instant::now();
                 if now >= deadline {
                     return Err("child ownership check timed out".into());
@@ -159,12 +186,15 @@ impl Backend {
                 if native["id"] != current {
                     return Ok(None);
                 }
-                if leaf_location.is_none() {
-                    leaf_location = Some(native["location"].clone());
-                }
                 let Some(parent) = native["parentID"].as_str().filter(|id| !id.is_empty()) else {
                     return Ok(None);
                 };
+                if hop == 0 {
+                    if expected_parent.is_some_and(|expected| parent != expected) {
+                        return Ok(None);
+                    }
+                    leaf_location = Some(native["location"].clone());
+                }
                 if parent == self.session {
                     return Ok(leaf_location);
                 }
@@ -224,7 +254,7 @@ pub(super) fn observe(b: &Backend, event: &Value) {
                         "session.execution.succeeded"
                         | "session.execution.failed"
                         | "session.execution.interrupted",
-                    ) => ChildSignal::ExecutionEnded,
+                    ) => ChildSignal::ExecutionEnded(event["created"].as_u64()),
                     _ => ChildSignal::Dirty,
                 };
                 b.client.children().invalidate(b, Some(id), signal);

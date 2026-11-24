@@ -64,7 +64,7 @@ pub(super) fn skill_prose_matches(
 }
 
 pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
-    prose_claimed(s, message, key, source, streaming, None)
+    prose_claimed(s, message, key, source, streaming, None, None)
 }
 
 pub(super) fn prose_claimed(
@@ -73,6 +73,7 @@ pub(super) fn prose_claimed(
     key: String,
     source: &str,
     streaming: bool,
+    part_index: Option<usize>,
     claimed: Option<&std::cell::Cell<bool>>,
 ) -> El {
     let query = s
@@ -82,7 +83,7 @@ pub(super) fn prose_claimed(
         .filter(|hit| hit.message == message)
         .map(|hit| rune_theme_codenomad::timeline::search::Query {
             claimed,
-            ..hit.text_query()
+            ..hit.text_query(part_index)
         });
     let revealed = query.is_some_and(|q| q.active)
         || s.transcript_display.search_revealed(&key)
@@ -159,7 +160,7 @@ fn prose_for(
             .search_highlight
             .as_ref()
             .filter(|hit| hit.message == message)
-            .map(|hit| hit.text_query())
+            .map(|hit| hit.text_query(None))
     });
     window(s, key, &[source], limit, |shown, units| {
         let claim_active =
@@ -230,9 +231,13 @@ fn prose_for(
                 move |card, frame| {
                     let index = frame.index;
                     let group = group.clone();
-                    let diagram = frame
+                    let diagram_open = frame
                         .language
-                        .is_some_and(|language| language.eq_ignore_ascii_case("mmd"));
+                        .is_some_and(|language| language.eq_ignore_ascii_case("mmd-open"));
+                    let diagram = diagram_open
+                        || frame
+                            .language
+                            .is_some_and(|language| language.eq_ignore_ascii_case("mmd"));
                     let copy = markdown::copy_button(
                         t("markdown.codeBlock.copy.label"),
                         screen::action_tx(&scope, {
@@ -274,7 +279,7 @@ fn prose_for(
                             diagram_sources.contains(&index)
                         };
                         return mermaid::frame(
-                            frame.open || streaming,
+                            frame.open || diagram_open || streaming,
                             source_only,
                             frame.source,
                             format!("{group}-code-{index}"),

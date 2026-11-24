@@ -113,7 +113,15 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
         let key = format!("body-{}", m.id);
         view = view.child(super::reading::passage(
             s,
-            document::prose_claimed(s, &m.id, key.clone(), &m.body, false, Some(&text_claimed)),
+            document::prose_claimed(
+                s,
+                &m.id,
+                key.clone(),
+                &m.body,
+                false,
+                None,
+                Some(&text_claimed),
+            ),
             &m.id,
             key,
             None,
@@ -186,6 +194,7 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                             key.clone(),
                             &body.text,
                             !m.completed && body.provenance != TextProvenance::Closed,
+                            body.part_index,
                             Some(&text_claimed),
                         ),
                         &m.id,

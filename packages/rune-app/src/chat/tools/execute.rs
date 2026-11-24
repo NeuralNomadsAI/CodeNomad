@@ -129,9 +129,9 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
             && rendered_input
                 .as_deref()
                 .is_some_and(|text| query.is_some_and(|q| q.matches(text)));
-        let search_toggle = format!("{call}-search-{search_id}");
         let expanded = if search_match {
-            s.transcript_display.expanded(&search_toggle, true)
+            s.transcript_display
+                .execute_search_expanded(search_id, &call, true)
         } else {
             manual
         };
@@ -140,13 +140,14 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
             layout::action_row()
                 .child(if input.is_object() {
                     let toggle = call.clone();
-                    let search_key = search_toggle.clone();
                     layout::button(
                         &name,
                         false,
                         screen::action(&s.input_scope, move |s| {
                             if search_match {
-                                super::Display::set_expanded(s, &search_key, !expanded);
+                                super::Display::set_execute_search_expanded(
+                                    s, search_id, &toggle, !expanded,
+                                );
                             } else {
                                 super::Display::toggle(s, &toggle);
                             }

@@ -377,17 +377,49 @@ fn diagram_fence(info: &str, block: &str) -> Option<(std::ops::Range<usize>, &'s
     let line = block.lines().next()?;
     let opening = line.trim_start();
     let marker = opening.chars().next().filter(|c| matches!(c, '`' | '~'))?;
-    let language = opening.trim_start_matches(marker).trim_start();
+    let fence_len = opening.bytes().take_while(|&b| b == marker as u8).count();
+    let language = opening[fence_len..].trim_start();
     let word = language.split_whitespace().next()?;
     let start = line.len() - language.len();
     // Kit recognizes comma modifiers; Solid only admits a whitespace-delimited language.
     // Route both forms through the ordinary code frame, retaining Copy even for plain source.
     let replacement = if word.eq_ignore_ascii_case("mermaid") || word.eq_ignore_ascii_case("mmd") {
-        "mmd"
+        if commonmark_closed(block, marker, fence_len) {
+            "mmd"
+        } else {
+            "mmd-open"
+        }
     } else {
         "text"
     };
     Some((start..start + word.len(), replacement))
+}
+
+fn commonmark_closed(block: &str, marker: char, fence_len: usize) -> bool {
+    let mut lines = block.lines();
+    if lines.next().is_none() {
+        return false;
+    }
+    let Some(mut tail) = lines.last() else {
+        return false;
+    };
+    loop {
+        let trimmed = tail.trim_start_matches(' ');
+        if tail.len() - trimmed.len() <= 3
+            && let Some(rest) = trimmed.strip_prefix('>')
+        {
+            tail = rest.strip_prefix(' ').unwrap_or(rest);
+            continue;
+        }
+        break;
+    }
+    let indent = tail.bytes().take_while(|&b| b == b' ').count();
+    if indent > 3 {
+        return false;
+    }
+    let rest = &tail[indent..];
+    let closing = rest.bytes().take_while(|&b| b == marker as u8).count();
+    closing >= fence_len && rest[closing..].bytes().all(|b| matches!(b, b' ' | b'\t'))
 }
 
 pub fn language_for_path(path: &str) -> &str {

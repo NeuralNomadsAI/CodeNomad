@@ -90,7 +90,7 @@ impl Jump {
         resident: &[Row],
         wire: &Arc<stream::State>,
         send: impl AsyncFnOnce(Event) -> bool,
-    ) -> Option<(crate::history::Page, u64)> {
+    ) -> Option<(crate::history::Page, Vec<Row>, u64)> {
         let ticket = self.ticket;
         let revision = wire.history_revision.load(SeqCst);
         let stamp = wire.version.load(SeqCst);
@@ -122,6 +122,7 @@ impl Jump {
             }
             return None;
         };
+        let raw_rows = page.rows.clone();
         let mut merged = page.rows.clone();
         if crate::content::merge_page(resident, &mut merged).is_ok() {
             page.rows = merged;
@@ -147,7 +148,7 @@ impl Jump {
             verdict.try_recv().ok()
         })
         .await;
-        accepted.map(|()| (page, stamp))
+        accepted.map(|()| (page, raw_rows, stamp))
     }
 }
 

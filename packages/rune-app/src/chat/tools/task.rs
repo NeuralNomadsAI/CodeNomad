@@ -40,11 +40,31 @@ impl DeliveryCache {
         self.by_child.clear();
     }
 
-    fn refresh(&mut self, rows: &[crate::history::Row]) {
+    fn refresh(&mut self, revision: u64, rows: &[crate::history::Row]) {
         use crate::content::Part;
-        let mut fp = rows.len() as u64;
+        let mut fp = revision.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (rows.len() as u64);
         for row in rows {
-            fp = fp.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (Arc::as_ptr(row) as usize as u64);
+            fp = fp.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                ^ (Arc::as_ptr(row) as usize as u64)
+                ^ ((row.parts.len() as u64) << 1);
+            for part in &row.parts {
+                match part {
+                    Part::Tool(tool) if is_task(tool) => {
+                        fp = fp.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                            ^ (Arc::as_ptr(tool) as usize as u64)
+                            ^ tool.started.unwrap_or(0)
+                            ^ ((child(tool).len() as u64) << 4)
+                            ^ (tool.status.len() as u64);
+                    }
+                    Part::SubagentReport(report) => {
+                        fp = fp.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                            ^ report.created
+                            ^ ((report.state.len() as u64) << 8)
+                            ^ (report.child.len() as u64);
+                    }
+                    _ => {}
+                }
+            }
         }
         let fp = fp.max(1);
         if self.fingerprint == fp {
@@ -235,7 +255,7 @@ pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<D
     }
     let rows = &s.messages[s.messages.len().saturating_sub(500)..];
     let mut cache = s.transcript_display.task_deliveries.borrow_mut();
-    cache.refresh(rows);
+    cache.refresh(s.revision, rows);
     let Some(entry) = cache.by_child.get(child_id) else {
         return Some(Delivery {
             status: "toolCall.status.running",
@@ -351,15 +371,32 @@ pub(super) fn body(
         ),
     ] {
         if !value.trim().is_empty() || truncated {
+            let copy_key = (section == "output" && truncated)
+                .then(|| {
+                    let parent = parent_child(message)?;
+                    let (row_id, part_index) = report_location?;
+                    Some(ReportCopyKey {
+                        key: format!("copy-{key}-output"),
+                        parent: parent.to_owned(),
+                        row_id: row_id.to_owned(),
+                        part_index,
+                        child: child(tool).to_owned(),
+                    })
+                })
+                .flatten();
+            let expanded_full = copy_key
+                .as_ref()
+                .and_then(|k| s.transcript_display.children.loaded_report(k));
+            let shown_value = expanded_full.unwrap_or(value);
             result = result.child(text(t(label)).text_role(TextRole::Label));
-            if !value.trim().is_empty() {
+            if !shown_value.trim().is_empty() {
                 result = result.child(markdown::tool_pane(
                     super::super::document::prose_pane_search(
                         s,
                         message,
                         key,
                         format!("{key}-task-{section}"),
-                        value,
+                        shown_value,
                         tool.status == "running" && section == "output",
                         PANE_LIMIT,
                         section_query,
@@ -367,25 +404,33 @@ pub(super) fn body(
                     true,
                 ));
             }
-            if truncated {
-                result = result.child(text(t("toolCall.output.tooLarge")).role("status"));
-                if let Some(parent) = parent_child(message)
-                    && let Some((row_id, part_index)) = report_location
-                {
-                    let copy_key = ReportCopyKey {
-                        key: format!("copy-{key}-output"),
-                        parent: parent.to_owned(),
-                        row_id: row_id.to_owned(),
-                        part_index,
-                        child: child(tool).to_owned(),
-                    };
-                    if s.transcript_display.children.copy_failed(&copy_key) {
+            if truncated && expanded_full.is_none() {
+                let mut status_row =
+                    layout::action_row().child(text(t("toolCall.output.tooLarge")).role("status"));
+                if let Some(copy_key) = copy_key {
+                    let expand_key = copy_key.clone();
+                    status_row = status_row.child(
+                        layout::button(
+                            t("messageBlock.hiddenText.showAll"),
+                            false,
+                            screen::action(&s.input_scope, move |s| {
+                                Children::expand_report(s, expand_key.clone());
+                            }),
+                        )
+                        .key(format!("expand-{key}-output")),
+                    );
+                    result = result.child(status_row);
+                    if s.transcript_display.children.copy_failed(&copy_key)
+                        || s.transcript_display.children.expand_failed(&copy_key)
+                    {
                         result =
                             result.child(text(t("sessionList.loadError.retry")).role("status"));
                     } else if s.transcript_display.children.copy_ready(&copy_key) {
                         result =
                             result.child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
                     }
+                } else {
+                    result = result.child(status_row);
                 }
             }
         }
@@ -563,15 +608,21 @@ pub(super) fn watched_child(tool: &Tool) -> Option<&str> {
     .then_some(id)
 }
 
-pub(super) fn observe(s: &State, key: &str, tool: &Tool, card: El) -> El {
+pub(super) fn observe(s: &State, key: &str, parent: Option<&str>, tool: &Tool, card: El) -> El {
     let Some(id) = watched_child(tool) else {
         return card;
     };
     let lease = s.transcript_display.children.lease(id, key);
     let drawn = Rc::new(DrawnRect::new([0.0; 4]));
     let clip = s.transcript_display.tool_clock.current_clip();
-    let (id, key, scope) = (id.to_owned(), key.to_owned(), s.input_scope.clone());
+    let (id, parent, key, scope) = (
+        id.to_owned(),
+        parent.map(str::to_owned),
+        key.to_owned(),
+        s.input_scope.clone(),
+    );
     let layout_id = id.clone();
+    let layout_parent = parent.clone();
     let layout_key = key.clone();
     let layout_scope = scope.clone();
     let layout_lease = lease.clone();
@@ -593,7 +644,14 @@ pub(super) fn observe(s: &State, key: &str, tool: &Tool, card: El) -> El {
                         s.transcript_display
                             .tool_clock
                             .rect_in_view(rect, bounds, &layout_clip);
-                    Children::demand(s, &layout_id, &layout_key, &layout_lease, in_view);
+                    Children::demand(
+                        s,
+                        &layout_id,
+                        layout_parent.as_deref(),
+                        &layout_key,
+                        &layout_lease,
+                        in_view,
+                    );
                 }
             }
             tx.live_only();
@@ -609,7 +667,7 @@ pub(super) fn observe(s: &State, key: &str, tool: &Tool, card: El) -> El {
                             s.tool_diff_preferences.history_bounds.get(),
                             &visible_clip,
                         ));
-                Children::demand(s, &id, &key, &lease, effective);
+                Children::demand(s, &id, parent.as_deref(), &key, &lease, effective);
             }
             tx.live_only();
         })

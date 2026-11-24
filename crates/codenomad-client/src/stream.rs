@@ -27,7 +27,6 @@ use routing::dispatch;
 #[path = "stream_browser.rs"]
 mod browser;
 
-#[derive(Default)]
 pub struct State {
     pub cancelled: AtomicBool,
     pub version: AtomicU64,
@@ -38,7 +37,26 @@ pub struct State {
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     catalogue: Option<Arc<catalogue::Signals>>,
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
+    closed: (Sender<()>, crate::Receiver<()>),
     provider_usage: Option<crate::provider_usage::Watch>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            cancelled: AtomicBool::new(false),
+            version: AtomicU64::new(0),
+            alive: AtomicBool::new(false),
+            running: AtomicBool::new(false),
+            upstream: AtomicBool::new(false),
+            history_revision: AtomicU64::new(0),
+            preferences: None,
+            catalogue: None,
+            placement: None,
+            closed: crate::bounded(1),
+            provider_usage: None,
+        }
+    }
 }
 
 impl State {
@@ -76,6 +94,10 @@ impl State {
         } else {
             std::future::pending::<()>().await;
         }
+    }
+
+    pub(crate) async fn stream_closed(&self) {
+        let _ = self.closed.1.recv().await;
     }
 
     async fn notify_preferences(
@@ -129,6 +151,7 @@ pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>
     runtime::spawn(async move {
         let result = read(&backend, epoch, &out, &state).await;
         state.alive.store(false, SeqCst);
+        state.closed.0.close();
         state.running.store(false, SeqCst);
         state.version.fetch_add(1, SeqCst);
         if let Some(quota) = state.quota_ingress(&backend) {

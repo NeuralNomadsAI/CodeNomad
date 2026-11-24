@@ -131,48 +131,60 @@ pub(super) fn error(tool: &Tool) -> &str {
     shell::interrupted(tool).map_or(tool.error.as_str(), |(_, notice)| notice)
 }
 
-pub(super) fn format_unknown(
-    value: &Value,
-    limit: Option<usize>,
-) -> Option<(String, &'static str)> {
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Formatted {
+    Empty,
+    Text(String, &'static str),
+    TooLarge,
+}
+
+pub(super) fn format_unknown(value: &Value, limit: Option<usize>) -> Formatted {
     match value {
-        Value::Null => None,
-        Value::String(s) => (!s.is_empty()).then(|| (s.clone(), "text")),
-        Value::Bool(b) => Some((b.to_string(), "text")),
-        Value::Number(n) => Some((n.to_string(), "text")),
+        Value::Null => Formatted::Empty,
+        Value::String(s) => {
+            if s.is_empty() {
+                Formatted::Empty
+            } else {
+                Formatted::Text(s.clone(), "text")
+            }
+        }
+        Value::Bool(b) => Formatted::Text(b.to_string(), "text"),
+        Value::Number(n) => Formatted::Text(n.to_string(), "text"),
         Value::Array(items) => {
             let mut out = String::new();
             for item in items {
-                let Some((piece, _)) = format_unknown(item, limit) else {
-                    if limit.is_some()
-                        && !item.is_null()
-                        && !matches!(item, Value::String(s) if s.is_empty())
-                        && !matches!(item, Value::Array(a) if a.is_empty())
-                    {
-                        return None;
-                    }
-                    continue;
+                let piece = match format_unknown(item, limit) {
+                    Formatted::Empty => continue,
+                    Formatted::TooLarge => return Formatted::TooLarge,
+                    Formatted::Text(piece, _) => piece,
                 };
                 if piece.is_empty() {
                     continue;
                 }
                 let add = piece.len() + usize::from(!out.is_empty());
                 if limit.is_some_and(|max| out.len().saturating_add(add) > max) {
-                    return None;
+                    return Formatted::TooLarge;
                 }
                 if !out.is_empty() {
                     out.push('\n');
                 }
                 out.push_str(&piece);
             }
-            (!out.is_empty()).then_some((out, "text"))
+            if out.is_empty() {
+                Formatted::Empty
+            } else {
+                Formatted::Text(out, "text")
+            }
         }
         Value::Object(_) => {
             let json = match limit {
-                Some(max) => input_json(value, max, false)?,
-                None => serde_json::to_string_pretty(value).ok()?,
+                Some(max) => input_json(value, max, false),
+                None => serde_json::to_string_pretty(value).ok(),
             };
-            Some((json, "json"))
+            match json {
+                Some(json) => Formatted::Text(json, "json"),
+                None => Formatted::TooLarge,
+            }
         }
     }
 }
@@ -220,4 +232,16 @@ fn nested_tool_arguments_stop_at_the_actual_pretty_json_budget() {
     assert!(value.to_string().len() < limit);
     assert!(serde_json::to_string_pretty(&value).unwrap().len() > 400_000);
     assert!(input_json(&value, limit, false).is_none());
+}
+
+#[test]
+fn format_unknown_skips_empty_nested_arrays_instead_of_marking_too_large() {
+    assert_eq!(
+        format_unknown(&serde_json::json!([[null], "ok"]), Some(1024)),
+        Formatted::Text("ok".into(), "text")
+    );
+    assert_eq!(
+        format_unknown(&serde_json::json!([[null, ""]]), Some(1024)),
+        Formatted::Empty
+    );
 }

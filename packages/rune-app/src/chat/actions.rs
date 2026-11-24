@@ -47,6 +47,7 @@ struct SessionDisplay {
     unwrapped: HashMap<String, BTreeSet<usize>>,
     diagram_sources: HashMap<String, BTreeSet<usize>>,
     diagram_search: (u64, HashMap<String, BTreeMap<usize, bool>>),
+    execute_search: (u64, HashMap<String, bool>),
     compact_diffs: (u64, HashSet<String>),
 }
 impl Display {
@@ -137,6 +138,34 @@ impl Display {
             .active
             .expansion
             .insert(key.into(), expanded);
+        s.revision += 1;
+    }
+
+    pub(super) fn execute_search_expanded(&self, search_id: u64, key: &str, default: bool) -> bool {
+        if self.active.execute_search.0 == search_id {
+            self.active
+                .execute_search
+                .1
+                .get(key)
+                .copied()
+                .unwrap_or(default)
+        } else {
+            default
+        }
+    }
+
+    pub(super) fn set_execute_search_expanded(
+        s: &mut State,
+        search_id: u64,
+        key: &str,
+        expanded: bool,
+    ) {
+        let state = &mut s.transcript_display.active.execute_search;
+        if state.0 != search_id {
+            state.0 = search_id;
+            state.1.clear();
+        }
+        state.1.insert(key.into(), expanded);
         s.revision += 1;
     }
 
