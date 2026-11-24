@@ -209,17 +209,22 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
                 .key(format!("reveal-{step_key}")),
             );
         }
+        let pane_clip = s.transcript_display.tool_clock.clip_rect(&step_key);
         if let Some(child_id) = child_id.filter(|_| !child_steps.is_empty()) {
-            for (message, step) in visible_steps.skip(start) {
-                let owner = format!("child:{child_id}:{message}");
-                let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
-                list = list.child(
-                    col()
-                        .key(child_key.clone())
-                        .role("listitem")
-                        .child(super::render::render(s, &owner, step, &child_key)),
-                );
-            }
+            list = s.transcript_display.tool_clock.with_clip(&pane_clip, || {
+                let mut list = list;
+                for (message, step) in visible_steps.skip(start) {
+                    let owner = format!("child:{child_id}:{message}");
+                    let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
+                    list = list.child(
+                        col()
+                            .key(child_key.clone())
+                            .role("listitem")
+                            .child(super::render::render(s, &owner, step, &child_key)),
+                    );
+                }
+                list
+            });
         }
         for (index, step) in legacy
             .iter()
@@ -287,7 +292,7 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
                 .role("status"),
             );
         }
-        result = result.child(markdown::tool_pane(list, true));
+        result = result.child(markdown::tool_pane(list, true).drawn_rect_into(&pane_clip));
     }
     Some(result)
 }

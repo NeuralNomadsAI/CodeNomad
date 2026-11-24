@@ -61,25 +61,19 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
             }
             false
         }
-        ("completed" | "error", "streaming" | "running") => true,
         _ => false,
     };
     if replace {
         let index = fetched.part_index;
         *fetched = live.clone();
         Arc::make_mut(fetched).part_index = index;
-    } else if live.status == "running"
-        && fetched.status == "running"
-        && fetched.started.is_none()
-        && live.started.is_some()
-    {
-        Arc::make_mut(fetched).started = live.started;
-    } else if matches!(live.status.as_str(), "completed" | "error")
-        && fetched.status == live.status
-        && fetched.ended.is_none()
-        && live.ended.is_some()
-    {
-        Arc::make_mut(fetched).ended = live.ended;
+    } else if live.status == "running" && fetched.status == "running" {
+        if fetched.started.is_none() && live.started.is_some() {
+            Arc::make_mut(fetched).started = live.started;
+        }
+        if fetched.ended.is_none() && live.ended.is_some() {
+            Arc::make_mut(fetched).ended = live.ended;
+        }
     }
 }
 
@@ -185,21 +179,11 @@ pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u
             if !matches!(tool.status.as_str(), "streaming" | "running") {
                 return Fit::Drop;
             }
-            tool.status = if kind.ends_with(".success") {
-                "completed"
-            } else {
-                "error"
-            }
-            .into();
-            tool.ended = at.or(tool.ended);
-            if let Some(metadata) = data.get("metadata").filter(|value| !value.is_null()) {
-                let prev = std::mem::replace(&mut tool.metadata, metadata.clone());
-                measure(&mut tool);
-                if tool.bytes.saturating_add(tool.output_bytes) > LIVE_BYTES {
-                    tool.metadata = prev;
-                }
-            }
-            measure(&mut tool);
+            let Some(ended) = at.or(tool.ended) else {
+                return Fit::Repair;
+            };
+            // Freeze the live timer now while keeping live preview output until HTTP settles.
+            tool.ended = Some(ended);
             let tool = Arc::new(tool);
             *prior = tool.clone();
             return Fit::Settled(tool);
@@ -419,7 +403,7 @@ mod tests {
             apply_at(
                 &mut live,
                 "session.tool.input.started",
-                &json!({"id":"a","name":"webfetch"}),
+                &json!({"id":"a","name":"bash"}),
                 Some(1_000)
             ),
             Fit::Applied(_)
@@ -428,8 +412,17 @@ mod tests {
             apply_at(
                 &mut live,
                 "session.tool.called",
-                &json!({"id":"a","input":{"url":"https://example.test"}}),
+                &json!({"id":"a","input":{"command":"echo hi"}}),
                 Some(2_000)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.progress",
+                &json!({"id":"a","metadata":{"output":"hi"}}),
+                Some(2_500)
             ),
             Fit::Applied(_)
         ));
@@ -441,15 +434,16 @@ mod tests {
         ) else {
             panic!("expected Settled")
         };
-        assert_eq!(done.status, "completed");
+        assert_eq!(done.status, "running");
         assert_eq!(done.started, Some(2_000));
         assert_eq!(done.ended, Some(5_000));
+        assert_eq!(done.metadata["output"], "hi");
 
         // A stale running HTTP page must not restart the settled tool timer.
         let mut stale = [Arc::new(
             crate::history::decode_message(&json!({
                 "id":"row","type":"assistant","content":[
-                    {"type":"tool","id":"a","name":"webfetch","time":{"ran":2000},"state":{"status":"running","input":{}}}
+                    {"type":"tool","id":"a","name":"bash","time":{"ran":2000},"state":{"status":"running","input":{"command":"echo hi"}}}
                 ]
             }))
             .unwrap(),
@@ -458,8 +452,9 @@ mod tests {
         let Part::Tool(merged) = &stale[0].parts[0] else {
             panic!("tool part")
         };
-        assert_eq!(merged.status, "completed");
+        assert_eq!(merged.status, "running");
         assert_eq!(merged.ended, Some(5_000));
+        assert_eq!(merged.metadata["output"], "hi");
 
         assert!(matches!(
             apply_at(
@@ -487,7 +482,7 @@ mod tests {
         ) else {
             panic!("expected Settled")
         };
-        assert_eq!(failed.status, "error");
+        assert_eq!(failed.status, "running");
         assert_eq!(failed.ended, Some(8_000));
     }
 }

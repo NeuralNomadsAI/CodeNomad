@@ -7,18 +7,26 @@ use rune_theme_codenomad::{
     usage::numbers,
 };
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     rc::{Rc, Weak},
     time::Duration,
 };
 
+struct Clip {
+    rect: Rc<DrawnRect>,
+    parent: Option<Rc<Clip>>,
+}
+
 #[derive(Default)]
 pub(crate) struct Clock {
-    visible: HashMap<String, (Weak<Cell<bool>>, Rc<DrawnRect>)>,
+    visible: HashMap<String, (Weak<Cell<bool>>, Rc<DrawnRect>, Option<Rc<Clip>>)>,
+    clips: RefCell<HashMap<String, Weak<DrawnRect>>>,
+    active_clip: RefCell<Option<Rc<Clip>>>,
     next: Option<f64>,
     epoch: u64,
     generation: u64,
+    paused: bool,
 }
 
 fn in_viewport(rect: [f32; 4], bounds: [f32; 4]) -> bool {
@@ -31,6 +39,19 @@ fn in_viewport(rect: [f32; 4], bounds: [f32; 4]) -> bool {
         && rect[0] + rect[2] > bounds[0]
         && rect[1] < bounds[1] + bounds[3]
         && rect[1] + rect[3] > bounds[1]
+}
+
+fn in_bounds(rect: [f32; 4], bounds: [f32; 4], mut clip: Option<&Clip>) -> bool {
+    if !in_viewport(rect, bounds) {
+        return false;
+    }
+    while let Some(node) = clip {
+        if !in_viewport(rect, node.rect.get()) {
+            return false;
+        }
+        clip = node.parent.as_deref();
+    }
+    true
 }
 
 fn online(phase: &Phase) -> bool {
@@ -46,23 +67,64 @@ impl Clock {
         self.generation
     }
 
+    pub(super) fn clip_rect(&self, key: &str) -> Rc<DrawnRect> {
+        let mut clips = self.clips.borrow_mut();
+        clips.retain(|_, rect| rect.strong_count() > 0);
+        if let Some(rect) = clips.get(key).and_then(Weak::upgrade) {
+            return rect;
+        }
+        let rect = Rc::new(DrawnRect::new([0.0; 4]));
+        clips.insert(key.into(), Rc::downgrade(&rect));
+        rect
+    }
+
+    pub(super) fn with_clip<T>(&self, clip: &Rc<DrawnRect>, render: impl FnOnce() -> T) -> T {
+        struct Restore<'a>(&'a RefCell<Option<Rc<Clip>>>, Option<Rc<Clip>>);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                *self.0.borrow_mut() = self.1.take();
+            }
+        }
+        let prev = {
+            let mut current = self.active_clip.borrow_mut();
+            let next = Rc::new(Clip {
+                rect: clip.clone(),
+                parent: current.clone(),
+            });
+            current.replace(next)
+        };
+        let _restore = Restore(&self.active_clip, prev);
+        render()
+    }
+
     pub(crate) fn pause(&mut self) {
+        self.paused = true;
         self.next = None;
+    }
+
+    pub(crate) fn resume(&mut self) {
+        self.paused = false;
     }
 
     pub(crate) fn reset(&mut self) {
         self.visible.clear();
+        self.clips.get_mut().clear();
         self.next = None;
+        self.paused = false;
         self.generation = self.generation.wrapping_add(1);
     }
 
     pub(crate) fn poll(&mut self, now: f64, bounds: [f32; 4], tx: &mut Tx) -> bool {
+        if self.paused {
+            self.next = None;
+            return false;
+        }
         self.visible
-            .retain(|_, (lease, _)| lease.upgrade().is_some_and(|active| active.get()));
+            .retain(|_, (lease, _, _)| lease.upgrade().is_some_and(|active| active.get()));
         if !self
             .visible
             .values()
-            .any(|(_, rect)| in_viewport(rect.get(), bounds))
+            .any(|(_, rect, clip)| in_bounds(rect.get(), bounds, clip.as_deref()))
         {
             self.next = None;
             return false;
@@ -87,7 +149,7 @@ impl Clock {
 
 pub(super) fn tool_timing(tool: &Tool) -> Option<(u64, Option<u64>)> {
     match tool.status.as_str() {
-        "running" => tool.started.map(|start| (start, None)),
+        "running" => tool.started.map(|start| (start, tool.ended)),
         "completed" | "error" => tool.started.zip(tool.ended.map(Some)),
         _ => None,
     }
@@ -101,7 +163,7 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
             .tool_clock
             .visible
             .get(&entry_key)
-            .and_then(|(lease, _)| lease.upgrade())
+            .and_then(|(lease, _, _)| lease.upgrade())
         {
             active.set(false);
         }
@@ -126,19 +188,22 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
     let lease = clock
         .visible
         .get(&entry_key)
-        .and_then(|(lease, _)| lease.upgrade())
+        .and_then(|(lease, _, _)| lease.upgrade())
         .filter(|active| active.get())
         .unwrap_or_else(|| Rc::new(Cell::new(true)));
     let drawn = clock
         .visible
         .get(&entry_key)
-        .map(|(_, rect)| rect.clone())
+        .map(|(_, rect, _)| rect.clone())
         .unwrap_or_else(|| Rc::new(DrawnRect::new([0.0; 4])));
+    let clip = clock.active_clip.borrow().clone();
     let scope = s.input_scope.clone();
     let layout_scope = scope.clone();
     let layout_key = entry_key.clone();
     let layout_drawn = drawn.clone();
+    let layout_clip = clip.clone();
     let visible_drawn = drawn.clone();
+    let visible_clip = clip;
     let observer_key = format!(
         "{entry_key}-{:p}-{}",
         Rc::as_ptr(&scope),
@@ -148,16 +213,16 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
         .key(observer_key)
         .drawn_rect_into(&drawn)
         .on_drawn_layout_tx(move |s: &mut State, _, tx| {
+            let clock = &s.transcript_display.tool_clock;
             if s.current_scope(&layout_scope)
                 && online(&s.phase)
-                && s.transcript_display.tool_clock.next.is_none()
-                && s.transcript_display
-                    .tool_clock
-                    .visible
-                    .contains_key(&layout_key)
-                && in_viewport(
+                && !clock.paused
+                && clock.next.is_none()
+                && clock.visible.contains_key(&layout_key)
+                && in_bounds(
                     layout_drawn.get(),
                     s.tool_diff_preferences.history_bounds.get(),
+                    layout_clip.as_deref(),
                 )
             {
                 tx.wake_after(Duration::ZERO);
@@ -173,10 +238,18 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
                         .visible
                         .insert(
                             entry_key.clone(),
-                            (Rc::downgrade(&lease), visible_drawn.clone()),
+                            (
+                                Rc::downgrade(&lease),
+                                visible_drawn.clone(),
+                                visible_clip.clone(),
+                            ),
                         )
                         .is_none();
-                    if added && online(&s.phase) && in_viewport(visible_drawn.get(), bounds) {
+                    if added
+                        && online(&s.phase)
+                        && !clock.paused
+                        && in_bounds(visible_drawn.get(), bounds, visible_clip.as_deref())
+                    {
                         tx.wake_after(Duration::ZERO);
                     }
                 } else {

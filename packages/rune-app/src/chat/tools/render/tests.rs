@@ -21,6 +21,8 @@ fn specialized_titles_prose_and_header_controls() {
             {"type":"tool","id":"invalid_bash","name":"invalid","state":{"status":"error","input":{"tool":"bash"}}},
             {"type":"tool","id":"invalid_bare","name":"invalid","state":{"status":"error","input":{}}},
             {"type":"tool","id":"skill_running","name":"skill","state":{"status":"running","metadata":{"output":"partial"}}},
+            {"type":"tool","id":"edit_running","name":"edit","state":{"status":"running","input":{"filePath":"a.rs"},
+             "metadata":{"output":"--- a.rs\n+++ a.rs\n@@ -1 +1 @@\n-old\n+new"}}},
             {"type":"tool","id":"skill","name":"skill","state":{"status":"completed","content":[{"type":"text","text":raw_skill}]}}
         ]
     })).unwrap();
@@ -58,6 +60,21 @@ fn specialized_titles_prose_and_header_controls() {
     assert!(
         rt.find(&format!("copy-{skill_running_key}-output"))
             .is_none()
+    );
+    let edit_running_key = super::tool_key("result", "edit_running");
+    let (_, edit_toggle_y) = rt.find(&format!("toggle-{edit_running_key}")).unwrap();
+    if !rt.accessibility_json().to_string().contains("+new") {
+        let (x, y) = rt.find(&format!("toggle-{edit_running_key}")).unwrap();
+        rt.pointer_move(x, y);
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.01);
+    }
+    assert!(rt.accessibility_json().to_string().contains("+new"));
+    let (_, edit_wrap_y) = rt.find(&format!("{edit_running_key}-wrap")).unwrap();
+    assert!(
+        edit_wrap_y > edit_toggle_y + 4.0,
+        "running edit diff keeps wrap in body ({edit_wrap_y} <= {edit_toggle_y})"
     );
     let (x, y) = rt.find(&format!("toggle-{skill_running_key}")).unwrap();
     rt.pointer_move(x, y);
@@ -139,12 +156,15 @@ fn running_tool_duration_ticks_through_view_memo_and_stops_when_settled() {
     let row = crate::history::decode_message(&json!({
         "type":"assistant","id":"live","content":[
             {"type":"tool","id":"cmd","name":"bash","time":{"ran":start},
-             "state":{"status":"running","input":{"command":"sleep 90"}}}
+             "state":{"status":"running","input":{"command":"sleep 90"},
+                      "metadata":{"output":"LIVE_BASH_PREVIEW"}}}
         ]
     }))
     .unwrap();
     let mut state = init();
     state.phase = Phase::Streaming;
+    let key = super::tool_key("live", "cmd");
+    crate::chat::actions::Display::set_expanded(&mut state, &key, true);
     state.messages = vec![row.into()];
     let mut rt = Runtime::new(
         state,
@@ -184,6 +204,25 @@ fn running_tool_duration_ticks_through_view_memo_and_stops_when_settled() {
     rt.update(|_, tx| tx.focus(&toggle_key, true));
     rt.frame(1.15);
     rt.update(|_, tx| assert_eq!(tx.focused(), Some(toggle_key.as_str())));
+    // SSE settlement sets ended before HTTP completes: freeze duration while keeping live output.
+    rt.update(|s, _| {
+        let row = std::sync::Arc::make_mut(&mut s.messages[0]);
+        let crate::content::Part::Tool(tool) = &mut row.parts[0] else {
+            panic!("tool part");
+        };
+        std::sync::Arc::make_mut(tool).ended = Some(start + 66_000);
+    });
+    rt.frame(1.18);
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.contains("1m 6s") && tree.contains("LIVE_BASH_PREVIEW"),
+        "{tree}"
+    );
+    rt.update(|s, tx| ticked = Display::poll(s, false, 2.3, tx));
+    assert!(!ticked);
+    rt.frame(0.0);
+    assert!(rt.wake_deadline().is_none());
+    rt.update(|_, tx| assert_eq!(tx.focused(), Some(toggle_key.as_str())));
     rt.update(|s, _| {
         s.messages[0] = crate::history::decode_message(&json!({
             "type":"assistant","id":"live","time":{"completed":start + 67_000},"content":[
@@ -208,7 +247,7 @@ fn running_tool_duration_ticks_through_view_memo_and_stops_when_settled() {
 fn active_search_keeps_skill_prose_bounded_and_uses_prose_step() {
     let prefix = "a".repeat(270_000);
     let raw_skill = format!(
-        "# Skill heading\n\n[Guide](https://example.test/LINK_URL_ONLY)\n\n{prefix}\nDEEP_SKILL_NEEDLE\n{}",
+        "# Skill heading\n\nR&amp;D [Guide](https://example.test/LINK_URL_ONLY)\n\n{prefix}\nDEEP_SKILL_NEEDLE\n{}",
         "b".repeat(50_000)
     );
     let row = crate::history::decode_message(&json!({
@@ -216,6 +255,7 @@ fn active_search_keeps_skill_prose_bounded_and_uses_prose_step() {
             {"type":"tool","id":"sk","name":"skill",
              "state":{"status":"completed","input":{
                  "name":"demo",
+                 "entity":"R&D",
                  "shared":"DEEP_SKILL_NEEDLE",
                  "link_only":"LINK_URL_ONLY",
                  "only_input":"INPUT_ONLY_NEEDLE"
@@ -282,6 +322,13 @@ fn active_search_keeps_skill_prose_bounded_and_uses_prose_step() {
         tool,
         link_url_hit.query(Some((codenomad_client::search::Kind::Tool, 0))),
     ));
+    let entity_hit = crate::chat::search_hit::SearchHit::new(&hit, "R&D", false);
+    assert!(!super::match_hidden_by_inputs(
+        &rt.state,
+        "msg",
+        tool,
+        entity_hit.query(Some((codenomad_client::search::Kind::Tool, 0))),
+    ));
     let input_hit = crate::chat::search_hit::SearchHit::new(&hit, "INPUT_ONLY_NEEDLE", false);
     assert!(super::match_hidden_by_inputs(
         &rt.state,
@@ -289,6 +336,18 @@ fn active_search_keeps_skill_prose_bounded_and_uses_prose_step() {
         tool,
         input_hit.query(Some((codenomad_client::search::Kind::Tool, 0))),
     ));
+    // Closing search preserves the revealed Skill prose step once expanded.
+    rt.update(|s, _| {
+        Display::set_expanded(s, &skill_key, true);
+        s.transcript_display.mark_search_revealed(&skill_key);
+        s.transcript_display.search_highlight = None;
+    });
+    rt.frame(0.01);
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("DEEP_SKILL_NEEDLE")
+    );
 }
 
 #[test]
@@ -313,13 +372,16 @@ fn clock_stops_offscreen_or_on_session_change_and_rearms_after_same_session_susp
                 else {
                     return rune::col();
                 };
-                rune_theme_codenomad::markdown::tool_pane(
-                    rune::col()
-                        .child(super::view(s, "live", tool))
-                        .children((0..40).map(|_| rune::text("spacer"))),
-                    false,
-                )
-                .key("scroller")
+                let clip = s.transcript_display.tool_clock.clip_rect("test-clip");
+                s.transcript_display.tool_clock.with_clip(&clip, || {
+                    rune_theme_codenomad::markdown::tool_pane(
+                        rune::col()
+                            .child(super::view(s, "live", tool))
+                            .children((0..40).map(|_| rune::text("spacer"))),
+                        false,
+                    )
+                    .key("scroller")
+                })
             })
         },
         (960.0, 200.0),
@@ -350,9 +412,9 @@ fn clock_stops_offscreen_or_on_session_change_and_rearms_after_same_session_susp
         }
     };
 
-    // Pause clock during disconnect (Reconnecting) and resume when connected again.
+    // Pause clock during disconnect (including detached history where phase stays Streaming).
     rt.update(|s, _| {
-        s.phase = Phase::Reconnecting;
+        s.history_detached = true;
         s.transcript_display.tool_clock.pause();
     });
     drain(&mut rt);
@@ -361,9 +423,36 @@ fn clock_stops_offscreen_or_on_session_change_and_rearms_after_same_session_susp
     });
     rt.frame(0.0);
     assert!(rt.wake_deadline().is_none());
-    rt.update(|s, _| s.phase = Phase::Streaming);
+    rt.update(|s, _| {
+        s.history_detached = false;
+        s.transcript_display.tool_clock.resume();
+    });
     rt.update(|s, tx| {
         assert!(!Display::poll(s, false, 4.1, tx));
+    });
+    rt.frame(0.0);
+    assert!(rt.wake_deadline().is_some());
+
+    // Clip header outside nested pane bounds (subagent steps) while still in transcript bounds.
+    rt.state
+        .transcript_display
+        .tool_clock
+        .clip_rect("test-clip")
+        .set([0.0, 500.0, 960.0, 200.0]);
+    drain(&mut rt);
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 6.0, tx));
+    });
+    rt.frame(0.0);
+    assert!(rt.wake_deadline().is_none());
+    rt.state
+        .transcript_display
+        .tool_clock
+        .clip_rect("test-clip")
+        .set([0.0, 0.0, 960.0, 200.0]);
+    rt.frame(0.1);
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 6.2, tx));
     });
     rt.frame(0.0);
     assert!(rt.wake_deadline().is_some());

@@ -78,28 +78,42 @@ fn prose_ranges(
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     let mut out = Vec::new();
     let mut rendered = String::new();
-    let mut map: Vec<(usize, usize, usize)> = Vec::new();
+    // (rendered_start, rendered_end, source_start, source_end, verbatim)
+    let mut map: Vec<(usize, usize, usize, usize, bool)> = Vec::new();
     let flush = |rendered: &mut String,
-                 map: &mut Vec<(usize, usize, usize)>,
+                 map: &mut Vec<(usize, usize, usize, usize, bool)>,
                  out: &mut Vec<Vec<std::ops::Range<usize>>>| {
         if rendered.is_empty() || out.len() >= limit {
             rendered.clear();
             map.clear();
             return;
         }
+        let mut cursor = 0usize;
         for hit in query.ranges(rendered, limit - out.len()) {
+            while cursor < map.len() && map[cursor].1 <= hit.start {
+                cursor += 1;
+            }
             let mut spans: Vec<std::ops::Range<usize>> = Vec::new();
-            for &(r_start, r_end, s_start) in map.iter() {
+            let mut idx = cursor;
+            while let Some(&(r_start, r_end, s_start, s_end, verbatim)) = map.get(idx) {
+                if r_start >= hit.end {
+                    break;
+                }
                 let a = hit.start.max(r_start);
                 let b = hit.end.min(r_end);
                 if a < b {
-                    let span = (s_start + (a - r_start))..(s_start + (b - r_start));
-                    if let Some(prev) = spans.last_mut().filter(|prev| prev.end == span.start) {
-                        prev.end = span.end;
+                    let span = if verbatim {
+                        (s_start + (a - r_start))..(s_start + (b - r_start))
+                    } else {
+                        s_start..s_end
+                    };
+                    if let Some(prev) = spans.last_mut().filter(|prev| prev.end >= span.start) {
+                        prev.end = prev.end.max(span.end);
                     } else {
                         spans.push(span);
                     }
                 }
+                idx += 1;
             }
             if !spans.is_empty() {
                 out.push(spans);
@@ -114,6 +128,9 @@ fn prose_ranges(
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
         match event {
             Event::Text(ref text) | Event::Code(ref text) => {
+                if text.is_empty() {
+                    continue;
+                }
                 let src_slice = source.get(range.clone()).unwrap_or_default();
                 let start = if matches!(event, Event::Code(_)) {
                     src_slice
@@ -122,16 +139,15 @@ fn prose_ranges(
                 } else {
                     range.start
                 };
-                if source.get(start..start + text.len()) == Some(text.as_ref()) {
-                    let r_start = rendered.len();
-                    rendered.push_str(&text);
-                    map.push((r_start, rendered.len(), start));
-                } else if !text.is_empty() && query.matches(&text) {
-                    out.push(vec![range]);
-                    if out.len() >= limit {
-                        break;
-                    }
-                }
+                let verbatim = source.get(start..start + text.len()) == Some(text.as_ref());
+                let (s_start, s_end) = if verbatim {
+                    (start, start + text.len())
+                } else {
+                    (range.start, range.end)
+                };
+                let r_start = rendered.len();
+                rendered.push_str(text);
+                map.push((r_start, rendered.len(), s_start, s_end, verbatim));
             }
             Event::SoftBreak | Event::HardBreak => rendered.push(' '),
             Event::End(
@@ -361,4 +377,23 @@ fn prose_search_bounds_matches_and_skips_link_destinations() {
         claimed: None,
     };
     assert!(prose_has_match(link_only, split_query));
+
+    let entity_terms = vec!["R&D".into()];
+    let entity_query = crate::timeline::search::Query {
+        terms: &entity_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert!(prose_has_match("Team R&amp;D roadmap", entity_query));
+
+    let dense_bold = "**hit** ".repeat(4_000);
+    let bold_terms = vec!["hit".into()];
+    let bold_query = crate::timeline::search::Query {
+        terms: &bold_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert_eq!(prose_ranges(&dense_bold, bold_query, 512).len(), 512);
 }

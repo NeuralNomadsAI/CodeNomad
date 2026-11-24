@@ -39,6 +39,7 @@ struct SessionDisplay {
     toggled: HashSet<String>,
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
+    search_revealed: HashSet<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     diagram_sources: HashMap<String, BTreeSet<usize>>,
     compact_diffs: (u64, HashSet<String>),
@@ -95,6 +96,14 @@ impl Display {
             self.receipts.clear();
             self.diffs = Default::default();
         }
+    }
+
+    pub(crate) fn mark_search_revealed(&mut self, key: &str) {
+        self.active.search_revealed.insert(key.into());
+    }
+
+    pub(super) fn search_revealed(&self, key: &str) -> bool {
+        self.active.search_revealed.contains(key)
     }
 
     pub fn toggled(&self, key: &str) -> bool {

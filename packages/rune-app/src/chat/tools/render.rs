@@ -47,7 +47,7 @@ pub(in crate::chat) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
             display.steps(&format!("{key}-patch-{index}"))
         })
     });
-    let live_tick = (tool.status == "running" && tool.started.is_some())
+    let live_tick = (tool.status == "running" && tool.started.is_some() && tool.ended.is_none())
         .then(|| (display.tool_clock.epoch(), display.tool_clock.generation()));
     let stamp = (
         Arc::as_ptr(tool) as usize,
@@ -201,6 +201,8 @@ fn render_body(
             .then(|| search::view(s, parts[0]))
             .flatten();
     let rich_diff = !active && !nested && tool_diff::candidate(tool, parts[0]);
+    let edit_diff =
+        !active && !nested && tool.name == "edit" && tool_diff::structured_candidate(parts[0]);
     let wrap_key = format!("{key}-wrap");
     let wrap = !s.transcript_display.toggled(&wrap_key);
     let shared_wrap = expanded
@@ -208,6 +210,7 @@ fn render_body(
         && !is_task
         && !skill
         && !is_patch(tool)
+        && !edit_diff
         && result_list.is_none()
         && !rich_diff
         && !matches!(tool.name.as_str(), "question" | "todowrite");
@@ -380,7 +383,14 @@ fn render_body(
         }
         if skill {
             block = block.child(markdown::tool_pane(
-                document::prose_search(s, message, format!("{key}-tool_output"), parts[0], query),
+                document::prose_search(
+                    s,
+                    message,
+                    key,
+                    format!("{key}-tool_output"),
+                    parts[0],
+                    query,
+                ),
                 false,
             ));
         } else if has_output && !specialized_task {

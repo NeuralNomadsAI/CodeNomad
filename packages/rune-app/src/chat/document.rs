@@ -36,16 +36,14 @@ pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streami
 pub(super) fn prose_search(
     s: &State,
     message: &str,
+    card_key: &str,
     key: String,
     source: &str,
     query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
 ) -> El {
-    let limit = PROSE_LIMIT
-        + if query.is_some_and(|q| q.active) {
-            STEP
-        } else {
-            0
-        };
+    let revealed =
+        query.is_some_and(|q| q.active) || s.transcript_display.search_revealed(card_key);
+    let limit = PROSE_LIMIT + if revealed { STEP } else { 0 };
     prose_for(s, message, key, source, false, limit, query)
 }
 

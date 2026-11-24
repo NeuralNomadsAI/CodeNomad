@@ -207,6 +207,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
             Event::Sync(page) | Event::ReaderSync { page, .. } => {
+                s.transcript_display.tool_clock.resume();
                 if s.reader.is_none() {
                     // Direct startup also uses Reconnecting to stage a fresh transcript read.
                     s.status_permissions.synchronized();
@@ -339,6 +340,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 }
             }
             Event::History(messages) => {
+                s.transcript_display.tool_clock.resume();
                 s.messages = messages;
                 s.phase = Phase::Ready;
             }
