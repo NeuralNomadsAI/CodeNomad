@@ -9,8 +9,13 @@ mod reserved;
 
 fn decode(rule: &Value) -> Option<Chord> {
     let rule = rule.as_object()?;
-    let key = rule.get("key")?.as_str()?;
-    let key = key.to_lowercase();
+    let raw = rule.get("key")?.as_str()?;
+    let mut chars = raw.chars();
+    let single = chars
+        .next()
+        .filter(|_| chars.next().is_none())
+        .filter(|c| !c.is_control());
+    let key = raw.to_lowercase();
     let key = match key.as_str() {
         "{" | "bracketleft" => "[",
         "}" | "bracketright" => "]",
@@ -25,6 +30,10 @@ fn decode(rule: &Value) -> Option<Chord> {
         if c.is_control() {
             return None;
         }
+        Chord::new(ChordKey::Char(c))
+    } else if key == "i\u{307}" {
+        Chord::new(ChordKey::Char('İ'))
+    } else if let Some(c) = single.filter(|_| !matches!(key, "space" | "plus")) {
         Chord::new(ChordKey::Char(c))
     } else {
         let parsed = Chord::parse(key).ok()?;
@@ -56,17 +65,6 @@ pub(crate) fn save_label(s: &State) -> String {
 
 fn shortcut_label(s: &State, action: &str) -> String {
     format_chords(&catalog::resolve(&s.settings.shared.borrow(), action))
-}
-
-pub(crate) fn shortcut_override_match(
-    s: &State,
-    action: &str,
-    event: &KeyEvent,
-    tx: &Tx,
-) -> Option<bool> {
-    let preferences = s.settings.shared.borrow();
-    preferences.shortcut(action)?;
-    Some(matches_shortcut_in(&preferences, action, event, tx))
 }
 
 pub(crate) fn with_shortcut_label(s: &State, label: &str, action: &str) -> String {
@@ -117,16 +115,31 @@ fn bindings_conflict(first: &[Chord], second: &[Chord], platform: rune::KeyPlatf
         .any(|a| second.iter().any(|b| a.same_keys(b, platform)))
 }
 
+fn canonical_key_name(c: char) -> String {
+    let lower: String = c.to_lowercase().collect();
+    if lower.chars().count() == 1 {
+        lower
+    } else {
+        c.to_string()
+    }
+}
+
 pub(super) fn record(event: &KeyEvent, tx: &Tx) -> Option<Value> {
     use serde_json::json;
     let name = if let Some(c) = tx.physical_key().and_then(physical_slot) {
         c.to_string()
     } else {
         match &event.key {
-            Key::Command(c) => logical_command(*c, event, tx.physical_key(), tx.key_base())
-                .to_lowercase()
-                .to_string(),
-            Key::Text(text) => text.to_lowercase(),
+            Key::Command(c) => {
+                canonical_key_name(logical_command(*c, event, tx.physical_key(), tx.key_base()))
+            }
+            Key::Text(text) => {
+                let mut chars = text.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(c), None) => canonical_key_name(c),
+                    _ => text.to_lowercase(),
+                }
+            }
             Key::Function(n) => format!("f{n}"),
             Key::Tab => "tab".into(),
             Key::Enter => "enter".into(),
@@ -623,4 +636,15 @@ fn turkish_shifted_i_does_not_substitute_dotless_base() {
             Some('ı'),
         ));
     }
+    let dotted_i = decode(&serde_json::json!({"key": "İ", "shift": true})).unwrap();
+    let dotted_i_solid = decode(&serde_json::json!({"key": "i\u{307}", "shift": true})).unwrap();
+    let shifted_dotted = KeyEvent {
+        key: Key::Text("İ".into()),
+        mods: rune::Mods {
+            shift: true,
+            ..Default::default()
+        },
+    };
+    assert!(matches(dotted_i, &shifted_dotted, None, None));
+    assert!(matches(dotted_i_solid, &shifted_dotted, None, None));
 }

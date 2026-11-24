@@ -410,6 +410,7 @@ fn shared_fields_edit_their_inner_models_and_stale_launcher_input_is_discarded()
     assert_eq!(rt.state.draft.text, "current composer");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
     crate::platform::block_on(async {
@@ -471,10 +472,18 @@ fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
         rt.update(|s, tx| {
             assert!(poll(s, tx));
         });
-        // Re-authentication keeps the old receiver alive until the in-flight prompt settles.
+        // Re-authentication keeps the old receiver alive until the in-flight prompt settles,
+        // and preserves rebind_after_send across a tab switch round-trip.
         assert!(rt.state.composer.pending());
         assert!(!rt.state.screen.is_launcher());
         assert!(!rt.state.screen.launcher().unwrap().pending);
+        rt.update(|s, tx| {
+            crate::workspace::new_tab(s, tx);
+            let _ = poll(s, tx);
+            crate::workspace::select_index(s, 0, tx);
+        });
+        assert!(rt.state.composer.pending());
+        assert!(!rt.state.screen.is_launcher());
 
         // When the old transport reports an explicit 401 rejection, the draft restores without locking sends
         // and the launcher automatically rebinds the session on the renewed connection.

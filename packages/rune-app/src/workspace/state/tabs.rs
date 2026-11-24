@@ -36,6 +36,7 @@ fn stash(s: &mut State) {
             entry.listed_sessions = std::mem::take(&mut l.listed_sessions);
             entry.creation_uncertain = l.creation_uncertain;
             entry.creation_uncertain_linked = l.creation_uncertain_linked;
+            entry.rebind_after_send = l.rebind_after_send.take();
             entry.next = l.next.take();
             entry.linked = std::mem::take(&mut l.linked);
             entry.consumed_cursors = std::mem::take(&mut l.consumed_cursors);
@@ -70,6 +71,7 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
         });
         l.creation_uncertain = std::mem::take(&mut item.creation_uncertain);
         l.creation_uncertain_linked = std::mem::take(&mut item.creation_uncertain_linked);
+        l.rebind_after_send = item.rebind_after_send.take();
         l.error = l.creation_uncertain.then_some("rune.create_error");
         (l.title, l.show_title, l.search, l.show_search) = item
             .sidebar_edits

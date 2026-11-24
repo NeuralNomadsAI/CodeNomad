@@ -91,7 +91,7 @@ impl Cache {
 
     pub(super) fn reconcile_detached_online(
         &mut self,
-        targets: &std::collections::HashSet<String>,
+        opened_after: &std::collections::HashSet<String>,
         live: &std::collections::HashSet<&str>,
     ) -> bool {
         if !self.is_detached() {
@@ -100,7 +100,7 @@ impl Cache {
         let mut changed = false;
         if let Some(git) = &mut self.git.owner {
             let id = git.workspace_id();
-            if targets.contains(id) && !live.contains(id) {
+            if !opened_after.contains(id) && !live.contains(id) {
                 let workspace_id = id.to_owned();
                 git.event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
             } else {
@@ -110,7 +110,7 @@ impl Cache {
         }
         if let Some(files) = &mut self.files {
             let id = files.workspace_id();
-            if targets.contains(id) && !live.contains(id) {
+            if !opened_after.contains(id) && !live.contains(id) {
                 let workspace_id = id.to_owned();
                 files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
             } else {

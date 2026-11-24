@@ -25,7 +25,10 @@ impl Refresh {
 }
 
 pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let visible = s.screen.is_launcher() || s.shell.visible(0);
+    let visible = s.shell.visible(0)
+        || s.screen
+            .launcher()
+            .is_some_and(|l| l.creation_uncertain_linked);
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };

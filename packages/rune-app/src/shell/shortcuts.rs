@@ -147,7 +147,7 @@ fn reserved_shell_key(event: &KeyEvent) -> bool {
     no_command_mod && event.key == Key::Function(6)
 }
 
-pub(super) fn global_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
+pub(crate) fn global_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
     authentication_required(s)
         || overlay_open(s)
         || any_editor_composing(s)

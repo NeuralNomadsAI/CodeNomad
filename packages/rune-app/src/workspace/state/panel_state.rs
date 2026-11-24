@@ -360,9 +360,18 @@ pub(crate) fn detached_workspace_ids(s: &State) -> std::collections::HashSet<Str
     ids
 }
 
+pub(crate) fn has_unopened_detached_panels(
+    s: &State,
+    opened_after: &std::collections::HashSet<String>,
+) -> bool {
+    detached_workspace_ids(s)
+        .iter()
+        .any(|id| !opened_after.contains(id))
+}
+
 pub(crate) fn reconcile_detached_online(
     s: &mut State,
-    targets: &std::collections::HashSet<String>,
+    opened_after: &std::collections::HashSet<String>,
     live: &std::collections::HashSet<&str>,
 ) -> bool {
     let mut changed = false;
@@ -373,7 +382,9 @@ pub(crate) fn reconcile_detached_online(
             .as_ref()
             .map(|git| git.workspace_id().to_owned())
         {
-            if targets.contains(workspace_id.as_str()) && !live.contains(workspace_id.as_str()) {
+            if !opened_after.contains(workspace_id.as_str())
+                && !live.contains(workspace_id.as_str())
+            {
                 crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
             } else {
                 crate::git::online(s, true);
@@ -382,7 +393,9 @@ pub(crate) fn reconcile_detached_online(
         }
         if let Some(files) = &mut s.files {
             let workspace_id = files.workspace_id().to_owned();
-            if targets.contains(workspace_id.as_str()) && !live.contains(workspace_id.as_str()) {
+            if !opened_after.contains(workspace_id.as_str())
+                && !live.contains(workspace_id.as_str())
+            {
                 files.event(WorkspaceEvent::Stopped { workspace_id });
             } else {
                 files.online(true);
@@ -396,7 +409,7 @@ pub(crate) fn reconcile_detached_online(
                 continue;
             }
             if let Some(cache) = entry.cache.as_mut() {
-                changed |= cache.reconcile_detached_online(targets, live);
+                changed |= cache.reconcile_detached_online(opened_after, live);
             }
         }
     }

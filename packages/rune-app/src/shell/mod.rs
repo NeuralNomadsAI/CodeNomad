@@ -3,6 +3,7 @@ mod panels;
 pub(crate) mod render;
 mod right_panel;
 mod shortcuts;
+pub(crate) use shortcuts::global_blocked as shortcut_blocked;
 mod sidebar;
 pub(crate) mod status_permissions;
 pub(crate) mod status_usage;
@@ -163,7 +164,7 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
     }
-    if !shortcuts::global_blocked(s, event, tx) && crate::timeline::search::open_key(s, event, tx) {
+    if crate::timeline::search::open_key(s, event, tx) {
         return true;
     }
     if shortcuts::dispatch(s, event, tx) {

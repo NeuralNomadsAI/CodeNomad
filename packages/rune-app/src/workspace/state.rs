@@ -22,10 +22,10 @@ pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
 };
 pub(crate) use panel_state::{
-    deliver_detached_events, detached_workspace_ids, has_detached_panels, mission_confirmation,
-    mission_event, mission_observation_project, mission_panel, mission_supported,
-    missions_composing, reconcile_detached_online, right_panel_tab, set_detached_online,
-    set_right_panel_tab, suspend_missions,
+    deliver_detached_events, has_detached_panels, has_unopened_detached_panels,
+    mission_confirmation, mission_event, mission_observation_project, mission_panel,
+    mission_supported, missions_composing, reconcile_detached_online, right_panel_tab,
+    set_detached_online, set_right_panel_tab, suspend_missions,
 };
 pub use polling::{poll, status};
 pub use strip::strip;
@@ -51,6 +51,7 @@ pub(super) struct Entry {
     listed_sessions: HashSet<String>,
     creation_uncertain: bool,
     creation_uncertain_linked: bool,
+    rebind_after_send: Option<String>,
     next: Option<String>,
     linked: crate::launcher::linked::Linked,
     consumed_cursors: HashSet<u64>,
@@ -259,6 +260,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         listed_sessions: HashSet::new(),
         creation_uncertain: false,
         creation_uncertain_linked: false,
+        rebind_after_send: None,
         next: None,
         linked: Default::default(),
         consumed_cursors: HashSet::new(),
@@ -491,9 +493,12 @@ pub fn opened(s: &mut State, project: &Project) {
 }
 
 pub fn schedule_catalogue(s: &mut State) {
-    if cfg!(target_os = "windows")
-        && let Some(ui) = &mut s.workspace
-    {
+    let allow = cfg!(target_os = "windows")
+        || cfg!(not(target_arch = "wasm32"))
+            && s.screen
+                .launcher()
+                .is_some_and(|l| l.creation_uncertain_linked);
+    if allow && let Some(ui) = &mut s.workspace {
         ui.entries[ui.active].catalogue.schedule(ui.clock);
     }
 }

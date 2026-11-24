@@ -130,6 +130,9 @@ impl Launcher {
 }
 
 pub fn list(s: &mut State, more: bool) {
+    if !more {
+        super::retry_detached_reconcile(s);
+    }
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
@@ -419,7 +422,6 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
             crate::git::online(s, true);
         }
     }
-    crate::workspace::schedule_catalogue(s);
     tx.instant();
     true
 }

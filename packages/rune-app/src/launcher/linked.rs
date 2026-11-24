@@ -43,6 +43,9 @@ impl Linked {
     pub fn pending(&self) -> bool {
         self.job.is_some()
     }
+    pub(super) fn cancel(&mut self) {
+        self.job = None;
+    }
 }
 
 pub(super) fn load(s: &mut State) {

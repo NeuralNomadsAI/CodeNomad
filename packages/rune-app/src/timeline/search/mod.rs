@@ -161,19 +161,18 @@ pub(crate) fn close_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
 }
 
 pub(crate) fn open_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    if tx.key_repeat() || crate::shell::shortcut_blocked(s, event, tx) {
+        return false;
+    }
     if state(s).open && matches!(event.key, Key::Text(_)) && (!event.mods.alt || event.mods.ctrl) {
         return false;
     }
-    let matched = match crate::settings::shortcut_override_match(s, "session-search", event, tx) {
-        Some(matched) => matched,
-        None => {
-            matches!(event.key, Key::Command(c) if c.eq_ignore_ascii_case(&'f'))
-                && (event.mods.ctrl || event.mods.cmd)
-                && !event.mods.alt
-                && !event.mods.shift
-        }
-    };
-    if matched && visible(s) {
+    if crate::settings::match_shortcut(s, event, tx, |matches| {
+        matches("session-search").then_some(())
+    })
+    .is_some()
+        && visible(s)
+    {
         state(s).open = true;
         state(s).query.focused = true;
         tx.focus_when_shown(FOCUS, true);

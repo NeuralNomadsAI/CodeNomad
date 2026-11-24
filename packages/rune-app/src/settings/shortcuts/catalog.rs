@@ -71,6 +71,7 @@ fn is_valid_rule(rule: &Value) -> bool {
             && key.len() <= 40
             && !key.chars().any(char::is_control)
             && (key == " " || !key.trim().is_empty())
+            && !(key.len() > 1 && key.contains('+'))
             && !matches!(
                 lower.as_str(),
                 "control"
@@ -100,11 +101,16 @@ fn resolve_def(
     if let Some(rules) =
         overrides.filter(|rules| rules.len() <= 8 && rules.iter().all(is_valid_rule))
     {
-        return rules
-            .iter()
-            .filter_map(decode)
-            .filter(|chord| !is_region_cycle(chord, platform))
-            .collect();
+        if rules.is_empty() {
+            return Vec::new();
+        }
+        let decoded: Vec<_> = rules.iter().filter_map(decode).collect();
+        if !decoded.is_empty() {
+            return decoded
+                .into_iter()
+                .filter(|chord| !is_region_cycle(chord, platform))
+                .collect();
+        }
     }
     def["defaults"][index]
         .as_array()
@@ -269,8 +275,12 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
     let mut invalid = Preferences::default();
     invalid.fixture_shortcuts(serde_json::json!({
         "close-session": [{"key": "Dead"}],
+        "close-instance": [{"key": "Ctrl+W"}],
+        "instance-next": [{"key": "UnknownKeyName"}],
         "new-instance": [],
     }));
     assert!(!resolve(&invalid, "close-session").is_empty());
+    assert!(!resolve(&invalid, "close-instance").is_empty());
+    assert!(!resolve(&invalid, "instance-next").is_empty());
     assert!(resolve(&invalid, "new-instance").is_empty());
 }

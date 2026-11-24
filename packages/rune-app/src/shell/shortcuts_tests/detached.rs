@@ -355,20 +355,20 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
         files.activate(true);
         assert!(!files.tree.take_refresh().is_empty());
 
-        // Reconciling with an older target set that omits a newly opened workspace does not stop it,
-        // whereas omitting a targeted workspace stops detached Files/Git.
+        // Reconciling with opened_after omits a newly opened workspace from Stopped,
+        // whereas any pre-existing detached workspace (including one closed during reconcile) stops when absent from live.
         let empty = std::collections::HashSet::new();
-        let other_targets: std::collections::HashSet<String> = ["other-workspace".into()].into();
+        let no_opened = std::collections::HashSet::new();
+        let opened_after: std::collections::HashSet<String> = ["header-windows".into()].into();
         assert!(crate::workspace::reconcile_detached_online(
             &mut rt.state,
-            &other_targets,
+            &opened_after,
             &empty,
         ));
         assert!(!rt.state.files.as_ref().unwrap().stopped);
-        let targets: std::collections::HashSet<String> = ["header-windows".into()].into();
         assert!(crate::workspace::reconcile_detached_online(
             &mut rt.state,
-            &targets,
+            &no_opened,
             &empty,
         ));
         assert!(rt.state.files.as_ref().unwrap().stopped);
@@ -907,5 +907,26 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         assert!(!crate::timeline::search::is_open(&rt.state));
         rt.state.composer.picker.reset();
         rt.state.draft = TextEdit::new("");
+
+        // Conversation header search toggle tooltip reflects confirmed session-search override,
+        // and key repeat does not reopen session-search.
+        rt.update(|_, tx| tx.instant());
+        settle(&mut rt);
+        let search_help = rt
+            .elements()
+            .into_iter()
+            .find(|el| el.key.as_deref() == Some("history-search-toggle"))
+            .and_then(|el| el.help)
+            .unwrap_or_default();
+        assert!(
+            search_help.contains("F8"),
+            "expected F8 shortcut in search tooltip: {search_help:?}"
+        );
+        rt.repeat_key(KeyEvent {
+            key: Key::Function(8),
+            mods: Mods::default(),
+        });
+        settle(&mut rt);
+        assert!(!crate::timeline::search::is_open(&rt.state));
     });
 }

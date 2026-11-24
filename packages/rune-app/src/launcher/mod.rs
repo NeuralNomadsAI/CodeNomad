@@ -67,8 +67,9 @@ pub struct Launcher {
     pub creation_uncertain_linked: bool,
     pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
-    detached_reconcile: Option<(u64, HashSet<String>, Receiver<Vec<Project>>)>,
-    rebind_after_send: Option<String>,
+    detached_reconcile: Option<(u64, HashSet<String>, Receiver<Option<Vec<Project>>>)>,
+    detached_reconcile_failed: bool,
+    pub(crate) rebind_after_send: Option<String>,
     selection_ticket: Option<u64>,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
@@ -105,6 +106,7 @@ impl Launcher {
     }
     pub(crate) fn workspace_stream_online(&self) -> bool {
         self.detached_reconcile.is_none()
+            && !self.detached_reconcile_failed
             && (self.catalogue_watch.is_none()
                 || self.workspace_stream_generation == 0
                 || self.workspace_stream_generation % 2 == 1)
@@ -177,6 +179,7 @@ impl Launcher {
             openings: Default::default(),
             result: None,
             detached_reconcile: None,
+            detached_reconcile_failed: false,
             rebind_after_send: None,
             selection_ticket: None,
             boot,
@@ -204,6 +207,65 @@ impl Launcher {
             let _ = out.send(result).await;
             wake();
         });
+    }
+}
+
+const MAX_RECONCILE_ATTEMPTS: usize = 5;
+
+fn spawn_detached_reconcile(l: &mut Launcher, generation: u64) {
+    let Some(backend) = l.connection.clone() else {
+        return;
+    };
+    let (out, input) = bounded(1);
+    l.detached_reconcile = Some((generation, HashSet::new(), input));
+    l.detached_reconcile_failed = false;
+    let wake = l.wake.clone();
+    crate::platform::spawn(async move {
+        let mut delay_ms = 1_000u64;
+        for attempt in 0..MAX_RECONCILE_ATTEMPTS {
+            match codenomad_client::runtime::until_closed(&out, backend.projects()).await {
+                None => return,
+                Some(Ok(projects)) => {
+                    let _ = out.send(Some(projects)).await;
+                    wake();
+                    return;
+                }
+                Some(Err(_)) => {
+                    if attempt + 1 == MAX_RECONCILE_ATTEMPTS {
+                        let _ = out.send(None).await;
+                        wake();
+                        return;
+                    }
+                    if codenomad_client::runtime::until_closed(
+                        &out,
+                        crate::platform::sleep(std::time::Duration::from_millis(delay_ms)),
+                    )
+                    .await
+                    .is_none()
+                    {
+                        return;
+                    }
+                    delay_ms = (delay_ms * 2).min(8_000);
+                }
+            }
+        }
+    });
+}
+
+pub(super) fn retry_detached_reconcile(s: &mut State) {
+    if !crate::workspace::has_detached_panels(s) {
+        return;
+    }
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    if l.detached_reconcile_failed
+        && l.detached_reconcile.is_none()
+        && !l.authentication_required
+        && l.workspace_stream_generation % 2 == 1
+    {
+        let generation = l.workspace_stream_generation;
+        spawn_detached_reconcile(l, generation);
     }
 }
 
@@ -255,6 +317,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if generation > 0 && generation % 2 == 0 {
                 if let Some(l) = s.screen.launcher_mut() {
                     l.detached_reconcile = None;
+                    l.detached_reconcile_failed = false;
                 }
                 relayed |= crate::workspace::set_detached_online(s, false);
             } else if generation % 2 == 1 {
@@ -271,46 +334,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 start_reconcile = Some(generation);
             }
         }
-        if let Some(reconcile_generation) = start_reconcile {
-            let targets = crate::workspace::detached_workspace_ids(s);
-            if !targets.is_empty()
-                && let Some(l) = s.screen.launcher_mut()
-                && !l.authentication_required
-                && let Some(backend) = l.connection.clone()
-            {
-                let (out, input) = bounded(1);
-                l.detached_reconcile = Some((reconcile_generation, targets, input));
-                let wake = l.wake.clone();
-                crate::platform::spawn(async move {
-                    let mut delay_ms = 1_000u64;
-                    loop {
-                        match codenomad_client::runtime::until_closed(&out, backend.projects())
-                            .await
-                        {
-                            None => return,
-                            Some(Ok(projects)) => {
-                                let _ = out.send(projects).await;
-                                wake();
-                                return;
-                            }
-                            Some(Err(_)) => {
-                                if codenomad_client::runtime::until_closed(
-                                    &out,
-                                    crate::platform::sleep(std::time::Duration::from_millis(
-                                        delay_ms,
-                                    )),
-                                )
-                                .await
-                                .is_none()
-                                {
-                                    return;
-                                }
-                                delay_ms = (delay_ms * 2).min(10_000);
-                            }
-                        }
-                    }
-                });
-            }
+        if let Some(reconcile_generation) = start_reconcile
+            && crate::workspace::has_detached_panels(s)
+            && let Some(l) = s.screen.launcher_mut()
+            && !l.authentication_required
+        {
+            spawn_detached_reconcile(l, reconcile_generation);
         }
         if !other.is_empty() {
             relayed |= crate::workspace::deliver_detached_events(s, &other);
@@ -319,24 +348,47 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             relayed |= crate::settings::authentication_required(s, &expired);
         }
     }
-    if s.screen.launcher().is_some_and(|l| {
-        l.detached_reconcile.is_some()
-            && (l.authentication_required || !crate::workspace::has_detached_panels(s))
-    }) && let Some(l) = s.screen.launcher_mut()
-    {
-        l.detached_reconcile = None;
+    let cancel_reconcile = s.screen.launcher().and_then(|l| {
+        let (_, opened_after, _) = l.detached_reconcile.as_ref()?;
+        if l.authentication_required {
+            Some(false)
+        } else if !crate::workspace::has_unopened_detached_panels(s, opened_after) {
+            Some(!opened_after.is_empty())
+        } else {
+            None
+        }
+    });
+    if let Some(bring_opened_online) = cancel_reconcile {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.detached_reconcile = None;
+        }
+        if bring_opened_online {
+            relayed |= crate::workspace::set_detached_online(s, true);
+        }
     }
     let reconciled = s.screen.launcher_mut().and_then(|l| {
         let (reconcile_generation, _, rx) = l.detached_reconcile.as_ref()?;
-        let projects = rx.try_recv().ok()?;
+        let result = rx.try_recv().ok()?;
         let current = l.workspace_stream_generation;
         let reconcile_generation = *reconcile_generation;
-        let targets = l.detached_reconcile.take().map(|(_, targets, _)| targets)?;
-        (reconcile_generation == current).then_some((targets, projects))
+        let opened_after = l
+            .detached_reconcile
+            .take()
+            .map(|(_, opened_after, _)| opened_after)?;
+        if reconcile_generation != current {
+            return None;
+        }
+        match result {
+            Some(projects) => Some((opened_after, projects)),
+            None => {
+                l.detached_reconcile_failed = true;
+                None
+            }
+        }
     });
-    if let Some((targets, projects)) = reconciled {
+    if let Some((opened_after, projects)) = reconciled {
         let live: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
-        relayed |= crate::workspace::reconcile_detached_online(s, &targets, &live);
+        relayed |= crate::workspace::reconcile_detached_online(s, &opened_after, &live);
     }
     let deferred_rebind = s.screen.launcher().and_then(|l| {
         let id = l.rebind_after_send.as_ref()?;
@@ -393,6 +445,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.catalogue_watch = None;
             l.workspace_stream_generation = 0;
             l.detached_reconcile = None;
+            l.detached_reconcile_failed = false;
             l.rebind_after_send = None;
             l.connection = Some(b);
             l.server_id = Some(server_id);
@@ -445,6 +498,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.creation_uncertain = false;
             l.creation_uncertain_linked = false;
             l.rebind_after_send = None;
+            if let Some((_, opened_after, _)) = &mut l.detached_reconcile {
+                opened_after.insert(project.id.clone());
+            }
             connection::watch_catalogue(l);
             l.apply_listing(rows, false, None);
             l.search = TextEdit::new("");
@@ -537,6 +593,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         Ok(Reply::CreateUncertainLinked) => {
             l.creation_uncertain = true;
             l.creation_uncertain_linked = true;
+            l.linked.cancel();
             l.error = Some("rune.create_error");
             crate::shell::notifications::emit_outcome(
                 s,
