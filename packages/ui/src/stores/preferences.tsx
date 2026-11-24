@@ -969,11 +969,11 @@ function saveMissionDefaults(input: MissionProfileDefault[], expected: MissionPr
 }
 
 let missionModelWriteQueue = Promise.resolve()
-function saveUserMissionModel(input: UserMissionModel): Promise<void> {
+function saveUserMissionModel(input: UserMissionModel, expected = missionPreferenceSnapshot("missionModels")): Promise<void> {
   const model = parseMissionModel(input)
   if (!missionModelsValid()) return Promise.reject(new Error("Invalid mission model document"))
-  const expected = missionPreferenceSnapshot("missionModels")
-   const current = normalizeMissionModels(expected.present ? expected.value : preferences().missionModels)
+  if (expected.key !== "missionModels" || !validMissionModels(expected.present ? expected.value : undefined)) return Promise.reject(new Error("Invalid mission model expectation"))
+  const current = normalizeMissionModels(expected.present ? expected.value : preferences().missionModels)
   const write = missionModelWriteQueue.then(async () => {
     await patchMissionPreferences({ settings: { missionModels: saveMissionModelRecord(current, model) } }, [expected])
   })
