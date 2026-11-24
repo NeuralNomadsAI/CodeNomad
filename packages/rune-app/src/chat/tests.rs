@@ -247,7 +247,10 @@ fn stream_disconnected_keeps_device_attachments_tracks_observed_running_and_sett
     // Drop SSE while idle: attachments stay available and ObservedRunning updates the phase.
     out.try_send(Event::ConnectionLost).unwrap();
     rt.frame(1.0 / 60.0);
-    assert_eq!(rt.state.phase, Phase::StreamDisconnected { running: false });
+    assert!(matches!(
+        rt.state.phase,
+        Phase::StreamDisconnected { running: false }
+    ));
     assert!(crate::composer::device::available(&rt.state));
 
     out.try_send(Event::ObservedRunning {
@@ -256,7 +259,10 @@ fn stream_disconnected_keeps_device_attachments_tracks_observed_running_and_sett
     })
     .unwrap();
     rt.frame(1.0 / 60.0);
-    assert_eq!(rt.state.phase, Phase::StreamDisconnected { running: true });
+    assert!(matches!(
+        rt.state.phase,
+        Phase::StreamDisconnected { running: true }
+    ));
 
     // ObservedRunning(false) clears running in StreamDisconnected without a reader barrier.
     out.try_send(Event::ObservedRunning {
@@ -265,7 +271,10 @@ fn stream_disconnected_keeps_device_attachments_tracks_observed_running_and_sett
     })
     .unwrap();
     rt.frame(1.0 / 60.0);
-    assert_eq!(rt.state.phase, Phase::StreamDisconnected { running: false });
+    assert!(matches!(
+        rt.state.phase,
+        Phase::StreamDisconnected { running: false }
+    ));
 
     // Queue a prompt during StreamDisconnected, then expire authentication before any receipt arrives.
     rt.state.draft = rune::edit::TextEdit::new("Never posted");
@@ -301,15 +310,11 @@ fn deferred_alternate_send_surfaces_refusal_after_authority_loss() {
     // and revoke authority before its deferred action executes on the next frame.
     tap(&mut rt, "composer-more:trigger");
     rt.frame(1.0 / 60.0);
-    let item = rt
+    let (x, y) = rt
         .find("composer-more:item:queue")
         .expect("alternate-send menu item");
-    let center = (
-        item.rect.x + item.rect.w / 2.0,
-        item.rect.y + item.rect.h / 2.0,
-    );
-    rt.pointer_down(center.0, center.1);
-    rt.pointer_up(center.0, center.1);
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
     out.try_send(Event::Failed).unwrap();
     rt.frame(1.0 / 60.0);
     rt.frame(1.0 / 60.0);

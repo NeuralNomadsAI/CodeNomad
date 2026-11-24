@@ -116,7 +116,6 @@ pub(crate) async fn run_with_reading(
                 }
             }
             Some(Input::AuthenticationRequired(e)) if e == epoch => {
-                stream_gap = false;
                 while let Ok(queued) = rx.try_recv() {
                     let attempted = match queued {
                         Input::Command(Command::Prompt(prompt)) => prompt.id,
