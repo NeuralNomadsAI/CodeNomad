@@ -17,14 +17,20 @@ pub const AVAILABLE: bool = cfg!(windows);
 
 pub fn copy_path(
     path: &str,
-    out: codenomad_client::Sender<(bool, String)>,
+    out: codenomad_client::Sender<(crate::shell::notifications::Category, bool, String)>,
     wake: codenomad_client::Wake,
     tx: &mut rune::Tx,
 ) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = (out, wake);
         tx.copy(path);
+        let path = path.to_owned();
+        let locale = crate::strings::locale();
+        tx.read_clipboard(move |_: &mut crate::State, content, _| {
+            let copied = content.text() == path;
+            let _ = out.try_send(copy_feedback(locale, copied));
+            wake();
+        });
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -33,12 +39,28 @@ pub fn copy_path(
     }
 }
 
+fn copy_feedback(
+    locale: &str,
+    copied: bool,
+) -> (crate::shell::notifications::Category, bool, String) {
+    let key = if copied {
+        "instanceShell.filesShell.toast.copyPathSuccess"
+    } else {
+        "instanceShell.filesShell.toast.copyPathError"
+    };
+    (
+        crate::shell::notifications::Category::Copy,
+        copied,
+        rune_theme_codenomad::catalogue::format(locale, key, &[]),
+    )
+}
+
 #[cfg(target_arch = "wasm32")]
 mod web;
 
 pub fn windows_default_mode(path: &str) -> DefaultMode {
     let extension = path
-        .rsplit('/')
+        .rsplit(['/', '\\'])
         .next()
         .unwrap_or_default()
         .rsplit_once('.')

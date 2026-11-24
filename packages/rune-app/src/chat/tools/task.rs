@@ -97,7 +97,7 @@ pub(super) fn output<'a>(
     }
 }
 
-pub(super) fn status(s: &State, tool: &Tool) -> Option<&'static str> {
+pub(super) fn status(s: &State, tool: &Tool) -> Option<(&'static str, bool, Option<u64>)> {
     if tool.status != "completed" || tool.metadata["status"] != "running" {
         return None;
     }
@@ -126,12 +126,20 @@ pub(super) fn status(s: &State, tool: &Tool) -> Option<&'static str> {
                 })
             })
             .max_by_key(|(created, id, _)| (*created, *id))
-            .map(|(_, _, state)| state)
+            .map(|(created, _, state)| (created, state))
     });
     Some(match latest {
-        Some("completed") => "toolCall.status.completed",
-        Some("error" | "cancelled") => "toolCall.status.error",
-        _ => "toolCall.status.running",
+        Some((created, "completed")) => (
+            "toolCall.status.completed",
+            false,
+            (created > 0).then_some(created),
+        ),
+        Some((created, "error" | "cancelled")) => (
+            "toolCall.status.error",
+            false,
+            (created > 0).then_some(created),
+        ),
+        _ => ("toolCall.status.running", true, None),
     })
 }
 

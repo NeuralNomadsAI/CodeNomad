@@ -69,19 +69,26 @@ impl Reading {
             self.top = Some((id.into(), y - top));
         }
     }
+}
 
-    pub(crate) fn keep_passage(
-        &self,
-        tx: &mut Tx,
-        visible: impl Fn(crate::settings::TranscriptRow) -> bool,
-    ) {
-        if !self.following
-            && let (Some((message, _)), Some(passage)) = (&self.top, &self.passage)
-            && *message == passage.message
-            && passage.mode.is_none_or(visible)
-        {
-            tx.scroll_key_to(format!("{message}/{}", passage.key), passage.offset);
-        }
+pub(crate) fn keep_passage(s: &State, tx: &mut Tx) {
+    let reading = s.transcript_display.reading();
+    if !reading.following
+        && let (Some((message, _)), Some(passage)) = (&reading.top, &reading.passage)
+        && *message == passage.message
+        && passage
+            .mode
+            .is_none_or(|row| crate::settings::transcript_mode(s, row) != "hidden")
+    {
+        let group = matches!(passage.mode, Some(crate::settings::TranscriptRow::Tool(_)))
+            .then(|| {
+                super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key)
+            })
+            .flatten();
+        tx.scroll_key_to(
+            group.unwrap_or_else(|| format!("{message}/{}", passage.key)),
+            passage.offset,
+        );
     }
 }
 

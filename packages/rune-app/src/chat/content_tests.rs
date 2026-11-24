@@ -497,7 +497,7 @@ fn compact_view_mode_and_unified_wrap_are_local_to_the_card() {
 
 #[test]
 fn a_larger_history_viewport_retries_an_already_mounted_diff() {
-    let mut rt = Runtime::new(edit_cards(12), view, (960.0, 360.0), Env::new(false, 1.0));
+    let mut rt = Runtime::new(edit_cards(12), view, (960.0, 440.0), Env::new(false, 1.0));
     rt.frame(0.0);
     rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
     for _ in 0..24 {
@@ -512,6 +512,7 @@ fn a_larger_history_viewport_retries_an_already_mounted_diff() {
             .rect[1]
     };
     let before = top(&rt);
+    assert!(rt.find("tool-cards:5:edit0-copy-patch").is_some());
     assert!(rt.find("tool-cards:5:edit1-copy-patch").is_none());
     rt.set_viewport((960.0, 960.0), 1.0);
     for _ in 0..24 {
@@ -605,7 +606,7 @@ fn historical_part_gap_reveals_the_middle_without_rejecting_the_message() {
         rt.key_up(event);
         rt.frame(1.0 / 60.0);
     }
-    for _ in 0..6 {
+    for _ in 0..12 {
         if focused(&rt, "reveal-parts-gap-parts") {
             break;
         }

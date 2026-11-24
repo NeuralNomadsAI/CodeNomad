@@ -41,6 +41,15 @@ describe("background subagent reports", () => {
     assert.equal(parseSubagentReport("plain text"), null)
   })
 
+  it("parses the background-result report tag only for subagents", () => {
+    const tagged = (kind: string, close = "background-result") =>
+      `<background-result kind="${kind}" sessionID="ses_child" state="completed" description="Nest">\nDone\n</${close}>`
+    assert.deepEqual(parseSubagentReport(tagged("subagent")), { childId: "ses_child", state: "completed", body: "Done" })
+    assert.equal(parseSubagentReport(tagged("shell")), null)
+    assert.equal(parseSubagentReport(tagged("subagent", "subagent")), null)
+    assert.equal(parseSubagentReport(`<subagent kind="subagent" sessionID="ses_child" state="completed">\nDone\n</subagent>`), null)
+  })
+
   it("picks the latest report after the launch by time, whatever the listing order", () => {
     const index = session([
       // Listed before the launch yet delivered after it; an older one listed after it.

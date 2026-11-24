@@ -20,6 +20,14 @@ pub(super) fn wait(rt: &mut Runtime<State>, label: &str, condition: impl Fn(&Sta
         rt.frame(1.0 / 60.0);
     }
 }
+pub(super) fn wait_control(rt: &mut Runtime<State>, key: &str) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while rt.find(key).is_none() {
+        assert!(Instant::now() < deadline, "restore timeout: {key}");
+        rt.frame(1.0 / 60.0);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 pub(super) fn tap(rt: &mut Runtime<State>, key: &str) {
     rt.update(|_, tx| {
         tx.scroll_into_view(key);
@@ -66,10 +74,13 @@ fn ready(s: &State, id: &str) -> bool {
         && active_session(s).as_deref() == Some(id)
 }
 fn select(rt: &mut Runtime<State>, index: usize, id: &str) {
-    tap(rt, &format!("t-tab-{index}"));
+    let tab = format!("t-tab-{index}");
+    wait_control(rt, &tab);
+    tap(rt, &tab);
     wait(rt, "selected conversation", |s| ready(s, id));
 }
 fn open(rt: &mut Runtime<State>, title: &str, id: &str) {
+    wait_control(rt, "folder-path");
     type_text(
         rt,
         "folder-path",
@@ -177,6 +188,18 @@ pub(super) fn finish(mut rt: Runtime<State>) {
 
 #[cfg(target_os = "windows")]
 fn finish_native(rt: Runtime<State>) {
+    close_hidden_window(rt, |state, tx| {
+        finish_window_state(state, tx);
+        report(
+            &std::env::var("RUNE_TEST_RESTORE_STAGE").unwrap(),
+            true,
+            true,
+        );
+    });
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn close_hidden_window(rt: Runtime<State>, closed: fn(&mut State, &mut rune::Tx)) {
     let state = rt.state;
     rune::run_windows_with_args(Default::default(), [], move |_| {
         [rune::WindowSpec::new(
@@ -190,20 +213,18 @@ fn finish_native(rt: Runtime<State>) {
         .state(state)
         .inactive()
         .on_created(|handle| handle.close())
-        .on_close(|state, tx| {
-            workspace::finish(state, tx);
-            assert!(
-                workspace::status(state).is_none(),
-                "native close must flush drafts"
-            );
-            report(
-                &std::env::var("RUNE_TEST_RESTORE_STAGE").unwrap(),
-                true,
-                true,
-            );
-        })]
+        .on_close(closed)]
     });
     finish_backend();
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn finish_window_state(state: &mut State, tx: &mut rune::Tx) {
+    workspace::finish(state, tx);
+    assert!(
+        workspace::status(state).is_none(),
+        "native close must flush the snapshot"
+    );
 }
 
 fn report(stage: &str, native_window: bool, file_drafts: bool) {

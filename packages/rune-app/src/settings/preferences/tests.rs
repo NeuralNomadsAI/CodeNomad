@@ -1,12 +1,17 @@
 use super::*;
+mod advanced;
 mod appearance;
 mod behavior;
 mod conversation;
 mod events;
+mod info;
 mod memory;
+mod notifications;
+mod opencode;
 mod providers;
+mod shortcuts;
+mod tab_shortcuts;
 mod transcript;
-
 use codenomad_client::bounded;
 use std::time::Duration;
 use tokio::{
@@ -577,6 +582,7 @@ fn owner_path(owner: Owner) -> &'static str {
     match owner {
         Owner::Config => "config",
         Owner::State => "state",
+        Owner::Server => "config",
     }
 }
 
@@ -584,6 +590,7 @@ fn choice(owner: Owner) -> Choice {
     match owner {
         Owner::Config => Choice::Locale,
         Owner::State => Choice::Mode,
+        Owner::Server => Choice::LogLevel,
     }
 }
 
@@ -591,6 +598,7 @@ fn desired(owner: Owner) -> &'static str {
     match owner {
         Owner::Config => "he",
         Owner::State => "dark",
+        Owner::Server => "WARN",
     }
 }
 
@@ -598,6 +606,7 @@ fn desired_doc(owner: Owner) -> Value {
     match owner {
         Owner::Config => json!({"settings":{"locale":desired(owner)}}),
         Owner::State => json!({"appearancePreferences":{"mode":desired(owner)}}),
+        Owner::Server => json!({"logLevel":desired(owner)}),
     }
 }
 
@@ -644,7 +653,7 @@ fn settings_passive_reads_never_retry_unconfirmed_writes_but_the_retry_action_do
             "a successful read of the old value is not success"
         );
         platform::block_on(async {
-            prefs.retry();
+            prefs.retry_general();
             assert!(prefs.poll());
             let read = request(&listener).await;
             assert!(read.first.starts_with("GET "));

@@ -1,6 +1,7 @@
 // Explicit isolated CLI only: no service discovery, real provider, or user database.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
+import { spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { createServer } from "node:http"
 import { watch } from "node:fs"
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises"

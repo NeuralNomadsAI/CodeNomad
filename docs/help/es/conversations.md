@@ -119,6 +119,8 @@ Un objetivo pertenece a su conversación: las subsesiones y las bifurcaciones em
 
 ## Bifurcar, deshacer y recuperar una ejecución fallida {#fork-errors}
 
+En Rune, deshacer rellena el cuadro de redacción vacío con el texto original. Usa **Rehacer último mensaje** encima de la conversación para recuperar el historial. Deshacer y eliminar herramientas y razonamientos requieren compatibilidad del servidor.
+
 1. En un mensaje, elige **Bifurcar después de este mensaje** para crear una conversación después de ese punto sin reemplazar la original.
 2. Para deshacer, revisa cuidadosamente **Deshacer cambios hasta aquí (elimina mensajes)**. La paleta ofrece **Deshacer último mensaje** y **Rehacer último mensaje** para la operación de deshacer preparada. Deshacer se desactiva si no hay un mensaje de usuario que se pueda deshacer; Rehacer se desactiva si no hay una operación de deshacer preparada.
 3. Si la ejecución falla, inspecciona **Error de sesión**, el error de la respuesta y los detalles de **Error al enviar** antes de volver a enviar.

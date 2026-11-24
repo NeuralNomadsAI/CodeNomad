@@ -212,7 +212,7 @@ mod tests {
         settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":true}));
         let t = owner(&mut s);
         t.width = 800.;
-        t.outline = Some(super::super::Outline {
+        t.outline = Some(std::sync::Arc::new(super::super::Outline {
             entries: vec![
                 serde_json::from_value(json!({
                     "id":"step","seq":1,"type":"assistant","tools":0,"reasoning":1,"text":0,
@@ -221,7 +221,8 @@ mod tests {
             ],
             total: 1,
             cacheable: true,
-        });
+            saved: None,
+        }));
         t.changed = true;
         t.index_changed = true;
         let mut rt = Runtime::new(s, view, (800., 600.), Env::new(false, 1.));

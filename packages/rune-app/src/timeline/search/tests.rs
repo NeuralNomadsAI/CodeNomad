@@ -201,17 +201,39 @@ fn the_toolbar_drags_the_search_window_and_resize_keeps_its_close_button_visible
         }
     };
     settle(&mut rt);
-    rt.update(|s, _| state(s).open = true);
+    rt.update(|s, tx| {
+        state(s).open = true;
+        state(s).query.focused = true;
+        tx.focus_when_shown(FOCUS, true);
+    });
     settle(&mut rt);
+    let focused = |rt: &Runtime<State>| {
+        rt.elements()
+            .iter()
+            .any(|el| el.path.contains(FIELD) && el.focused)
+    };
+    assert!(focused(&rt), "the query has focus before dragging");
     let before = rt.presented("history-search").unwrap().0;
-    let (x, y) = rt.find("history-search-drag").unwrap();
+    let [left, top, _, height] = rt.presented("history-search-drag").unwrap().0;
+    let (x, y) = (left + 8., top + height / 2.);
     rt.pointer_down(x, y);
     rt.pointer_move(x + 40., y + 80.);
     rt.frame(0.016);
+    assert!(
+        state(&mut rt.state).drag.is_some(),
+        "the title receives the drag"
+    );
+    assert!(focused(&rt), "dragging must not blur the query field");
     rt.pointer_up(x + 40., y + 80.);
     settle(&mut rt);
+    rt.key(KeyEvent {
+        key: Key::Text("still focused".into()),
+        mods: Mods::default(),
+    });
+    rt.frame(0.016);
     let dragged = rt.presented("history-search").unwrap().0;
     let model = state(&mut rt.state);
+    assert_eq!(model.query.text, "still focused");
     assert!(
         dragged[0] > before[0] + 30. && dragged[1] > before[1] + 70.,
         "before={before:?} after={dragged:?} frame={:?} position={:?}",
@@ -226,6 +248,50 @@ fn the_toolbar_drags_the_search_window_and_resize_keeps_its_close_button_visible
         "close bounds={:?}",
         [x, y, w, h]
     );
+}
+
+#[test]
+fn the_short_search_body_scrolls_to_its_cursor_without_moving_the_toolbar() {
+    let mut s = crate::init();
+    let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    backend.session = "here".into();
+    super::super::observe(&mut s, &crate::transport::Event::Connected(backend));
+    let mut rt = Runtime::new(s, view, (844., 245.), Env::new(false, 1.));
+    rt.update(|s, _| {
+        let m = state(s);
+        m.open = true;
+        m.results = Some(Ranked::Ranked {
+            version: 1,
+            capped: false,
+            examined_before: 0,
+            exclusions: vec![],
+            page: Page {
+                hits: (0..20)
+                    .map(|i| hit("here", &format!("hit-{i}"), Kind::Text, 0))
+                    .collect(),
+                cursor: Some("older".into()),
+                ..Page::default()
+            },
+        });
+    });
+    for _ in 0..12 {
+        rt.frame(0.016);
+    }
+    let toolbar = rt.presented("history-search-close").unwrap().0;
+    let [x, y, w, h] = rt.presented("history-search-body").unwrap().0;
+    let more = |rt: &Runtime<State>| rt.presented("history-search-more").unwrap().0;
+    assert!(more(&rt)[1] >= y + h);
+    rt.wheel(x + w / 2., y + h / 2., -3500.);
+    for _ in 0..12 {
+        rt.frame(0.016);
+    }
+    let [left, top, width, height] = more(&rt);
+    assert!(top >= y && top + height <= y + h + 1.);
+    assert_eq!(rt.presented("history-search-close").unwrap().0, toolbar);
+    rt.pointer_down(left + width / 2., top + height / 2.);
+    rt.pointer_up(left + width / 2., top + height / 2.);
+    rt.frame(0.016);
+    assert_eq!(state(&mut rt.state).cursor.as_deref(), Some("older"));
 }
 
 #[test]

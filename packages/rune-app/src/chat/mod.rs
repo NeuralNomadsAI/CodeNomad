@@ -12,6 +12,9 @@ mod links;
 mod media;
 #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
 pub(crate) use media::browser_fixture as images_fixture;
+pub(crate) mod message_actions;
+#[cfg(feature = "test-support")]
+pub(crate) use links::SAMPLE as LOOPBACK_LINK_SCENE;
 pub(crate) mod reader;
 pub(crate) mod reading;
 mod receipts;

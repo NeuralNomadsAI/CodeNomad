@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
+import {spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 import {promisify} from 'node:util'
 import {mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
@@ -15,10 +16,24 @@ import {controlsFixture} from './controls-fixture.mjs'
 import {pendingOpenFixture} from './pending-open-fixture.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 import {webLiveFixture} from './web-live-fixture.mjs'
+import {seedGitImages} from '../../../scripts/rune/web-git-images.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
 import {launchWeb} from './launcher-web.mjs'
+import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
+const mobileSessionSearch=process.argv.includes('--mobile-session-search')
+assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation requires the Chromium mobile smoke')
+if(process.platform==='win32'&&webMobile&&!process.argv.includes('--owned-mobile-worker')){
+  const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:'inherit'})
+  const closed=new Promise(resolve=>worker.once('close',resolve))
+  const stop=()=>void stopFixtureChild(worker,closed).catch(error=>console.error(error.message))
+  process.once('SIGINT',stop)
+  process.once('SIGTERM',stop)
+  const code=await closed
+  process.exit(code??1)
+}
 const webMissions=process.argv.includes('--web-missions')
+const webGitImages=process.argv.includes('--web-git-images')
 const solid=webAndroid&&process.env.RUNE_ANDROID_SOLID_DIR
 const compare=webAndroid&&process.env.RUNE_ANDROID_COMPARE
 const probeGpu=webAndroid&&process.env.RUNE_ANDROID_GPU_PROBE==='only'
@@ -29,11 +44,13 @@ const sameOriginPairing=process.argv.includes('--same-origin-pairing')
 const webTouchHistory=process.argv.includes('--web-touch-history')
 const webTimeline=process.argv.includes('--web-timeline')||webTouchHistory
 const webSearch=process.argv.includes('--web-history-search')
+const webOutline=process.argv.includes('--web-outline-restore')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webFileWrap=process.argv.includes('--web-file-wrap')
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webOutline,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webGitImages||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
 assert(!webFileWrap||(!webPending&&!webMobile),'File wrap uses the loopback Chromium restoration fixture')
 assert(!webMissions||!webRestore&&!webMobile)
+assert(!webGitImages||!webRestore&&!webMobile&&!webMissions)
 if(!web)requireTestSupport()
 const gitPanel=process.argv.includes('--git-panel'),gitOutput=gitPanel?process.env.RUNE_TEST_GIT_OUTPUT:undefined
 const placeWorktree=process.argv.includes('--place-worktree'),moves=[]
@@ -65,8 +82,9 @@ const manifest=web?JSON.parse(await readFile(path.join(ui,'bundle-manifest.json'
 if(web){assert.equal(manifest.generator,'scripts/rune/bundle-web.mjs');assert.equal(manifest.testSupport,false,'Connected qualification requires the default product bundle')}
 const gitCount=Number(process.env.RUNE_TEST_GIT_COUNT??0)
 const review=path.join(path.dirname(project),'review')
-const gitEnv=gitPanel?{...await privateEnvironment(profile),GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null'}:undefined
+const gitEnv=gitPanel||webGitImages?{...await privateEnvironment(profile),GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null'}:undefined
 const git=async (...args)=>(await promisify(execFile)('git',['-C',project,...args],{windowsHide:true,env:gitEnv})).stdout
+if(webGitImages)await seedGitImages(project,git)
 if(gitPanel){
   assert(!gitCount,'Git panel uses real worktrees')
   await git('init','--quiet','-b','main')
@@ -79,16 +97,16 @@ if(gitPanel){
   await writeFile(path.join(project,'git-panel.txt'),'git-panel edited\n')
 }
 if(gitCount)await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL'}})
-const linked=webMobile&&!webAndroid?path.join(path.dirname(project),'linked'):null
+const linked=(webMobile&&!webAndroid||webSearch)?path.join(path.dirname(project),'linked'):null
 if(linked){
   const hooks=path.join(profile,'empty-hooks')
   await mkdir(hooks)
   const git=(...args)=>promisify(execFile)('git',['-c',`core.hooksPath=${hooks}`,'-C',project,...args],{
     windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig')},
   })
-  await git('init','--quiet')
+   await git('init','--quiet',...(webSearch?['-b','history-fixture']:[]))
   await git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','--quiet','--allow-empty','-m','synthetic')
-  await git('worktree','add','--quiet','--detach',linked,'HEAD')
+   await git('worktree','add','--quiet',...(webSearch?['-b','history-linked']:['--detach']),linked,'HEAD')
 }
 const records=new Map(),stores=new Map(),streams=new Set(),requests=[]
 const stats={created:0,prompts:0,lists:0}
@@ -180,15 +198,15 @@ function add(id,title,directory=project) {
   return row
 }
 add('ses_existing','Existing history')
-add('ses_another','Another session',gitPanel&&!placeWorktree?review:project)
-seedHistory({stores,webTimeline,webMobile,webAndroid,webSearch})
+add('ses_another','Another session',webSearch?linked:gitPanel&&!placeWorktree?review:project)
+seedHistory({stores,webTimeline:webTimeline||webOutline,webMobile,webAndroid,webSearch})
 if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
 if(placeWorktree){
   add('ses_child','Child session').parentID='ses_existing'
   for(const row of records.values())row.projectID='fixture_project'
   for(let i=0;i<32;i++)stores.get('ses_existing').append('assistant',`Placement history ${i}`)
 }
-if(linked){
+if(linked&&!webSearch){
   add('ses_linked','Linked checkout session',linked)
   add('ses_linked_next','Linked checkout next page',linked)
   stores.get('ses_linked_next').append('assistant','Linked checkout answer')
@@ -216,8 +234,9 @@ const upstream=createServer(async(req,res)=>{
     if(url.pathname==='/api/event') {
       if(mobile?.held){res.statusCode=503;return json({})}
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
+      // Match OpenCode's idle heartbeat; only the explicit outage stops this fixture's stream.
+      const heartbeat=setInterval(()=>res.write(': heartbeat\n\n'),15000).unref()
       streams.add(res)
-      const heartbeat=webSearch||webTimeline?setInterval(()=>res.write(': heartbeat\n\n'),15_000).unref():undefined
       res.once('close',()=>{clearInterval(heartbeat);streams.delete(res)})
       return
     }
@@ -244,11 +263,12 @@ const upstream=createServer(async(req,res)=>{
         return json({directory,project:{id:'fixture_project',canonical:project,directory}})
       }
       const directory=url.searchParams.get('location[directory]')??project
-      return json(gitCount||linked||webSearch?{directory,project:{id:'fixture_project',canonical:project,directory}}:
+      return json(gitCount||linked||webSearch||webGitImages?{directory,project:{id:'fixture_project',canonical:project,directory}}:
         compare?{directory:project,project:{id:'global',canonical:project,directory:project}}:{data:{directory:project}})
     }
     if(linked&&url.pathname==='/api/worktree')return json([{directory:project},{directory:linked}])
-    if(linked&&url.pathname==='/api/worktree/refresh'){res.writeHead(204);res.end();return}
+    if(webGitImages&&url.pathname==='/api/worktree')return json([{directory:project}])
+    if((linked||webGitImages)&&url.pathname==='/api/worktree/refresh'){res.writeHead(204);res.end();return}
     if(webSearch&&url.pathname==='/api/worktree')return json([{directory:project}])
     if(webSearch&&url.pathname==='/api/worktree/refresh')return json({})
     if(gitPanel&&url.pathname==='/api/worktree'&&req.method==='DELETE'){
@@ -304,7 +324,7 @@ const upstream=createServer(async(req,res)=>{
       return json({data:created})
     }
     if(url.pathname==='/api/plugin')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
-    const history=historyResponse(url.pathname,raw,{stores,records,project,webSearch,webTouchHistory,compare})
+    const history=historyResponse(url.pathname,raw,{stores,records,project,linked,directory:url.searchParams.get('location[directory]'),webSearch,webTouchHistory,webOutline,compare})
     if(history)return json(history)
     if(url.pathname==='/api/rpc/codenomad.missions/scheduleCarrierRead')return json({output:{owned:false}})
     if(placeWorktree&&url.pathname==='/api/model')return json({data:[]})
@@ -399,44 +419,24 @@ await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
-if(webSearch){
-  delete env.GIT_CEILING_DIRECTORIES
-  const git=(...args)=>promisify(execFile)('git',['-C',project,...args],{
-    windowsHide:true,env:{...env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig')},
-  })
-  await git('init','-q','-b','history-fixture')
-  await git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','-q','--allow-empty','-m','History fixture')
-}
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
-let server,exited,log='',client,androidCleanup,result=1,http,runLog='',expired=false
+let host,server,log='',client,androidCleanup,result=1,http,expired=false
 const webState={diagnostic:''}
 async function startServer(){
-  runLog=''
-  server=spawn(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-  server.stdout.on('data',d=>{if(log.length<1048576)log+=d;if(runLog.length<1048576)runLog+=d})
-  server.stderr.on('data',d=>{if(log.length<1048576)log+=d})
-  server.stdin.on('error',()=>{})
-  exited=new Promise(resolve=>{server.once('close',resolve);server.once('error',resolve)})
-  for(const until=Date.now()+20000;;){
-    assert(Date.now()<until&&server.exitCode===null,`${ts?'TypeScript':'Rust'} startup: ${log.slice(-1000)}`)
-    const origin=ts?ts.ready(runLog):runLog.match(/^http:\/\/127\.0\.0\.1:\d+(?=\r?$)/m)?.[0]
-    if(origin)return origin
-    await new Promise(r=>setTimeout(r,50))
-  }
+  host=launchFixture(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],
+    {cwd:profile,env,shutdown:ts?'codenomad:shutdown\n':'shutdown\n',graceMs:ts?15000:3000})
+  server=host.child
+  return host.ready(ts?stdout=>ts.ready(stdout):rustOrigin)
 }
 async function stopServer(){
-  if(!server || server.exitCode!==null)return
-  server.stdin.end(ts?'codenomad:shutdown\n':'shutdown\n')
-  await Promise.race([exited,new Promise(r=>setTimeout(r,ts?15000:3000).unref())])
-  if(server.exitCode===null){server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,5000))])}
+  if(!host)return
+  try{await host.stop()}finally{log=(log+host.output()).slice(-1048576);host=undefined}
 }
 async function signIn(origin){
   await http?.dispose()
-  http=await request.newContext({baseURL:origin,timeout:15000})
-  assert.equal((await http.get('/api/workspaces')).status(),401,'Workspace inventory requires authentication')
-  assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200)
+  http=await signInFixture(origin,'fixture-backend')
 }
 async function restartWeb(previous,uiOrigin){
   const {serverId}=await (await previous.get('/api/meta')).json()
@@ -447,7 +447,7 @@ async function restartWeb(previous,uiOrigin){
   assert.equal(server.exitCode,0,'The original listener must actually exit')
   if(!ts)env.CNRS_HTTPS_BIND=new URL(uiOrigin).host
   await signIn(await startServer())
-  if(!ts)assert(runLog.includes(`HTTPS ${uiOrigin}`))
+  if(!ts)assert(host.stdout().includes(`HTTPS ${uiOrigin}`))
   assert.equal((await (await http.get('/api/meta')).json()).serverId,serverId)
   const opened=await http.post('/api/workspaces',{data:{path:project}})
   assert(opened.ok())
@@ -457,8 +457,8 @@ try{
   const origin=await startServer()
   if(web){
     await signIn(origin)
-    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog,http,mobile,restart:restartWeb,
-      webMobile,webAndroid,webMissions,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch},webState)
+    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog:host.stdout(),http,mobile,restart:restartWeb,
+      webMobile,webAndroid,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
     client=webState.client
   }else if(pendingOpen){
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
@@ -467,7 +467,7 @@ try{
     for(const stage of ['prepare','resume','verify']){
       if(restoreFileDrafts&&stage==='verify')await writeFile(path.join(project,'draft.txt'),'external')
       clientLines=''
-      client=spawn(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
+      client=spawnFixtureChild(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
       client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
       const timer=setTimeout(()=>client.kill(),120000)
       try{result=await new Promise((resolve,reject)=>{client.on('close',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
@@ -484,7 +484,7 @@ try{
   }else {
     if(gitPanel)await signIn(origin)
     const args=gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'
-    client=spawn(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
+    client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
@@ -495,7 +495,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,webState.diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid?1:webTouchHistory?4:webMissions?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,webState.diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||mobileSessionSearch?1:webTouchHistory?4:webMissions||webGitImages?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
     if(!placeWorktree){
       await removeReview

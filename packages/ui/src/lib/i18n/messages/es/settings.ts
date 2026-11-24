@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "Error de sintaxis en la línea {line}",
   "settings.nav.servers": "Servidores",
   "settings.servers.open": "Abrir",
   "settings.servers.dialog.name": "Nombre",
@@ -751,5 +752,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "Descargar .txt",
   "settings.info.diagnostics.reportBug": "Informar de un error",
   "settings.info.diagnostics.copied": "Diagnósticos copiados.",
+  "settings.info.actions.failed": "No se pudo completar la acción. Inténtalo de nuevo.",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI no proporciona datos de uso para este método de inicio de sesión de ChatGPT. Puedes seguir chateando.",
 } as const

@@ -1,11 +1,42 @@
-use crate::{State, content::Part, history::Result, platform};
+use crate::{
+    State,
+    content::Part,
+    history::Result,
+    platform,
+    strings::{locale, t},
+};
 use codenomad_client::{Receiver, Sender, bounded, search::Hit};
+use rune_theme_codenomad::catalogue;
 
 #[derive(Default)]
 pub(super) struct Preview {
-    pub(super) blocks: Vec<String>,
+    pub(super) body: Option<Body>,
     pub(super) failed: bool,
-    flight: Option<(Sender<()>, Receiver<Result<Vec<String>>>)>,
+    flight: Option<(Sender<()>, Receiver<Result<Body>>)>,
+}
+
+pub(super) struct Body {
+    pub(super) title: String,
+    pub(super) slug: String,
+    pub(super) created: Option<u64>,
+    pub(super) blocks: Vec<String>,
+}
+
+impl Preview {
+    pub(super) fn pending(&self) -> bool {
+        self.flight.is_some()
+    }
+}
+
+pub(super) fn age(at: u64, now: u64) -> String {
+    let minutes = now.saturating_sub(at) / 60_000;
+    let (key, count) = match minutes {
+        0 => return t("time.relative.justNow").into(),
+        1..=59 => ("time.relative.minutesAgoShort", minutes),
+        60..=1439 => ("time.relative.hoursAgoShort", minutes / 60),
+        _ => ("time.relative.daysAgoShort", minutes / 1440),
+    };
+    catalogue::format(locale(), key, &[("count", &count.to_string())])
 }
 
 pub(super) fn blocks<'a>(hit: &'a Hit, body: &'a [String]) -> impl Iterator<Item = &'a str> {
@@ -16,7 +47,7 @@ pub(super) fn blocks<'a>(hit: &'a Hit, body: &'a [String]) -> impl Iterator<Item
     )
 }
 
-pub(super) fn start(s: &mut State, hit: Hit) {
+pub(super) fn start(s: &mut State, hit: Hit, tx: &mut rune::Tx) {
     let Some(backend) = s.transcript_display.timeline.backend.clone() else {
         return;
     };
@@ -31,15 +62,20 @@ pub(super) fn start(s: &mut State, hit: Hit) {
         flight: Some((cancel, inbox)),
         ..Default::default()
     };
+    rune_theme_codenomad::timeline::search::announce(
+        tx,
+        t("messageSection.search.searching").to_owned(),
+    );
     platform::spawn(async move {
         let Some(_permit) = reads.preview(&cancelled).await else {
             return;
         };
         let request = async {
-            let (backend, _, _) = backend
+            let (backend, session, slug) = backend
                 .bind_session_placed(&project, &hit.session, false)
                 .await?;
-            let row = backend.history_search_preview(&hit.message).await?;
+            let entry = backend.history_search_preview(&hit.message).await?;
+            let row = entry.row;
             let mut left = 4096;
             let mut blocks = Vec::new();
             let mut add = |text: &str| {
@@ -68,7 +104,12 @@ pub(super) fn start(s: &mut State, hit: Hit) {
                     _ => {}
                 }
             }
-            Ok(blocks)
+            Ok(Body {
+                title: session.title,
+                slug,
+                created: entry.created,
+                blocks,
+            })
         };
         if let Some(result) = platform::reads::cancellable(&cancelled, request).await
             && out.send(result).await.is_ok()
@@ -89,7 +130,7 @@ pub(super) fn poll(s: &mut State) -> bool {
     };
     preview.flight = None;
     match result {
-        Ok(blocks) => preview.blocks = blocks,
+        Ok(body) => preview.body = Some(body),
         Err(_) => preview.failed = true,
     }
     true

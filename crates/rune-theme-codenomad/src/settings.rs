@@ -1,11 +1,12 @@
 //! Preferences geometry follows settings-screen.css and the native Preferences bounds.
+pub mod stats;
 use crate::{
     Space, TextRole,
     layout::{self, Layout},
     tokens,
 };
 use rune::{AppSpec, Cx, El, ScrollSpec, col, el, row, text};
-use rune_kit::{SegmentedControl, Select, SelectAppearance, Sidebar, SidebarRow};
+use rune_kit::{Checkbox, SegmentedControl, Select, SelectAppearance, Sidebar, SidebarRow};
 
 pub const WINDOW_SIZE: (f32, f32) = (1100.0, 760.0);
 pub const WINDOW_MIN: (f32, f32) = (760.0, 560.0);
@@ -127,13 +128,6 @@ pub fn placed_window<S: 'static>(
     .map_app(|app| app.maximized(maximized))
 }
 
-pub fn shell_entry(tabs: El, entry: El) -> El {
-    row()
-        .full_width()
-        .child(tabs.grow(1.0).shrink())
-        .child(entry)
-}
-
 pub fn nav<S: 'static>(
     title: &str,
     label: &str,
@@ -178,6 +172,48 @@ pub fn segments<S: 'static>(
     control.build(crate::kit(layout::dark()))
 }
 
+/// Segments whose selection commits a change. Navigation only moves focus.
+pub fn committing_segments<S: 'static>(
+    label: &str,
+    options: &[&str],
+    selected: Option<usize>,
+    locale: &str,
+    choose: impl Fn(&mut S, usize) + Clone + 'static,
+) -> El {
+    let count = options.len();
+    let rtl = crate::catalogue::direction(locale) == "rtl";
+    segments(label, options, selected, false, choose.clone()).on_key(move |s, event, tx| {
+        if event.mods != rune::Mods::default() {
+            return false;
+        }
+        let Some(index) = tx
+            .focused()
+            .and_then(|key| key.strip_prefix("segment"))
+            .and_then(|index| index.parse::<usize>().ok())
+            .filter(|index| *index < count)
+        else {
+            return false;
+        };
+        let next = match event.key {
+            rune::Key::Left if !rtl => (index + count - 1) % count,
+            rune::Key::Right if rtl => (index + count - 1) % count,
+            rune::Key::Right | rune::Key::Left | rune::Key::Down => (index + 1) % count,
+            rune::Key::Up => (index + count - 1) % count,
+            rune::Key::Home => 0,
+            rune::Key::End => count - 1,
+            rune::Key::Enter => {
+                if !tx.key_repeat() {
+                    choose(s, index);
+                }
+                return true;
+            }
+            _ => return false,
+        };
+        tx.focus(format!("segment{next}"), true);
+        true
+    })
+}
+
 pub fn picker(key: &str, label: &str, options: &[&str]) -> Select {
     Select::new(key, options)
         .label(label)
@@ -197,6 +233,7 @@ pub fn transcript_popup<S: 'static>(
     trigger: &str,
     label: &str,
     content: El,
+    viewport: &layout::DrawnRect,
     dismiss: impl Fn(&mut S, &mut rune::Tx) + 'static,
 ) -> El {
     let dark = layout::dark();
@@ -215,6 +252,7 @@ pub fn transcript_popup<S: 'static>(
         .child(
             col()
                 .max_h(400.0)
+                .drawn_rect_into(viewport)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
@@ -233,11 +271,38 @@ pub fn transcript_preset_picker(key: &str, label: &str, options: &[&str]) -> Sel
     picker(key, label, options).width(272.0)
 }
 
+pub enum FilterDrag {
+    Start([f32; 2]),
+    Move([f32; 2]),
+    Release([f32; 2]),
+    Cancel,
+}
+
+pub fn filter_drag<S: 'static>(
+    button: El,
+    change: impl Fn(&mut S, FilterDrag, &mut rune::Tx) + 'static,
+) -> El {
+    button.on_drag(move |s, drag, tx| {
+        let point = drag.window_point();
+        change(
+            s,
+            match drag.phase {
+                rune::Phase::Down => FilterDrag::Start(point),
+                rune::Phase::Move => FilterDrag::Move(point),
+                rune::Phase::Up if drag.cancelled() => FilterDrag::Cancel,
+                rune::Phase::Up => FilterDrag::Release(point),
+            },
+            tx,
+        );
+    })
+}
+
 pub fn transcript_filter_row<S: 'static>(
     label: &str,
     visibility: (&str, bool, impl Fn(&mut S, &mut rune::Tx) + 'static),
     expansion: (&str, bool, impl Fn(&mut S, &mut rune::Tx) + 'static),
     disabled: bool,
+    decorate: impl Fn(El, bool) -> El,
 ) -> El {
     use crate::git_panel::{CHEVRON_DOWN, CHEVRON_RIGHT, EYE};
     fn filter_button<S: 'static>(
@@ -280,11 +345,12 @@ pub fn transcript_filter_row<S: 'static>(
                 .shrink()
                 .truncate(),
         )
-        .child(
+        .child(decorate(
             filter_button(&EYE, visibility_name, disabled, visible, set_visibility)
                 .key("visibility"),
-        )
-        .child(
+            false,
+        ))
+        .child(decorate(
             filter_button(
                 if expanded {
                     &CHEVRON_DOWN
@@ -297,7 +363,8 @@ pub fn transcript_filter_row<S: 'static>(
                 set_expansion,
             )
             .key("expansion"),
-        )
+            true,
+        ))
 }
 
 pub fn render<S, T>(
@@ -380,6 +447,57 @@ pub fn setting_row(label: &str, control: El) -> El {
     setting_row_with_info(label, None, control)
 }
 
+fn table_header(label: &str, role: &'static str) -> El {
+    col()
+        .role(role)
+        .label(label)
+        .child(text(label).wrap().a11y_hidden())
+}
+
+pub fn checkbox_table_header(label: &str, columns: [&str; 3]) -> El {
+    checkbox_row(
+        table_header(label, "columnheader"),
+        columns.map(|column| table_header(column, "columnheader")),
+        false,
+    )
+}
+
+pub fn checkbox_table_row(label: &str, cells: [El; 3]) -> El {
+    checkbox_row(table_header(label, "rowheader"), cells, true)
+}
+
+fn checkbox_row(label: El, cells: [El; 3], body: bool) -> El {
+    let tokens = tokens(layout::dark());
+    row()
+        .role("row")
+        .full_width()
+        .center_y()
+        .separate(Space::Sm)
+        .child(label.grow(1.0))
+        .children(cells.map(|cell| {
+            let column = col().w(tokens.space(Space::Lg).px() * 3.0).center();
+            if body {
+                column.role("cell").child(cell)
+            } else {
+                column.child(cell)
+            }
+        }))
+}
+
+pub fn checkbox_cell<S: 'static>(
+    label: String,
+    checked: bool,
+    disabled: bool,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    Checkbox::new(checked)
+        .label(label)
+        .hide_label()
+        .disabled(disabled)
+        .on_toggle(toggle)
+        .build(crate::kit(layout::dark()))
+}
+
 pub fn setting_row_with_info(label: &str, info: Option<El>, control: El) -> El {
     layout::action_row()
         .justify_between()
@@ -397,6 +515,19 @@ pub fn info_link<S: 'static>(help: &str, open: impl Fn(&mut S, &mut rune::Tx) + 
     layout::button_tx("ⓘ", false, open).label(help).help(help)
 }
 
+pub fn info_tip<S: 'static>(
+    label: &str,
+    help: &str,
+    open: bool,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    layout::button("ⓘ", false, toggle)
+        .label(label)
+        .description(help)
+        .help(help)
+        .help_open(open)
+}
+
 pub fn setting_switch<S: 'static>(
     label: &str,
     checked: bool,
@@ -408,6 +539,26 @@ pub fn setting_switch<S: 'static>(
         .hide_label()
         .disabled(disabled)
         .on_toggle(toggle)
+        .build(crate::kit(layout::dark()))
+}
+
+pub fn primary_action<S: 'static>(
+    label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S) + 'static,
+) -> El {
+    primary_action_tx(label, disabled, move |s, _| press(s))
+}
+
+pub fn primary_action_tx<S: 'static>(
+    label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    rune_kit::Button::new(label)
+        .variant(rune_kit::ButtonVariant::Submit)
+        .disabled(disabled)
+        .on_press_tx(press)
         .build(crate::kit(layout::dark()))
 }
 
@@ -453,8 +604,22 @@ pub fn disclosure<S: 'static>(
     body: El,
     toggle: impl Fn(&mut S) + 'static,
 ) -> El {
+    let toggle = std::rc::Rc::new(toggle);
+    let press = toggle.clone();
     rune_kit::Collapsible::new(label, open)
         .child(body)
-        .on_toggle(toggle)
+        .on_toggle(move |s| press(s))
         .build(crate::kit(layout::dark()))
+        .on_key(move |s, event, tx| {
+            if tx.focused() != Some("trigger")
+                || event.key != rune::Key::Enter
+                || event.mods != rune::Mods::default()
+            {
+                return false;
+            }
+            if !tx.key_repeat() {
+                toggle(s);
+            }
+            true
+        })
 }

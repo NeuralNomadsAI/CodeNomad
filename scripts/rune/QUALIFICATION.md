@@ -6,6 +6,7 @@ Pour inspecter et agir sur le vrai runtime sans fenêtre, après compilation :
 
 ```powershell
 $env:CARGO_TARGET_DIR = 'D:/CodeNomad/.codenomad/worktrees/rune-native-chat/packages/rune-chat/target'
+cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
 cargo build --locked -p codenomad-rune-app --bin codenomad-rune --features test-support
 node scripts/rune/headless.mjs --binary "$env:CARGO_TARGET_DIR/debug/codenomad-rune.exe"
 ```
@@ -26,6 +27,14 @@ Le contrat SSE Préférences/Git s'exécute dans Chromium depuis la sonde WASM d
 cargo build --locked -p codenomad-client --example browser-preference-events --target wasm32-unknown-unknown
 wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-sse/probe" "$CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/examples/browser-preference-events.wasm"
 node packages/rune-app/fixtures/browser-preference-events.mjs "$CARGO_TARGET_DIR/browser-sse/probe"
+```
+
+La sonde notifications remplace `window.Notification` par un enregistreur dans Chromium headless. Elle vérifie la demande d’autorisation depuis un clic, l’envoi après accord et le retrait du gestionnaire après révocation, sans notification système :
+
+```sh
+cargo build --locked -p codenomad-rune-app --features test-support --example browser-notifications --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-notifications" "$CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/examples/browser_notifications.wasm"
+node packages/rune-app/fixtures/browser-notifications.mjs "$CARGO_TARGET_DIR/browser-notifications"
 ```
 
 Les tests Windows vérifient l'ordre natif de l'index, les curseurs et les sauts par fenêtre `around`. La sonde Chromium rejoue les mêmes lectures avec le cookie de la même origine, y compris le saut résident sans requête :
@@ -50,7 +59,9 @@ Le raccord conversation est couvert par `cargo test --locked -p codenomad-rune-a
 
 `node packages/rune-app/fixtures/launcher-fixture.mjs --web-touch-history` envoie le toucher, le glissement et le relâchement par le canal CDP tactile. Le banc retient la réponse du lecteur pendant le retour élastique et vérifie un seul curseur `before` ainsi que la disparition du statut après admission.
 
-La recherche utilise le même banc Rust, via `node packages/rune-app/fixtures/launcher-fixture.mjs --web-history-search` avec les routes `query` et `ranked`. Le scénario vérifie un résultat résident sans fenêtre, le rang d'un résultat d'une autre session, sa lecture unitaire et son ouverture au moyen d'une fenêtre `around`. Les tests `codenomad-client search::tests` couvrent les continuations et le redémarrage classé.
+La recherche utilise le même banc Rust, via `node packages/rune-app/fixtures/launcher-fixture.mjs --web-history-search` avec les routes `query` et `ranked`. Le scénario vérifie le focus pendant le glissement, l'ordre de Maj+Tab, le seuil de requête, un résultat résident sans fenêtre et l'ouverture d'une autre session par une fenêtre `around` après lecture unitaire. Sur mobile en paysage, il réduit la hauteur et fait défiler le corps jusqu'à une continuation classée sans déplacer la barre. Les tests `codenomad-client search::tests` couvrent aussi le redémarrage classé.
+
+`node packages/rune-app/fixtures/launcher-fixture.mjs --web-outline-restore` vérifie en Chromium un rechargement réel avec le repère restauré avant la réponse du broker, la réutilisation de la plage inchangée et le retour à une lecture à froid quand le cache est corrompu. Les deux rechargements conservent le brouillon.
 
 `node packages/rune-app/fixtures/transcript-images-browser.mjs <bundle-test-support> <sortie>` vérifie les pièces jointes et l’agrandissement au clavier, une image d’outil AVIF animée, une référence authentifiée, et deux chargements externes avec et sans CORS. Le fichier `animated-32.avif.b64` contient deux images de `ffmpeg -f lavfi -i testsrc2=size=32x32:rate=2 -frames:v 2 -c:v libaom-av1 animated.avif`.
 

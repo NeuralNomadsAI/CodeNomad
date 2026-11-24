@@ -10,6 +10,8 @@ pub fn prose<S: 'static>(
     highlight: bool,
     query: Option<(&[String], bool)>,
     link: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
+    secondary: impl Fn(&mut S, &str, (f32, f32), &mut rune::Tx) + 'static,
+    help: impl Fn(&str) -> Option<String> + 'static,
     wrapped: impl Fn(usize, &str) -> bool + 'static,
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
 ) -> El {
@@ -40,9 +42,32 @@ pub fn prose<S: 'static>(
         .scroll_wide(true)
         .streaming(streaming)
         .on_link_tx(link)
+        .on_link_secondary(move |s, href, press, tx| secondary(s, href, (press.x, press.y), tx))
+        .link_help(help)
         .code_wrap(wrapped)
         .code_frame(frame)
         .build(kit)
+}
+
+pub fn link_menu<S: 'static>(
+    tx: &mut rune::Tx,
+    point: (f32, f32),
+    open: &str,
+    copy: &str,
+    help: Option<String>,
+    pick: impl FnOnce(&mut S, Option<&str>, &mut rune::Tx) + 'static,
+) {
+    use rune::{PopupItem, PopupMenu};
+    let mut menu = PopupMenu::new();
+    if let Some(help) = help {
+        menu = menu.item(PopupItem::new("link-help", help).enabled(false));
+    }
+    tx.popup_menu(
+        menu.item(PopupItem::new("open", open))
+            .item(PopupItem::new("copy-link", copy)),
+        point,
+        pick,
+    );
 }
 
 // Normalize only parsed events. Diagram fences stay on Kit's source path so the

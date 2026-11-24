@@ -1,7 +1,10 @@
+pub(crate) mod notifications;
 mod panels;
 pub(crate) mod render;
 mod right_panel;
 mod sidebar;
+pub(crate) mod status_permissions;
+pub(crate) mod status_usage;
 
 use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};
 use rune::{Cx, El, Tx, col, text};
@@ -26,10 +29,7 @@ pub fn view(
         root = root.child(crate::platform::titlebar::view(s, cx));
     }
     if let Some(ui) = &s.workspace {
-        root = root.child(rune_theme_codenomad::settings::shell_entry(
-            workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside),
-            crate::settings::entry(),
-        ));
+        root = root.child(workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside));
         if let Some(error) = workspace::status(s) {
             root = root.child(
                 layout::action_row()
@@ -46,8 +46,12 @@ pub fn view(
         let body = body(s, cx, conversation).key(format!("tab-body-{}", ui.active_key()));
         root.child(body.remaining())
     } else {
-        root.child(crate::settings::direct_entry(s))
-            .child(body(s, cx, conversation).remaining())
+        root.child(
+            rune::row()
+                .child(crate::settings::direct_entry(s, cx.touch_controls()))
+                .child(notifications::history_entry(s, cx.touch_controls())),
+        )
+        .child(body(s, cx, conversation).remaining())
     }
 }
 
@@ -158,9 +162,10 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
     }
-    if crate::settings::matches_shortcut(s, "new-instance", event, 'n') && workspace::can_new(s) {
+    if crate::settings::matches_shortcut(s, "new-instance", event, tx, 'n') && workspace::can_new(s)
+    {
         workspace::new_tab(s, tx);
-    } else if crate::settings::matches_shortcut(s, "close-instance", event, 'w') {
+    } else if crate::settings::matches_shortcut(s, "close-instance", event, tx, 'w') {
         let Some(key) = s.workspace.as_ref().map(|ui| ui.active_key().to_owned()) else {
             return false;
         };

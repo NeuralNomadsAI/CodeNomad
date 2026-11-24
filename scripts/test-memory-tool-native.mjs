@@ -1,7 +1,6 @@
 // Shipped bundle, private authenticated daemon, real server policy/storage and
 // deterministic model tool calls. Never discovers or stops the shared daemon.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
@@ -11,7 +10,7 @@ import { OpenCode } from "@opencode/client"
 import Fastify from "fastify"
 import pino from "pino"
 import { fixtureEnvironment, fixtureParent } from "./native-product-fixture.mjs"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 import { DesktopPluginLifecycle } from "../packages/server/src/opencode/desktop-plugin-lifecycle.ts"
 import { resolveDesktopPluginPaths } from "../packages/server/src/opencode/desktop-plugin-paths.ts"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "../packages/server/src/opencode/automation-plugin.ts"

@@ -1,6 +1,6 @@
 use super::format::{error, input_json, output, path, title};
 use super::{
-    Tool,
+    Tool, apply_patch,
     clipboard::{Section, copy},
     diagnostics, execute, question, search, shell, task, todo, tool_key,
 };
@@ -25,8 +25,10 @@ use std::sync::Arc;
 
 pub(in crate::chat) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
     let key = tool_key(message, &tool.id);
-    if matches!(tool.name.as_str(), "execute" | "question" | "skill")
-        || task::is_task(tool)
+    if matches!(
+        tool.name.as_str(),
+        "apply_patch" | "execute" | "question" | "skill"
+    ) || task::is_task(tool)
         || !tool.pictures.is_empty()
     {
         return render(s, message, tool, &key).key(key);
@@ -45,8 +47,8 @@ pub(in crate::chat) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
             display.steps(&format!("{key}-patch-{index}"))
         })
     });
-    let live_tick =
-        (tool.status == "running" && tool.started.is_some()).then(|| display.tool_clock.epoch());
+    let live_tick = (tool.status == "running" && tool.started.is_some())
+        .then(|| (display.tool_clock.epoch(), display.tool_clock.generation()));
     let stamp = (
         Arc::as_ptr(tool) as usize,
         std::rc::Rc::as_ptr(&s.input_scope) as usize,
@@ -159,8 +161,9 @@ fn render_body(
     let is_task = task::is_task(tool);
     let nested = message.starts_with("child:");
     let report = is_task.then(|| task::report(s, tool)).flatten();
-    let status = task::status(s, tool)
-        .filter(|_| is_task)
+    let task_status = is_task.then(|| task::status(s, tool)).flatten();
+    let status = task_status
+        .map(|(label, _, _)| label)
         .unwrap_or(match tool.status.as_str() {
             "completed" if tool.name == "execute" && tool.metadata["error"] == true => {
                 "toolCall.status.error"
@@ -177,6 +180,8 @@ fn render_body(
         todo::title(tool)
     } else if tool.name == "question" {
         question::title(tool).into()
+    } else if tool.name == "apply_patch" {
+        apply_patch::title(tool)
     } else {
         title(tool)
     };
@@ -190,7 +195,7 @@ fn render_body(
         parts = [""; 4];
     }
     let has_output = !pending && parts.iter().any(|part| !part.trim().is_empty());
-    let skill = tool.name == "skill" && tool.status == "completed" && has_output && !active;
+    let skill = tool.name == "skill" && tool.status == "completed" && has_output;
     let result_list =
         (expanded && !active && tool.name == "websearch" && tool.status == "completed")
             .then(|| search::view(s, parts[0]))
@@ -202,9 +207,21 @@ fn render_body(
         && has_output
         && !is_task
         && !skill
+        && !is_patch(tool)
         && result_list.is_none()
         && !rich_diff
         && !matches!(tool.name.as_str(), "question" | "todowrite");
+    let timing = if let Some((_, running, ended)) = task_status {
+        if running {
+            tool.started.map(|start| (start, None))
+        } else {
+            tool.started.zip(ended.map(Some))
+        }
+    } else {
+        super::duration::tool_timing(tool)
+    };
+    let status_el =
+        super::duration::view(s, key, timing, text(t(status)).text_role(TextRole::Label));
     let mut header = layout::action_row()
         .child(
             layout::button(
@@ -220,14 +237,12 @@ fn render_body(
             .key(format!("toggle-{key}"))
             .expanded(expanded),
         )
-        .child(text(t(status)).text_role(TextRole::Label));
-    if !is_task || tool.metadata["status"] != "running" {
-        header = super::duration::tool(s, key, tool, header);
-    }
+        .child(status_el);
     if shared_wrap {
         header = header.child(wrap_control(s, &wrap_key, wrap));
     }
     if has_output
+        || !pending && tool.name == "apply_patch" && apply_patch::has_patch(tool)
         || tool.name == "todowrite"
             && tool.metadata["todos"]
                 .as_array()
@@ -351,79 +366,83 @@ fn render_body(
     } else {
         lang
     };
-    if !pending
-        && is_patch(tool)
-        && let Some(patch) = tool_patch::view(s, tool, key, query)
-    {
+    let apply_patch_body = (!pending && query.is_none() && tool.name == "apply_patch")
+        .then(|| apply_patch::view(s, message, key, tool))
+        .flatten();
+    if let Some(patch) = apply_patch_body {
         block = block.child(patch);
-    }
-    if skill {
-        block = block.child(document::prose(
-            s,
-            message,
-            format!("{key}-tool_output"),
-            parts[0],
-            false,
-        ));
-    } else if has_output && !specialized_task {
-        let formatted = (tool.name == "execute" && tool.status == "completed")
-            .then(|| execute::formatted_output(parts[0]))
-            .flatten();
-        let (parts, lang) = if let Some(formatted) = formatted.as_deref() {
-            ([formatted, "", "", ""], "json")
-        } else {
-            (parts, lang)
-        };
-        let terminal = shell::matches(tool) && parts.iter().any(|text| ansi::present(text));
-        let highlight = tool.status != "running"
-            && (lang != "diff"
-                || parts
-                    .iter()
-                    .flat_map(|text| text.encode_utf16())
-                    .nth(TOOL_LIMIT)
-                    .is_none());
-        let output_key = format!("{key}-tool_output");
-        let fallback = || {
-            col()
-                .full_width()
-                .separate(Space::Sm)
-                .children((!shared_wrap).then(|| {
-                    layout::action_row()
-                        .child(wrap_control(s, &wrap_key, wrap))
-                        .child(text(lang).text_role(TextRole::Label))
-                }))
-                .child(markdown::tool_pane(
-                    window(
-                        s,
-                        output_key,
-                        &parts,
-                        document::search_limit(query),
-                        |shown, units| {
-                            if tool.status == "running" && shell::matches(tool) {
-                                s.transcript_display.live_ansi(key, shown, wrap, query)
-                            } else if terminal {
-                                ansi::search_code(shown, wrap, query)
-                            } else {
-                                markdown::search_code(
-                                    shown,
-                                    lang,
-                                    highlight && units <= HIGHLIGHT_LIMIT,
-                                    wrap,
-                                    query,
-                                )
-                            }
-                        },
-                    ),
-                    matches!(tool.name.as_str(), "edit" | "write"),
-                ))
-        };
-        block = block.child(if let Some(results) = result_list {
-            results
-        } else if rich_diff {
-            tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
-        } else {
-            fallback()
-        });
+    } else {
+        if !pending
+            && is_patch(tool)
+            && let Some(patch) = tool_patch::view(s, tool, key, query)
+        {
+            block = block.child(patch);
+        }
+        if skill {
+            block = block.child(markdown::tool_pane(
+                document::prose_search(s, message, format!("{key}-tool_output"), parts[0], query),
+                false,
+            ));
+        } else if has_output && !specialized_task {
+            let formatted = (tool.name == "execute" && tool.status == "completed")
+                .then(|| execute::formatted_output(parts[0]))
+                .flatten();
+            let (parts, lang) = if let Some(formatted) = formatted.as_deref() {
+                ([formatted, "", "", ""], "json")
+            } else {
+                (parts, lang)
+            };
+            let terminal = shell::matches(tool) && parts.iter().any(|text| ansi::present(text));
+            let highlight = tool.status != "running"
+                && (lang != "diff"
+                    || parts
+                        .iter()
+                        .flat_map(|text| text.encode_utf16())
+                        .nth(TOOL_LIMIT)
+                        .is_none());
+            let output_key = format!("{key}-tool_output");
+            let fallback = || {
+                col()
+                    .full_width()
+                    .separate(Space::Sm)
+                    .children((!shared_wrap).then(|| {
+                        layout::action_row()
+                            .child(wrap_control(s, &wrap_key, wrap))
+                            .child(text(lang).text_role(TextRole::Label))
+                    }))
+                    .child(markdown::tool_pane(
+                        window(
+                            s,
+                            output_key,
+                            &parts,
+                            document::search_limit(query),
+                            |shown, units| {
+                                if tool.status == "running" && shell::matches(tool) {
+                                    s.transcript_display.live_ansi(key, shown, wrap, query)
+                                } else if terminal {
+                                    ansi::search_code(shown, wrap, query)
+                                } else {
+                                    markdown::search_code(
+                                        shown,
+                                        lang,
+                                        highlight && units <= HIGHLIGHT_LIMIT,
+                                        wrap,
+                                        query,
+                                    )
+                                }
+                            },
+                        ),
+                        matches!(tool.name.as_str(), "edit" | "write"),
+                    ))
+            };
+            block = block.child(if let Some(results) = result_list {
+                results
+            } else if rich_diff {
+                tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
+            } else {
+                fallback()
+            });
+        }
     }
     block = block.children(failure);
     if tool.name == "execute" {

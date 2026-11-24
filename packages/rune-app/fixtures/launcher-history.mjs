@@ -28,14 +28,15 @@ export function seedHistory({stores,webTimeline,webMobile,webAndroid,webSearch})
       {type:'tool',id:'search-input',name:'grep',state:{status:'completed',input:{extra:'Existing arguments only'},content:[{type:'text',text:'No match here'}]}},
     )
     const another=stores.get('ses_another')
-    another.append('user','Existing ranked destination')
+    const hit=another.append('user','Existing ranked destination\n\nStored preview detail')
+    hit.time.created-=2*60*60*1000
     another.append('assistant','Remote tool fixture').content.push(
       {type:'tool',id:'remote-tool',name:'grep',state:{status:'completed',content:[{type:'text',text:'Existing remote tool match'}]}},
     )
   }
 }
 
-export function historyResponse(pathname, raw, {stores,records,project,webSearch,webTouchHistory,compare}) {
+export function historyResponse(pathname, raw, {stores,records,project,linked,directory,webSearch,webTouchHistory,webOutline,compare}) {
   const prefix='/api/rpc/codenomad.session-pruning/'
   if(!pathname.startsWith(prefix))return
   const method=pathname.slice(prefix.length)
@@ -57,15 +58,19 @@ export function historyResponse(pathname, raw, {stores,records,project,webSearch
     assert.equal(input.query,'Existing')
     const shape=(sessionID,index,excerpt,kind='text',partIndex=0)=>({sessionID,messageID:stores.get(sessionID).rows[index].id,
       role:'assistant',partIndex,kind,excerpt,createdAt:100})
-    const hits=[shape('ses_another',0,'Existing ranked destination'),shape('ses_existing',1,'Existing answer')]
-    if(input.includeTechnical)hits.splice(1,0,shape('ses_another',1,'Existing remote tool match','tool',1))
+    const continued=input.cursor!==undefined
+    if(continued)assert.equal(input.cursor,'fixture-ranked-continuation')
+    assert(directory===project||directory===linked)
+    const hits=directory===linked?[shape('ses_another',0,'Existing ranked destination')]:
+      [shape('ses_existing',1,continued?'Existing older result':'Existing answer')]
+    if(input.includeTechnical&&directory===linked)hits.push(shape('ses_another',1,'Existing remote tool match','tool',1))
     const sessions=hits.filter(({sessionID},i)=>i===hits.findIndex(hit=>hit.sessionID===sessionID)).map(({sessionID})=>{
       const count=hits.filter(hit=>hit.sessionID===sessionID).length
-      return {sessionID,directory:project,title:records.get(sessionID).title,scanned:count,candidates:count,
+      return {sessionID,directory,title:records.get(sessionID).title,scanned:count,candidates:count,
         judged:count,matchedMessages:count,tools:0,reasoning:0,skipped:0,prefilterBypassed:0}
     })
     return {output:{version:1,status:'ranked',scanned:hits.length,candidates:hits.length,judged:hits.length,skipped:0,prefilterBypassed:0,
-      matchedSessions:sessions.length,capped:false,examinedBefore:0,cursor:null,exclusions:[],caps:[],hits,sessions}}
+      matchedSessions:sessions.length,capped:false,examinedBefore:0,cursor:continued||directory===linked?null:'fixture-ranked-continuation',exclusions:[],caps:[],hits,sessions}}
   }
   if(method==='outlinePreview'){
     const {input}=JSON.parse(raw), rows=stores.get(input.sessionID).rows
@@ -88,6 +93,14 @@ export function historyResponse(pathname, raw, {stores,records,project,webSearch
         ...(row.content.some(part=>part.type==='tool')?{toolName:row.content.find(part=>part.type==='tool').name}:{}),
       }:{}),
     }))
+    if(webOutline&&rows.length>24){
+      const head={after:-1,through:23,digest:'a'.repeat(64)}
+      const unchanged=input.known?.some(c=>c.after===head.after&&c.through===head.through&&c.digest===head.digest)??false
+      const tail={after:23,through:rows.length-1,digest:(unchanged?'c':'b').repeat(64),changed:true}
+      if(unchanged)Object.assign(entries[24],{tools:1,toolName:'outline-delta',layout:'TX'})
+      return {output:{status:'outline',entries:unchanged?entries.slice(24):entries,
+        total:entries.length,cursor:null,checkpoints:[{...head,changed:!unchanged},tail]}}
+    }
     const through=Math.max(0,rows.length-1)
     return {output:{status:'outline',entries,total:rows.length,cursor:null,
       checkpoints:rows.length?[{after:-1,through,digest:'a'.repeat(64),changed:true}]:[]}}

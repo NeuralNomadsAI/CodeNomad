@@ -1,8 +1,9 @@
 use super::Tool;
 use crate::{State, platform::storage::unix_millis, strings::locale};
-use rune::{El, Tx, text};
-use rune_theme_codenomad::{TextRole, catalogue, layout::Layout, usage::numbers};
+use rune::{El, Tx, row, text};
+use rune_theme_codenomad::{Space, TextRole, catalogue, layout::Layout, usage::numbers};
 use std::{
+    cell::Cell,
     collections::HashMap,
     rc::{Rc, Weak},
     time::Duration,
@@ -10,9 +11,10 @@ use std::{
 
 #[derive(Default)]
 pub(crate) struct Clock {
-    visible: HashMap<String, Weak<()>>,
-    next: f64,
+    visible: HashMap<String, Weak<Cell<bool>>>,
+    next: Option<f64>,
     epoch: u64,
+    generation: u64,
 }
 
 impl Clock {
@@ -20,67 +22,106 @@ impl Clock {
         self.epoch
     }
 
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.visible.clear();
+        self.next = None;
+        self.generation = self.generation.wrapping_add(1);
+    }
+
     pub(crate) fn poll(&mut self, now: f64, tx: &mut Tx) -> bool {
-        self.visible.retain(|_, lease| lease.strong_count() > 0);
+        self.visible
+            .retain(|_, lease| lease.upgrade().is_some_and(|active| active.get()));
         if self.visible.is_empty() {
-            self.next = 0.0;
+            self.next = None;
             return false;
         }
-        let tick = now >= self.next;
+        let Some(next) = self.next else {
+            let due = now + 1.0;
+            self.next = Some(due);
+            tx.wake_at(due);
+            return false;
+        };
+        let tick = now >= next;
         if tick {
-            self.next = now + 1.0;
+            self.next = Some(now + 1.0);
             self.epoch = self.epoch.wrapping_add(1);
         }
-        tx.wake_at(self.next);
+        if let Some(due) = self.next {
+            tx.wake_at(due);
+        }
         tick
     }
 }
 
-pub(super) fn tool(s: &State, key: &str, tool: &Tool, header: El) -> El {
-    let timing = match tool.status.as_str() {
+pub(super) fn tool_timing(tool: &Tool) -> Option<(u64, Option<u64>)> {
+    match tool.status.as_str() {
         "running" => tool.started.map(|start| (start, None)),
         "completed" | "error" => tool.started.zip(tool.ended.map(Some)),
         _ => None,
-    };
-    view(s, key, timing, header)
+    }
 }
 
-pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, header: El) -> El {
+pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, status: El) -> El {
+    let entry_key = format!("{key}-duration");
+    let retire = || {
+        if let Some(active) = s
+            .transcript_display
+            .tool_clock
+            .visible
+            .get(&entry_key)
+            .and_then(Weak::upgrade)
+        {
+            active.set(false);
+        }
+    };
     let Some((start, end)) = timing else {
-        return header;
+        retire();
+        return status;
     };
     let label = caption(
         end.unwrap_or_else(unix_millis).saturating_sub(start),
         end.is_none(),
     );
-    let header = header.children(label.map(|label| text(label).text_role(TextRole::Label)));
+    let group = row()
+        .separate(Space::Sm)
+        .child(status)
+        .children(label.map(|label| text(label).text_role(TextRole::Label)));
     if end.is_some() {
-        return header;
+        retire();
+        return group;
     }
-    let key = format!("{key}-duration");
-    let lease = s
-        .transcript_display
-        .tool_clock
+    let clock = &s.transcript_display.tool_clock;
+    let lease = clock
         .visible
-        .get(&key)
+        .get(&entry_key)
         .and_then(Weak::upgrade)
-        .unwrap_or_default();
+        .filter(|active| active.get())
+        .unwrap_or_else(|| Rc::new(Cell::new(true)));
     let scope = s.input_scope.clone();
-    header
-        .key(key.clone())
+    let observer_key = format!(
+        "{entry_key}-{:p}-{}",
+        Rc::as_ptr(&scope),
+        clock.generation()
+    );
+    group
+        .key(observer_key)
         .on_visible(move |s: &mut State, visible, tx| {
             if s.current_scope(&scope) {
                 let clock = &mut s.transcript_display.tool_clock;
                 if visible {
                     if clock
                         .visible
-                        .insert(key.clone(), Rc::downgrade(&lease))
+                        .insert(entry_key.clone(), Rc::downgrade(&lease))
                         .is_none()
                     {
                         tx.wake_after(Duration::ZERO);
                     }
                 } else {
-                    clock.visible.remove(&key);
+                    clock.visible.remove(&entry_key);
                 }
             }
             tx.live_only();

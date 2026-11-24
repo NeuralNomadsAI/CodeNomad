@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.filter.includeSubsessions": "תת־סשנים",
   "session.pruning.maintenance_required": "יש להמתין לסיום הפעולה הנוכחית ולנסות לנקות שוב.",
   "session.pruning.unavailable": "יש לפתוח את CodeNomad מחדש ולנסות שוב.",
+  "session.messageActions.serverUnavailable": "שרת זה אינו תומך בפעולה זו.",
   "session.pruning.conflict": "יש לטעון את ההודעה מחדש ולבחור את התוכן שוב.",
   "session.pruning.not_deletable": "ניתן להסיר רק כלים וחשיבה שהסתיימו בסשן זה.",
   "session.pruning.unsupported_storage": "תוסף הניקוי לא הצליח לאמת את האחסון של הסשן הזה. הניקוי נדחה.",

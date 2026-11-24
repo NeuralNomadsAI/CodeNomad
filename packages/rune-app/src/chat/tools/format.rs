@@ -56,10 +56,14 @@ pub(super) fn input_json(value: &Value, limit: usize, partial: bool) -> Option<S
 }
 
 pub(super) fn title(tool: &Tool) -> String {
-    let name = tool.name.strip_prefix("opencode_").unwrap_or(&tool.name);
+    let name = tool
+        .name
+        .trim()
+        .strip_prefix("opencode_")
+        .unwrap_or(tool.name.trim());
     let mut title = if name == "websearch" {
         name.into()
-    } else if name == "invalid" && !string(&tool.input, &["tool"]).is_empty() {
+    } else if name == "invalid" && !string(&tool.input, &["tool"]).trim().is_empty() {
         label(string(&tool.input, &["tool"]))
     } else {
         label(name)
@@ -102,14 +106,16 @@ pub(super) fn title(tool: &Tool) -> String {
 }
 
 fn label(name: &str) -> String {
-    let key = match name {
+    let trimmed = name.trim();
+    let normalized = trimmed.strip_prefix("opencode_").unwrap_or(trimmed);
+    let key = match normalized {
+        "" | "invalid" => "toolCall.renderer.toolName.invalid",
         "bash" | "shell" => "toolCall.renderer.toolName.shell",
         "webfetch" => "toolCall.renderer.toolName.fetch",
-        "invalid" => "toolCall.renderer.toolName.invalid",
         "todowrite" => "toolCall.renderer.toolName.plan",
         "apply_patch" => "toolCall.renderer.toolName.applyPatch",
         _ => {
-            let mut chars = name.strip_prefix("opencode_").unwrap_or(name).chars();
+            let mut chars = normalized.chars();
             return chars
                 .next()
                 .into_iter()

@@ -58,9 +58,11 @@ pub fn can_send(s: &State) -> bool {
             .launcher()
             .is_some_and(crate::launcher::Launcher::blocks_prompt)
         && !s.history_detached
+        && !s.status_permissions.settling()
         && !crate::git::placement_unconfirmed(s)
         && s.reader.as_ref().is_none_or(|reader| !reader.blocks_send())
         && s.composer.sending.is_none()
+        && !s.transcript_display.messages.pending()
         && !s.composer.picker.open()
         && !s.composer.device.busy()
         && !s.composer.picker.command_pending(&s.draft.text)

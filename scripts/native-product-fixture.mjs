@@ -1,5 +1,4 @@
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
@@ -8,7 +7,7 @@ import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
 import { Service } from "@opencode/client/service"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 /** The resolved `opencode` folder fixtures are created in. With `projectConfig` the daemon reads
  * every ancestor's `.opencode/`, so outside CI it must lie outside the user's home. */
@@ -111,12 +110,13 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: {} },
   } } })
   let output = "", spawnError
-  const child = spawn(cli, ["serve", ...(service ? ["--service"] : []), "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env, windowsHide: true })
-  const stopped = new Promise(resolve => child.once("close", resolve))
-  child.on("error", error => { spawnError = error })
-  child.stdout.on("data", data => { output += data })
-  child.stderr.on("data", data => { output += data })
+  let child, stopped
   try {
+    child = spawnFixtureChild(cli, ["serve", ...(service ? ["--service"] : []), "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env, windowsHide: true })
+    stopped = new Promise(resolve => child.once("close", resolve))
+    child.on("error", error => { spawnError = error })
+    child.stdout.on("data", data => { output += data })
+    child.stderr.on("data", data => { output += data })
     const deadline = Date.now() + 30_000
     while (!/http:\/\/127\.0\.0\.1:\d+/.test(output)) {
       if (spawnError) throw spawnError
@@ -124,13 +124,15 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
       await delay(25)
     }
     let endpoint
+    const pid = await fixtureChildPid(child)
+    assert(Number.isSafeInteger(pid) && pid > 0, "Private OpenCode did not report its PID")
     if (service) {
       const file = path.join(env.XDG_STATE_HOME, "opencode/service.json")
       while (!endpoint && Date.now() < deadline) {
         if (spawnError) throw spawnError
         assert.equal(child.exitCode, null, "Owned service exited before registration")
         try {
-          if (JSON.parse(await readFile(file, "utf8")).pid === child.pid) endpoint = await Service.discover({ file })
+          if (JSON.parse(await readFile(file, "utf8")).pid === pid) endpoint = await Service.discover({ file })
         } catch { /* Registration publication and readiness may still be in flight. */ }
         if (!endpoint) await delay(25)
       }
@@ -139,11 +141,11 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     const boundedFetch = (url, init) => fetch(url, { ...init, signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) })
     const client = OpenCode.make({ baseUrl: endpoint.url,
       headers: Service.headers(endpoint), fetch: boundedFetch })
-    if (service) assert.equal((await client.server.info()).pid, child.pid)
+    assert.equal((await client.server.info()).pid, pid)
     await run({ client, root, requests, env, connection: { endpoint, client, fetch: boundedFetch, assertCurrent() {} } })
     if (providerError) throw providerError
   } finally {
-    try { await stopFixtureChild(child, stopped) } finally {
+    try { if (child) await stopFixtureChild(child, stopped) } finally {
       provider.closeAllConnections()
       await new Promise(resolve => provider.close(resolve))
       await writeFile(path.join(root, "daemon.log"), output)

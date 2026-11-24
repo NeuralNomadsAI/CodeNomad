@@ -1,8 +1,8 @@
 // Run: node --import tsx scripts/test-integrations-host-install-native.mjs <absolute supported CLI> [integration checkout]
 // Uses the existing built kit read-only; never launches Blender or installs an application payload.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
+import { spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import path from "node:path"
@@ -42,12 +42,12 @@ async function until(label, probe) {
 
 async function git(args, env) {
   const child = spawn("git", args, { cwd: checkout, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
-  let output = ""
-  child.stdout.on("data", chunk => { output += chunk })
-  child.stderr.on("data", chunk => { output += chunk })
+  let stdout = "", stderr = ""
+  child.stdout.on("data", chunk => { stdout += chunk })
+  child.stderr.on("data", chunk => { stderr += chunk })
   const code = await new Promise((resolve, reject) => { child.once("close", resolve); child.once("error", reject) })
-  assert.equal(code, 0, "Read-only integration checkout qualification succeeds")
-  return output.trim()
+  assert.equal(code, 0, stderr || "Read-only integration checkout qualification succeeds")
+  return stdout.trim()
 }
 
 // Snapshot every readable fixture file. Only the daemon's database, internal cache and log

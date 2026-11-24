@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { assetTargetSchema, assetReadResultSchema } from "./assets-contract"
-import { sessionPermissionRules } from "../../permissions/session-mode-rules"
+import { sessionPermissionRules } from "./permission-rules-contract"
 
 // Fixed gallery methods over image `read` parts of one session (dev-docs/SESSION_PRUNING_RPC.md#image-gallery).
 const Id = z.string().min(1).max(256)

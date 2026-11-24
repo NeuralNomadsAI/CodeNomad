@@ -26,8 +26,16 @@ pub(super) struct Cache {
     history_detached: bool,
     launcher_visible: bool,
     input_scope: std::rc::Rc<()>,
+    status_permissions: crate::shell::status_permissions::Permissions,
+    status_usage: crate::shell::status_usage::Panel,
 }
 impl Cache {
+    pub(super) fn observes_notifications(&self, allow_running: bool) -> bool {
+        self.agent
+            .as_ref()
+            .is_some_and(|agent| agent.online && (allow_running || !agent.running))
+    }
+
     pub(super) fn has_conversation_stream(&self) -> bool {
         self.incoming
             .as_ref()
@@ -88,6 +96,8 @@ impl Cache {
             history_detached: std::mem::take(&mut s.history_detached),
             launcher_visible: s.screen.is_launcher(),
             input_scope: s.input_scope.clone(),
+            status_permissions: std::mem::take(&mut s.status_permissions),
+            status_usage: std::mem::take(&mut s.status_usage),
         }
     }
     pub fn apply(self, s: &mut State) {
@@ -116,6 +126,8 @@ impl Cache {
             s.screen.show_chat();
         }
         s.input_scope = self.input_scope;
+        s.status_permissions = self.status_permissions;
+        s.status_usage = self.status_usage;
     }
 }
 pub(super) fn status(

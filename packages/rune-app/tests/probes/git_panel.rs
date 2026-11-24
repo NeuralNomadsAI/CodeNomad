@@ -56,6 +56,7 @@ pub(super) fn run() {
                 .screen
                 .launcher()
                 .is_some_and(|l| l.connection.is_some())
+            && rt.find("folder-path").is_some()
     });
     type_text(
         &mut rt,

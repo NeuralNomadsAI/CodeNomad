@@ -7,6 +7,8 @@ on:
     paths:
       - 'Cargo.*'
       - 'packages/rune-app/**'
+      - 'packages/server-rs/**'
+      - 'packages/server/src/server/routes/auth-pages/**'
       - 'crates/**'
       - 'scripts/rune/**'
       - 'packages/ui/src/**'
@@ -84,6 +86,7 @@ jobs:
           node scripts/rune/generate-theme.mjs --check
           node scripts/rune/generate-palettes.mjs --check
           node scripts/rune/generate-catalogues.mjs --check
+          node scripts/rune/generate-hotkeys.mjs --check
           node scripts/rune/component-inventory.mjs --check
           node --test scripts/rune/*.test.mjs
           node --test packages/rune-app/fixtures/*.test.mjs
@@ -91,9 +94,13 @@ jobs:
       - name: Build application and run native runtime tests
         run: |
           cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -- --check
+          cargo fmt --manifest-path packages/server-rs/Cargo.toml -- --check
           cargo test --locked --workspace
           cargo run --locked -p rune-style-policy -- packages/rune-app/src
           cargo build --locked -p codenomad-rune-app --bin codenomad-rune
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
+          fi
       - name: Build shared client, state and views for WebAssembly
         run: |
           cargo build --locked --target wasm32-unknown-unknown -p codenomad-client -p rune-theme-codenomad
@@ -118,9 +125,18 @@ jobs:
           node scripts/rune/parity/workspace-tree-row-native.mjs --binary "$CARGO_TARGET_DIR/debug/examples/workspace-tree-row$suffix"
       - name: Qualify restoration through the shared Rust server
         run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            # Windows defaults TMP/TEMP under the user profile, which serve.rs rejects.
+            win_temp="$(cygpath -w "$RUNNER_TEMP")"
+            TMP="$win_temp" TEMP="$win_temp" cargo test --locked --manifest-path packages/server-rs/Cargo.toml
+          else
+            cargo test --locked --manifest-path packages/server-rs/Cargo.toml
+          fi
           cargo build --locked --manifest-path packages/server-rs/Cargo.toml
           suffix=''
-          if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            suffix='.exe'
+          fi
           export RUNE_CLIENT_EXE="$CARGO_TARGET_DIR/debug/codenomad-rune$suffix"
           export RUNE_SERVER_EXE="$CARGO_TARGET_DIR/debug/codenomad-rs$suffix"
           node packages/rune-app/fixtures/launcher-fixture.mjs --workspace-claims

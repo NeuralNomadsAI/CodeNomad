@@ -11,7 +11,7 @@ pub(crate) fn older(s: &mut State) -> bool {
 }
 
 pub(crate) fn announce_paging(tx: &mut Tx) {
-    rune_theme_codenomad::layout::announce_selection(
+    rune_theme_codenomad::layout::announce_polite(
         tx,
         crate::strings::t("history.navigation.loading"),
     );

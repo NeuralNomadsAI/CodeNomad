@@ -183,6 +183,15 @@ pub(crate) fn invalidate(s: &mut State) {
     }
 }
 
+pub(super) fn refresh_after_message_action(s: &mut State) {
+    if let Some(reader) = &mut s.reader {
+        reader.resume(Bookmark::Latest);
+        s.paging = false;
+    } else if let Some(command) = &s.commands {
+        let _ = command.try_send(crate::transport::Command::Latest);
+    }
+}
+
 pub(crate) fn settle_bookmark(s: &mut State, attempted: &str, confirmed: Option<&str>) {
     s.transcript_display
         .reading_mut()

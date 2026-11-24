@@ -4,27 +4,32 @@ import {mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
-import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
-import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
-import {mobileLive, revokedLauncher} from './web-live.mjs'
+import {activateControl,launchChromium} from './web-chromium.mjs'
+import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
+import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
 import {historySearch} from './web-history-search.mjs'
 import {markerFilters} from './web-marker-filters.mjs'
+import {recordTouches} from './web-touch-trace.mjs'
+import {checkGitImages, gitImageReadAllowed} from './web-git-images.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'paste-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
 if(values.connected){assert(values.workspace&&values.project&&values['storage-state']);url.searchParams.delete('scene')}
 else url.searchParams.set('scene', values['paste-only'] ? 'synthetic-paste' : 'synthetic')
 if(values.mobile)assert(values.connected && url.protocol==='https:')
+const searchOnly=values['mobile-session-search']
+assert(!searchOnly||values.mobile)
 if(values['paste-only'])assert(!values.connected)
 if(values.missions)assert(values.connected&&!values.mobile&&url.protocol==='http:')
+if(values['git-images'])assert(values.connected&&!values.mobile&&!values.missions)
 url.searchParams.set('locale', values.locale)
 const catalogueIndex = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/catalogues.json'), 'utf8'))
 assert(catalogueIndex.locales.includes(values.locale), 'Select a supported locale from the generated catalogue')
@@ -38,8 +43,7 @@ if(values.connected){
 }
 await mkdir(out, {recursive: true})
 if(privateScope)assert(privateScope.inside(privateScope.profile,await realpath(out)),'Output link escapes fixture')
-const browser = await chromium.launch({headless: true, ...(values.executable ? {executablePath: values.executable} : {}),
-  args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader']})
+const browser = await launchChromium(values.executable)
 const records = []
 const imagePage = await browser.newPage()
 const palette = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/theme.json'), 'utf8'))
@@ -51,23 +55,37 @@ const connectedPalettes = values.connected
   if(values.mobile)assets.add('/remote-pair')
 try {
   const android=mobileContext(browser)
-  const sizes=values.missions?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
+  const sizes=values.missions||values['git-images']?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
   for (const [name, width, height, touch] of sizes) {
     const control=name==='phone-dpr1-control'
-    for (const colorScheme of control?['light']:['light','dark']) {
+    if(searchOnly&&control)continue
+    for (const colorScheme of control||searchOnly?['light']:['light','dark']) {
       const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch, colorScheme,
         ...(values.mobile?{...android,ignoreHTTPSErrors:true,...(control?{deviceScaleFactor:1}:{})}:{}),
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
+      const touches = touch ? [] : undefined
+      const flushTouches = touch ? await recordTouches(context, touches) : async () => {}
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
+      if (values.mobile) await page.addInitScript(() => {
+        window.Notification = class {
+          static permission = 'default'
+          static requestPermission() { throw Error('Unexpected system permission request in the mobile smoke') }
+        }
+      })
       const missions=values.missions?missionsFixture({page,messages,artifact:path.join(out,`missions-${colorScheme}`),project:values.project}):null
       if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
       const errors = [], forbiddenRequests = [], routes=[], history=[]
       let holdOlder
       let holdAnchor
-      let measured
-      const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,markerFilters:values.timeline})
+      let holdPreview
+      let measured, tabBar, lastPress
+      const tap=(x,y,meta)=>{
+        if(meta)lastPress={...meta,x,y,requestedAt:Date.now()}
+        return page.touchscreen.tap(x,y)
+      }
+      const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,mobilePreferences:values.mobile===true,markerFilters:values.timeline})
       let eventSource=0
       let releaseLinked
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
@@ -122,6 +140,10 @@ try {
             return route.continue().catch(()=>{})
           }
         }
+        if(holdPreview&&p.endsWith('/session/ses_another/message/message-00000')){
+          const held=holdPreview;holdPreview=undefined
+          await held.promise
+        }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/instance/api/session')&&
           requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')){
           const cursor=requested.searchParams.get('cursor')
@@ -130,7 +152,15 @@ try {
         }
         await route.continue()
       })
-      const started = performance.now()
+       if(values['git-images'])await context.route('**/api/workspaces/**', async route=>{
+         const request=route.request()
+         if(await gitImageReadAllowed(request,{origin:url.origin,project:values.project,workspaces:policy.workspaces})){
+           const requested=new URL(request.url())
+           routes.push({method:request.method(),path:requested.pathname,query:requested.search,cookie:true})
+           await route.continue()
+         }else await route.fallback()
+       })
+       const started = performance.now()
       try {
         let network
          if(values.mobile){
@@ -156,8 +186,8 @@ try {
             await button.scrollIntoViewIfNeeded()
             const box=await button.boundingBox()
             assert(box&&box.width>0&&box.height>0&&box.x>=-1&&box.y>=-1&&box.x+box.width<=width+1&&box.y+box.height<=height+1,`Connected control outside viewport: ${label}`)
-            if(values.mobile)await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
-            else await button.click({force:true})
+            if(values.mobile)await tap(box.x+box.width/2,box.y+box.height/2,{label,role})
+            else await activateControl(page,button,{touch:false,rect:box})
           }
           const left=messages['window.menu.leftPanel']
           const sessions=page.getByRole('region',{name:left,exact:true})
@@ -179,6 +209,42 @@ try {
           const reading=async()=>await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history')&&document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing answer'),undefined,{timeout:30000})
           await press(messages['folderSelection.servers.dialog.connect'])
           await press(values.project)
+          if (values.mobile) {
+            const right = messages['window.menu.rightPanel']
+            const drawer = page.getByRole('region', {name:right, exact:true})
+            const toggle = page.getByRole('button', {name:right, exact:true})
+            if (await toggle.getAttribute('aria-expanded') !== 'true') await press(right)
+            await drawer.waitFor()
+            const sourceHeight = palette.metrics[colorScheme].tabActive.height
+            const tabHeights = []
+            for (const key of ['status', 'files']) {
+              const tab = drawer.getByRole('tab', {name:messages[`instanceShell.rightPanel.tabs.${key}`], exact:true})
+              await tab.waitFor()
+              const box = await tab.boundingBox()
+              assert(box && Math.abs(box.height - sourceHeight) <= 1, `${key}: height ${box?.height}, Solid ${sourceHeight}`)
+              tabHeights.push({key, height:box.height})
+            }
+            await page.screenshot({path:path.join(out, `${name}-${colorScheme}-right-panel.png`), scale:'css'})
+            await writeFile(path.join(out, `${name}-${colorScheme}-right-panel.json`),JSON.stringify({sourceHeight,tabHeights}))
+            await press(right)
+            await drawer.waitFor({state:'hidden'})
+            tabBar = await mobileTabBar(page, [
+              messages['instanceTabs.new.ariaLabel'], messages['settings.title'],
+              messages['toastHistory.title'],
+            ])
+            const permission = page.getByRole('button', {
+              name: messages['settings.notifications.requestPermission.action'], exact: true,
+            })
+            assert.equal(await permission.count(), 0, 'Notification permission belongs in Preferences, not the tab bar')
+            await press(messages['settings.title'])
+            await press(messages['settings.nav.notifications'], 'radio')
+            await permission.waitFor({state:'attached'})
+            assert.equal(await permission.count(), 1)
+            await press(messages['settings.close'])
+            await permission.waitFor({state:'detached'})
+            await writeFile(path.join(out, `${name}-${colorScheme}-tab-bar.json`),
+              JSON.stringify({tabBar, permissionOnlyInPreferences:true}, null, 2))
+          }
           await openSessions()
           if(values.mobile){
             await row('Existing history').waitFor()
@@ -188,6 +254,8 @@ try {
               const blank=page.getByRole('tab',{name:messages['instanceTabs.new.ariaLabel'],exact:true})
               await page.waitForFunction(tab=>[...document.querySelectorAll('[role=tab][aria-selected=true]')].some(el=>el.textContent===tab),messages['instanceTabs.new.ariaLabel'])
               assert.equal(await blank.getAttribute('aria-selected'),'true')
+              await writeFile(path.join(out, `${name}-${colorScheme}-tab-bar.json`),
+                JSON.stringify({tabBar, permissionOnlyInPreferences:true, newTabSelected:true}, null, 2))
               const continuation=page.waitForResponse(response=>{
                 const requested=new URL(response.url())
                 return requested.pathname.endsWith('/instance/api/session')&&requested.searchParams.has('cursor')&&
@@ -213,22 +281,31 @@ try {
               linkedContinuationRecovered=true
             }
             assert.equal(await row('Another session').count(),0)
-            await press(messages['sessionList.filter.ariaLabel'])
+            await openSessionSearch(page, sessions, messages, tap)
             await page.locator('textarea:focus').fill('Another session')
             await row('Another session').waitFor()
             assert(routes.some(row=>row.query.includes('search=Another+session')),'Use the native search before loading the next ordinary page')
             await press(messages['sessionList.filter.ariaLabel'])
             await row('Existing history').waitFor()
+            if(searchOnly){
+              await flushTouches()
+              assert.deepEqual(forbiddenRequests,[])
+              assert.deepEqual(errors,[])
+              records.push({name,colorScheme,sessionSearchOpened:true,routes,touches})
+              continue
+            }
             await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
           }
-          await press(messages['rune.more'])
+           if(!values['history-search']){
+           await press(messages['rune.more'])
           if(values.mobile){
             await row('Another session').waitFor()
             await select('Linked checkout next page','ses_linked_next')
             await page.getByText('Linked checkout answer',{exact:true}).waitFor()
           }
-          await select('Another session','ses_another')
-          await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
+           await select('Another session','ses_another')
+           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
+           }
           await select('Existing history','ses_existing');await reading()
           if(values['touch-history']){
             const cdp=await context.newCDPSession(page)
@@ -430,6 +507,7 @@ try {
             await markerFilters(page,messages,url,values.project,{touch:true,pages})
           }
           if(missions)await missions.check(press)
+          if(values['git-images'])await checkGitImages(page,messages,press,path.join(out,`git-images-${colorScheme}`))
          }else{
         // The DOM editing proxy is ready before the browser presents the GPU handover.
         // Start the synthetic interactions on the canvas that will be sampled.
@@ -520,7 +598,7 @@ try {
           assert(Math.abs(backingWidth-width*measured.viewport.dpr)<=1 && Math.abs(backingHeight-height*measured.viewport.dpr)<=1)
           assert.equal(measured.android.touchScroll.moved,true,'Physical touch dispatch must move the portrait transcript')
           measured.live=await mobileLive({page,context,url,messages,revoke:control,
-            eventSources:()=>eventSource,workspaces:policy.workspaces,fromLink:!values['same-origin-pairing']})
+            eventSources:()=>eventSource,workspaces:policy.workspaces,fromLink:!values['same-origin-pairing'],tap})
          }
          assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
         assert.equal(errors.length, 0, 'Web app must initialize and handle multiline input without JS exceptions')
@@ -534,19 +612,29 @@ try {
              if(values.mobile||values.timeline||values['touch-history']||values['history-search'])assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
             else assert.deepEqual(bodies,['Existing project history','Existing answer'])
           }
-           assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===(values['history-search']?2:0)))
-          assert(routes.some(row=>row.query.includes('cursor=')))
-          if(values['history-search']&&name==='desktop')await historySearch(page,messages,()=>{
-            const held={release:Promise.withResolvers()}
-            holdAnchor=held
-            return ()=>{held.release.resolve();holdAnchor=undefined}
-          })
+          if(!values['history-search']){
+            assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===0))
+            assert(routes.some(row=>row.query.includes('cursor=')))
+          }
+           if(values['history-search']&&(name==='desktop'||name==='phone'))await historySearch(page,messages,touch,{
+             holdNextAnchor(){
+               const held={release:Promise.withResolvers()}
+               holdAnchor=held
+               return ()=>{held.release.resolve();holdAnchor=undefined}
+             },
+             holdNextPreview(){
+               const held=Promise.withResolvers()
+               holdPreview=held
+               return ()=>{held.resolve();holdPreview=undefined}
+             },
+           })
           const inventory=async()=>{const response=await context.request.get(new URL('/api/workspaces',url).href);assert(response.ok());const rows=await response.json();assert(Array.isArray(rows)&&rows.length<=128);return rows.map(row=>row.id)}
           const before=await inventory(),owned=[...policy.workspaces],retained=before.filter(id=>!policy.workspaces.has(id))
           assert(owned.length>0&&owned.every(id=>before.includes(id)),'Browser must own its admitted occurrences')
           // Closing a browser context skips pagehide; use the product's ordinary departure first.
           const departure=values.mobile?new URL('/remote-pair',url).href:'about:blank'
           if(values.mobile)await page.waitForFunction(()=>sessionStorage.getItem('codenomad.rune.alpha.client-state.v1'))
+          await flushTouches()
           await page.goto(departure)
           let after
           for(const until=Date.now()+10000;;){
@@ -566,15 +654,17 @@ try {
             assert.equal(forbiddenRequests.length,0,'Launcher recovery may not submit a password')
           }
         }
-        records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,...measured,
+        await flushTouches()
+        records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,tabBar,touches,...measured,
           ...(values.mobile?{requiredChecksPassed:true,knownGaps:[
             ...(measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]),
             ...(measured.passwordProxy?.status==='known-gap'?['password-input-bridge-proxy']:[]),
           ]}:{pass:true})})
       } catch (error) {
+        await flushTouches()
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
         await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot(),
-          marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))}, null, 2))
+          touches,lastPress,marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))}, null, 2))
         throw error
        } finally {missions?.release();releaseLinked?.();await context.close()}
     }
@@ -582,6 +672,6 @@ try {
 } finally {
   await browser.close()
   await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
-    scene: values.connected?'connected':'synthetic', pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
+    scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
 }
 console.log(`Rune web smoke evidence: ${out}`)

@@ -119,6 +119,8 @@ Bir hedef kendi görüşmesine aittir: alt oturumlar ve çatallar hedefsiz başl
 
 ## Başarısız bir çalıştırmayı çatallayın, geri alın ve kurtarın {#fork-errors}
 
+Rune'da geri alma, boş yazma alanına özgün metni yerleştirir. Geçmişi geri yüklemek için konuşmanın üzerindeki **Son Mesajı Yinele** düğmesini kullanın. Geri alma ve araçları ve akıl yürütmeyi kaldırma, sunucu desteği gerektirir.
+
 1. Bir mesajda, bu noktadan sonra orijinali değiştirmeden bir konuşma oluşturmak için **Bu mesajdan sonra fork'la** öğesini seçin.
 2. Geri almak için **Buraya kadarki değişiklikleri geri al (mesajları siler)** öğesini dikkatlice inceleyin. Palet, aşamalı geri alma için **Son Mesajı Geri Al** ve **Son Mesajı Yinele** öğesini sunuyor. Geri alınabilecek kullanıcı mesajı yoksa geri alma, hazırlanmış geri alma yoksa yineleme devre dışıdır.
 3. Yürütme başarısız olursa, tekrar göndermeden önce **Session hatası** öğesini, yanıt hatasını ve tüm **Gönderme başarısız** ayrıntılarını inceleyin.

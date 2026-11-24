@@ -42,6 +42,18 @@ test('only the exact private project and bounded creation claims enter the owned
   assert(!p.allows('GET','/workspaces/foreign/instance/api/session'))
   assert(!p.allows('DELETE','/api/workspaces/foreign'))
 })
+test('mobile Preferences admits only the private read of memory settings',async()=>{
+  const smoke=workspacePolicy({origin,project,mobilePreferences:true})
+  const req=(base,cookie,method='GET',suffix='settings')=>({
+    url:()=>`${base}/api/memory/${suffix}`,method:()=>method,allHeaders:async()=>({cookie}),
+  })
+  assert(await smoke.request(req(origin,'private=fixture')))
+  assert(!await smoke.request(req(origin,'')))
+  assert(!await smoke.request(req('http://localhost:12345','private=fixture')))
+  assert(!await smoke.request(req(origin,'private=fixture','PUT')))
+  assert(!await smoke.request(req(origin,'private=fixture','GET','entries')))
+  assert(!await workspacePolicy({origin,project}).request(req(origin,'private=fixture')))
+})
 test('invalid admissions leave every workspace unowned; release requires its own claim',()=>{
   const p=workspacePolicy({origin,project}),input=creation('first')
   p.allows('POST','/api/workspaces',input)
@@ -109,4 +121,18 @@ test('only the Android benchmark may submit its exact prompt on an owned session
   assert(!p.allows('POST',route,{text:androidPrompt,files:[]}))
   assert(!p.allows('POST',route.replace('/one/','/foreign/'),{text:androidPrompt}))
   assert(!p.allows('POST',route.replace('ses_existing','ses_another'),{text:androidPrompt}))
+})
+
+test('Mission control is admitted only to the recorded lifecycle fixture target',()=>{
+  for(const missions of [false,true]){
+    const p=workspacePolicy({origin,project,missions}),input=creation('own')
+    p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
+    const path='/api/workspaces/one/missions/gamma/control'
+    const intent={action:'pause',expectedRevision:7,requestId:'a8df8d99-9f05-42e9-8ba6-5558eb68a166',graceful:true}
+    assert.equal(p.allows('POST',path,intent),missions)
+    assert(!p.allows('POST',path.replace('/one/','/outside/'),intent))
+    assert(!p.allows('POST',path.replace('/gamma/','/another/'),intent))
+    assert(!p.allows('POST',path,{...intent,action:'stop'}))
+    assert(!p.allows('POST',path,{...intent,expectedRevision:0}))
+  }
 })

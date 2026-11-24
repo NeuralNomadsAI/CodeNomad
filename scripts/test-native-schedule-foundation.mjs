@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { createServer } from "node:http"
 import { createHash, randomBytes } from "node:crypto"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
@@ -81,7 +81,7 @@ const launch = async label => {
   await wait(async () => {
     if (!existsSync(registrationFile)) return false
     const registration = JSON.parse(readFileSync(registrationFile))
-    if (registration.pid !== child.pid) return false
+    if (registration.pid !== await fixtureChildPid(child)) return false
     endpoint = await Service.discover({ file: registrationFile, version: cliVersion })
     return !!endpoint
   })
@@ -333,7 +333,7 @@ try {
   if (artifacts?.qualification && existsSync(`${artifacts.qualification.file}.held`)) renameSync(`${artifacts.qualification.file}.held`, artifacts.qualification.file)
   for (const child of owned) await stop(child)
   spy.closeAllConnections(); await new Promise(resolve => spy.close(resolve))
-  save("cleanup", { ownPIDs: owned.map(child => child.pid), running: owned.filter(child => child.exitCode === null && child.signalCode === null).map(child => child.pid),
+  save("cleanup", { ownPIDs: await Promise.all(owned.map(fixtureChildPid)), running: await Promise.all(owned.filter(child => child.exitCode === null && child.signalCode === null).map(fixtureChildPid)),
     providerRequests, sharedServiceAccess: "none", externalClient: statusOnly ? "harness only; read-only status qualification"
       : controlledMaintenance ? "harness clock tick RPC; controlled-time maintenance explicitly qualified"
         : "harness only; bounded no-project-client cold window recorded" })

@@ -56,11 +56,13 @@ struct State {
     pairing: platform::pairing::Recovery,
     transcript_display: transcript_state::Display,
     rail_excerpts: timeline::ExcerptCache,
+    saved_outlines: workspace::outlines::Cache,
     rail_filter_revision: u64,
     window_size: [f32; 2],
     tool_diff_preferences: chat::ToolDiffPreferences,
     screen: Screen,
     settings: settings::Host,
+    notifications: shell::notifications::Host,
     #[cfg(not(target_arch = "wasm32"))]
     direct_authentication: chat::authentication::Recovery,
     input_scope: std::rc::Rc<()>,
@@ -69,6 +71,8 @@ struct State {
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
     shell: shell::Panels,
+    status_permissions: shell::status_permissions::Permissions,
+    status_usage: shell::status_usage::Panel,
     chat_title: String,
     messages: Vec<history::Row>,
     draft: TextEdit,
@@ -112,11 +116,13 @@ fn init() -> State {
         pairing: Default::default(),
         transcript_display: Default::default(),
         rail_excerpts: Default::default(),
+        saved_outlines: Default::default(),
         rail_filter_revision: 0,
         window_size: [0.0; 2],
         tool_diff_preferences: Default::default(),
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
+        notifications: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
         direct_authentication: Default::default(),
         input_scope: std::rc::Rc::new(()),
@@ -125,6 +131,8 @@ fn init() -> State {
         rejected_edit: TextEdit::new(""),
         workspace: None,
         shell: Default::default(),
+        status_permissions: Default::default(),
+        status_usage: Default::default(),
         chat_title: String::new(),
         messages: vec![],
         draft: TextEdit::new(""),
@@ -140,7 +148,24 @@ fn init() -> State {
         history_detached: false,
     }
 }
+#[cfg(feature = "test-support")]
+fn load_loopback_scene(s: &mut State) {
+    s.messages.push(
+        Message {
+            id: "loopback-fixture".into(),
+            role: "assistant".into(),
+            completed: true,
+            parts: vec![],
+            usage: None,
+            body: chat::LOOPBACK_LINK_SCENE.into(),
+        }
+        .into(),
+    );
+    s.phase = Phase::Ready;
+}
 fn setup(s: &mut State, wake: rune::Waker) {
+    #[cfg(target_arch = "wasm32")]
+    let wake = shell::notifications::with_background_wake(s, wake);
     s.wake = wake.clone();
     #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
     if platform::scene_is("transcript-images") {
@@ -148,7 +173,15 @@ fn setup(s: &mut State, wake: rune::Waker) {
         return;
     }
     #[cfg(feature = "test-support")]
+    if platform::scene_is("transcript-loopback") {
+        #[cfg(target_arch = "wasm32")]
+        load_loopback_scene(s);
+        return;
+    }
+    #[cfg(feature = "test-support")]
     if platform::scene_is("transcript") {
+        #[cfg(target_arch = "wasm32")]
+        transcript::load_scene(s);
         return;
     }
     #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
@@ -200,8 +233,13 @@ fn latest(s: &mut State, tx: &mut Tx) {
     chat::reader::latest(s, tx);
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
+    strings::with_locale(settings::app_locale(s), || poll_window(s, now, tx))
+}
+
+fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let gesture = timeline::poll_edge(s, tx);
     let chat = !timeline::input_precedes_admission(s, tx) && poll_chat(s, 64);
+    shell::notifications::collect(s, workspace::notification_target);
     if !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)
@@ -215,6 +253,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);
+    changed |= chat::message_actions::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     {
         changed |= platform::pairing::poll(s, tx);
@@ -222,11 +261,17 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
     let transcript_revision = s.revision;
-    changed |= settings::poll(s, tx);
+    changed |= settings::poll(s, tx) | settings::poll_window_actions(s, tx);
     if s.revision != transcript_revision {
         timeline::filters_changed(s);
     }
     changed |= timeline::search::settle_destination(s, tx);
+    #[cfg(target_arch = "wasm32")]
+    {
+        changed |= settings::poll_stats(s, now, tx);
+    }
+    changed |= shell::status_permissions::poll(s, tx);
+    changed |= shell::status_usage::poll(s, now, tx);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
         changed |= launcher::reopen(s);
@@ -237,6 +282,8 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     changed |= files::poll(s, now, tx);
     changed |= git::poll(s, now, tx);
+    changed |= shell::notifications::poll(s, tx);
+    changed |= shell::notifications::poll_app_notices(s, now, tx);
     workspace::capture_files_mode(s);
     if changed {
         tx.instant();
@@ -296,7 +343,9 @@ fn run_app() {
         AppSpec {
             setup: Some(setup),
             poll: Some(poll),
-            on_key: Some(shell::keys),
+            on_key: Some(|s, event, tx| {
+                strings::with_locale(settings::app_locale(s), || shell::keys(s, event, tx))
+            }),
             #[cfg(feature = "test-support")]
             scenes: &[
                 ("synthetic", |s| {
@@ -304,7 +353,9 @@ fn run_app() {
                     s.phase = Phase::Ready;
                 }),
                 #[cfg(not(target_arch = "wasm32"))]
-                ("transcript", probes::transcript_scene::load),
+                ("transcript", transcript::load_scene),
+                #[cfg(not(target_arch = "wasm32"))]
+                ("transcript-loopback", load_loopback_scene),
                 #[cfg(not(target_arch = "wasm32"))]
                 ("git-changes", probes::git_scene::changes),
                 #[cfg(not(target_arch = "wasm32"))]

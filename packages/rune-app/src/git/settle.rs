@@ -16,20 +16,28 @@ impl Ui {
                 self.dirty(&[Lane::Preview]);
             }
         }
-        let mut changed = self.reader.poll_images();
+        let changed = self.reader.poll_images() | self.poll_results();
+        let before = self.loading();
+        self.demand();
+        changed || before != self.loading()
+    }
+
+    pub(super) fn poll_results(&mut self) -> bool {
+        let mut changed = false;
         while let Some(done) = self.requests.take() {
             changed = true;
             match done {
                 Completed::Read(lane, Ok(value)) => self.accept(lane, value),
                 Completed::Read(lane, Err(error)) => self.read_failed(lane, error),
-                Completed::Mutation(epoch, tree, action, result) => {
-                    self.settle_mutation(epoch, &tree, action, result)
+                Completed::Mutation(epoch, tree, source, action, result) => {
+                    self.settle_mutation(epoch, &tree, action, result);
+                    if !self.backend.client.same_connection(&source.client) {
+                        self.mutation_notice = None;
+                    }
                 }
             }
         }
-        let before = self.loading();
-        self.demand();
-        changed || before != self.loading()
+        changed
     }
 
     pub(super) fn read_failed(&mut self, lane: Lane, error: Error) {
@@ -170,6 +178,7 @@ impl Ui {
         {
             self.dirty(&[Lane::Preview]);
         }
+        let announce = matches!(&action, Mutation::Init(_) | Mutation::Commit { .. });
         self.mutation_message = match (action, outcome) {
             (Mutation::Init(_), Ok(())) => {
                 Some((true, crate::strings::t("filesPanel.gitInit.success").into()))
@@ -190,6 +199,9 @@ impl Ui {
             (Mutation::Init(_), Err(error)) => Some((false, init_error(error))),
             (_, Err(error)) => Some((false, error.to_string())),
         };
+        if announce {
+            self.mutation_notice = self.mutation_message.clone();
+        }
     }
 
     pub(crate) fn take_files_invalidation(&mut self) -> bool {

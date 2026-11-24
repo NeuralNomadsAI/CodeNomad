@@ -273,7 +273,7 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
     if project || !s.chat_title.is_empty() || s.files.is_some() {
         center = center.child(header(s, project, docked, touch));
     } else if let Some(warning) = connection_warning(s) {
-        center = center.child(shell::floating_notice(warning));
+        center = center.child(shell::floating_notice(warning).key("connection-warning"));
     }
     let center = center.child(body.remaining());
     let mut columns = shell::columns();

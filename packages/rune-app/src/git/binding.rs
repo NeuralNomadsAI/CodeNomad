@@ -232,7 +232,32 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
         sync_files(s);
         tx.instant();
     }
+    publish_notice(s);
     changed | super::menu::poll(s, tx)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn poll_notices(s: &mut State) -> bool {
+    let changed = s.git.owner.as_mut().is_some_and(Ui::poll_results);
+    publish_notice(s);
+    changed
+}
+
+fn publish_notice(s: &mut State) {
+    if let Some((backend, (success, message))) = s.git.owner.as_mut().and_then(|owner| {
+        owner
+            .mutation_notice
+            .take()
+            .map(|notice| (owner.backend.clone(), notice))
+    }) {
+        crate::shell::notifications::emit_from(
+            s,
+            backend,
+            crate::shell::notifications::Category::Files,
+            message,
+            !success,
+        );
+    }
 }
 
 pub(crate) fn show(s: &mut State, visible: bool) {

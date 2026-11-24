@@ -16,10 +16,12 @@ mod limits;
 mod mission_events;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+mod notifications;
 mod routing;
 mod sessions;
-pub use catalogue::{CatalogueChanges, CatalogueWatch};
+pub use catalogue::{AttentionHint, CatalogueChanges, CatalogueWatch};
 pub(crate) use children::Children;
+use notifications::session_attention;
 use routing::dispatch;
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]
@@ -36,9 +38,27 @@ pub struct State {
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     catalogue: Option<Arc<catalogue::Signals>>,
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
+    provider_usage: Option<crate::provider_usage::Watch>,
 }
 
 impl State {
+    pub(crate) fn with_provider_usage(
+        mut self,
+        watch: Option<crate::provider_usage::Watch>,
+    ) -> Self {
+        self.provider_usage = watch;
+        self
+    }
+
+    fn quota_ingress(&self, backend: &Backend) -> Option<crate::provider_usage::Ingress> {
+        Some(crate::provider_usage::Ingress::new(
+            self.provider_usage.clone()?,
+            self.preferences.as_ref()?.1.clone(),
+            backend.workspace.clone(),
+            backend.session.clone(),
+        ))
+    }
+
     pub(crate) fn observing_preferences(
         out: Sender<crate::transport::Event>,
         wake: crate::Wake,
@@ -111,6 +131,9 @@ pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>
         state.alive.store(false, SeqCst);
         state.running.store(false, SeqCst);
         state.version.fetch_add(1, SeqCst);
+        if let Some(quota) = state.quota_ingress(&backend) {
+            quota.transport(false);
+        }
         let expired = result
             .as_ref()
             .is_err_and(crate::http::authentication_expired);

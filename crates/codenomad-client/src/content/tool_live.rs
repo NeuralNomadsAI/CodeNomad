@@ -67,6 +67,12 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
         let index = fetched.part_index;
         *fetched = live.clone();
         Arc::make_mut(fetched).part_index = index;
+    } else if live.status == "running"
+        && fetched.status == "running"
+        && fetched.started.is_none()
+        && live.started.is_some()
+    {
+        Arc::make_mut(fetched).started = live.started;
     }
 }
 
@@ -335,5 +341,42 @@ mod tests {
             ),
             Fit::Repair
         ));
+    }
+
+    #[test]
+    fn running_http_page_without_timestamp_preserves_live_start() {
+        let mut live =
+            crate::history::decode_message(&json!({"id":"row","type":"assistant"})).unwrap();
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.input.started",
+                &json!({"id":"call","name":"bash"}),
+                Some(1_000)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.called",
+                &json!({"id":"call","input":{"command":"sleep 5"}}),
+                Some(2_000)
+            ),
+            Fit::Applied(_)
+        ));
+        let mut fetched = [Arc::new(
+            crate::history::decode_message(&json!({
+                "id":"row","type":"assistant","content":[
+                    {"type":"tool","id":"call","name":"bash","state":{"status":"running","input":{"command":"sleep 5"}}}
+                ]
+            }))
+            .unwrap(),
+        )];
+        crate::content::merge_page(&[Arc::new(live)], &mut fetched).unwrap();
+        let Part::Tool(tool) = &fetched[0].parts[0] else {
+            panic!("tool part")
+        };
+        assert_eq!(tool.started, Some(2_000));
     }
 }

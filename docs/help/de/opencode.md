@@ -57,7 +57,7 @@ Verwenden Sie **OpenCode-Konfiguration neu laden** (unter **Fehlerbehebung**, we
 ## Sitzungsumgebung {#session-environment}
 
 1. Öffnen Sie **Einstellungen → Erweitert** und klappen Sie **Umgebungsvariablen** auf.
-2. Ergänzen Sie Überschreibungen, bearbeiten Sie ihre Werte oder entfernen Sie sie; gespeicherte Namen sind schreibgeschützt und jede Änderung wird sofort gespeichert.
+2. Fügen Sie Werte hinzu, ändern oder entfernen Sie sie. Gespeicherte Namen sind schreibgeschützt. Wählen Sie in Rune eine Variable aus, ändern Sie ihren Wert und wählen Sie **Speichern**.
 3. Senden Sie den nächsten Prompt, benutzerdefinierten Befehl oder Sitzungs-Shell-Aufruf über CodeNomad, um die aktuelle Umgebung auf diese Unterhaltung anzuwenden.
 
 Dies ist eine Konfigurationsprofileinstellung. Bloßes Öffnen/Lesen einer Unterhaltung oder Speichern von Einstellungen verändert keine native Sitzung. Das Entfernen einer Überschreibung stellt den geerbten Wert des Ausführungshosts wieder her oder entfernt ihn, wenn er dort fehlt.

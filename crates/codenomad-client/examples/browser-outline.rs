@@ -52,7 +52,7 @@ pub async fn fetch_outline() -> Result<String, wasm_bindgen::JsValue> {
     backend.workspace = "workspace".into();
     backend.session = "session".into();
     let outline = backend
-        .read_outline(&OutlineRevision::default())
+        .read_outline_cached(&OutlineRevision::default(), None, None, |_| ())
         .await
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
     Ok(outline

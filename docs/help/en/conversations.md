@@ -119,6 +119,8 @@ A goal belongs to its conversation: subsessions and forks start without one. Ope
 
 ## Fork, undo and recover a failed run {#fork-errors}
 
+In Rune, undo fills an empty composer with the original text. Use **Redo Last Message** above the conversation to restore the staged history. Undo and technical cleanup require server support.
+
 1. On a message, choose **Fork after this message** to create a conversation after that point without replacing the original.
 2. For undo, review **Undo changes up to here (deletes messages)** carefully. The palette offers **Undo Last Message** and **Redo Last Message** for the staged undo. Undo is disabled without an undoable user message; Redo is disabled without a staged undo.
 3. If execution fails, inspect **Session error**, the response error and any **Send failed** details before sending again.

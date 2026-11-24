@@ -23,6 +23,7 @@ pub struct Display {
     pub(crate) usage_family: super::usage::family::Totals,
     pub(super) pictures: super::media::Pictures,
     pub(crate) receipts: super::receipts::Receipts,
+    pub(crate) messages: super::message_actions::Actions,
 }
 
 #[derive(Default)]
@@ -48,17 +49,21 @@ impl Display {
         self.receipts.clear();
     }
     pub(super) fn suspend_rendered(&mut self) {
+        self.messages.suspend();
         self.diffs = Default::default();
         self.stream = StreamRender::default();
         self.live_ansi.get_mut().clear();
         self.children.clear();
-        self.tool_clock = Default::default();
+        self.tool_clock.reset();
         self.usage_family.close();
         self.pictures.clear();
         self.receipts.suspend();
     }
     pub(crate) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
+    }
+    pub(super) fn reading(&self) -> &super::reading::Reading {
+        &self.active.reading
     }
 
     pub fn bind(&mut self, server: &str, workspace: &str, session: &str) {
@@ -73,6 +78,7 @@ impl Display {
                 ..Self::default()
             };
         } else if self.session != session {
+            self.messages = Default::default();
             self.timeline = Default::default();
             self.search_highlight = None;
             let next = self.saved.remove(session).unwrap_or_default();
@@ -83,7 +89,7 @@ impl Display {
             self.stream = StreamRender::default();
             self.live_ansi.get_mut().clear();
             self.children.clear();
-            self.tool_clock = Default::default();
+            self.tool_clock.reset();
             self.usage_family.close();
             self.pictures.clear();
             self.receipts.clear();

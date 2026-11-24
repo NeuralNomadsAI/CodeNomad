@@ -45,7 +45,7 @@ function hidesFixtureThinking(body){
       /^(bash|read|write|edit|patch|webfetch|websearch|glob|grep|task|execute|skill|question|invalid|other)$/.test(key)&&visibility(mode))
 }
 
-export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,missions=false,markerFilters=false}){
+export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,missions=false,mobilePreferences=false,markerFilters=false,allowOwned}){
   const workspaces=new Set(),claims=new Map(),owners=new Map()
   const claim=body=>typeof body?.requestId==='string'&&body.requestId.length>0&&body.requestId.length<=128&&body.requestId.trim()===body.requestId
   const creation=body=>body?.path===project&&claim(body)&&Object.keys(body).every(key=>['path','requestId'].includes(key))
@@ -55,25 +55,31 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if(requested.origin!==origin)return false
       if(protectedRoute&&(!allowApi||!(await req.allHeaders()).cookie))return false
       let body;try{body=req.postDataJSON()}catch{}
-      return this.allows(req.method(),requested.pathname,body,{forbidRelease})
+       return this.allows(req.method(),requested.pathname,body,{forbidRelease,query:requested.searchParams})
     },
-    allows(method,p,body,{forbidRelease=false}={}){
+     allows(method,p,body,{forbidRelease=false,query=new URLSearchParams()}={}){
       if(body&&Buffer.byteLength(JSON.stringify(body))>32768)return false
       if((method==='GET'||method==='HEAD')&&assets.has(p))return true
       if(method==='GET'&&['/api/workspaces','/api/meta','/api/events','/api/auth/status'].includes(p))return true
       if(method==='GET'&&(p==='/api/storage/config/ui'||p==='/api/storage/state/ui'))return true
+      if(mobilePreferences&&method==='GET'&&p==='/api/memory/settings')return true
       if(markerFilters&&method==='PATCH'&&p==='/api/storage/config/ui')
         return !!hidesFixtureThinking(body)
       if(method==='POST'&&p==='/api/client-connections/pong')return true
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)
       const scoped=p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(.*)$/)
+      if(scoped&&workspaces.has(scoped[1])&&allowOwned)
+        return allowOwned({method,path:scoped[2],body,query,native:true})
       if(scoped&&workspaces.has(scoped[1])&&method==='GET'&&/^session\/ses_another\/message\/message-0000[01]$/.test(scoped[2]))return true
       if(scoped&&workspaces.has(scoped[1])&&method==='POST'&&scoped[2]==='session/ses_existing/prompt')
         return typeof androidPrompt==='string'&&body?.text===androidPrompt&&Object.keys(body).length===1
       if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(command|model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another|ses_linked|ses_linked_next)(?:\/(permission|form))?$/.test(scoped[2])
-      const owned=p.match(/^\/api\/workspaces\/([^/]+)(?:\/(.*))?$/)
-      if(!owned||!workspaces.has(owned[1]))return false
+       const owned=p.match(/^\/api\/workspaces\/([^/]+)(?:\/(.*))?$/)
+       if(!owned||!workspaces.has(owned[1]))return false
+       if(method==='POST'&&owned[2]==='creation/release')return claim(body)&&owners.get(owned[1])===body.requestId
+       if(method==='DELETE'&&!owned[2])return !forbidRelease
+       if(allowOwned)return allowOwned({method,path:owned[2]??'',body,query,native:false})
       if(method==='GET'&&owned[2]==='worktrees')return true
       if(method==='POST'&&['session-history/window','session-history/outline'].includes(owned[2]))return ['ses_existing','ses_another','ses_linked','ses_linked_next'].includes(body?.sessionID)
       if(method==='POST'&&owned[2]==='session-history/outlinePreview')return body?.sessionID==='ses_existing'
@@ -81,15 +87,19 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
         &&body.messageIDs.every(id=>typeof id==='string'&&/^(message-\d{5}|timeline-(compaction|system))$/.test(id))
       if(method==='POST'&&owned[2]==='session-history/query')return body?.sessionID==='ses_existing'&&body.purpose==='search'
       if(method==='POST'&&owned[2]==='session-history/ranked')return body?.version===1&&body.limit===40
+      if(missions&&method==='POST'&&owned[2]==='missions/gamma/control')return ['start','pause','stop'].includes(body?.action)&&
+        Number.isSafeInteger(body.expectedRevision)&&body.expectedRevision>0&&typeof body.requestId==='string'&&/^[a-f0-9-]{36}$/.test(body.requestId)&&
+        Object.keys(body).every(key=>['action','expectedRevision','requestId','graceful'].includes(key))&&
+        (body.graceful===undefined||body.action==='pause'&&body.graceful===true)
       if(missions&&method==='POST'&&owned[2]==='missions/panel-page'){
-        if(body?.source==='mission')return body.header===true&&['alpha','beta','gamma'].includes(body.missionID)
+        if(body?.source==='mission')return body.header===true&&['alpha','beta','gamma'].includes(body.missionID)||
+          body.missionID==='gamma'&&body.field==='control'&&['receipts','pending'].includes(body.part)&&[0,50].includes(body.window?.offset)
         if(body?.source==='activity')return body.actorOffset===0&&['alpha','beta','gamma'].includes(body.missionID)
         if(body?.source==='tasks')return body.task?.missionID==='gamma'&&
           ([0,50].includes(body.task.offset)||body.task.attention===0||body.task.ids?.length===1&&body.task.ids[0]==='tsk-51')
         return ['summaries','cleanups'].includes(body?.source)&&Number.isSafeInteger(body?.window?.offset)
       }
-      if(method==='POST'&&owned[2]==='creation/release')return claim(body)&&owners.get(owned[1])===body.requestId
-      return method==='DELETE'&&!owned[2]&&!forbidRelease
+       return false
     },
     admit(input,body,responseUrl){
       assert.equal(new URL(responseUrl).origin,origin,'Workspace response changed origin')

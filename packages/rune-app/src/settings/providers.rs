@@ -18,6 +18,8 @@ pub(super) struct Target {
     observed: Option<u64>,
     authority: u64,
     online: bool,
+    stats: [u64; 2],
+    stats_status: Option<(bool, Option<u64>)>,
 }
 
 impl Target {
@@ -46,6 +48,8 @@ impl Target {
             observed: None,
             authority: 0,
             online: true,
+            stats: [0; 2],
+            stats_status: None,
         })
     }
 
@@ -98,6 +102,40 @@ impl Target {
         self.online
     }
 
+    pub(super) fn stats_source(&self) -> (&Backend, &str, u64, [u64; 2]) {
+        (&self.backend, &self.workspace, self.authority, self.stats)
+    }
+
+    pub(super) fn stats_status(&self) -> Option<(bool, Option<u64>)> {
+        self.stats_status
+    }
+
+    pub(super) fn stats_catalogue(
+        &mut self,
+        changes: &[CatalogueChanges; 2],
+        status: Option<(bool, Option<u64>)>,
+    ) -> bool {
+        let mut changed = std::mem::replace(&mut self.stats_status, status) != status;
+        for (index, lane) in changes.iter().enumerate() {
+            if self.matches(lane) {
+                self.stats[index] = self.stats[index].wrapping_add(1);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    pub(super) fn stats_hint(&mut self, workspace: &str, urgent: bool) {
+        if self.is_workspace(workspace) {
+            let counter = &mut self.stats[usize::from(!urgent)];
+            *counter = counter.wrapping_add(1);
+        }
+    }
+
+    pub(super) fn location(&self) -> (&str, Option<&str>) {
+        (&self.workspace, self.session.as_deref())
+    }
+
     pub fn revision(&self) -> u64 {
         self.authority.wrapping_add(self.revision)
     }
@@ -131,7 +169,7 @@ type Flight = (Sender<()>, Receiver<Option<Vec<Provider>>>);
 
 pub(super) struct Catalog {
     pub expanded: bool,
-    client_id: Option<String>,
+    scope: Option<(String, String, Option<String>)>,
     authority: u64,
     seen: Option<u64>,
     flight: Option<Flight>,
@@ -143,7 +181,7 @@ impl Default for Catalog {
     fn default() -> Self {
         Self {
             expanded: true,
-            client_id: None,
+            scope: None,
             authority: 0,
             seen: None,
             flight: None,
@@ -167,12 +205,23 @@ impl Catalog {
             return changed;
         };
         let mut changed = false;
-        if self.client_id.as_deref() != Some(&target.backend.client_id)
+        if self
+            .scope
+            .as_ref()
+            .is_none_or(|(client, workspace, session)| {
+                client != &target.backend.client_id
+                    || workspace != &target.workspace
+                    || session != &target.session
+            })
             || self.authority != target.authority
         {
             *self = Self {
                 expanded: true,
-                client_id: Some(target.backend.client_id.clone()),
+                scope: Some((
+                    target.backend.client_id.clone(),
+                    target.workspace.clone(),
+                    target.session.clone(),
+                )),
                 authority: target.authority,
                 ..Self::default()
             };

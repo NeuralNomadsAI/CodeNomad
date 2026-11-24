@@ -13,7 +13,6 @@ pub(super) async fn read_native(
     out: &Sender<Input>,
     state: &State,
 ) -> Result<()> {
-    use futures_lite::StreamExt;
     let connection = format!("stream-{epoch}");
     let response = b
         .client
@@ -36,22 +35,82 @@ pub(super) async fn read_native(
         return Err("expected event stream".into());
     }
     b.client.children().invalidate(b, None);
-    opened(epoch, out, state).await?;
-    let mut chunks = response.bytes_stream();
-    let mut parser = Parser::default();
-    while let Some(chunk) = chunks.next().await {
-        for byte in chunk? {
-            match parser.byte(byte)? {
-                Some(Parsed::Data(kind, data)) => {
-                    dispatch(b, epoch, out, state, &connection, &kind, &data).await?;
+    read_frames(b, epoch, out, state, &connection, response.bytes_stream()).await
+}
+
+pub(super) async fn read_frames<B: AsRef<[u8]>>(
+    b: &Backend,
+    epoch: u64,
+    out: &Sender<Input>,
+    state: &State,
+    connection: &str,
+    chunks: impl futures_lite::Stream<Item = std::result::Result<B, reqwest::Error>>,
+) -> Result<()> {
+    use futures_lite::StreamExt;
+    let quota = state.quota_ingress(b);
+    if let Some(quota) = &quota {
+        quota.transport(true);
+    }
+    // One bounded frame of read-ahead keeps SSE authority ahead of transcript dispatch.
+    let (send, receive) = crate::bounded(1);
+    let read = async move {
+        let result: Result<()> = async {
+            let mut chunks = std::pin::pin!(chunks);
+            let mut parser = Parser::default();
+            while let Some(chunk) = chunks.next().await {
+                receive_chunk(&mut parser, chunk?.as_ref(), quota.as_ref(), &send).await?;
+            }
+            Err("event stream ended".into())
+        }
+        .await;
+        if let Some(quota) = &quota {
+            quota.transport(false);
+        }
+        Ok::<_, crate::history::Error>(result)
+    };
+    let route = async move {
+        opened(epoch, out, state).await?;
+        while let Ok(frame) = receive.recv().await {
+            match frame {
+                Parsed::Data(kind, data) => {
+                    dispatch(b, epoch, out, state, connection, &kind, &data).await?;
                 }
-                Some(Parsed::Skipped) => {
+                Parsed::Skipped => {
                     b.client.children().invalidate(b, None);
                     reread(epoch, out, state).await?;
                 }
-                None => {}
             }
         }
+        Ok(())
+    };
+    let (read, ()) = futures_lite::future::try_zip(read, route).await?;
+    read
+}
+
+async fn receive_chunk(
+    parser: &mut Parser,
+    chunk: &[u8],
+    quota: Option<&crate::provider_usage::Ingress>,
+    frames: &Sender<Parsed>,
+) -> Result<()> {
+    // Bytes already delivered by HTTP may still contain a revocation past the next queued frame.
+    let unobserved = quota.map(crate::provider_usage::Ingress::chunk);
+    for byte in chunk {
+        if let Some(frame) = parser.byte(*byte)? {
+            if let Some(quota) = quota {
+                match &frame {
+                    Parsed::Data(kind, data) if kind.is_empty() || kind == "message" => {
+                        quota.frame(data)
+                    }
+                    Parsed::Skipped => quota.skipped(),
+                    _ => {}
+                }
+            }
+            frames.send(frame).await?;
+        }
     }
-    Err("event stream ended".into())
+    if let Some(chunk) = unobserved {
+        chunk.finish();
+    }
+    Ok(())
 }

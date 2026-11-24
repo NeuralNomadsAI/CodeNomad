@@ -6,6 +6,7 @@ use crate::{
 use futures_lite::StreamExt;
 use serde_json::{Value, json};
 
+mod binding;
 mod inventory;
 pub use inventory::{InventoryPage, InventoryScope, Member};
 
@@ -73,22 +74,48 @@ pub struct Sessions {
 }
 
 impl Backend {
-    pub async fn server_id(&self) -> Result<String> {
-        server_id(
-            &read_json(
-                self.client
-                    .get(format!("{}api/meta", self.base))
-                    .send()
-                    .await?
-                    .error_for_status()?,
-            )
-            .await?,
+    async fn server_meta(&self) -> Result<Value> {
+        read_json(
+            self.client
+                .get(format!("{}api/meta", self.base))
+                .send()
+                .await?
+                .error_for_status()?,
         )
+        .await
+    }
+
+    fn observe_service_usage(&self, meta: &Value, id: &str) {
+        if self
+            .client
+            .server_identity()
+            .is_none_or(|current| current == id)
+            && let Some(capabilities) = meta["capabilities"].as_array()
+        {
+            self.client
+                .observe_service_usage(capabilities.iter().any(|cap| cap == "service-usage"));
+        }
+    }
+
+    pub async fn server_id(&self) -> Result<String> {
+        let meta = self.server_meta().await?;
+        let id = server_id(&meta)?;
+        self.observe_service_usage(&meta, &id);
+        Ok(id)
     }
 
     pub async fn attest_server(&self) -> Result<String> {
-        let id = self.server_id().await?;
-        if self.client.verify_server_identity(&id) {
+        let meta = self.server_meta().await?;
+        let id = server_id(&meta)?;
+        let capabilities = meta["capabilities"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        if self.client.attest(&id, capabilities) {
+            self.observe_service_usage(&meta, &id);
             Ok(id)
         } else {
             Err("Server identity changed".into())
@@ -340,150 +367,6 @@ impl Backend {
         )
         .await?;
         session(&data["data"], project)
-    }
-    pub async fn bind(&self, project: &Project, id: &str, fresh: bool) -> Result<Self> {
-        Ok(self.bind_session(project, id, fresh).await?.0)
-    }
-    // A session can move across a live cursor without leaving the workspace.
-    pub async fn confirm_missing_sessions(
-        &self,
-        project: &Project,
-        ids: Vec<String>,
-        missing: async_channel::Sender<(String, crate::runtime::Instant)>,
-        notify: impl Fn(),
-    ) {
-        futures_lite::future::race(
-            async {
-                for id in ids {
-                    let started = crate::runtime::Instant::now();
-                    let confirmed = futures_lite::future::race(
-                        async {
-                            self.bind_session(project, &id, false)
-                                .await
-                                .is_err_and(|error| error.is::<SessionMissing>())
-                        },
-                        async {
-                            crate::runtime::sleep(std::time::Duration::from_secs(1)).await;
-                            false
-                        },
-                    )
-                    .await;
-                    if confirmed {
-                        if missing.send((id, started)).await.is_err() {
-                            return;
-                        }
-                        notify();
-                    }
-                }
-            },
-            missing.closed(),
-        )
-        .await;
-    }
-    pub async fn bind_session(
-        &self,
-        project: &Project,
-        id: &str,
-        fresh: bool,
-    ) -> Result<(Self, Session)> {
-        let (backend, session, _) = self.bind_session_placed(project, id, fresh).await?;
-        Ok((backend, session))
-    }
-    pub async fn bind_at(
-        &self,
-        project: &Project,
-        id: &str,
-        expected: Option<&str>,
-        fresh: bool,
-    ) -> Result<(Self, Session)> {
-        let (backend, session, _) = self
-            .bind_at_placed(project, id, expected, fresh, true)
-            .await?;
-        Ok((backend, session))
-    }
-
-    pub async fn bind_session_placed(
-        &self,
-        project: &Project,
-        id: &str,
-        fresh: bool,
-    ) -> Result<(Self, Session, String)> {
-        self.bind_at_placed(project, id, None, fresh, false).await
-    }
-
-    async fn bind_at_placed(
-        &self,
-        project: &Project,
-        id: &str,
-        expected: Option<&str>,
-        fresh: bool,
-        verify_directory: bool,
-    ) -> Result<(Self, Session, String)> {
-        if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
-            return Err("invalid session".into());
-        }
-        let response = self
-            .client
-            .get(format!(
-                "{}workspaces/{}/instance/api/session/{id}",
-                self.base, project.id
-            ))
-            .header("x-codenomad-session-placement", "1")
-            .send()
-            .await?;
-        let status = response.status();
-        if matches!(
-            status,
-            reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::FORBIDDEN
-        ) {
-            let data = crate::backend::read_json_limited(response, 4096).await?;
-            let absent = status == reqwest::StatusCode::NOT_FOUND
-                && data["_tag"] == "SessionNotFoundError"
-                && data["sessionID"] == id;
-            let moved = status == reqwest::StatusCode::FORBIDDEN
-                && data["reason"] == "session_located_elsewhere";
-            return Err(if absent || moved {
-                SessionMissing.into()
-            } else {
-                "session request unavailable".into()
-            });
-        }
-        let data = read_json(response.error_for_status()?).await?;
-        let row = &data["data"];
-        let directory = row["location"]["directory"]
-            .as_str()
-            .ok_or("missing session directory")?;
-        let placement = row["listWorktreeSlug"]
-            .as_str()
-            .filter(|slug| valid_id(slug));
-        let linked = !crate::server_path::same(&project.path, directory);
-        if expected.is_some_and(|d| !crate::server_path::same(d, directory)) || linked && fresh {
-            return Err("foreign session location".into());
-        }
-        if linked {
-            let owned = if verify_directory {
-                self.session_directories(project)
-                    .await?
-                    .iter()
-                    .any(|d| crate::server_path::same(d, directory))
-            } else {
-                placement.is_some_and(|slug| slug != "root")
-            };
-            if !owned {
-                return Err("foreign session location".into());
-            }
-        }
-        let info = session_at(row, directory)?;
-        if info.id != id {
-            return Err("session response identity mismatch".into());
-        }
-        let mut backend = self.clone();
-        backend.workspace = project.id.clone();
-        backend.session = id.into();
-        backend.session_directory = Some(directory.into());
-        backend.fresh_mode = fresh;
-        backend.client_id = crate::http::client_id()?;
-        Ok((backend, info, placement.unwrap_or("root").into()))
     }
 }
 fn server_id(data: &Value) -> Result<String> {

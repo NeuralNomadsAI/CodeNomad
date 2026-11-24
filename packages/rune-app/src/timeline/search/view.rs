@@ -46,6 +46,7 @@ fn button(s: &State, id: &str, label: &str, f: impl Fn(&mut State, &mut Tx) + 's
 
 pub(crate) const HOST: &str = "history-search-host";
 const WINDOW: &str = "history-search";
+const BODY: &str = "history-search-body";
 
 fn drag(s: &mut State, gesture: search::WindowDrag, tx: &mut Tx) {
     let model = state(s);
@@ -120,7 +121,8 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
         },
     )
     .key("history-search-drag");
-    let preferences = layout::action_row()
+    let toolbar = layout::action_row()
+        .child(title)
         .child(search::build_scope(picker, layers))
         .child(
             search::technical(
@@ -134,17 +136,17 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                 }),
             )
             .key("history-search-technical"),
-        );
-    let toolbar = layout::action_row().child(title).child(
-        search::close(
-            t("messageSection.search.closeAriaLabel"),
-            screen::action_tx(&scope, |s, tx| {
-                close(s);
-                tx.focus("history-search-toggle", true);
-            }),
         )
-        .key("history-search-close"),
-    );
+        .child(
+            search::close(
+                t("messageSection.search.closeAriaLabel"),
+                screen::action_tx(&scope, |s, tx| {
+                    close(s);
+                    tx.focus("history-search-toggle", true);
+                }),
+            )
+            .key("history-search-close"),
+        );
     let change = screen::action_tx(&scope, super::query_changed);
     let input = layout::hinted_field(&model.query, t("messageSection.search.placeholder"))
         .label(t("messageSection.search.ariaLabel"))
@@ -169,16 +171,11 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
         })
         .build(field_kit(layout::dark()))
         .key(super::FIELD);
-    let header = layout::action_row().child(input.remaining());
-    let mut frame = search::panel()
-        .key(WINDOW)
-        .role("region")
-        .label_static(t("messageSection.search.ariaLabel"))
-        .drawn_rect_into(&model.frame.0)
-        .child(toolbar)
-        .child(preferences)
-        .child(header)
-        .children(model.page().filter(|p| !p.hits.is_empty()).map(|_| {
+    let header = layout::action_row()
+        .child(input.remaining())
+        .children(model.minimum_hint().map(rune::text));
+    let mut frame = search::body().key(BODY).child(header).children(
+        model.page().filter(|p| !p.hits.is_empty()).map(|_| {
             layout::action_row()
                 .child(button(
                     s,
@@ -192,7 +189,8 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     "messageSection.search.nextAriaLabel",
                     |s, tx| super::move_match(s, tx, true),
                 ))
-        }));
+        }),
+    );
     if model.flight.is_some() {
         frame = frame.child(rune::text(t("messageSection.search.searching")).role("status"));
     }
@@ -207,9 +205,6 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     |s, _| state(s).run(),
                 )),
         );
-    }
-    if model.open_error {
-        frame = frame.child(rune::text(t("history.openFailed")).role("alert"));
     }
     if s.transcript_display.timeline.jump.filtered {
         frame = frame.child(
@@ -364,25 +359,7 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     .as_ref()
                     .is_some_and(|backend| backend.session != hit.session)
             {
-                frame = frame
-                    .child(
-                        search::results().children(
-                            super::preview::blocks(hit, &model.preview.blocks)
-                                .map(|block| search::excerpt(block, &terms)),
-                        ),
-                    )
-                    .children(
-                        model
-                            .preview
-                            .failed
-                            .then(|| rune::text(t("messageSection.search.failed")).role("status")),
-                    )
-                    .child(button(
-                        s,
-                        "history-search-open",
-                        "history.openSession",
-                        super::open_result,
-                    ));
+                frame = frame.child(preview(s, model, hit, &terms));
             }
             if model.flight.is_none()
                 && let Some(cursor) = &page.cursor
@@ -396,17 +373,101 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     } else {
                         "history.more"
                     },
-                    move |s, _| {
+                    move |s, tx| {
                         super::clear_selection(s);
                         state(s).cursor = Some(cursor.clone());
                         state(s).run();
+                        tx.scroll_to_y(BODY, 0.);
                     },
                 ));
             }
         }
         _ => {}
     }
-    Some(frame)
+    Some(
+        search::panel()
+            .key(WINDOW)
+            .role("region")
+            .label_static(t("messageSection.search.ariaLabel"))
+            .drawn_rect_into(&model.frame.0)
+            .child(toolbar)
+            .child(frame),
+    )
+}
+
+fn preview(
+    s: &State,
+    model: &super::Search,
+    hit: &codenomad_client::search::Hit,
+    terms: &[String],
+) -> El {
+    let data = model.preview.body.as_ref();
+    let (title, slug) = data
+        .map(|body| (body.title.as_str(), body.slug.as_str()))
+        .or_else(|| {
+            model
+                .labels
+                .get(&hit.session)
+                .and_then(|label| label.as_ref())
+                .map(|(title, slug)| (title.as_str(), slug.as_str()))
+        })
+        .unwrap_or_default();
+    let title = if title.is_empty() {
+        t("sessionList.session.untitled")
+    } else {
+        title
+    };
+    let worktree = (!slug.is_empty())
+        .then(|| crate::git::history_worktree(s, slug))
+        .flatten();
+    let age = data
+        .and_then(|data| data.created)
+        .map(|created| super::preview::age(created, crate::platform::storage::unix_millis()));
+    let body = search::results()
+        .children(
+            model
+                .preview
+                .pending()
+                .then(|| rune::text(t("messageSection.search.searching")).role("status")),
+        )
+        .children(
+            model
+                .preview
+                .failed
+                .then(|| rune::text(t("messageSection.search.failed")).role("alert")),
+        )
+        .children(
+            model
+                .open_error
+                .then(|| rune::text(t("history.openFailed")).role("alert")),
+        )
+        .children(
+            super::preview::blocks(hit, data.map_or(&[], |data| data.blocks.as_slice()))
+                .map(|block| search::excerpt(block, terms)),
+        );
+    let disabled = model.destination.is_some();
+    let keyboard = screen::action_tx(&s.input_scope, super::open_result);
+    let open = layout::button_tx(
+        t("history.openSession"),
+        disabled,
+        screen::action_tx(&s.input_scope, super::open_result),
+    )
+    .key("history-search-open");
+    let open = if disabled {
+        open
+    } else {
+        open.on_key(move |s, event, tx| {
+            if event.key != rune::Key::Enter || event.mods != rune::Mods::default() {
+                return false;
+            }
+            if !tx.key_repeat() {
+                keyboard(s, tx);
+            }
+            true
+        })
+    };
+    search::preview(title, worktree.as_deref(), age, open, body)
+        .key("history-inter-session-preview")
 }
 
 pub(super) fn group_starts(hits: &[codenomad_client::search::Hit]) -> Vec<usize> {

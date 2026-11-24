@@ -1,7 +1,7 @@
 // Compile the shared app separately, then package the exact wasm artifact without Cargo.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {createHash, randomUUID} from 'node:crypto'
+import {spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
 import {createReadStream} from 'node:fs'
 import {access, copyFile, mkdir, open, readFile, readdir, rename, rm, stat, writeFile} from 'node:fs/promises'
 import {Writable} from 'node:stream'
@@ -32,10 +32,11 @@ const bindgen = values.bindgen ?? process.env.RUNE_WASM_BINDGEN ?? 'wasm-bindgen
 async function run(binary, args) {
   return await new Promise((resolve, reject) => {
     const child = spawn(binary, args, {cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']})
-    let output = ''
-    for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => {output += chunk; if (output.length > 1024 * 1024) child.kill()})
+    let stdout = '', output = ''
+    child.stdout.on('data', chunk => {stdout += chunk; output += chunk; if (output.length > 1024 * 1024) child.kill()})
+    child.stderr.on('data', chunk => {output += chunk; if (output.length > 1024 * 1024) child.kill()})
     child.once('error', () => reject(Error(`Cannot run ${binary}. Install wasm-bindgen-cli ${version} outside this task or set RUNE_WASM_BINDGEN to the matching executable.`)))
-    child.once('close', code => code === 0 ? resolve(output.trim()) : reject(Error(`${path.basename(binary)} failed (${code}): ${output.slice(-4000)}`)))
+    child.once('close', code => code === 0 ? resolve(stdout.trim()) : reject(Error(`${path.basename(binary)} failed (${code}): ${output.slice(-4000)}`)))
   })
 }
 assert.equal(await run(bindgen, ['--version']), `wasm-bindgen ${version}`, `Use wasm-bindgen-cli ${version} matching Cargo.lock`)

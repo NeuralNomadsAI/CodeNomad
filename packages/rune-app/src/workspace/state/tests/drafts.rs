@@ -581,10 +581,11 @@ fn delivery_hidden_interruptions_keep_the_active_close_guard_and_button() {
         match kind {
             "form" => {
                 a.forms.push(crate::agent_api::Form {
+                    tool: None,
+                    infer_websearch: false,
                     id: "request".into(),
                     title: "Question".into(),
                     fields: vec![serde_json::json!({"key":"answer","type":"string"})],
-                    tool: None,
                 });
                 a.selected = "request".into();
                 let mut d = crate::agent::forms::Draft::default();
@@ -593,12 +594,12 @@ fn delivery_hidden_interruptions_keep_the_active_close_guard_and_button() {
             }
             "reason" => {
                 a.permissions.push(crate::agent_api::Permission {
+                    tool: None,
                     id: "request".into(),
                     action: "read".into(),
                     resources: vec!["/fixture".into()],
                     message: String::new(),
                     supported: true,
-                    tool: None,
                 });
                 a.selected = "request".into();
                 a.reasons

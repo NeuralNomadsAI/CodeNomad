@@ -5,6 +5,104 @@ use crate::{
 use serde_json::json;
 
 #[test]
+fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification() {
+    use crate::shell::notifications::{self, Target};
+    let (jobs, incoming) = super::bounded(1);
+    let (stop, _) = super::bounded(1);
+    let (out, results) = super::bounded(1);
+    let mut agent = super::Ui::new(super::Handle {
+        connection: None,
+        jobs,
+        stop,
+        results,
+    });
+    agent.online = true;
+    assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(true, 0))));
+    let snapshot = || agent_api::Snapshot {
+        models: Some(vec![]),
+        current: None,
+        directory: None,
+        session_known: true,
+        running: false,
+        root_directory: Some("/project/worktree".into()),
+        usage: None,
+        permissions: Some(vec![]),
+        forms: Some(vec![Form {
+            id: "question".into(),
+            title: "A question".into(),
+            fields: vec![],
+            tool: None,
+            infer_websearch: false,
+        }]),
+    };
+    let mut s = crate::init();
+    crate::settings::notification_fixture(&s);
+    s.chat_title = "Private conversation".into();
+    s.agent = Some(agent);
+    let (events, inbox) = super::bounded(1);
+    s.incoming = Some(inbox);
+    s.notifications.record();
+    let target = Target {
+        tab: Some("tab-0".into()),
+        backend_url: "http://127.0.0.1:9/".into(),
+        server: None,
+        occurrence: 0,
+        workspace: "project".into(),
+        session: "session".into(),
+    };
+    let mut runtime =
+        rune::Runtime::new(s, crate::view, (960.0, 760.0), rune::Env::new(false, 1.0));
+    runtime.frame(0.0);
+    runtime.window_focus(false);
+    runtime.frame(0.02);
+    runtime.update(|s, _| {
+        let mut foreign = target.clone();
+        foreign.server = Some("other-server".into());
+        assert!(matches!(crate::settings::system_notification(
+            s, &foreign, crate::settings::notification_routing::Category::NeedsInput, false, "foreign"
+        ), crate::settings::Delivery::Suppressed));
+        assert!(events.try_send(crate::transport::Event::Workspace(
+            codenomad_client::transport::WorkspaceEvent::SessionRequest { form: true, id: "question".into() }
+        )).is_ok());
+        assert!(crate::poll_chat(s, 8));
+        for _ in 0..2 {
+            assert!(out.try_send(super::Result::Read(snapshot(), false, 0)).is_ok());
+            assert!(crate::poll_chat(s, 8));
+            notifications::collect(s, |_| Some((target.clone(), "Private project".into())));
+            let _ = incoming.try_recv();
+        }
+        assert_eq!(
+            s.notifications.recorded(),
+            &[(
+                0,
+                "Private project".into(),
+                "Session “Private conversation” needs your answer".into()
+            )]
+        );
+        assert!(events.try_send(crate::transport::Event::Workspace(
+            codenomad_client::transport::WorkspaceEvent::SessionExecution { notice: Some("finished".into()) }
+        )).is_ok());
+        assert!(crate::poll_chat(s, 8));
+        assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(false, 0))));
+        assert!(out.try_send(super::Result::Read(snapshot(), false, 0)).is_ok());
+        assert!(crate::poll_chat(s, 8));
+        assert!(matches!(
+            incoming.try_recv(),
+            Ok(super::Job::VerifyIdle(id, directory)) if id == "finished" && directory == "/project/worktree"
+        ));
+        notifications::collect(s, |_| Some((target.clone(), "Private project".into())));
+        assert_eq!(s.notifications.recorded().len(), 1);
+        assert!(out.try_send(super::Result::VerifiedIdle("finished".into(), true)).is_ok());
+        assert!(crate::poll_chat(s, 8));
+        notifications::collect(s, |_| Some((target, "Private project".into())));
+        assert_eq!(
+            s.notifications.recorded()[1].2,
+            "Session “Private conversation” finished"
+        );
+    });
+}
+
+#[test]
 fn terminal_event_fences_only_activity_in_a_pending_control_response() {
     let (jobs, incoming) = super::bounded(1);
     let (stop, _) = super::bounded(1);
@@ -15,13 +113,15 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
         stop,
         results,
     });
-    assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(true))));
+    assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(true, 0))));
     ui.known = true;
     ui.observe_running(false);
     let snapshot = |forms| agent_api::Snapshot {
         models: Some(vec![]),
         current: None,
+        directory: None,
         session_known: true,
+        root_directory: None,
         usage: None,
         running: true,
         permissions: Some(vec![]),
@@ -30,12 +130,14 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
     assert!(
         out.try_send(super::Result::Read(
             snapshot(vec![Form {
+                tool: None,
+                infer_websearch: false,
                 id: "form_pending".into(),
                 title: "Pending question".into(),
                 fields: vec![],
-                tool: None,
             }]),
-            true
+            true,
+            0
         ))
         .is_ok()
     );
@@ -43,13 +145,53 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
     assert!(!ui.running);
     assert_eq!(ui.selected, "form_pending");
     ui.refresh(false);
-    assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(false))));
+    assert!(matches!(
+        incoming.try_recv(),
+        Ok(super::Job::Read(false, 0))
+    ));
     assert!(
-        out.try_send(super::Result::Read(snapshot(vec![]), false))
+        out.try_send(super::Result::Read(snapshot(vec![]), false, 0))
             .is_ok()
     );
     assert!(ui.poll());
     assert!(ui.running);
+}
+
+#[test]
+fn quota_model_waits_for_a_snapshot_requested_after_the_native_change() {
+    use super::{Handle, Job, Result, Ui, bounded};
+    let (jobs, read) = bounded(1);
+    let (stop, _stopped) = bounded(1);
+    let (out, results) = bounded(1);
+    let mut ui = Ui::new(Handle {
+        connection: None,
+        jobs,
+        stop,
+        results,
+    });
+    assert!(matches!(read.try_recv(), Ok(Job::Read(true, 0))));
+    let snapshot = |model| agent_api::Snapshot {
+        models: Some(vec![]),
+        current: Some(json!({"providerID":"fixture","id":model})),
+        directory: Some("/fixture".into()),
+        root_directory: None,
+        usage: None,
+        session_known: true,
+        running: false,
+        permissions: Some(vec![]),
+        forms: Some(vec![]),
+    };
+    ui.refresh_usage_model(1);
+    assert!(out.try_send(Result::Read(snapshot("old"), true, 0)).is_ok());
+    assert!(ui.poll());
+    assert!(ui.usage_model(1).is_none());
+    assert!(matches!(read.try_recv(), Ok(Job::Read(false, 1))));
+    assert!(
+        out.try_send(Result::Read(snapshot("new"), false, 1))
+            .is_ok()
+    );
+    assert!(ui.poll());
+    assert_eq!(ui.usage_model(1).unwrap().1["id"], "new");
 }
 
 #[test]
@@ -88,7 +230,7 @@ fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
     ui.choose_model(model.reference);
     assert!(matches!(
         incoming.try_recv(),
-        Ok(super::Job::Act(agent_api::Action::Model(_)))
+        Ok(super::Job::Act(agent_api::Action::Model(_), 0))
     ));
     assert!(ui.busy);
     assert!(!ui.picker);
@@ -96,6 +238,8 @@ fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
 #[test]
 fn native_questions_keep_typed_defaults_conditions_and_validation() {
     let form = Form {
+        tool: None,
+        infer_websearch: false,
         id: "form_one".into(),
         title: "Synthetic".into(),
         fields: vec![
@@ -104,7 +248,6 @@ fn native_questions_keep_typed_defaults_conditions_and_validation() {
             json!({"key":"count","type":"integer","minimum":1,"maximum":4,"required":true}),
             json!({"key":"hidden","type":"string","hidden":true,"default":"retained"}),
         ],
-        tool: None,
     };
     let mut drafts = Default::default();
     agent_forms::seed(&[form.clone()], &mut drafts);

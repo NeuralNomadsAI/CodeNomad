@@ -9,6 +9,7 @@ use crate::{
     settings::{self, TranscriptRow},
 };
 
+mod apply_patch;
 pub(super) mod children;
 mod clipboard;
 mod diagnostics;

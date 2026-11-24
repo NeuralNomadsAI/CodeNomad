@@ -3,7 +3,7 @@
 // and Stop through the owned HTTP control route. Isolated CLI/home/database/provider
 // only: never discovers the shared service or a user's database.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { createServer } from "node:http"
 import { mkdtemp, mkdir, writeFile, realpath } from "node:fs/promises"
@@ -13,7 +13,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { tsImport } from "tsx/esm/api"
 import Fastify from "fastify"
 import pino from "pino"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const cli = process.argv[2]
 assert(cli && path.isAbsolute(cli), "Pass an absolute existing isolated CLI")

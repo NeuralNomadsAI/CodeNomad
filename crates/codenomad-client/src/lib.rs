@@ -14,11 +14,14 @@ pub mod git;
 pub mod history;
 pub mod http;
 pub mod interruption_receipts;
+pub mod message_actions;
 pub mod missions;
+pub mod permission_mode;
 pub mod prompt;
 pub mod prompt_catalogue;
 mod prompt_command;
 mod prompt_receipt;
+pub mod provider_usage;
 pub mod recovery;
 pub mod runtime;
 pub mod search;
@@ -32,7 +35,7 @@ pub mod stream;
 pub mod timeline;
 pub mod transport;
 pub mod wire;
-pub use async_channel::{Receiver, Sender, bounded};
+pub use async_channel::{Receiver, Sender, TryRecvError, bounded};
 
 /// Notify an owner's event loop after publishing data, without depending on its UI framework.
 pub type Wake = std::sync::Arc<dyn Fn() + Send + Sync>;

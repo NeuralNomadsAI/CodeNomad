@@ -30,11 +30,27 @@ pub(super) fn search_limit(
 }
 
 pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
-    prose_for(s, message, key, source, streaming, PROSE_LIMIT)
+    prose_for(s, message, key, source, streaming, PROSE_LIMIT, None)
+}
+
+pub(super) fn prose_search(
+    s: &State,
+    message: &str,
+    key: String,
+    source: &str,
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+) -> El {
+    let limit = PROSE_LIMIT
+        + if query.is_some_and(|q| q.active) {
+            STEP
+        } else {
+            0
+        };
+    prose_for(s, message, key, source, false, limit, query)
 }
 
 pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, limit: usize) -> El {
-    prose_for(s, "", key, source, streaming, limit)
+    prose_for(s, "", key, source, streaming, limit, None)
 }
 
 fn prose_for(
@@ -44,6 +60,7 @@ fn prose_for(
     source: &str,
     streaming: bool,
     limit: usize,
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
 ) -> El {
     let group = key.clone();
     let scope = s.input_scope.clone();
@@ -53,21 +70,30 @@ fn prose_for(
     let steps = s.transcript_display.steps(&key);
     let version = s.transcript_display.stream_version();
     let memo_key = format!("{group}-markdown");
-    let terms = s
-        .transcript_display
-        .search_highlight
-        .as_ref()
-        .filter(|hit| hit.message == message)
-        .map(|hit| {
-            let q = hit.query(None);
-            (q.terms, q.ranked)
-        });
+    let terms = query.map(|q| (q.terms, q.ranked)).or_else(|| {
+        s.transcript_display
+            .search_highlight
+            .as_ref()
+            .filter(|hit| hit.message == message)
+            .map(|hit| {
+                let q = hit.query(None);
+                (q.terms, q.ranked)
+            })
+    });
     window(s, key, &[source], limit, |shown, units| {
+        if let Some(q) = query
+            && q.active
+            && let Some(claimed) = q.claimed
+            && q.matches(shown)
+        {
+            claimed.set(true);
+        }
+        let active_locale = locale();
         let stamp = (
             version,
             steps,
             std::rc::Rc::as_ptr(&scope) as usize,
-            locale(),
+            active_locale,
             &unwrapped,
             terms,
             &diagram_sources,
@@ -84,11 +110,9 @@ fn prose_for(
                         HIGHLIGHT_LIMIT
                     },
                 terms,
-                move |s: &mut State, url, tx| {
-                    if s.current_scope(&link_scope) {
-                        links::open(s, url, tx);
-                    }
-                },
+                links::on_open(link_scope.clone()),
+                links::on_menu(link_scope, active_locale),
+                links::help,
                 {
                     let unwrapped = unwrapped.clone();
                     move |index, _| !unwrapped.contains(&index)

@@ -1,4 +1,4 @@
-use super::{actions::Display, document, tools};
+use super::{actions::Display, document, tool_groups::Groups, tools};
 use crate::{
     State,
     content::{Part, TextProvenance},
@@ -9,7 +9,6 @@ use rune::{El, col, text};
 use rune_theme_codenomad::{
     Space, TextRole, catalogue,
     layout::{self, Layout},
-    markdown,
 };
 
 pub(super) const PART_LIMIT: usize = 1000;
@@ -17,6 +16,23 @@ pub(super) const PART_LIMIT: usize = 1000;
 mod context;
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "test-support")]
+pub(crate) fn load_scene(s: &mut State) {
+    let native = serde_json::from_str(include_str!("../../fixtures/transcript.json"))
+        .expect("transcript fixture JSON");
+    s.messages = vec![
+        crate::history::decode_message(&native)
+            .expect("transcript fixture record")
+            .into(),
+    ];
+    s.phase = crate::Phase::Ready;
+    crate::settings::fixture_transcript(
+        s,
+        serde_json::from_str(include_str!("../../fixtures/transcript-settings.json"))
+            .expect("transcript fixture preferences"),
+    );
+}
 
 pub(super) fn part_window(len: usize, steps: usize) -> (usize, usize) {
     let initial = if len > PART_LIMIT {
@@ -32,12 +48,17 @@ pub(super) fn part_window(len: usize, steps: usize) -> (usize, usize) {
 
 pub fn rows(s: &State) -> El {
     let locale = locale();
+    let groups = Groups::project(s);
     layout::transcript_rows(
-        s.messages.len(),
+        s.transcript_display.messages.visible(&s.messages).len(),
         |s: &State, i| s.messages[i].id.clone().into(),
         move |s: &State, i| {
             crate::strings::with_locale(locale, || {
-                super::reading::row(s, s.messages[i].id.clone(), message(s, i))
+                super::reading::row(
+                    s,
+                    s.messages[i].id.clone(),
+                    message_with_groups(s, i, &groups),
+                )
             })
         },
     )
@@ -45,7 +66,12 @@ pub fn rows(s: &State) -> El {
     .virtual_rows_version(s.revision)
 }
 
+#[cfg(test)]
 pub fn message(s: &State, i: usize) -> El {
+    message_with_groups(s, i, &Groups::project(s))
+}
+
+fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
     let m = &s.messages[i];
     if let Some(context) = context::view(s, m) {
         return context;
@@ -66,7 +92,7 @@ pub fn message(s: &State, i: usize) -> El {
             .next_if(|block| block.part == index)
             .map(|block| block.marker)
     };
-    let mut header = layout::action_row().child(
+    let header = layout::action_row().child(
         text(t(if m.role == "user" {
             "messageItem.speaker.you"
         } else {
@@ -74,35 +100,7 @@ pub fn message(s: &State, i: usize) -> El {
         }))
         .text_role(TextRole::Label),
     );
-    if !m.body.trim().is_empty() {
-        let id = m.id.clone();
-        header = header.child(
-            markdown::copy_button(
-                t("messageItem.actions.copy"),
-                screen::action_tx(&s.input_scope, move |s, tx| {
-                    let Some(row) = s.messages.iter().find(|row| row.id == id) else {
-                        return;
-                    };
-                    if row.role == "user" || row.parts.is_empty() {
-                        tx.copy(row.body.as_str());
-                    } else {
-                        let prose = row
-                            .parts
-                            .iter()
-                            .filter_map(|part| match part {
-                                Part::Text(body) if !body.text.trim().is_empty() => {
-                                    Some(body.text.as_str())
-                                }
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>();
-                        tx.copy(prose.join("\n\n"));
-                    }
-                }),
-            )
-            .key(format!("copy-message-{}", m.id)),
-        );
-    }
+    let header = super::message_actions::header(s, m, header);
     let mut view = col()
         .key(m.id.clone())
         .full_width()
@@ -128,8 +126,11 @@ pub fn message(s: &State, i: usize) -> El {
     let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
     let mut reasoning_end = 0;
     let mut group_end = 0;
+    let mut hidden_continuation = false;
+    let mut shows_content = m.role == "user" || m.parts.is_empty();
     for (index, part) in m.parts.iter().enumerate() {
         if index == head && head < tail {
+            shows_content = true;
             let hidden = tail - head;
             let notice = catalogue::format(
                 locale(),
@@ -194,26 +195,17 @@ pub fn message(s: &State, i: usize) -> El {
                     None
                 }
             }
-            Part::Tool(tool) if visible && tools::visible(s, &m.id, tool) => {
-                let limit = if index < head && head < tail {
-                    head
-                } else {
-                    m.parts.len()
-                };
-                match super::tool_groups::view(
-                    s,
-                    &m.id,
-                    &m.parts[index..limit],
-                    m.completed,
-                    &mut |index, el| match marker(index) {
-                        Some(marker) => crate::timeline::watch_block(s, marker, el, |_, _, _| {}),
-                        None => el,
-                    },
-                    index,
-                ) {
-                    Some((group, count)) => {
-                        group_end = index + count;
-                        Some(group)
+            Part::Tool(tool)
+                if visible
+                    && (tools::visible(s, &m.id, tool) || groups.awaiting(&m.id, &tool.id)) =>
+            {
+                match groups.get(i, index) {
+                    Some(chunk) => {
+                        group_end = chunk.end;
+                        let body =
+                            chunk.view(s, &m.id, &m.parts[index..group_end], index, &mut marker);
+                        hidden_continuation |= body.is_none();
+                        body
                     }
                     None => Some(super::reading::passage(
                         s,
@@ -235,9 +227,16 @@ pub fn message(s: &State, i: usize) -> El {
                 reasoning_end = index
                     + m.parts[index..limit]
                         .iter()
-                    .take_while(|part| matches!(part, Part::Reasoning(_))
-                        || matches!(part, Part::Text(text) if text.text.trim().is_empty())
-                        || matches!(part, Part::Tool(tool) if !tools::visible(s, &m.id, tool)))
+                        .take_while(|part| {
+                            matches!(part, Part::Reasoning(_))
+                                || matches!(part, Part::Text(text) if text.text.trim().is_empty())
+                                || matches!(
+                                    part,
+                                    Part::Tool(tool)
+                                        if !tools::visible(s, &m.id, tool)
+                                            && !groups.awaiting(&m.id, &tool.id)
+                                )
+                        })
                         .count();
                 super::reasoning::view(s, &m.id, &m.parts[index..reasoning_end])
             }
@@ -248,6 +247,7 @@ pub fn message(s: &State, i: usize) -> El {
             Part::Skill(_) | Part::File(_) => None,
         };
         if let Some(body) = body {
+            shows_content = true;
             // The first fragment of a reasoning run can be blank: its rendered group starts
             // at the first non-blank fragment, though the renderer consumes the full run.
             let body = if matches!(part, Part::Reasoning(_))
@@ -277,5 +277,9 @@ pub fn message(s: &State, i: usize) -> El {
             }
         }
     }
-    view
+    if hidden_continuation && !shows_content {
+        col().key(m.id.clone())
+    } else {
+        view
+    }
 }

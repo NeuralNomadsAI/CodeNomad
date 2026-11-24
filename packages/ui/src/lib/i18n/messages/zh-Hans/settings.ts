@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "第 {line} 行有语法错误",
   "settings.nav.servers": "服务器",
   "settings.servers.open": "打开",
   "settings.servers.dialog.name": "名称",
@@ -751,5 +752,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "下载 .txt",
   "settings.info.diagnostics.reportBug": "报告错误",
   "settings.info.diagnostics.copied": "诊断信息已复制。",
+  "settings.info.actions.failed": "无法完成操作。请重试。",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI 不为这种 ChatGPT 登录方式提供用量数据。你仍可继续聊天。",
 } as const

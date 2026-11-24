@@ -1,4 +1,6 @@
 export const advancedSettingsMessages = {
+  "advancedSettings.unavailable": "Rune ले यो सेटिङ अझै लागू गर्दैन।",
+  "advancedSettings.environmentVariables.maskValue": "पूर्वनिर्धारित रूपमा मान लुकाउनुहोस्",
   "advancedSettings.title": "उन्नत सेटिङहरू",
   "advancedSettings.environmentVariables.title": "वातावरण चरहरू (Environment Variables)",
   "advancedSettings.environmentVariables.subtitle": "प्रत्येक प्रम्प्ट वा सत्र आदेशअघि लागू हुन्छ",

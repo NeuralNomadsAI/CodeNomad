@@ -54,7 +54,21 @@ fn specialized_titles_prose_and_header_controls() {
             && tree.contains("\"name\":\"Invalid\"")
     );
     assert!(tree.contains("\"3s\""));
-    assert!(rt.find("copy-tool-result:5:skill_running-output").is_none());
+    let skill_running_key = super::tool_key("result", "skill_running");
+    assert!(
+        rt.find(&format!("copy-{skill_running_key}-output"))
+            .is_none()
+    );
+    let (x, y) = rt.find(&format!("toggle-{skill_running_key}")).unwrap();
+    rt.pointer_move(x, y);
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.01);
+    assert!(
+        rt.find(&format!("copy-{skill_running_key}-output"))
+            .is_none()
+    );
+    assert!(!rt.accessibility_json().to_string().contains("partial"));
     let fetch_key = super::tool_key("result", "fetch");
     let skill_key = super::tool_key("result", "skill");
     if rt.find(&format!("{fetch_key}-wrap")).is_none() {
@@ -155,7 +169,8 @@ fn running_tool_duration_ticks_through_view_memo_and_stops_when_settled() {
     assert!(tree.contains("1m 0"), "{tree}");
     let mut ticked = false;
     rt.update(|s, tx| ticked = Display::poll(s, false, 0.01, tx));
-    assert!(ticked);
+    assert!(!ticked);
+    assert!(rt.wake_deadline().is_some());
     let before = rt.state.transcript_display.tool_clock.epoch();
     rt.update(|s, tx| ticked = Display::poll(s, false, 0.5, tx));
     assert!(!ticked);
@@ -164,6 +179,11 @@ fn running_tool_duration_ticks_through_view_memo_and_stops_when_settled() {
     assert!(ticked);
     assert!(rt.state.transcript_display.tool_clock.epoch() > before);
     rt.frame(1.1);
+    let key = super::tool_key("live", "cmd");
+    let toggle_key = format!("toggle-{key}");
+    rt.update(|_, tx| tx.focus(&toggle_key, true));
+    rt.frame(1.15);
+    rt.update(|_, tx| assert_eq!(tx.focused(), Some(toggle_key.as_str())));
     rt.update(|s, _| {
         s.messages[0] = crate::history::decode_message(&json!({
             "type":"assistant","id":"live","time":{"completed":start + 67_000},"content":[
@@ -175,9 +195,240 @@ fn running_tool_duration_ticks_through_view_memo_and_stops_when_settled() {
         .into();
     });
     rt.frame(1.2);
+    rt.update(|_, tx| assert_eq!(tx.focused(), Some(toggle_key.as_str())));
     let settled = rt.state.transcript_display.tool_clock.epoch();
     assert!(rt.accessibility_json().to_string().contains("1m 7s"));
     rt.update(|s, tx| ticked = Display::poll(s, false, 3.5, tx));
     assert!(!ticked);
     assert_eq!(rt.state.transcript_display.tool_clock.epoch(), settled);
+    assert!(rt.wake_deadline().is_none());
+}
+
+#[test]
+fn active_search_keeps_skill_prose_bounded_and_uses_prose_step() {
+    let prefix = "a".repeat(270_000);
+    let raw_skill = format!(
+        "# Skill heading\n\n{prefix}\nDEEP_SKILL_NEEDLE\n{}",
+        "b".repeat(50_000)
+    );
+    let row = crate::history::decode_message(&json!({
+        "type":"assistant","id":"msg","time":{"completed":10000},"content":[
+            {"type":"tool","id":"sk","name":"skill",
+             "state":{"status":"completed","input":{"name":"demo","only_input":"INPUT_ONLY_NEEDLE"},
+                      "content":[{"type":"text","text":raw_skill}]}}
+        ]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    crate::settings::fixture_transcript(
+        &mut state,
+        json!({"toolCallExpansionDefaults":{"tools":{"other":"collapsed"}},"toolInputsVisibility":"hidden"}),
+    );
+    let hit = codenomad_client::search::Hit {
+        session: "s".into(),
+        message: "msg".into(),
+        role: "assistant".into(),
+        part: 0,
+        kind: codenomad_client::search::Kind::Tool,
+        excerpt: String::new(),
+    };
+    state.transcript_display.search_highlight = Some(crate::chat::search_hit::SearchHit::new(
+        &hit,
+        "DEEP_SKILL_NEEDLE",
+        false,
+    ));
+    state.messages = vec![row.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| {
+            cx.web_focus();
+            with_locale("en", || {
+                let crate::content::Part::Tool(tool) = &s.messages[0].parts[0] else {
+                    panic!("tool part")
+                };
+                super::view(s, "msg", tool)
+            })
+        },
+        (960.0, 820.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let skill_key = super::tool_key("msg", "sk");
+    assert!(rt.find(&format!("{skill_key}-wrap")).is_none());
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("Skill heading") && !tree.contains("# Skill heading"));
+    assert!(tree.contains("DEEP_SKILL_NEEDLE"));
+    let crate::content::Part::Tool(tool) = &rt.state.messages[0].parts[0] else {
+        panic!("tool part")
+    };
+    let output_hit = crate::chat::search_hit::SearchHit::new(&hit, "DEEP_SKILL_NEEDLE", false);
+    assert!(!super::match_hidden_by_inputs(
+        &rt.state,
+        "msg",
+        tool,
+        output_hit.query(Some((codenomad_client::search::Kind::Tool, 0))),
+    ));
+    let input_hit = crate::chat::search_hit::SearchHit::new(&hit, "INPUT_ONLY_NEEDLE", false);
+    assert!(super::match_hidden_by_inputs(
+        &rt.state,
+        "msg",
+        tool,
+        input_hit.query(Some((codenomad_client::search::Kind::Tool, 0))),
+    ));
+}
+
+#[test]
+fn clock_stops_offscreen_or_on_session_change_and_rearms_after_same_session_suspend() {
+    let start = unix_millis().saturating_sub(5_000);
+    let row = crate::history::decode_message(&json!({
+        "type":"assistant","id":"live","content":[
+            {"type":"tool","id":"cmd","name":"bash","time":{"ran":start},
+             "state":{"status":"running","input":{"command":"sleep 90"}}}
+        ]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Streaming;
+    state.messages = vec![row.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            with_locale("en", || {
+                let Some(crate::content::Part::Tool(tool)) =
+                    s.messages.first().and_then(|row| row.parts.first())
+                else {
+                    return rune::col();
+                };
+                rune_theme_codenomad::markdown::tool_pane(
+                    rune::col()
+                        .child(super::view(s, "live", tool))
+                        .children((0..40).map(|_| rune::text("spacer"))),
+                    false,
+                )
+                .key("scroller")
+            })
+        },
+        (960.0, 200.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    rt.frame(0.0);
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 0.1, tx));
+    });
+    assert!(rt.wake_deadline().is_some());
+
+    // Suspend rendered state while staying on the same session (reconnect / resume).
+    rt.update(|s, _| s.transcript_display.suspend_rendered());
+    rt.frame(0.2);
+    rt.frame(0.2);
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 0.3, tx));
+    });
+    assert!(rt.wake_deadline().is_some());
+    rt.update(|s, tx| {
+        assert!(Display::poll(s, false, 1.4, tx));
+    });
+
+    // Scroll the running card off-screen so on_visible(false) stops the shared clock.
+    rt.update(|_, tx| tx.scroll_to("scroller", 0.0, 600.0));
+    rt.frame(1.5);
+    rt.frame(1.5);
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 2.6, tx));
+    });
+    assert!(rt.wake_deadline().is_none());
+
+    // Bring back on screen, then switch session via bind() and verify clock stops.
+    rt.update(|_, tx| tx.scroll_to("scroller", 0.0, 0.0));
+    rt.frame(2.7);
+    rt.frame(2.7);
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 2.8, tx));
+    });
+    assert!(rt.wake_deadline().is_some());
+    rt.update(|s, _| {
+        s.transcript_display.bind("http://a", "ws", "other");
+        s.messages.clear();
+    });
+    rt.frame(4.0);
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 4.0, tx));
+    });
+    assert!(rt.wake_deadline().is_none());
+}
+
+#[test]
+fn task_duration_runs_for_foreground_and_follows_background_reports() {
+    let start = unix_millis().saturating_sub(12_000);
+    let fg_row = crate::history::decode_message(&json!({
+        "type":"assistant","id":"fg","content":[
+            {"type":"tool","id":"call","name":"task","time":{"ran":start},
+             "state":{"status":"running","input":{"description":"Foreground"},
+                      "metadata":{"status":"running"}}}
+        ]
+    }))
+    .unwrap();
+    let bg_row = crate::history::decode_message(&json!({
+        "type":"assistant","id":"bg","time":{"completed":start + 500},"content":[
+            {"type":"tool","id":"call","name":"subagent","time":{"ran":start,"completed":start + 500},
+             "state":{"status":"completed","input":{"description":"Background"},
+                      "metadata":{"sessionID":"child","status":"running"}}}
+        ]
+    }))
+    .unwrap();
+    let report = crate::history::decode_message(&json!({
+        "type":"synthetic","id":"rep","time":{"created":start + 9_000},
+        "text":"<subagent sessionID=\"child\" state=\"completed\">\nDone\n</subagent>"
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Streaming;
+    state.messages = vec![fg_row.into(), bg_row.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            with_locale("en", || {
+                rune::col().children(s.messages.iter().flat_map(|row| {
+                    row.parts.iter().filter_map(|part| {
+                        let crate::content::Part::Tool(tool) = part else {
+                            return None;
+                        };
+                        Some(super::view(s, &row.id, tool))
+                    })
+                }))
+            })
+        },
+        (960.0, 600.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    rt.frame(0.0);
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("12s") || tree.contains("13s"), "{tree}");
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 0.1, tx));
+    });
+    assert!(rt.wake_deadline().is_some());
+    // Add background report and complete foreground task: background settles at 9s.
+    rt.update(|s, _| {
+        s.messages[0] = crate::history::decode_message(&json!({
+            "type":"assistant","id":"fg","time":{"completed":start + 4_000},"content":[
+                {"type":"tool","id":"call","name":"task","time":{"ran":start,"completed":start + 4_000},
+                 "state":{"status":"completed","input":{"description":"Foreground"}}}
+            ]
+        }))
+        .unwrap()
+        .into();
+        s.messages.push(report.into());
+    });
+    rt.frame(0.2);
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("\"4s\"") && tree.contains("\"9s\""), "{tree}");
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 2.0, tx));
+    });
+    rt.frame(2.1);
+    assert!(rt.wake_deadline().is_none());
 }

@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.control.reader.loading": "सामग्री पढ्दै…",
   "missions.control.form.loading": "फारम लोड गर्दै…",
   "missions.control.run.checking": "कार्यको स्थिति जाँच्दै…",
+  "missions.control.run.superseded": "यो कार्यलाई नयाँ कार्यले प्रतिस्थापन गरेको छ।",
   "missions.control.run.pending.start": "मिसन सुरु गर्दै…",
   "missions.control.run.pending.pause": "मिसन पज गर्दै…",
   "missions.control.run.pending.interrupt": "मिसन अवरुद्ध गर्दै…",

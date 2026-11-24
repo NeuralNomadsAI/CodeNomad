@@ -176,7 +176,40 @@ async fn owns_physical(app: &App, workspace: &Workspace, target: &Path) -> bool 
         .is_ok_and(|catalogue| catalogue.trees.iter().any(|tree| tree.contains_live(target)))
 }
 
-pub(super) async fn directory(app: &App, workspace: &Workspace, candidate: &str) -> Result<String, Error> {
+#[derive(PartialEq, Eq)]
+pub(super) struct Location {
+    pub directory: String,
+    pub checkout: PathBuf,
+}
+
+impl Location {
+    /// TS's non-strict request inventory keeps a resolved prospective path
+    /// for up to 10 s. Only an absent checkout can reuse that request proof;
+    /// an existing or redirected checkout must pass live resolution again.
+    pub(super) fn removed_prospectively(&self, raw: &str, observed: tokio::time::Instant) -> bool {
+        let absent =
+            |path: &Path| std::fs::symlink_metadata(path).is_err_and(|err| err.kind() == std::io::ErrorKind::NotFound);
+        let directory = Path::new(&self.directory);
+        observed.elapsed() < std::time::Duration::from_secs(10)
+            && directory != self.checkout
+            && directory.starts_with(&self.checkout)
+            && absent(&self.checkout)
+            && crate::worktrees::ownership::resolve_directory(raw).as_deref() == Some(directory)
+    }
+}
+
+pub(super) async fn directory(app: &App, workspace: &Workspace, candidate: &str) -> Result<Location, Error> {
+    observe_directory(app, workspace, candidate).await.map(|(location, _, _)| location)
+}
+
+/// Resolve a prompt directory selector while capturing its deletion display
+/// token before the async ownership lookup, closing the TOCTOU window where a
+/// CodeNomad deletion finishes during resolution.
+pub(super) async fn observe_directory(
+    app: &App,
+    workspace: &Workspace,
+    candidate: &str,
+) -> Result<(Location, std::sync::Arc<std::sync::atomic::AtomicBool>, tokio::time::Instant), Error> {
     let foreign = || error(Status::FORBIDDEN, "Location does not belong to workspace");
     let candidate = crate::shared::js_trim(candidate);
     let normalized = crate::files::node_path::Style::host().normalize(candidate);
@@ -186,10 +219,17 @@ pub(super) async fn directory(app: &App, workspace: &Workspace, candidate: &str)
     let target = crate::worktrees::ownership::resolve_directory(candidate)
         .filter(|target| target.starts_with(&app.scope))
         .ok_or_else(foreign)?;
-    if !owns_physical(app, workspace, &target).await {
-        return Err(foreign());
-    }
-    target.to_str().map(str::to_owned).ok_or_else(foreign)
+    let live = crate::worktrees::fence::capture_display(&crate::worktrees::fence::identity(&target));
+    let directory = target.to_str().ok_or_else(foreign)?.to_owned();
+    let checkout = crate::worktrees::ownership::resolve(app, workspace, &directory)
+        .await
+        .filter(|owned| owned.directory == directory)
+        .ok_or_else(foreign)?
+        .checkout;
+    let observed = tokio::time::Instant::now();
+    #[cfg(test)]
+    crate::worktrees::fence_test_trace::after_prompt_resolve().await;
+    Ok((Location { directory, checkout }, live, observed))
 }
 
 pub(super) fn translate(body: &mut Value, directories: &BTreeMap<String, String>) {

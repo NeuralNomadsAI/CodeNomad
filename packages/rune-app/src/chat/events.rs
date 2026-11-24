@@ -44,10 +44,13 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
+                s.status_permissions.bind(&backend);
+                s.status_usage.bind(&backend);
                 s.transcript_display.children.bind(backend.clone());
                 s.transcript_display.usage_family.bind(backend.clone());
                 s.transcript_display.pictures.bind(backend.clone());
                 s.transcript_display.receipts.bind(backend.clone());
+                s.transcript_display.messages.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -59,6 +62,8 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    s.transcript_display.messages.refresh();
+                    s.status_permissions.online(true);
                     workspace::mission_event(s, None);
                     s.transcript_display.receipts.reconnect();
                     s.transcript_display.pictures.retry_interrupted();
@@ -94,6 +99,11 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.composer.picker.mentions_changed(&s.reads, &s.wake);
             }
             Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::PermissionModeChanged { root },
+            ) => {
+                s.status_permissions.invalidate(root.as_deref());
+            }
+            Event::Workspace(
                 codenomad_client::transport::WorkspaceEvent::ComposerCataloguesChanged,
             ) => {
                 s.composer.picker.commands_changed(&s.reads, &s.wake);
@@ -120,23 +130,74 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                     agent.observe_running(running);
                 }
             }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionRequest {
+                form,
+                id,
+            }) => {
+                if !uses_workspace_attention(s)
+                    && let Some(agent) = &mut s.agent
+                {
+                    agent.notice_request(form, id);
+                }
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionExecution {
+                notice,
+            }) => {
+                if !uses_workspace_attention(s)
+                    && let Some(agent) = &mut s.agent
+                {
+                    let verify = notice.is_some();
+                    agent.attention.execution(notice);
+                    if verify {
+                        agent.refresh(false);
+                    }
+                }
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionCompacted {
+                id,
+            }) => {
+                if !uses_workspace_attention(s)
+                    && let Some(agent) = &mut s.agent
+                {
+                    agent.attention.compacted(id);
+                    agent.refresh(false);
+                }
+            }
+            Event::Workspace(
+                event @ codenomad_client::transport::WorkspaceEvent::OpenCodeNotice { .. },
+            ) => {
+                if !uses_workspace_attention(s) {
+                    crate::shell::notifications::relay_notice(s, event);
+                }
+            }
             Event::Workspace(
                 codenomad_client::transport::WorkspaceEvent::PermissionReceiptsChanged { message },
             ) => {
                 s.transcript_display.receipts.invalidate(message);
                 continue;
             }
+            Event::ProviderUsageWatch(watch) => s.status_usage.watch(watch),
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::ProviderUsageRefresh(directory),
+            ) => {
+                s.status_usage.refresh(directory.as_deref());
+            }
             Event::Workspace(event) => {
                 if matches!(
                     event,
                     codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
                 ) {
+                    s.status_permissions.online(false);
+                    s.status_usage.disconnect();
                     chat::reader::suspend(s);
                     s.composer.picker.set_attachments_supported(false);
                     s.attachments.cancel();
                     s.messages.clear();
                     s.history_detached = false;
                     s.can_older = false;
+                    if let Some(agent) = &mut s.agent {
+                        agent.attention.disconnected();
+                    }
                 }
                 workspace::mission_event(s, Some(&event));
                 git::event(s, &event);
@@ -146,6 +207,10 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
             Event::Sync(page) | Event::ReaderSync { page, .. } => {
+                if s.reader.is_none() {
+                    // Direct startup also uses Reconnecting to stage a fresh transcript read.
+                    s.status_permissions.synchronized();
+                }
                 chat::reader::reconcile_bookmark(s, &page.rows);
                 if let Some(reader) = &mut s.reader {
                     reader.install(page.newer.is_some());
@@ -201,6 +266,8 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 }
             }
             Event::Reconnecting | Event::ConnectionLost => {
+                s.transcript_display.messages.offline();
+                s.status_permissions.online(false);
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::reconnecting(s);
                 #[cfg(target_arch = "wasm32")]
@@ -217,6 +284,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.attachments.cancel();
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
+                    a.attention.disconnected();
                 }
             }
             Event::PagingFailed => {
@@ -224,6 +292,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.paging = false;
                 s.history_error = true;
             }
+            Event::RevertChanged => s.transcript_display.messages.invalidate_boundary(),
             Event::PageFailed(cancelled) => {
                 chat::reader::admit_page(s, &cancelled, || false);
             }
@@ -236,6 +305,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::AnchorFailed(ticket) => crate::timeline::failed(s, ticket),
             Event::HistoryInvalidated => {
+                s.transcript_display.messages.invalidate_boundary();
                 chat::reader::cancel_page(s);
                 s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
@@ -251,6 +321,8 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::WorkspaceMissing => {
                 s.transcript_display.receipts.clear();
+                s.status_permissions.online(false);
+                s.status_usage.disconnect();
                 s.transcript_display.children.clear();
                 s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
@@ -351,6 +423,8 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                     continue;
                 }
                 s.composer.picker.set_attachments_supported(false);
+                s.status_permissions.online(false);
+                s.status_usage.disconnect();
                 chat::reader::suspend(s);
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
@@ -359,6 +433,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.phase = Phase::Failed;
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
+                    a.attention.disconnected();
                 }
             }
         }
@@ -382,4 +457,10 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
         changed = true;
     }
     changed | super::usage::family::Totals::poll(s)
+}
+
+fn uses_workspace_attention(s: &State) -> bool {
+    s.screen
+        .launcher()
+        .is_some_and(|launcher| launcher.catalogue_watch.is_some())
 }

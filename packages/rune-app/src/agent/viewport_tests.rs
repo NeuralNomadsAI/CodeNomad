@@ -131,6 +131,7 @@ fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
             let ui = state.agent.as_mut().unwrap();
             ui.selected = "permission-fixture".into();
             ui.permissions.push(Permission {
+                tool: None,
                 id: ui.selected.clone(),
                 action: "read".into(),
                 resources: (0..40)
@@ -138,7 +139,6 @@ fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
                     .collect(),
                 message: String::new(),
                 supported: true,
-                tool: None,
             });
             ui.reasons.insert(ui.selected.clone(), TextEdit::new(""));
             let mut rt = runtime(state, size);
@@ -209,7 +209,7 @@ fn question_fields_model_list_and_composer_remain_scroll_reachable() {
         let mut state = state();
         let ui = state.agent.as_mut().unwrap();
         ui.selected = "form-fixture".into();
-        ui.forms.push(Form { id: ui.selected.clone(), title: "Synthetic question".into(), fields: (0..24).map(|i| json!({"key":format!("field{i}"),"type":"string","title":format!("Synthetic field {i}")})).collect(), tool: None });
+        ui.forms.push(Form { tool: None, infer_websearch: false, id: ui.selected.clone(), title: "Synthetic question".into(), fields: (0..24).map(|i| json!({"key":format!("field{i}"),"type":"string","title":format!("Synthetic field {i}")})).collect() });
         agent_forms::seed(&ui.forms, &mut ui.drafts);
         let mut rt = runtime(state, size);
         reveal(&mut rt, "field-field23");
@@ -254,21 +254,22 @@ fn audit_settlement_during_edit(permission: bool) {
     let key;
     if permission {
         ui.permissions.push(Permission {
+            tool: None,
             id: ui.selected.clone(),
             action: "read".into(),
             resources: vec!["/synthetic".into()],
             message: String::new(),
             supported: true,
-            tool: None,
         });
         ui.reasons.insert(ui.selected.clone(), TextEdit::new(""));
         key = "reason-audit_pending";
     } else {
         ui.forms.push(Form {
+            tool: None,
+            infer_websearch: false,
             id: ui.selected.clone(),
             title: "Synthetic question".into(),
             fields: vec![json!({"key":"answer","type":"string"})],
-            tool: None,
         });
         agent_forms::seed(&ui.forms, &mut ui.drafts);
         key = "field-answer";
@@ -289,13 +290,16 @@ fn audit_settlement_during_edit(permission: bool) {
                 Snapshot {
                     models: None,
                     current: None,
+                    directory: None,
                     session_known: true,
+                    root_directory: None,
                     usage: None,
                     running: false,
                     permissions: Some(vec![]),
                     forms: Some(vec![]),
                 },
-                false
+                false,
+                0
             ))
             .is_ok()
     );
@@ -329,12 +333,12 @@ fn late_editor_event_cannot_change_a_replacement_session_with_the_same_request_i
     let ui = initial.agent.as_mut().unwrap();
     ui.selected = "reused-request".into();
     ui.permissions.push(Permission {
+        tool: None,
         id: ui.selected.clone(),
         action: "read".into(),
         resources: vec![],
         message: String::new(),
         supported: true,
-        tool: None,
     });
     ui.reasons
         .insert(ui.selected.clone(), TextEdit::new("first session"));

@@ -266,6 +266,7 @@ pub fn drag_title<S: 'static>(
         .center_y()
         .pad(Space::Xs)
         .child(rune::text(label).text_role(crate::TextRole::Label))
+        .preserve_focus_on_press(true)
         .touch_drags_at_once()
         .on_drag(move |s, gesture, tx| {
             let at = [gesture.dx, gesture.dy];
@@ -286,14 +287,54 @@ pub fn toggle<S: 'static>(label: &str, press: impl Fn(&mut S, &mut rune::Tx) + '
         .build(crate::kit(layout::dark()))
 }
 
-pub fn results() -> El {
+pub fn body() -> El {
     rune::col()
         .w_full()
-        .max_h(18.0 * tokens(layout::dark()).number("font-size-base").px())
+        .min_h(0.0)
         .shrink()
+        .separate(Space::Sm)
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+}
+
+pub fn announce(tx: &mut rune::Tx, hint: String) {
+    tx.announce(hint, rune::LiveRegion::Polite);
+}
+
+pub fn results() -> El {
+    rune::col().w_full()
+}
+
+pub fn preview(
+    title: &str,
+    worktree: Option<&str>,
+    age: Option<String>,
+    open: El,
+    blocks: El,
+) -> El {
+    let t = tokens(layout::dark());
+    let header = layout::action_row()
+        .child(rune::text(title).text_role(crate::TextRole::Label))
+        .children(worktree.map(|label| {
+            rune::text(label)
+                .text_role(crate::TextRole::Small)
+                .color(t.color("text-secondary"))
+        }))
+        .children(age.map(|label| {
+            rune::text(label)
+                .role("time")
+                .color(t.color("text-secondary"))
+        }))
+        .child(open);
+    rune::col()
+        .w_full()
+        .shrink()
+        .min_h(0.0)
+        .role("group")
+        .label(title)
+        .child(header)
+        .child(blocks)
 }
 
 #[cfg(test)]

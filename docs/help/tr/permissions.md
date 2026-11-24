@@ -57,7 +57,7 @@ Karar kayıtları OpenCode mesajı veya izin kuralı düzenleyicisi değil, salt
 
 ## Konuşma izin modu {#conversation-mode}
 
-Bir konuşma seçin, **Durum → İzinler** bölümünü açın ve bir moda tıklayın. Bölüm kapalıyken şimşek (Özerk) veya kalkan (Denetimli) simgesi bilinen son modu gösterir.
+Bir konuşma seçin, **Durum → İzinler** bölümünü açın ve bir moda tıklayın. Kapalı bölüm bilinen son modu gösterir.
 
 - **Özerk** — OpenCode’un izin kurallarını uygular.
 - **Denetimli** — Ajan dosyaları değiştirmeden veya kabuk komutlarını çalıştırmadan önce onay ister. Bu işlemlere ilişkin genel, proje ve konuşma yasakları geçerli kalır; izin veren kurallar onay isteğine dönüşür. OpenCode’a kaydedilen **Her Zaman İzin Ver** onayları, eşleşen istekler için geçerli kalır.
