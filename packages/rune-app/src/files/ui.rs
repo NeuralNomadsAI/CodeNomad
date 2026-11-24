@@ -183,6 +183,9 @@ impl Ui {
         self.backend = backend.clone();
         self.reader.rebind_session(backend);
         self.document.rebind_session(backend);
+        if !backend.session.is_empty() {
+            self.online(false);
+        }
         if renewed {
             self.actions.revoke();
             self.tree.invalidate_all();

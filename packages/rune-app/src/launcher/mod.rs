@@ -289,6 +289,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if reauthenticated {
                 crate::workspace::renew_connection(s);
                 if let Some(id) = selected {
+                    s.incoming = None;
+                    s.phase = Phase::Failed;
                     s.show_chat();
                     choose_destination(s, id, None, tx);
                 } else {

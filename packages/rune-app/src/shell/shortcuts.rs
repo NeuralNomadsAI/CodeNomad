@@ -242,6 +242,9 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
 }
 
 fn select_relative_session(s: &mut State, next: bool, tx: &mut Tx) {
+    if !launcher::can_change_session(s) || s.screen.launcher().is_none_or(|l| l.pending) {
+        return;
+    }
     let Some(ids) = s.screen.launcher().map(sidebar::visible_session_ids) else {
         return;
     };

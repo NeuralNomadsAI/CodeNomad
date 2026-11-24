@@ -110,7 +110,11 @@ impl Backend {
             .as_str()
             .filter(|dir| crate::server_path::absolute(dir))
             .ok_or("missing session directory")?;
+        let placement = row["listWorktreeSlug"]
+            .as_str()
+            .filter(|slug| valid_id(slug));
         if !crate::server_path::same(&project.path, directory)
+            && !placement.is_some_and(|slug| slug != "root")
             && !self
                 .session_directories(project)
                 .await?
@@ -187,7 +191,14 @@ impl Backend {
             return Err("foreign session location".into());
         }
         if linked {
-            let owned = if verify_directory {
+            let owned = if allow_linked_fresh {
+                placement.is_some_and(|slug| slug != "root")
+                    || self
+                        .session_directories(project)
+                        .await?
+                        .iter()
+                        .any(|d| crate::server_path::same(d, directory))
+            } else if verify_directory {
                 self.session_directories(project)
                     .await?
                     .iter()

@@ -46,8 +46,7 @@ fn session_new_resolves_authoritative_directory_and_honors_placement_hold() {
         let mut saw_lookup = false;
         let mut saw_create = false;
         let mut saw_bind = false;
-        let mut worktree_reads = 0usize;
-        while !(saw_lookup && saw_create && saw_bind && worktree_reads >= 2) {
+        while !(saw_lookup && saw_create && saw_bind) {
             let req = http.accept().await;
             if req
                 .header
@@ -62,7 +61,7 @@ fn session_new_resolves_authoritative_directory_and_honors_placement_hold() {
             } else if req.header.starts_with(
                 "POST /workspaces/proj-1/instance/api/session?directory=%2Frepo-moved ",
             ) {
-                assert!(saw_lookup && worktree_reads >= 1);
+                assert!(saw_lookup);
                 assert_eq!(req.body["location"]["directory"], json!("/repo-moved"));
                 saw_create = true;
                 req.reply(
@@ -84,7 +83,6 @@ fn session_new_resolves_authoritative_directory_and_honors_placement_hold() {
                 .header
                 .starts_with("GET /api/workspaces/proj-1/worktrees ")
             {
-                worktree_reads += 1;
                 req.reply(
                     200,
                     json!({"worktrees":[
@@ -575,6 +573,14 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         rt.state.files = Some(files);
         crate::git::connected_placed(&mut rt.state, &bound, "wt-a");
         crate::git::fixture_commit_draft(&mut rt.state, Some("wip commit"));
+        rt.state.composer.device.choosing = true;
+        rt.update(|s, tx| {
+            assert!(
+                !crate::launcher::close_session(s, tx),
+                "close-session must refuse while composer device attachment work is active"
+            );
+        });
+        rt.state.composer.device.choosing = false;
         rt.update(|s, tx| {
             assert!(crate::launcher::close_session(s, tx));
         });
@@ -654,6 +660,21 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
             rt.state.files.as_ref().unwrap().tree.selected(),
             Some("src")
         );
+        // Rebinding a detached Files panel to a live conversation resets online state so
+        // the conversation SSE's online(true) revalidates the tree without losing mid-handoff edits.
+        rt.state.files.as_mut().unwrap().show(true);
+        let _ = rt.state.files.as_mut().unwrap().tree.take_refresh();
+        rt.state.files.as_mut().unwrap().online(true);
+        assert!(
+            !rt.state
+                .files
+                .as_mut()
+                .unwrap()
+                .tree
+                .take_refresh()
+                .is_empty(),
+            "conversation stream online(true) must revalidate a rebound detached Files tree"
+        );
 
         // project_opened during a catalogue SSE outage keeps detached Files/Git offline.
         let (watch, _watch_task) = codenomad_client::stream::CatalogueWatch::new(
@@ -720,5 +741,81 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         )
         .await;
         assert_eq!(create_task.await.unwrap().id, "s-root");
+
+        // Proxy-attested alias worktree slug succeeds in session_directory and bind_created_session
+        // without requiring the alias string to match the inventory path verbatim.
+        let alias_project = Project {
+            id: "proj-alias".into(),
+            path: "/repo".into(),
+        };
+        let dir_task = tokio::spawn({
+            let backend = http.backend.clone();
+            let project = alias_project.clone();
+            async move {
+                backend
+                    .session_directory(&project, "s-alias")
+                    .await
+                    .unwrap()
+            }
+        });
+        let req = http.accept().await;
+        assert!(
+            req.header
+                .starts_with("GET /workspaces/proj-alias/instance/api/session/s-alias ")
+        );
+        req.reply(
+            200,
+            json!({
+                "data": {
+                    "id": "s-alias",
+                    "title": "",
+                    "location": {"directory": "/alias-wt"},
+                    "listWorktreeSlug": "wt-a"
+                }
+            }),
+        )
+        .await;
+        assert_eq!(dir_task.await.unwrap(), "/alias-wt");
+        let bind_task = tokio::spawn({
+            let backend = http.backend.clone();
+            let project = alias_project.clone();
+            async move {
+                backend
+                    .bind_created_session(&project, "s-new", "/alias-wt")
+                    .await
+                    .unwrap()
+            }
+        });
+        let req = http.accept().await;
+        assert!(
+            req.header
+                .starts_with("GET /workspaces/proj-alias/instance/api/session/s-new ")
+        );
+        req.reply(
+            200,
+            json!({
+                "data": {
+                    "id": "s-new",
+                    "title": "",
+                    "location": {"directory": "/alias-wt"},
+                    "listWorktreeSlug": "wt-a"
+                }
+            }),
+        )
+        .await;
+        let (_, _, slug) = bind_task.await.unwrap();
+        assert_eq!(slug, "wt-a");
+
+        // Refused session-next while launcher is pending does not supersede an active navigation ticket.
+        settings::fixture_shortcuts(&rt.state, json!({}));
+        let ticket = rt.state.notifications.navigation_ticket();
+        if let Some(l) = rt.state.screen.launcher_mut() {
+            l.pending = true;
+        }
+        send_key(&mut rt, Key::Command(']'), primary_mods(true));
+        assert_eq!(rt.state.notifications.navigation_ticket(), ticket);
+        if let Some(l) = rt.state.screen.launcher_mut() {
+            l.pending = false;
+        }
     });
 }

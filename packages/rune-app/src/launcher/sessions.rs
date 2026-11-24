@@ -363,6 +363,7 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
     });
     if s.screen.is_launcher()
         || !can_change_session(s)
+        || s.composer.device.busy()
         || tab_key.is_some_and(|key| s.documents.has_tab_edits(key))
         || s.files
             .as_ref()
