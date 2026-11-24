@@ -29,7 +29,16 @@ const readPayload = (feature: DesktopPluginFeature, file: string) => readFile(ne
     return readFile(new URL(`../../dist/plugins/${feature}/${file}`, import.meta.url))
   })
 
-export const readOptionalDesktopPluginPayload = (feature: DesktopPluginFeature, file: string, reader = readPayload) => reader(feature, file)
+export const readOptionalDesktopPluginPayload = (
+  feature: DesktopPluginFeature,
+  file: string,
+  base = new URL("../plugins/", import.meta.url),
+  fallback = new URL("../../dist/plugins/", import.meta.url),
+) => readFile(new URL(`${feature}/${file}`, base))
+  .catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error
+    return readFile(new URL(`${feature}/${file}`, fallback))
+  })
   .catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined
     throw error

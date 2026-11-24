@@ -79,7 +79,7 @@ async function journey(kind) {
   Object.assign(process.env, env)
   process.env.CLI_CONFIG = path.join(root, "profile.yaml")
   const [{ default: Fastify }, { default: pino }, { OpenCode }, { Service },
-    { WorkspaceManager }, { EventBus }, { rememberRuntime }, { DesktopPluginLifecycle }, { resolveDesktopPluginPaths },
+    { WorkspaceManager }, { EventBus }, { rememberRuntime }, { DesktopPluginLifecycle, readOptionalDesktopPluginPayload }, { resolveDesktopPluginPaths },
     { createAutomationBridgeRegistration, publishAutomationBridge }, { registerAutomationPluginRoute }, { registerMissionRoutes },
     { WorktreeDeletionFence }, { PluginControls }, { NativeScheduleSettingsActivation }, { missionDocumentPassage },
     { NativeScheduleTransportRpc, nativeScheduleWakeKey }, { readNativeScheduleIncarnation }, { nativeScheduleCarrierLookupKey }, experimentalEditor] = await Promise.all([
@@ -465,14 +465,26 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     await app.listen({ host: "127.0.0.1", port: 0 }); baseURL = `http://127.0.0.1:${app.server.address().port}`; assert.notEqual(app.server.address().port, 28894)
     registration.url = `${baseURL}/api/opencode-plugin/automation`; removeBridge = await publishAutomationBridge(registration)
     const legacy = values["legacy-bundle"]
-    const readProvider = runtimeOnly ? async () => undefined : undefined
-    plugin = controlTrace ? new DesktopPluginLifecycle("missions", () => readFile(controlTrace.file), readProvider)
-      : legacy ? new DesktopPluginLifecycle("missions", () => readFile(legacy), readProvider)
-      : new DesktopPluginLifecycle("missions", undefined, readProvider); await plugin.start(paths)
+    let readProvider
     if (runtimeOnly) {
-      const { readdir } = await import("node:fs/promises")
+      const { copyFile, readdir } = await import("node:fs/promises")
+      const { pathToFileURL } = await import("node:url")
+      const pkgPrimary = path.join(root, "runtime-only-pkg", "plugins")
+      const pkgFallback = path.join(root, "runtime-only-pkg", "dist")
+      await mkdir(path.join(pkgPrimary, "missions"), { recursive: true })
+      await mkdir(path.join(pkgFallback, "missions"), { recursive: true })
+      await copyFile(fileURLToPath(legacy ?? bundled), path.join(pkgPrimary, "missions", "plugin.mjs"))
+      const primaryURL = pathToFileURL(`${pkgPrimary}${path.sep}`), fallbackURL = pathToFileURL(`${pkgFallback}${path.sep}`)
+      readProvider = () => readOptionalDesktopPluginPayload("missions", "provider.mjs", primaryURL, fallbackURL)
+      plugin = controlTrace ? new DesktopPluginLifecycle("missions", () => readFile(controlTrace.file), readProvider)
+        : new DesktopPluginLifecycle("missions", () => readFile(path.join(pkgPrimary, "missions", "plugin.mjs")), readProvider)
+      await plugin.start(paths)
       const files = await readdir(path.join(paths.data, "missions"))
       assert.equal(files.some(name => name.endsWith(".provider.mjs")), false, "runtime-only provisioning must not install provider.mjs")
+    } else {
+      plugin = controlTrace ? new DesktopPluginLifecycle("missions", () => readFile(controlTrace.file))
+        : legacy ? new DesktopPluginLifecycle("missions", () => readFile(legacy)) : new DesktopPluginLifecycle("missions")
+      await plugin.start(paths)
     }
     await until(async () => (await client.plugin.list({ location: { directory: project } })).data.some(item => item.id === "codenomad.missions" && item.state.status === "active"))
     if (controlsKinds.includes(kind)) {

@@ -147,6 +147,7 @@ export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context, _artifact
       if (info && !info.code) {
         requireProvider = true
         assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation, { requireProvider: true })
+        await native.qualifyLegacyProvider(current)
       }
       const wake = info?.code ? missionCodeWakeProof(binding.calendar, info, input.wake.run) : await reader.message(input.wake)
       if (!info || !info.code && info.runCount < input.wake.run || !wake) throw new Error("schedule-wake-proof")

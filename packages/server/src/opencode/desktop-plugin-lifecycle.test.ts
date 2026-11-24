@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { existsSync, readdirSync } from "node:fs"
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import type { OpenCodeClient } from "@opencode/client"
 import type { Endpoint } from "@opencode/client/service"
 import { OpenCodeSharedService, type OpenCodeSharedServiceDependencies } from "../workspaces/opencode-service"
@@ -202,13 +203,18 @@ test("a provider read failure fails Missions provisioning before installing its 
 })
 
 test("Missions provisions a runtime-only artifact manifest when the optional legacy provider is absent", async t => {
-  const enoent = Object.assign(new Error("not found"), { code: "ENOENT" })
-  assert.equal(await readOptionalDesktopPluginPayload("missions", "provider.mjs", async () => { throw enoent }), undefined)
-  const eacces = Object.assign(new Error("denied"), { code: "EACCES" })
-  await assert.rejects(readOptionalDesktopPluginPayload("missions", "provider.mjs", async () => { throw eacces }), /denied/)
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-provider-optional-"))
-  const lifecycle = new DesktopPluginLifecycle("missions", async () => bundle,
-    () => readOptionalDesktopPluginPayload("missions", "provider.mjs", async () => { throw enoent }))
+  const primary = path.join(root, "pkg-plugins"), fallback = path.join(root, "pkg-dist")
+  await mkdir(path.join(primary, "missions"), { recursive: true })
+  await mkdir(path.join(fallback, "missions"), { recursive: true })
+  await writeFile(path.join(primary, "missions", "plugin.mjs"), bundle)
+  const primaryURL = pathToFileURL(`${primary}${path.sep}`), fallbackURL = pathToFileURL(`${fallback}${path.sep}`)
+  assert.equal(await readOptionalDesktopPluginPayload("missions", "provider.mjs", primaryURL, fallbackURL), undefined)
+  await mkdir(path.join(primary, "missions", "as-dir"))
+  await assert.rejects(readOptionalDesktopPluginPayload("missions", "as-dir", primaryURL, fallbackURL))
+  const lifecycle = new DesktopPluginLifecycle("missions",
+    () => readFile(path.join(primary, "missions", "plugin.mjs")),
+    () => readOptionalDesktopPluginPayload("missions", "provider.mjs", primaryURL, fallbackURL))
   t.after(async () => { await lifecycle.stop(); await rm(root, { recursive: true, force: true }) })
   await lifecycle.start(pathsFor(root))
   const source = await readFile(entryFor(root, "missions"), "utf8")

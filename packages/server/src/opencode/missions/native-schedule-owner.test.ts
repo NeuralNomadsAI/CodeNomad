@@ -611,10 +611,9 @@ test("legacy prompt resume and lost-ACK auxiliary adoption recheck provider arti
     get(target, prop, receiver) {
       if (prop === "withExclusion") return (fn: (locked: any) => Promise<any>) => target.withExclusion(locked => fn(new Proxy(locked, {
         get(lTarget, lProp, lReceiver) {
-          if (lProp === "read") return async (id: string) => {
-            const value = await lTarget.read(id)
+          if (lProp === "change") return async (id: string, rev: number, guard: () => true, update: (v: any) => void) => {
             if (!unlinked) { unlinked = true; unlinkSync(vanishingAdopt.installation.provider.file) }
-            return value
+            return lTarget.change(id, rev, guard, update)
           }
           return Reflect.get(lTarget, lProp, lReceiver)
         },
@@ -624,7 +623,7 @@ test("legacy prompt resume and lost-ACK auxiliary adoption recheck provider arti
   }))
   const vanishingWake = { missionID: vanishingDoc.id, generation: vanishingDoc.timeGeneration, sessionID: vanishingInfo.sessionID,
     scheduleID: vanishingInfo.id, run: 1, messageID: `msg_${vanishingInfo.id}_1` }
-  await assert.rejects(vanishingOwner.adoptAuxiliary(vanishingWake), /ENOENT|artifact/)
+  await assert.rejects(vanishingOwner.adoptAuxiliary(vanishingWake), /policy-unqualified|ENOENT|artifact/)
   assert.equal(unlinked, true)
   assert.equal((await origRead(vanishingDoc.id) as any).calendarOwner?.slots.find((item: any) => item.role === "reconciliation")?.creation, "attempted")
 
@@ -643,4 +642,34 @@ test("legacy prompt resume and lost-ACK auxiliary adoption recheck provider arti
     assert.equal(reconciled.calendarOwner?.operation.pending, true, `${drift} must prevent ordinary lost-ACK adoption`)
     assert.equal(reconciled.calendarOwner?.slots.find(item => item.role === "reconciliation")?.creation, "attempted")
   }
+
+  const afterResume = await ownerFixture(t)
+  await afterResume.control("play")
+  await afterResume.control("pause")
+  const baseResume = afterResume.native.resume
+  let removedAfterResume = false
+  afterResume.native.resume = async (target, id, guard) => {
+    const result = await baseResume(target, id, guard)
+    if (!removedAfterResume && target.descriptor.role === "principal") {
+      removedAfterResume = true
+      unlinkSync(afterResume.installation.provider.file)
+    }
+    return result
+  }
+  const notReady = await afterResume.control("resume")
+  assert.equal(removedAfterResume, true)
+  assert.equal(notReady.calendarOwner?.operation.pending, true, "removing provider.mjs after final resume must block receipt commit")
+
+  const pausePrincipals = await ownerFixture(t)
+  const armedPause = await pausePrincipals.control("play")
+  const auxCal = armedPause.calendars.find(item => item.role === "reconciliation")!
+  const priCal = armedPause.calendars.find(item => item.role === "principal")!
+  pausePrincipals.calendars.get(auxCal.scheduleID)!.status = "paused"
+  await pausePrincipals.store.change(armedPause.id, armedPause.revision, pausePrincipals.current, value => {
+    missionDocumentChanges.reserve(value, { kind: "manual", requestID: "held_pending" }, pausePrincipals.now + 1, [])
+  })
+  unlinkSync(pausePrincipals.installation.provider.file)
+  const pausedWithPending = await pausePrincipals.control("pause")
+  assert.equal(pausePrincipals.calendars.get(priCal.scheduleID)!.status, "paused", "Pause must freeze principals even if retained legacy auxiliary resume fails")
+  assert.equal(pausedWithPending.calendarOwner?.operation.pending, true)
 })

@@ -165,11 +165,12 @@ the journal revision and write count unchanged.
 
 ## Local carrier primitives
 
-`nativeScheduleCarrierHooks` supplies public language/context/title/compaction and
-provider-HTTP hooks for legacy prompt carriers, registered with an exact owned
-carrier lookup. `createNativeScheduleCarrierProvider` is registered only when
-`provider.mjs` is present and serves legacy prompt rows; Code Mode carriers have no
-model and refuse prompt and LLM context hooks. The language object is shared and
+`nativeScheduleCarrierHooks` supplies public `title`, `compaction` and
+provider-HTTP hooks for every owned carrier, plus `language` and `context`
+hooks for legacy prompt carriers, registered with an exact owned carrier lookup.
+`createNativeScheduleCarrierProvider` is registered only when `provider.mjs` is
+present and serves legacy prompt rows; Code Mode carriers have no model and
+refuse prompt and LLM context hooks. The language object is shared and
 stateless; title and compaction return local results even when auxiliary agent
 defaults point to remote models. Context validation clears technical tools;
 provider HTTP for any owned carrier throws.
