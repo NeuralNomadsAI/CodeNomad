@@ -103,7 +103,11 @@ impl Panel {
         if self.cleanup_scope().as_ref() != Some(scope) {
             return;
         }
-        if !self.cleanups.iter().any(|row| row.matches_saved(&cleanup)) {
+        if !self
+            .cleanups
+            .iter()
+            .any(|row| row.is_pending() && row.matches_saved(&cleanup))
+        {
             return;
         }
         let row_live = self.cleanup_row_live(&cleanup.mission_id, &cleanup.deletion_id);
@@ -324,6 +328,17 @@ impl Panel {
     ) {
         let mut refreshed = false;
         if let Some(scope) = self.cleanup_scope() {
+            for (deleted_scope, mission_id) in &settled.cleanup.deleted_missions {
+                if deleted_scope == &scope {
+                    self.forget_deleted_mission(mission_id);
+                    owner.recovery.clear_error_for(&scope, mission_id);
+                }
+            }
+            for (settled_scope, mission_id, deletion_id) in &settled.cleanup.settled_cleanups {
+                if settled_scope == &scope {
+                    self.mark_cleanup_settled(mission_id, deletion_id);
+                }
+            }
             owner
                 .cleanup
                 .retire_settled_cleanups(&scope, &self.cleanups);

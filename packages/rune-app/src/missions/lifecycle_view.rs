@@ -43,7 +43,10 @@ pub(crate) fn controls(
     let recovery_busy = owner.recovery.any_pending_for(&source);
     let recover_pending = owner.recovery.pending(&recover_key);
     let recover_admitted = owner.recovery.admitted(&recover_key);
-    let recover_error = owner.recovery.error(&recover_key);
+    let recover_error = owner.recovery.error_for(
+        &source,
+        codenomad_client::missions::RecoveryTarget::Coordinator,
+    );
     let pausing = Lifecycle::allow(
         header,
         LifecycleAction::Pause,
@@ -217,12 +220,10 @@ pub(crate) fn controls(
             "status",
         ));
     }
-    if recover_eligible {
-        if recover_pending {
-            view = view.child(theme::note(t("missions.recovery.pending"), "status"));
-        } else if let Some(error) = recover_error {
-            view = view.child(theme::note(t(error.key()), "alert"));
-        }
+    if recover_pending {
+        view = view.child(theme::note(t("missions.recovery.pending"), "status"));
+    } else if let Some(error) = recover_error {
+        view = view.child(theme::note(t(error.key()), "alert"));
     }
     match delete_state {
         Some(DeleteState::Busy) => {

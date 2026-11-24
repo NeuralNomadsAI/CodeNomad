@@ -184,7 +184,7 @@ fn coordinator_eligibility_requires_complete_fresh_interrupted_active_or_resumab
 }
 
 #[test]
-fn coordinator_eligibility_handles_161_actors_across_two_pages_and_revokes_on_sse_disconnect() {
+fn separate_activity_windows_never_manufacture_idle_proof_and_sse_loss_persists_across_selection() {
     let active = header_value("msn", "active", Some("running"), 7, true, None);
     let page1 = Activity {
         revision: 7,
@@ -214,72 +214,6 @@ fn coordinator_eligibility_handles_161_actors_across_two_pages_and_revokes_on_ss
             })
             .collect(),
     };
-    let mut obs = Observation::default();
-    obs.observe(7);
-    assert!(obs.adopt_page(0, page1));
-    assert!(
-        !coordinator_eligible(&active, &obs),
-        "first page alone cannot prove all 161 actors are idle"
-    );
-
-    // Loading page 2 with an Unknown actor still withholds Recover.
-    let unknown_page2 = Activity {
-        revision: 7,
-        observed_at: 101.0,
-        window: Window {
-            order: "ord-161".into(),
-            offset: 160,
-            end: 161,
-            total: 161,
-        },
-        coverage: Coverage::Partial,
-        requests: Coverage::Partial,
-        actors: vec![codenomad_client::missions::Actor {
-            session_id: "ses_w_160".into(),
-            title: "Actor 160".into(),
-            state: ActorState::Unknown,
-            request: None,
-        }],
-    };
-    let mut obs_unknown = Observation::default();
-    obs_unknown.observe(7);
-    assert!(
-        obs_unknown.adopt_page(
-            0,
-            Activity {
-                revision: 7,
-                observed_at: 100.0,
-                window: Window {
-                    order: "ord-161".into(),
-                    offset: 0,
-                    end: 160,
-                    total: 161,
-                },
-                coverage: Coverage::Partial,
-                requests: Coverage::Partial,
-                actors: (0..160)
-                    .map(|i| codenomad_client::missions::Actor {
-                        session_id: if i == 0 {
-                            "ses_coord".into()
-                        } else {
-                            format!("ses_w_{i}")
-                        },
-                        title: format!("Actor {i}"),
-                        state: if i == 0 {
-                            ActorState::IdleWithoutReport
-                        } else {
-                            ActorState::Missing
-                        },
-                        request: None,
-                    })
-                    .collect(),
-            }
-        )
-    );
-    assert!(obs_unknown.adopt_page(160, unknown_page2));
-    assert!(!coordinator_eligible(&active, &obs_unknown));
-
-    // Loading a clean page 2 unlocks Recover for a 161-actor mission.
     let page2 = Activity {
         revision: 7,
         observed_at: 101.0,
@@ -298,18 +232,92 @@ fn coordinator_eligibility_handles_161_actors_across_two_pages_and_revokes_on_ss
             request: None,
         }],
     };
+    let mut obs = Observation::default();
+    obs.observe(7);
+    assert!(obs.adopt_page(0, page1));
     assert!(obs.adopt_page(160, page2));
     assert!(
-        coordinator_eligible(&active, &obs),
-        "loading both real partial pages at revision 7 must enable Recover"
+        !coordinator_eligible(&active, &obs),
+        "separately observed windows never manufacture a whole-mission idle proof"
     );
 
-    // Losing the SSE stream revokes Recover immediately even without a revision change.
-    obs.set_online(false);
-    assert!(!coordinator_eligible(&active, &obs));
-    // Reconnecting marks a refresh pending, so Recover stays unavailable until fresh pages load.
-    obs.set_online(true);
-    assert!(!coordinator_eligible(&active, &obs));
+    // Losing SSE persists across switching Mission selection in the Panel.
+    let mut backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+    backend.workspace = "ws".into();
+    let (wake, _) = witness();
+    let mut panel =
+        super::super::Panel::new(backend, Some("project".into()), Default::default(), wake);
+    let make_summary = |id: &str| codenomad_client::missions::Summary {
+        id: id.into(),
+        title: Some(id.into()),
+        objective: id.into(),
+        status: Status::Active,
+        run_state: None,
+        coordinator_session_id: "ses_coord".into(),
+        actor_count: 1,
+        updated_at: 1.0,
+        revision: 7,
+        finish_sequence: None,
+        task_count: None,
+    };
+    panel.summaries = vec![make_summary("msn-a"), make_summary("msn-b")];
+    panel.select("msn-a");
+    panel.set_online(false);
+    panel.select("msn-b");
+    let single_idle = Activity {
+        revision: 7,
+        observed_at: 102.0,
+        window: Window {
+            order: "ord-1".into(),
+            offset: 0,
+            end: 1,
+            total: 1,
+        },
+        coverage: Coverage::Observed,
+        requests: Coverage::Observed,
+        actors: vec![codenomad_client::missions::Actor {
+            session_id: "ses_coord".into(),
+            title: "Coord".into(),
+            state: ActorState::IdleWithoutReport,
+            request: None,
+        }],
+    };
+    panel.observation.observe(7);
+    assert!(panel.observation.adopt_page(0, single_idle));
+    assert!(
+        !coordinator_eligible(&active, &panel.observation),
+        "switching missions while SSE is disconnected must keep Recover unavailable"
+    );
+}
+
+#[test]
+fn revision_conflict_error_survives_refresh_to_next_revision() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-rev");
+        let mut guard = Recovery::default();
+        guard.start(
+            &src,
+            7,
+            RecoveryTarget::Coordinator,
+            http.backend.clone(),
+            wake,
+        );
+        let req = http.accept().await;
+        req.reply(409, json!({"code": "revision-conflict"})).await;
+        wait(done.recv()).await.unwrap();
+        guard.poll();
+        // Even when the panel advances to revision 8, the refusal reason stays visible.
+        let key_rev_8 = RecoveryKey::coordinator(&src, 8);
+        assert_eq!(guard.error(&key_rev_8), Some(RecoveryError::Conflict));
+        assert_eq!(
+            guard.error_for(&src, RecoveryTarget::Coordinator),
+            Some(RecoveryError::Conflict)
+        );
+        guard.clear_error_for(&src.workspace_scope(), "msn-rev");
+        assert_eq!(guard.error_for(&src, RecoveryTarget::Coordinator), None);
+    });
 }
 
 #[test]

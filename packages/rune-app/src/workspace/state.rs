@@ -22,7 +22,7 @@ pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
 };
 pub(crate) use panel_state::{
-    mission_confirmation, mission_event, mission_observation_project, mission_panel,
+    hide_missions, mission_confirmation, mission_event, mission_observation_project, mission_panel,
     mission_supported, missions_online, right_panel_tab, set_right_panel_tab, suspend_missions,
 };
 pub use polling::{poll, status};

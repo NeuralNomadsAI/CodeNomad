@@ -33,6 +33,13 @@ pub(super) struct Observation {
 }
 
 impl Observation {
+    pub fn new(online: bool) -> Self {
+        Self {
+            disconnected: !online,
+            ..Self::default()
+        }
+    }
+
     pub fn working(&self) -> bool {
         self.pages
             .iter()
@@ -74,32 +81,26 @@ impl Observation {
     }
 
     pub fn complete_and_fresh(&self, revision: u64) -> bool {
-        let Some(first) = self.pages.first() else {
-            return false;
-        };
-        let total = first.window.total;
-        let loaded: u64 = self.pages.iter().map(|page| page.actors.len() as u64).sum();
+        // Separately observed windows never manufacture a whole-mission idle proof
+        // (mirrors Solid mission-panel-inventory.ts).
         !self.disconnected
+            && self.pages.len() == 1
             && !self.busy()
             && self.due.is_none()
             && self.failed.is_none()
             && self.more_offset().is_none()
-            && loaded == total
-            && self.pages.iter().all(|page| {
-                let expected = if page.window.total > page.actors.len() as u64 {
-                    Coverage::Partial
-                } else {
-                    Coverage::Observed
-                };
-                self.current(page)
+            && {
+                let page = &self.pages[0];
+                page.window.total == page.actors.len() as u64
+                    && self.current(page)
                     && page.revision == revision
-                    && page.coverage == expected
-                    && page.requests == expected
+                    && page.coverage == Coverage::Observed
+                    && page.requests == Coverage::Observed
                     && page
                         .actors
                         .iter()
                         .all(|actor| actor.state != ActorState::Unknown)
-            })
+            }
     }
 
     pub fn set_online(&mut self, online: bool) {

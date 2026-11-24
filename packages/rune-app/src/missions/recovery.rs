@@ -49,11 +49,39 @@ enum Attempt {
     Admitted(u64),
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct RecoveryErrorScope {
+    server: String,
+    workspace: String,
+    mission: String,
+    target: RecoveryTarget,
+}
+
+impl RecoveryErrorScope {
+    fn from_key(key: &RecoveryKey) -> Self {
+        Self {
+            server: key.server.clone(),
+            workspace: key.workspace.clone(),
+            mission: key.mission.clone(),
+            target: key.target.clone(),
+        }
+    }
+
+    fn from_source(source: &Source, target: RecoveryTarget) -> Self {
+        Self {
+            server: source.mission.server.clone(),
+            workspace: source.workspace.clone(),
+            mission: source.mission.id.clone(),
+            target,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Recovery {
     attempts: HashMap<RecoveryKey, Attempt>,
     seq: u64,
-    error: Option<(RecoveryKey, RecoveryError)>,
+    error: Option<(RecoveryErrorScope, RecoveryError)>,
 }
 
 pub(super) fn coordinator_eligible(header: &MapHeader, observation: &Observation) -> bool {
@@ -132,10 +160,29 @@ impl Recovery {
     }
 
     pub fn error(&self, key: &RecoveryKey) -> Option<RecoveryError> {
+        let scope = RecoveryErrorScope::from_key(key);
         self.error
             .as_ref()
-            .filter(|(owner, _)| owner == key)
+            .filter(|(owner, _)| *owner == scope)
             .map(|(_, error)| *error)
+    }
+
+    pub fn error_for(&self, source: &Source, target: RecoveryTarget) -> Option<RecoveryError> {
+        let scope = RecoveryErrorScope::from_source(source, target);
+        self.error
+            .as_ref()
+            .filter(|(owner, _)| *owner == scope)
+            .map(|(_, error)| *error)
+    }
+
+    pub fn clear_error_for(&mut self, scope: &WorkspaceScope, mission_id: &str) {
+        if self.error.as_ref().is_some_and(|(owner, _)| {
+            owner.server == scope.server
+                && owner.workspace == scope.workspace
+                && owner.mission == mission_id
+        }) {
+            self.error = None;
+        }
     }
 
     pub fn start(
@@ -159,7 +206,12 @@ impl Recovery {
         let Ok(request) = RecoveryRequest::new(revision, target) else {
             return;
         };
-        if self.error.as_ref().is_some_and(|(owner, _)| owner == &key) {
+        let err_scope = RecoveryErrorScope::from_key(&key);
+        if self
+            .error
+            .as_ref()
+            .is_some_and(|(owner, _)| *owner == err_scope)
+        {
             self.error = None;
         }
         let (out, inbox) = bounded(1);
@@ -212,13 +264,22 @@ impl Recovery {
             }
             match outcome {
                 RecoveryOutcome::Admitted(revision) => {
+                    let err_scope = RecoveryErrorScope::from_key(&key);
+                    if self
+                        .error
+                        .as_ref()
+                        .is_some_and(|(owner, _)| *owner == err_scope)
+                    {
+                        self.error = None;
+                    }
                     self.seq = self.seq.wrapping_add(1);
                     self.attempts.insert(key, Attempt::Admitted(self.seq));
                     polled.admitted.push((mission, target, revision));
                 }
                 RecoveryOutcome::Refused(error) => {
+                    let err_scope = RecoveryErrorScope::from_key(&key);
                     self.attempts.remove(&key);
-                    self.error = Some((key, error));
+                    self.error = Some((err_scope, error));
                 }
             }
         }

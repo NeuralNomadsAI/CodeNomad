@@ -121,11 +121,15 @@ pub(super) fn select_destination(s: &mut State, id: &str, tx: &mut Tx) {
     };
     if s.workspace.as_ref().is_some_and(|ui| ui.active == index) {
         s.shell.leave_project();
+        if !crate::shell::right_panel_visible(s) {
+            super::panel_state::hide_missions(s);
+        }
         return;
     }
     if busy(s) {
         return;
     }
+    super::panel_state::hide_missions(s);
     stash(s);
     if let Some(ui) = &mut s.workspace {
         ui.active = index;
@@ -146,6 +150,7 @@ pub fn new_tab(s: &mut State, tx: &mut Tx) {
         return;
     }
     s.notifications.supersede_navigation();
+    super::panel_state::hide_missions(s);
     stash(s);
     if let Some(ui) = &mut s.workspace {
         ui.entries
@@ -184,21 +189,11 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         return;
     };
     let removed = ui.entries.remove(index);
-    if let Some(scope) = removed
-        .missions
-        .as_ref()
-        .and_then(crate::missions::Panel::cleanup_scope)
-        && !ui.entries.iter().any(|entry| {
-            entry
-                .missions
-                .as_ref()
-                .and_then(crate::missions::Panel::cleanup_scope)
-                .as_ref()
-                == Some(&scope)
-        })
-    {
-        ui.mission_lifecycle.retire_scope(&scope);
-    }
+    super::panel_state::retire_unused_mission_scope(
+        &ui.entries,
+        &mut ui.mission_lifecycle,
+        removed.missions,
+    );
     s.notifications.forget_tab(id);
     if let Tab::Workspace(mut saved) = removed.saved {
         // Undelivered copies still belong to their closed source.

@@ -128,7 +128,12 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     }
     if event.mods == Mods::default() {
         let handled = match event.key {
-            Key::Escape if s.shell.close_floating(tx) => true,
+            Key::Escape if s.shell.close_floating(tx) => {
+                if !s.shell.visible(1) {
+                    crate::workspace::hide_missions(s);
+                }
+                true
+            }
             Key::Escape if crate::git::has_preview(s) => {
                 crate::git::close_preview(s);
                 tx.instant();

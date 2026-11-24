@@ -65,14 +65,47 @@ pub(crate) fn right_panel_tab(s: &State) -> RightPanelTab {
 
 pub(crate) fn set_right_panel_tab(s: &mut State, tab: RightPanelTab) {
     let Some(ui) = &mut s.workspace else { return };
-    if let Tab::Workspace(saved) = &mut ui.entries[ui.active].saved
+    let entry = &mut ui.entries[ui.active];
+    if let Tab::Workspace(saved) = &mut entry.saved
         && saved.view.right_panel != tab
     {
         saved.view.right_panel = tab;
+        if tab != RightPanelTab::Missions
+            && let Some(panel) = &mut entry.missions
+        {
+            panel.show(false);
+        }
         if tab == RightPanelTab::Files {
             saved.view.files_mode.get_or_insert("workspace");
         }
         ui.changed();
+    }
+}
+
+pub(crate) fn hide_missions(s: &mut State) {
+    if let Some(ui) = &mut s.workspace
+        && let Some(panel) = &mut ui.entries[ui.active].missions
+    {
+        panel.show(false);
+    }
+}
+
+pub(super) fn retire_unused_mission_scope(
+    entries: &[super::Entry],
+    lifecycle: &mut missions::Lifecycle,
+    old: Option<missions::Panel>,
+) {
+    if let Some(scope) = old.as_ref().and_then(missions::Panel::cleanup_scope)
+        && !entries.iter().any(|entry| {
+            entry
+                .missions
+                .as_ref()
+                .and_then(missions::Panel::cleanup_scope)
+                .as_ref()
+                == Some(&scope)
+        })
+    {
+        lifecycle.retire_scope(&scope);
     }
 }
 
@@ -231,6 +264,7 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
         ui.mission_lifecycle.confirmation = None;
         changed = true;
     }
+    let mut retired_panels = Vec::new();
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if index != ui.active {
             if let Some(panel) = &mut entry.missions {
@@ -250,7 +284,10 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
                     (!backend.workspace.is_empty()).then_some(backend)
                 });
         let Some(backend) = target else {
-            changed |= entry.missions.take().is_some();
+            if let Some(old) = entry.missions.take() {
+                retired_panels.push(old);
+                changed = true;
+            }
             ui.mission_lifecycle.retain_checks_for(None);
             ui.mission_lifecycle.confirmation = None;
             continue;
@@ -267,7 +304,9 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
             ui.mission_lifecycle.confirmation = None;
             let mut panel = missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone());
             panel.selected.clone_from(&saved.view.selected_mission);
-            entry.missions = Some(panel);
+            if let Some(old) = entry.missions.replace(panel) {
+                retired_panels.push(old);
+            }
             changed = true;
         }
         if let Some(panel) = &mut entry.missions {
@@ -293,6 +332,9 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
                 selection_changed = true;
             }
         }
+    }
+    for old in retired_panels {
+        retire_unused_mission_scope(&ui.entries, &mut ui.mission_lifecycle, Some(old));
     }
     if selection_changed {
         ui.changed();

@@ -211,4 +211,51 @@ mod tests {
         );
         assert!(root.revision > rev_before);
     }
+
+    #[test]
+    fn sse_disconnect_revokes_cached_mission_delete_sessions_until_revalidated() {
+        platform::block_on(async {
+            let http = Http::new().await;
+            let mut prefs = Preferences::default();
+            prefs.bind(Some(http.backend.clone()));
+
+            let (mut got_config, mut got_state) = (false, false);
+            while !(got_config && got_state) {
+                prefs.poll();
+                let req = http.accept().await;
+                if req.header.contains("/api/storage/config/ui") {
+                    req.reply(200, json!({"settings": {"missionDeleteSessions": true}}))
+                        .await;
+                    got_config = true;
+                } else {
+                    req.reply(200, json!({})).await;
+                    got_state = true;
+                }
+            }
+            wait_until(|| {
+                prefs.poll();
+                prefs.mission_delete_sessions() == Some(true)
+            })
+            .await;
+
+            // SSE disconnects: stale `true` must be withheld immediately.
+            prefs.set_stream_online(false);
+            assert_eq!(prefs.mission_delete_sessions(), None);
+
+            // SSE reconnects: preference stays withheld until fresh GET settles with `false`.
+            prefs.set_stream_online(true);
+            assert_eq!(prefs.mission_delete_sessions(), None);
+            prefs.poll();
+            let refresh = http.accept().await;
+            assert!(refresh.header.contains("/api/storage/config/ui"));
+            refresh
+                .reply(200, json!({"settings": {"missionDeleteSessions": false}}))
+                .await;
+            wait_until(|| {
+                prefs.poll();
+                prefs.mission_delete_sessions() == Some(false)
+            })
+            .await;
+        });
+    }
 }

@@ -146,6 +146,7 @@ impl Backend {
         mission_id: &str,
         request: &DeletionRequest,
         expected_deletion_id: Option<&str>,
+        require_document_settled: bool,
     ) -> Result<DeletionOutcome> {
         request.validate()?;
         if expected_deletion_id.is_some_and(|id| !panel_id(id)) {
@@ -163,6 +164,7 @@ impl Backend {
             mission_id,
             request,
             expected_deletion_id,
+            require_document_settled,
         ))
     }
 }
@@ -200,6 +202,7 @@ fn settle_deletion(
     mission_id: &str,
     request: &DeletionRequest,
     expected_deletion_id: Option<&str>,
+    require_document_settled: bool,
 ) -> DeletionOutcome {
     if !status.is_success() {
         let code = body["code"].as_str().and_then(DeletionCode::parse);
@@ -211,7 +214,9 @@ fn settle_deletion(
     if body["deleted"] != true {
         return DeletionOutcome::Unconfirmed;
     }
-    let require_cleanup = expected_deletion_id.is_some() || request.delete_managed_sessions;
+    let require_cleanup = expected_deletion_id.is_some()
+        || request.delete_managed_sessions
+        || require_document_settled;
     match body.get("cleanup") {
         None | Some(serde_json::Value::Null) if !require_cleanup => DeletionOutcome::Deleted,
         Some(value) if !value.is_null() => match serde_json::from_value::<Cleanup>(value.clone()) {
@@ -219,6 +224,7 @@ fn settle_deletion(
                 if valid_cleanup(&cleanup)
                     && request.matches_cleanup(mission_id, &cleanup)
                     && !cleanup.is_pending()
+                    && (!require_document_settled || cleanup.document_pending == Some(false))
                     && expected_deletion_id.is_none_or(|id| cleanup.deletion_id == id) =>
             {
                 DeletionOutcome::Deleted
@@ -347,6 +353,7 @@ mod tests {
                 "msn-1",
                 &request,
                 None,
+                false,
             );
             assert_eq!(outcome.error_key(), expected, "{status} {code:?}");
         }
@@ -357,6 +364,7 @@ mod tests {
                 "msn-1",
                 &request,
                 None,
+                false,
             ),
             DeletionOutcome::Deleted
         );
@@ -367,6 +375,7 @@ mod tests {
                 "msn-1",
                 &request,
                 None,
+                false,
             ),
             DeletionOutcome::Unconfirmed
         );
@@ -383,8 +392,25 @@ mod tests {
                 "msn-1",
                 &request,
                 Some("del-1"),
+                true,
             ),
             DeletionOutcome::Deleted
+        );
+        let mut omitted_doc_pending = settled_cleanup.clone();
+        omitted_doc_pending
+            .as_object_mut()
+            .unwrap()
+            .remove("documentPending");
+        assert_eq!(
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": true, "cleanup": omitted_doc_pending}),
+                "msn-1",
+                &request,
+                Some("del-1"),
+                true,
+            ),
+            DeletionOutcome::Unconfirmed
         );
         assert_eq!(
             settle_deletion(
@@ -393,6 +419,7 @@ mod tests {
                 "msn-1",
                 &request,
                 Some("del-1"),
+                false,
             ),
             DeletionOutcome::Unconfirmed
         );
@@ -403,6 +430,7 @@ mod tests {
                 "msn-1",
                 &request,
                 Some("del-other"),
+                false,
             ),
             DeletionOutcome::Unconfirmed
         );
@@ -418,6 +446,7 @@ mod tests {
                 "msn-1",
                 &managed,
                 None,
+                false,
             ),
             DeletionOutcome::Unconfirmed
         );
@@ -430,6 +459,7 @@ mod tests {
                 "msn-1",
                 &request,
                 None,
+                false,
             ),
             DeletionOutcome::Unconfirmed
         );
@@ -442,6 +472,7 @@ mod tests {
                 "msn-1",
                 &request,
                 None,
+                false,
             ),
             DeletionOutcome::Unconfirmed
         );

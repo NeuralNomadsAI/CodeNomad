@@ -48,6 +48,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    settings::set_stream_online(s, true);
                     workspace::missions_online(s, true);
                     workspace::mission_event(s, None);
                     s.transcript_display.usage_family.refresh();
@@ -180,6 +181,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     .picker
                     .set_attachments_supported(page.user_file_references);
                 git::online(s, true);
+                settings::set_stream_online(s, true);
                 workspace::missions_online(s, true);
                 if let Some(files) = &mut s.files {
                     files.online(true);
@@ -233,6 +235,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     platform::pairing::observe(s);
                 }
                 git::online(s, false);
+                settings::set_stream_online(s, false);
                 workspace::missions_online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
@@ -340,6 +343,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::suspend(s);
                 git::online(s, false);
+                settings::set_stream_online(s, false);
                 workspace::missions_online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);

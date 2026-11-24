@@ -66,7 +66,7 @@ pub(super) enum DeleteState {
 }
 
 enum DeleteResult {
-    Deleted,
+    Deleted(Option<String>),
     Failed(&'static str),
     Cancelled,
 }
@@ -84,6 +84,7 @@ struct DeleteIntent {
 enum CleanupRetryResult {
     Settled {
         mission_id: String,
+        deletion_id: String,
         request_id: String,
         expected_revision: u64,
         delete_managed_sessions: bool,
@@ -102,12 +103,18 @@ struct CleanupRetry {
 pub(super) struct CleanupPolled {
     pub refreshed_missions: Vec<(MissionKey, LifecycleTarget)>,
     pub refreshed_scopes: Vec<WorkspaceScope>,
+    pub deleted_missions: Vec<(WorkspaceScope, String)>,
+    pub settled_cleanups: Vec<(WorkspaceScope, String, String)>,
     pub changed: bool,
 }
 
 impl CleanupPolled {
     pub fn is_empty(&self) -> bool {
-        !self.changed && self.refreshed_missions.is_empty() && self.refreshed_scopes.is_empty()
+        !self.changed
+            && self.refreshed_missions.is_empty()
+            && self.refreshed_scopes.is_empty()
+            && self.deleted_missions.is_empty()
+            && self.settled_cleanups.is_empty()
     }
 }
 
@@ -385,10 +392,20 @@ impl CleanupOwner {
                 return false;
             }
             match result {
-                DeleteResult::Deleted => {
+                DeleteResult::Deleted(deletion_id) => {
                     polled
                         .refreshed_missions
                         .push((mission.clone(), intent.target.clone()));
+                    polled
+                        .deleted_missions
+                        .push((intent.scope.clone(), intent.target.mission.clone()));
+                    if let Some(deletion_id) = deletion_id {
+                        polled.settled_cleanups.push((
+                            intent.scope.clone(),
+                            intent.target.mission.clone(),
+                            deletion_id,
+                        ));
+                    }
                     if !polled.refreshed_scopes.contains(&intent.scope) {
                         polled.refreshed_scopes.push(intent.scope.clone());
                     }
@@ -428,6 +445,7 @@ impl CleanupOwner {
             match result {
                 CleanupRetryResult::Settled {
                     mission_id,
+                    deletion_id,
                     request_id,
                     expected_revision,
                     delete_managed_sessions,
@@ -441,6 +459,12 @@ impl CleanupOwner {
                             && intent.request.expected_revision == expected_revision
                             && intent.request.delete_managed_sessions == delete_managed_sessions)
                     });
+                    polled
+                        .deleted_missions
+                        .push((scope.clone(), mission_id.clone()));
+                    polled
+                        .settled_cleanups
+                        .push((scope.clone(), mission_id, deletion_id));
                     if !polled.refreshed_scopes.contains(&scope) {
                         polled.refreshed_scopes.push(scope);
                     }
@@ -465,6 +489,10 @@ impl CleanupOwner {
     }
 }
 
+fn cleanup_settled_for(require_document_settled: bool, item: &Cleanup) -> bool {
+    !item.is_pending() && (!require_document_settled || item.document_pending == Some(false))
+}
+
 async fn run_delete(
     backend: Backend,
     target: LifecycleTarget,
@@ -472,28 +500,29 @@ async fn run_delete(
     reconcile_first: bool,
     live: Option<Arc<AtomicBool>>,
 ) -> DeleteResult {
+    let still_live = || {
+        live.as_ref()
+            .is_none_or(|flag| flag.load(Ordering::Acquire))
+    };
     let mut expected_deletion_id: Option<String> = None;
+    let mut require_document_settled = false;
     if reconcile_first {
         let Ok(snapshot) = backend
             .read_mission_reconciliation(&target.project, &target.mission)
             .await
         else {
-            if live
-                .as_ref()
-                .is_some_and(|flag| !flag.load(Ordering::Acquire))
-            {
-                return DeleteResult::Cancelled;
-            }
-            return DeleteResult::Failed("missions.cleanup.error.unconfirmed");
+            return if still_live() {
+                DeleteResult::Failed("missions.cleanup.error.unconfirmed")
+            } else {
+                DeleteResult::Cancelled
+            };
         };
         if snapshot.cleanup_unavailable {
-            if live
-                .as_ref()
-                .is_some_and(|flag| !flag.load(Ordering::Acquire))
-            {
-                return DeleteResult::Cancelled;
-            }
-            return DeleteResult::Failed("missions.cleanup.error.unconfirmed");
+            return if still_live() {
+                DeleteResult::Failed("missions.cleanup.error.unconfirmed")
+            } else {
+                DeleteResult::Cancelled
+            };
         }
         let matching = snapshot
             .cleanups
@@ -501,30 +530,40 @@ async fn run_delete(
             .find(|item| request.matches_cleanup(&target.mission, item));
         if let Some(intent) = matching {
             if !intent.is_pending() {
-                return DeleteResult::Deleted;
+                return DeleteResult::Deleted(Some(intent.deletion_id.clone()));
             }
             expected_deletion_id = Some(intent.deletion_id.clone());
+            require_document_settled = intent.document_pending == Some(true);
         }
         if matching.is_none()
             && snapshot
                 .mission_revision
                 .is_some_and(|revision| revision != request.expected_revision)
         {
-            return DeleteResult::Failed("missions.cleanup.error.revisionConflict");
+            return if still_live() {
+                DeleteResult::Failed("missions.cleanup.error.revisionConflict")
+            } else {
+                DeleteResult::Cancelled
+            };
         }
-        if live
-            .as_ref()
-            .is_some_and(|flag| !flag.load(Ordering::Acquire))
-        {
+        if !still_live() {
             return DeleteResult::Cancelled;
         }
     }
     let outcome = backend
-        .delete_mission(&target.mission, &request, expected_deletion_id.as_deref())
+        .delete_mission(
+            &target.mission,
+            &request,
+            expected_deletion_id.as_deref(),
+            require_document_settled,
+        )
         .await
         .unwrap_or(DeletionOutcome::Unconfirmed);
     if outcome == DeletionOutcome::Deleted {
-        return DeleteResult::Deleted;
+        return DeleteResult::Deleted(expected_deletion_id);
+    }
+    if live.is_some() && !still_live() {
+        return DeleteResult::Cancelled;
     }
     let mut key = outcome.error_key();
     let conflict = matches!(
@@ -542,8 +581,8 @@ async fn run_delete(
                     .is_none_or(|id| item.deletion_id == id)
         })
     {
-        if !intent.is_pending() {
-            return DeleteResult::Deleted;
+        if cleanup_settled_for(require_document_settled, intent) {
+            return DeleteResult::Deleted(Some(intent.deletion_id.clone()));
         }
         if !conflict {
             key = if intent.document_pending == Some(true) {
@@ -552,6 +591,9 @@ async fn run_delete(
                 "missions.cleanup.error.pending"
             };
         }
+    }
+    if live.is_some() && !still_live() {
+        return DeleteResult::Cancelled;
     }
     DeleteResult::Failed(key)
 }
@@ -564,6 +606,7 @@ async fn run_cleanup_retry(
     row_live: Arc<AtomicBool>,
 ) -> CleanupRetryResult {
     let still_live = || view_live.load(Ordering::Acquire) && row_live.load(Ordering::Acquire);
+    let require_document_settled = saved.document_pending == Some(true);
     let Ok(snapshot) = backend
         .read_mission_reconciliation(&project, &saved.mission_id)
         .await
@@ -594,12 +637,19 @@ async fn run_cleanup_retry(
     };
     let settled = CleanupRetryResult::Settled {
         mission_id: fresh.mission_id.clone(),
+        deletion_id: fresh.deletion_id.clone(),
         request_id: fresh.request_id.clone(),
         expected_revision: fresh.expected_revision,
         delete_managed_sessions: fresh.delete_managed_sessions,
     };
     if !fresh.is_pending() {
-        return settled;
+        return if cleanup_settled_for(require_document_settled, fresh) {
+            settled
+        } else if still_live() {
+            CleanupRetryResult::Failed("missions.cleanup.error.unconfirmed")
+        } else {
+            CleanupRetryResult::Cancelled
+        };
     }
     if !still_live() {
         return CleanupRetryResult::Cancelled;
@@ -608,11 +658,19 @@ async fn run_cleanup_retry(
         return CleanupRetryResult::Failed("missions.cleanup.error.unconfirmed");
     };
     let outcome = backend
-        .delete_mission(&fresh.mission_id, &request, Some(&fresh.deletion_id))
+        .delete_mission(
+            &fresh.mission_id,
+            &request,
+            Some(&fresh.deletion_id),
+            require_document_settled,
+        )
         .await
         .unwrap_or(DeletionOutcome::Unconfirmed);
     if outcome == DeletionOutcome::Deleted {
         return settled;
+    }
+    if !still_live() {
+        return CleanupRetryResult::Cancelled;
     }
     if matches!(outcome, DeletionOutcome::Failed(err) if err.status == 409)
         && let Ok(after) = backend
@@ -623,9 +681,12 @@ async fn run_cleanup_retry(
             .cleanups
             .iter()
             .find(|item| item.matches_saved(&saved))
-            .is_some_and(|intent| !intent.is_pending())
+            .is_some_and(|intent| cleanup_settled_for(require_document_settled, intent))
     {
         return settled;
+    }
+    if !still_live() {
+        return CleanupRetryResult::Cancelled;
     }
     CleanupRetryResult::Failed(outcome.error_key())
 }

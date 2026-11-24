@@ -56,6 +56,7 @@ pub(crate) struct Panel {
     project: Option<String>,
     serial: u64,
     visible: bool,
+    online: bool,
     refresh_due: Option<f64>,
     last_passive: Option<f64>,
     now: f64,
@@ -90,6 +91,7 @@ impl Panel {
             incoming,
             serial: 0,
             visible: false,
+            online: true,
             refresh_due: None,
             last_passive: None,
             now: 0.0,
@@ -120,8 +122,8 @@ impl Panel {
         self.selection_live.store(false, Ordering::Release);
         self.revoke_all_cleanup_tokens();
         if show {
-            self.view_live = Arc::new(AtomicBool::new(true));
-            self.selection_live = Arc::new(AtomicBool::new(true));
+            self.view_live = Arc::new(AtomicBool::new(self.online));
+            self.selection_live = Arc::new(AtomicBool::new(self.online));
             self.refresh();
         } else {
             self.refresh_due = None;
@@ -138,9 +140,51 @@ impl Panel {
     }
 
     pub(crate) fn set_online(&mut self, online: bool) {
+        self.online = online;
         self.observation.set_online(online);
-        if online && self.visible {
+        if !online {
+            self.view_live.store(false, Ordering::Release);
+            self.selection_live.store(false, Ordering::Release);
+            self.revoke_all_cleanup_tokens();
+        } else if self.visible {
+            if !self.view_live.load(Ordering::Acquire) {
+                self.view_live = Arc::new(AtomicBool::new(true));
+            }
+            if !self.selection_live.load(Ordering::Acquire) {
+                self.selection_live = Arc::new(AtomicBool::new(true));
+            }
             (self.wake)();
+        }
+    }
+
+    pub(super) fn forget_deleted_mission(&mut self, mission_id: &str) {
+        self.summaries.retain(|row| row.id != mission_id);
+        if self.selected.as_deref() == Some(mission_id) {
+            self.selection_live.store(false, Ordering::Release);
+            if self.visible && self.online {
+                self.selection_live = Arc::new(AtomicBool::new(true));
+            }
+            self.control_fields.cancel();
+            self.detail.clear();
+            self.observation = Observation::new(self.online);
+            self.selected = None;
+        }
+    }
+
+    pub(super) fn mark_cleanup_settled(&mut self, mission_id: &str, deletion_id: &str) {
+        for row in &mut self.cleanups {
+            if row.mission_id == mission_id && row.deletion_id == deletion_id {
+                row.pending = 0;
+                if row.document_pending == Some(true) {
+                    row.document_pending = Some(false);
+                }
+            }
+        }
+        if let Some(token) = self
+            .cleanup_tokens
+            .remove(&(mission_id.to_owned(), deletion_id.to_owned()))
+        {
+            token.store(false, Ordering::Release);
         }
     }
 
@@ -222,6 +266,7 @@ impl Panel {
                 self.view_live = Arc::new(AtomicBool::new(true));
                 self.selection_live = Arc::new(AtomicBool::new(true));
             }
+            self.online = true;
             self.detail.cancel();
             self.observation.cancel();
             self.observation.set_online(true);
@@ -490,7 +535,7 @@ impl Panel {
             }
         } else if self.selected.is_none() {
             self.detail.clear();
-            self.observation = Observation::default();
+            self.observation = Observation::new(self.online);
         }
         changed | self.poll_control_fields()
     }
@@ -573,12 +618,12 @@ impl Panel {
     pub(super) fn select(&mut self, id: &str) {
         if self.selected.as_deref() != Some(id) && self.summaries.iter().any(|row| row.id == id) {
             self.selection_live.store(false, Ordering::Release);
-            if self.visible {
+            if self.visible && self.online {
                 self.selection_live = Arc::new(AtomicBool::new(true));
             }
             self.control_fields.cancel();
             self.detail.clear();
-            self.observation = Observation::default();
+            self.observation = Observation::new(self.online);
             self.selected = Some(id.into());
         }
     }

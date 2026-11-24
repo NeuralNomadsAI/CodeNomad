@@ -81,6 +81,14 @@ pub(crate) fn mission_delete_sessions(s: &State) -> Option<bool> {
     s.settings.shared.borrow().mission_delete_sessions()
 }
 
+pub(crate) fn set_stream_online(s: &State, online: bool) {
+    let mut prefs = s.settings.shared.borrow_mut();
+    prefs.set_stream_online(online);
+    if let Some(wake) = &prefs.window_wake {
+        wake();
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
     s.settings.shared.borrow_mut().fixture_usage(mode);
@@ -197,6 +205,10 @@ pub(crate) fn poll(s: &mut State) -> bool {
     } else {
         shared.watch(&s.wake);
     }
+    let stream_state = shared.mission_stream_state();
+    if let Some(online) = stream_state {
+        shared.set_stream_online(online);
+    }
     let preferences_changed = bound | shared.poll();
     if preferences_changed && let Some(wake) = &shared.window_wake {
         wake();
@@ -233,7 +245,6 @@ pub(crate) fn poll(s: &mut State) -> bool {
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
-    let stream_state = shared.mission_stream_state();
     let (reconnected, missions) = shared.mission_changes();
     let locale = shared.locale().unwrap_or_else(strings::locale);
     let notify_failure = shared.take_notification_failure();

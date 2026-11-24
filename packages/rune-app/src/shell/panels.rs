@@ -169,6 +169,9 @@ impl Panels {
 
     pub fn dismiss_outside(s: &mut State, tx: &mut Tx) {
         if s.shell.floating.take().is_some() {
+            if !s.shell.visible(1) {
+                crate::workspace::hide_missions(s);
+            }
             tx.instant();
         }
     }
@@ -205,6 +208,9 @@ pub fn toggle(s: &mut State, index: usize, tx: &mut Tx) {
         s.shell.resizing = None;
     }
     s.shell.toggle(index, tx);
+    if !s.shell.visible(1) {
+        crate::workspace::hide_missions(s);
+    }
 }
 
 pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {

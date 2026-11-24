@@ -31,6 +31,7 @@ pub(super) struct Preferences {
     stream: Option<PreferencesWatch>,
     closing_stream: Option<codenomad_client::Receiver<()>>,
     authentication_required: bool,
+    stream_offline: bool,
 }
 
 impl Preferences {
@@ -194,6 +195,7 @@ impl Preferences {
         self.opencode_install.cancel_check();
         self.backend = owner;
         self.authentication_required = false;
+        self.stream_offline = false;
         self.unwatch();
         self.refresh();
         self.revision += 1;
@@ -500,7 +502,7 @@ impl Preferences {
     }
 
     pub fn mission_delete_sessions(&self) -> Option<bool> {
-        if self.authentication_required {
+        if self.authentication_required || self.stream_offline {
             return None;
         }
         let doc = self.config.confirmed()?;
@@ -509,6 +511,18 @@ impl Preferences {
                 .as_bool()
                 .unwrap_or(false),
         )
+    }
+
+    pub(super) fn set_stream_online(&mut self, online: bool) {
+        if !online {
+            if !self.stream_offline {
+                self.stream_offline = true;
+                self.revision += 1;
+            }
+        } else if std::mem::replace(&mut self.stream_offline, false) {
+            self.config.invalidate();
+            self.revision += 1;
+        }
     }
 
     pub(super) fn mission_delete_sessions_display(&self) -> Option<bool> {
