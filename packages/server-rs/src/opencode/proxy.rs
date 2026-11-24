@@ -827,9 +827,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 sent.map_err(|_| interrupted())?.map_err(|_| upstream_error())?
             }
         };
-        if response.status() == Status::UNAUTHORIZED {
-            app.native.invalidate(&endpoint);
-        }
         if response.status().is_success() && is_json_content_type(response.headers()) {
             let status = response.status();
             let headers: Vec<(&'static str, axum::http::HeaderValue)> =
@@ -912,6 +909,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             // Drop the upstream strong ETag only when the JSON body was actually rewritten
             // (RFC 9110: never reuse the original validator for a modified representation).
             let length = axum::http::HeaderValue::from(payload.len());
+            let held_slot = if payload.len() > 256 * 1024 { Some(slot) } else { None };
+            let abort = crate::shared::stream_abort(
+                app.clone(),
+                id.to_owned(),
+                workspace.clone(),
+                endpoint.clone(),
+                principal.0.clone(),
+                Duration::from_secs(30),
+            );
             let builder = headers
                 .into_iter()
                 .filter(|(name, _)| !(changed && *name == "etag"))
@@ -919,21 +925,40 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 .header(header::CONTENT_LENGTH, length);
             return builder
                 .extension(NativeBody)
-                .body(crate::shared::permit_body(payload, slot, principal.0.clone()))
+                .body(crate::shared::permit_body(payload, held_slot, abort))
                 .map_err(|_| upstream_error());
         }
         drop(slot);
+        let unauthorized = response.status() == Status::UNAUTHORIZED;
+        struct InvalidateOnDrop {
+            app: Shared,
+            endpoint: std::sync::Arc<super::Endpoint>,
+        }
+        impl Drop for InvalidateOnDrop {
+            fn drop(&mut self) {
+                self.app.native.invalidate(&self.endpoint);
+            }
+        }
         let builder = relayed(&response);
         use futures_util::StreamExt;
-        let cancelled = principal.0.clone().cancelled_owned();
+        let cancelled = Box::pin(principal.0.clone().cancelled_owned());
         let app_retire = app.clone();
         let endpoint_retire = endpoint.clone();
-        let bytes = response.bytes_stream().take_until(async move {
-            tokio::select! {
-                _ = cancelled => {}
-                _ = app_retire.native.wait_retired(&endpoint_retire) => {}
-            }
-        });
+        // Matches TS `proxy.ts:33-35`: invalidate a 401 connection only after the native
+        // 401 error body finishes streaming downstream, so retiring it does not truncate the body.
+        let invalidate = unauthorized.then(|| InvalidateOnDrop { app: app.clone(), endpoint: endpoint.clone() });
+        let bytes = futures_util::stream::unfold(
+            (response.bytes_stream(), cancelled, app_retire, endpoint_retire, unauthorized, invalidate),
+            |(mut inner, mut cancelled, app_retire, endpoint_retire, unauthorized, invalidate)| async move {
+                let next = tokio::select! {
+                    biased;
+                    _ = &mut cancelled => return None,
+                    _ = app_retire.native.wait_retired(&endpoint_retire), if !unauthorized => return None,
+                    item = inner.next() => item,
+                };
+                next.map(|chunk| (chunk, (inner, cancelled, app_retire, endpoint_retire, unauthorized, invalidate)))
+            },
+        );
         return builder.extension(NativeBody).body(Body::from_stream(bytes)).map_err(|_| upstream_error());
     }
     let (route, opened, directory, id) = (route.to_owned(), opened.to_owned(), directory.to_owned(), id.to_owned());

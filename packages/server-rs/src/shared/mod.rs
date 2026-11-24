@@ -86,30 +86,63 @@ pub fn abortable_service(
     })
 }
 
-pub fn permit_body(
-    bytes: axum::body::Bytes,
-    slot: tokio::sync::SemaphorePermit<'static>,
+pub fn stream_abort(
+    app: crate::Shared,
+    workspace_key: String,
+    workspace: crate::Workspace,
+    endpoint: std::sync::Arc<crate::opencode::Endpoint>,
     cancel: tokio_util::sync::CancellationToken,
+    limit: std::time::Duration,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(async move {
+        let workspace_closed = async {
+            loop {
+                let notified = app.workspace_closed.notified();
+                if !app
+                    .workspace(&workspace_key)
+                    .is_ok_and(|current| current.id == workspace.id && current.path == workspace.path)
+                {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        tokio::select! {
+            _ = cancel.cancelled() => {}
+            _ = app.native.wait_retired(&endpoint) => {}
+            _ = workspace_closed => {}
+            _ = tokio::time::sleep(limit) => {}
+        }
+    })
+}
+
+pub fn permit_body(
+    mut bytes: axum::body::Bytes,
+    mut slot: Option<tokio::sync::SemaphorePermit<'static>>,
+    mut abort: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
 ) -> axum::body::Body {
-    axum::body::Body::from_stream(futures_util::stream::unfold(
-        (bytes, Some(slot), Some(cancel)),
-        |(mut bytes, slot, cancel)| async move {
-            let cancel = cancel?;
-            if cancel.is_cancelled() {
-                drop(slot);
-                return Some((
-                    Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "session revoked")),
-                    (axum::body::Bytes::new(), None, None),
-                ));
-            }
-            if bytes.is_empty() {
-                drop(slot);
-                return None;
-            }
-            let chunk = bytes.split_to(bytes.len().min(64 * 1024));
-            Some((Ok::<_, std::io::Error>(chunk), (bytes, slot, Some(cancel))))
-        },
-    ))
+    let mut done = false;
+    axum::body::Body::from_stream(futures_util::stream::poll_fn(move |cx| {
+        if done {
+            return std::task::Poll::Ready(None);
+        }
+        if std::future::Future::poll(abort.as_mut(), cx).is_ready() {
+            done = true;
+            drop(slot.take());
+            bytes.clear();
+            return std::task::Poll::Ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "response stream aborted",
+            ))));
+        }
+        if bytes.is_empty() {
+            done = true;
+            drop(slot.take());
+            return std::task::Poll::Ready(None);
+        }
+        let chunk = bytes.split_to(bytes.len().min(64 * 1024));
+        std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(chunk)))
+    }))
 }
 
 /// Bounds continuous write stalls (a peer whose TCP receive window stays full) without
@@ -232,13 +265,16 @@ pub async fn serve_local(
                         _ = &mut conn => {}
                         _ = stop.cancelled() => {
                             conn.as_mut().graceful_shutdown();
-                            let _ = conn.await;
+                            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), conn).await;
                         }
                     }
                 });
             }
         }
     }
-    while tasks.join_next().await.is_some() {}
+    let _ =
+        tokio::time::timeout(std::time::Duration::from_secs(5), async { while tasks.join_next().await.is_some() {} })
+            .await;
+    tasks.abort_all();
     Ok(())
 }

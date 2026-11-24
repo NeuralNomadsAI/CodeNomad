@@ -69,13 +69,15 @@ fn git_layout_gone(root: &Path) -> bool {
     let marker = root.join(".git");
     match std::fs::symlink_metadata(&marker) {
         Err(e) => e.kind() == std::io::ErrorKind::NotFound,
-        Ok(meta) if meta.is_file() => std::fs::read_to_string(&marker).is_ok_and(|text| {
-            text.lines().find_map(|line| line.strip_prefix("gitdir:")).is_some_and(|dir| {
-                let dir = Path::new(dir.trim());
-                let dir = if dir.is_absolute() { dir.to_path_buf() } else { root.join(dir) };
-                std::fs::symlink_metadata(dir).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+        Ok(meta) if meta.is_file() => {
+            small(&marker).ok().and_then(|bytes| String::from_utf8(bytes).ok()).is_some_and(|text| {
+                text.lines().find_map(|line| line.strip_prefix("gitdir:")).is_some_and(|dir| {
+                    let dir = Path::new(dir.trim());
+                    let dir = if dir.is_absolute() { dir.to_path_buf() } else { root.join(dir) };
+                    std::fs::symlink_metadata(dir).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+                })
             })
-        }),
+        }
         Ok(_) => false,
     }
 }
@@ -402,7 +404,14 @@ async fn catalogue_in_at(
                 // Reference `listNativeWorktrees`: a registration whose Git layout
                 // is gone (removal or prune in progress, interrupted removal) is no
                 // longer a checkout and is omitted rather than failing the list.
-                Err(_) if git_layout_gone(&root) => {
+                Err(_)
+                    if tokio::task::spawn_blocking({
+                        let root = root.clone();
+                        move || git_layout_gone(&root)
+                    })
+                    .await
+                    .unwrap_or(false) =>
+                {
                     crate::bench::route_trace(format_args!("worktree-omitted layout-gone"));
                     continue;
                 }

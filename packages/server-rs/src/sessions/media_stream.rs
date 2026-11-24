@@ -3,14 +3,16 @@
 //! Splits the top-level `"data": [...]` array one message at a time while chunks arrive so a
 //! page with many large tool images (hundreds of MiB raw) is projected in bounded memory
 //! without failing before image URIs are replaced by `/api/workspaces/.../session-media/...`.
-use serde_json::Value;
+use std::collections::BTreeMap;
+
+use serde_json::value::{RawValue, to_raw_value};
 
 use super::media;
 
 /// Cap on the projected (or unprojected fallback) output buffer.
 pub(crate) const OUTPUT_LIMIT: usize = 128 * 1024 * 1024;
 /// Cap on a single raw message item before projection.
-const ITEM_LIMIT: usize = 64 * 1024 * 1024;
+const ITEM_LIMIT: usize = 128 * 1024 * 1024;
 const INLINE_THRESHOLD: usize = 32 * 1024;
 
 #[derive(Debug)]
@@ -277,12 +279,116 @@ impl MessageListStream {
     }
 }
 
+fn may_contain_image_uri(haystack: &[u8]) -> bool {
+    const NEEDLE: &[u8] = b"data:image";
+    if haystack.len() < NEEDLE.len() {
+        return false;
+    }
+    haystack.windows(NEEDLE.len()).any(|w| w.eq_ignore_ascii_case(NEEDLE)) || haystack.windows(2).any(|w| w == b"\\u")
+}
+
+fn parse_string(raw: &RawValue) -> Option<String> {
+    serde_json::from_str::<String>(raw.get()).ok()
+}
+
+/// Projects a single message JSON item without building a `serde_json::Value` tree,
+/// keeping unknown or dense numeric subtrees as raw JSON slices (1x memory).
 pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>) -> (Vec<u8>, bool) {
-    if let Ok(mut message) = serde_json::from_slice::<Value>(&raw)
-        && media::defer_message(workspace_enc, session_enc, &mut message)
-        && let Ok(serialized) = serde_json::to_vec(&message)
-    {
-        return (serialized, true);
+    if !may_contain_image_uri(&raw) {
+        return (raw, false);
+    }
+    let Ok(mut fields) = serde_json::from_slice::<BTreeMap<String, Box<RawValue>>>(&raw) else {
+        return (raw, false);
+    };
+    if fields.get("type").and_then(|v| parse_string(v)).as_deref() != Some("assistant") {
+        return (raw, false);
+    }
+    let Some(id_raw) = fields.get("id").and_then(|v| parse_string(v)).filter(|id| media::valid_id(id)) else {
+        return (raw, false);
+    };
+    let Some(content_raw) = fields.get("content") else {
+        return (raw, false);
+    };
+    if !may_contain_image_uri(content_raw.get().as_bytes()) {
+        return (raw, false);
+    }
+    let Ok(mut parts) = serde_json::from_str::<Vec<Box<RawValue>>>(content_raw.get()) else {
+        return (raw, false);
+    };
+    let id_enc = media::encode(&id_raw);
+    let mut changed = false;
+    for (part_idx, part_raw) in parts.iter_mut().take(100_001).enumerate() {
+        if !may_contain_image_uri(part_raw.get().as_bytes()) {
+            continue;
+        }
+        let Ok(mut part_fields) = serde_json::from_str::<BTreeMap<String, Box<RawValue>>>(part_raw.get()) else {
+            continue;
+        };
+        if part_fields.get("type").and_then(|v| parse_string(v)).as_deref() != Some("tool") {
+            continue;
+        }
+        let Some(state_raw) = part_fields.get("state") else {
+            continue;
+        };
+        if !may_contain_image_uri(state_raw.get().as_bytes()) {
+            continue;
+        }
+        let Ok(mut state_fields) = serde_json::from_str::<BTreeMap<String, Box<RawValue>>>(state_raw.get()) else {
+            continue;
+        };
+        let Some(items_raw) = state_fields.get("content") else {
+            continue;
+        };
+        if !may_contain_image_uri(items_raw.get().as_bytes()) {
+            continue;
+        }
+        let Ok(mut items) = serde_json::from_str::<Vec<Box<RawValue>>>(items_raw.get()) else {
+            continue;
+        };
+        let mut part_changed = false;
+        for (item_idx, item_raw) in items.iter_mut().take(100_001).enumerate() {
+            if item_raw.get().len() <= INLINE_THRESHOLD || !may_contain_image_uri(item_raw.get().as_bytes()) {
+                continue;
+            }
+            let Ok(mut file_fields) = serde_json::from_str::<BTreeMap<String, Box<RawValue>>>(item_raw.get()) else {
+                continue;
+            };
+            let Some(file_type) = file_fields.get("type").and_then(|v| parse_string(v)) else {
+                continue;
+            };
+            let Some(mime) = file_fields.get("mime").and_then(|v| parse_string(v)) else {
+                continue;
+            };
+            let Some(uri) = file_fields.get("uri").and_then(|v| parse_string(v)) else {
+                continue;
+            };
+            if let Some(reference) =
+                media::defer_uri(workspace_enc, session_enc, &id_enc, part_idx, item_idx, &file_type, &mime, &uri)
+                && let Ok(encoded_uri) = to_raw_value(&reference)
+            {
+                file_fields.insert("uri".into(), encoded_uri);
+                if let Ok(encoded_file) = to_raw_value(&file_fields) {
+                    *item_raw = encoded_file;
+                    part_changed = true;
+                }
+            }
+        }
+        if part_changed && let Ok(encoded_items) = to_raw_value(&items) {
+            state_fields.insert("content".into(), encoded_items);
+            if let Ok(encoded_state) = to_raw_value(&state_fields) {
+                part_fields.insert("state".into(), encoded_state);
+                if let Ok(encoded_part) = to_raw_value(&part_fields) {
+                    *part_raw = encoded_part;
+                    changed = true;
+                }
+            }
+        }
+    }
+    if changed && let Ok(encoded_parts) = to_raw_value(&parts) {
+        fields.insert("content".into(), encoded_parts);
+        if let Ok(serialized) = serde_json::to_vec(&fields) {
+            return (serialized, true);
+        }
     }
     (raw, false)
 }
@@ -290,7 +396,7 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn run_stream(workspace: &str, session: &str, input: &[u8], chunk_size: usize) -> (axum::body::Bytes, bool) {
         let mut stream = MessageListStream::new(workspace, session);
@@ -339,5 +445,31 @@ mod tests {
             let uri = parsed["data"][1]["content"][0]["state"]["content"][0]["uri"].as_str().unwrap();
             assert!(uri.starts_with("/api/workspaces/ws%201/session-media/ses_1/msg_big/0/0/"), "{uri}");
         }
+    }
+
+    #[test]
+    fn skips_dense_numeric_items_and_preserves_unknown_fields_without_value_tree() {
+        let dense = format!("{{\"id\":\"msg_n\",\"type\":\"assistant\",\"nums\":[{}]}}", vec!["1"; 20_000].join(","));
+        let (out, changed) = project_item("ws_1", "ses_1", dense.clone().into_bytes());
+        assert!(!changed);
+        assert_eq!(out, dense.as_bytes());
+
+        let large = format!("data:image/png;base64,{}", "A".repeat(40 * 1024));
+        let with_nums = json!({
+            "id": "msg_mix",
+            "type": "assistant",
+            "extra": [1, 2, 3, 4, 5],
+            "content": [{"type": "tool", "state": {"content": [{"type": "file", "mime": "image/png", "uri": large}]}}]
+        });
+        let (out, changed) = project_item("ws_1", "ses_1", with_nums.to_string().into_bytes());
+        assert!(changed);
+        let parsed: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(parsed["extra"], json!([1, 2, 3, 4, 5]));
+        assert!(
+            parsed["content"][0]["state"]["content"][0]["uri"]
+                .as_str()
+                .unwrap()
+                .starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_mix/0/0/")
+        );
     }
 }

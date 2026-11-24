@@ -251,9 +251,13 @@ pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, Pa
     if !crate::files::paths::under(scope, Path::new(&normalized)) {
         return None;
     }
-    let resolved = resolve_exact_directory(raw).filter(|p| p.starts_with(scope))?;
+    let resolved = resolve_exact_directory(raw).filter(|p| crate::files::paths::under(scope, p))?;
     let anchor = directory_anchor(&resolved).ok()??.to_path_buf();
     Some((resolved, anchor))
+}
+
+async fn proof_live_async(proof: DirectoryProof, path: PathBuf) -> Option<DirectoryProof> {
+    tokio::task::spawn_blocking(move || proof.live(&path).then_some(proof)).await.ok()?
 }
 
 pub(crate) async fn media_directory(
@@ -275,14 +279,14 @@ pub(crate) async fn media_directory(
     let external = !path.starts_with(&workspace.path);
     if path == workspace.path {
         let proof = DirectoryProof { tree: None, source: None, external, media: true };
-        return Ok(proof.live(path).then_some(proof));
+        return Ok(proof_live_async(proof, path.to_path_buf()).await);
     }
     if !external && let Some(subfolders) = super::root_only(workspace).await? {
         if !current() || !subfolders {
             return Err(native_error());
         }
         let proof = DirectoryProof { tree: None, source: None, external, media: true };
-        return Ok(proof.live(path).then_some(proof));
+        return Ok(proof_live_async(proof, path.to_path_buf()).await);
     }
     if external && !shares_common_directory(&workspace.path, anchor).await.map_err(|_| native_error())? {
         if !current() {
@@ -302,7 +306,13 @@ pub(crate) async fn media_directory(
             if !current() {
                 return Err(native_error());
             }
-            let proof = catalogue_proof(&catalogue, path, external, true).filter(|proof| proof.live(path));
+            let proof = match catalogue_proof(&catalogue, path, external, true) {
+                Some(proof) => proof_live_async(proof, path.to_path_buf()).await,
+                None => None,
+            };
+            if !current() {
+                return Err(native_error());
+            }
             if inventory::revision(app) != revision {
                 continue;
             }
@@ -312,12 +322,17 @@ pub(crate) async fn media_directory(
     }
     // History windows and `message.list` reuse a valid warm inventory before falling back to
     // a cold read and a single refresh on a miss (TS `worktree-directory.ts:37-47`).
-    if let Some(cached) = app.linked_events.lock().unwrap().cached(workspace.id, endpoint)
+    let cached = app.linked_events.lock().unwrap().cached(workspace.id, endpoint);
+    if let Some(cached) = cached
         && let Some(proof) = catalogue_proof(&cached, path, external, true).filter(|proof| {
-            proof.live(path) && proof.tree.as_ref().is_none_or(|tree| tree.registered().starts_with(&app.scope))
+            proof.tree.as_ref().is_none_or(|tree| crate::files::paths::under(&app.scope, tree.registered()))
         })
+        && let Some(live) = proof_live_async(proof, path.to_path_buf()).await
     {
-        return Ok(Some(proof));
+        if !current() {
+            return Err(native_error());
+        }
+        return Ok(Some(live));
     }
     let timeout = std::time::Duration::from_secs(12);
     let mut refresh = false;
@@ -328,7 +343,13 @@ pub(crate) async fn media_directory(
         if !current() {
             return Err(native_error());
         }
-        let proof = catalogue_proof(&catalogue, path, external, true).filter(|proof| proof.live(path));
+        let proof = match catalogue_proof(&catalogue, path, external, true) {
+            Some(proof) => proof_live_async(proof, path.to_path_buf()).await,
+            None => None,
+        };
+        if !current() {
+            return Err(native_error());
+        }
         if inventory::revision(app) != revision {
             continue;
         }

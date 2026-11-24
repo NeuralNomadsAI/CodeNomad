@@ -66,11 +66,9 @@ fn parse(path: &str) -> Option<Reference<'_>> {
     })
 }
 
-fn renderable(file: &Value) -> Option<(&str, &str)> {
-    let mime = file["mime"].as_str()?;
-    let uri = file["uri"].as_str()?;
+fn renderable_parts<'a>(file_type: &str, mime: &'a str, uri: &'a str) -> Option<(&'a str, &'a str)> {
     let (kind, subtype) = mime.split_once('/')?;
-    if file["type"] != "file"
+    if file_type != "file"
         || !kind.eq_ignore_ascii_case("image")
         || mime.len() > 128
         || subtype.is_empty()
@@ -81,6 +79,28 @@ fn renderable(file: &Value) -> Option<(&str, &str)> {
     }
     let prefix = format!("data:{mime};base64,");
     uri.get(..prefix.len()).is_some_and(|start| start.eq_ignore_ascii_case(&prefix)).then_some((mime, uri))
+}
+
+fn renderable(file: &Value) -> Option<(&str, &str)> {
+    renderable_parts(file["type"].as_str()?, file["mime"].as_str()?, file["uri"].as_str()?)
+}
+
+pub(super) fn defer_uri(
+    workspace_enc: &str,
+    session_enc: &str,
+    message_enc: &str,
+    part: usize,
+    index: usize,
+    file_type: &str,
+    mime: &str,
+    uri: &str,
+) -> Option<String> {
+    let (_, uri) =
+        renderable_parts(file_type, mime, uri).filter(|(_, uri)| uri.encode_utf16().nth(INLINE_LIMIT).is_some())?;
+    let digest = user_files::digest(uri.as_bytes());
+    let reference =
+        format!("/api/workspaces/{workspace_enc}/session-media/{session_enc}/{message_enc}/{part}/{index}/{digest}");
+    (reference.len() <= 4096).then_some(reference)
 }
 
 pub(crate) fn wants_deferred(headers: &axum::http::HeaderMap) -> bool {
@@ -320,6 +340,14 @@ pub(super) async fn route(
             if !placement.live(&app, &r.workspace).await {
                 return Err(error(Status::CONFLICT, "Session location changed"));
             }
+            let abort = crate::shared::stream_abort(
+                app.clone(),
+                r.workspace.clone(),
+                initial_workspace.clone(),
+                placement.endpoint.clone(),
+                principal.0.clone(),
+                Duration::from_secs(30),
+            );
             let length = HeaderValue::from(bytes.len());
             Ok((
                 [
@@ -329,7 +357,7 @@ pub(super) async fn route(
                     (header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")),
                     (header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'; sandbox")),
                 ],
-                crate::shared::permit_body(bytes.into(), slot, principal.0.clone()),
+                crate::shared::permit_body(bytes.into(), Some(slot), abort),
             )
                 .into_response())
         };

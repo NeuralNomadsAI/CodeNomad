@@ -388,25 +388,25 @@ fn project_history_response(
     reference: bool,
     defer: bool,
     slot: Option<tokio::sync::SemaphorePermit<'static>>,
-    cancel: tokio_util::sync::CancellationToken,
-) -> Response {
-    let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return blocked("unavailable") };
-    let Some(raw) = envelope.output else { return blocked("unavailable") };
-    let Ok(mut output) = serde_json::from_str::<Value>(raw.get()) else { return blocked("unavailable") };
+    abort: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
+) -> Result<Response, Response> {
+    let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return Err(blocked("unavailable")) };
+    let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
+    let Ok(mut output) = serde_json::from_str::<Value>(raw.get()) else { return Err(blocked("unavailable")) };
     if reference && output["status"] == "window" && !user_files::validate_window(&mut output) {
-        return blocked("unavailable");
+        return Err(blocked("unavailable"));
     }
     if !status.is_success()
         || !crate::sessions::contracts::valid(crate::sessions::contracts::get(action, true), &output)
     {
-        return blocked("unavailable");
+        return Err(blocked("unavailable"));
     }
     if output["entries"].as_array().is_some_and(|items| {
         items.iter().any(|item| {
             item.get("omitted").is_some() != item["layout"].as_str().is_some_and(|layout| layout.contains('-'))
         })
     }) {
-        return blocked("unavailable");
+        return Err(blocked("unavailable"));
     }
     let deferred = defer && output["status"] == "window" && media::defer(id, session, &mut output["messages"]);
     let referenced = reference && output["status"] == "window";
@@ -414,27 +414,28 @@ fn project_history_response(
         if referenced {
             output["userFiles"] = user_files::REFERENCE.into();
         }
-        let Ok(projected) = serde_json::to_vec(&output) else { return blocked("unavailable") };
+        let Ok(projected) = serde_json::to_vec(&output) else { return Err(blocked("unavailable")) };
         if referenced && projected.len() > 24 * 1024 * 1024 {
-            return blocked("unsupported_storage");
+            return Err(blocked("unsupported_storage"));
         }
         projected.into()
     } else {
         body.slice_ref(raw.get().as_bytes())
     };
     let length = axum::http::HeaderValue::from(payload.len());
-    let response_body = match slot {
-        Some(slot) => crate::shared::permit_body(payload, slot, cancel),
+    let held_slot = if payload.len() > 256 * 1024 { slot } else { None };
+    let response_body = match abort {
+        Some(abort) => crate::shared::permit_body(payload, held_slot, abort),
         None => axum::body::Body::from(payload),
     };
-    (
+    Ok((
         [
             (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/json")),
             (header::CONTENT_LENGTH, length),
         ],
         response_body,
     )
-        .into_response()
+        .into_response())
 }
 
 pub async fn handle(
@@ -471,91 +472,116 @@ pub async fn handle(
             Err(_) => return blocked("unavailable"),
         };
         static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
-        let slot = if defer {
-            let workspace_closed = async {
-                loop {
-                    let notified = app.workspace_closed.notified();
-                    if !placement.operation_current_fast(&app, &id) {
-                        return;
+        let work = async {
+            let slot = if defer {
+                let workspace_closed = async {
+                    loop {
+                        let notified = app.workspace_closed.notified();
+                        if !placement.operation_current_fast(&app, &id) {
+                            return;
+                        }
+                        notified.await;
                     }
-                    notified.await;
-                }
+                };
+                let permit = tokio::select! {
+                    biased;
+                    _ = workspace_closed => return blocked("unavailable"),
+                    permit = DEFER_SLOTS.acquire() => match permit {
+                        Ok(permit) => permit,
+                        Err(_) => return blocked("unavailable"),
+                    }
+                };
+                Some(permit)
+            } else {
+                None
             };
-            let permit = tokio::select! {
-                biased;
-                _ = app.native.wait_retired(&placement.endpoint) => return blocked("unavailable"),
-                _ = workspace_closed => return blocked("unavailable"),
-                permit = DEFER_SLOTS.acquire() => match permit {
-                    Ok(permit) => permit,
+            // Acquire the deferred permit before final revalidation so a closed project or
+            // retired daemon cannot dispatch an RPC after waiting for a slot.
+            let directory = match placement.ready(&app, &id, session).await {
+                Ok(directory) => directory,
+                Err(Recheck::Conflict) => return blocked("conflict"),
+                Err(_) => return blocked("unavailable"),
+            };
+            if !placement.operation_current(&app, &id).await {
+                return blocked("unavailable");
+            }
+            let rpc_limit = 24 * 1024 * 1024 + if defer { 64 * 1024 } else { 0 };
+            let rpc_timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if rpc_timeout.is_zero() {
+                return blocked("unavailable");
+            }
+            let Ok((mut status, mut body)) =
+                rpc_with_limit(&app, &placement.endpoint, directory, method, &input, rpc_timeout, rpc_limit).await
+            else {
+                return blocked("unavailable");
+            };
+            if action == "outline" && status == Status::BAD_REQUEST {
+                let fallback = serde_json::from_slice::<Envelope>(&body).ok().is_some_and(|envelope| {
+                    envelope.tag.as_deref() == Some("RpcError")
+                        && envelope.kind.as_deref() == Some("rpc.method_not_found")
+                });
+                if fallback {
+                    match placement.current(&app, &id, session).await {
+                        Recheck::Current => {}
+                        Recheck::Conflict => return blocked("conflict"),
+                        Recheck::Unavailable => return blocked("unavailable"),
+                    }
+                    let fallback_timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    let Ok(fallback) =
+                        rpc_with_timeout(&app, &placement.endpoint, directory, "outline", &input, fallback_timeout)
+                            .await
+                    else {
+                        return blocked("unavailable");
+                    };
+                    (status, body) = fallback;
+                }
+            }
+            let abort = defer.then(|| {
+                crate::shared::stream_abort(
+                    app.clone(),
+                    id.clone(),
+                    placement.workspace.clone(),
+                    placement.endpoint.clone(),
+                    principal.0.clone(),
+                    Duration::from_secs(30),
+                )
+            });
+            let projected = if defer && body.len() > 32 * 1024 {
+                let (action, id, session) = (action.clone(), id.clone(), session.to_owned());
+                match tokio::task::spawn_blocking(move || {
+                    project_history_response(status, body, &action, &id, &session, reference, defer, slot, abort)
+                })
+                .await
+                {
+                    Ok(result) => result,
                     Err(_) => return blocked("unavailable"),
                 }
+            } else {
+                project_history_response(status, body, &action, &id, session, reference, defer, slot, abort)
             };
-            Some(permit)
-        } else {
-            None
-        };
-        // Acquire the deferred permit before final revalidation so a closed project or
-        // retired daemon cannot dispatch an RPC after waiting for a slot.
-        let directory = match placement.ready(&app, &id, session).await {
-            Ok(directory) => directory,
-            Err(Recheck::Conflict) => return blocked("conflict"),
-            Err(_) => return blocked("unavailable"),
-        };
-        if !placement.operation_current(&app, &id).await {
-            return blocked("unavailable");
-        }
-        let rpc_limit = 24 * 1024 * 1024 + if defer { 64 * 1024 } else { 0 };
-        let rpc_timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if rpc_timeout.is_zero() {
-            return blocked("unavailable");
-        }
-        let Ok((mut status, mut body)) =
-            rpc_with_limit(&app, &placement.endpoint, directory, method, &input, rpc_timeout, rpc_limit).await
-        else {
-            return blocked("unavailable");
-        };
-        if action == "outline" && status == Status::BAD_REQUEST {
-            let fallback = serde_json::from_slice::<Envelope>(&body).ok().is_some_and(|envelope| {
-                envelope.tag.as_deref() == Some("RpcError") && envelope.kind.as_deref() == Some("rpc.method_not_found")
-            });
-            if fallback {
-                match placement.current(&app, &id, session).await {
-                    Recheck::Current => {}
-                    Recheck::Conflict => return blocked("conflict"),
-                    Recheck::Unavailable => return blocked("unavailable"),
-                }
-                let fallback_timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
-                let Ok(fallback) =
-                    rpc_with_timeout(&app, &placement.endpoint, directory, "outline", &input, fallback_timeout).await
-                else {
-                    return blocked("unavailable");
-                };
-                (status, body) = fallback;
-            }
-        }
-        let cancel = principal.0.clone();
-        let response = if defer && body.len() > 32 * 1024 {
-            let (action, id, session) = (action.clone(), id.clone(), session.to_owned());
-            match tokio::task::spawn_blocking(move || {
-                project_history_response(status, body, &action, &id, &session, reference, defer, slot, cancel)
-            })
-            .await
-            {
+            let response = match projected {
                 Ok(response) => response,
-                Err(_) => return blocked("unavailable"),
+                Err(invalid_response) => return invalid_response,
+            };
+            match placement.current(&app, &id, session).await {
+                Recheck::Current => {}
+                Recheck::Conflict => return blocked("conflict"),
+                Recheck::Unavailable => return blocked("unavailable"),
+            }
+            if principal.live().is_err() {
+                return crate::auth::unauthorized().into_response();
+            }
+            response
+        };
+        if defer {
+            tokio::select! {
+                biased;
+                _ = app.native.wait_retired(&placement.endpoint) => blocked("unavailable"),
+                response = work => response,
             }
         } else {
-            project_history_response(status, body, &action, &id, session, reference, defer, slot, cancel)
-        };
-        match placement.current(&app, &id, session).await {
-            Recheck::Current => {}
-            Recheck::Conflict => return blocked("conflict"),
-            Recheck::Unavailable => return blocked("unavailable"),
+            work.await
         }
-        if principal.live().is_err() {
-            return crate::auth::unauthorized().into_response();
-        }
-        response
     };
     tokio::select! {
         biased;
