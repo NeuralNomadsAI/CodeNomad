@@ -95,7 +95,7 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
         instanceId={id} sessionId="ses_link" onRendered={() => { renderCount++ }} />
     </div>
     <div id="sub-root">
-      <Markdown part={{ id: "sub-part", type: "text", version: 0, text: "See [readme](./README.md)." }}
+      <Markdown part={{ id: "sub-part", type: "text", version: 0, text: "See [readme](./README.md) and [docs](./docs)." }}
         instanceId={id} sessionId="ses_sub" />
     </div>
     <div id="child-root">

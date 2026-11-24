@@ -105,12 +105,18 @@ test("on the local desktop, project folder links open in the file manager", { ti
   try {
     await page.goto(url)
     await page.waitForFunction(() => (window as any).fixture?.rendered() > 0)
+    await page.locator('#main-root a[href="file:///fixture-root/docs/"][data-project-folder]').waitFor()
+
+    // A worktree the inventory has not identified never opens natively: its
+    // native slug could name another checkout.
+    await page.click('#sub-root a[href="./docs"]')
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.targetFull()), { path: "docs", directory: "/fixture-root/wt-a" })
+    assert.deepEqual(await page.evaluate(() => (window as any).opened), [])
 
     await page.click('#main-root a[href="file:///fixture-root/docs/"]')
     await page.waitForFunction(() => (window as any).opened.length === 1)
     assert.deepEqual(await page.evaluate(() => (window as any).opened),
       [{ target: "default", instanceId: "markdown-session-links", worktreeSlug: "root", path: "docs" }])
-    assert.equal(await page.evaluate(() => (window as any).fixture.target()), null)
 
     // A file keeps the file reader, including through a `file:` URL.
     await page.click('#main-root a[href="file:///fixture-root/README.md"]')

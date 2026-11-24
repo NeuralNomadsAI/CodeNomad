@@ -1,6 +1,5 @@
 import { tGlobal } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
-import { backendOf } from "../lib/backend-client"
 import { showToastNotification } from "../lib/notifications"
 import { canOpenWorkspacePaths, openWorkspacePath } from "../lib/workspace-open"
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
@@ -46,6 +45,9 @@ export interface SessionLinkBase {
   /** The root hrefs resolve against: the service namespace path when the
    * worktree is known (notably WSL), else the directory itself. */
   base: string
+  /** The slug native workspace actions resolve to `directory`; undefined
+   * while the inventory has not identified it. */
+  nativeSlug?: string
 }
 
 export function sessionLinkBase(instanceId: string, sessionId: string): SessionLinkBase | undefined {
@@ -60,7 +62,8 @@ export function sessionLinkBase(instanceId: string, sessionId: string): SessionL
     ?? sessionDirectory
     ?? instances().get(instanceId)?.folder
   if (!directory) return undefined
-  return { slug: worktree?.slug ?? "root", directory, serviceDirectory: worktree?.serviceDirectory, base: worktree?.serviceDirectory ?? directory }
+  const nativeSlug = worktree?.slug ?? (directory === instances().get(instanceId)?.folder ? "root" : undefined)
+  return { slug: worktree?.slug ?? "root", directory, serviceDirectory: worktree?.serviceDirectory, base: worktree?.serviceDirectory ?? directory, nativeSlug }
 }
 
 /** The file-reader target a link href resolves to inside the session's
@@ -75,11 +78,12 @@ export function resolveSessionProjectLink(instanceId: string, sessionId: string,
 
 /** The plain-click dispatch for session-bound markdown links: a loopback URL
  * opens the session preview on the instance owning the session (browser-accessed
- * frontends cannot reach the backend host's localhost), and a path inside the
- * session's worktree opens the file reader. Returns whether the click was
- * handled; modified clicks never reach this. Availability comes from the
- * mounted owner's createProjectServerMeta reader. */
-export function routeSessionLink(instanceId: string, sessionId: string, href: string, loopbackLinksOpenPreview: boolean): boolean {
+ * frontends cannot reach the backend host's localhost), a link the decoration
+ * pass marked as a folder opens in the system file manager, and any other path
+ * inside the session's worktree opens the file reader. Returns whether the
+ * click was handled; modified clicks never reach this. Availability comes from
+ * the mounted owner's createProjectServerMeta reader. */
+export function routeSessionLink(instanceId: string, sessionId: string, href: string, loopbackLinksOpenPreview: boolean, folder = false): boolean {
   const instance = instances().get(instanceId)
   if (!instance || !captureBackendOperation(instanceId).current()) return false
   if (loopbackLinksOpenPreview && isLoopbackHttpUrl(href)) {
@@ -88,29 +92,25 @@ export function routeSessionLink(instanceId: string, sessionId: string, href: st
   }
   const resolution = resolveSessionProjectLink(instanceId, sessionId, href)
   if (!resolution) return false
-  if (canOpenWorkspacePaths(instanceId)) openProjectLinkNatively(instanceId, sessionId, resolution)
-  else openFilePreview(instanceId, { kind: "workspace", sessionId, ...resolution })
+  const worktreeSlug = folder ? nativeFolderSlug(instanceId, sessionLinkBase(instanceId, sessionId)) : undefined
+  if (worktreeSlug === undefined) {
+    openFilePreview(instanceId, { kind: "workspace", sessionId, ...resolution })
+    return true
+  }
+  const operation = captureBackendOperation(instanceId)
+  void openWorkspacePath({ target: "default", instanceId, worktreeSlug, path: resolution.path }).catch(error => {
+    if (!operation.current()) return
+    showToastNotification({ category: "files", variant: "error",
+      message: tGlobal("instanceShell.filesShell.toast.openError", { message: error instanceof Error ? error.message : String(error) }) })
+  })
   return true
 }
 
-// On the local desktop a folder opens in the system file manager; a file, or a
-// path the listing cannot confirm as a folder, keeps the file reader.
-const openProjectLinkNatively = (instanceId: string, sessionId: string, link: SessionProjectLink) => {
-  const operation = captureBackendOperation(instanceId)
-  const slash = link.path.lastIndexOf("/")
-  const name = link.path.slice(slash + 1)
-  void backendOf(instanceId).api.listWorkspaceFiles(instanceId, slash < 0 ? "." : link.path.slice(0, slash), link.directory)
-    .then(entries => entries.some(entry => entry.name === name && entry.type === "directory"), () => false)
-    .then(async folder => {
-      if (!operation.current()) return
-      if (!folder) {
-        openFilePreview(instanceId, { kind: "workspace", sessionId, ...link })
-        return
-      }
-      await openWorkspacePath({ target: "default", instanceId, worktreeSlug: link.slug, path: link.path })
-    })
-    .catch(error => showToastNotification({ category: "files", variant: "error",
-      message: tGlobal("instanceShell.filesShell.toast.openError", { message: error instanceof Error ? error.message : String(error) }) }))
+/** The slug a folder link opens through in the system file manager, or
+ * undefined where folders cannot open natively (remote, web, unidentified
+ * worktree). */
+export function nativeFolderSlug(instanceId: string, base: SessionLinkBase | undefined): string | undefined {
+  return canOpenWorkspacePaths(instanceId) ? base?.nativeSlug : undefined
 }
 
 /** The titles decorated links carry, computed from the reactive availability
@@ -121,7 +121,8 @@ export function sessionLinkTitles(instanceId: string | undefined, sessionId: str
   const sessionBound = Boolean(instanceId && sessionId && captureBackendOperation(instanceId).current())
   return {
     preview: sessionBound && loopbackLinksOpenPreview ? tGlobal("markdown.link.previewOpens") : "",
-    file: !sessionBound ? "" : tGlobal(canOpenWorkspacePaths(instanceId) ? "markdown.link.pathOpens" : "markdown.link.fileOpens"),
+    file: !sessionBound ? "" : tGlobal(nativeFolderSlug(instanceId!, sessionLinkBase(instanceId!, sessionId!)) !== undefined
+      ? "markdown.link.pathOpens" : "markdown.link.fileOpens"),
   }
 }
 

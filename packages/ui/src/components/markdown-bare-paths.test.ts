@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { serverApi } from "../lib/api-client"
-import { BARE_PATH_LISTING_DEADLINE_MS, BARE_PATH_TTL_MS, clearBarePathCaches, fileNamesInDirectory } from "./markdown-bare-paths"
+import { BARE_PATH_LISTING_DEADLINE_MS, BARE_PATH_TTL_MS, clearBarePathCaches, directoryEntries, entryKind } from "./markdown-bare-paths"
 
 type Entry = { name: string; type: string }
 
@@ -21,20 +21,29 @@ const stalledListing = (signal?: AbortSignal) => new Promise<Entry[]>((_resolve,
   signal?.addEventListener("abort", () => reject(new Error("The operation was aborted")), { once: true })
 })
 
+describe("directory entry lookup", () => {
+  it("matches names case-insensitively only under a Windows root", () => {
+    const entries = new Map([["Docs", "directory"], ["app.ts", "file"]] as const)
+    assert.equal(entryKind(entries, "DOCS", true), "directory")
+    assert.equal(entryKind(entries, "DOCS", false), undefined)
+    assert.equal(entryKind(entries, "app.ts", false), "file")
+  })
+})
+
 describe("directory existence cache", () => {
   it("answers concurrent callers from one shared flight", async () => {
     clearBarePathCaches()
     let release!: (entries: Entry[]) => void
     const stub = patchListing(() => new Promise<Entry[]>(resolve => { release = resolve }))
     try {
-      const first = fileNamesInDirectory("inst", "/repo", "src")
-      const second = fileNamesInDirectory("inst", "/repo", "src")
+      const first = directoryEntries("inst", "/repo", "src")
+      const second = directoryEntries("inst", "/repo", "src")
       // The shared background queue starts the read a tick later.
       await new Promise(resolve => setImmediate(resolve))
       release([{ name: "app.ts", type: "file" }])
       const [a, b] = await Promise.all([first, second])
-      assert.deepEqual([...a], ["app.ts"])
-      assert.deepEqual([...b], ["app.ts"])
+      assert.deepEqual([...a.keys()], ["app.ts"])
+      assert.deepEqual([...b.keys()], ["app.ts"])
       assert.equal(stub.calls.length, 1)
     } finally { stub.restore() }
   })
@@ -43,8 +52,8 @@ describe("directory existence cache", () => {
     clearBarePathCaches()
     const stub = patchListing(async () => [{ name: "app.ts", type: "file" }])
     try {
-      await fileNamesInDirectory("inst", "/repo", "src")
-      await fileNamesInDirectory("inst", "/repo", "src")
+      await directoryEntries("inst", "/repo", "src")
+      await directoryEntries("inst", "/repo", "src")
       assert.equal(stub.calls.length, 1)
     } finally { stub.restore() }
   })
@@ -54,19 +63,19 @@ describe("directory existence cache", () => {
     clearBarePathCaches()
     const stub = patchListing(async () => [{ name: "a.ts", type: "file" }])
     try {
-      await fileNamesInDirectory("inst", "/repo", "src")
+      await directoryEntries("inst", "/repo", "src")
       t.mock.timers.tick(BARE_PATH_TTL_MS + 1)
-      await fileNamesInDirectory("inst", "/repo", "src")
+      await directoryEntries("inst", "/repo", "src")
       assert.equal(stub.calls.length, 2)
     } finally { stub.restore(); t.mock.timers.reset() }
   })
 
-  it("excludes directories from the file-name set", async () => {
+  it("records whether each entry is a folder", async () => {
     clearBarePathCaches()
     const stub = patchListing(async () => [{ name: "app.ts", type: "file" }, { name: "sub", type: "directory" }])
     try {
-      const names = await fileNamesInDirectory("inst", "/repo", "src")
-      assert.deepEqual([...names], ["app.ts"])
+      const names = await directoryEntries("inst", "/repo", "src")
+      assert.deepEqual([...names], [["app.ts", "file"], ["sub", "directory"]])
     } finally { stub.restore() }
   })
 
@@ -79,15 +88,15 @@ describe("directory existence cache", () => {
       return [{ name: "x.ts", type: "file" }]
     })
     try {
-      const empty = await fileNamesInDirectory("inst", "/repo", "src")
+      const empty = await directoryEntries("inst", "/repo", "src")
       assert.equal(empty.size, 0)
       // The failed listing's empty set is cached: prose false positives stay cheap.
-      await fileNamesInDirectory("inst", "/repo", "src")
+      await directoryEntries("inst", "/repo", "src")
       assert.equal(stub.calls.length, 1)
       failing = false
       t.mock.timers.tick(BARE_PATH_TTL_MS + 1)
-      const recovered = await fileNamesInDirectory("inst", "/repo", "src")
-      assert.deepEqual([...recovered], ["x.ts"])
+      const recovered = await directoryEntries("inst", "/repo", "src")
+      assert.deepEqual([...recovered.keys()], ["x.ts"])
     } finally { stub.restore(); t.mock.timers.reset() }
   })
 
@@ -100,11 +109,11 @@ describe("directory existence cache", () => {
       return [{ name: "a.ts", type: "file" }]
     })
     try {
-      await fileNamesInDirectory("inst", "/repo", "src")
+      await directoryEntries("inst", "/repo", "src")
       failing = true
       t.mock.timers.tick(BARE_PATH_TTL_MS + 1)
-      const kept = await fileNamesInDirectory("inst", "/repo", "src")
-      assert.deepEqual([...kept], ["a.ts"])
+      const kept = await directoryEntries("inst", "/repo", "src")
+      assert.deepEqual([...kept.keys()], ["a.ts"])
       assert.equal(stub.calls.length, 2)
     } finally { stub.restore(); t.mock.timers.reset() }
   })
@@ -114,16 +123,16 @@ describe("directory existence cache", () => {
     let release!: (entries: Entry[]) => void
     const stub = patchListing(() => new Promise<Entry[]>(resolve => { release = resolve }))
     try {
-      const first = fileNamesInDirectory("inst", "/repo", "src")
+      const first = directoryEntries("inst", "/repo", "src")
       // A later caller arrives while the shared flight is still pending —
       // the render pass that started it may already be gone, and the
       // listing must complete regardless, serving both.
-      const second = fileNamesInDirectory("inst", "/repo", "src")
+      const second = directoryEntries("inst", "/repo", "src")
       await new Promise(resolve => setImmediate(resolve))
       release([{ name: "app.ts", type: "file" }])
       const [a, b] = await Promise.all([first, second])
-      assert.deepEqual([...a], ["app.ts"])
-      assert.deepEqual([...b], ["app.ts"])
+      assert.deepEqual([...a.keys()], ["app.ts"])
+      assert.deepEqual([...b.keys()], ["app.ts"])
       assert.equal(stub.calls.length, 1)
     } finally { stub.restore() }
   })
@@ -143,7 +152,7 @@ describe("directory existence cache", () => {
       // every listing at once: passive transcript decoration leaves room for
       // foreground reads through the shared background queue.
       const parents = Array.from({ length: 8 }, (_, index) => `d${index}`)
-      await Promise.all(parents.map(parent => fileNamesInDirectory("inst", "/repo", parent)))
+      await Promise.all(parents.map(parent => directoryEntries("inst", "/repo", parent)))
       assert.ok(peak <= 2, `peak concurrency ${peak} exceeded the background budget`)
     } finally { stub.restore() }
   })
@@ -153,7 +162,7 @@ describe("directory existence cache", () => {
     const consumer = new AbortController()
     const stub = patchListing((_path, _directory, signal) => stalledListing(signal))
     try {
-      const first = fileNamesInDirectory("inst", "/repo", "src", { signal: consumer.signal })
+      const first = directoryEntries("inst", "/repo", "src", { signal: consumer.signal })
       await new Promise(resolve => setImmediate(resolve))
       consumer.abort()
       assert.equal((await first).size, 0, "the leaving consumer converts nothing")
@@ -162,8 +171,8 @@ describe("directory existence cache", () => {
     } finally { stub.restore() }
     const healthy = patchListing(async () => [{ name: "app.ts", type: "file" }])
     try {
-      const second = await fileNamesInDirectory("inst", "/repo", "src")
-      assert.deepEqual([...second], ["app.ts"])
+      const second = await directoryEntries("inst", "/repo", "src")
+      assert.deepEqual([...second.keys()], ["app.ts"])
       assert.equal(healthy.calls.length, 1)
     } finally { healthy.restore() }
   })
@@ -177,14 +186,14 @@ describe("directory existence cache", () => {
       signal?.addEventListener("abort", () => reject(new Error("The operation was aborted")), { once: true })
     }))
     try {
-      const first = fileNamesInDirectory("inst", "/repo", "src", { signal: consumerA.signal })
+      const first = directoryEntries("inst", "/repo", "src", { signal: consumerA.signal })
       await new Promise(resolve => setImmediate(resolve))
       // The successor pass registers before the superseded one's abort lands.
-      const second = fileNamesInDirectory("inst", "/repo", "src", { signal: consumerB.signal })
+      const second = directoryEntries("inst", "/repo", "src", { signal: consumerB.signal })
       consumerA.abort()
       await new Promise(resolve => setTimeout(resolve, 10))
       release([{ name: "app.ts", type: "file" }])
-      assert.deepEqual([...(await second)], ["app.ts"], "the successor still receives the shared read")
+      assert.deepEqual([...(await second).keys()], ["app.ts"], "the successor still receives the shared read")
       await first.catch(() => undefined)
       assert.equal(stub.calls.length, 1)
     } finally { stub.restore() }
@@ -195,7 +204,7 @@ describe("directory existence cache", () => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"] })
     const stub = patchListing((_path, _directory, signal) => stalledListing(signal))
     try {
-      const first = fileNamesInDirectory("inst", "/repo", "src")
+      const first = directoryEntries("inst", "/repo", "src")
       t.mock.timers.tick(BARE_PATH_LISTING_DEADLINE_MS + 1)
       assert.equal((await first).size, 0, "a stalled listing fails closed at its deadline")
     } finally { stub.restore(); t.mock.timers.reset() }
@@ -205,9 +214,9 @@ describe("directory existence cache", () => {
     clearBarePathCaches()
     const stub = patchListing(async () => [])
     try {
-      await fileNamesInDirectory("inst", "/repo", "src")
-      await fileNamesInDirectory("inst", "/repo", "docs")
-      await fileNamesInDirectory("other", "/repo", "src")
+      await directoryEntries("inst", "/repo", "src")
+      await directoryEntries("inst", "/repo", "docs")
+      await directoryEntries("other", "/repo", "src")
       assert.equal(stub.calls.length, 3)
     } finally { stub.restore() }
   })
