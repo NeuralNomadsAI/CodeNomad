@@ -84,30 +84,28 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
     input["limit"] = json!(40);
     let mut capped = selected.len() < directories.len();
     let mut fences = Vec::with_capacity(selected.len());
-    for directory in selected {
-        let owned = scope.own(directory).await;
-        if !scope.current() {
-            return Ok(blocked());
-        }
-        fences.push(owned.ok_or_else(location_denied)?);
-    }
     let mut exclusions = Vec::new();
     let mut pages = Vec::new();
     let mut sessions = Vec::new();
     let mut hits = Vec::new();
     let mut seen = HashSet::new();
-    for (index, owned) in fences.iter().enumerate() {
+    for (index, directory) in selected.iter().enumerate() {
         let mut request = input.clone();
         if token.is_some() {
             let Some(page) = prior.pages.iter().find(|page| page.index == index) else { continue };
             request["cursor"] = json!(page.page);
         }
+        let owned = scope.own(directory).await;
+        if !scope.current() {
+            return Ok(blocked());
+        }
+        let owned = owned.ok_or_else(location_denied)?;
         match scope.verify_native_location(&owned.directory, true).await {
             Ok(()) => {}
             Err(Some(err)) => return Err(err),
             Err(None) => return Ok(blocked()),
         }
-        let output = match scope.call(owned, "historyRanked", &request, None).await {
+        let output = match scope.call(&owned, "historyRanked", &request, None).await {
             Some(Call::Result(output)) => output,
             Some(Call::Unsupported) if token.is_some() => return Ok(status("restart_required")),
             Some(Call::Unsupported) => {
@@ -116,6 +114,7 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
             }
             None => return Ok(blocked()),
         };
+        fences.push(owned);
         if output["status"] != "ranked" {
             return Ok(Json(output).into_response());
         }

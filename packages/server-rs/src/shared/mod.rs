@@ -179,9 +179,9 @@ pub fn bounded_stream_abort(
     })
 }
 
-/// Stream abort bound to principal revocation, daemon retirement, and an optional total lifetime
-/// (without cancelling on workspace close once a proxied request has been dispatched, matching TS
-/// `proxy.ts:37-115`).
+/// Stream abort bound to principal revocation, daemon retirement, server shutdown grace (5 s),
+/// and an optional total lifetime (without cancelling on workspace close once a proxied request
+/// has been dispatched, matching TS `proxy.ts:37-115`).
 pub fn proxy_stream_abort(
     app: crate::Shared,
     endpoint: std::sync::Arc<crate::opencode::Endpoint>,
@@ -189,18 +189,25 @@ pub fn proxy_stream_abort(
     max_duration: Option<std::time::Duration>,
 ) -> AbortFuture {
     let deadline = max_duration.map(|d| tokio::time::Instant::now() + d);
+    let shutdown = app.events.shutdown.clone();
+    let shutdown_grace = async move {
+        shutdown.cancelled().await;
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    };
     Box::pin(async move {
         match deadline {
             Some(at) => tokio::select! {
                 biased;
                 _ = principal.cancelled() => {}
                 _ = app.native.wait_retired(&endpoint) => {}
+                _ = shutdown_grace => {}
                 _ = tokio::time::sleep_until(at) => {}
             },
             None => tokio::select! {
                 biased;
                 _ = principal.cancelled() => {}
                 _ = app.native.wait_retired(&endpoint) => {}
+                _ = shutdown_grace => {}
             },
         }
     })

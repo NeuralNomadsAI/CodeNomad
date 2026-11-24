@@ -17,11 +17,15 @@ pub struct Record {
     removed: bool,
 }
 impl Record {
-    /// Removes the bridge registration with retries (250 ms backoff), propagating non-`NotFound`
-    /// errors (TS `automation-plugin.ts:189-196`, `shutdown.ts:85-102`).
-    pub fn remove(mut self) -> io::Result<()> {
+    /// Removes the bridge registration with retries (1 initial + 3 retries at 250 ms backoff,
+    /// matching TS `shutdown.ts:85-103`), keeping `removed = false` on failure so callers or
+    /// `Drop` can still retry cleanup.
+    pub fn remove(&mut self) -> io::Result<()> {
+        if self.removed {
+            return Ok(());
+        }
         let mut last_err = None;
-        for attempt in 0..3 {
+        for attempt in 0..4 {
             match fs::remove_file(&self.path) {
                 Ok(()) => {
                     self.removed = true;
@@ -33,13 +37,12 @@ impl Record {
                 }
                 Err(e) => {
                     last_err = Some(e);
-                    if attempt < 2 {
+                    if attempt < 3 {
                         std::thread::sleep(std::time::Duration::from_millis(250));
                     }
                 }
             }
         }
-        self.removed = true;
         Err(last_err.unwrap())
     }
 }

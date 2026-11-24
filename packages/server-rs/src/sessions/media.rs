@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
+#[cfg(test)]
 use serde_json::Value;
 use std::time::Duration;
 
@@ -81,6 +82,7 @@ fn renderable_parts<'a>(file_type: &str, mime: &'a str, uri: &'a str) -> Option<
     uri.get(..prefix.len()).is_some_and(|start| start.eq_ignore_ascii_case(&prefix)).then_some((mime, uri))
 }
 
+#[cfg(test)]
 fn renderable(file: &Value) -> Option<(&str, &str)> {
     renderable_parts(file["type"].as_str()?, file["mime"].as_str()?, file["uri"].as_str()?)
 }
@@ -107,6 +109,7 @@ pub(crate) fn wants_deferred(headers: &axum::http::HeaderMap) -> bool {
     headers.get_all("x-codenomad-media").iter().eq(["deferred"])
 }
 
+#[cfg(test)]
 pub(super) fn defer_message(workspace_enc: &str, session_enc: &str, message: &mut Value) -> bool {
     if message["type"] != "assistant" {
         return false;
@@ -140,6 +143,7 @@ pub(super) fn defer_message(workspace_enc: &str, session_enc: &str, message: &mu
     changed
 }
 
+#[cfg(test)]
 pub(crate) fn defer(workspace: &str, session: &str, messages: &mut Value) -> bool {
     if !valid_id(workspace) || !valid_id(session) {
         return false;

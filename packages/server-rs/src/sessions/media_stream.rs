@@ -10,13 +10,16 @@
 //! oversized upstream payloads.
 use super::media;
 
-/// Cap on the projected (or unprojected fallback) output buffer, aligned with `ResponsePool::List`.
-pub(crate) const OUTPUT_LIMIT: usize = 256 * 1024 * 1024;
-/// Cap on a single raw message item before projection.
-const ITEM_LIMIT: usize = 128 * 1024 * 1024;
+/// Cap on the projected (or unprojected fallback) output buffer. Chosen via Banker's admission
+/// rule alongside `ResponsePool::List` (256 MiB), `DEFER_SLOTS` (4), and `FAIR_LIST_SHARE`
+/// (32 MiB): `160 MiB + 3 * 32 MiB = 256 MiB`, so the single `LARGE_DEFER_SLOT` holder can
+/// always finish without ever deadlocking against up to 3 concurrent waiting streams.
+pub(crate) const OUTPUT_LIMIT: usize = 160 * 1024 * 1024;
+/// Cap on a single raw message item before projection (`2 * 72 MiB + 8 MiB URI <= 160 MiB`).
+const ITEM_LIMIT: usize = 72 * 1024 * 1024;
 /// Cap on kept original image URIs for invalid-JSON rollback so valid pages with hundreds of MiB
 /// of deferrable images still project down to a few KiB instead of hitting `OUTPUT_LIMIT`.
-const UNDO_LIMIT: usize = 64 * 1024 * 1024;
+const UNDO_LIMIT: usize = 48 * 1024 * 1024;
 const INLINE_THRESHOLD: usize = 32 * 1024;
 const RESERVE_STEP: usize = crate::shared::RESPONSE_CHUNK;
 const MAX_SYNTAX_DEPTH: usize = 1024;
@@ -923,7 +926,17 @@ impl MessageListStream {
     }
 }
 
-fn may_contain_image_uri(haystack: &[u8]) -> bool {
+fn parse_short_string(raw: &str, max_raw: usize) -> Option<String> {
+    (raw.len() <= max_raw).then(|| serde_json::from_str::<String>(raw).ok()).flatten()
+}
+
+pub(super) fn validate_json_syntax(raw: &[u8]) -> bool {
+    let mut syntax = JsonSyntax::new();
+    syntax.feed(raw);
+    syntax.is_valid_eof()
+}
+
+pub(super) fn may_contain_image_uri(haystack: &[u8]) -> bool {
     const NEEDLE: &[u8] = b"data:image";
     if haystack.len() < NEEDLE.len() {
         return false;
@@ -1049,7 +1062,7 @@ fn parse_bounded_image_uri(raw: &str, max_utf16: usize) -> Option<String> {
 /// `BTreeMap` or `String` allocations. Only short keys (`<= 64` bytes, matching the target
 /// field names) are decoded and forwarded to `visit`. Duplicate keys naturally follow last-wins
 /// order matching JS `JSON.parse`.
-fn for_each_json_object_field<'a>(raw: &'a str, mut visit: impl FnMut(&str, &'a str)) -> Option<()> {
+pub(super) fn for_each_json_object_field<'a>(raw: &'a str, mut visit: impl FnMut(&str, &'a str)) -> Option<()> {
     let bytes = raw.as_bytes();
     let mut i = 0;
     while i < bytes.len() && bytes[i].is_ascii_whitespace() {
@@ -1187,7 +1200,11 @@ const MAX_SCANNED_ITEMS: usize = 100_001;
 
 /// Streams through up to `limit` elements of a JSON array slice with zero intermediate `Vec`
 /// allocations, calling `visit(index, element_slice)` for each element.
-fn for_each_json_array_item<'a>(raw: &'a str, limit: usize, mut visit: impl FnMut(usize, &'a str)) -> Option<()> {
+pub(super) fn for_each_json_array_item<'a>(
+    raw: &'a str,
+    limit: usize,
+    mut visit: impl FnMut(usize, &'a str),
+) -> Option<()> {
     let bytes = raw.as_bytes();
     let mut i = 0;
     while i < bytes.len() && bytes[i].is_ascii_whitespace() {
@@ -1252,6 +1269,120 @@ fn for_each_json_array_item<'a>(raw: &'a str, limit: usize, mut visit: impl FnMu
     }
 }
 
+/// Collects byte ranges `(start, end, json_encoded_replacement)` relative to `text` for every
+/// deferrable `> 32 KiB` tool image URI in a single message JSON object, with zero `Value` tree
+/// allocation and bounded string decoding (`<= 2 KiB` for metadata fields, `<= 8 MiB` for URIs).
+pub(super) fn collect_item_patches(
+    workspace_enc: &str,
+    session_enc: &str,
+    text: &str,
+) -> Option<Vec<(usize, usize, String)>> {
+    if !may_contain_image_uri(text.as_bytes()) {
+        return None;
+    }
+    let base = text.as_ptr() as usize;
+    let (mut msg_type, mut msg_id, mut content_raw) = (None, None, None);
+    for_each_json_object_field(text, |k, v| match k {
+        "type" => msg_type = Some(v),
+        "id" => msg_id = Some(v),
+        "content" => content_raw = Some(v),
+        _ => {}
+    })?;
+    if parse_short_string(msg_type?, 128)?.as_str() != "assistant" {
+        return None;
+    }
+    let id_raw = parse_short_string(msg_id?, 2048)?;
+    if !media::valid_id(&id_raw) {
+        return None;
+    }
+    let content_raw = content_raw?;
+    if !may_contain_image_uri(content_raw.as_bytes()) {
+        return None;
+    }
+    let id_enc = media::encode(&id_raw);
+    let mut patches = Vec::new();
+    for_each_json_array_item(content_raw, MAX_SCANNED_ITEMS, |part_idx, part_raw| {
+        if !may_contain_image_uri(part_raw.as_bytes()) {
+            return;
+        }
+        let (mut part_type, mut state_raw) = (None, None);
+        if for_each_json_object_field(part_raw, |k, v| match k {
+            "type" => part_type = Some(v),
+            "state" => state_raw = Some(v),
+            _ => {}
+        })
+        .is_none()
+        {
+            return;
+        }
+        if part_type.and_then(|v| parse_short_string(v, 128)).as_deref() != Some("tool") {
+            return;
+        }
+        let Some(state_raw) = state_raw else {
+            return;
+        };
+        if !may_contain_image_uri(state_raw.as_bytes()) {
+            return;
+        }
+        let mut items_raw = None;
+        if for_each_json_object_field(state_raw, |k, v| {
+            if k == "content" {
+                items_raw = Some(v);
+            }
+        })
+        .is_none()
+        {
+            return;
+        }
+        let Some(items_raw) = items_raw else {
+            return;
+        };
+        if !may_contain_image_uri(items_raw.as_bytes()) {
+            return;
+        }
+        let _ = for_each_json_array_item(items_raw, MAX_SCANNED_ITEMS, |item_idx, item_raw| {
+            if item_raw.len() <= INLINE_THRESHOLD || !may_contain_image_uri(item_raw.as_bytes()) {
+                return;
+            }
+            let (mut file_type, mut mime, mut uri_raw) = (None, None, None);
+            if for_each_json_object_field(item_raw, |k, v| match k {
+                "type" => file_type = Some(v),
+                "mime" => mime = Some(v),
+                "uri" => uri_raw = Some(v),
+                _ => {}
+            })
+            .is_none()
+            {
+                return;
+            }
+            let Some(file_type) = file_type.and_then(|v| parse_short_string(v, 128)) else {
+                return;
+            };
+            let Some(mime) = mime.and_then(|v| parse_short_string(v, 1024)) else {
+                return;
+            };
+            let Some(uri_raw) = uri_raw else {
+                return;
+            };
+            if uri_raw.len() <= INLINE_THRESHOLD {
+                return;
+            }
+            let Some(uri) = parse_bounded_image_uri(uri_raw, media::URI_LIMIT) else {
+                return;
+            };
+            if let Some(reference) =
+                media::defer_uri(workspace_enc, session_enc, &id_enc, part_idx, item_idx, &file_type, &mime, &uri)
+                && let Ok(encoded) = serde_json::to_string(&reference)
+            {
+                let start = uri_raw.as_ptr() as usize - base;
+                let end = start + uri_raw.len();
+                patches.push((start, end, encoded));
+            }
+        });
+    })?;
+    (!patches.is_empty()).then_some(patches)
+}
+
 /// Projects a single message JSON item by streaming through up to `MAX_SCANNED_ITEMS` parts
 /// and tool content items with zero intermediate array/map allocations, recording only the
 /// byte ranges of replaced `"uri"` JSON string tokens and splicing them in one single pass.
@@ -1261,110 +1392,8 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, mut raw: Vec<
     if !may_contain_image_uri(&raw) {
         return (raw, Vec::new());
     }
-    let patches = (|| -> Option<Vec<(usize, usize, String)>> {
-        let text = std::str::from_utf8(&raw).ok()?;
-        let base = raw.as_ptr() as usize;
-        let (mut msg_type, mut msg_id, mut content_raw) = (None, None, None);
-        for_each_json_object_field(text, |k, v| match k {
-            "type" => msg_type = Some(v),
-            "id" => msg_id = Some(v),
-            "content" => content_raw = Some(v),
-            _ => {}
-        })?;
-        if parse_string(msg_type?)?.as_str() != "assistant" {
-            return None;
-        }
-        let id_raw = parse_string(msg_id?)?;
-        if !media::valid_id(&id_raw) {
-            return None;
-        }
-        let content_raw = content_raw?;
-        if !may_contain_image_uri(content_raw.as_bytes()) {
-            return None;
-        }
-        let id_enc = media::encode(&id_raw);
-        let mut patches = Vec::new();
-        for_each_json_array_item(content_raw, MAX_SCANNED_ITEMS, |part_idx, part_raw| {
-            if !may_contain_image_uri(part_raw.as_bytes()) {
-                return;
-            }
-            let (mut part_type, mut state_raw) = (None, None);
-            if for_each_json_object_field(part_raw, |k, v| match k {
-                "type" => part_type = Some(v),
-                "state" => state_raw = Some(v),
-                _ => {}
-            })
-            .is_none()
-            {
-                return;
-            }
-            if part_type.and_then(parse_string).as_deref() != Some("tool") {
-                return;
-            }
-            let Some(state_raw) = state_raw else {
-                return;
-            };
-            if !may_contain_image_uri(state_raw.as_bytes()) {
-                return;
-            }
-            let mut items_raw = None;
-            if for_each_json_object_field(state_raw, |k, v| {
-                if k == "content" {
-                    items_raw = Some(v);
-                }
-            })
-            .is_none()
-            {
-                return;
-            }
-            let Some(items_raw) = items_raw else {
-                return;
-            };
-            if !may_contain_image_uri(items_raw.as_bytes()) {
-                return;
-            }
-            let _ = for_each_json_array_item(items_raw, MAX_SCANNED_ITEMS, |item_idx, item_raw| {
-                if item_raw.len() <= INLINE_THRESHOLD || !may_contain_image_uri(item_raw.as_bytes()) {
-                    return;
-                }
-                let (mut file_type, mut mime, mut uri_raw) = (None, None, None);
-                if for_each_json_object_field(item_raw, |k, v| match k {
-                    "type" => file_type = Some(v),
-                    "mime" => mime = Some(v),
-                    "uri" => uri_raw = Some(v),
-                    _ => {}
-                })
-                .is_none()
-                {
-                    return;
-                }
-                let Some(file_type) = file_type.and_then(parse_string) else {
-                    return;
-                };
-                let Some(mime) = mime.and_then(parse_string) else {
-                    return;
-                };
-                let Some(uri_raw) = uri_raw else {
-                    return;
-                };
-                if uri_raw.len() <= INLINE_THRESHOLD {
-                    return;
-                }
-                let Some(uri) = parse_bounded_image_uri(uri_raw, media::URI_LIMIT) else {
-                    return;
-                };
-                if let Some(reference) =
-                    media::defer_uri(workspace_enc, session_enc, &id_enc, part_idx, item_idx, &file_type, &mime, &uri)
-                    && let Ok(encoded) = serde_json::to_string(&reference)
-                {
-                    let start = uri_raw.as_ptr() as usize - base;
-                    let end = start + uri_raw.len();
-                    patches.push((start, end, encoded));
-                }
-            });
-        })?;
-        (!patches.is_empty()).then_some(patches)
-    })();
+    let patches =
+        std::str::from_utf8(&raw).ok().and_then(|text| collect_item_patches(workspace_enc, session_enc, text));
     let Some(mut patches) = patches else {
         return (raw, Vec::new());
     };
@@ -1471,8 +1500,8 @@ pub(crate) fn extract_tool_media(
         _ => {}
     })
     .ok_or(())?;
-    let id = id_raw.and_then(parse_string);
-    let msg_type = type_raw.and_then(parse_string);
+    let id = id_raw.and_then(|v| parse_short_string(v, 2048));
+    let msg_type = type_raw.and_then(|v| parse_short_string(v, 128));
     let mut part_raw = None;
     if let Some(content) = content_raw {
         let _ = for_each_json_array_item(content, part_index.saturating_add(1), |idx, elem| {
@@ -1518,10 +1547,10 @@ pub(crate) fn extract_tool_media(
     Ok(Some(ExtractedToolMedia {
         id,
         msg_type,
-        part_type: part_type.and_then(parse_string),
-        file_type: file_type.and_then(parse_string),
-        mime: mime.and_then(parse_string),
-        uri: uri.and_then(parse_string),
+        part_type: part_type.and_then(|v| parse_short_string(v, 128)),
+        file_type: file_type.and_then(|v| parse_short_string(v, 128)),
+        mime: mime.and_then(|v| parse_short_string(v, 1024)),
+        uri: uri.and_then(|v| parse_bounded_image_uri(v, media::URI_LIMIT)),
     }))
 }
 

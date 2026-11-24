@@ -181,17 +181,24 @@ impl Scope<'_> {
         owned.current_local(self).then_some(owned)
     }
     async fn inventory(&self) -> Option<(u64, Arc<HistoryInventory>)> {
-        let rev = worktrees::inventory_revision(self.app);
         let mut guard = self.inventory.lock().await;
-        if let Some((cached_rev, inv)) = guard.as_ref()
-            && *cached_rev == rev
-        {
-            return Some((*cached_rev, inv.clone()));
+        for _ in 0..2 {
+            let before = worktrees::inventory_revision(self.app);
+            if let Some((cached_rev, inv)) = guard.as_ref()
+                && *cached_rev == before
+            {
+                return Some((*cached_rev, inv.clone()));
+            }
+            let loaded = Arc::new(HistoryInventory::load(self.app, &self.workspace).await?);
+            // Only cache the snapshot if no `worktree.updated` invalidation arrived during load;
+            // stamping a post-scan revision onto pre-scan data would hide a concurrent removal.
+            if worktrees::inventory_revision(self.app) == before {
+                *guard = Some((before, loaded.clone()));
+                return Some((before, loaded));
+            }
+            *guard = None;
         }
-        let loaded = Arc::new(HistoryInventory::load(self.app, &self.workspace).await?);
-        let loaded_rev = worktrees::inventory_revision(self.app);
-        *guard = Some((loaded_rev, loaded.clone()));
-        Some((loaded_rev, loaded))
+        None
     }
     /// Matches TS `session-history.ts:67-72` & `session-history-ranked.ts:73-75`: for any non-root
     /// worktree target, resolve native `GET /api/location` and confirm it echoes the exact owned

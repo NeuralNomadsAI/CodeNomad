@@ -169,8 +169,9 @@ impl Placement {
             let (path, anchor, physical) = tokio::task::spawn_blocking(move || -> Result<_, Error> {
                 let unavailable = || error(Status::SERVICE_UNAVAILABLE, "History placement unavailable");
                 let forbidden = || error(Status::FORBIDDEN, "Session does not belong to workspace");
-                let (path, anchor) =
-                    crate::worktrees::ownership::resolve_media_path(&scope, &dir_owned).ok_or_else(forbidden)?;
+                let (path, anchor) = crate::worktrees::ownership::resolve_media_path_checked(&scope, &dir_owned)
+                    .map_err(|_| unavailable())?
+                    .ok_or_else(forbidden)?;
                 let physical = directory_identity(&anchor).map_err(|_| unavailable())?;
                 Ok((path, anchor, physical))
             })
@@ -309,6 +310,7 @@ impl Placement {
         let Some(raw_dir) = self.source["location"]["directory"].as_str().map(str::to_owned) else {
             return false;
         };
+        let scope = app.scope.clone();
         let workspace_path = self.workspace.path.clone();
         let workspace_physical = self.workspace_physical.clone();
         let path = self.path.clone();
@@ -320,7 +322,8 @@ impl Placement {
                 .as_ref()
                 .is_none_or(|expected| directory_identity(&workspace_path).is_ok_and(|current| &current == expected));
             if !workspace_ok
-                || crate::worktrees::ownership::resolve_exact_directory(&raw_dir).as_ref() != Some(&path)
+                || crate::worktrees::ownership::resolve_media_path(&scope, &raw_dir).map(|(p, _)| p).as_ref()
+                    != Some(&path)
                 || !checkout.live(&path)
             {
                 return false;
@@ -503,41 +506,227 @@ fn blocked(reason: &str) -> Response {
     Json(json!({"status":"blocked","reason":reason})).into_response()
 }
 
-struct ValidatedHistory {
-    output: Value,
-    raw_range: std::ops::Range<usize>,
-    body: Bytes,
-    user_files_marker: Option<Value>,
+fn detach_or_slice(body: Bytes, raw_range: std::ops::Range<usize>) -> Bytes {
+    if body.len() > raw_range.len().saturating_add(4096) {
+        Bytes::copy_from_slice(&body[raw_range])
+    } else {
+        body.slice(raw_range)
+    }
 }
 
-fn parse_and_validate_history(status: Status, mut body: Vec<u8>, action: &str) -> Result<ValidatedHistory, Response> {
+/// Validates and optionally defers a `window` RPC output without building a `serde_json::Value`
+/// tree over `messages[*]` tool payloads, so valid windows with millions of numeric samples in
+/// free tool metadata never amplify memory or trip a node cap.
+fn process_window_payload(
+    status: Status,
+    body: Bytes,
+    raw_str: &str,
+    raw_range: std::ops::Range<usize>,
+    id: &str,
+    session: &str,
+    reference: bool,
+    defer: bool,
+) -> Result<Bytes, Response> {
+    use super::media_stream;
+    if !status.is_success() || !media_stream::validate_json_syntax(raw_str.as_bytes()) {
+        return Err(blocked("unavailable"));
+    }
+    let mut envelope_map = serde_json::Map::new();
+    let mut messages_raw: Option<&str> = None;
+    let mut envelope_ok = true;
+    if media_stream::for_each_json_object_field(raw_str, |k, v| {
+        if !envelope_ok {
+            return;
+        }
+        if k == "messages" {
+            messages_raw = Some(v);
+        } else if !media_stream::json_node_count_within(v.as_bytes(), 1024) {
+            envelope_ok = false;
+        } else if let Ok(val) = serde_json::from_str::<Value>(v) {
+            envelope_map.insert(k.to_owned(), val);
+        } else {
+            envelope_ok = false;
+        }
+    })
+    .is_none()
+        || !envelope_ok
+    {
+        return Err(blocked("unavailable"));
+    }
+    if envelope_map.get("status").and_then(Value::as_str) != Some("window") {
+        if messages_raw.is_some() {
+            envelope_map.insert("messages".into(), Value::Null);
+        }
+        if !crate::sessions::contracts::valid(
+            crate::sessions::contracts::get("window", true),
+            &Value::Object(envelope_map),
+        ) {
+            return Err(blocked("unavailable"));
+        }
+        return Ok(detach_or_slice(body, raw_range));
+    }
+    let user_files_marker = envelope_map.remove("userFiles");
+    if user_files_marker.as_ref().is_some_and(|v| v.as_str() != Some(user_files::REFERENCE))
+        || (reference && user_files_marker.is_none())
+    {
+        return Err(blocked("unavailable"));
+    }
+    let Some(messages_str) = messages_raw else {
+        return Err(blocked("unavailable"));
+    };
+    let can_defer = defer && media::valid_id(id) && media::valid_id(session);
+    let (ws_enc, ses_enc) =
+        if can_defer { (media::encode(id), media::encode(session)) } else { (String::new(), String::new()) };
+    let raw_base = raw_str.as_ptr() as usize;
+    let mut check_messages: Vec<Value> = Vec::new();
+    let mut patches: Vec<(usize, usize, String)> = Vec::new();
+    let mut messages_ok = true;
+    let mut count = 0usize;
+    if media_stream::for_each_json_array_item(messages_str, 201, |_, msg_str| {
+        if !messages_ok {
+            return;
+        }
+        count += 1;
+        if count > 200 {
+            messages_ok = false;
+            return;
+        }
+        let (mut id_tok, mut type_tok, mut time_tok, mut files_tok) = (None, None, None, None);
+        if media_stream::for_each_json_object_field(msg_str, |k, v| match k {
+            "id" => id_tok = Some(v),
+            "type" => type_tok = Some(v),
+            "time" => time_tok = Some(v),
+            "files" => files_tok = Some(v),
+            _ => {}
+        })
+        .is_none()
+        {
+            messages_ok = false;
+            return;
+        }
+        let (Some(id_tok), Some(type_tok), Some(time_tok)) = (id_tok, type_tok, time_tok) else {
+            messages_ok = false;
+            return;
+        };
+        if id_tok.len() > 2048 || type_tok.len() > 128 {
+            messages_ok = false;
+            return;
+        }
+        let (Ok(id_val), Ok(type_val)) =
+            (serde_json::from_str::<Value>(id_tok), serde_json::from_str::<Value>(type_tok))
+        else {
+            messages_ok = false;
+            return;
+        };
+        let mut created_tok = None;
+        if media_stream::for_each_json_object_field(time_tok, |k, v| {
+            if k == "created" {
+                created_tok = Some(v);
+            }
+        })
+        .is_none()
+        {
+            messages_ok = false;
+            return;
+        }
+        let Some(created_tok) = created_tok.filter(|t| t.len() <= 64) else {
+            messages_ok = false;
+            return;
+        };
+        let Ok(created_val) = serde_json::from_str::<Value>(created_tok) else {
+            messages_ok = false;
+            return;
+        };
+        if reference
+            && type_val.as_str() == Some("user")
+            && let Some(files_tok) = files_tok
+        {
+            if !media_stream::json_node_count_within(files_tok.as_bytes(), 4096) {
+                messages_ok = false;
+                return;
+            }
+            let Ok(Value::Array(files)) = serde_json::from_str::<Value>(files_tok) else {
+                messages_ok = false;
+                return;
+            };
+            if files.len() > user_files::FILE_COUNT || !files.iter().all(user_files::reference) {
+                messages_ok = false;
+                return;
+            }
+        }
+        check_messages.push(json!({"id": id_val, "type": type_val, "time": {"created": created_val}}));
+        if can_defer && type_val.as_str() == Some("assistant") {
+            let msg_offset = msg_str.as_ptr() as usize - raw_base;
+            if let Some(item_patches) = media_stream::collect_item_patches(&ws_enc, &ses_enc, msg_str) {
+                for (start, end, replacement) in item_patches {
+                    patches.push((msg_offset + start, msg_offset + end, replacement));
+                }
+            }
+        }
+    })
+    .is_none()
+        || !messages_ok
+    {
+        return Err(blocked("unavailable"));
+    }
+    envelope_map.insert("messages".into(), Value::Array(check_messages));
+    if !crate::sessions::contracts::valid(crate::sessions::contracts::get("window", true), &Value::Object(envelope_map))
+    {
+        return Err(blocked("unavailable"));
+    }
+    if !patches.is_empty() {
+        patches.sort_unstable_by_key(|(start, _, _)| *start);
+        let raw_bytes = raw_str.as_bytes();
+        let mut out = Vec::with_capacity(raw_bytes.len());
+        let mut cursor = 0usize;
+        for (start, end, replacement) in patches {
+            if start < cursor || end > raw_bytes.len() {
+                return Err(blocked("unavailable"));
+            }
+            out.extend_from_slice(&raw_bytes[cursor..start]);
+            out.extend_from_slice(replacement.as_bytes());
+            cursor = end;
+        }
+        out.extend_from_slice(&raw_bytes[cursor..]);
+        if reference && out.len() > 24 * 1024 * 1024 {
+            return Err(blocked("unsupported_storage"));
+        }
+        out.shrink_to_fit();
+        return Ok(out.into());
+    }
+    if reference && raw_str.len() > 24 * 1024 * 1024 {
+        return Err(blocked("unsupported_storage"));
+    }
+    Ok(detach_or_slice(body, raw_range))
+}
+
+fn process_history_payload(
+    status: Status,
+    mut body: Vec<u8>,
+    action: &str,
+    id: &str,
+    session: &str,
+    reference: bool,
+    defer: bool,
+) -> Result<Bytes, Response> {
     body.shrink_to_fit();
     let body: Bytes = body.into();
     let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return Err(blocked("unavailable")) };
     let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
     let raw_bytes = raw.get().as_bytes();
-    // Bound JSON structural nodes before allocating a `serde_json::Value` tree so a dense
-    // numeric array (e.g. 12M tiny ints under 24 MiB) cannot amplify memory into GiB, while
-    // admitting valid high-part-count message windows (e.g. 2 messages x 90,000 text parts).
-    const MAX_HISTORY_NODES: usize = 2_000_000;
-    if !crate::sessions::media_stream::json_node_count_within(raw_bytes, MAX_HISTORY_NODES) {
-        return Err(blocked("unavailable"));
-    }
     let offset = raw_bytes.as_ptr() as usize - body.as_ptr() as usize;
     let raw_range = offset..offset + raw_bytes.len();
-    let Ok(mut output) = serde_json::from_str::<Value>(raw.get()) else { return Err(blocked("unavailable")) };
-    // Temporarily strip valid `userFiles` on any window output (it is optional in TS
-    // `navigation-contract.ts:77-83`) while still rejecting a present-but-invalid value
-    // before session revalidation (`session-navigation.ts:85-91`).
-    let user_files_marker = if output["status"] == "window" {
-        let marker = output.as_object_mut().and_then(|root| root.remove("userFiles"));
-        if marker.as_ref().is_some_and(|v| v.as_str() != Some(user_files::REFERENCE)) {
-            return Err(blocked("unavailable"));
-        }
-        marker
-    } else {
-        None
-    };
+    if action == "window" {
+        return process_window_payload(status, body.clone(), raw.get(), raw_range, id, session, reference, defer);
+    }
+    // `outline` / `outlinePreview` schemas are strict flat lists (max 16,384 / 12 entries, no
+    // passthrough metadata), so 400,000 nodes comfortably exceeds any valid response while blocking
+    // dense numeric arrays from amplifying memory.
+    const MAX_OUTLINE_NODES: usize = 400_000;
+    if !crate::sessions::media_stream::json_node_count_within(raw_bytes, MAX_OUTLINE_NODES) {
+        return Err(blocked("unavailable"));
+    }
+    let Ok(output) = serde_json::from_str::<Value>(raw.get()) else { return Err(blocked("unavailable")) };
     if !status.is_success()
         || !crate::sessions::contracts::valid(crate::sessions::contracts::get(action, true), &output)
     {
@@ -550,47 +739,7 @@ fn parse_and_validate_history(status: Status, mut body: Vec<u8>, action: &str) -
     }) {
         return Err(blocked("unavailable"));
     }
-    Ok(ValidatedHistory { output, raw_range, body, user_files_marker })
-}
-
-fn finalize_history_payload(
-    mut validated: ValidatedHistory,
-    id: &str,
-    session: &str,
-    reference: bool,
-    defer: bool,
-) -> Result<Bytes, Response> {
-    if reference && validated.output["status"] == "window" {
-        if let Some(marker) = validated.user_files_marker.take()
-            && let Some(root) = validated.output.as_object_mut()
-        {
-            root.insert("userFiles".into(), marker);
-        }
-        if !user_files::validate_window(&mut validated.output) {
-            return Err(blocked("unavailable"));
-        }
-    }
-    let deferred =
-        defer && validated.output["status"] == "window" && media::defer(id, session, &mut validated.output["messages"]);
-    let referenced = reference && validated.output["status"] == "window";
-    let payload: Bytes = if referenced || deferred {
-        if referenced {
-            validated.output["userFiles"] = user_files::REFERENCE.into();
-        }
-        let Ok(mut projected) = serde_json::to_vec(&validated.output) else { return Err(blocked("unavailable")) };
-        if referenced && projected.len() > 24 * 1024 * 1024 {
-            return Err(blocked("unsupported_storage"));
-        }
-        projected.shrink_to_fit();
-        projected.into()
-    } else if validated.body.len() > validated.raw_range.len().saturating_add(4096) {
-        // Detach from an oversized RPC envelope so slow clients do not pin extra memory outside
-        // `payload.len()`.
-        Bytes::copy_from_slice(&validated.body[validated.raw_range])
-    } else {
-        validated.body.slice(validated.raw_range)
-    };
-    Ok(payload)
+    Ok(detach_or_slice(body, raw_range))
 }
 
 pub async fn handle(
@@ -689,7 +838,7 @@ pub async fn handle(
             // Reserve `ResponsePool::History` memory BEFORE reading the up-to-24 MiB RPC payload
             // so concurrent `HISTORY_SLOTS` callers cannot hold 4x24 MiB outside the 64 MiB pool,
             // then shrink the permit to the actual serialized response size once projected.
-            let mut mem = {
+            let mem = {
                 let workspace_closed = async {
                     loop {
                         let notified = app.workspace_closed.notified();
@@ -748,43 +897,41 @@ pub async fn handle(
                 }
             }
             let body_len = body.len();
-            let (validated, slot) = if body_len > 32 * 1024 {
-                let action_owned = action.clone();
+            // Validate and project BEFORE final session/revert revalidation, moving both `slot`
+            // and `mem` into `spawn_blocking` so client cancellation never releases pool permits
+            // while a detached worker still holds `body`.
+            let (projected, slot, mut mem) = if body_len > 32 * 1024 {
+                let (action_owned, id_owned, session_owned) = (action.clone(), id.clone(), session.to_owned());
                 match tokio::task::spawn_blocking(move || {
-                    (parse_and_validate_history(status, body, &action_owned), slot)
+                    let result = process_history_payload(
+                        status,
+                        body,
+                        &action_owned,
+                        &id_owned,
+                        &session_owned,
+                        reference,
+                        defer,
+                    );
+                    (result, slot, mem)
                 })
                 .await
                 {
-                    Ok((Ok(validated), slot)) => (validated, slot),
-                    Ok((Err(invalid_response), _)) => return invalid_response,
+                    Ok(triple) => triple,
                     Err(_) => return blocked("unavailable"),
                 }
             } else {
-                match parse_and_validate_history(status, body, &action) {
-                    Ok(validated) => (validated, slot),
-                    Err(invalid_response) => return invalid_response,
-                }
-            };
-            // Project BEFORE final session/revert revalidation so no `spawn_blocking` yield occurs
-            // after the last `revert` check, then shrink the held memory permit to the final body.
-            let (projected, slot) = if body_len > 32 * 1024 {
-                let (id, session) = (id.clone(), session.to_owned());
-                match tokio::task::spawn_blocking(move || {
-                    (finalize_history_payload(validated, &id, &session, reference, defer), slot)
-                })
-                .await
-                {
-                    Ok(pair) => pair,
-                    Err(_) => return blocked("unavailable"),
-                }
-            } else {
-                (finalize_history_payload(validated, &id, session, reference, defer), slot)
+                (process_history_payload(status, body, &action, &id, session, reference, defer), slot, mem)
             };
             if defer || body_len > 32 * 1024 {
-                let keep_bytes = projected.as_ref().map_or(body_len, |p| p.len().saturating_add(4096));
-                let keep_units =
-                    crate::shared::response_memory_units(crate::shared::ResponsePool::History, keep_bytes) as usize;
-                if let Some(permit) = &mut mem {
+                let keep_bytes = projected.as_ref().map_or(0, |p| p.len().saturating_add(4096));
+                let keep_units = if keep_bytes == 0 {
+                    0
+                } else {
+                    crate::shared::response_memory_units(crate::shared::ResponsePool::History, keep_bytes) as usize
+                };
+                if keep_units == 0 {
+                    mem = None;
+                } else if let Some(permit) = &mut mem {
                     let excess = permit.num_permits().saturating_sub(keep_units);
                     if excess > 0 {
                         let _ = permit.split(excess);

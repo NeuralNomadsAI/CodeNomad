@@ -1101,16 +1101,22 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         return Err(upstream_error());
     }
     if let Some(session) = defer_media {
-        // Allow up to 4 concurrent deferred `message.list` streams (64 MiB fair share each inside
-        // the 256 MiB `ResponsePool::List`, deadlock-free) and acquire a slot only after receiving
-        // a `2xx` JSON response so a slow upstream stream never starves other workspaces. Streams
-        // growing past 64 MiB serialize behind `LARGE_DEFER_SLOT` with bounded waits.
+        // Banker's admission budget for deadlock-free concurrency: `ResponsePool::List` is 256 MiB,
+        // `DEFER_SLOTS = 4`, `FAIR_LIST_SHARE = 32 MiB`, and `OUTPUT_LIMIT = 160 MiB`. Up to 3
+        // streams waiting on `LARGE_DEFER_SLOT` hold at most `3 * 32 = 96 MiB`, leaving the full
+        // `160 MiB` guaranteed for the single `LARGE_DEFER_SLOT` holder (`96 + 160 = 256 MiB`).
         static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
         static LARGE_DEFER_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
-        const FAIR_LIST_SHARE: usize = 64 * 1024 * 1024;
-        const LARGE_WAIT: Duration = Duration::from_secs(15);
-        const POOL_WAIT: Duration = Duration::from_secs(30);
+        const FAIR_LIST_SHARE: usize = 32 * 1024 * 1024;
+        const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
         let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
+        let shutdown_grace = || {
+            let shutdown = app.events.shutdown.clone();
+            async move {
+                shutdown.cancelled().await;
+                tokio::time::sleep(SHUTDOWN_GRACE).await;
+            }
+        };
         if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
             return Err(upstream_error());
         }
@@ -1121,6 +1127,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+            _ = shutdown_grace() => return Err(interrupted()),
             sent = tokio::time::timeout(super::PROXY_IDLE, upstream.send()) => match sent {
                 Ok(Ok(response)) => response,
                 Ok(Err(_)) => {
@@ -1137,7 +1144,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    permit = tokio::time::timeout(POOL_WAIT, DEFER_SLOTS.acquire()) => {
+                    _ = shutdown_grace() => return Err(interrupted()),
+                    permit = tokio::time::timeout(super::PROXY_IDLE, DEFER_SLOTS.acquire()) => {
                         permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                     }
                 },
@@ -1159,6 +1167,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    _ = shutdown_grace() => return Err(interrupted()),
                     next = tokio::time::timeout(super::PROXY_IDLE, response.chunk()) => {
                         next.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                     }
@@ -1178,19 +1187,20 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        permit = tokio::time::timeout(LARGE_WAIT, LARGE_DEFER_SLOT.acquire()) => {
+                        _ = shutdown_grace() => return Err(interrupted()),
+                        permit = tokio::time::timeout(super::PROXY_IDLE, LARGE_DEFER_SLOT.acquire()) => {
                             permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                         }
                     });
                 }
                 if pre_needed > held_units {
-                    let wait = if pre_needed > fair_units { POOL_WAIT } else { super::PROXY_IDLE };
                     let extra = tokio::select! {
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                        _ = shutdown_grace() => return Err(interrupted()),
                         permit = tokio::time::timeout(
-                            wait,
+                            super::PROXY_IDLE,
                             crate::shared::acquire_response_units(
                                 crate::shared::ResponsePool::List,
                                 pre_needed - held_units,
@@ -1207,7 +1217,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 while let Some(pending) = stream.feed(&chunk, &mut pos).map_err(|_| interrupted())? {
                     // Account for the transient peak inside `project_item` where `raw`, at most one
                     // bounded `<= 8 MiB` decoded URI, and `UndoPatch` originals coexist.
-                    let item_peak = pending.bytes.capacity().saturating_mul(2);
+                    let item_peak = pending.bytes.capacity().saturating_mul(2).saturating_add(8 * 1024 * 1024);
                     stream.evict_undo_if_needed(item_peak);
                     let peak_bytes = stream.retained_bytes().saturating_add(item_peak);
                     if peak_bytes > crate::sessions::media_stream::OUTPUT_LIMIT {
@@ -1219,19 +1229,20 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                             biased;
                             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                            permit = tokio::time::timeout(LARGE_WAIT, LARGE_DEFER_SLOT.acquire()) => {
+                            _ = shutdown_grace() => return Err(interrupted()),
+                            permit = tokio::time::timeout(super::PROXY_IDLE, LARGE_DEFER_SLOT.acquire()) => {
                                 permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                             }
                         });
                     }
                     if needed > held_units {
-                        let wait = if needed > fair_units { POOL_WAIT } else { super::PROXY_IDLE };
                         let extra = tokio::select! {
                             biased;
                             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                            _ = shutdown_grace() => return Err(interrupted()),
                             permit = tokio::time::timeout(
-                                wait,
+                                super::PROXY_IDLE,
                                 crate::shared::acquire_response_units(
                                     crate::shared::ResponsePool::List,
                                     needed - held_units,
@@ -1257,6 +1268,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                        _ = shutdown_grace() => return Err(interrupted()),
                         res = tokio::time::timeout(
                             super::PROXY_IDLE,
                             tokio::task::spawn_blocking(move || {
@@ -1289,19 +1301,20 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        permit = tokio::time::timeout(LARGE_WAIT, LARGE_DEFER_SLOT.acquire()) => {
+                        _ = shutdown_grace() => return Err(interrupted()),
+                        permit = tokio::time::timeout(super::PROXY_IDLE, LARGE_DEFER_SLOT.acquire()) => {
                             permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                         }
                     });
                 }
                 if needed > held_units {
-                    let wait = if needed > fair_units { POOL_WAIT } else { super::PROXY_IDLE };
                     let extra = tokio::select! {
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                        _ = shutdown_grace() => return Err(interrupted()),
                         permit = tokio::time::timeout(
-                            wait,
+                            super::PROXY_IDLE,
                             crate::shared::acquire_response_units(
                                 crate::shared::ResponsePool::List,
                                 needed - held_units,
@@ -1322,6 +1335,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    _ = shutdown_grace() => return Err(interrupted()),
                     res = tokio::time::timeout(
                         super::PROXY_IDLE,
                         tokio::task::spawn_blocking(move || (stream.finish(), held, held_mem)),
@@ -1338,14 +1352,25 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             } else {
                 crate::shared::response_memory_units(crate::shared::ResponsePool::List, payload_len)
             };
+            if final_units > fair_units && large_slot.is_none() {
+                large_slot = Some(tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    _ = shutdown_grace() => return Err(interrupted()),
+                    permit = tokio::time::timeout(super::PROXY_IDLE, LARGE_DEFER_SLOT.acquire()) => {
+                        permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+                    }
+                });
+            }
             if final_units > held_units {
-                let wait = if final_units > fair_units { POOL_WAIT } else { super::PROXY_IDLE };
                 let extra = tokio::select! {
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    _ = shutdown_grace() => return Err(interrupted()),
                     permit = tokio::time::timeout(
-                        wait,
+                        super::PROXY_IDLE,
                         crate::shared::acquire_response_units(
                             crate::shared::ResponsePool::List,
                             final_units - held_units,
