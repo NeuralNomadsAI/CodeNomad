@@ -271,19 +271,22 @@ impl Preferences {
             .is_some_and(|watch| watch.project() != project)
         {
             self.unwatch();
+            self.set_stream_online(false);
         }
         if self
             .closing_stream
             .as_ref()
             .is_some_and(|reader| !reader.is_closed())
         {
+            self.set_stream_online(false);
             return;
         }
         self.closing_stream = None;
         if self.stream.is_none()
-            && let Some(backend) = &self.backend
+            && let Some(backend) = self.backend.clone()
         {
-            let (watch, task) = PreferencesWatch::task(backend.clone(), project, wake.clone());
+            self.set_stream_online(false);
+            let (watch, task) = PreferencesWatch::task(backend, project, wake.clone());
             self.stream = Some(watch);
             platform::spawn(task);
         }
@@ -291,6 +294,17 @@ impl Preferences {
 
     pub fn unwatch(&mut self) {
         if let Some(watch) = self.stream.take() {
+            let (config, state) = watch.take();
+            if config {
+                self.invalidate(Owner::Config);
+            }
+            if state {
+                self.invalidate(Owner::State);
+            }
+            if watch.take_server_changed() {
+                self.invalidate(Owner::Server);
+            }
+            self.config.invalidate();
             self.closing_stream = Some(watch.stop());
         }
     }
@@ -517,6 +531,10 @@ impl Preferences {
                 .as_bool()
                 .unwrap_or(false),
         )
+    }
+
+    pub(super) fn stream_offline(&self) -> bool {
+        self.stream_offline
     }
 
     pub(super) fn set_stream_online(&mut self, online: bool) {

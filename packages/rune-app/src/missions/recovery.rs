@@ -81,7 +81,7 @@ impl RecoveryErrorScope {
 pub(super) struct Recovery {
     attempts: HashMap<RecoveryKey, Attempt>,
     seq: u64,
-    error: Option<(RecoveryErrorScope, RecoveryError)>,
+    errors: HashMap<RecoveryErrorScope, (u64, RecoveryError)>,
 }
 
 pub(super) fn coordinator_eligible(header: &MapHeader, observation: &Observation) -> bool {
@@ -121,13 +121,8 @@ impl Recovery {
             let same_scope = key.server == scope.server && key.workspace == scope.workspace;
             !same_scope || matches!(attempt, Attempt::Pending { .. })
         });
-        if self
-            .error
-            .as_ref()
-            .is_some_and(|(key, _)| key.server == scope.server && key.workspace == scope.workspace)
-        {
-            self.error = None;
-        }
+        self.errors
+            .retain(|key, _| !(key.server == scope.server && key.workspace == scope.workspace));
     }
 
     pub fn pending(&self, key: &RecoveryKey) -> bool {
@@ -162,28 +157,20 @@ impl Recovery {
     #[cfg(test)]
     pub fn error(&self, key: &RecoveryKey) -> Option<RecoveryError> {
         let scope = RecoveryErrorScope::from_key(key);
-        self.error
-            .as_ref()
-            .filter(|(owner, _)| *owner == scope)
-            .map(|(_, error)| *error)
+        self.errors.get(&scope).map(|(_, error)| *error)
     }
 
     pub fn error_for(&self, source: &Source, target: RecoveryTarget) -> Option<RecoveryError> {
         let scope = RecoveryErrorScope::from_source(source, target);
-        self.error
-            .as_ref()
-            .filter(|(owner, _)| *owner == scope)
-            .map(|(_, error)| *error)
+        self.errors.get(&scope).map(|(_, error)| *error)
     }
 
     pub fn clear_error_for(&mut self, scope: &WorkspaceScope, mission_id: &str) {
-        if self.error.as_ref().is_some_and(|(owner, _)| {
-            owner.server == scope.server
+        self.errors.retain(|owner, _| {
+            !(owner.server == scope.server
                 && owner.workspace == scope.workspace
-                && owner.mission == mission_id
-        }) {
-            self.error = None;
-        }
+                && owner.mission == mission_id)
+        });
     }
 
     pub fn start(
@@ -208,13 +195,7 @@ impl Recovery {
             return;
         };
         let err_scope = RecoveryErrorScope::from_key(&key);
-        if self
-            .error
-            .as_ref()
-            .is_some_and(|(owner, _)| *owner == err_scope)
-        {
-            self.error = None;
-        }
+        self.errors.remove(&err_scope);
         let (out, inbox) = bounded(1);
         let lifecycle_target = source.target.clone();
         self.attempts.insert(
@@ -266,13 +247,7 @@ impl Recovery {
             match outcome {
                 RecoveryOutcome::Admitted(revision) => {
                     let err_scope = RecoveryErrorScope::from_key(&key);
-                    if self
-                        .error
-                        .as_ref()
-                        .is_some_and(|(owner, _)| *owner == err_scope)
-                    {
-                        self.error = None;
-                    }
+                    self.errors.remove(&err_scope);
                     self.seq = self.seq.wrapping_add(1);
                     self.attempts.insert(key, Attempt::Admitted(self.seq));
                     polled.admitted.push((mission, target, revision));
@@ -280,7 +255,8 @@ impl Recovery {
                 RecoveryOutcome::Refused(error) => {
                     let err_scope = RecoveryErrorScope::from_key(&key);
                     self.attempts.remove(&key);
-                    self.error = Some((err_scope, error));
+                    self.seq = self.seq.wrapping_add(1);
+                    self.errors.insert(err_scope, (self.seq, error));
                 }
             }
         }
@@ -309,6 +285,17 @@ impl Recovery {
                 break;
             };
             self.attempts.remove(&oldest);
+        }
+        while self.errors.len() > SETTLED_CAPACITY {
+            let Some(oldest) = self
+                .errors
+                .iter()
+                .min_by_key(|(_, (seq, _))| *seq)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            self.errors.remove(&oldest);
         }
     }
 }

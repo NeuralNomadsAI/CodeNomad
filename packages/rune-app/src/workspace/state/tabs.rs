@@ -72,6 +72,7 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             .take()
             .unwrap_or_else(|| (TextEdit::new(""), false, TextEdit::new(""), false));
     }
+    let panel_offline = item.missions.as_ref().is_some_and(|panel| !panel.online());
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
         s.renew_scope();
@@ -92,6 +93,23 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
         }
         if let Some(git) = &mut s.git.owner {
             git.activate(true);
+        }
+        let offline =
+            matches!(s.phase, crate::Phase::Reconnecting | crate::Phase::Failed) || panel_offline;
+        if offline {
+            if let Some(ui) = &mut s.workspace
+                && let Some(panel) = &mut ui.entries[ui.active].missions
+            {
+                panel.set_online(false);
+            }
+            crate::settings::set_stream_online(s, false);
+        } else if s
+            .incoming
+            .as_ref()
+            .is_some_and(|stream| !stream.is_closed())
+            && matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming)
+        {
+            crate::settings::set_stream_online(s, true);
         }
     } else {
         let restore = match &item.saved {

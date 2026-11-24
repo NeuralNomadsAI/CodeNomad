@@ -1,21 +1,10 @@
-use super::{
-    Panel,
-    lifecycle::{MissionKey, Source},
-};
-use crate::{
-    State, platform,
-    strings::{locale, t},
-};
+use super::lifecycle::{MissionKey, Source};
+use crate::platform;
 use codenomad_client::{
     Receiver, Wake,
     backend::Backend,
     bounded,
     missions::{Cleanup, DeletionOutcome, DeletionRequest, LifecycleTarget},
-};
-use rune::{El, col, text};
-use rune_theme_codenomad::{
-    Space, TextRole, catalogue, git_panel as theme,
-    layout::{self, Layout},
 };
 use std::{
     collections::HashMap,
@@ -65,39 +54,50 @@ pub(super) enum DeleteState {
     Failed(&'static str),
 }
 
-enum DeleteResult {
+pub(super) enum DeleteResult {
     Deleted(Option<Box<Cleanup>>),
     Failed {
         key: &'static str,
         document_cleanup: bool,
+        deletion_id: Option<String>,
     },
     Cancelled {
         dispatched: bool,
+        document_cleanup: bool,
+        deletion_id: Option<String>,
     },
 }
 
-struct DeleteIntent {
+pub(super) struct DeleteIntent {
     scope: WorkspaceScope,
-    title: String,
+    pub(super) title: String,
     target: LifecycleTarget,
     request: DeletionRequest,
-    flight: Option<Receiver<DeleteResult>>,
-    error: Option<&'static str>,
+    pub(super) flight: Option<Receiver<DeleteResult>>,
+    pub(super) error: Option<&'static str>,
     document_cleanup: bool,
+    deletion_id: Option<String>,
     retired: bool,
 }
 
 enum CleanupRetryResult {
     Settled {
         receipt: Box<Cleanup>,
-        publish_view: bool,
+        mutated: bool,
     },
-    Failed(&'static str),
-    Cancelled,
+    Failed {
+        key: &'static str,
+        mutated: bool,
+    },
+    Cancelled {
+        mutated: bool,
+    },
 }
 
 struct CleanupRetry {
     key: CleanupKey,
+    view_live: Arc<AtomicBool>,
+    row_live: Arc<AtomicBool>,
     flight: Receiver<CleanupRetryResult>,
     retired: bool,
 }
@@ -129,6 +129,20 @@ pub(super) struct CleanupOwner {
 }
 
 impl CleanupOwner {
+    pub fn orphaned_deletes<'a>(
+        &'a self,
+        scope: &WorkspaceScope,
+        selected_id: Option<&MissionKey>,
+    ) -> Vec<(&'a MissionKey, &'a DeleteIntent)> {
+        self.deletes
+            .iter()
+            .filter_map(|((intent_scope, key), intent)| {
+                (!intent.retired && intent_scope == scope && selected_id != Some(key))
+                    .then_some((key, intent))
+            })
+            .collect()
+    }
+
     pub fn delete_state(&self, source: &Source) -> Option<DeleteState> {
         let intent = self
             .deletes
@@ -202,11 +216,12 @@ impl CleanupOwner {
                 flight: Some(inbox),
                 error: None,
                 document_cleanup: false,
+                deletion_id: None,
                 retired: false,
             },
         );
         platform::spawn(async move {
-            let result = run_delete(backend, target, request, false, false, None).await;
+            let result = run_delete(backend, target, request, false, false, None, None).await;
             if out.send(result).await.is_ok() {
                 wake();
             }
@@ -263,10 +278,19 @@ impl CleanupOwner {
         let target = intent.target.clone();
         let request = intent.request.clone();
         let document_cleanup = intent.document_cleanup;
+        let expected_deletion_id = intent.deletion_id.clone();
         intent.flight = Some(inbox);
         platform::spawn(async move {
-            let result =
-                run_delete(backend, target, request, true, document_cleanup, Some(live)).await;
+            let result = run_delete(
+                backend,
+                target,
+                request,
+                true,
+                document_cleanup,
+                expected_deletion_id,
+                Some(live),
+            )
+            .await;
             if out.send(result).await.is_ok() {
                 wake();
             }
@@ -318,14 +342,35 @@ impl CleanupOwner {
             if &intent.scope != scope || intent.flight.is_some() {
                 return true;
             }
-            for row in cleanups {
-                if intent.request.matches_cleanup(&intent.target.mission, row) {
-                    if row.document_pending == Some(true) {
-                        intent.document_cleanup = true;
-                    }
-                    if cleanup_settled_for(intent.document_cleanup, row) {
-                        return false;
-                    }
+            let matching: Vec<&Cleanup> = cleanups
+                .iter()
+                .filter(|row| {
+                    intent.request.matches_cleanup(&intent.target.mission, row)
+                        && intent
+                            .deletion_id
+                            .as_deref()
+                            .is_none_or(|id| row.deletion_id == id)
+                })
+                .collect();
+            if intent.deletion_id.is_none()
+                && let Some(first) = matching.first()
+                && matching
+                    .iter()
+                    .all(|row| row.deletion_id == first.deletion_id)
+            {
+                intent.deletion_id = Some(first.deletion_id.clone());
+            }
+            for row in matching {
+                if row.document_pending == Some(true) {
+                    intent.document_cleanup = true;
+                }
+                if intent
+                    .deletion_id
+                    .as_deref()
+                    .is_none_or(|id| row.deletion_id == id)
+                    && cleanup_settled_for(intent.document_cleanup, row)
+                {
+                    return false;
                 }
             }
             true
@@ -378,6 +423,8 @@ impl CleanupOwner {
             scope,
             CleanupRetry {
                 key,
+                view_live: view_live.clone(),
+                row_live: row_live.clone(),
                 flight: inbox,
                 retired: false,
             },
@@ -426,9 +473,13 @@ impl CleanupOwner {
                 DeleteResult::Failed {
                     key,
                     document_cleanup,
+                    deletion_id,
                 } => {
                     intent.error = Some(key);
                     intent.document_cleanup |= document_cleanup;
+                    if intent.deletion_id.is_none() {
+                        intent.deletion_id = deletion_id;
+                    }
                     polled
                         .refreshed_missions
                         .push((mission.clone(), intent.target.clone()));
@@ -437,7 +488,15 @@ impl CleanupOwner {
                     }
                     true
                 }
-                DeleteResult::Cancelled { dispatched } => {
+                DeleteResult::Cancelled {
+                    dispatched,
+                    document_cleanup,
+                    deletion_id,
+                } => {
+                    intent.document_cleanup |= document_cleanup;
+                    if intent.deletion_id.is_none() {
+                        intent.deletion_id = deletion_id;
+                    }
                     if dispatched && !polled.refreshed_scopes.contains(&intent.scope) {
                         polled.refreshed_scopes.push(intent.scope.clone());
                     }
@@ -452,23 +511,25 @@ impl CleanupOwner {
                     scope.clone(),
                     retry.key.mission_id.clone(),
                     retry.key.deletion_id.clone(),
+                    retry.view_live.clone(),
+                    retry.row_live.clone(),
                     retry.retired,
                     result,
                 ));
             }
         }
-        for (scope, mission_id, deletion_id, retired, result) in finished_retries {
+        for (scope, mission_id, deletion_id, view_live, row_live, retired, result) in
+            finished_retries
+        {
             self.retries.remove(&scope);
             polled.changed = true;
             if retired {
                 continue;
             }
+            let view_current =
+                view_live.load(Ordering::Acquire) && row_live.load(Ordering::Acquire);
             match result {
-                CleanupRetryResult::Settled {
-                    receipt,
-                    publish_view,
-                } => {
-                    self.retry_errors.remove(&scope);
+                CleanupRetryResult::Settled { receipt, mutated } => {
                     self.deletes.retain(|_, intent| {
                         !(intent.scope == scope
                             && intent.flight.is_none()
@@ -476,9 +537,14 @@ impl CleanupOwner {
                             && intent.request.request_id == receipt.request_id
                             && intent.request.expected_revision == receipt.expected_revision
                             && intent.request.delete_managed_sessions
-                                == receipt.delete_managed_sessions)
+                                == receipt.delete_managed_sessions
+                            && intent
+                                .deletion_id
+                                .as_deref()
+                                .is_none_or(|id| id == receipt.deletion_id))
                     });
-                    if publish_view {
+                    if view_current {
+                        self.retry_errors.remove(&scope);
                         polled
                             .deleted_missions
                             .push((scope.clone(), receipt.mission_id.clone()));
@@ -486,22 +552,37 @@ impl CleanupOwner {
                         if !polled.refreshed_scopes.contains(&scope) {
                             polled.refreshed_scopes.push(scope);
                         }
+                    } else if mutated {
+                        polled
+                            .deleted_missions
+                            .push((scope.clone(), receipt.mission_id.clone()));
+                        if !polled.refreshed_scopes.contains(&scope) {
+                            polled.refreshed_scopes.push(scope);
+                        }
                     }
                 }
-                CleanupRetryResult::Failed(key) => {
-                    if !self.retry_errors.contains_key(&scope)
-                        && self.retry_errors.len() >= CAPACITY
-                        && let Some(evict) = self.retry_errors.keys().next().cloned()
-                    {
-                        self.retry_errors.remove(&evict);
-                    }
-                    self.retry_errors
-                        .insert(scope.clone(), (mission_id, deletion_id, key));
-                    if !polled.refreshed_scopes.contains(&scope) {
+                CleanupRetryResult::Failed { key, mutated } => {
+                    if view_current {
+                        if !self.retry_errors.contains_key(&scope)
+                            && self.retry_errors.len() >= CAPACITY
+                            && let Some(evict) = self.retry_errors.keys().next().cloned()
+                        {
+                            self.retry_errors.remove(&evict);
+                        }
+                        self.retry_errors
+                            .insert(scope.clone(), (mission_id, deletion_id, key));
+                        if !polled.refreshed_scopes.contains(&scope) {
+                            polled.refreshed_scopes.push(scope);
+                        }
+                    } else if mutated && !polled.refreshed_scopes.contains(&scope) {
                         polled.refreshed_scopes.push(scope);
                     }
                 }
-                CleanupRetryResult::Cancelled => {}
+                CleanupRetryResult::Cancelled { mutated } => {
+                    if mutated && !polled.refreshed_scopes.contains(&scope) {
+                        polled.refreshed_scopes.push(scope);
+                    }
+                }
             }
         }
         polled
@@ -518,13 +599,13 @@ async fn run_delete(
     request: DeletionRequest,
     reconcile_first: bool,
     mut require_document_settled: bool,
+    mut expected_deletion_id: Option<String>,
     live: Option<Arc<AtomicBool>>,
 ) -> DeleteResult {
     let still_live = || {
         live.as_ref()
             .is_none_or(|flag| flag.load(Ordering::Acquire))
     };
-    let mut expected_deletion_id: Option<String> = None;
     if reconcile_first {
         let Ok(snapshot) = backend
             .read_mission_reconciliation(&target.project, &target.mission)
@@ -534,9 +615,14 @@ async fn run_delete(
                 DeleteResult::Failed {
                     key: "missions.cleanup.error.unconfirmed",
                     document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
                 }
             } else {
-                DeleteResult::Cancelled { dispatched: false }
+                DeleteResult::Cancelled {
+                    dispatched: false,
+                    document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
+                }
             };
         };
         if snapshot.cleanup_unavailable {
@@ -544,18 +630,28 @@ async fn run_delete(
                 DeleteResult::Failed {
                     key: "missions.cleanup.error.unconfirmed",
                     document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
                 }
             } else {
-                DeleteResult::Cancelled { dispatched: false }
+                DeleteResult::Cancelled {
+                    dispatched: false,
+                    document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
+                }
             };
         }
-        let matching = snapshot
-            .cleanups
-            .iter()
-            .find(|item| request.matches_cleanup(&target.mission, item));
+        let matching = snapshot.cleanups.iter().find(|item| {
+            request.matches_cleanup(&target.mission, item)
+                && expected_deletion_id
+                    .as_deref()
+                    .is_none_or(|id| item.deletion_id == id)
+        });
         if let Some(intent) = matching {
             if intent.document_pending == Some(true) {
                 require_document_settled = true;
+            }
+            if expected_deletion_id.is_none() {
+                expected_deletion_id = Some(intent.deletion_id.clone());
             }
             if !intent.is_pending() {
                 return if cleanup_settled_for(require_document_settled, intent) {
@@ -564,12 +660,16 @@ async fn run_delete(
                     DeleteResult::Failed {
                         key: "missions.cleanup.error.unconfirmed",
                         document_cleanup: require_document_settled,
+                        deletion_id: expected_deletion_id,
                     }
                 } else {
-                    DeleteResult::Cancelled { dispatched: false }
+                    DeleteResult::Cancelled {
+                        dispatched: false,
+                        document_cleanup: require_document_settled,
+                        deletion_id: expected_deletion_id,
+                    }
                 };
             }
-            expected_deletion_id = Some(intent.deletion_id.clone());
         }
         if matching.is_none()
             && snapshot
@@ -580,13 +680,22 @@ async fn run_delete(
                 DeleteResult::Failed {
                     key: "missions.cleanup.error.revisionConflict",
                     document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
                 }
             } else {
-                DeleteResult::Cancelled { dispatched: false }
+                DeleteResult::Cancelled {
+                    dispatched: false,
+                    document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
+                }
             };
         }
         if !still_live() {
-            return DeleteResult::Cancelled { dispatched: false };
+            return DeleteResult::Cancelled {
+                dispatched: false,
+                document_cleanup: require_document_settled,
+                deletion_id: expected_deletion_id,
+            };
         }
     }
     let outcome = backend
@@ -602,7 +711,11 @@ async fn run_delete(
         return DeleteResult::Deleted(receipt);
     }
     if live.is_some() && !still_live() {
-        return DeleteResult::Cancelled { dispatched: true };
+        return DeleteResult::Cancelled {
+            dispatched: true,
+            document_cleanup: require_document_settled,
+            deletion_id: expected_deletion_id,
+        };
     }
     let mut key = outcome.error_key();
     let conflict = matches!(
@@ -620,6 +733,9 @@ async fn run_delete(
                     .is_none_or(|id| item.deletion_id == id)
         })
     {
+        if expected_deletion_id.is_none() {
+            expected_deletion_id = Some(intent.deletion_id.clone());
+        }
         if intent.document_pending == Some(true) {
             require_document_settled = true;
         }
@@ -635,11 +751,16 @@ async fn run_delete(
         }
     }
     if live.is_some() && !still_live() {
-        return DeleteResult::Cancelled { dispatched: true };
+        return DeleteResult::Cancelled {
+            dispatched: true,
+            document_cleanup: require_document_settled,
+            deletion_id: expected_deletion_id,
+        };
     }
     DeleteResult::Failed {
         key,
         document_cleanup: require_document_settled,
+        deletion_id: expected_deletion_id,
     }
 }
 
@@ -651,22 +772,28 @@ async fn run_cleanup_retry(
     row_live: Arc<AtomicBool>,
 ) -> CleanupRetryResult {
     let still_live = || view_live.load(Ordering::Acquire) && row_live.load(Ordering::Acquire);
-    let require_document_settled = saved.document_pending == Some(true);
+    let mut require_document_settled = saved.document_pending == Some(true);
     let Ok(snapshot) = backend
         .read_mission_reconciliation(&project, &saved.mission_id)
         .await
     else {
         return if still_live() {
-            CleanupRetryResult::Failed("missions.cleanup.error.unconfirmed")
+            CleanupRetryResult::Failed {
+                key: "missions.cleanup.error.unconfirmed",
+                mutated: false,
+            }
         } else {
-            CleanupRetryResult::Cancelled
+            CleanupRetryResult::Cancelled { mutated: false }
         };
     };
     if snapshot.cleanup_unavailable {
         return if still_live() {
-            CleanupRetryResult::Failed("missions.cleanup.error.unconfirmed")
+            CleanupRetryResult::Failed {
+                key: "missions.cleanup.error.unconfirmed",
+                mutated: false,
+            }
         } else {
-            CleanupRetryResult::Cancelled
+            CleanupRetryResult::Cancelled { mutated: false }
         };
     }
     let Some(fresh) = snapshot
@@ -675,29 +802,41 @@ async fn run_cleanup_retry(
         .find(|item| item.matches_saved(&saved))
     else {
         return if still_live() {
-            CleanupRetryResult::Failed("missions.cleanup.error.unconfirmed")
+            CleanupRetryResult::Failed {
+                key: "missions.cleanup.error.unconfirmed",
+                mutated: false,
+            }
         } else {
-            CleanupRetryResult::Cancelled
+            CleanupRetryResult::Cancelled { mutated: false }
         };
     };
+    if fresh.document_pending == Some(true) {
+        require_document_settled = true;
+    }
     if !fresh.is_pending() {
         if !still_live() {
-            return CleanupRetryResult::Cancelled;
+            return CleanupRetryResult::Cancelled { mutated: false };
         }
         return if cleanup_settled_for(require_document_settled, fresh) {
             CleanupRetryResult::Settled {
                 receipt: Box::new(fresh.clone()),
-                publish_view: true,
+                mutated: false,
             }
         } else {
-            CleanupRetryResult::Failed("missions.cleanup.error.unconfirmed")
+            CleanupRetryResult::Failed {
+                key: "missions.cleanup.error.unconfirmed",
+                mutated: false,
+            }
         };
     }
     if !still_live() {
-        return CleanupRetryResult::Cancelled;
+        return CleanupRetryResult::Cancelled { mutated: false };
     }
     let Ok(request) = DeletionRequest::from_cleanup(fresh) else {
-        return CleanupRetryResult::Failed("missions.cleanup.error.unconfirmed");
+        return CleanupRetryResult::Failed {
+            key: "missions.cleanup.error.unconfirmed",
+            mutated: false,
+        };
     };
     let outcome = backend
         .delete_mission(
@@ -711,11 +850,11 @@ async fn run_cleanup_retry(
     if let DeletionOutcome::Deleted(Some(receipt)) = outcome {
         return CleanupRetryResult::Settled {
             receipt,
-            publish_view: still_live(),
+            mutated: true,
         };
     }
     if !still_live() {
-        return CleanupRetryResult::Cancelled;
+        return CleanupRetryResult::Cancelled { mutated: true };
     }
     if matches!(outcome, DeletionOutcome::Failed(err) if err.status == 409)
         && let Ok(after) = backend
@@ -723,7 +862,7 @@ async fn run_cleanup_retry(
             .await
     {
         if !still_live() {
-            return CleanupRetryResult::Cancelled;
+            return CleanupRetryResult::Cancelled { mutated: true };
         }
         if !after.cleanup_unavailable
             && let Some(intent) = after
@@ -734,240 +873,17 @@ async fn run_cleanup_retry(
         {
             return CleanupRetryResult::Settled {
                 receipt: Box::new(intent.clone()),
-                publish_view: true,
+                mutated: true,
             };
         }
     }
     if !still_live() {
-        return CleanupRetryResult::Cancelled;
+        return CleanupRetryResult::Cancelled { mutated: true };
     }
-    CleanupRetryResult::Failed(outcome.error_key())
-}
-
-pub(crate) type CleanupAct = fn(&mut State, String, WorkspaceScope, Cleanup);
-pub(crate) type DeleteAct = fn(&mut State, String, WorkspaceScope, MissionKey, bool);
-
-pub(crate) fn cleanup_view<S: 'static>(
-    panel: &Panel,
-    owner: &CleanupOwner,
-    occurrence: &str,
-    retry: fn(&mut S, String, WorkspaceScope, Cleanup),
-    orphaned_delete: fn(&mut S, String, WorkspaceScope, MissionKey, bool),
-) -> El {
-    let scope = panel.cleanup_scope();
-    let selected_id = panel
-        .control_source(occurrence)
-        .map(|(source, _)| source.mission);
-    let mut orphaned: Vec<(&MissionKey, &DeleteIntent)> = scope
-        .as_ref()
-        .map(|scope| {
-            owner
-                .deletes
-                .iter()
-                .filter_map(|((intent_scope, key), intent)| {
-                    (!intent.retired && intent_scope == scope && selected_id.as_ref() != Some(key))
-                        .then_some((key, intent))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    orphaned.sort_by(|(a, _), (b, _)| a.id.cmp(&b.id));
-    if panel.cleanups.is_empty() && orphaned.is_empty() {
-        return rune::el();
+    CleanupRetryResult::Failed {
+        key: outcome.error_key(),
+        mutated: true,
     }
-    let mut root = col().full_width();
-    if let Some(scope) = &scope
-        && !orphaned.is_empty()
-    {
-        let mut pending = col()
-            .full_width()
-            .key("mission-orphaned-deletes")
-            .role("region")
-            .label(t("missions.control.delete"));
-        for (mission_key, intent) in orphaned {
-            let mut row = col()
-                .full_width()
-                .pad(Space::Sm)
-                .key(format!("mission-delete-{}", mission_key.id))
-                .child(
-                    text(&intent.title)
-                        .text_role(TextRole::Small)
-                        .wrap_anywhere(),
-                );
-            if intent.flight.is_some() {
-                row = row.child(theme::note(
-                    t("missions.control.mutation.pending"),
-                    "status",
-                ));
-            } else if let Some(err) = intent.error {
-                let retry_disabled = owner.has_active_cleanup_retry(scope, &mission_key.id);
-                let occ_retry = occurrence.to_owned();
-                let scope_retry = scope.clone();
-                let key_retry = mission_key.clone();
-                let occ_cancel = occurrence.to_owned();
-                let scope_cancel = scope.clone();
-                let key_cancel = mission_key.clone();
-                row = row.child(theme::note(t(err), "alert")).child(
-                    layout::action_row()
-                        .role("group")
-                        .label(t("missions.control.delete"))
-                        .child(
-                            layout::button_tx(
-                                t("missions.control.retry"),
-                                false,
-                                move |s: &mut S, tx| {
-                                    if !retry_disabled {
-                                        orphaned_delete(
-                                            s,
-                                            occ_retry.clone(),
-                                            scope_retry.clone(),
-                                            key_retry.clone(),
-                                            true,
-                                        );
-                                        tx.instant();
-                                    }
-                                },
-                            )
-                            .disabled(retry_disabled)
-                            .focusable(true)
-                            .description(&intent.title)
-                            .key(format!("mission-delete-retry-{}", mission_key.id)),
-                        )
-                        .child(
-                            layout::button_tx(
-                                t("missions.control.cancel"),
-                                false,
-                                move |s: &mut S, tx| {
-                                    orphaned_delete(
-                                        s,
-                                        occ_cancel.clone(),
-                                        scope_cancel.clone(),
-                                        key_cancel.clone(),
-                                        false,
-                                    );
-                                    tx.instant();
-                                },
-                            )
-                            .description(&intent.title)
-                            .key(format!("mission-delete-cancel-{}", mission_key.id)),
-                        ),
-                );
-            }
-            pending = pending.child(row);
-        }
-        root = root.child(pending);
-    }
-    if panel.cleanups.is_empty() {
-        return root;
-    }
-    let any_pending = panel.cleanups.iter().any(Cleanup::is_pending);
-    let heading = t(if any_pending {
-        "missions.cleanup.title"
-    } else {
-        "missions.progress.cleanupHistory"
-    });
-    let busy = scope
-        .as_ref()
-        .is_some_and(|scope| owner.cleanup_busy(scope));
-    let mut section = col()
-        .full_width()
-        .key("mission-cleanup-section")
-        .role("region")
-        .label(heading)
-        .child(
-            text(heading)
-                .text_role(TextRole::Small)
-                .pad(Space::Sm)
-                .role("heading"),
-        );
-    for cleanup in &panel.cleanups {
-        let counts = catalogue::format(
-            locale(),
-            "missions.cleanup.counts",
-            &[
-                ("removed", &cleanup.removed.to_string()),
-                ("retained", &cleanup.retained.to_string()),
-                ("pending", &cleanup.pending.to_string()),
-            ],
-        );
-        let mut row = col()
-            .full_width()
-            .pad(Space::Sm)
-            .key(format!(
-                "mission-cleanup-{}-{}",
-                cleanup.mission_id, cleanup.deletion_id
-            ))
-            .child(
-                text(&cleanup.objective)
-                    .text_role(TextRole::Small)
-                    .wrap_anywhere(),
-            )
-            .child(text(counts).text_role(TextRole::Small).wrap_anywhere());
-        if cleanup.document_pending == Some(true) {
-            row = row.child(theme::note(t("missions.cleanup.documentPending"), "status"));
-        }
-        if cleanup.retained > 0 {
-            for reason in &cleanup.reasons {
-                if let Some(key) = reason_key(reason) {
-                    row = row.child(text(t(key)).text_role(TextRole::Small).wrap_anywhere());
-                }
-            }
-        }
-        if cleanup.is_pending() {
-            let retrying = scope.as_ref().is_some_and(|scope| {
-                owner.cleanup_retrying(&CleanupKey::new(scope.clone(), cleanup))
-            });
-            let label = t(if retrying {
-                "missions.cleanup.retrying"
-            } else {
-                "missions.control.retry"
-            });
-            let delete_busy = scope
-                .as_ref()
-                .is_some_and(|scope| owner.has_active_delete_flight(scope, &cleanup.mission_id));
-            let disabled = scope.is_none() || busy || delete_busy;
-            let occ = occurrence.to_owned();
-            let captured_scope = scope.clone();
-            let saved = cleanup.clone();
-            row = row.child(
-                layout::button_tx(label, false, move |state: &mut S, tx| {
-                    if !disabled && let Some(scope) = captured_scope.clone() {
-                        retry(state, occ.clone(), scope, saved.clone());
-                        tx.instant();
-                    }
-                })
-                .disabled(disabled)
-                .focusable(true)
-                .description(&cleanup.objective)
-                .key(format!(
-                    "mission-cleanup-retry-{}-{}",
-                    cleanup.mission_id, cleanup.deletion_id
-                )),
-            );
-        }
-        section = section.child(row);
-    }
-    section = section.child(
-        text(t("missions.cleanup.preserved"))
-            .text_role(TextRole::Small)
-            .pad(Space::Sm)
-            .wrap_anywhere(),
-    );
-    if let Some(err) = scope.as_ref().and_then(|scope| owner.cleanup_error(scope)) {
-        section = section.child(theme::note(t(err), "alert"));
-    }
-    root.child(section)
-}
-
-fn reason_key(reason: &str) -> Option<&'static str> {
-    Some(match reason {
-        "children" => "missions.cleanup.reason.children",
-        "shared" => "missions.cleanup.reason.shared",
-        "moved" => "missions.cleanup.reason.moved",
-        "identity" => "missions.cleanup.reason.identity",
-        "guarded" => "missions.cleanup.reason.guarded",
-        _ => return None,
-    })
 }
 
 #[cfg(test)]

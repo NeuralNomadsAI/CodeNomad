@@ -1,6 +1,7 @@
 use super::{
     Gesture, Lifecycle, Panel, Source,
-    cleanup::{CleanupAct, DeleteAct, DeleteState, cleanup_view},
+    cleanup::DeleteState,
+    cleanup_view::{CleanupAct, DeleteAct, cleanup_view},
     recovery::{self, RecoveryKey},
 };
 use crate::{State, strings::t};

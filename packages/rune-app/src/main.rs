@@ -80,6 +80,7 @@ struct State {
     history_error: bool,
     history_detached: bool,
     polling_cached: bool,
+    cached_stream_online: Option<bool>,
 }
 #[derive(PartialEq)]
 enum Phase {
@@ -135,6 +136,7 @@ fn init() -> State {
         history_error: false,
         history_detached: false,
         polling_cached: false,
+        cached_stream_online: None,
     }
 }
 fn setup(s: &mut State, wake: rune::Waker) {

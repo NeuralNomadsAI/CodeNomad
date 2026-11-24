@@ -63,6 +63,7 @@ pub(crate) struct Panel {
     pub(super) scope: std::rc::Rc<()>,
     pub(super) view_live: Arc<AtomicBool>,
     pub(super) selection_live: Arc<AtomicBool>,
+    pub(super) cleanup_view_live: Arc<AtomicBool>,
     cleanup_tokens: HashMap<(String, String), Arc<AtomicBool>>,
     supported: Option<bool>,
     capability: Option<Receiver<Option<bool>>>,
@@ -98,6 +99,7 @@ impl Panel {
             scope: std::rc::Rc::new(()),
             view_live: Arc::new(AtomicBool::new(false)),
             selection_live: Arc::new(AtomicBool::new(false)),
+            cleanup_view_live: Arc::new(AtomicBool::new(false)),
             cleanup_tokens: HashMap::new(),
             supported: None,
             capability: None,
@@ -120,10 +122,12 @@ impl Panel {
         self.visible = show;
         self.view_live.store(false, Ordering::Release);
         self.selection_live.store(false, Ordering::Release);
+        self.cleanup_view_live.store(false, Ordering::Release);
         self.revoke_all_cleanup_tokens();
         if show {
             self.view_live = Arc::new(AtomicBool::new(self.online));
             self.selection_live = Arc::new(AtomicBool::new(self.online));
+            self.cleanup_view_live = Arc::new(AtomicBool::new(self.online));
             self.refresh();
         } else {
             self.refresh_due = None;
@@ -139,12 +143,17 @@ impl Panel {
         }
     }
 
+    pub(crate) fn online(&self) -> bool {
+        self.online
+    }
+
     pub(crate) fn set_online(&mut self, online: bool) {
         self.online = online;
         self.observation.set_online(online);
         if !online {
             self.view_live.store(false, Ordering::Release);
             self.selection_live.store(false, Ordering::Release);
+            self.cleanup_view_live.store(false, Ordering::Release);
             self.revoke_all_cleanup_tokens();
         } else if self.visible {
             if !self.view_live.load(Ordering::Acquire) {
@@ -153,7 +162,17 @@ impl Panel {
             if !self.selection_live.load(Ordering::Acquire) {
                 self.selection_live = Arc::new(AtomicBool::new(true));
             }
+            if !self.cleanup_view_live.load(Ordering::Acquire) {
+                self.cleanup_view_live = Arc::new(AtomicBool::new(true));
+            }
             (self.wake)();
+        }
+    }
+
+    fn renew_cleanup_view(&mut self) {
+        self.cleanup_view_live.store(false, Ordering::Release);
+        if self.visible && self.online {
+            self.cleanup_view_live = Arc::new(AtomicBool::new(true));
         }
     }
 
@@ -173,6 +192,7 @@ impl Panel {
             if self.visible && self.online {
                 self.selection_live = Arc::new(AtomicBool::new(true));
             }
+            self.renew_cleanup_view();
             self.control_fields.cancel();
             self.detail.clear();
             self.observation = Observation::new(self.online);
@@ -180,20 +200,28 @@ impl Panel {
         }
     }
 
-    pub(super) fn adopt_settled_cleanup(&mut self, receipt: Cleanup) {
+    pub(super) fn adopt_settled_cleanup(&mut self, mut receipt: Cleanup) {
         self.cancel_lane(Kind::Cleanups);
+        let before = pending_cleanup_keys(&self.cleanups);
         if let Some(existing) = self.cleanups.iter_mut().find(|row| {
             row.mission_id == receipt.mission_id && row.deletion_id == receipt.deletion_id
         }) {
+            if existing.document_pending == Some(true) && receipt.document_pending.is_none() {
+                receipt.document_pending = Some(true);
+            }
             *existing = receipt.clone();
         } else {
             self.cleanups.insert(0, receipt.clone());
         }
-        if let Some(token) = self
-            .cleanup_tokens
-            .remove(&(receipt.mission_id, receipt.deletion_id))
+        if !receipt.is_pending()
+            && let Some(token) = self
+                .cleanup_tokens
+                .remove(&(receipt.mission_id, receipt.deletion_id))
         {
             token.store(false, Ordering::Release);
+        }
+        if pending_cleanup_keys(&self.cleanups) != before {
+            self.renew_cleanup_view();
         }
     }
 
@@ -270,10 +298,12 @@ impl Panel {
             // A reconnect retires publication authority while keeping the display.
             self.view_live.store(false, Ordering::Release);
             self.selection_live.store(false, Ordering::Release);
+            self.cleanup_view_live.store(false, Ordering::Release);
             self.revoke_all_cleanup_tokens();
             if self.visible {
                 self.view_live = Arc::new(AtomicBool::new(true));
                 self.selection_live = Arc::new(AtomicBool::new(true));
+                self.cleanup_view_live = Arc::new(AtomicBool::new(true));
             }
             self.online = true;
             self.detail.cancel();
@@ -582,6 +612,7 @@ impl Panel {
         {
             return true;
         }
+        let mut selection_cleared = false;
         match (kind, page.rows) {
             (Kind::Summaries, DirectoryRows::Summaries(rows)) => {
                 if !merge(&mut self.summaries, lane, read, &page.window, rows, |row| {
@@ -597,13 +628,26 @@ impl Panel {
                         .is_some_and(|id| !self.summaries.iter().any(|row| &row.id == id))
                 {
                     self.selection_live.store(false, Ordering::Release);
-                    if self.visible {
+                    if self.visible && self.online {
                         self.selection_live = Arc::new(AtomicBool::new(true));
                     }
+                    selection_cleared = true;
                     self.selected = None;
                 }
             }
-            (Kind::Cleanups, DirectoryRows::Cleanups(rows)) => {
+            (Kind::Cleanups, DirectoryRows::Cleanups(mut rows)) => {
+                for row in &mut rows {
+                    if row.document_pending.is_none()
+                        && self.cleanups.iter().any(|old| {
+                            old.mission_id == row.mission_id
+                                && old.deletion_id == row.deletion_id
+                                && old.document_pending == Some(true)
+                        })
+                    {
+                        row.document_pending = Some(true);
+                    }
+                }
+                let before_pending = pending_cleanup_keys(&self.cleanups);
                 if rows.iter().any(|row| {
                     self.cleanups.iter().any(|old| {
                         old.mission_id == row.mission_id
@@ -621,12 +665,18 @@ impl Panel {
                 self.project = Some(page.project_id);
                 lane.window = Some(page.window);
                 self.sync_cleanup_tokens(covered);
+                if pending_cleanup_keys(&self.cleanups) != before_pending {
+                    self.renew_cleanup_view();
+                }
                 return true;
             }
             _ => return false,
         }
         self.project = Some(page.project_id);
         lane.window = Some(page.window);
+        if selection_cleared {
+            self.renew_cleanup_view();
+        }
         true
     }
 
@@ -636,11 +686,35 @@ impl Panel {
             if self.visible && self.online {
                 self.selection_live = Arc::new(AtomicBool::new(true));
             }
+            self.renew_cleanup_view();
             self.control_fields.cancel();
             self.detail.clear();
             self.observation = Observation::new(self.online);
             self.selected = Some(id.into());
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn seed_summary_for_test(&mut self, id: &str) {
+        self.summaries.push(Summary {
+            id: id.into(),
+            title: Some(id.into()),
+            objective: id.into(),
+            status: codenomad_client::missions::Status::Active,
+            run_state: None,
+            coordinator_session_id: "ses_c".into(),
+            actor_count: 1,
+            updated_at: 1.0,
+            revision: 7,
+            finish_sequence: None,
+            task_count: None,
+        });
+        self.select(id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_summary_for_test(&self, id: &str) -> bool {
+        self.summaries.iter().any(|row| row.id == id)
     }
 
     #[cfg(test)]
@@ -678,6 +752,24 @@ pub(super) fn title(row: &Summary) -> &str {
         .as_deref()
         .filter(|text| !text.is_empty())
         .unwrap_or(&row.objective)
+}
+
+fn pending_cleanup_keys(cleanups: &[Cleanup]) -> Vec<(String, String, String, u64, bool)> {
+    let mut keys: Vec<_> = cleanups
+        .iter()
+        .filter(|row| row.is_pending())
+        .map(|row| {
+            (
+                row.deletion_id.clone(),
+                row.mission_id.clone(),
+                row.request_id.clone(),
+                row.expected_revision,
+                row.delete_managed_sessions,
+            )
+        })
+        .collect();
+    keys.sort();
+    keys
 }
 
 impl Drop for Panel {

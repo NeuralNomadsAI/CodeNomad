@@ -454,3 +454,56 @@ fn settled_guard_capacity_never_evicts_pending_attempts() {
     );
     assert!(guard.pending(&pending_key));
 }
+
+#[test]
+fn concurrent_recovery_failures_preserve_each_missions_error() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src_a = source("msn-a");
+        let src_b = source("msn-b");
+        let mut guard = Recovery::default();
+
+        guard.start(
+            &src_a,
+            7,
+            RecoveryTarget::Coordinator,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let req_a = http.accept().await;
+        assert!(req_a.header.contains("/missions/msn-a/recover "));
+
+        guard.start(
+            &src_b,
+            7,
+            RecoveryTarget::Coordinator,
+            http.backend.clone(),
+            wake,
+        );
+        let req_b = http.accept().await;
+        assert!(req_b.header.contains("/missions/msn-b/recover "));
+
+        // B fails first with already-member.
+        req_b.reply(409, json!({"code": "already-member"})).await;
+        wait(done.recv()).await.unwrap();
+        guard.poll();
+        assert_eq!(
+            guard.error_for(&src_b, RecoveryTarget::Coordinator),
+            Some(RecoveryError::Member)
+        );
+
+        // Late failure from A arrives while B is still selected; B's error must survive.
+        req_a.reply(409, json!({"code": "recovery-busy"})).await;
+        wait(done.recv()).await.unwrap();
+        guard.poll();
+        assert_eq!(
+            guard.error_for(&src_b, RecoveryTarget::Coordinator),
+            Some(RecoveryError::Member)
+        );
+        assert_eq!(
+            guard.error_for(&src_a, RecoveryTarget::Coordinator),
+            Some(RecoveryError::Busy)
+        );
+    });
+}

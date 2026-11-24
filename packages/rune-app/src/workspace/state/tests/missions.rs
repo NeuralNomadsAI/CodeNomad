@@ -351,3 +351,103 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         drop(conversation_a);
     });
 }
+
+#[test]
+fn parked_tab_disconnect_marks_own_missions_panel_offline_and_hidden_deletions_forget_cached_rows()
+{
+    crate::platform::block_on(async {
+        let http = test_http::Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let wake: codenomad_client::Wake = std::sync::Arc::new(|| {});
+        let mut s = crate::init();
+        crate::settings::fixture_mission_delete_sessions(&s, true);
+        let mut active_entry = entry("tab-active".into(), Tab::Workspace(workspace("alpha", "")));
+        active_entry.binding = Some(backend.clone());
+        active_entry.project = Some(codenomad_client::catalog::Project {
+            id: backend.workspace.clone(),
+            path: "/fixture".into(),
+        });
+        let mut active_panel = crate::missions::Panel::new(
+            backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        active_panel.seed_summary_for_test("msn-del");
+        active_entry.missions = Some(active_panel);
+
+        let mut parked_entry = entry("tab-parked".into(), Tab::Blank);
+        let parked_panel = crate::missions::Panel::new(
+            backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        parked_entry.missions = Some(parked_panel);
+        let (tx_parked, rx_parked) = bounded(4);
+        let active_cache = Cache::take(&mut s);
+        s.incoming = Some(rx_parked);
+        parked_entry.cache = Some(Cache::take(&mut s));
+        active_cache.apply(&mut s);
+
+        let mut ui = Ui::new();
+        ui.entries = vec![active_entry, parked_entry];
+        ui.active = 0;
+        // Send ConnectionLost on the parked tab's stream.
+        tx_parked
+            .send(codenomad_client::transport::Event::ConnectionLost)
+            .await
+            .unwrap();
+        let mut tx = rune::Tx::default();
+        assert!(super::super::observation::poll_cached(
+            &mut s, &mut ui, None, &mut tx
+        ));
+        // Active tab's delete preference and online state stay untouched, while the parked tab's
+        // own Missions panel records offline.
+        assert_eq!(crate::settings::mission_delete_sessions(&s), Some(true));
+        assert!(ui.entries[0].missions.as_ref().unwrap().online());
+        assert!(!ui.entries[1].missions.as_ref().unwrap().online());
+        drop(tx_parked);
+
+        // Even while Missions is hidden (Tab::Blank / right panel closed), a confirmed deletion
+        // removes the deleted mission from cached summaries and clears its selection.
+        ui.mission_lifecycle.start_delete_for_test(
+            "tab-active",
+            &http.backend,
+            "project",
+            "msn-del",
+            7,
+            wake,
+        );
+        let del = http.accept().await;
+        del.reply(200, json!({"deleted": true})).await;
+        let mut settled = false;
+        for _ in 0..100 {
+            if super::super::panel_state::poll_missions(&mut ui, &s, &mut tx)
+                && ui.entries[0]
+                    .missions
+                    .as_ref()
+                    .is_some_and(|p| !p.has_summary_for_test("msn-del"))
+            {
+                settled = true;
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            settled,
+            "confirmed deletion must forget cached summaries even when Missions panel is hidden"
+        );
+        assert!(ui.entries[0].missions.as_ref().unwrap().selected.is_none());
+    });
+}

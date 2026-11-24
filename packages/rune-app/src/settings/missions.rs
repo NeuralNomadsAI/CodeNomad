@@ -274,4 +274,47 @@ mod tests {
             "staging a toggle must immediately withhold the stale confirmed value before poll()"
         );
     }
+
+    #[test]
+    fn watch_project_handoff_revokes_cached_delete_preference_until_replacement_opens() {
+        platform::block_on(async {
+            let http = Http::new().await;
+            let mut prefs = Preferences::default();
+            prefs.bind(Some(http.backend.clone()));
+
+            let (mut got_config, mut got_state) = (false, false);
+            while !(got_config && got_state) {
+                prefs.poll();
+                let req = http.accept().await;
+                if req.header.contains("/api/storage/config/ui") {
+                    req.reply(200, json!({"settings": {"missionDeleteSessions": true}}))
+                        .await;
+                    got_config = true;
+                } else if req.header.contains("/api/storage/state") {
+                    req.reply(200, json!({})).await;
+                    got_state = true;
+                } else {
+                    req.reply(404, json!({})).await;
+                }
+            }
+            wait_until(|| {
+                prefs.poll();
+                prefs.mission_delete_sessions() == Some(true)
+            })
+            .await;
+
+            // Start a project watch handoff without letting the replacement SSE open yet.
+            let wake: rune::Waker = std::sync::Arc::new(|| {});
+            prefs.watch_project(Some("ws-1"), &wake);
+            assert_eq!(
+                prefs.mission_delete_sessions(),
+                None,
+                "handoff to an unopened replacement watch must immediately revoke the stale true cache"
+            );
+            // Even if the replacement watch is still waiting to open, poll() must not re-arm the old cache.
+            prefs.poll();
+            assert_eq!(prefs.mission_delete_sessions(), None);
+            prefs.unwatch();
+        });
+    }
 }

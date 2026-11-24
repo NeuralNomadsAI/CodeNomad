@@ -140,5 +140,12 @@ test('Mission recovery, reconciliation and deletion are admitted only to the fix
     }
     assert(!p.allows('GET','/api/workspaces/one/missions/other'))
     assert(!p.allows('DELETE','/api/workspaces/one/missions/other',{expectedRevision:1,requestId:'request',deleteManagedSessions:false}))
+    assert.equal(p.allows('PATCH','/api/storage/config/ui',{settings:{missionDeleteSessions:true}}),missions)
+    assert.equal(p.allows('PATCH','/api/storage/config/ui',{settings:{missionDeleteSessions:false}}),missions)
+    assert(!p.allows('PATCH','/api/storage/config/ui',{settings:{missionDeleteSessions:'true'}}))
+    assert(!p.allows('PATCH','/api/storage/config/ui',{settings:{missionDeleteSessions:true,locale:'en'}}))
+    assert(!p.allows('PATCH','/api/storage/config/ui',{settings:{},extra:true}))
+    assert.equal(p.allows('GET','/api/memory/settings'),missions)
+    assert(!p.allows('PUT','/api/memory/settings'))
   }
 })

@@ -44,7 +44,10 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if((method==='GET'||method==='HEAD')&&assets.has(p))return true
       if(method==='GET'&&['/api/workspaces','/api/meta','/api/events','/api/auth/status'].includes(p))return true
       if(method==='GET'&&(p==='/api/storage/config/ui'||p==='/api/storage/state/ui'))return true
-      if(mobilePreferences&&method==='GET'&&p==='/api/memory/settings')return true
+      if(missions&&method==='PATCH'&&p==='/api/storage/config/ui')return body&&Object.keys(body).length===1&&
+        body.settings&&typeof body.settings==='object'&&!Array.isArray(body.settings)&&
+        Object.keys(body.settings).length===1&&typeof body.settings.missionDeleteSessions==='boolean'
+      if((mobilePreferences||missions)&&method==='GET'&&p==='/api/memory/settings')return true
       if(method==='POST'&&p==='/api/client-connections/pong')return true
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)

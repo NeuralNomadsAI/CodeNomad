@@ -270,6 +270,7 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
             if let Some(panel) = &mut entry.missions {
                 panel.show(false);
                 panel.cancel_probe();
+                panel.apply_background_deletions(&mut ui.mission_lifecycle, &finished);
             }
             continue;
         }
@@ -332,6 +333,8 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
             panel.show(panel.supported() && visible);
             if panel.supported() && visible {
                 panel.settle_controls(&entry.key, &mut ui.mission_lifecycle, &finished);
+            } else {
+                panel.apply_background_deletions(&mut ui.mission_lifecycle, &finished);
             }
             if saved.view.selected_mission != panel.selected {
                 saved.view.selected_mission.clone_from(&panel.selected);

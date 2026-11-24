@@ -193,6 +193,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
             }
         }
     }
+    let was_offline = shared.stream_offline();
     if s.screen
         .launcher()
         .is_some_and(|launcher| launcher.authentication_required)
@@ -209,6 +210,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
     if let Some(online) = stream_state {
         shared.set_stream_online(online);
     }
+    let handoff_offline = !was_offline && shared.stream_offline() && stream_state.is_none();
     let preferences_changed = bound | shared.poll();
     if preferences_changed && let Some(wake) = &shared.window_wake {
         wake();
@@ -276,6 +278,8 @@ pub(crate) fn poll(s: &mut State) -> bool {
     } else {
         if let Some(online) = stream_state {
             crate::workspace::missions_online(s, online);
+        } else if handoff_offline {
+            crate::workspace::missions_online(s, false);
         }
         if reconnected && stream_state != Some(false) {
             crate::workspace::mission_event(s, None);
@@ -292,4 +296,12 @@ pub(crate) fn poll(s: &mut State) -> bool {
 #[cfg(test)]
 pub(crate) fn fixture_shortcuts(s: &State, overrides: serde_json::Value) {
     s.settings.shared.borrow_mut().fixture_shortcuts(overrides);
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_mission_delete_sessions(s: &State, enabled: bool) {
+    s.settings
+        .shared
+        .borrow_mut()
+        .fixture_mission_delete_sessions(enabled);
 }

@@ -1,5 +1,6 @@
 //! Mission views and control owners for a project occurrence.
 mod cleanup;
+mod cleanup_view;
 mod control_fields;
 mod detail;
 mod directory;

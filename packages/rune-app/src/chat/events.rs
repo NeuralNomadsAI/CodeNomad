@@ -48,7 +48,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
-                    if !s.polling_cached {
+                    if s.polling_cached {
+                        s.cached_stream_online = Some(true);
+                    } else {
                         settings::set_stream_online(s, true);
                         workspace::missions_online(s, true);
                         workspace::mission_event(s, None);
@@ -183,7 +185,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     .picker
                     .set_attachments_supported(page.user_file_references);
                 git::online(s, true);
-                if !s.polling_cached {
+                if s.polling_cached {
+                    s.cached_stream_online = Some(true);
+                } else {
                     settings::set_stream_online(s, true);
                     workspace::missions_online(s, true);
                 }
@@ -239,7 +243,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     platform::pairing::observe(s);
                 }
                 git::online(s, false);
-                if !s.polling_cached {
+                if s.polling_cached {
+                    s.cached_stream_online = Some(false);
+                } else {
                     settings::set_stream_online(s, false);
                     workspace::missions_online(s, false);
                 }
@@ -349,7 +355,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::suspend(s);
                 git::online(s, false);
-                if !s.polling_cached {
+                if s.polling_cached {
+                    s.cached_stream_online = Some(false);
+                } else {
                     settings::set_stream_online(s, false);
                     workspace::missions_online(s, false);
                 }

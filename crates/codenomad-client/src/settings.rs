@@ -253,6 +253,14 @@ impl PreferencesWatch {
                                             notices.fetch_and(!64, SeqCst);
                                             if e > 1 { 11 | 16 | 32 | 128 } else { 11 | 32 | 128 }
                                         }
+                                        Input::Unavailable(_) => {
+                                            notices.fetch_and(!(16 | 128), SeqCst);
+                                            64
+                                        }
+                                        Input::Available(_, _) => {
+                                            notices.fetch_and(!64, SeqCst);
+                                            11 | 16 | 32 | 128
+                                        }
                                         Input::Preferences(Owner::Config) => 1,
                                         Input::Preferences(Owner::State) => 2,
                                         Input::Preferences(Owner::Server) => 32,
@@ -356,5 +364,110 @@ impl PreferencesWatch {
 
     pub fn stop(self) -> crate::Receiver<()> {
         self.closed
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod watch_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    #[test]
+    fn preferences_watch_reports_upstream_instance_unavailable_and_available() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let (tx_ev, mut rx_ev) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n",
+                    )
+                    .await
+                    .unwrap();
+                stream.flush().await.unwrap();
+                while let Some(chunk) = rx_ev.recv().await {
+                    if stream.write_all(chunk.as_bytes()).await.is_err() {
+                        break;
+                    }
+                    let _ = stream.flush().await;
+                }
+            });
+            let backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+            let (notify, woken) = crate::bounded(16);
+            let wake: Wake = Arc::new(move || {
+                let _ = notify.try_send(());
+            });
+            let (watch, task) = PreferencesWatch::task(backend, Some("ws-1"), wake);
+            let handle = tokio::spawn(task);
+
+            // First event opens the SSE stream -> online (Some(true)).
+            tx_ev
+                .send(
+                    "data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"ws-1\",\"status\":\"connected\"}\n\n"
+                        .into(),
+                )
+                .unwrap();
+            let mut opened = false;
+            for _ in 0..40 {
+                if watch.take_stream_state() == Some(true) {
+                    opened = true;
+                    break;
+                }
+                let _ = tokio::time::timeout(Duration::from_millis(25), woken.recv()).await;
+            }
+            assert!(opened, "watch should report online after opening");
+
+            // Upstream disconnect without closing outer SSE -> offline (Some(false)).
+            tx_ev
+                .send(
+                    "data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"ws-1\",\"status\":\"disconnected\"}\n\n"
+                        .into(),
+                )
+                .unwrap();
+            let mut offline = false;
+            for _ in 0..40 {
+                if watch.take_stream_state() == Some(false) {
+                    offline = true;
+                    break;
+                }
+                let _ = tokio::time::timeout(Duration::from_millis(25), woken.recv()).await;
+            }
+            assert!(
+                offline,
+                "owned instance.eventStatus disconnected must report offline while outer SSE stays open"
+            );
+
+            // Upstream reconnect -> online (Some(true)) + reconnect notice.
+            tx_ev
+                .send(
+                    "data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"ws-1\",\"status\":\"connected\"}\n\n"
+                        .into(),
+                )
+                .unwrap();
+            let mut reconnected = false;
+            for _ in 0..40 {
+                if watch.take_stream_state() == Some(true) {
+                    reconnected = true;
+                    break;
+                }
+                let _ = tokio::time::timeout(Duration::from_millis(25), woken.recv()).await;
+            }
+            assert!(reconnected, "upstream connected must restore online state");
+
+            drop(tx_ev);
+            let closed = watch.stop();
+            let _ = tokio::time::timeout(Duration::from_secs(2), closed.recv()).await;
+            handle.abort();
+            server.abort();
+        });
     }
 }

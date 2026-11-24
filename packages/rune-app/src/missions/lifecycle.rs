@@ -100,7 +100,7 @@ impl Panel {
         scope: &WorkspaceScope,
         cleanup: Cleanup,
     ) {
-        if self.cleanup_scope().as_ref() != Some(scope) {
+        if !self.online() || self.cleanup_scope().as_ref() != Some(scope) {
             return;
         }
         if !self
@@ -114,7 +114,7 @@ impl Panel {
         owner.cleanup.start_cleanup_retry(
             scope.clone(),
             cleanup,
-            self.view_live.clone(),
+            self.cleanup_view_live.clone(),
             row_live,
             self.backend.clone(),
             self.wake.clone(),
@@ -132,7 +132,7 @@ impl Panel {
             return;
         }
         if retry {
-            if owner.busy_mission(mission) {
+            if !self.online() || owner.busy_mission(mission) {
                 return;
             }
             owner.cleanup.retry_delete_in_scope(
@@ -320,6 +320,18 @@ impl Panel {
         }
     }
 
+    pub(crate) fn apply_background_deletions(&mut self, owner: &mut Lifecycle, settled: &Settled) {
+        let Some(scope) = self.cleanup_scope() else {
+            return;
+        };
+        for (deleted_scope, mission_id) in &settled.cleanup.deleted_missions {
+            if deleted_scope == &scope {
+                self.forget_deleted_mission(mission_id);
+                owner.recovery.clear_error_for(&scope, mission_id);
+            }
+        }
+    }
+
     pub(crate) fn settle_controls(
         &mut self,
         occurrence: &str,
@@ -448,6 +460,40 @@ impl Intent {
 }
 
 impl Lifecycle {
+    #[cfg(test)]
+    pub(crate) fn start_delete_for_test(
+        &mut self,
+        occurrence: &str,
+        backend: &Backend,
+        project: &str,
+        mission_id: &str,
+        revision: u64,
+        wake: Wake,
+    ) {
+        let src = Source {
+            occurrence: occurrence.into(),
+            workspace: backend.workspace.clone(),
+            mission: MissionKey {
+                server: backend.client.server_identity().unwrap().into(),
+                id: mission_id.into(),
+            },
+            target: LifecycleTarget {
+                project: project.into(),
+                mission: mission_id.into(),
+                canonical: "/fixture".into(),
+                coordinator: "ses_c".into(),
+                coordinator_location: None,
+            },
+        };
+        self.cleanup.start_delete(
+            &src,
+            mission_id.into(),
+            revision,
+            false,
+            backend.clone(),
+            wake,
+        );
+    }
     pub(crate) fn retire_scope(&mut self, scope: &WorkspaceScope) {
         self.cleanup.retire_scope(scope);
         self.recovery.retire_scope(scope);
