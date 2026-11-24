@@ -8,7 +8,7 @@ import { isLocalAbsolutePath, resolveLocalExecutable } from "./native-fixture-ht
 
 const jobs = new WeakMap()
 
-export function fixtureJobExecutable() {
+export function fixtureJobExecutable({ required = process.platform === "win32" } = {}) {
   const root = fileURLToPath(new URL("../", import.meta.url))
   const suffix = process.platform === "win32" ? ".exe" : ""
   const rawExe = process.env.CODENOMAD_FIXTURE_JOB_EXE
@@ -19,6 +19,7 @@ export function fixtureJobExecutable() {
     accessSync(exe, constants.X_OK)
     return exe
   } catch (cause) {
+    if (!required) return null
     throw new Error("Build `cargo build -p codenomad-host-process --bin codenomad-fixture-job` or set CODENOMAD_FIXTURE_JOB_EXE", { cause })
   }
 }
@@ -33,7 +34,10 @@ export function spawnFixtureChild(command, args, options) {
   }
   const env = { ...(options?.env ?? process.env), CODENOMAD_FIXTURE_PARENT_PID: String(process.pid) }
   const { detached: _detached, ...restOptions } = options ?? {}
-  const child = spawn(exe, [command, ...args], { ...restOptions, detached: false, env, windowsHide: true })
+  const supervisor = exe
+    ? [exe, [command, ...args]]
+    : [process.execPath, [fileURLToPath(new URL("./native-fixture-posix-supervisor.mjs", import.meta.url)), command, ...args]]
+  const child = spawn(supervisor[0], supervisor[1], { ...restOptions, detached: false, env, windowsHide: true })
   if (!child.stderr) {
     jobs.set(child, Promise.resolve(undefined))
     return child
@@ -57,8 +61,18 @@ export function spawnFixtureChild(command, args, options) {
   return child
 }
 
-export async function fixtureChildPid(child) {
-  return jobs.has(child) ? jobs.get(child) : child.pid
+export async function fixtureChildPid(child, timeoutMs = 10_000) {
+  if (!jobs.has(child)) return child.pid
+  let timer
+  try {
+    return await Promise.race([
+      jobs.get(child),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Timed out reading fixture child PID")), timeoutMs)
+        timer.unref?.()
+      }),
+    ])
+  } finally { clearTimeout(timer) }
 }
 
 export function clearFixtureGitEnvironment(environment = process.env) {

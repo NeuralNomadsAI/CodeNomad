@@ -9,7 +9,10 @@ export async function json(send, route, { method = "GET", headers, body } = {}) 
     method, headers: { ...headers, ...(body === undefined ? {} : { "content-type": "application/json" }) },
     body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(60_000),
   })
-  if (!response.ok) throw Error(`${method} ${route} returned ${response.status}: ${(await response.text()).slice(0, 400)}`)
+  if (!response.ok) {
+    await response.body?.cancel?.().catch(() => {})
+    throw Error(`${method} ${route} returned ${response.status}`)
+  }
   const text = await response.text()
   return text ? JSON.parse(text) : undefined
 }

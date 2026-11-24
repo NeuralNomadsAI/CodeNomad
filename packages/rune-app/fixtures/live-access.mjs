@@ -102,7 +102,7 @@ export async function attestNative(origin,child,authorization,request=fixtureFet
   return {read,send,close:()=>transport.close?.()??Promise.resolve()}
 }
 
-const forbiddenProfileEntries=new Set(['.opencode','opencode.json','opencode.jsonc','.claude','.agents','programdata'])
+const forbiddenProfileEntries=new Set(['.opencode','opencode.json','opencode.jsonc','.claude','.agents','programdata','agents.md','claude.md'])
 const forbiddenGitEntries=new Set(['commondir','gitdir','alternates','config.worktree','worktrees'])
 const allowedGitSections=new Set(['core','user','init'])
 const allowedGitKeys=new Map([
@@ -262,12 +262,20 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
     assert.equal(privatePath(expected),expected,'A private fixture path was redirected')
     return expected
   }
-  let cleaned
+  let cleaned,leaseRemoved=false
+  const tryRemoveLease=async()=>{
+    if(leaseRemoved)return
+    const daemonStopped=!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null
+    if(executionFinished&&daemonStopped){
+      leaseRemoved=true
+      try{await unlink(lease)}catch(error){if(error.code!=='ENOENT')throw error}
+    }
+  }
   const cleanup=()=>{
     cleaned??=(async()=>{
       try{
-        try{await attested?.close()}finally{
-          try{await plugin?.close()}finally{await daemon?.stop()}
+        try{await daemon?.stop()}finally{
+          try{await attested?.close()}finally{await plugin?.close()}
         }
       }finally{
         model?.closeAllConnections()
@@ -284,12 +292,11 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
           }
         } finally {
           await lock.close()
-          const daemonStopped=!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null
-          if(executionFinished&&daemonStopped)await unlink(lease)
+          await tryRemoveLease()
         }
       }
     })()
-    return cleaned
+    return cleaned.finally(()=>tryRemoveLease())
   }
   const execution=(async()=>{
     try{

@@ -1,5 +1,6 @@
 // OpenCode executes a real permitted edit through an exclusively loopback model.
 import assert from 'node:assert/strict'
+import {existsSync} from 'node:fs'
 import {mkdir, mkdtemp, writeFile, readFile} from 'node:fs/promises'
 import path from 'node:path'
 import {parseArgs} from 'node:util'
@@ -22,15 +23,16 @@ const browserExecutable=process.env.CODENOMAD_BROWSER_PATH||undefined
 const codenomad=path.basename(path.dirname(root))==='worktrees'?path.resolve(root,'../..'):path.join(root,'.codenomad')
 const evidence=path.join(codenomad,'cargo-targets','e2e-journey')
 // esbuild's worker and any OS helper inherit only this allowlist.
+const jobSuffix=process.platform==='win32'?'.exe':''
 const jobExecutable=process.env.CODENOMAD_FIXTURE_JOB_EXE
-  ?? path.resolve(root,process.env.CARGO_TARGET_DIR||'target','debug','codenomad-fixture-job.exe')
+  || path.resolve(root,process.env.CARGO_TARGET_DIR||'target','debug',`codenomad-fixture-job${jobSuffix}`)
 const system=assertPrivateChild(fixtureSystemEnvironment())
 const stripped=Object.keys(process.env).filter(key=>!Object.hasOwn(system,key))
 for(const key of stripped)delete process.env[key]
 const filtered=stripped.filter(credentialVariable).sort()
 if(filtered.length)console.error(`Fixture filtered environment variables: ${JSON.stringify(filtered)}`)
 // Runner-only executable selection; fixture children receive their explicit private env.
-process.env.CODENOMAD_FIXTURE_JOB_EXE=jobExecutable
+if(process.platform==='win32'||existsSync(jobExecutable))process.env.CODENOMAD_FIXTURE_JOB_EXE=jobExecutable
 await mkdir(evidence,{recursive:true})
 
 async function journeyDesktop({origin,password,project,profile,env},report){

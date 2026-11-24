@@ -3,7 +3,7 @@ import {execFile} from 'node:child_process'
 import {Agent,createServer,request} from 'node:http'
 import {test} from 'node:test'
 import {promisify} from 'node:util'
-import {fixtureFetch,relayTarget,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,fixtureFetch,relayTarget,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {sseReader} from '../../../scripts/perf/lib.mjs'
 
 async function listen(t,handler){
@@ -94,4 +94,32 @@ test('sseReader bounds silent opens and cancels an idle open SSE body cleanly',{
   assert.equal(received,1)
   await stop()
   await Promise.race([closed,new Promise((_,reject)=>setTimeout(()=>reject(Error('SSE socket did not close on server')),3000))])
+})
+
+test('createAttestedFetch serves concurrent POST while an SSE stream stays open and closes immediately',{timeout:15000},async t=>{
+  let ownerChecks=0
+  const srv=await listen(t,(req,res)=>{
+    if(req.url==='/api/event'){
+      res.writeHead(200,{'content-type':'text/event-stream'})
+      res.write('data: {"type":"server.connected"}\n\n')
+      return
+    }
+    if(req.method==='POST'&&req.url==='/api/session'){
+      res.writeHead(200,{'content-type':'application/json'})
+      res.end(JSON.stringify({id:'ses_concurrent'}))
+      return
+    }
+    res.writeHead(404);res.end()
+  })
+  const port=Number(new URL(srv.origin).port)
+  const bound=createAttestedFetch(srv.origin,port,process.pid,async()=>{ownerChecks++})
+  try{
+    const sse=await bound(new URL('/api/event',srv.origin),{signal:AbortSignal.timeout(5000)})
+    assert.equal(sse.status,200)
+    const post=await bound(new URL('/api/session',srv.origin),{method:'POST',body:'{}',signal:AbortSignal.timeout(5000)})
+    assert.equal(post.status,200)
+    assert.deepEqual(await post.json(),{id:'ses_concurrent'})
+    assert(ownerChecks>=4,'each opened socket must verify ownership before and after connect')
+    await bound.close()
+  }finally{await bound.close()}
 })

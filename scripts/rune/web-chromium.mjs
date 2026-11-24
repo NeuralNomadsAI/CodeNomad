@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
 import path from 'node:path'
 import {originGuardProxy,resolveWorktreePackage} from '../native-fixture-http.mjs'
-import {launchFixture} from '../../packages/rune-app/fixtures/fixture-host.mjs'
+import {launchFixture,until} from '../../packages/rune-app/fixtures/fixture-host.mjs'
 
 const {chromium}=await import(resolveWorktreePackage('playwright'))
 const graphics=['--enable-unsafe-webgpu','--use-angle=swiftshader']
@@ -18,6 +18,8 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
     '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
     `--proxy-server=http://127.0.0.1:${guard.port}`,
     '--proxy-bypass-list=<-loopback>',
+    '--webrtc-ip-handling-policy=disable_non_proxied_udp',
+    '--force-webrtc-ip-handling-policy',
   ]:[]
   let host,browser
   try{
@@ -28,9 +30,13 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
       'about:blank',
     ],{cwd:profile,env})
     const port=await host.ready(()=>host.output().match(/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//)?.[1])
-    const [record,id]=(await readFile(path.join(data,'DevToolsActivePort'),'utf8')).trim().split(/\r?\n/)
-    assert.equal(record,port)
-    assert.match(id,/^\/devtools\/browser\/[a-f\d-]+$/i)
+    const id=await until(async()=>{
+      try{
+        const [record,wsPath]=(await readFile(path.join(data,'DevToolsActivePort'),'utf8')).trim().split(/\r?\n/)
+        if(record===port&&/^\/devtools\/browser\/[a-f\d-]+$/i.test(wsPath))return wsPath
+      }catch{}
+      return null
+    },'DevToolsActivePort matching announced port',15000)
     browser=await chromium.connectOverCDP(`ws://127.0.0.1:${port}${id}`,{timeout:15000})
   }catch(error){
     try{await host?.stop()}finally{await guard?.close()}

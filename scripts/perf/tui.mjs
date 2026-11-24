@@ -10,18 +10,29 @@ export async function withTui(cli, daemon, session, run) {
   const pty = require("./tools/node_modules/@lydell/node-pty")
   const { Terminal } = require("./tools/node_modules/@xterm/headless")
   const cols = 200, rows = 60
-  const p = pty.spawn(fixtureJobExecutable(), [cli, "--server", daemon.url, "--session", session, daemon.project], {
+  const useJob = process.platform === "win32"
+  const command = useJob ? fixtureJobExecutable() : cli
+  const args = useJob
+    ? [cli, "--server", daemon.url, "--session", session, daemon.project]
+    : ["--server", daemon.url, "--session", session, daemon.project]
+  const p = pty.spawn(command, args, {
     name: "xterm-256color", cols, rows, cwd: daemon.project,
     env: withoutFixtureProxy({
       ...daemon.env,
-      CODENOMAD_FIXTURE_PARENT_PID: String(process.pid),
+      ...(useJob ? { CODENOMAD_FIXTURE_PARENT_PID: String(process.pid) } : {}),
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
     }),
   })
   const exited = new Promise(resolve => p.onExit(resolve))
-  const untrack = registerFixtureChild(() => {
+  const killTui = () => {
     try { p.kill() } catch {}
+    if (process.platform !== "win32" && p.pid) {
+      try { process.kill(-p.pid, "SIGKILL") } catch {}
+    }
+  }
+  const untrack = registerFixtureChild(() => {
+    killTui()
     return Promise.race([exited, new Promise(resolve => setTimeout(resolve, 3000))])
   })
   void exited.finally(untrack)
@@ -80,7 +91,7 @@ export async function withTui(cli, daemon, session, run) {
     data.dispose()
     term.dispose()
     // The PTY owns just this child. Refuse to leave it running after the sample.
-    p.kill()
+    killTui()
     let timer
     try {
       await Promise.race([exited, new Promise((_, reject) => { timer = setTimeout(() => reject(Error("Fixture TUI did not exit")), 5000) })])

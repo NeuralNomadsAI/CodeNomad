@@ -1,10 +1,11 @@
 // Attach the real backend to the owned fixture daemon; never start or stop a service.
 import assert from "node:assert/strict"
+import dgram from "node:dgram"
 import net from "node:net"
 import { register } from "node:module"
 import { pathToFileURL, fileURLToPath } from "node:url"
 import { privatePath } from "./isolation.mjs"
-import { fixtureFetch, resolveWorktreePackage } from "../native-fixture-http.mjs"
+import { fixtureFetch, resolveWorktreePackage, verifyLoopbackListenerOwner } from "../native-fixture-http.mjs"
 
 const { Agent, setGlobalDispatcher } = await import(resolveWorktreePackage("undici"))
 
@@ -19,15 +20,19 @@ const { rememberRuntime } = await import(new URL("opencode/compatibility/runtime
 const url = new URL(process.env.PERF_DAEMON_URL)
 assert.equal(url.hostname, "127.0.0.1")
 const password = process.env.OPENCODE_SERVER_PASSWORD
+const expectedPid = Number(process.env.PERF_DAEMON_PID)
 const endpoint = { url: url.origin, auth: { type: "basic", username: "opencode", password } }
+await verifyLoopbackListenerOwner(Number(url.port), expectedPid)
 const info = await (await fixtureFetch(new URL("/api/info", url), { headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` } })).json()
-assert.equal(String(info.pid), process.env.PERF_DAEMON_PID)
+assert.equal(info.pid, expectedPid)
+await verifyLoopbackListenerOwner(Number(url.port), expectedPid)
 rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
 OpenCodeCliService.prototype.discover = async () => endpoint
 for (const action of ["ensure", "restart"]) OpenCodeCliService.prototype[action] = async () => { throw Error(`Bench forbids service ${action}`) }
 const entry = new URL("index.js", dist)
 const allowedOrigin = url.origin
 const allowedPort = Number(url.port)
+dgram.createSocket = () => { throw Error("Benchmark server cannot create UDP sockets") }
 const originalConnect = net.Socket.prototype.connect
 net.Socket.prototype.connect = function guardedConnect(...args) {
   let host, port, ipcPath
@@ -42,8 +47,8 @@ net.Socket.prototype.connect = function guardedConnect(...args) {
     port = Number(args[0])
     host = typeof args[1] === "string" ? args[1] : undefined
   }
-  if (ipcPath || port !== allowedPort || (host && host !== "127.0.0.1")) {
-    throw Error(`Benchmark server cannot connect outside ${allowedOrigin}: ${ipcPath ?? `${host ?? "127.0.0.1"}:${port}`}`)
+  if (ipcPath || port !== allowedPort || host !== "127.0.0.1") {
+    throw Error(`Benchmark server cannot connect outside ${allowedOrigin}: ${ipcPath ?? `${host ?? "<unspecified>"}:${port}`}`)
   }
   return originalConnect.apply(this, args)
 }

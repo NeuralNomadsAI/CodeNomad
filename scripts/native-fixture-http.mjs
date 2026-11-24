@@ -64,7 +64,7 @@ export function redactSecrets(text,secrets=[]){
   return value
 }
 
-const {Agent,Client,buildConnector,fetch:undiciFetch}=await import(resolveWorktreePackage('undici'))
+const {Agent,Pool,buildConnector,fetch:undiciFetch}=await import(resolveWorktreePackage('undici'))
 
 const dispatcher=new Agent()
 export const fixtureHttpAgent=new HttpAgent({keepAlive:true,proxyEnv:{}})
@@ -145,10 +145,19 @@ export async function originGuardProxy(localOrigin){
 
 export function createAttestedFetch(origin,port,pid,verifyOwner=verifyLoopbackListenerOwner){
   const connector=buildConnector({})
-  const client=new Client(origin,{
+  const pool=new Pool(origin,{
+    connections:8,
     keepAliveTimeout:60_000,
     connect(opts,cb){
-      verifyOwner(port,pid).then(()=>connector(opts,cb),error=>cb(error,null))
+      verifyOwner(port,pid).then(()=>{
+        connector(opts,(error,socket)=>{
+          if(error||!socket){cb(error??Error('Socket connection failed'),null);return}
+          verifyOwner(port,pid).then(()=>cb(null,socket),postError=>{
+            try{socket.destroy()}catch{}
+            cb(postError,null)
+          })
+        })
+      },error=>cb(error,null))
     },
   })
   const fetchBound=(input,init={})=>{
@@ -156,9 +165,9 @@ export function createAttestedFetch(origin,port,pid,verifyOwner=verifyLoopbackLi
       const {url,method,headers,body,signal}=input
       return fetchBound(url,{method,headers,body,signal,...init})
     }
-    return undiciFetch(input,{...init,duplex:'half',dispatcher:client,redirect:'error'})
+    return undiciFetch(input,{...init,duplex:'half',dispatcher:pool,redirect:'error'})
   }
-  fetchBound.close=()=>client.close().catch(()=>{})
+  fetchBound.close=()=>pool.destroy().catch(()=>{})
   return fetchBound
 }
 

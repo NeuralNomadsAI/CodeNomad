@@ -53,6 +53,33 @@ impl Drop for ParentWatch {
 }
 
 #[cfg(unix)]
+static STOP_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn handle_stop_signal(_sig: libc::c_int) {
+    STOP_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(unix)]
+fn install_signal_handlers() {
+    // SAFETY: handle_stop_signal only performs an async-signal-safe atomic store.
+    unsafe {
+        libc::signal(
+            libc::SIGTERM,
+            handle_stop_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGINT,
+            handle_stop_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGHUP,
+            handle_stop_signal as *const () as libc::sighandler_t,
+        );
+    }
+}
+
+#[cfg(unix)]
 struct ParentWatch(u32);
 
 #[cfg(unix)]
@@ -84,6 +111,8 @@ impl ParentWatch {
 }
 
 fn run() -> io::Result<i32> {
+    #[cfg(unix)]
+    install_signal_handlers();
     let parent = ParentWatch::open()?;
     // SAFETY: single-threaded process before spawning the child; clears the internal
     // supervisor variable so inherited Windows/Unix child environments never receive it.
@@ -106,6 +135,10 @@ fn run() -> io::Result<i32> {
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break Some(status);
+        }
+        #[cfg(unix)]
+        if STOP_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+            break None;
         }
         if parent.as_ref().is_some_and(ParentWatch::exited) {
             break None;

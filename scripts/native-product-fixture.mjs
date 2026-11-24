@@ -5,7 +5,7 @@ import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { resolveWorktreePackage } from "./native-fixture-http.mjs"
+import { createAttestedFetch, redactSecrets, resolveWorktreePackage, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { fixtureChildPid, spawnFixtureChild, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const { OpenCode } = await import(resolveWorktreePackage("@opencode/client"))
@@ -112,7 +112,7 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: {} },
   } } })
   let output = "", spawnError
-  let child, stopped
+  let child, stopped, attestedFetch
   try {
     child = spawnFixtureChild(cli, ["serve", ...(service ? ["--service"] : []), "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env, windowsHide: true })
     stopped = new Promise(resolve => child.once("close", resolve))
@@ -122,7 +122,7 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     const deadline = Date.now() + 30_000
     while (!/http:\/\/127\.0\.0\.1:\d+/.test(output)) {
       if (spawnError) throw spawnError
-      if (child.exitCode !== null || Date.now() > deadline) throw new Error(output.slice(-3000))
+      if (child.exitCode !== null || Date.now() > deadline) throw new Error(redactSecrets(output.slice(-3000), [password]))
       await delay(25)
     }
     let endpoint
@@ -140,17 +140,22 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
       }
     } else endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password } }
     assert(endpoint && endpoint.url === output.match(/http:\/\/127\.0\.0\.1:\d+/)[0])
-    const boundedFetch = (url, init) => fetch(url, { ...init, signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) })
+    const port = Number(new URL(endpoint.url).port)
+    await verifyLoopbackListenerOwner(port, pid)
+    attestedFetch = createAttestedFetch(new URL(endpoint.url).origin, port, pid)
+    const boundedFetch = (url, init) => attestedFetch(url, { ...init, signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) })
     const client = OpenCode.make({ baseUrl: endpoint.url,
       headers: Service.headers(endpoint), fetch: boundedFetch })
     assert.equal((await client.server.info()).pid, pid)
     await run({ client, root, requests, env, connection: { endpoint, client, fetch: boundedFetch, assertCurrent() {} } })
     if (providerError) throw providerError
   } finally {
-    try { if (child) await stopFixtureChild(child, stopped) } finally {
+    try {
+      try { if (child) await stopFixtureChild(child, stopped) } finally { await attestedFetch?.close() }
+    } finally {
       provider.closeAllConnections()
       await new Promise(resolve => provider.close(resolve))
-      await writeFile(path.join(root, "daemon.log"), output)
+      await writeFile(path.join(root, "daemon.log"), redactSecrets(output, [password]))
       console.log(`Isolated fixture: ${root}`)
     }
   }

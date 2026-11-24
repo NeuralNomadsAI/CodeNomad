@@ -40,7 +40,7 @@ await mkdir(env.ProgramData)
 const logs={},children=[],proxies=[],ownedIDs=[],stages=[],requests=[]
 const proof={root,project,opencode:values.opencode,ownedIDs,stages,requests,cleanup:[],result:'failed',
   binaries:{rune:createHash('sha256').update(await readFile(rune)).digest('hex'),rust:createHash('sha256').update(await readFile(rust)).digest('hex')}}
-let pruning,native,server,client,failure,rustPassword
+let pruning,native,server,client,failure,rustPassword,attested
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))
 const group=process.platform!=='win32'
 function launch(name,binary,args,childEnv){
@@ -97,7 +97,8 @@ try{
   const daemon=launch('opencode',opencodeExecutable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],env)
   const endpoint=await origin(daemon)
   const authorization=`Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
-  const {send}=await attestNative(endpoint,daemon.child,authorization,fixtureFetch,await fixtureChildPid(daemon.child))
+  attested=await attestNative(endpoint,daemon.child,authorization,fixtureFetch,await fixtureChildPid(daemon.child))
+  const {send}=attested
   native=OpenCode.make({baseUrl:endpoint,fetch:(url,init)=>send(new Request(url,init))})
   const info=await native.server.info()
   proof.nativeVersion=info.version
@@ -187,6 +188,7 @@ finally{
     proof.rustGraceful=server.child.exitCode===0
     if(!proof.rustGraceful)errors.push(Error('Owned Rust server did not exit cleanly after shutdown'))
   }
+  try{await attested?.close()}catch(error){errors.push(error)}
   try{await pruning?.close()}catch(error){errors.push(error)}
   for(const entry of children.slice().reverse())if(group||entry.child.exitCode===null&&entry.child.signalCode===null)
     try{await stopFixtureChild(entry.child,entry.stopped,1_000,2_000,{group,startedBy:entry.startedBy})}catch(error){errors.push(error)}

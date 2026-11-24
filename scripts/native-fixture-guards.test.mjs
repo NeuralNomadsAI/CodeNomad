@@ -156,7 +156,7 @@ test("fixture job terminates child and grandchild when parent dies and hides COD
     import { spawnFixtureChild, fixtureChildPid } from ${JSON.stringify(guardsUrl)}
     const child = spawnFixtureChild(process.execPath, ["-e", \`
       const { spawn } = require("node:child_process")
-      const leaf = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, windowsHide: true, stdio: "ignore" })
+      const leaf = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: process.platform === "win32", windowsHide: true, stdio: "ignore" })
       leaf.once("spawn", () => {
         console.log(JSON.stringify({ childPid: process.pid, leafPid: leaf.pid, leaked: Boolean(process.env.CODENOMAD_FIXTURE_PARENT_PID) }))
       })

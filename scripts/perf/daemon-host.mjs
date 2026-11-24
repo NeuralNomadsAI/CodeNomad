@@ -103,12 +103,14 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
   try {
     if(pruningEnabled){const {preparePruning}=await import('./pruning.mjs');pruning=await preparePruning(root,env.OPENCODE_CONFIG_DIR)}
   } catch(error){provider.closeAllConnections();await new Promise(resolve=>provider.close(resolve));throw error}
-  let daemon
+  let daemon, attested
   try {
-    daemon = launchFixture(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {cwd: project, env, redact: [password]})
+    const daemonEnv = { ...env, ...gitEnv }
+    daemon = launchFixture(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {cwd: project, env: daemonEnv, redact: [password]})
     const url = await daemon.ready(stdout => stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1], 60_000)
     const pid = await daemon.pid()
-    const {send} = await attestNative(url, daemon.child, authorization, fixtureFetch, pid)
+    attested = await attestNative(url, daemon.child, authorization, fixtureFetch, pid)
+    const {send} = attested
     const call = (method, route, body) => json(send, route, {method, body})
     await pruning?.activate({project,url,authorization,send},()=>assert.equal(daemon.child.exitCode,null,'Owned pruning daemon exited'))
     await run({ project, env, url, password, authorization, call, send, markers, pid, cli, pruning,
@@ -119,7 +121,7 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
     })
     if (providerError) throw providerError
   } finally {
-    try {try{await pruning?.close()}finally{await daemon?.stop()}} finally {
+    try {try{await daemon?.stop()}finally{try{await attested?.close()}finally{await pruning?.close()}}} finally {
       provider.closeAllConnections()
       batch?.release()
       await new Promise(resolve => provider.close(resolve))
