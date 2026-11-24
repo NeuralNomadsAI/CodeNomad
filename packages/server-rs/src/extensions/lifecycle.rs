@@ -390,7 +390,9 @@ async fn connection_at(
         }
         let features = stale.features;
         let _ = tokio::task::spawn_blocking(move || {
-            let _io = LEASE_IO.read().unwrap();
+            // Take exclusive `LEASE_IO.write()` so a concurrent `sync()` worker cannot recreate
+            // the disposed lease file after this installation was removed from `STATE`.
+            let _io = LEASE_IO.write().unwrap();
             if provision::dispose_checked(&features).is_err() {
                 STATE.lock().unwrap().stranded.push(features);
             }
@@ -427,8 +429,13 @@ async fn sync(app: &App, renew: bool) {
         for (inst_idx, feat_idx, lease, rewrite, do_renew, check_ready) in plan {
             let written = {
                 let _io = LEASE_IO.read().unwrap();
-                if !STATE.lock().unwrap().active {
-                    break;
+                let still_registered = {
+                    let state = STATE.lock().unwrap();
+                    state.active
+                        && state.installations.iter().any(|inst| inst.features.iter().any(|f| f.lease == lease))
+                };
+                if !still_registered {
+                    continue;
                 }
                 if let Some(wanted) = rewrite {
                     crate::extensions::artifact::write_replacing(&lease, wanted.as_bytes()).is_ok().then_some(wanted)
@@ -649,9 +656,13 @@ pub async fn ready_at(
     endpoint: &Arc<crate::opencode::Endpoint>,
     directory: &str,
     deadline: tokio::time::Instant,
+    still_valid: impl Fn() -> bool,
 ) -> Result<(), String> {
     if !STATE.lock().unwrap().active {
         return Ok(());
+    }
+    if !still_valid() {
+        return Err("Operation is no longer valid".into());
     }
     tokio::time::timeout_at(deadline, prepare(app, endpoint))
         .await
@@ -662,6 +673,7 @@ pub async fn ready_at(
             return Ok(());
         }
         if !app.native.current(endpoint)
+            || !still_valid()
             || !state.prepared.as_ref().is_some_and(|prepared| Arc::ptr_eq(prepared, endpoint))
         {
             return Err("Pruning lease does not match captured connection".into());
@@ -669,5 +681,5 @@ pub async fn ready_at(
         state.current.and_then(|i| state.installations[i].readiness.clone())
     };
     let owner = owner.ok_or("Pruning presence unavailable for captured connection")?;
-    owner.prepare(directory, deadline).await.map(|_| ())
+    owner.prepare_while(directory, deadline, || app.native.current(endpoint) && still_valid()).await.map(|_| ())
 }

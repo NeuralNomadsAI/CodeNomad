@@ -536,58 +536,72 @@ impl MessageListStream {
         }
     }
 
-    fn total_len(&self) -> usize {
-        self.segments_bytes
-            .saturating_add(self.undo_bytes)
-            .saturating_add(self.out.len())
-            .saturating_add(self.item.len())
-            .saturating_add(self.segments.capacity().saturating_mul(std::mem::size_of::<(axum::body::Bytes, usize)>()))
-            .saturating_add(self.undo.capacity().saturating_mul(std::mem::size_of::<(usize, Vec<UndoPatch>)>()))
-    }
-
     fn push_out(&mut self, byte: u8) -> Result<(), ()> {
-        self.evict_undo_if_needed(1);
-        let total = self.total_len();
-        if total >= OUTPUT_LIMIT {
-            return Err(());
-        }
-        if self.out.len() == self.out.capacity() && self.out.len() >= RESERVE_STEP {
-            let step = (OUTPUT_LIMIT - total).min(RESERVE_STEP).max(1);
+        if self.out.len() == self.out.capacity() {
+            self.evict_undo_if_needed(1);
+            let avail = OUTPUT_LIMIT.saturating_sub(self.retained_bytes());
+            if avail == 0 {
+                return Err(());
+            }
+            let step = self.out.capacity().max(64).min(RESERVE_STEP).min(avail);
             self.out.reserve_exact(step);
         }
         self.out.push(byte);
+        if self.retained_bytes() > OUTPUT_LIMIT {
+            return Err(());
+        }
         Ok(())
     }
 
     fn extend_out(&mut self, bytes: &[u8]) -> Result<(), ()> {
-        self.evict_undo_if_needed(bytes.len());
-        let total = self.total_len().saturating_add(bytes.len());
-        if total > OUTPUT_LIMIT {
-            return Err(());
-        }
-        if self.out.len() + bytes.len() > self.out.capacity() && self.out.len() + bytes.len() >= RESERVE_STEP {
-            self.out.reserve_exact(bytes.len());
+        let slack = self.out.capacity().saturating_sub(self.out.len());
+        if bytes.len() > slack {
+            let extra = bytes.len() - slack;
+            self.evict_undo_if_needed(extra);
+            let avail = OUTPUT_LIMIT.saturating_sub(self.retained_bytes());
+            if extra > avail {
+                return Err(());
+            }
+            let step = self.out.capacity().max(64).min(RESERVE_STEP).max(extra).min(avail);
+            self.out.reserve_exact(step);
         }
         self.out.extend_from_slice(bytes);
+        if self.retained_bytes() > OUTPUT_LIMIT {
+            return Err(());
+        }
         Ok(())
     }
 
     fn push_item(&mut self, byte: u8) -> Result<(), ()> {
-        self.evict_undo_if_needed(1);
-        let total = self.total_len();
-        if self.item.len() >= ITEM_LIMIT || total >= OUTPUT_LIMIT {
+        if self.item.len() >= ITEM_LIMIT {
             return Err(());
         }
-        if self.item.len() == self.item.capacity() && self.item.len() >= RESERVE_STEP {
-            let rem = (ITEM_LIMIT - self.item.len()).min(OUTPUT_LIMIT - total);
-            self.item.reserve_exact(rem.min(RESERVE_STEP).max(1));
+        if self.item.len() == self.item.capacity() {
+            self.evict_undo_if_needed(1);
+            let avail = OUTPUT_LIMIT.saturating_sub(self.retained_bytes());
+            if avail == 0 {
+                return Err(());
+            }
+            let rem = (ITEM_LIMIT - self.item.len()).min(avail);
+            let step = self.item.capacity().max(64).min(RESERVE_STEP).min(rem);
+            self.item.reserve_exact(step);
         }
         self.item.push(byte);
+        if self.retained_bytes() > OUTPUT_LIMIT {
+            return Err(());
+        }
         Ok(())
     }
 
     fn push_segment(&mut self, mut bytes: Vec<u8>) -> Result<Option<usize>, ()> {
-        if self.total_len().saturating_add(bytes.len()) > OUTPUT_LIMIT {
+        self.evict_undo_if_needed(bytes.len());
+        let after_flush = self
+            .segments_bytes
+            .saturating_add(self.undo_bytes)
+            .saturating_add(self.out.len())
+            .saturating_add(self.item.capacity())
+            .saturating_add(bytes.len());
+        if after_flush > OUTPUT_LIMIT {
             return Err(());
         }
         if !bytes.is_empty() {
@@ -600,6 +614,9 @@ impl MessageListStream {
             bytes.shrink_to_fit();
             self.segments_bytes += bytes.len();
             self.segments.push_back(axum::body::Bytes::from(bytes));
+            if self.retained_bytes() > OUTPUT_LIMIT {
+                return Err(());
+            }
             return Ok(Some(self.segments.len() - 1));
         }
         Ok(None)
@@ -846,15 +863,18 @@ impl MessageListStream {
         if changed
             && (self.undo_overflow
                 || self.undo_bytes.saturating_add(undo_len) > UNDO_LIMIT
-                || self.total_len().saturating_add(projected.len()).saturating_add(undo_len) > OUTPUT_LIMIT)
+                || self.retained_bytes().saturating_add(projected.len()).saturating_add(undo_len) > OUTPUT_LIMIT)
         {
             self.undo.clear();
             self.undo.shrink_to_fit();
             self.undo_bytes = 0;
             self.undo_overflow = true;
         }
-        if self.total_len().saturating_add(projected.len()) > OUTPUT_LIMIT {
-            return Err(());
+        if self.retained_bytes().saturating_add(projected.len()) > OUTPUT_LIMIT {
+            self.evict_undo_if_needed(projected.len());
+            if self.retained_bytes().saturating_add(projected.len()) > OUTPUT_LIMIT {
+                return Err(());
+            }
         }
         self.changed |= changed;
         if (!changed || self.undo_overflow) && projected.len() <= 4096 {
@@ -1654,8 +1674,8 @@ pub(crate) fn valid_reference_files(raw: &str, max_count: usize) -> bool {
                     }
                 }
                 "mime" => {
-                    // Valid JSON string (already syntax-checked) is non-empty iff raw token != `""`.
-                    if !vt.starts_with('"') || vt.len() <= 2 {
+                    // Match TS `user-file-reference.ts:24-31`: any JSON string (including `""`).
+                    if !vt.starts_with('"') {
                         ok = false;
                     } else {
                         has_mime = true;
@@ -1671,8 +1691,8 @@ pub(crate) fn valid_reference_files(raw: &str, max_count: usize) -> bool {
                         fields += 1;
                         let svt = sv.trim();
                         match sk {
-                            "type" => kind = parse_short_string(svt, 32),
-                            "sha256" => sha = parse_short_string(svt, 128),
+                            "type" => kind = parse_short_string(svt, 128),
+                            "sha256" => sha = parse_short_string(svt, 512),
                             _ => ok = false,
                         }
                     })

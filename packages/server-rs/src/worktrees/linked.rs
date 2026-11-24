@@ -243,37 +243,36 @@ pub async fn create(
                 return Err(conflict("Worktree parent was replaced"));
             }
         }
-        // Resolve the effective Git exclude path (`git-worktrees.ts:163-165`) so repositories
-        // created with `git init --separate-git-dir` work identically to standard `.git/info`.
-        let exclude_raw = git(&catalogue.main, &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"])
-            .await
-            .map_err(|_| conflict("Git exclude is unavailable"))?;
-        let exclude_path = PathBuf::from(exclude_raw.trim());
-        let info_dir_path = exclude_path.parent().ok_or_else(|| conflict("Git exclude is unavailable"))?;
-        let info_canon = dunce::canonicalize(info_dir_path).map_err(|_| conflict("Git exclude is unavailable"))?;
-        if info_canon != info_dir_path {
-            return Err(conflict("Git exclude is not physically owned"));
-        }
-        let info = cap_std::fs::Dir::open_ambient_dir(&info_canon, cap_std::ambient_authority())
-            .map_err(|_| conflict("Git exclude is unavailable"))?;
-        let exclude_name =
-            exclude_path.file_name().and_then(|n| n.to_str()).ok_or_else(|| conflict("Git exclude is unavailable"))?;
-        let mut options = cap_std::fs::OpenOptions::new();
-        options.read(true).append(true).create(true);
-        if info.symlink_metadata(exclude_name).is_ok_and(|m| !m.is_file() || m.is_symlink()) {
-            return Err(conflict("Git exclude is not physically owned"));
-        }
-        let mut excludes =
-            info.open_with(exclude_name, &options).map_err(|_| conflict("Git exclude is unavailable"))?;
-        let mut contents = Vec::new();
-        let unavailable = || conflict("Git exclude is unavailable");
-        (&mut excludes).take(64 * 1024 + 1).read_to_end(&mut contents).map_err(|_| unavailable())?;
-        if contents.len() > 64 * 1024 {
-            return Err(conflict("Git exclude exceeds the limit"));
-        }
-        let text = String::from_utf8_lossy(&contents);
-        if !text.lines().any(|line| line == ".codenomad/worktrees/") {
-            excludes.write_all(b"\n# codenomad\n.codenomad/worktrees/\n").map_err(|_| unavailable())?;
+        // Best-effort: match TS `git-worktrees.ts:163-165` & `worktree-map.ts:6-21`, which ensure
+        // `.codenomad/worktrees/` is listed in the effective `info/exclude` (creating `info/` if
+        // absent) without failing worktree creation if the exclude file cannot be updated.
+        if let Ok(exclude_raw) =
+            git(&catalogue.main, &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]).await
+        {
+            let exclude_path = PathBuf::from(exclude_raw.trim());
+            if let Some(info_dir_path) = exclude_path.parent() {
+                let _ = std::fs::create_dir_all(info_dir_path);
+                if let Ok(info_canon) = dunce::canonicalize(info_dir_path)
+                    && info_canon == info_dir_path
+                    && let Ok(info) = cap_std::fs::Dir::open_ambient_dir(&info_canon, cap_std::ambient_authority())
+                    && let Some(exclude_name) = exclude_path.file_name().and_then(|n| n.to_str())
+                    && !info.symlink_metadata(exclude_name).is_ok_and(|m| !m.is_file() || m.is_symlink())
+                {
+                    let mut options = cap_std::fs::OpenOptions::new();
+                    options.read(true).append(true).create(true);
+                    if let Ok(mut excludes) = info.open_with(exclude_name, &options) {
+                        let mut contents = Vec::new();
+                        if (&mut excludes).take(64 * 1024 + 1).read_to_end(&mut contents).is_ok()
+                            && contents.len() <= 64 * 1024
+                        {
+                            let text = String::from_utf8_lossy(&contents);
+                            if !text.lines().any(|line| line == ".codenomad/worktrees/") {
+                                let _ = excludes.write_all(b"\n# codenomad\n.codenomad/worktrees/\n");
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     let name = branch.replace('/', "-");
@@ -283,6 +282,9 @@ pub async fn create(
     let service = created["directory"].as_str().ok_or_else(native_error)?;
     let inside = |d: &PathBuf| *d != catalogue.parent && d.starts_with(&catalogue.parent);
     physical(service).filter(inside).ok_or_else(native_error)?;
+    if catalogue.by_registered(service).is_some() {
+        return Err(native_error());
+    }
     let read_catalogue_once_retry = || async {
         match super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), Duration::from_secs(12)).await {
             Ok(cat) => Ok(cat),
@@ -292,19 +294,11 @@ pub async fn create(
             Err(err) => Err(err),
         }
     };
-    let confirmed = match read_catalogue_once_retry().await {
-        Ok(cat) => cat,
-        Err(err) => {
-            let _ = delete_worktree_at(&app, &endpoint, &catalogue.project, service).await;
-            return Err(err);
-        }
-    };
-    let Some(checkout) =
-        confirmed.by_registered(service).filter(|t| t.slug != "root" && t.head.as_deref() == Some(&rev))
-    else {
-        let _ = delete_worktree_at(&app, &endpoint, &catalogue.project, service).await;
-        return Err(native_error());
-    };
+    let confirmed = read_catalogue_once_retry().await?;
+    let checkout = confirmed
+        .by_registered(service)
+        .filter(|t| t.slug != "root" && t.head.as_deref() == Some(&rev))
+        .ok_or_else(native_error)?;
     let args = if existing { vec!["switch", "--", branch] } else { vec!["switch", "-c", branch] };
     if git(checkout.registered(), &args).await.is_err() {
         delete_worktree_at(&app, &endpoint, &catalogue.project, service).await?;

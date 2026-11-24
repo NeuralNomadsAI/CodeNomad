@@ -131,11 +131,27 @@ impl Owner {
     }
 
     /// A fresh challenge for one caller-authorized Location; returns the echoed ACK.
+    #[cfg(test)]
     pub async fn prepare(&self, location: &str, deadline: tokio::time::Instant) -> Result<Value, String> {
+        self.prepare_while(location, deadline, || true).await
+    }
+
+    /// Runs a fresh presence challenge while `still_valid()` holds, aborting and deleting the
+    /// challenge file immediately if caller authority (workspace, endpoint, or deletion fences)
+    /// is lost (TS `desktop-plugin-readiness.ts:118-164`).
+    pub async fn prepare_while(
+        &self,
+        location: &str,
+        deadline: tokio::time::Instant,
+        still_valid: impl Fn() -> bool,
+    ) -> Result<Value, String> {
         let expires_at = deadline.min(tokio::time::Instant::now() + WAIT);
         let check = || {
             if self.closed.load(Ordering::SeqCst) {
                 return Err("Readiness lease closed".to_owned());
+            }
+            if !still_valid() {
+                return Err("Readiness caller authority lost".to_owned());
             }
             if tokio::time::Instant::now() >= expires_at { Err(UNSUPPORTED.to_owned()) } else { Ok(()) }
         };

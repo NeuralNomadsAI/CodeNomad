@@ -1,5 +1,5 @@
 //! Shared registered-checkout inventory for event routing and receipt reads.
-use super::{Catalogue, catalogue_in};
+use super::{Catalogue, catalogue_in_at};
 use crate::{App, Workspace};
 use futures_util::future::{BoxFuture, FutureExt, Shared};
 use std::{
@@ -23,7 +23,9 @@ pub struct InventoryCache {
     serial: u64,
     reset: u64,
     changed: HashMap<String, u64>,
-    entries: HashMap<Uuid, EventEntry>,
+    /// Keyed by `(workspace_id, refreshed)` so SSE/receipt routing (`false`, no refresh) and
+    /// history search (`true`, refreshes on cold/invalidated load) never mix entries or flights.
+    entries: HashMap<(Uuid, bool), EventEntry>,
 }
 
 impl InventoryCache {
@@ -42,7 +44,8 @@ impl InventoryCache {
         endpoint: &Arc<crate::opencode::Endpoint>,
     ) -> Option<Arc<Catalogue>> {
         self.entries
-            .get(&id)
+            .get(&(id, false))
+            .or_else(|| self.entries.get(&(id, true)))
             .filter(|e| Arc::ptr_eq(&e.endpoint, endpoint) && e.at.elapsed() < EVENT_STALE_LIMIT)?
             .value
             .clone()
@@ -73,7 +76,10 @@ const EVENT_ENTRIES: usize = 64;
 fn drop_entries(app: &App, id: Option<Uuid>) {
     let mut cache = app.linked_events.lock().unwrap();
     match id {
-        Some(id) => _ = cache.entries.remove(&id),
+        Some(id) => {
+            cache.entries.remove(&(id, false));
+            cache.entries.remove(&(id, true));
+        }
         None => {
             cache.serial += 1;
             cache.reset = cache.serial;
@@ -129,17 +135,18 @@ async fn cached_catalogue(
     for_event: bool,
     refresh_on_load: bool,
 ) -> Option<Arc<Catalogue>> {
+    let key = (w.id, refresh_on_load);
     let (epoch, loading) = {
         let mut cache = app.linked_events.lock().unwrap();
         if !app.native.current(endpoint) {
             return None;
         }
         let epoch = cache.stamp();
-        if cache.entries.get(&w.id).is_some_and(|e| !Arc::ptr_eq(&e.endpoint, endpoint)) {
-            cache.entries.remove(&w.id);
+        if cache.entries.get(&key).is_some_and(|e| !Arc::ptr_eq(&e.endpoint, endpoint)) {
+            cache.entries.remove(&key);
         }
         let mut background = None;
-        if let Some(entry) = cache.entries.get_mut(&w.id) {
+        if let Some(entry) = cache.entries.get_mut(&key) {
             let age = entry.at.elapsed();
             if age < if for_event { EVENT_FRESH } else { EVENT_STALE_LIMIT }
                 && (entry.value.is_some() || entry.loading.is_none())
@@ -150,20 +157,20 @@ async fn cached_catalogue(
                 background = entry.value.clone();
             }
         }
-        if cache.entries.len() >= EVENT_ENTRIES {
+        if cache.entries.len() >= EVENT_ENTRIES * 2 {
             cache.entries.retain(|_, e| e.loading.is_some() || e.at.elapsed() < EVENT_STALE_LIMIT);
         }
-        let admitted = cache.entries.len() < EVENT_ENTRIES || cache.entries.contains_key(&w.id);
+        let admitted = cache.entries.len() < EVENT_ENTRIES * 2 || cache.entries.contains_key(&key);
         let loading = cache
             .entries
-            .get(&w.id)
+            .get(&key)
             .and_then(|entry| entry.loading.as_ref().map(|(_, read)| read.clone()))
             .unwrap_or_else(|| {
                 let (done, receive) = tokio::sync::oneshot::channel();
                 let loading = async move { receive.await.ok().flatten() }.boxed().shared();
                 let flight = Uuid::new_v4();
                 if admitted {
-                    let entry = cache.entries.entry(w.id).or_insert_with(|| EventEntry {
+                    let entry = cache.entries.entry(key).or_insert_with(|| EventEntry {
                         at: Instant::now(),
                         value: None,
                         endpoint: endpoint.clone(),
@@ -174,35 +181,40 @@ async fn cached_catalogue(
                 let (app, w, endpoint) = (app.clone(), w.clone(), endpoint.clone());
                 tokio::spawn(async move {
                     let started = Instant::now();
+                    // Pin SSE/receipt scans to the observed `endpoint` without re-acquiring, and
+                    // call `catalogue_at(..., refresh=true)` for history search cold/invalidated loads.
                     let result = if refresh_on_load {
                         super::catalogue_at(&app, &w, true, Some(&endpoint), Duration::from_secs(12))
                             .await
                             .ok()
                             .map(Arc::new)
                     } else {
-                        catalogue_in(&app, &w, false, false).await.ok().map(Arc::new)
+                        catalogue_in_at(&app, &w, false, false, Some(&endpoint), Duration::from_secs(12))
+                            .await
+                            .ok()
+                            .map(Arc::new)
                     };
                     crate::bench::trace_elapsed("registered-catalogue", started);
                     let mut cache = app.linked_events.lock().unwrap();
                     let owns_flight =
-                        cache.entries.get(&w.id).and_then(|e| e.loading.as_ref()).is_some_and(|(id, _)| *id == flight);
+                        cache.entries.get(&key).and_then(|e| e.loading.as_ref()).is_some_and(|(id, _)| *id == flight);
                     if !cache.valid(epoch, result.as_ref().map(|c| c.project.as_str()))
                         || !app.native.current(&endpoint)
                         || admitted && !owns_flight
                     {
                         if owns_flight {
-                            cache.entries.remove(&w.id);
+                            cache.entries.remove(&key);
                         }
                         return;
                     }
                     if admitted {
                         if result.is_some() {
                             cache.entries.insert(
-                                w.id,
+                                key,
                                 EventEntry { at: Instant::now(), value: result.clone(), endpoint, loading: None },
                             );
                         } else {
-                            cache.entries.remove(&w.id);
+                            cache.entries.remove(&key);
                         }
                     }
                     let _ = done.send(result);

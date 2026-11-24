@@ -160,8 +160,8 @@ impl Physical {
             }
     }
 }
-/// The checkout's `.git` is missing, or its `gitdir:` points at a missing
-/// administrative directory (TS `readCheckoutIdentity` fails with ENOENT).
+/// The checkout's `.git`, its `gitdir:` admin directory, or an administrative backlink
+/// (`gitdir` / `commondir`) is missing (`ENOENT`, TS `readCheckoutIdentity` / `native-worktrees.ts:135-150`).
 fn git_layout_gone(root: &Path) -> bool {
     let marker = root.join(".git");
     match std::fs::symlink_metadata(&marker) {
@@ -171,7 +171,17 @@ fn git_layout_gone(root: &Path) -> bool {
                 text.lines().find_map(|line| line.strip_prefix("gitdir:")).is_some_and(|dir| {
                     let dir = Path::new(dir.trim());
                     let dir = if dir.is_absolute() { dir.to_path_buf() } else { root.join(dir) };
-                    std::fs::symlink_metadata(dir).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+                    if std::fs::symlink_metadata(&dir).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+                        return true;
+                    }
+                    // A linked worktree whose `admin/gitdir` backlink or `admin/commondir` disappeared
+                    // mid-removal is gone (TS `readCheckoutIdentity` throws ENOENT).
+                    let is_linked = dir.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "worktrees");
+                    is_linked
+                        && (std::fs::symlink_metadata(dir.join("gitdir"))
+                            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+                            || std::fs::symlink_metadata(dir.join("commondir"))
+                                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound))
                 })
             })
         }

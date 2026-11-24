@@ -260,7 +260,14 @@ impl Scope<'_> {
             {
                 return Some((*cached_rev, inv.clone()));
             }
-            let loaded = Arc::new(HistoryInventory::load(self.app, &self.workspace, &self.endpoint).await?);
+            let Some(loaded) = HistoryInventory::load(self.app, &self.workspace, &self.endpoint).await else {
+                *guard = None;
+                if worktrees::inventory_revision(self.app) != before {
+                    continue;
+                }
+                return None;
+            };
+            let loaded = Arc::new(loaded);
             // Only cache the snapshot if no `worktree.updated` invalidation arrived during load;
             // stamping a post-scan revision onto pre-scan data would hide a concurrent removal.
             if worktrees::inventory_revision(self.app) == before {
@@ -345,7 +352,12 @@ impl Scope<'_> {
         extra_fences: &[Arc<AtomicBool>],
     ) -> Option<Call> {
         let ready = self.deadline.min(Instant::now() + Duration::from_secs(5));
-        history::prepare(self.app, &self.endpoint, &owned.directory, ready).await?;
+        let still_valid = || {
+            self.current()
+                && owned.fences.iter().all(|f| f.load(Relaxed))
+                && extra_fences.iter().all(|f| f.load(Relaxed))
+        };
+        history::prepare(self.app, &self.endpoint, &owned.directory, ready, still_valid).await?;
         if extra_fences.iter().any(|f| !f.load(Relaxed))
             || !self.session_current(source).await
             || !self.owned_current(owned).await

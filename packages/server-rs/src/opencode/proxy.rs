@@ -197,8 +197,13 @@ fn parse_location_context(headers: &axum::http::HeaderMap) -> Result<Option<Valu
 async fn resolve_media_path_async(
     scope: std::path::PathBuf,
     raw: String,
-) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
-    tokio::task::spawn_blocking(move || crate::worktrees::ownership::resolve_media_path(&scope, &raw)).await.ok()?
+    slot: Option<tokio::sync::OwnedSemaphorePermit>,
+) -> (Option<(std::path::PathBuf, std::path::PathBuf)>, Option<tokio::sync::OwnedSemaphorePermit>) {
+    // Move the admission permit into `spawn_blocking` so cancelling a stalled request never
+    // releases a slot while the detached filesystem probe worker is still running.
+    tokio::task::spawn_blocking(move || (crate::worktrees::ownership::resolve_media_path(&scope, &raw), slot))
+        .await
+        .unwrap_or((None, None))
 }
 
 fn one_location(location: &Value, directory: &str) -> Result<(), Error> {
@@ -379,17 +384,23 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let mut requested_checkout = None;
     let mut verified_media_dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
     // Hold the admission slot across the entire `message.list` admission phase (query/header
-    // checks, `session.get`, session location identity, and `media_directory`/placement inventory).
-    static LIST_ADMISSION_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
-    let _list_admission_slot = if message_list {
-        Some(match LIST_ADMISSION_SLOTS.try_acquire() {
+    // checks, `session.get`, session location identity, and `media_directory`/placement inventory),
+    // moving the owned permit into `spawn_blocking` probes so cancellation never frees a slot
+    // while a detached filesystem worker is still executing.
+    static LIST_ADMISSION_SLOTS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    let list_admission_slots = || {
+        std::sync::Arc::clone(LIST_ADMISSION_SLOTS.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4))))
+    };
+    let mut list_admission_slot = if message_list {
+        Some(match list_admission_slots().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => tokio::select! {
                 biased;
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                 _ = workspace_closed() => return Err(not_found()),
-                permit = tokio::time::timeout_at(list_deadline, LIST_ADMISSION_SLOTS.acquire()) => {
+                permit = tokio::time::timeout_at(list_deadline, list_admission_slots().acquire_owned()) => {
                     permit.map_err(|_| upstream_error())?.map_err(|_| upstream_error())?
                 }
             },
@@ -400,7 +411,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let admission_work = async {
         for req in &requested_dirs {
             if message_list {
-                let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), req.clone()).await else {
+                let (resolved_pair, returned_slot) =
+                    resolve_media_path_async(app.scope.clone(), req.clone(), list_admission_slot.take()).await;
+                list_admission_slot = returned_slot;
+                let Some((resolved, anchor)) = resolved_pair else {
                     return Err(foreign());
                 };
                 let _proof = crate::worktrees::ownership::media_directory(
@@ -430,8 +444,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             let ctx_resolved = if let Some((_, resolved)) = verified_media_dirs.iter().find(|(raw, _)| raw == ctx_dir) {
                 resolved.clone()
             } else {
-                let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), ctx_dir.to_owned()).await
-                else {
+                let (resolved_pair, returned_slot) =
+                    resolve_media_path_async(app.scope.clone(), ctx_dir.to_owned(), list_admission_slot.take()).await;
+                list_admission_slot = returned_slot;
+                let Some((resolved, anchor)) = resolved_pair else {
                     return Err(foreign());
                 };
                 let _proof = crate::worktrees::ownership::media_directory(
@@ -518,7 +534,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let initial_identity = if message_list {
         if let Some(raw) = native_directory {
             let (scope, raw) = (app.scope.clone(), raw.to_owned());
-            tokio::select! {
+            let held_slot = list_admission_slot.take();
+            let (resolved, returned_slot) = tokio::select! {
                 biased;
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
@@ -526,12 +543,18 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 res = tokio::time::timeout_at(
                     list_deadline,
                     tokio::task::spawn_blocking(move || {
-                        let (resolved, anchor) = crate::worktrees::ownership::resolve_media_path(&scope, &raw)?;
-                        let identity = crate::files::directory_identity(&anchor).ok()?;
-                        Some((resolved, anchor, identity))
+                        let resolved = crate::worktrees::ownership::resolve_media_path(&scope, &raw).and_then(
+                            |(resolved, anchor)| {
+                                let identity = crate::files::directory_identity(&anchor).ok()?;
+                                Some((resolved, anchor, identity))
+                            },
+                        );
+                        (resolved, held_slot)
                     }),
-                ) => res.map_err(|_| upstream_error())?.ok().flatten(),
-            }
+                ) => res.map_err(|_| upstream_error())?.map_err(|_| upstream_error())?,
+            };
+            list_admission_slot = returned_slot;
+            resolved
         } else {
             None
         }
@@ -614,7 +637,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     {
         return Err(foreign());
     }
-    drop(_list_admission_slot);
+    drop(list_admission_slot);
     target.path_segments_mut().map_err(|_| invalid())?.clear().extend(route.trim_start_matches('/').split('/'));
     if message_list && !verified_media_dirs.is_empty() {
         let pairs: Vec<(String, String)> = target
@@ -1072,47 +1095,43 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
     }
     let mut upstream = app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password));
-    if message_list {
-        // Forward all sanitized request headers (including Accept, conditionals, Range, If-Range)
-        // matching TS `sanitizeInstanceProxyRequestHeaders` (`http-server.ts:1836-1858`).
-        for (name, value) in &head.headers {
-            let lower = name.as_str();
-            let blocked = matches!(
-                lower,
-                "authorization"
-                    | "connection"
-                    | "cookie"
-                    | "forwarded"
-                    | "host"
-                    | "keep-alive"
-                    | "proxy-authenticate"
-                    | "proxy-authorization"
-                    | "proxy-connection"
-                    | "set-cookie"
-                    | "te"
-                    | "trailer"
-                    | "transfer-encoding"
-                    | "upgrade"
-                    | "content-length"
-                    | "content-type"
-                    | "x-forwarded-for"
-                    | "x-forwarded-host"
-                    | "x-forwarded-port"
-                    | "x-forwarded-proto"
-                    | "x-codenomad-location"
-                    | "x-codenomad-human-answer"
-                    | "x-codenomad-media"
-                    | "x-codenomad-pending-reconciliation"
-                    | "x-codenomad-session-placement"
-            ) || lower.starts_with("x-opencode-")
-                || is_hop_by_hop_connection_token(&head.headers, lower);
-            if !blocked {
-                upstream = upstream.header(name, value);
-            }
-        }
-    } else if !is_hop_by_hop_connection_token(&head.headers, "accept") {
-        for accept in head.headers.get_all(header::ACCEPT) {
-            upstream = upstream.header(header::ACCEPT, accept);
+    // Forward all sanitized request headers across every proxied route (including Accept,
+    // conditionals, Range, If-Range), matching TS `sanitizeInstanceProxyRequestHeaders`
+    // (`http-server.ts:1836-1858`). `content-type` is omitted here and set by `.json(input)`
+    // whenever a JSON body is forwarded.
+    for (name, value) in &head.headers {
+        let lower = name.as_str();
+        let blocked = matches!(
+            lower,
+            "authorization"
+                | "connection"
+                | "cookie"
+                | "forwarded"
+                | "host"
+                | "keep-alive"
+                | "proxy-authenticate"
+                | "proxy-authorization"
+                | "proxy-connection"
+                | "set-cookie"
+                | "te"
+                | "trailer"
+                | "transfer-encoding"
+                | "upgrade"
+                | "content-length"
+                | "content-type"
+                | "x-forwarded-for"
+                | "x-forwarded-host"
+                | "x-forwarded-port"
+                | "x-forwarded-proto"
+                | "x-codenomad-location"
+                | "x-codenomad-human-answer"
+                | "x-codenomad-media"
+                | "x-codenomad-pending-reconciliation"
+                | "x-codenomad-session-placement"
+        ) || lower.starts_with("x-opencode-")
+            || is_hop_by_hop_connection_token(&head.headers, lower);
+        if !blocked {
+            upstream = upstream.header(name, value);
         }
     }
     if let Some(input) = &input {
@@ -1342,8 +1361,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         large_slot = None;
                     }
                 }
-                let needed =
-                    crate::shared::response_memory_units(crate::shared::ResponsePool::List, stream.retained_bytes());
+                let retained = stream.retained_bytes();
+                if retained > crate::sessions::media_stream::OUTPUT_LIMIT {
+                    return Err(interrupted());
+                }
+                let needed = crate::shared::response_memory_units(crate::shared::ResponsePool::List, retained);
                 if needed > fair_units && large_slot.is_none() {
                     let timeout = step_timeout().ok_or_else(interrupted)?;
                     large_slot = Some(tokio::select! {

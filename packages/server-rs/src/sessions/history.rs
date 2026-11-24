@@ -348,13 +348,12 @@ impl Placement {
             let Ok(Some(cur_anchor)) = crate::worktrees::ownership::directory_anchor(&path) else {
                 return (false, None);
             };
-            let anchor_ok = if cur_anchor == anchor.as_path() {
-                directory_identity(&anchor).is_ok_and(|current| current == physical)
-            } else if cur_anchor.starts_with(&anchor) {
-                // Missing subfolder created in place during the read while the original anchor
-                // stayed identical and `path` still resolves identically inside the owned checkout
-                // (TS `session-media.ts:65-90`, `worktree-directory.ts:166-193`).
-                directory_identity(&anchor).is_ok_and(|current| current == physical)
+            let anchor_ok = if cur_anchor == anchor.as_path() || cur_anchor.starts_with(&anchor) {
+                // Workspace root identity is checked via `workspace_ok` (and `physical` when
+                // `anchor == workspace_path`). A subfolder recreated in place under an intact
+                // workspace/checkout remains valid (TS `session-navigation.ts:64-87`,
+                // `session-media.ts:65-90`, `worktree-directory.ts:166-193`).
+                anchor != workspace_path || directory_identity(&anchor).is_ok_and(|current| current == physical)
             } else {
                 // TS `session-navigation.ts:64-87`, `session-media.ts:61-76`, and
                 // `worktree-directory.ts:166-193`: if only a session's subfolder disappears while
@@ -407,9 +406,11 @@ impl Placement {
         // Provision bundled plugins for this exact captured endpoint before checking the catalogue
         // and presence lease under the same deadline (TS `opencode-service.ts:148-166`).
         let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(app, &self.endpoint)).await;
+        let still_valid =
+            || self.operation_current_fast(app, id) && self.displays.iter().all(|display| display.load(Relaxed));
         let url = self.endpoint.url.join("/api/plugin").map_err(|_| Recheck::Unavailable)?;
         super::pending::await_plugin_with(super::pending::SESSION_PRUNING_PLUGIN, directory, deadline, || {
-            self.operation_current_fast(app, id)
+            still_valid()
                 .then(|| app.native.client.get(url.clone()).basic_auth("opencode", Some(&self.endpoint.password)))
         })
         .await
@@ -420,7 +421,7 @@ impl Placement {
         if !self.live(app, id).await {
             return Err(Recheck::Conflict);
         }
-        crate::extensions::lifecycle::ready_at(app, &self.endpoint, directory, deadline)
+        crate::extensions::lifecycle::ready_at(app, &self.endpoint, directory, deadline, still_valid)
             .await
             .map_err(|_| Recheck::Unavailable)?;
         match self.current(app, id, session).await {
@@ -475,7 +476,11 @@ pub(super) async fn prepare(
     endpoint: &Arc<crate::opencode::Endpoint>,
     directory: &str,
     deadline: tokio::time::Instant,
+    still_valid: impl Fn() -> bool,
 ) -> Option<()> {
+    if !still_valid() {
+        return None;
+    }
     let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(app, endpoint)).await;
     let url = endpoint.url.join("/api/plugin").ok()?;
     crate::sessions::pending::await_plugin_with(
@@ -483,14 +488,13 @@ pub(super) async fn prepare(
         directory,
         deadline,
         || {
-            app.native
-                .current(endpoint)
+            (app.native.current(endpoint) && still_valid())
                 .then(|| app.native.client.get(url.clone()).basic_auth("opencode", Some(&endpoint.password)))
         },
     )
     .await
     .ok()?;
-    crate::extensions::lifecycle::ready_at(app, endpoint, directory, deadline).await.ok()
+    crate::extensions::lifecycle::ready_at(app, endpoint, directory, deadline, still_valid).await.ok()
 }
 
 pub(super) async fn rpc(
@@ -914,10 +918,13 @@ pub async fn handle(
                 return blocked("unavailable");
             }
             let rpc_limit = 24 * 1024 * 1024 + 64 * 1024;
-            // Reserve `ResponsePool::History` memory BEFORE reading the up-to-24 MiB RPC payload
-            // (+ 8 MiB peak for one decoded deferred image URI during `window` projection) so
-            // concurrent callers never exceed the 64 MiB pool, then shrink once projected.
-            let reserve_bytes = rpc_limit + if action == "window" && defer { 8 * 1024 * 1024 } else { 0 };
+            // Reserve `ResponsePool::History` (64 MiB) memory BEFORE reading the up-to-24 MiB RPC
+            // payload: `outline`/`outlinePreview` expand JSON into a `serde_json::Value` tree, so
+            // reserve 56 MiB to serialize concurrent full-size parses under the 64 MiB pool;
+            // `window` projects bytes in-place (+ 8 MiB peak for one decoded deferred image URI),
+            // then shrinks the permit down to the serialized payload size.
+            let reserve_bytes =
+                if action == "window" { rpc_limit + if defer { 8 * 1024 * 1024 } else { 0 } } else { 56 * 1024 * 1024 };
             let mem = {
                 let workspace_closed = async {
                     loop {
