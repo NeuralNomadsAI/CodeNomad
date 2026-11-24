@@ -440,6 +440,65 @@ mod tests {
                 Some(false),
                 "Preferences -> Missions switch must stay editable during an OpenCode outage"
             );
+
+            // Actually toggling the switch during the OpenCode outage must stage and PATCH
+            // the host config, keep mission_delete_sessions() withheld while offline, and
+            // persist the new value after reconnect.
+            rt.state.set_mission_delete_sessions(false);
+            let mut saw_patch = false;
+            for _ in 0..100 {
+                rt.state.poll();
+                if let Ok(req) =
+                    tokio::time::timeout(std::time::Duration::from_millis(10), http.accept()).await
+                {
+                    assert!(
+                        req.header.starts_with("PATCH /api/storage/config/ui "),
+                        "unexpected request during outage toggle: {}",
+                        req.header
+                    );
+                    assert_eq!(req.body["settings"]["missionDeleteSessions"], json!(false));
+                    saw_patch = true;
+                    req.reply(200, json!({"settings": {"missionDeleteSessions": false}}))
+                        .await;
+                    break;
+                }
+            }
+            assert!(
+                saw_patch,
+                "toggling missionDeleteSessions during an OpenCode outage must send a config PATCH"
+            );
+            wait_until(|| {
+                rt.state.poll();
+                !rt.state.mission_delete_sessions_pending()
+                    && rt.state.mission_delete_sessions_display() == Some(false)
+            })
+            .await;
+            assert_eq!(
+                rt.state.mission_delete_sessions(),
+                None,
+                "destructive deletion authority must stay withheld while OpenCode is offline"
+            );
+
+            // Reconnect OpenCode: revalidation GET confirms the persisted false value.
+            rt.state.set_stream_online(true);
+            for _ in 0..100 {
+                rt.state.poll();
+                if let Ok(req) =
+                    tokio::time::timeout(std::time::Duration::from_millis(10), http.accept()).await
+                {
+                    if req.header.starts_with("GET /api/storage/config/ui ") {
+                        req.reply(200, json!({"settings": {"missionDeleteSessions": false}}))
+                            .await;
+                        break;
+                    }
+                    req.reply(200, json!({})).await;
+                }
+            }
+            wait_until(|| {
+                rt.state.poll();
+                rt.state.mission_delete_sessions() == Some(false)
+            })
+            .await;
         });
     }
 }

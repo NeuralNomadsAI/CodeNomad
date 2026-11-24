@@ -46,6 +46,7 @@ pub(crate) async fn run_with_reading(
     let mut wire = make_wire();
     stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
     let mut opened = false;
+    let mut workspace_unavailable = false;
     let mut connection_lost = false;
     let mut connection_closed = false;
     let mut retry = None;
@@ -78,7 +79,9 @@ pub(crate) async fn run_with_reading(
             Some(Input::Opened(e)) if e == epoch => {
                 opened = true;
                 attempts = 0;
-                publish(&out, &wake, Event::AgentHint(true)).await;
+                if !workspace_unavailable {
+                    publish(&out, &wake, Event::AgentHint(true)).await;
+                }
                 reader.dirty = true;
                 reader.parked = false;
                 reader.quiet = Instant::now() + Duration::from_millis(100);
@@ -105,6 +108,7 @@ pub(crate) async fn run_with_reading(
                 return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
+                workspace_unavailable = true;
                 ReadingLane::invalidate_connection(reading);
                 reader.dirty = true;
                 if reading.is_some() || !reader.historical {
@@ -112,10 +116,13 @@ pub(crate) async fn run_with_reading(
                 }
             }
             Some(Input::Available(e, v)) if e == epoch => {
+                let recovered = std::mem::replace(&mut workspace_unavailable, false);
                 if reading.is_some() {
                     publish(&out, &wake, Event::AgentHint(true)).await;
                 } else if v > reader.fence && !reader.historical {
                     publish(&out, &wake, Event::Reconnecting).await;
+                } else if recovered {
+                    publish(&out, &wake, Event::AgentHint(true)).await;
                 }
                 reader.dirty = true;
                 reader.parked = false;
@@ -503,10 +510,155 @@ pub(crate) async fn run_with_reading(
             wake: &wake,
         };
         if matches!(
-            reader.sync(&lane, opened, &mut connection_lost).await?,
+            reader
+                .sync(
+                    &lane,
+                    opened && !workspace_unavailable,
+                    &mut connection_lost
+                )
+                .await?,
             Turn::Stop
         ) {
             return Ok(());
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    #[test]
+    fn reopening_host_sse_while_workspace_unavailable_withholds_agent_hint_until_available() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let (reopened_tx, reopened_rx) = tokio::sync::oneshot::channel::<()>();
+            let (avail_tx, avail_rx) = tokio::sync::oneshot::channel::<()>();
+            let server = tokio::spawn(async move {
+                let mut reopened_tx = Some(reopened_tx);
+                let mut avail_rx = Some(avail_rx);
+                let mut sse_count = 0usize;
+                while let Ok((mut socket, _)) = listener.accept().await {
+                    let mut req = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let n = socket.read(&mut buf).await.unwrap();
+                        if n == 0 {
+                            break;
+                        }
+                        req.extend_from_slice(&buf[..n]);
+                    }
+                    let head = String::from_utf8_lossy(&req);
+                    if head.starts_with("POST /api/client-connections/pong") {
+                        let _ = socket
+                            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                            .await;
+                        continue;
+                    }
+                    if !head.starts_with("GET /api/events?") {
+                        let _ = socket
+                            .write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                            .await;
+                        continue;
+                    }
+                    sse_count += 1;
+                    if sse_count == 1 {
+                        let body = "data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"ws-1\",\"status\":\"disconnected\"}\n\n";
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = socket.write_all(resp.as_bytes()).await;
+                    } else {
+                        let _ = socket
+                            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n")
+                            .await;
+                        let _ = socket
+                            .write_all(b"data: {\"type\":\"codenomad.client.ping\",\"id\":\"p2\"}\n\n")
+                            .await;
+                        if let Some(tx) = reopened_tx.take() {
+                            let _ = tx.send(());
+                        }
+                        if let Some(rx) = avail_rx.take() {
+                            let _ = rx.await;
+                            let _ = socket
+                                .write_all(b"data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"ws-1\",\"status\":\"connected\"}\n\n")
+                                .await;
+                            tokio::time::sleep(Duration::from_millis(200)).await;
+                        }
+                        break;
+                    }
+                }
+            });
+
+            let mut backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+            backend.workspace = "ws-1".into();
+            backend.session = "ses-1".into();
+            let (out_tx, out_rx) = crate::bounded(64);
+            let (cmd_tx, cmd_rx) = crate::bounded(8);
+            let wake: crate::Wake = Arc::new(|| {});
+            let (demand, observer) = super::super::demand::open();
+            let (content, _snapshots) = crate::bounded(8);
+            demand.publish(None);
+            let reading = ReadingLane {
+                demand: observer,
+                events: content,
+                connection: Default::default(),
+            };
+            let worker = tokio::spawn(run_with_reading(
+                backend,
+                out_tx,
+                cmd_rx,
+                wake,
+                Some(reading),
+            ));
+
+            tokio::time::timeout(Duration::from_secs(5), reopened_rx)
+                .await
+                .unwrap()
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let mut saw_loss = false;
+            let mut rearmed_early = false;
+            while let Ok(ev) = out_rx.try_recv() {
+                match ev {
+                    Event::ConnectionLost | Event::Reconnecting => saw_loss = true,
+                    Event::AgentHint(true) if saw_loss => rearmed_early = true,
+                    _ => {}
+                }
+            }
+            assert!(saw_loss, "must observe workspace unavailability / loss");
+            assert!(
+                !rearmed_early,
+                "reopening host SSE must not emit AgentHint(true) before workspace availability returns"
+            );
+
+            let _ = avail_tx.send(());
+            let rearmed = tokio::time::timeout(Duration::from_secs(3), async {
+                while let Ok(ev) = out_rx.recv().await {
+                    if matches!(ev, Event::AgentHint(true)) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .await
+            .unwrap();
+            assert!(rearmed, "workspace connected must re-arm AgentHint(true)");
+
+            let _ = cmd_tx.send(Command::Close).await;
+            let _ = tokio::time::timeout(Duration::from_secs(2), worker).await;
+            server.abort();
+        });
     }
 }

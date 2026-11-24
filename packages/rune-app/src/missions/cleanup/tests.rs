@@ -1216,10 +1216,9 @@ fn revoking_view_during_post_409_get_releases_busy_without_settling_or_refreshin
             polled.settled_cleanups.is_empty(),
             "revoked view must not publish settled receipt directly into a replacement view"
         );
-        assert_eq!(
-            polled.refreshed_scopes,
-            vec![sc],
-            "mutated DELETE must still schedule a fresh directory refresh for any reopened panel"
+        assert!(
+            polled.refreshed_scopes.is_empty(),
+            "refused 409 DELETE with a revoked view must not schedule a refresh"
         );
     });
 }
@@ -2481,6 +2480,405 @@ fn cleanup_pagination_stays_within_2000_row_display_and_seen_cap() {
         assert_eq!(panel.cleanups.len(), 2_000);
         assert_eq!(panel.cleanup_seen_count(), 2_000);
         assert!(!panel.has_more(super::super::directory::Kind::Cleanups));
+    });
+}
+
+#[test]
+fn document_pending_observed_during_delete_flight_blocks_bare_retry_settlement() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-doc-flight");
+        let sc = src.workspace_scope();
+        let mut owner = CleanupOwner::default();
+        owner.start_delete(
+            &src,
+            "Doc flight".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let first_del = http.accept().await;
+        let request_id = first_del.body["requestId"].as_str().unwrap().to_owned();
+
+        // While the first DELETE is in flight, the directory observes its exact documentPending row
+        // and then refreshes to an empty directory before the flight completes.
+        let doc_row: Cleanup = serde_json::from_value(json!({
+            "missionID": "msn-doc-flight", "deletionID": "del-doc-flight",
+            "requestID": request_id, "expectedRevision": 7, "deleteManagedSessions": false,
+            "objective": "Doc flight", "createdAt": 1, "removed": 0, "retained": 0,
+            "pending": 0, "reasons": [], "documentPending": true
+        }))
+        .unwrap();
+        owner.retire_settled_cleanups(&sc, &[doc_row], true);
+        owner.retire_settled_cleanups(&sc, &[], true);
+
+        // First DELETE fails with 503 and an empty reconciliation.
+        first_del.reply(503, json!({})).await;
+        let rec1 = http.accept().await;
+        rec1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": []
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        let _ = owner.poll();
+        assert_eq!(
+            owner.delete_state(&src),
+            Some(DeleteState::Failed("missions.cleanup.error.unconfirmed"))
+        );
+
+        // Retry against an empty preflight and a bare {deleted: true}: frozen intent must stay.
+        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake);
+        let pre = http.accept().await;
+        pre.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": []
+            }),
+        )
+        .await;
+        let replay = http.accept().await;
+        replay.reply(200, json!({"deleted": true})).await;
+        let post = http.accept().await;
+        post.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 3,
+                "cleanups": []
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        let polled = owner.poll();
+        assert!(polled.deleted_missions.is_empty());
+        assert_eq!(
+            owner.delete_state(&src),
+            Some(DeleteState::Failed("missions.cleanup.error.unconfirmed")),
+            "frozen intent must survive bare 200 after documentPending was observed during flight"
+        );
+    });
+}
+
+#[test]
+fn pinned_deletion_id_does_not_hide_ambiguous_wire_matches() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-pin-amb");
+        let sc = src.workspace_scope();
+        let mut owner = CleanupOwner::default();
+        owner.start_delete(
+            &src,
+            "Pin amb".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let first = http.accept().await;
+        let request_id = first.body["requestId"].as_str().unwrap().to_owned();
+        first.reply(503, json!({})).await;
+        let rec1 = http.accept().await;
+        let row_a_pending = json!({
+            "missionID": "msn-pin-amb", "deletionID": "del-a", "requestID": request_id,
+            "expectedRevision": 7, "deleteManagedSessions": false,
+            "objective": "A", "createdAt": 1, "removed": 0, "retained": 0,
+            "pending": 1, "reasons": [], "documentPending": false
+        });
+        rec1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [row_a_pending]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+
+        // Passive retirement with settled A + conflicting B (same wire intent, different deletionID)
+        // must NOT retire the frozen intent.
+        let mut row_a_settled = row_a_pending.clone();
+        row_a_settled["pending"] = json!(0);
+        row_a_settled["removed"] = json!(1);
+        let row_b = json!({
+            "missionID": "msn-pin-amb", "deletionID": "del-b", "requestID": request_id,
+            "expectedRevision": 7, "deleteManagedSessions": false,
+            "objective": "B", "createdAt": 2, "removed": 0, "retained": 0,
+            "pending": 1, "reasons": [], "documentPending": false
+        });
+        let a_cleanup: Cleanup = serde_json::from_value(row_a_settled.clone()).unwrap();
+        let b_cleanup: Cleanup = serde_json::from_value(row_b.clone()).unwrap();
+        owner.retire_settled_cleanups(&sc, &[a_cleanup, b_cleanup], true);
+        assert!(
+            owner.delete_state(&src).is_some(),
+            "passive retirement must reject ambiguous wire matches even when pinned A is settled"
+        );
+
+        // Retry preflight returning settled A + conflicting B must neither DELETE nor retire.
+        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake);
+        let pre = http.accept().await;
+        pre.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": [row_a_settled, row_b]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        http.quiet().await;
+        let polled = owner.poll();
+        assert!(polled.deleted_missions.is_empty());
+        assert_eq!(
+            owner.delete_state(&src),
+            Some(DeleteState::Failed("missions.cleanup.error.unconfirmed"))
+        );
+    });
+}
+
+#[test]
+fn adopted_off_page_receipt_preserves_pagination_prefix_and_deduplicates() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        let make_row = |idx: u64| {
+            let mut r = cleanup_row(0, false);
+            r.mission_id = format!("msn-{idx}");
+            r.deletion_id = format!("del-{idx}");
+            r
+        };
+        assert!(panel.accept_more_cleanups_for_test(
+            "order-1",
+            0,
+            110,
+            (0..50).map(make_row).collect()
+        ));
+        assert!(panel.accept_more_cleanups_for_test(
+            "order-1",
+            50,
+            110,
+            (50..100).map(make_row).collect()
+        ));
+        // Adopt off-page receipt for row 105, then deliver same-order refresh (0..50) and page 100..110.
+        panel.adopt_settled_cleanup(make_row(105));
+        assert!(panel.accept_more_cleanups_for_test(
+            "order-1",
+            0,
+            110,
+            (0..50).map(make_row).collect()
+        ));
+        assert!(panel.accept_more_cleanups_for_test(
+            "order-1",
+            100,
+            110,
+            (100..110).map(make_row).collect()
+        ));
+        assert_eq!(panel.cleanups.len(), 110);
+        let unique: std::collections::HashSet<&str> = panel
+            .cleanups
+            .iter()
+            .map(|r| r.deletion_id.as_str())
+            .collect();
+        assert_eq!(unique.len(), 110, "all 110 rows must appear exactly once");
+        for idx in 0..110 {
+            assert!(
+                unique.contains(format!("del-{idx}").as_str()),
+                "row {idx} must not be lost"
+            );
+        }
+    });
+}
+
+#[test]
+fn revoked_post_409_get_settlement_neither_publishes_nor_retires_delete_intent() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("old");
+        let sc = src.workspace_scope();
+        let mut owner = CleanupOwner::default();
+        owner.start_delete(
+            &src,
+            "Old".into(),
+            1,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let first = http.accept().await;
+        let request_id = first.body["requestId"].as_str().unwrap().to_owned();
+        first.reply(503, json!({})).await;
+        let rec1 = http.accept().await;
+        let pending_json = json!({
+            "missionID": "old", "deletionID": "del-1", "requestID": request_id,
+            "expectedRevision": 1, "deleteManagedSessions": false,
+            "objective": "Old", "createdAt": 1, "removed": 0, "retained": 0,
+            "pending": 1, "reasons": [], "documentPending": false
+        });
+        rec1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [pending_json.clone()]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+        assert!(owner.delete_state(&src).is_some());
+
+        // Start a cleanup row retry for the matching row; 409 DELETE followed by settled GET.
+        let row: Cleanup = serde_json::from_value(pending_json.clone()).unwrap();
+        let view = live_flag();
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row,
+            view.clone(),
+            live_flag(),
+            http.backend.clone(),
+            wake,
+        );
+        let pre = http.accept().await;
+        pre.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": [pending_json.clone()]
+            }),
+        )
+        .await;
+        let del = http.accept().await;
+        del.reply(409, json!({"code": "request-conflict"})).await;
+        let post = http.accept().await;
+        let mut settled_json = pending_json;
+        settled_json["pending"] = json!(0);
+        settled_json["removed"] = json!(1);
+        post.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 3,
+                "cleanups": [settled_json]
+            }),
+        )
+        .await;
+        // Wait for the settled post-409 result to queue, then revoke the view BEFORE polling.
+        wait(done.recv()).await.unwrap();
+        view.store(false, Ordering::Release);
+        let polled = owner.poll_retries();
+        assert!(!owner.cleanup_busy(&sc));
+        assert!(polled.settled_cleanups.is_empty());
+        assert!(polled.refreshed_scopes.is_empty());
+        assert!(
+            owner.delete_state(&src).is_some(),
+            "revoked post-409 GET must not retire the frozen delete intent"
+        );
+    });
+}
+
+#[test]
+fn cleanup_pagination_continues_after_order_change_refresh_at_2000_cap() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        let make_row = |prefix: &str, idx: u64| {
+            let mut r = cleanup_row(0, false);
+            r.mission_id = format!("{prefix}-m-{idx}");
+            r.deletion_id = format!("{prefix}-d-{idx}");
+            r
+        };
+        for page in 0..40u64 {
+            let offset = page * 50;
+            assert!(panel.accept_more_cleanups_for_test(
+                "order-old",
+                offset,
+                2_000,
+                (0..50).map(|i| make_row("old", offset + i)).collect()
+            ));
+        }
+        assert_eq!(panel.cleanups.len(), 2_000);
+
+        // Refresh into a new order that still has 2000 rows and 1 brand-new row on page 1.
+        let mut page1: Vec<Cleanup> = vec![make_row("new", 0)];
+        page1.extend((0..49).map(|i| make_row("old", i)));
+        assert!(panel.accept_more_cleanups_for_test("order-new", 0, 2_000, page1));
+        assert_eq!(panel.cleanups.len(), 2_000);
+        assert_eq!(panel.cleanup_seen_count(), 50);
+        assert!(
+            panel.has_more(super::super::directory::Kind::Cleanups),
+            "Load more must stay available for the new order"
+        );
+        // Page 2 (offset 50) of the new order must be accepted while staying within the 2000 cap.
+        let page2: Vec<Cleanup> = (49..99).map(|i| make_row("old", i)).collect();
+        assert!(panel.accept_more_cleanups_for_test("order-new", 50, 2_000, page2));
+        assert!(panel.cleanups.len() <= 2_000);
+        assert_eq!(panel.cleanup_seen_count(), 100);
+    });
+}
+
+#[test]
+fn remembered_document_pending_overflow_never_marks_journal_only_receipt_pending() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        // Feed > 2000 distinct documentPending: true rows across refreshes to fill the cache.
+        for batch in 0..42u64 {
+            let rows: Vec<Cleanup> = (0..50)
+                .map(|i| {
+                    let idx = batch * 50 + i;
+                    let mut r = cleanup_row(0, true);
+                    r.mission_id = format!("doc-m-{idx}");
+                    r.deletion_id = format!("doc-d-{idx}");
+                    r
+                })
+                .collect();
+            assert!(panel.accept_cleanups_for_test(rows));
+        }
+        // Now return an unrelated journal-only receipt with pending: 0 and omitted documentPending.
+        let mut journal_only: Cleanup = serde_json::from_value(json!({
+            "missionID": "journal-only", "deletionID": "del-journal-only", "requestID": "req-j",
+            "expectedRevision": 1, "deleteManagedSessions": false,
+            "objective": "Journal only", "createdAt": 99, "removed": 1, "retained": 0,
+            "pending": 0, "reasons": []
+        }))
+        .unwrap();
+        assert_eq!(journal_only.document_pending, None);
+        assert!(panel.accept_cleanups_for_test(vec![journal_only.clone()]));
+        assert_eq!(panel.cleanups.len(), 1);
+        assert_eq!(
+            panel.cleanups[0].document_pending, None,
+            "unrelated journal-only receipt must never gain a synthetic documentPending warning"
+        );
+        assert!(!panel.cleanups[0].is_pending());
+        // Adopting an unrelated journal-only receipt must also keep document_pending: None.
+        journal_only.deletion_id = "del-journal-only-2".into();
+        panel.adopt_settled_cleanup(journal_only);
+        assert_eq!(panel.cleanups[0].document_pending, None);
+        assert!(!panel.cleanups[0].is_pending());
     });
 }
 

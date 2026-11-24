@@ -12,7 +12,7 @@ use codenomad_client::{
 };
 use rune::edit::TextEdit;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -79,7 +79,7 @@ pub(crate) struct Panel {
     pub(super) cleanup_view_live: Arc<AtomicBool>,
     cleanup_tokens: HashMap<(String, String), Arc<AtomicBool>>,
     remembered_document_pending: HashSet<CleanupIdentity>,
-    document_pending_overflow: bool,
+    remembered_document_order: VecDeque<CleanupIdentity>,
     supported: Option<bool>,
     capability: Option<Receiver<Option<bool>>>,
     probe_attempted: bool,
@@ -118,7 +118,7 @@ impl Panel {
             cleanup_view_live: Arc::new(AtomicBool::new(false)),
             cleanup_tokens: HashMap::new(),
             remembered_document_pending: HashSet::new(),
-            document_pending_overflow: false,
+            remembered_document_order: VecDeque::new(),
             supported: None,
             capability: None,
             probe_attempted: false,
@@ -173,18 +173,33 @@ impl Panel {
     pub(crate) fn carry_document_pending_from(&mut self, old: &Self) {
         self.remembered_document_pending
             .clone_from(&old.remembered_document_pending);
-        self.document_pending_overflow |= old.document_pending_overflow;
+        self.remembered_document_order
+            .clone_from(&old.remembered_document_order);
     }
 
     fn remember_document_pending(&mut self, key: CleanupIdentity) {
         if self.remembered_document_pending.contains(&key) {
             return;
         }
-        if self.remembered_document_pending.len() >= CLEANUP_DISPLAY_CAP {
-            self.document_pending_overflow = true;
-            return;
+        while self.remembered_document_pending.len() >= CLEANUP_DISPLAY_CAP {
+            let evict_pos = self
+                .remembered_document_order
+                .iter()
+                .position(|id| !self.cleanups.iter().any(|row| cleanup_identity(row) == *id))
+                .unwrap_or(0);
+            let Some(evict) = self.remembered_document_order.remove(evict_pos) else {
+                break;
+            };
+            self.remembered_document_pending.remove(&evict);
         }
+        self.remembered_document_order.push_back(key.clone());
         self.remembered_document_pending.insert(key);
+    }
+
+    fn forget_document_pending(&mut self, key: &CleanupIdentity) {
+        if self.remembered_document_pending.remove(key) {
+            self.remembered_document_order.retain(|id| id != key);
+        }
     }
 
     pub(crate) fn set_online(&mut self, online: bool) {
@@ -248,14 +263,13 @@ impl Panel {
         let key = cleanup_identity(&receipt);
         match receipt.document_pending {
             Some(false) => {
-                self.remembered_document_pending.remove(&key);
+                self.forget_document_pending(&key);
             }
             Some(true) => {
                 self.remember_document_pending(key);
             }
             None => {
-                if self.document_pending_overflow
-                    || self.remembered_document_pending.contains(&key)
+                if self.remembered_document_pending.contains(&key)
                     || self.cleanups.iter().any(|row| {
                         cleanup_identity(row) == key && row.document_pending == Some(true)
                     })
@@ -272,12 +286,23 @@ impl Panel {
             *existing = receipt.clone();
         } else {
             self.cleanups.insert(0, receipt.clone());
+            let lane_seen = &mut self.lanes[Kind::Cleanups as usize].seen;
             while self.cleanups.len() > CLEANUP_DISPLAY_CAP {
-                if let Some(pos) = self.cleanups.iter().rposition(|row| !row.is_pending()) {
-                    self.cleanups.remove(pos);
-                } else {
-                    self.cleanups.pop();
-                }
+                let row_key =
+                    |row: &Cleanup| (row.mission_id.clone(), Some(row.deletion_id.clone()));
+                let pos = self
+                    .cleanups
+                    .iter()
+                    .rposition(|row| !row.is_pending() && !lane_seen.contains(&row_key(row)))
+                    .or_else(|| {
+                        self.cleanups
+                            .iter()
+                            .rposition(|row| !lane_seen.contains(&row_key(row)))
+                    })
+                    .or_else(|| self.cleanups.iter().rposition(|row| !row.is_pending()))
+                    .unwrap_or(self.cleanups.len() - 1);
+                let removed = self.cleanups.remove(pos);
+                lane_seen.remove(&row_key(&removed));
             }
         }
         if !receipt.is_pending()
@@ -525,13 +550,15 @@ impl Panel {
     }
 
     pub(super) fn has_more(&self, kind: Kind) -> bool {
-        if kind == Kind::Cleanups && self.cleanups.len() >= CLEANUP_DISPLAY_CAP {
-            return false;
-        }
+        let limit = if kind == Kind::Cleanups {
+            CLEANUP_DISPLAY_CAP as u64
+        } else {
+            u64::MAX
+        };
         self.lanes[kind as usize]
             .window
             .as_ref()
-            .is_some_and(|w| w.end < w.total)
+            .is_some_and(|w| w.end < w.total && w.end < limit)
     }
 
     pub(super) fn covered(&self, kind: Kind) -> bool {
@@ -548,10 +575,15 @@ impl Panel {
         if !self.visible || self.busy(kind) {
             return;
         }
+        let limit = if kind == Kind::Cleanups {
+            CLEANUP_DISPLAY_CAP as u64
+        } else {
+            u64::MAX
+        };
         let lane = &mut self.lanes[kind as usize];
         let (offset, order) = match (read, &lane.window) {
             (Read::Refresh, _) => (0, None),
-            (Read::More, Some(window)) if window.end < window.total => {
+            (Read::More, Some(window)) if window.end < window.total && window.end < limit => {
                 (window.end, Some(window.order.as_str()))
             }
             _ => return,
@@ -752,14 +784,13 @@ impl Panel {
                 }
             }
             (Kind::Cleanups, DirectoryRows::Cleanups(mut rows)) => {
-                if read == Read::More && self.cleanups.len() >= CLEANUP_DISPLAY_CAP {
+                if read == Read::More && lane.seen.len() >= CLEANUP_DISPLAY_CAP {
                     return false;
                 }
                 for row in &mut rows {
                     if row.document_pending.is_none() {
                         let id = cleanup_identity(row);
-                        if self.document_pending_overflow
-                            || self.remembered_document_pending.contains(&id)
+                        if self.remembered_document_pending.contains(&id)
                             || self.cleanups.iter().any(|old| {
                                 cleanup_identity(old) == id && old.document_pending == Some(true)
                             })
@@ -785,12 +816,14 @@ impl Panel {
                 let mut truncated = false;
                 if self.cleanups.len() > CLEANUP_DISPLAY_CAP {
                     self.cleanups.drain(CLEANUP_DISPLAY_CAP..);
-                    lane.seen = self
-                        .cleanups
-                        .iter()
-                        .map(|row| (row.mission_id.clone(), Some(row.deletion_id.clone())))
-                        .collect();
-                    truncated = true;
+                    if lane.seen.len() > CLEANUP_DISPLAY_CAP {
+                        lane.seen = self
+                            .cleanups
+                            .iter()
+                            .map(|row| (row.mission_id.clone(), Some(row.deletion_id.clone())))
+                            .collect();
+                        truncated = true;
+                    }
                 }
                 let covered = page.window.end == page.window.total && !truncated;
                 self.project = Some(page.project_id);
@@ -804,7 +837,7 @@ impl Panel {
                     match doc_pending {
                         Some(true) => self.remember_document_pending(id),
                         Some(false) => {
-                            self.remembered_document_pending.remove(&id);
+                            self.forget_document_pending(&id);
                         }
                         None => {}
                     }
@@ -979,15 +1012,27 @@ fn merge<T>(
     } else if rows.iter().any(|row| lane.seen.contains(&key(row))) {
         return false;
     }
-    // Current-order rows are a prefix; keep the previous snapshot's unvisited rows after it.
+    // Current-order rows stay a contiguous prefix; keep unvisited rows (including adopted
+    // off-page receipts and previous-order tail rows) after it and deduplicate on arrival.
     let previous = std::mem::take(display);
-    let prefix = lane.seen.len();
+    let mut prefix_rows = Vec::with_capacity(lane.seen.len());
+    let mut tail_rows = Vec::new();
+    for row in previous {
+        if lane.seen.contains(&key(&row)) {
+            prefix_rows.push(row);
+        } else {
+            tail_rows.push(row);
+        }
+    }
     lane.seen.extend(rows.iter().map(&key));
-    let mut previous = previous.into_iter();
-    display.extend(previous.by_ref().take(prefix));
+    display.extend(prefix_rows);
     display.extend(rows);
     if window.end != window.total {
-        display.extend(previous.filter(|row| !lane.seen.contains(&key(row))));
+        display.extend(
+            tail_rows
+                .into_iter()
+                .filter(|row| !lane.seen.contains(&key(row))),
+        );
     }
     true
 }

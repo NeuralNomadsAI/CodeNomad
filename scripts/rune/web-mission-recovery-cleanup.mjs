@@ -4,6 +4,7 @@ import {pressControl} from './web-mission-lifecycle.mjs'
 export function recoveryCleanupFixture(){
   let oldPending=true
   let oldSequence=[]
+  let holdCleanupsGate=null
   let alphaTombstoned=false
   let alphaDeleted=false
   let alphaRecoveryCalls=0
@@ -27,6 +28,8 @@ export function recoveryCleanupFixture(){
   })
   return {
     cleanups:()=>alphaDeleteRequest?[cleanupRow(),alphaCleanupRow()]:[cleanupRow()],
+    holdCleanups:()=>holdCleanupsGate?.promise??null,
+    releaseCleanups:()=>{holdCleanupsGate?.release();holdCleanupsGate=null},
     alphaTombstoned:()=>alphaTombstoned,
     alphaRevision:()=>alphaRevision,
     alphaHeader:()=>({
@@ -72,7 +75,11 @@ export function recoveryCleanupFixture(){
         const body=route.request().postDataJSON()
         assert.deepEqual(body,{expectedRevision:1,requestId:'request',deleteManagedSessions:false})
         // Simulate a 409 whose reconciliation confirms the cleanup already completed.
+        // Hold subsequent cleanup directory refreshes until the UI proves exact receipt adoption.
         oldPending=false
+        let release
+        const promise=new Promise(resolve=>{release=resolve})
+        holdCleanupsGate={promise,release}
         await route.fulfill({status:409,json:{code:'request-conflict'}})
         return true
       }
@@ -166,7 +173,7 @@ async function setDeleteSessionsPreference(page,messages,expected){
   await toggle.waitFor({state:'detached'})
 }
 
-export async function checkCleanupRetry(page,messages,counts){
+export async function checkCleanupRetry(page,messages,counts,releaseCleanups){
   const pendingRegion=page.getByRole('region',{name:messages['missions.cleanup.title'],exact:true})
   await pendingRegion.waitFor()
   await pendingRegion.getByText(messages['missions.cleanup.reason.children'],{exact:true}).waitFor()
@@ -176,9 +183,13 @@ export async function checkCleanupRetry(page,messages,counts){
   const del=page.waitForResponse(r=>r.url().endsWith('/missions/old')&&r.request().method()==='DELETE')
   await pressControl(page,retryButton)
   assert.equal((await del).status(),409)
-  await page.getByRole('region',{name:messages['missions.progress.cleanupHistory'],exact:true}).waitFor()
-  await page.getByText(messages['missions.cleanup.documentPending'],{exact:true}).waitFor({state:'detached'})
-  if(counts) assert.deepEqual(counts().oldSequence,['GET','DELETE','GET'])
+  try{
+    await page.getByRole('region',{name:messages['missions.progress.cleanupHistory'],exact:true}).waitFor()
+    await page.getByText(messages['missions.cleanup.documentPending'],{exact:true}).waitFor({state:'detached'})
+    if(counts) assert.deepEqual(counts().oldSequence,['GET','DELETE','GET'])
+  }finally{
+    releaseCleanups?.()
+  }
 }
 
 export async function checkRecoveryAndDelete(page,messages,counts,filter){

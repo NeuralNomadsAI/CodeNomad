@@ -27,7 +27,7 @@ export function missionsFixture({page,messages,artifact,project}){
   const reads=[]
   const lifecycle=lifecycleFixture()
   const recovery=recoveryCleanupFixture()
-  function release(){held?.release()}
+  function release(){held?.release();recovery.releaseCleanups()}
   async function route(route,path){
     if(path==='/api/meta'){
       const response=await route.fetch({maxRedirects:0})
@@ -114,9 +114,11 @@ export function missionsFixture({page,messages,artifact,project}){
       },
     }
     const pending=source==='summaries'?held:null
+    const cleanupGate=source==='cleanups'?recovery.holdCleanups():null
     if(pending){pending.arrive();await pending.gate}
+    if(cleanupGate)await cleanupGate
     try{await route.fulfill({json})}
-    catch(error){if(!pending)throw error} // The panel can abort a held fetch upon hiding.
+    catch(error){if(!pending&&!cleanupGate)throw error} // The panel can abort a held fetch upon hiding.
     finally{pending?.settled()}
     return true
   }
@@ -152,7 +154,7 @@ export function missionsFixture({page,messages,artifact,project}){
     assert.equal(await page.getByText(messages['missionsPanel.picker.noMatch'],{exact:true}).count(),0)
     await page.getByText('Nettoyage vérifié',{exact:true}).waitFor()
     await page.getByText(messages['missions.cleanup.documentPending'],{exact:true}).waitFor()
-    await checkCleanupRetry(page,messages,recovery.counts)
+    await checkCleanupRetry(page,messages,recovery.counts,recovery.releaseCleanups)
     await press(more)
     await page.getByText(messages['missionsPanel.picker.noMatch'],{exact:true}).waitFor()
     await filter('Bêta')

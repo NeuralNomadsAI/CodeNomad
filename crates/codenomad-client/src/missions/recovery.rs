@@ -4,10 +4,71 @@ use super::{
     lifecycle::{CONTROL_TIMEOUT, MAX_REVISION},
 };
 use crate::{
-    backend::{Backend, read_json_limited},
+    backend::{Backend, read_json_typed_limited},
     history::{Result, valid_id},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+const RECOVERY_RESPONSE_LIMIT: usize = 64 * 1024 * 1024;
+
+#[derive(Default, Deserialize)]
+struct RecoveryBody {
+    #[serde(default)]
+    admitted: bool,
+    code: Option<String>,
+    mission: Option<RecoveryMission>,
+}
+
+#[derive(Deserialize)]
+struct RecoveryMission {
+    id: Option<String>,
+    #[serde(rename = "projectID")]
+    project_id: Option<String>,
+    #[serde(rename = "projectCanonical")]
+    project_canonical: Option<String>,
+    #[serde(rename = "coordinatorSessionId")]
+    coordinator_session_id: Option<String>,
+    revision: Option<u64>,
+    #[serde(default)]
+    actors: Vec<RecoveryActor>,
+}
+
+#[derive(Deserialize)]
+struct RecoveryActor {
+    kind: Option<String>,
+    #[serde(rename = "sessionId")]
+    session_id: Option<String>,
+    location: Option<RecoveryLocation>,
+}
+
+#[derive(Deserialize)]
+struct RecoveryLocation {
+    directory: Option<String>,
+    #[serde(rename = "workspaceID")]
+    workspace_id: Option<String>,
+}
+
+impl RecoveryMission {
+    fn matches(&self, target: &LifecycleTarget) -> bool {
+        self.id.as_deref() == Some(target.mission.as_str())
+            && self.project_id.as_deref() == Some(target.project.as_str())
+            && self.project_canonical.as_deref() == Some(target.canonical.as_str())
+            && self.coordinator_session_id.as_deref() == Some(target.coordinator.as_str())
+            && target
+                .coordinator_location
+                .as_ref()
+                .is_none_or(|(directory, workspace)| {
+                    self.actors.iter().any(|actor| {
+                        actor.kind.as_deref() == Some("coordinator")
+                            && actor.session_id.as_deref() == Some(target.coordinator.as_str())
+                            && actor.location.as_ref().is_some_and(|loc| {
+                                loc.directory.as_deref() == Some(directory.as_str())
+                                    && loc.workspace_id.as_deref() == workspace.as_deref()
+                            })
+                    })
+                })
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum RecoveryTarget {
@@ -122,9 +183,9 @@ impl Backend {
             ]);
         let response = recovery_post(self, url, request).send().await?;
         let status = response.status();
-        let body = read_json_limited(response, 4 * 1024 * 1024)
+        let body: RecoveryBody = read_json_typed_limited(response, RECOVERY_RESPONSE_LIMIT)
             .await
-            .unwrap_or(serde_json::Value::Null);
+            .unwrap_or_default();
         Ok(settle_recovery(status, &body, target, request))
     }
 }
@@ -160,18 +221,18 @@ fn classify(code: Option<&str>) -> RecoveryError {
 
 fn settle_recovery(
     status: reqwest::StatusCode,
-    body: &serde_json::Value,
+    body: &RecoveryBody,
     target: &LifecycleTarget,
     request: &RecoveryRequest,
 ) -> RecoveryOutcome {
     if !status.is_success() {
-        return RecoveryOutcome::Refused(classify(body["code"].as_str()));
+        return RecoveryOutcome::Refused(classify(body.code.as_deref()));
     }
-    let mission = &body["mission"];
-    if body["admitted"] == true
-        && target.matches(mission)
-        && let Some(revision) = mission["revision"]
-            .as_u64()
+    if body.admitted
+        && let Some(mission) = body.mission.as_ref()
+        && mission.matches(target)
+        && let Some(revision) = mission
+            .revision
             .filter(|r| (request.expected_revision..=MAX_REVISION).contains(r))
     {
         return RecoveryOutcome::Admitted(revision);
@@ -234,8 +295,11 @@ mod tests {
                 "revision": 8
             }
         });
+        let parse = |value: &serde_json::Value| -> RecoveryBody {
+            serde_json::from_value(value.clone()).unwrap()
+        };
         assert_eq!(
-            settle_recovery(reqwest::StatusCode::OK, &ok, &target, &request),
+            settle_recovery(reqwest::StatusCode::OK, &parse(&ok), &target, &request),
             RecoveryOutcome::Admitted(8)
         );
         let mut missing_rev = ok.clone();
@@ -244,19 +308,29 @@ mod tests {
             .unwrap()
             .remove("revision");
         assert_eq!(
-            settle_recovery(reqwest::StatusCode::OK, &missing_rev, &target, &request),
+            settle_recovery(
+                reqwest::StatusCode::OK,
+                &parse(&missing_rev),
+                &target,
+                &request,
+            ),
             RecoveryOutcome::Refused(RecoveryError::Unknown)
         );
         let mut regressed = ok.clone();
         regressed["mission"]["revision"] = json!(6);
         assert_eq!(
-            settle_recovery(reqwest::StatusCode::OK, &regressed, &target, &request),
+            settle_recovery(
+                reqwest::StatusCode::OK,
+                &parse(&regressed),
+                &target,
+                &request,
+            ),
             RecoveryOutcome::Refused(RecoveryError::Unknown)
         );
         assert_eq!(
             settle_recovery(
                 reqwest::StatusCode::OK,
-                &json!({"admitted": false, "mission": ok["mission"]}),
+                &parse(&json!({"admitted": false, "mission": ok["mission"]})),
                 &target,
                 &request,
             ),
@@ -265,7 +339,7 @@ mod tests {
         let mut foreign = ok.clone();
         foreign["mission"]["projectID"] = json!("other");
         assert_eq!(
-            settle_recovery(reqwest::StatusCode::OK, &foreign, &target, &request),
+            settle_recovery(reqwest::StatusCode::OK, &parse(&foreign), &target, &request),
             RecoveryOutcome::Refused(RecoveryError::Unknown)
         );
         for (code, expected) in [
@@ -283,7 +357,7 @@ mod tests {
             assert_eq!(
                 settle_recovery(
                     reqwest::StatusCode::CONFLICT,
-                    &json!({"code": code}),
+                    &parse(&json!({"code": code})),
                     &target,
                     &request,
                 ),
@@ -291,5 +365,75 @@ mod tests {
                 "{code}"
             );
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn large_recovery_acknowledgement_over_4_mib_is_admitted() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let padding = "x".repeat(4_500_000);
+            let body = serde_json::to_vec(&json!({
+                "admitted": true,
+                "mission": {
+                    "id": "msn-large",
+                    "projectID": "project",
+                    "projectCanonical": "/fixture",
+                    "coordinatorSessionId": "coordinator",
+                    "revision": 8,
+                    "actors": [{
+                        "kind": "coordinator",
+                        "sessionId": "coordinator",
+                        "location": {"directory": "/fixture"}
+                    }],
+                    "history": [{"text": padding}]
+                }
+            }))
+            .unwrap();
+            assert!(body.len() > 4 * 1024 * 1024);
+
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut req = Vec::new();
+                let mut buf = [0u8; 4096];
+                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = socket.read(&mut buf).await.unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    req.extend_from_slice(&buf[..n]);
+                }
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(head.as_bytes()).await.unwrap();
+                socket.write_all(&body).await.unwrap();
+            });
+
+            let mut backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+            backend.workspace = "owned".into();
+            let target = LifecycleTarget {
+                mission: "msn-large".into(),
+                project: "project".into(),
+                canonical: "/fixture".into(),
+                coordinator: "coordinator".into(),
+                coordinator_location: Some(("/fixture".into(), None)),
+            };
+            let request = RecoveryRequest::new(7, RecoveryTarget::Coordinator).unwrap();
+            let outcome = backend.recover_mission(&target, &request).await.unwrap();
+            assert_eq!(outcome, RecoveryOutcome::Admitted(8));
+            server.await.unwrap();
+        });
     }
 }

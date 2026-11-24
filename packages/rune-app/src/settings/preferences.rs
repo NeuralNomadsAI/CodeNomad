@@ -593,10 +593,9 @@ impl Preferences {
     }
 
     pub(super) fn set_mission_delete_sessions(&mut self, value: bool) {
-        if self.can_retry()
-            && !self.mission_delete_sessions_pending()
+        if self.mission_delete_sessions_editable()
             && self
-                .mission_delete_sessions()
+                .mission_delete_sessions_display()
                 .is_some_and(|old| old != value || self.mission_delete_sessions_failed())
         {
             self.config.stage(
