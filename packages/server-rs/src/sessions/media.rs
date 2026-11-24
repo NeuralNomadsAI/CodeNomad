@@ -12,7 +12,7 @@ use std::time::Duration;
 use super::{history::Placement, user_files};
 use crate::{Error, Shared, auth::Principal, error};
 
-const URI_LIMIT: usize = 8 * 1024 * 1024;
+pub(super) const URI_LIMIT: usize = 8 * 1024 * 1024;
 const MESSAGE_LIMIT: usize = 16 * 1024 * 1024;
 const INLINE_LIMIT: usize = 32 * 1024;
 
@@ -361,6 +361,9 @@ pub(super) async fn route(
                 .map_err(|_| unavailable())?;
                 if !placement.operation_current(&app, &r.workspace).await {
                     return Ok(crate::shared::abort_response());
+                }
+                if !placement.live(&app, &r.workspace).await {
+                    return Err(error(Status::CONFLICT, "Session location changed"));
                 }
                 decoded?
             } else {

@@ -164,15 +164,13 @@ impl Placement {
             if !crate::files::paths::under(&app.scope, std::path::Path::new(directory)) {
                 return Err(forbidden());
             }
+            let scope = app.scope.clone();
             let dir_owned = directory.to_owned();
             let (path, anchor, physical) = tokio::task::spawn_blocking(move || -> Result<_, Error> {
                 let unavailable = || error(Status::SERVICE_UNAVAILABLE, "History placement unavailable");
                 let forbidden = || error(Status::FORBIDDEN, "Session does not belong to workspace");
-                let path = crate::worktrees::ownership::resolve_exact_directory(&dir_owned).ok_or_else(unavailable)?;
-                let anchor = crate::worktrees::ownership::directory_anchor(&path)
-                    .map_err(|_| unavailable())?
-                    .ok_or_else(forbidden)?
-                    .to_owned();
+                let (path, anchor) =
+                    crate::worktrees::ownership::resolve_media_path(&scope, &dir_owned).ok_or_else(forbidden)?;
                 let physical = directory_identity(&anchor).map_err(|_| unavailable())?;
                 Ok((path, anchor, physical))
             })
@@ -519,8 +517,9 @@ fn parse_and_validate_history(status: Status, mut body: Vec<u8>, action: &str) -
     let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
     let raw_bytes = raw.get().as_bytes();
     // Bound JSON structural nodes before allocating a `serde_json::Value` tree so a dense
-    // numeric array (e.g. millions of tiny ints under 24 MiB) cannot amplify memory into GiB.
-    const MAX_HISTORY_NODES: usize = 500_000;
+    // numeric array (e.g. 12M tiny ints under 24 MiB) cannot amplify memory into GiB, while
+    // admitting valid high-part-count message windows (e.g. 2 messages x 90,000 text parts).
+    const MAX_HISTORY_NODES: usize = 2_000_000;
     if !crate::sessions::media_stream::json_node_count_within(raw_bytes, MAX_HISTORY_NODES) {
         return Err(blocked("unavailable"));
     }
@@ -687,6 +686,30 @@ pub async fn handle(
                 return blocked("unavailable");
             }
             let rpc_limit = 24 * 1024 * 1024 + 64 * 1024;
+            // Reserve `ResponsePool::History` memory BEFORE reading the up-to-24 MiB RPC payload
+            // so concurrent `HISTORY_SLOTS` callers cannot hold 4x24 MiB outside the 64 MiB pool,
+            // then shrink the permit to the actual serialized response size once projected.
+            let mut mem = {
+                let workspace_closed = async {
+                    loop {
+                        let notified = app.workspace_closed.notified();
+                        if !placement.operation_current_fast(&app, &id) {
+                            return;
+                        }
+                        notified.await;
+                    }
+                };
+                tokio::select! {
+                    biased;
+                    _ = workspace_closed => return blocked("unavailable"),
+                    permit = crate::shared::reserve_response_memory(crate::shared::ResponsePool::History, rpc_limit) => {
+                        match permit {
+                            Ok(permit) => Some(permit),
+                            Err(_) => return blocked("unavailable"),
+                        }
+                    }
+                }
+            };
             let rpc_timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
             if rpc_timeout.is_zero() {
                 return blocked("unavailable");
@@ -742,8 +765,8 @@ pub async fn handle(
                     Err(invalid_response) => return invalid_response,
                 }
             };
-            // Project and reserve response memory BEFORE final session/revert revalidation so
-            // no blocking wait or `spawn_blocking` yield occurs after the last `revert` check.
+            // Project BEFORE final session/revert revalidation so no `spawn_blocking` yield occurs
+            // after the last `revert` check, then shrink the held memory permit to the final body.
             let (projected, slot) = if body_len > 32 * 1024 {
                 let (id, session) = (id.clone(), session.to_owned());
                 match tokio::task::spawn_blocking(move || {
@@ -757,31 +780,19 @@ pub async fn handle(
             } else {
                 (finalize_history_payload(validated, &id, session, reference, defer), slot)
             };
-            let mem = if defer || body_len > 32 * 1024 {
-                let workspace_closed = async {
-                    loop {
-                        let notified = app.workspace_closed.notified();
-                        if !placement.operation_current_fast(&app, &id) {
-                            return;
-                        }
-                        notified.await;
+            if defer || body_len > 32 * 1024 {
+                let keep_bytes = projected.as_ref().map_or(body_len, |p| p.len().saturating_add(4096));
+                let keep_units =
+                    crate::shared::response_memory_units(crate::shared::ResponsePool::History, keep_bytes) as usize;
+                if let Some(permit) = &mut mem {
+                    let excess = permit.num_permits().saturating_sub(keep_units);
+                    if excess > 0 {
+                        let _ = permit.split(excess);
                     }
-                };
-                let reserve_len = projected.as_ref().map_or(body_len, |p| p.len().saturating_add(4096));
-                let permit = tokio::select! {
-                    biased;
-                    _ = workspace_closed => return blocked("unavailable"),
-                    permit = crate::shared::reserve_response_memory(crate::shared::ResponsePool::History, reserve_len) => {
-                        match permit {
-                            Ok(permit) => permit,
-                            Err(_) => return blocked("unavailable"),
-                        }
-                    }
-                };
-                Some(permit)
+                }
             } else {
-                None
-            };
+                mem = None;
+            }
             match placement.current(&app, &id, session).await {
                 Recheck::Current => {}
                 Recheck::Conflict => return blocked("conflict"),
@@ -842,6 +853,30 @@ pub async fn handle(
     }
 }
 
+fn valid_attachment_output(output: &Value) -> bool {
+    let Some(obj) = output.as_object() else {
+        return false;
+    };
+    match obj.get("status").and_then(Value::as_str) {
+        Some("missing" | "too_large" | "current") => obj.len() == 1,
+        Some("file") => {
+            obj.len() == 2
+                && obj
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| s.len() <= user_files::FILE_BYTES.div_ceil(3) * 4)
+        }
+        Some("blocked") => {
+            obj.len() == 2
+                && obj
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .is_some_and(|r| matches!(r, "busy" | "conflict" | "unavailable"))
+        }
+        _ => false,
+    }
+}
+
 pub async fn attachment(
     State(app): State<Shared>,
     Extension(principal): Extension<Principal>,
@@ -849,15 +884,16 @@ pub async fn attachment(
 ) -> Result<Response, Error> {
     let missing = || error(Status::NOT_FOUND, "Attachment not found");
     let invalid = || error(Status::BAD_REQUEST, "Invalid attachment reference");
-    let index: usize = index
-        .parse::<usize>()
-        .ok()
-        .filter(|n| *n < user_files::FILE_COUNT && n.to_string() == index)
-        .ok_or_else(invalid)?;
+    let index_syntax = index.parse::<usize>().ok().filter(|n| n.to_string() == index);
     if [session.as_str(), message.as_str()].iter().any(|id| id.len() > 256 || !crate::opencode::valid_id(id))
+        || index_syntax.is_none()
         || !user_files::valid_digest(&sha)
     {
         return Err(invalid());
+    }
+    let index = index_syntax.unwrap();
+    if index >= user_files::FILE_COUNT {
+        return Err(error(Status::BAD_REQUEST, "Invalid history navigation request"));
     }
     let request = async {
         let placement = Placement::capture(&app, &id, &session, true)
@@ -882,6 +918,9 @@ pub async fn attachment(
         }
         let output: Value = serde_json::from_slice(&body).map_err(|_| missing())?;
         let output = &output["output"];
+        if !valid_attachment_output(output) {
+            return Err(missing());
+        }
         match placement.current(&app, &id, &session).await {
             Recheck::Current => {}
             Recheck::Conflict => return Err(error(Status::CONFLICT, "Session location changed")),
@@ -899,7 +938,8 @@ pub async fn attachment(
         let (status, reply) =
             rpc(&app, &placement.endpoint, directory, "sessionAttachment", &input).await.map_err(|_| missing())?;
         let reply: Value = serde_json::from_slice(&reply).map_err(|_| missing())?;
-        if !status.is_success() || reply["output"]["status"] != "current" {
+        if !status.is_success() || !valid_attachment_output(&reply["output"]) || reply["output"]["status"] != "current"
+        {
             return Err(missing());
         }
         if !placement.operation_current(&app, &id).await {

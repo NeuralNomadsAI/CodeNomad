@@ -530,9 +530,6 @@ pub async fn serve_local(
     shutdown: tokio_util::sync::CancellationToken,
     on_shutdown: impl FnOnce(),
 ) -> std::io::Result<()> {
-    // Keep graceful drain below the desktop host's 30 s hard stop (`tests/serve.rs:113`) while
-    // allowing admitted 15 s history and media requests to finish before plugin leases tear down.
-    const DRAIN: std::time::Duration = std::time::Duration::from_secs(25);
     let mut tasks = tokio::task::JoinSet::new();
     loop {
         while tasks.try_join_next().is_some() {}
@@ -572,10 +569,6 @@ pub async fn serve_local(
         }
     }
     drop(listener);
-    let drained = tokio::time::timeout(DRAIN, async { while tasks.join_next().await.is_some() {} }).await;
-    tasks.abort_all();
-    match drained {
-        Ok(()) => Ok(()),
-        Err(_) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "local server shutdown drain timed out")),
-    }
+    while tasks.join_next().await.is_some() {}
+    Ok(())
 }

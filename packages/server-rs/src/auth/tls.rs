@@ -263,7 +263,6 @@ impl Listener {
         })
     }
     pub async fn serve(self, router: Router, shutdown: CancellationToken) -> io::Result<()> {
-        const DRAIN: Duration = Duration::from_secs(25);
         let Self { socket, acceptor, origin, fingerprint: _, ingress } = self;
         let gate = Arc::new(crate::auth::tls_admission::Gate::default());
         let mut tasks = tokio::task::JoinSet::new();
@@ -328,12 +327,8 @@ impl Listener {
             });
         }
         drop(socket);
-        let drained = tokio::time::timeout(DRAIN, async { while tasks.join_next().await.is_some() {} }).await;
-        tasks.abort_all();
-        match drained {
-            Ok(()) => Ok(()),
-            Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "remote server shutdown drain timed out")),
-        }
+        while tasks.join_next().await.is_some() {}
+        Ok(())
     }
 }
 

@@ -330,6 +330,131 @@ pub(crate) fn directory_anchor(path: &Path) -> Result<Option<&Path>, ()> {
     Ok(None)
 }
 
+fn resolve_media_step(
+    scope: &Path,
+    scope_comps: &[std::path::Component<'_>],
+    cur: &mut PathBuf,
+    missing: &mut bool,
+    hops_left: &mut usize,
+    component: std::path::Component<'_>,
+) -> Option<()> {
+    use std::path::Component;
+    match component {
+        Component::Prefix(prefix) => cur.push(prefix.as_os_str()),
+        Component::RootDir => cur.push(component.as_os_str()),
+        Component::CurDir => {}
+        Component::Normal(seg) => {
+            #[cfg(windows)]
+            if is_windows_device_name(&seg.to_string_lossy()) {
+                return None;
+            }
+            cur.push(seg);
+            if !*missing {
+                match std::fs::symlink_metadata(&*cur) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => *missing = true,
+                    Err(_) => return None,
+                    Ok(_) => {
+                        // Follow symlinks/junctions hop-by-hop BEFORE `canonicalize` so a chain of
+                        // local links ending in a UNC share or mapped drive outside `scope` never
+                        // triggers SMB I/O.
+                        if let Ok(target) = std::fs::read_link(&*cur) {
+                            *hops_left = hops_left.checked_sub(1)?;
+                            let target_str = target.to_string_lossy();
+                            if reject_network_path(&target_str, &target).is_err() {
+                                return None;
+                            }
+                            let simplified = dunce::simplified(&target);
+                            if simplified.is_absolute() {
+                                #[cfg(windows)]
+                                if !scope_comps.is_empty() && !path_starts_with_scope(scope, simplified) {
+                                    return None;
+                                }
+                                let mut next = PathBuf::new();
+                                let mut t_comps = simplified.components();
+                                if !scope_comps.is_empty() {
+                                    let mut matched = 0usize;
+                                    while matched < scope_comps.len() {
+                                        match t_comps.next()? {
+                                            Component::CurDir => continue,
+                                            Component::ParentDir => return None,
+                                            c if component_eq(c, scope_comps[matched]) => {
+                                                next.push(c.as_os_str());
+                                                matched += 1;
+                                            }
+                                            _ => return None,
+                                        }
+                                    }
+                                    let real_root = dunce::canonicalize(&next).ok()?;
+                                    if real_root != scope {
+                                        return None;
+                                    }
+                                    next = real_root;
+                                }
+                                let mut next_missing = false;
+                                for c in t_comps {
+                                    resolve_media_step(scope, scope_comps, &mut next, &mut next_missing, hops_left, c)?;
+                                }
+                                *cur = next;
+                                *missing = next_missing;
+                                return Some(());
+                            } else {
+                                if !cur.pop() {
+                                    return None;
+                                }
+                                if !scope_comps.is_empty() && !cur.starts_with(scope) {
+                                    return None;
+                                }
+                                for c in simplified.components() {
+                                    resolve_media_step(scope, scope_comps, cur, missing, hops_left, c)?;
+                                }
+                                return Some(());
+                            }
+                        }
+                        match dunce::canonicalize(&*cur) {
+                            Ok(real) => {
+                                if reject_network_path(&real.to_string_lossy(), &real).is_err() {
+                                    return None;
+                                }
+                                if !scope_comps.is_empty() && !real.starts_with(scope) {
+                                    return None;
+                                }
+                                *cur = real;
+                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => *missing = true,
+                            Err(_) => return None,
+                        }
+                    }
+                }
+            }
+        }
+        Component::ParentDir => {
+            if !scope_comps.is_empty() && *cur == scope {
+                return None;
+            }
+            if !cur.pop() {
+                return None;
+            }
+            if !scope_comps.is_empty() && !cur.starts_with(scope) {
+                return None;
+            }
+            if *missing {
+                match dunce::canonicalize(&*cur) {
+                    Ok(real) => {
+                        if !scope_comps.is_empty() && !real.starts_with(scope) {
+                            return None;
+                        }
+                        *cur = real;
+                        *missing = false;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return None,
+                }
+            }
+        }
+    }
+    Some(())
+}
+
 pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, PathBuf)> {
     use std::path::Component;
     if raw.is_empty() || raw.len() > 32_768 || raw.contains('\0') {
@@ -353,98 +478,37 @@ pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, Pa
     }
     // Check lexical `scope` prefix BEFORE any filesystem I/O so paths on other drives (including
     // Windows mapped SMB drives) or outside `scope` are rejected with zero filesystem calls.
+    // Keep the raw components when canonicalizing the matched prefix so case-sensitive NTFS
+    // siblings (`Projet` vs `projet`) are never silently rewritten onto `scope`.
     let scope_comps: Vec<Component<'_>> = scope.components().collect();
     let mut comps = Path::new(raw).components();
+    let mut cur = PathBuf::new();
     let mut matched = 0usize;
     while matched < scope_comps.len() {
         match comps.next()? {
             Component::CurDir => continue,
             Component::ParentDir => return None,
-            comp if component_eq(comp, scope_comps[matched]) => matched += 1,
+            comp if component_eq(comp, scope_comps[matched]) => {
+                cur.push(comp.as_os_str());
+                matched += 1;
+            }
             _ => return None,
         }
+    }
+    if !scope_comps.is_empty() {
+        let real_root = dunce::canonicalize(&cur).ok()?;
+        if real_root != scope {
+            return None;
+        }
+        cur = real_root;
     }
     // Resolve symlinks component-by-component BEFORE applying `..` so a POSIX path like
     // `/workspace/link_to_foreign/..` resolves through `link_to_foreign` into `/foreign`
     // rather than being lexically collapsed back into `/workspace`.
-    let mut cur = if scope_comps.is_empty() { PathBuf::new() } else { scope.to_path_buf() };
     let mut missing = false;
+    let mut hops_left = 40usize;
     for component in comps {
-        match component {
-            Component::Prefix(prefix) => cur.push(prefix.as_os_str()),
-            Component::RootDir => cur.push(component.as_os_str()),
-            Component::CurDir => {}
-            Component::Normal(seg) => {
-                #[cfg(windows)]
-                if is_windows_device_name(&seg.to_string_lossy()) {
-                    return None;
-                }
-                cur.push(seg);
-                if !missing {
-                    match std::fs::symlink_metadata(&cur) {
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => missing = true,
-                        Err(_) => return None,
-                        Ok(_) => {
-                            // Inspect link/junction target BEFORE `canonicalize` so a link to a
-                            // UNC share or mapped drive outside `scope` triggers zero SMB I/O.
-                            if let Ok(target) = std::fs::read_link(&cur) {
-                                let target_str = target.to_string_lossy();
-                                if reject_network_path(&target_str, &target).is_err() {
-                                    return None;
-                                }
-                                #[cfg(windows)]
-                                {
-                                    let simplified = dunce::simplified(&target);
-                                    if simplified.is_absolute()
-                                        && !scope_comps.is_empty()
-                                        && !path_starts_with_scope(scope, simplified)
-                                    {
-                                        return None;
-                                    }
-                                }
-                            }
-                            match dunce::canonicalize(&cur) {
-                                Ok(real) => {
-                                    if reject_network_path(&real.to_string_lossy(), &real).is_err() {
-                                        return None;
-                                    }
-                                    if !scope_comps.is_empty() && !real.starts_with(scope) {
-                                        return None;
-                                    }
-                                    cur = real;
-                                }
-                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => missing = true,
-                                Err(_) => return None,
-                            }
-                        }
-                    }
-                }
-            }
-            Component::ParentDir => {
-                if !scope_comps.is_empty() && cur == scope {
-                    return None;
-                }
-                if !cur.pop() {
-                    return None;
-                }
-                if !scope_comps.is_empty() && !cur.starts_with(scope) {
-                    return None;
-                }
-                if missing {
-                    match dunce::canonicalize(&cur) {
-                        Ok(real) => {
-                            if !scope_comps.is_empty() && !real.starts_with(scope) {
-                                return None;
-                            }
-                            cur = real;
-                            missing = false;
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(_) => return None,
-                    }
-                }
-            }
-        }
+        resolve_media_step(scope, &scope_comps, &mut cur, &mut missing, &mut hops_left, component)?;
     }
     if !scope_comps.is_empty() && !cur.starts_with(scope) {
         return None;
@@ -667,25 +731,33 @@ pub(crate) async fn owns_loaded(
 }
 
 /// Request-local validated checkout inventory for history fan-out and provenance.
-pub(crate) struct HistoryInventory(Option<super::inventory::Catalogue>);
+pub(crate) struct HistoryInventory {
+    catalogue: Option<super::inventory::Catalogue>,
+    allow_subfolders: bool,
+}
 
 impl HistoryInventory {
     pub(crate) async fn load(app: &App, workspace: &Workspace) -> Option<Self> {
-        if super::root_only(workspace).await.ok()?.is_some() {
-            return Some(Self(None));
+        if let Some(allow_subfolders) = super::root_only(workspace).await.ok()? {
+            return Some(Self { catalogue: None, allow_subfolders });
         }
-        Some(Self(Some(super::linked::catalogue(app, workspace, false).await.ok()?)))
+        Some(Self {
+            catalogue: Some(super::linked::catalogue(app, workspace, false).await.ok()?),
+            allow_subfolders: true,
+        })
     }
 
     pub(crate) fn directories(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().flat_map(|inventory| &inventory.trees).map(|tree| tree.service.as_str())
+        self.catalogue.iter().flat_map(|inventory| &inventory.trees).map(|tree| tree.service.as_str())
     }
 
     pub(crate) fn prove(&self, workspace: &Path, path: &Path) -> Option<DirectoryProof> {
         let external = !path.starts_with(workspace);
-        let proof = match &self.0 {
+        let proof = match &self.catalogue {
             Some(inventory) => catalogue_proof(inventory, path, external, ProofMode::History)?,
-            None if !external => DirectoryProof { tree: None, source: None, root: None, external, media: false },
+            None if !external && (path == workspace || self.allow_subfolders) => {
+                DirectoryProof { tree: None, source: None, root: None, external, media: false }
+            }
             None => return None,
         };
         proof.history_live(workspace, path).then_some(proof)

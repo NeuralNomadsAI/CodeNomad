@@ -888,9 +888,10 @@ impl MessageListStream {
             // Never emit partially rewritten invalid JSON when rollback originals were evicted.
             return Err(());
         }
-        // Invalid JSON anywhere in the document: restore all deferred URIs verbatim with ZERO
-        // extra heap copies by slicing each modified segment and moving each `Box<[u8]>` original
-        // directly into `Bytes`, matching TS `proxy.ts:91` (`Response.text()` strips leading UTF-8 BOM).
+        // Invalid JSON anywhere in the document: restore all deferred URIs verbatim. Copy kept
+        // prefix/suffix slices of modified segments into independent `Vec<u8>` allocations so the
+        // patched segment (and its replaced `/api/workspaces/...` URLs) is dropped immediately and
+        // `Bytes::len()` matches actual retained heap memory for `ResponsePool::List` accounting.
         let mut by_idx: std::collections::HashMap<usize, Vec<UndoPatch>> = self.undo.into_iter().collect();
         let mut restored = std::collections::VecDeque::with_capacity(self.segments.len() + by_idx.len() * 2);
         let mut total_bytes = 0usize;
@@ -899,7 +900,7 @@ impl MessageListStream {
                 let mut cursor = 0usize;
                 for patch in patches {
                     if patch.range.start > cursor {
-                        let prefix = seg.slice(cursor..patch.range.start);
+                        let prefix = axum::body::Bytes::from(seg[cursor..patch.range.start].to_vec());
                         total_bytes += prefix.len();
                         restored.push_back(prefix);
                     }
@@ -909,7 +910,7 @@ impl MessageListStream {
                     cursor = patch.range.end;
                 }
                 if cursor < seg.len() {
-                    let suffix = seg.slice(cursor..);
+                    let suffix = axum::body::Bytes::from(seg[cursor..].to_vec());
                     total_bytes += suffix.len();
                     restored.push_back(suffix);
                 }
@@ -932,6 +933,116 @@ fn may_contain_image_uri(haystack: &[u8]) -> bool {
 
 fn parse_string(raw: &str) -> Option<String> {
     serde_json::from_str::<String>(raw).ok()
+}
+
+fn hex_val(b: u8) -> Option<u16> {
+    match b {
+        b'0'..=b'9' => Some((b - b'0') as u16),
+        b'a'..=b'f' => Some((b - b'a' + 10) as u16),
+        b'A'..=b'F' => Some((b - b'A' + 10) as u16),
+        _ => None,
+    }
+}
+
+fn parse_hex4(bytes: &[u8], i: usize) -> Option<u16> {
+    let b = bytes.get(i..i + 4)?;
+    Some((hex_val(b[0])? << 12) | (hex_val(b[1])? << 8) | (hex_val(b[2])? << 4) | hex_val(b[3])?)
+}
+
+/// Decodes a JSON string token directly into a single `String` capped at `max_utf16` UTF-16 code
+/// units (and rejects non-`data:image/` prefixes within the first 11 characters), preventing a
+/// 120 MiB escaped non-deferrable URI from allocating a 240+ MiB `serde_json` scratch + result pair.
+fn parse_bounded_image_uri(raw: &str, max_utf16: usize) -> Option<String> {
+    let bytes = raw.as_bytes();
+    if bytes.len() < 2 || bytes[0] != b'"' || bytes[bytes.len() - 1] != b'"' {
+        return None;
+    }
+    let inner = &raw[1..raw.len() - 1];
+    if !inner.as_bytes().contains(&b'\\') {
+        if !inner.get(..11).is_some_and(|p| p.eq_ignore_ascii_case("data:image/")) {
+            return None;
+        }
+        if inner.len() > max_utf16 && inner.encode_utf16().nth(max_utf16).is_some() {
+            return None;
+        }
+        return Some(inner.to_owned());
+    }
+    let mut out = String::with_capacity(inner.len().min(256));
+    let mut utf16 = 0usize;
+    let mut prefix_checked = false;
+    let mut i = 0usize;
+    let ib = inner.as_bytes();
+    while i < ib.len() {
+        let b = ib[i];
+        if b == b'\\' {
+            i += 1;
+            let esc = *ib.get(i)?;
+            i += 1;
+            let ch = match esc {
+                b'"' => '"',
+                b'\\' => '\\',
+                b'/' => '/',
+                b'b' => '\x08',
+                b'f' => '\x0C',
+                b'n' => '\n',
+                b'r' => '\r',
+                b't' => '\t',
+                b'u' => {
+                    let u1 = parse_hex4(ib, i)?;
+                    i += 4;
+                    if (0xD800..=0xDBFF).contains(&u1) {
+                        if ib.get(i..i + 2) != Some(b"\\u") {
+                            return None;
+                        }
+                        i += 2;
+                        let u2 = parse_hex4(ib, i)?;
+                        i += 4;
+                        if !(0xDC00..=0xDFFF).contains(&u2) {
+                            return None;
+                        }
+                        let cp = 0x10000 + (((u1 as u32 - 0xD800) << 10) | (u2 as u32 - 0xDC00));
+                        char::from_u32(cp)?
+                    } else if (0xDC00..=0xDFFF).contains(&u1) {
+                        return None;
+                    } else {
+                        char::from_u32(u1 as u32)?
+                    }
+                }
+                _ => return None,
+            };
+            utf16 += ch.len_utf16();
+            if utf16 > max_utf16 {
+                return None;
+            }
+            out.push(ch);
+        } else if b < 0x20 {
+            return None;
+        } else {
+            let start = i;
+            while i < ib.len() && ib[i] != b'\\' && ib[i] >= 0x20 {
+                i += 1;
+            }
+            let chunk = &inner[start..i];
+            let chunk_utf16 = if chunk.is_ascii() { chunk.len() } else { chunk.encode_utf16().count() };
+            utf16 += chunk_utf16;
+            if utf16 > max_utf16 {
+                return None;
+            }
+            out.push_str(chunk);
+        }
+        if !prefix_checked && out.len() >= 11 {
+            if !out.get(..11).is_some_and(|p| p.eq_ignore_ascii_case("data:image/")) {
+                return None;
+            }
+            prefix_checked = true;
+            let reserve = (ib.len() - i).min(max_utf16.saturating_sub(out.len()));
+            out.reserve(reserve);
+        }
+    }
+    if !prefix_checked {
+        return None;
+    }
+    Some(out)
 }
 
 /// Streams through a JSON object's top-level `"key": value` entries with zero intermediate
@@ -1239,7 +1350,7 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, mut raw: Vec<
                 if uri_raw.len() <= INLINE_THRESHOLD {
                     return;
                 }
-                let Some(uri) = parse_string(uri_raw) else {
+                let Some(uri) = parse_bounded_image_uri(uri_raw, media::URI_LIMIT) else {
                     return;
                 };
                 if let Some(reference) =
@@ -1765,5 +1876,13 @@ mod tests {
         assert_eq!(extracted["projectID"], "p1");
         assert_eq!(extracted["location"]["directory"], "/tmp/a");
         assert!(extracted["location"].get("workspaceID").is_some());
+
+        assert!(parse_bounded_image_uri("\"not-an-image\\u0020payload\"", 64).is_none());
+        let valid_uri = format!("\"data:image\\/png;base64,{}\"", "A".repeat(32));
+        assert_eq!(
+            parse_bounded_image_uri(&valid_uri, 64).as_deref(),
+            Some(format!("data:image/png;base64,{}", "A".repeat(32)).as_str())
+        );
+        assert!(parse_bounded_image_uri(&valid_uri, 32).is_none());
     }
 }

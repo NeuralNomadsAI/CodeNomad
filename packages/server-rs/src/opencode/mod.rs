@@ -65,8 +65,9 @@ impl Native {
     #[cfg(test)]
     pub(crate) fn test_connection(address: std::net::SocketAddr) -> Self {
         let url = Url::parse(&format!("http://{address}")).unwrap();
-        Self {
-            client: Client::builder().no_proxy().build().unwrap(),
+        let client = Client::builder().no_proxy().build().unwrap();
+        let inner = Arc::new(NativeInner {
+            client: client.clone(),
             endpoint: RwLock::new(Some(Arc::new(Endpoint {
                 url,
                 password: "synthetic".into(),
@@ -75,8 +76,10 @@ impl Native {
             }))),
             lifecycle: None,
             validated: Mutex::new(Some(Instant::now())),
-            acquiring: Default::default(),
-        }
+            inflight: Mutex::new(None),
+            retired: tokio::sync::Notify::new(),
+        });
+        Self { client, inner }
     }
 
     /// The bench's fixture daemon when the positional launch injects it, else the CLI lifecycle of `binary`.

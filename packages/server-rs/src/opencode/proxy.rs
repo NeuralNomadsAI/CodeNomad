@@ -149,13 +149,23 @@ fn relayed(response: &reqwest::Response) -> axum::http::response::Builder {
     )
 }
 
+/// Matches TS `proxy.ts:81` (`/^application\/json\b/i`) for `2xx` deferred `message.list`
+/// projection, including structured types like `application/json-patch+json`.
 fn is_json_content_type(headers: &axum::http::HeaderMap) -> bool {
     headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|ct| {
         let rest = ct.as_bytes();
         rest.len() >= 16
             && rest[..16].eq_ignore_ascii_case(b"application/json")
-            && rest[16..].trim_ascii_start().first().is_none_or(|&b| b == b';')
+            && rest.get(16).is_none_or(|&b| !(b.is_ascii_alphanumeric() || b == b'_'))
     })
+}
+
+fn is_hop_by_hop_connection_token(headers: &axum::http::HeaderMap, name: &str) -> bool {
+    headers
+        .get_all(header::CONNECTION)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .any(|val| val.split(',').any(|token| token.trim().eq_ignore_ascii_case(name)))
 }
 
 /// Non-OK native error classification (`transport.ts:59`: `contentType.includes("application/json")`).
@@ -1061,12 +1071,18 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
     }
     let mut upstream = app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password));
-    if let Some(accept) = head.headers.get(header::ACCEPT) {
+    if !is_hop_by_hop_connection_token(&head.headers, "accept")
+        && let Some(accept) = head.headers.get(header::ACCEPT)
+    {
         upstream = upstream.header(header::ACCEPT, accept);
     }
     if message_list {
-        for conditional in [header::IF_NONE_MATCH, header::IF_MODIFIED_SINCE] {
-            if let Some(value) = head.headers.get(&conditional) {
+        for conditional in
+            [header::IF_NONE_MATCH, header::IF_MODIFIED_SINCE, header::IF_MATCH, header::IF_UNMODIFIED_SINCE]
+        {
+            if !is_hop_by_hop_connection_token(&head.headers, conditional.as_str())
+                && let Some(value) = head.headers.get(&conditional)
+            {
                 upstream = upstream.header(conditional, value);
             }
         }
@@ -1085,25 +1101,16 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         return Err(upstream_error());
     }
     if let Some(session) = defer_media {
-        // One active projection builder at a time guarantees deadlock-free incremental
-        // reservation against the shared 256 MiB `ResponsePool::List` budget while already-built
-        // responses stream out concurrently and release permits on completion.
-        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+        // Allow up to 4 concurrent deferred `message.list` streams (64 MiB fair share each inside
+        // the 256 MiB `ResponsePool::List`, deadlock-free) and acquire a slot only after receiving
+        // a `2xx` JSON response so a slow upstream stream never starves other workspaces. Streams
+        // growing past 64 MiB serialize behind `LARGE_DEFER_SLOT` with bounded waits.
+        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+        static LARGE_DEFER_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+        const FAIR_LIST_SHARE: usize = 64 * 1024 * 1024;
+        const LARGE_WAIT: Duration = Duration::from_secs(15);
+        const POOL_WAIT: Duration = Duration::from_secs(30);
         let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
-        // Acquire the projection slot right before upstream dispatch so admission checks
-        // and `session.get` never occupy slots while waiting or after principal revocation.
-        let slot = match DEFER_SLOTS.try_acquire() {
-            Ok(permit) => permit,
-            Err(_) => tokio::select! {
-                biased;
-                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                _ = workspace_closed() => return Err(not_found()),
-                permit = tokio::time::timeout_at(list_deadline, DEFER_SLOTS.acquire()) => {
-                    permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
-                }
-            },
-        };
         if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
             return Err(upstream_error());
         }
@@ -1124,6 +1131,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             }
         };
         if response.status().is_success() && is_json_content_type(response.headers()) {
+            let slot = match DEFER_SLOTS.try_acquire() {
+                Ok(permit) => permit,
+                Err(_) => tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    permit = tokio::time::timeout(POOL_WAIT, DEFER_SLOTS.acquire()) => {
+                        permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+                    }
+                },
+            };
             let status = response.status();
             let headers: Vec<(&'static str, axum::http::HeaderValue)> =
                 ["content-type", "cache-control", "etag", "last-modified"]
@@ -1132,8 +1150,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     .collect();
             let mut stream = crate::sessions::media_stream::MessageListStream::new(id, session);
             let mut slot = Some(slot);
+            let mut large_slot: Option<tokio::sync::SemaphorePermit<'static>> = None;
             let mut mem: Option<tokio::sync::OwnedSemaphorePermit> = None;
             let mut held_units: u32 = 0;
+            let fair_units = crate::shared::response_memory_units(crate::shared::ResponsePool::List, FAIR_LIST_SHARE);
             loop {
                 let chunk = tokio::select! {
                     biased;
@@ -1153,13 +1173,24 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         .saturating_add(chunk.len())
                         .saturating_add(2 * crate::shared::RESPONSE_CHUNK),
                 );
+                if pre_needed > fair_units && large_slot.is_none() {
+                    large_slot = Some(tokio::select! {
+                        biased;
+                        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                        _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                        permit = tokio::time::timeout(LARGE_WAIT, LARGE_DEFER_SLOT.acquire()) => {
+                            permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+                        }
+                    });
+                }
                 if pre_needed > held_units {
+                    let wait = if pre_needed > fair_units { POOL_WAIT } else { super::PROXY_IDLE };
                     let extra = tokio::select! {
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                         permit = tokio::time::timeout(
-                            super::PROXY_IDLE,
+                            wait,
                             crate::shared::acquire_response_units(
                                 crate::shared::ResponsePool::List,
                                 pre_needed - held_units,
@@ -1174,8 +1205,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 }
                 let mut pos = 0;
                 while let Some(pending) = stream.feed(&chunk, &mut pos).map_err(|_| interrupted())? {
-                    // Account for the transient peak inside `project_item` where `raw` and the
-                    // `UndoPatch` originals coexist before `raw.truncate(); raw.shrink_to_fit()`.
+                    // Account for the transient peak inside `project_item` where `raw`, at most one
+                    // bounded `<= 8 MiB` decoded URI, and `UndoPatch` originals coexist.
                     let item_peak = pending.bytes.capacity().saturating_mul(2);
                     stream.evict_undo_if_needed(item_peak);
                     let peak_bytes = stream.retained_bytes().saturating_add(item_peak);
@@ -1183,13 +1214,24 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         return Err(interrupted());
                     }
                     let needed = crate::shared::response_memory_units(crate::shared::ResponsePool::List, peak_bytes);
+                    if needed > fair_units && large_slot.is_none() {
+                        large_slot = Some(tokio::select! {
+                            biased;
+                            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                            permit = tokio::time::timeout(LARGE_WAIT, LARGE_DEFER_SLOT.acquire()) => {
+                                permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+                            }
+                        });
+                    }
                     if needed > held_units {
+                        let wait = if needed > fair_units { POOL_WAIT } else { super::PROXY_IDLE };
                         let extra = tokio::select! {
                             biased;
                             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                             permit = tokio::time::timeout(
-                                super::PROXY_IDLE,
+                                wait,
                                 crate::shared::acquire_response_units(
                                     crate::shared::ResponsePool::List,
                                     needed - held_units,
@@ -1242,13 +1284,24 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 }
                 let needed =
                     crate::shared::response_memory_units(crate::shared::ResponsePool::List, stream.retained_bytes());
+                if needed > fair_units && large_slot.is_none() {
+                    large_slot = Some(tokio::select! {
+                        biased;
+                        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                        _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                        permit = tokio::time::timeout(LARGE_WAIT, LARGE_DEFER_SLOT.acquire()) => {
+                            permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+                        }
+                    });
+                }
                 if needed > held_units {
+                    let wait = if needed > fair_units { POOL_WAIT } else { super::PROXY_IDLE };
                     let extra = tokio::select! {
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                         permit = tokio::time::timeout(
-                            super::PROXY_IDLE,
+                            wait,
                             crate::shared::acquire_response_units(
                                 crate::shared::ResponsePool::List,
                                 needed - held_units,
@@ -1286,12 +1339,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 crate::shared::response_memory_units(crate::shared::ResponsePool::List, payload_len)
             };
             if final_units > held_units {
+                let wait = if final_units > fair_units { POOL_WAIT } else { super::PROXY_IDLE };
                 let extra = tokio::select! {
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                     permit = tokio::time::timeout(
-                        super::PROXY_IDLE,
+                        wait,
                         crate::shared::acquire_response_units(
                             crate::shared::ResponsePool::List,
                             final_units - held_units,
@@ -1312,6 +1366,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             } else if mem.is_none() {
                 return Err(interrupted());
             }
+            drop(large_slot);
             drop(slot);
             if !app.native.current(&endpoint) {
                 return Err(upstream_error());
@@ -1347,7 +1402,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 .body(crate::shared::permit_body_chunks(payload, mem, abort))
                 .map_err(|_| upstream_error());
         }
-        drop(slot);
         let status = response.status();
         if status.is_redirection() && status != Status::NOT_MODIFIED {
             app.native.invalidate(&endpoint);
@@ -1779,9 +1833,10 @@ fn deferred_message_list_headers_and_location_context_validation() {
         ("application/json", true),
         ("Application/JSON; charset=utf-8", true),
         ("application/json ; charset=utf-8", true),
-        ("application/json foo", false),
-        ("application/json-patch+json", false),
+        ("application/json foo", true),
+        ("application/json-patch+json", true),
         ("application/jsonp", false),
+        ("application/json_v2", false),
         ("text/plain", false),
     ] {
         headers.insert(header::CONTENT_TYPE, ct.parse().unwrap());

@@ -219,41 +219,25 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         println!("{local_url}");
     }
     let done = shutdown.clone();
-    let shutdown_at = Arc::new(std::sync::OnceLock::new());
-    let mark_shutdown = shutdown_at.clone();
     let served = shared::serve_local(listener, local, done, move || {
-        let _ = mark_shutdown.set(tokio::time::Instant::now());
         // Event streams end, as `closeSseClients` does, so the drain can finish.
         state.events.shutdown.cancel();
     })
     .await;
     shutdown.cancel();
-    // Share one 25 s graceful-drain deadline across local HTTP, HTTPS, and the automation bridge
-    // so sequential waits never stack past the desktop host's 30 s stop window.
-    let drain_deadline = *shutdown_at.get_or_init(tokio::time::Instant::now) + std::time::Duration::from_secs(25);
+    // Wait for local HTTP, HTTPS, and automation bridge handlers to finish within their own
+    // contractual deadlines before tearing down plugin leases and removing the bridge registration
+    // (TS `http-server.ts:243-273`, `index.ts:753-768`, `shutdown.ts:130-146`).
     let (remote, bridge_ok) = tokio::join!(
         async {
             match remote {
-                Some(mut task) => match tokio::time::timeout_at(drain_deadline, &mut task).await {
-                    Ok(joined) => joined.map_err(|e| e.to_string()).and_then(|r| r.map_err(|e| e.to_string())),
-                    Err(_) => {
-                        task.abort();
-                        Err("remote server shutdown drain timed out".into())
-                    }
-                },
+                Some(task) => task.await.map_err(|e| e.to_string()).and_then(|r| r.map_err(|e| e.to_string())),
                 None => Ok(()),
             }
         },
         async {
             match bridge {
-                Some(mut task) => match tokio::time::timeout_at(drain_deadline, &mut task).await {
-                    Ok(Ok(Ok(()))) => true,
-                    Ok(Ok(Err(_))) | Ok(Err(_)) => false,
-                    Err(_) => {
-                        task.abort();
-                        false
-                    }
-                },
+                Some(task) => matches!(task.await, Ok(Ok(()))),
                 None => true,
             }
         }

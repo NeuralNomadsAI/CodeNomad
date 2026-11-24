@@ -20,7 +20,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{sync::OnceCell, time::Instant};
+use tokio::{sync::Mutex, time::Instant};
 
 use super::{contracts, history};
 use crate::{
@@ -101,7 +101,7 @@ pub(super) async fn handle(
     let root = display(&workspace.path);
     let run = async {
         let Ok(endpoint) = app.native.acquire(deadline).await else { return Ok(blocked()) };
-        let scope = Scope { app: &app, workspace, endpoint, root, deadline, inventory: OnceCell::new() };
+        let scope = Scope { app: &app, workspace, endpoint, root, deadline, inventory: Mutex::new(None) };
         let result = if ranked {
             ranked::run(&scope, input, token.as_deref()).await
         } else {
@@ -132,21 +132,24 @@ struct Scope<'a> {
     endpoint: Arc<Endpoint>,
     root: Arc<AtomicBool>,
     deadline: Instant,
-    inventory: OnceCell<Option<HistoryInventory>>,
+    inventory: Mutex<Option<(u64, Arc<HistoryInventory>)>>,
 }
 struct Owned {
     directory: String,
     path: PathBuf,
+    anchor: PathBuf,
     identity: same_file::Handle,
     proof: DirectoryProof,
     fence: Arc<AtomicBool>,
+    inventory_rev: u64,
 }
 impl Owned {
-    fn current(&self, scope: &Scope<'_>) -> bool {
+    fn current_local(&self, scope: &Scope<'_>) -> bool {
         self.fence.load(Relaxed)
             && scope.current()
-            && crate::files::paths::canonical(&scope.app.scope, &self.directory).as_ref() == Some(&self.path)
-            && same_file::Handle::from_path(&self.path).is_ok_and(|identity| identity == self.identity)
+            && worktrees::ownership::resolve_media_path(&scope.app.scope, &self.directory)
+                .is_some_and(|(path, anchor)| path == self.path && anchor == self.anchor)
+            && same_file::Handle::from_path(&self.anchor).is_ok_and(|identity| identity == self.identity)
             && self.proof.history_live(&scope.workspace.path, &self.path)
     }
 }
@@ -156,21 +159,87 @@ impl Scope<'_> {
             && self.app.native.current(&self.endpoint)
             && super::permission_mode::workspace_current(self.app, &self.workspace)
     }
-    async fn own(&self, directory: &str) -> Option<Owned> {
-        let path = crate::files::paths::canonical(&self.app.scope, directory)?;
-        let identity = same_file::Handle::from_path(&path).ok()?;
-        let fence = display(&path);
-        let proof = self.inventory().await?.prove(&self.workspace.path, &path)?;
-        let owned = Owned { directory: directory.into(), path, identity, proof, fence };
-        owned.current(self).then_some(owned)
+    fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
     }
-    async fn inventory(&self) -> Option<&HistoryInventory> {
-        self.inventory.get_or_init(|| HistoryInventory::load(self.app, &self.workspace)).await.as_ref()
+    async fn owned_current(&self, owned: &Owned) -> bool {
+        if !owned.current_local(self) {
+            return false;
+        }
+        if worktrees::inventory_revision(self.app) == owned.inventory_rev {
+            return true;
+        }
+        self.own(&owned.directory).await.is_some()
+    }
+    async fn own(&self, directory: &str) -> Option<Owned> {
+        let (path, anchor) = worktrees::ownership::resolve_media_path(&self.app.scope, directory)?;
+        let identity = same_file::Handle::from_path(&anchor).ok()?;
+        let fence = display(&anchor);
+        let (inventory_rev, inventory) = self.inventory().await?;
+        let proof = inventory.prove(&self.workspace.path, &path)?;
+        let owned = Owned { directory: directory.into(), path, anchor, identity, proof, fence, inventory_rev };
+        owned.current_local(self).then_some(owned)
+    }
+    async fn inventory(&self) -> Option<(u64, Arc<HistoryInventory>)> {
+        let rev = worktrees::inventory_revision(self.app);
+        let mut guard = self.inventory.lock().await;
+        if let Some((cached_rev, inv)) = guard.as_ref()
+            && *cached_rev == rev
+        {
+            return Some((*cached_rev, inv.clone()));
+        }
+        let loaded = Arc::new(HistoryInventory::load(self.app, &self.workspace).await?);
+        let loaded_rev = worktrees::inventory_revision(self.app);
+        *guard = Some((loaded_rev, loaded.clone()));
+        Some((loaded_rev, loaded))
+    }
+    /// Matches TS `session-history.ts:67-72` & `session-history-ranked.ts:73-75`: for any non-root
+    /// worktree target, resolve native `GET /api/location` and confirm it echoes the exact owned
+    /// directory with no `workspaceID` before preparing plugins or calling the history RPC.
+    async fn verify_native_location(&self, directory: &str, include_header: bool) -> Result<(), Option<Error>> {
+        if self.workspace.location["directory"].as_str() == Some(directory) {
+            return Ok(());
+        }
+        let left = self.remaining();
+        if left.is_zero() || !self.current() {
+            return Err(None);
+        }
+        let mut req = self
+            .app
+            .native
+            .client
+            .get(self.endpoint.url.join("/api/location").map_err(|_| None)?)
+            .basic_auth("opencode", Some(&self.endpoint.password))
+            .query(&[("location[directory]", directory)])
+            .timeout(left);
+        if include_header {
+            req = req.header("x-opencode-directory", crate::sessions::media::encode(directory));
+        }
+        let response = req.send().await.map_err(|_| None)?;
+        if !self.current() || !response.status().is_success() {
+            return Err(None);
+        }
+        let raw = crate::opencode::read_json(response, 128 * 1024).await.map_err(|_| None)?;
+        let loc = raw.get("data").unwrap_or(&raw);
+        if !self.current() {
+            return Err(None);
+        }
+        if loc.get("workspaceID").is_some() || loc["directory"].as_str() != Some(directory) {
+            return Err(Some(location_denied()));
+        }
+        let rechecked = self.own(directory).await;
+        if !self.current() {
+            return Err(None);
+        }
+        if rechecked.is_none() {
+            return Err(Some(location_denied()));
+        }
+        Ok(())
     }
     async fn directories(&self) -> Option<Vec<String>> {
         let root = self.workspace.location["directory"].as_str()?.to_owned();
         let mut all = vec![root.clone()];
-        all.extend(self.inventory().await?.directories().map(str::to_owned));
+        all.extend(self.inventory().await?.1.directories().map(str::to_owned));
         all.sort();
         all.dedup();
         let normalized = |directory: &str| {
@@ -193,13 +262,13 @@ impl Scope<'_> {
     async fn call(&self, owned: &Owned, method: &str, input: &Value, source: Option<(&str, &Value)>) -> Option<Call> {
         let ready = self.deadline.min(Instant::now() + Duration::from_secs(5));
         history::prepare(self.app, &self.endpoint, &owned.directory, ready).await?;
-        if !self.session_current(source).await || !owned.current(self) {
+        if !self.session_current(source).await || !self.owned_current(owned).await {
             return None;
         }
-        let left = self.deadline.saturating_duration_since(Instant::now());
+        let left = self.remaining();
         let (status, bytes) =
             history::rpc_with_timeout(self.app, &self.endpoint, &owned.directory, method, input, left).await.ok()?;
-        if !self.session_current(source).await || !owned.current(self) {
+        if !self.session_current(source).await || !self.owned_current(owned).await {
             return None;
         }
         let value: Value = serde_json::from_slice(&bytes).ok()?;
@@ -234,8 +303,22 @@ impl Scope<'_> {
         match source {
             None => true,
             Some((session, before)) => {
-                crate::opencode::session_record_at(self.app, &self.endpoint, session).await.is_ok_and(|current| {
-                    current["location"] == before["location"] && current["projectID"] == before["projectID"]
+                let left = self.remaining();
+                if left.is_zero() {
+                    return false;
+                }
+                crate::opencode::session_record_opaque_at(
+                    self.app,
+                    &self.endpoint,
+                    session,
+                    left,
+                    true,
+                    16 * 1024 * 1024,
+                )
+                .await
+                .is_ok_and(|current| {
+                    current["location"]["directory"] == before["location"]["directory"]
+                        && current["location"].get("workspaceID") == before["location"].get("workspaceID")
                 })
             }
         }
@@ -257,18 +340,17 @@ impl Scope<'_> {
         if !self.current() {
             return None;
         }
-        Some(
-            sessions
-                .iter()
-                .filter(|owner| {
-                    owner.get("workspaceID").is_none()
-                        && owner["directory"]
-                            .as_str()
-                            .and_then(|dir| owners[dir].as_ref())
-                            .is_some_and(|owned| owned.current(self))
-                })
-                .collect(),
-        )
+        let mut out = Vec::with_capacity(sessions.len());
+        for owner in sessions {
+            if owner.get("workspaceID").is_none()
+                && let Some(dir) = owner["directory"].as_str()
+                && let Some(owned) = owners.get(dir).and_then(Option::as_ref)
+                && self.owned_current(owned).await
+            {
+                out.push(owner);
+            }
+        }
+        Some(out)
     }
 }
 enum Call {
@@ -288,7 +370,20 @@ struct QueryCursor {
 async fn query(scope: &Scope<'_>, mut input: Value, token: Option<&str>) -> Result<Response, Error> {
     let session = input["sessionID"].as_str().map(str::to_owned);
     let source = if let Some(session) = &session {
-        let Ok(record) = crate::opencode::session_record_at(scope.app, &scope.endpoint, session).await else {
+        let left = scope.remaining();
+        if left.is_zero() {
+            return Ok(blocked());
+        }
+        let Ok(record) = crate::opencode::session_record_opaque_at(
+            scope.app,
+            &scope.endpoint,
+            session,
+            left,
+            true,
+            16 * 1024 * 1024,
+        )
+        .await
+        else {
             return Ok(blocked());
         };
         if record["location"].get("workspaceID").is_some() {
@@ -336,6 +431,13 @@ async fn query(scope: &Scope<'_>, mut input: Value, token: Option<&str>) -> Resu
         return Ok(blocked());
     }
     let owned = owned.ok_or_else(location_denied)?;
+    if source.is_none() {
+        match scope.verify_native_location(directory, false).await {
+            Ok(()) => {}
+            Err(Some(err)) => return Err(err),
+            Err(None) => return Ok(blocked()),
+        }
+    }
     if let Some(page) = page {
         input["cursor"] = json!(page);
     }
@@ -349,7 +451,7 @@ async fn query(scope: &Scope<'_>, mut input: Value, token: Option<&str>) -> Resu
     }
     let owners = output.as_object_mut().and_then(|out| out.remove("sessions")).unwrap_or_default();
     let Some(approved) = scope.filter(list(&owners), session.as_deref()).await else { return Ok(blocked()) };
-    if !owned.current(scope) {
+    if !scope.owned_current(&owned).await {
         return Ok(blocked());
     }
     let ids: HashSet<_> = approved.iter().filter_map(|owner| owner["sessionID"].as_str()).collect();

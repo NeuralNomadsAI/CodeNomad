@@ -7,6 +7,10 @@ mod inventory;
 pub mod linked;
 pub mod ownership;
 
+pub(crate) fn inventory_revision(app: &App) -> u64 {
+    inventory::revision(app)
+}
+
 pub fn routes() -> axum::Router<Shared> {
     use axum::routing::{delete, get, post};
     axum::Router::new()

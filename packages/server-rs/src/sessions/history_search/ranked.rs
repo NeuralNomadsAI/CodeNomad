@@ -102,6 +102,11 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
             let Some(page) = prior.pages.iter().find(|page| page.index == index) else { continue };
             request["cursor"] = json!(page.page);
         }
+        match scope.verify_native_location(&owned.directory, true).await {
+            Ok(()) => {}
+            Err(Some(err)) => return Err(err),
+            Err(None) => return Ok(blocked()),
+        }
         let output = match scope.call(owned, "historyRanked", &request, None).await {
             Some(Call::Result(output)) => output,
             Some(Call::Unsupported) if token.is_some() => return Ok(status("restart_required")),
@@ -150,8 +155,13 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
     if approved.len() != sessions.len() {
         add_exclusion(&mut exclusions, "foreign_directory");
     }
-    if !root.current(scope) || fences.iter().any(|fence| !fence.current(scope)) {
+    if !scope.owned_current(&root).await {
         return Ok(blocked());
+    }
+    for fence in &fences {
+        if !scope.owned_current(fence).await {
+            return Ok(blocked());
+        }
     }
     let ids: HashSet<_> = approved.iter().filter_map(|owner| owner["sessionID"].as_str()).collect();
     hits.sort_by_key(|&(rank, index, _)| (rank, index));
