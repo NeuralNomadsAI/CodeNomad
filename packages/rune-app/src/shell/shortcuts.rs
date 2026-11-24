@@ -1,6 +1,6 @@
 use super::{launcher_replaces_project, notifications, sidebar, toggle_panel};
 use crate::{State, launcher, settings, workspace};
-use rune::{KeyEvent, Tx, edit::TextEdit};
+use rune::{Key, KeyEvent, Tx, edit::TextEdit};
 
 const APP_TAB_IDS: [&str; 9] = [
     "app-tab-1",
@@ -51,6 +51,8 @@ fn any_editor_composing(s: &State) -> bool {
         || s.files
             .as_ref()
             .is_some_and(|ui| ui.document.edit().is_composing())
+        || crate::git::is_composing(s)
+        || workspace::missions_composing(s)
         || s.screen.launcher().is_some_and(|l| {
             l.address.is_composing()
                 || l.password.is_composing()
@@ -67,8 +69,28 @@ fn any_editor_composing(s: &State) -> bool {
         })
 }
 
-fn focused_text_field(tx: &Tx) -> bool {
-    tx.focused() == Some("input")
+fn focused_text_field(s: &State, tx: &Tx) -> bool {
+    let focused = tx.focused();
+    if focused == Some("input") {
+        return true;
+    }
+    #[cfg(target_arch = "wasm32")]
+    if focused
+        .and_then(|key| key.strip_prefix("input-"))
+        .is_some_and(|epoch| epoch.parse().ok() == Some(s.web_composer_input_epoch))
+    {
+        return true;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = s;
+    false
+}
+
+fn field_key_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
+    let no_command_mod = !event.mods.ctrl && !event.mods.cmd && !event.mods.alt && !event.mods.logo;
+    no_command_mod
+        && matches!(event.key, Key::PageUp | Key::PageDown | Key::Insert)
+        && focused_text_field(s, tx)
 }
 
 fn authentication_required(s: &State) -> bool {
@@ -90,79 +112,113 @@ fn has_active_session(s: &State) -> bool {
 fn can_browse_home(s: &State, tx: &Tx) -> bool {
     crate::platform::folder_picker_available()
         && launcher_replaces_project(s)
-        && !focused_text_field(tx)
+        && !focused_text_field(s, tx)
         && s.screen
             .launcher()
             .is_some_and(|l| l.connection.is_some() && !l.authentication_required)
 }
 
+enum Action {
+    BrowseFolder,
+    NewInstance,
+    CloseInstance,
+    InstancePrev,
+    InstanceNext,
+    AppTab(usize),
+    SessionNew,
+    SessionPrev,
+    SessionNext,
+    CloseSession,
+    SessionTab(usize),
+}
+
 pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
-    if overlay_open(s) || any_editor_composing(s) {
+    if authentication_required(s)
+        || overlay_open(s)
+        || any_editor_composing(s)
+        || field_key_blocked(s, event, tx)
+    {
         return false;
     }
-    if can_browse_home(s, tx) && settings::matches_shortcut(s, "browse-folder", event, tx) {
-        let ready = workspace::input_ready(s) && s.screen.launcher().is_some_and(|l| !l.pending);
-        if ready {
-            crate::platform::browse(s, tx);
+    let browse_home = can_browse_home(s, tx);
+    let has_workspace = s.workspace.is_some();
+    let project_open = has_project(s);
+    let session_open = project_open && has_active_session(s);
+    let Some(action) = settings::match_shortcut(s, event, tx, |matches| {
+        if browse_home && matches("browse-folder") {
+            return Some(Action::BrowseFolder);
         }
+        if has_workspace {
+            if matches("new-instance") {
+                return Some(Action::NewInstance);
+            }
+            if matches("close-instance") {
+                return Some(Action::CloseInstance);
+            }
+            if matches("instance-prev") {
+                return Some(Action::InstancePrev);
+            }
+            if matches("instance-next") {
+                return Some(Action::InstanceNext);
+            }
+            if let Some(index) = APP_TAB_IDS.iter().position(|id| matches(id)) {
+                return Some(Action::AppTab(index));
+            }
+        }
+        if project_open {
+            if matches("session-new") {
+                return Some(Action::SessionNew);
+            }
+            if matches("session-prev") {
+                return Some(Action::SessionPrev);
+            }
+            if matches("session-next") {
+                return Some(Action::SessionNext);
+            }
+            if session_open && matches("close-session") {
+                return Some(Action::CloseSession);
+            }
+            if let Some(index) = SESSION_TAB_IDS.iter().position(|id| matches(id)) {
+                return Some(Action::SessionTab(index));
+            }
+        }
+        None
+    }) else {
+        return false;
+    };
+    if tx.key_repeat() {
         return true;
     }
-    if !authentication_required(s)
-        && s.workspace.is_some()
-        && settings::matches_shortcut(s, "new-instance", event, tx)
-    {
-        if workspace::can_new(s) {
-            workspace::new_tab(s, tx);
+    match action {
+        Action::BrowseFolder => {
+            let ready =
+                workspace::input_ready(s) && s.screen.launcher().is_some_and(|l| !l.pending);
+            if ready {
+                crate::platform::browse(s, tx);
+            }
         }
-        return true;
-    }
-    if s.workspace.is_some() {
-        if settings::matches_shortcut(s, "close-instance", event, tx) {
+        Action::NewInstance => {
+            if workspace::can_new(s) {
+                workspace::new_tab(s, tx);
+            }
+        }
+        Action::CloseInstance => {
             if let Some(key) = s.workspace.as_ref().map(|ui| ui.active_key().to_owned()) {
                 workspace::close(s, &key, tx);
             }
-            return true;
         }
-        if settings::matches_shortcut(s, "instance-prev", event, tx) {
-            workspace::select_relative(s, false, tx);
-            return true;
-        }
-        if settings::matches_shortcut(s, "instance-next", event, tx) {
-            workspace::select_relative(s, true, tx);
-            return true;
-        }
-        for (index, id) in APP_TAB_IDS.iter().enumerate() {
-            if settings::matches_shortcut(s, id, event, tx) {
-                workspace::select_index(s, index, tx);
-                return true;
-            }
-        }
-    }
-    if has_project(s) {
-        if settings::matches_shortcut(s, "session-new", event, tx) {
-            open_new_session(s, tx);
-            return true;
-        }
-        if settings::matches_shortcut(s, "session-prev", event, tx) {
-            select_relative_session(s, false, tx);
-            return true;
-        }
-        if settings::matches_shortcut(s, "session-next", event, tx) {
-            select_relative_session(s, true, tx);
-            return true;
-        }
-        if has_active_session(s) && settings::matches_shortcut(s, "close-session", event, tx) {
+        Action::InstancePrev => workspace::select_relative(s, false, tx),
+        Action::InstanceNext => workspace::select_relative(s, true, tx),
+        Action::AppTab(index) => workspace::select_index(s, index, tx),
+        Action::SessionNew => open_new_session(s, tx),
+        Action::SessionPrev => select_relative_session(s, false, tx),
+        Action::SessionNext => select_relative_session(s, true, tx),
+        Action::CloseSession => {
             launcher::close_session(s, tx);
-            return true;
         }
-        for (index, id) in SESSION_TAB_IDS.iter().enumerate() {
-            if settings::matches_shortcut(s, id, event, tx) {
-                select_session_index(s, index, tx);
-                return true;
-            }
-        }
+        Action::SessionTab(index) => select_session_index(s, index, tx),
     }
-    false
+    true
 }
 
 fn open_new_session(s: &mut State, tx: &mut Tx) {

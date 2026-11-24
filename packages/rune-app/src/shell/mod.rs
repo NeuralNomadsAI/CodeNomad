@@ -141,34 +141,33 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     if panel_keys(s, event, tx) {
         return true;
     }
-    if tx.key_repeat() {
-        return false;
-    }
-    if event.mods == Mods::default() {
-        let handled = match event.key {
-            Key::Escape if crate::git::has_preview(s) => {
-                crate::git::close_preview(s);
-                tx.instant();
-                true
+    if !tx.key_repeat() && event.mods == Mods::default() && event.key == Key::Escape {
+        if crate::git::has_preview(s) {
+            crate::git::close_preview(s);
+            tx.instant();
+            return true;
+        }
+        if crate::files::has_preview(s) && !s.screen.is_launcher() {
+            if let Some(files) = &mut s.files {
+                files.close_reader();
             }
-            Key::Escape if crate::files::has_preview(s) && !s.screen.is_launcher() => {
-                if let Some(files) = &mut s.files {
-                    files.close_reader();
-                }
-                crate::chat::reading::restore_position(s, tx);
-                true
-            }
-            Key::Function(11) if crate::platform::titlebar::available() => {
-                tx.toggle_full_screen();
-                true
-            }
-            _ => false,
-        };
-        if handled {
+            crate::chat::reading::restore_position(s, tx);
             return true;
         }
     }
-    shortcuts::dispatch(s, event, tx)
+    if shortcuts::dispatch(s, event, tx) {
+        return true;
+    }
+    if event.mods == Mods::default()
+        && event.key == Key::Function(11)
+        && crate::platform::titlebar::available()
+    {
+        if !tx.key_repeat() {
+            tx.toggle_full_screen();
+        }
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]

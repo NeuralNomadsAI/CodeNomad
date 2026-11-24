@@ -223,11 +223,45 @@ fn close_session_clears_active_session_preserves_draft_and_honors_guards() {
         session: "session".into(),
         ..Backend::unauthenticated("http://127.0.0.1:9/").unwrap()
     };
+    if let Some(l) = s.screen.launcher_mut() {
+        l.connection = Some(Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
     workspace::bound(&mut s, &backend);
+    let mut files = crate::files::Ui::new(
+        backend.clone(),
+        "/repo".into(),
+        s.reads.clone(),
+        s.wake.clone(),
+    )
+    .with_documents(s.documents.clone(), "tab-0".into());
+    files.online(true);
+    files.open("draft.txt".into());
+    files.reader.scene(Ok(codenomad_client::files::Preview {
+        workspace_id: backend.workspace.clone(),
+        path: "draft.txt".into(),
+        bytes: b"original".to_vec(),
+        version: Some("v1".into()),
+    }));
+    files.document.poll(&mut files.reader);
+    let scope = files.document.scope();
+    files.document.input(scope).replace_text("unsaved edit");
+    files.document.changed(scope);
+    s.files = Some(files);
     s.draft = TextEdit::new("unsent draft");
     let mut rt = project_runtime(s);
     assert!(!rt.state.screen.is_launcher());
     assert_eq!(workspace::active_session(&rt.state), Some("session"));
+
+    // Dirty file editor blocks close-session.
+    send_key(&mut rt, Key::Command('w'), primary_mods(true));
+    assert!(!rt.state.screen.is_launcher());
+    assert_eq!(workspace::active_session(&rt.state), Some("session"));
+
+    if let Some(files) = &mut rt.state.files {
+        let scope = files.document.scope();
+        files.document.input(scope).replace_text("original");
+        files.document.changed(scope);
+    }
 
     // Streaming blocks close-session.
     rt.state.phase = Phase::Streaming;
@@ -235,12 +269,14 @@ fn close_session_clears_active_session_preserves_draft_and_honors_guards() {
     assert!(!rt.state.screen.is_launcher());
     assert_eq!(workspace::active_session(&rt.state), Some("session"));
 
-    // Ready closes the active session, keeps the project open, and saves the draft.
+    // Ready closes the active session, keeps the project + Files/Git attached, and saves the draft.
     rt.state.phase = Phase::Ready;
     send_key(&mut rt, Key::Command('w'), primary_mods(true));
     assert!(rt.state.screen.is_launcher());
     assert!(rt.state.screen.launcher().unwrap().project.is_some());
     assert_eq!(workspace::active_session(&rt.state), None);
+    assert!(rt.state.files.is_some());
+    assert!(rt.state.git.owner.is_some());
     let snap = rt.state.workspace.as_ref().unwrap().snapshot();
     let workspace::Tab::Workspace(saved) = &snap.tabs[0] else {
         panic!("expected workspace tab");
@@ -480,4 +516,89 @@ fn modals_pickers_composing_inputs_and_repeat_block_global_shortcuts() {
     send_key(&mut rt, Key::Text("a".into()), Mods::default());
     assert_eq!(rt.state.draft.text, "a");
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+
+    // Unmodified PageUp remapped to a global shortcut does not fire while a text input has focus.
+    settings::fixture_shortcuts(&rt.state, json!({"instance-next": [{"key": "pageup"}]}));
+    send_key(&mut rt, Key::PageUp, Mods::default());
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+    rt.update(|_, tx| tx.focus("sessions-panel-toggle", true));
+    settle(&mut rt);
+    send_key(&mut rt, Key::PageUp, Mods::default());
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+}
+
+#[test]
+fn authentication_required_git_ime_f11_override_and_repeat_consumption() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static LAST_HANDLED: AtomicBool = AtomicBool::new(false);
+    fn tracked_keys(s: &mut State, event: &KeyEvent, tx: &mut rune::Tx) -> bool {
+        let handled = crate::shell::keys(s, event, tx);
+        LAST_HANDLED.store(handled, Ordering::SeqCst);
+        handled
+    }
+
+    let mut rt = project_runtime(workspace_state(2));
+    rt.on_key = Some(tracked_keys);
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+
+    // Authentication gate blocks all tab navigation and lifecycle shortcuts.
+    rt.state
+        .screen
+        .launcher_mut()
+        .unwrap()
+        .authentication_required = true;
+    for (key, mods) in [
+        (Key::Command(']'), primary_mods(false)),
+        (Key::Command('['), primary_mods(false)),
+        (Key::Command('2'), primary_mods(false)),
+        (Key::Command('w'), primary_mods(false)),
+        (Key::Command('n'), primary_mods(false)),
+    ] {
+        send_key(&mut rt, key, mods);
+    }
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+    assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 2);
+    rt.state
+        .screen
+        .launcher_mut()
+        .unwrap()
+        .authentication_required = false;
+
+    // Git commit draft IME composition blocks global shortcuts.
+    let backend = Backend {
+        workspace: "header-windows".into(),
+        session: "session".into(),
+        ..Backend::unauthenticated("http://127.0.0.1:9/").unwrap()
+    };
+    crate::git::connected(&mut rt.state, &backend);
+    crate::git::fixture_commit_preedit(&mut rt.state, "ka");
+    assert!(crate::git::is_composing(&rt.state));
+    send_key(&mut rt, Key::Command(']'), primary_mods(false));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+    crate::git::fixture_commit_preedit(&mut rt.state, "");
+    assert!(!crate::git::is_composing(&rt.state));
+
+    // Repeat consumes matching global shortcuts without executing, and leaves unmatched keys alone.
+    LAST_HANDLED.store(false, Ordering::SeqCst);
+    rt.repeat_key(KeyEvent {
+        key: Key::Command(']'),
+        mods: primary_mods(false),
+    });
+    settle(&mut rt);
+    assert!(LAST_HANDLED.load(Ordering::SeqCst));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+
+    LAST_HANDLED.store(true, Ordering::SeqCst);
+    rt.repeat_key(KeyEvent {
+        key: Key::Function(12),
+        mods: Mods::default(),
+    });
+    settle(&mut rt);
+    assert!(!LAST_HANDLED.load(Ordering::SeqCst));
+
+    // Remapping a shortcut to F11 runs the shortcut instead of the default fullscreen fallback.
+    settings::fixture_shortcuts(&rt.state, json!({"instance-next": [{"key": "f11"}]}));
+    send_key(&mut rt, Key::Function(11), Mods::default());
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
 }

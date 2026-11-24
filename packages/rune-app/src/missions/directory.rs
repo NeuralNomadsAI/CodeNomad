@@ -69,6 +69,10 @@ pub(crate) struct Panel {
 const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
 
 impl Panel {
+    pub(crate) fn is_composing(&self) -> bool {
+        self.filter.is_composing()
+    }
+
     pub(crate) fn new(backend: Backend, project: Option<String>, reads: Reads, wake: Wake) -> Self {
         let (out, incoming) = bounded(4);
         Self {

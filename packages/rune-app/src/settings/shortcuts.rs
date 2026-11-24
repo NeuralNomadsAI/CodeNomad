@@ -144,12 +144,24 @@ pub(crate) fn matches_save(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
 
 pub(crate) fn matches_shortcut(s: &State, action: &str, event: &KeyEvent, tx: &Tx) -> bool {
     let preferences = s.settings.shared.borrow();
-    catalog::resolve(&preferences, action)
+    matches_shortcut_in(&preferences, action, event, tx)
+}
+
+pub(super) fn matches_shortcut_in(
+    preferences: &Preferences,
+    action: &str,
+    event: &KeyEvent,
+    tx: &Tx,
+) -> bool {
+    catalog::resolve(preferences, action)
         .iter()
         .any(|chord| matches(*chord, event, physical_slot(tx), tx.key_base()))
 }
 
-fn canonical_char(c: char) -> char {
+fn canonical_char(c: char, shift: bool) -> char {
+    if !shift {
+        return c;
+    }
     match c {
         '{' => '[',
         '}' => ']',
@@ -176,12 +188,15 @@ fn matches(chord: Chord, event: &KeyEvent, physical: Option<char>, base: Option<
     // Unlike Rune's menu chords, Solid uses the typed character outside digit/bracket slots.
     if let ChordKey::Char(expected) = chord.key() {
         let char = physical.or_else(|| match &event.key {
-            Key::Command(c) => Some(canonical_char(logical_command(*c, event, base))),
+            Key::Command(c) => Some(canonical_char(
+                logical_command(*c, event, base),
+                event.mods.shift,
+            )),
             Key::Text(text) => text
                 .chars()
                 .next()
                 .filter(|c| c.len_utf8() == text.len())
-                .map(canonical_char),
+                .map(|c| canonical_char(c, event.mods.shift)),
             _ => None,
         });
         let Some(key) = char.filter(|actual| actual.to_lowercase().eq(expected.to_lowercase()))
@@ -381,6 +396,16 @@ fn bracket_and_digit_slots_match_physical_and_shifted_logical_keys() {
             mods: shift_ctrl,
         },
         Some('2'),
+        None
+    ));
+    let instance_next = catalog::resolve(&prefs, "instance-next");
+    assert!(!matches(
+        instance_next[0],
+        &KeyEvent {
+            key: Key::Command('}'),
+            mods: ctrl,
+        },
+        None,
         None
     ));
 }

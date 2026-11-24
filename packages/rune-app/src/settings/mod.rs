@@ -42,7 +42,7 @@ use connection::{provider_changed, provider_stopped};
 pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_notification};
 #[cfg(test)]
 pub(crate) use delivery::{notification_fixture, notification_test_config};
-pub(crate) use shortcuts::{matches_shortcut, with_shortcut_label};
+pub(crate) use shortcuts::with_shortcut_label;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
 pub(crate) use window::{close, direct_entry, entries};
@@ -74,6 +74,17 @@ pub(crate) struct Host {
 
 pub(crate) fn message_usage_visibility(s: &State) -> &'static str {
     s.settings.shared.borrow().usage_visibility(false)
+}
+
+pub(crate) fn match_shortcut<T>(
+    s: &State,
+    event: &rune::KeyEvent,
+    tx: &rune::Tx,
+    find: impl FnOnce(&dyn Fn(&str) -> bool) -> Option<T>,
+) -> Option<T> {
+    let preferences = s.settings.shared.borrow();
+    let matches = |id: &str| shortcuts::matches_shortcut_in(&preferences, id, event, tx);
+    find(&matches)
 }
 
 pub(crate) fn blocks_shell_shortcuts(s: &State) -> bool {
@@ -266,7 +277,10 @@ pub(crate) fn poll(s: &mut State) -> bool {
             crate::workspace::mission_event(s, Some(event));
         }
     }
-    changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
+    preferences_changed
+        | changed
+        | expired
+        | (display != std::mem::replace(&mut s.settings.last_display, display))
 }
 
 #[cfg(test)]

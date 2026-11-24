@@ -58,6 +58,22 @@ pub(crate) fn overlay_open(s: &State) -> bool {
         .is_some_and(|ui| ui.open_menu.is_some() || ui.picker || ui.placement_picker.is_some())
 }
 
+pub(crate) fn is_composing(s: &State) -> bool {
+    s.git
+        .owner
+        .as_ref()
+        .is_some_and(|ui| ui.changes.draft.is_composing() || ui.filter.is_composing())
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_commit_preedit(s: &mut State, text: &str) {
+    if let Some(ui) = &mut s.git.owner {
+        ui.changes
+            .draft
+            .ime(&rune::edit::Ime::Preedit(text.to_owned(), None, Vec::new()));
+    }
+}
+
 pub(crate) fn set_diff_preferences(s: &mut State, preference: DiffPreferences) {
     s.git.preferences.set(preference);
     if let Some(owner) = &mut s.git.owner {

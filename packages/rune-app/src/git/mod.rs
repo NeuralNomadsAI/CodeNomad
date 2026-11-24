@@ -8,12 +8,14 @@ mod preview;
 mod refresh;
 mod request;
 mod view;
+#[cfg(test)]
+pub(crate) use binding::fixture_commit_preedit;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use binding::poll_notices;
 pub(crate) use binding::{
     Binding, PlacementHold, can_place, close_preview, connected, connected_placed,
-    diff_preferences, event, files_checkout, has_preview, hold_placement, mode, online,
-    overlay_open, placeable, placement, placement_hold, placement_unconfirmed, poll,
+    diff_preferences, event, files_checkout, has_preview, hold_placement, is_composing, mode,
+    online, overlay_open, placeable, placement, placement_hold, placement_unconfirmed, poll,
     project_opened, release_placement, set_diff_preferences, set_mode, show,
 };
 pub(crate) use diff::DiffPreferences;

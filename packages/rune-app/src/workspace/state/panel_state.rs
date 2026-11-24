@@ -80,6 +80,10 @@ pub(crate) fn mission_supported(s: &State) -> bool {
     mission_owner(s).is_some_and(missions::Panel::supported)
 }
 
+pub(crate) fn missions_composing(s: &State) -> bool {
+    mission_owner(s).is_some_and(missions::Panel::is_composing)
+}
+
 pub(crate) fn mission_panel(s: &State) -> El {
     mission_owner(s).map_or_else(rune::el, |panel| missions::panel(panel, mission_edit))
 }
