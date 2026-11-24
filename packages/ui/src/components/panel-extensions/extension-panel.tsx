@@ -1,0 +1,80 @@
+import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import type { PanelExtensionContext, PanelExtensionSummary } from "../../../../server/src/api-types"
+import { panelExtensionsApi } from "../../lib/panel-extensions-api"
+import { useI18n } from "../../lib/i18n"
+import { captureBackendOperation } from "../../lib/backend-operation"
+import { PANEL_EXTENSION_SANDBOX, panelExtensionDocument } from "./frame-document"
+import { useAssetsChannel } from "./assets-channel"
+import { useWorkItemsChannel } from "./work-items-channel"
+import { useApi4Channel, type Api4Host } from "./api4-channel"
+import { resolveCssColor } from "../../lib/css-color"
+import { generateUUID } from "../../lib/client-identity"
+
+export function ExtensionPanel(props: {
+  entry: PanelExtensionSummary; instanceId: string; active: boolean; context: PanelExtensionContext; host: Api4Host
+}) {
+  const identity = createMemo(() => props.active ? JSON.stringify([props.instanceId, props.entry.digest, props.context.sessionId]) : null)
+  return <Show keyed when={identity()}>{_identity => <PanelFrame entry={props.entry} instanceId={props.instanceId} context={props.context} host={props.host} />}</Show>
+}
+
+function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; context: PanelExtensionContext; host: Api4Host }) {
+  const { t } = useI18n()
+  const [document, setDocument] = createSignal<string>()
+  const [failed, setFailed] = createSignal(false)
+  let frame: HTMLIFrameElement | undefined, port: MessagePort | undefined, disposed = false, initialized = false
+  let authenticated = false
+  const handshake = generateUUID()
+  const controller = new AbortController()
+  const operation = captureBackendOperation(props.instanceId, controller.signal)
+  const send = (value: unknown) => { if (!disposed && operation.current() && authenticated) port?.postMessage(value) }
+  const authority = { instanceId: props.instanceId, id: props.entry.manifest.id, digest: props.entry.digest, send }
+  // Each API version carries exactly its own capabilities; API 4 only those its manifest declares.
+  const manifest = props.entry.manifest
+  const items = manifest.apiVersion === 3 || (manifest.apiVersion === 4 && manifest.permissions.includes("repository.workItems.read"))
+    ? useWorkItemsChannel({ ...authority, captureOperation: captureBackendOperation }) : undefined
+  const api4 = manifest.apiVersion === 4
+    ? useApi4Channel({ ...authority, name: manifest.name, permissions: manifest.permissions, sessionId: props.context.sessionId, host: props.host }) : undefined
+  // Each channel ignores the other's messages.
+  const receive = manifest.apiVersion === 2 ? useAssetsChannel({ ...authority, sessionId: () => props.context.sessionId })
+    : (value: unknown) => { void items?.(value); void api4?.(value) }
+  void panelExtensionsApi.panel(props.instanceId, manifest.id, props.entry.digest, operation.signal).then(result => {
+    if (!disposed && operation.current()) setDocument(panelExtensionDocument(result.html, handshake, manifest.apiVersion, manifest.permissions))
+  }).catch(() => { if (!disposed && operation.current()) setFailed(true) })
+  const revoke = () => { authenticated = false; port?.close(); api4?.dispose(); setDocument(undefined) }
+  operation.signal.addEventListener("abort", revoke, { once: true })
+  onCleanup(() => operation.signal.removeEventListener("abort", revoke))
+  const publish = () => {
+    const style = getComputedStyle(globalThis.document.documentElement)
+    const colors = Object.fromEntries(Object.entries({ background: "--surface-secondary", text: "--text-primary",
+      muted: "--text-muted", border: "--border-base", focus: "--focus-ring-color" }).map(([key, token]) => [key, style.getPropertyValue(token).trim()]))
+    // The canvas role is a color-mix(); frames receive a concrete colour.
+    colors.surface = resolveCssColor("--surface-canvas")
+    const context = { ...props.context, apiVersion: props.entry.manifest.apiVersion,
+      ...(props.entry.manifest.apiVersion >= 2 ? { colors } : {}) }
+    if (operation.current() && authenticated) port?.postMessage({ type: "context", context })
+  }
+  createEffect(publish)
+  const palette = new MutationObserver(publish)
+  palette.observe(globalThis.document.documentElement, { attributes: true, attributeFilter: ["style", "data-theme", "data-color-scheme"] })
+  onCleanup(() => palette.disconnect())
+  onCleanup(() => { disposed = true; controller.abort(); port?.close() })
+  const loaded = () => {
+    if (!operation.current()) return
+    // Never reconnect the capability channel after self-navigation/reload.
+    if (initialized) { authenticated = false; port?.close(); api4?.dispose(); setDocument(undefined); setFailed(true); return }
+    initialized = true
+    const channel = new MessageChannel()
+    port = channel.port1
+    port.onmessage = event => {
+      if (!disposed && operation.current() && !authenticated && event.data?.type === "ready" && event.data.handshake === handshake) { authenticated = true; publish() }
+      else if (!disposed && operation.current() && authenticated) void receive(event.data)
+    }
+    frame?.contentWindow?.postMessage({ type: "codenomad:init" }, "*", [channel.port2])
+  }
+  return <div class="panel-extension-surface">
+    <Show when={failed()}><p role="status">{t("panelExtensions.error")}</p></Show>
+    <Show when={document()}>{source => <iframe ref={frame} title={props.entry.manifest.name} srcdoc={source()}
+      sandbox={PANEL_EXTENSION_SANDBOX} referrerpolicy="no-referrer" allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'"
+      onLoad={loaded} />}</Show>
+  </div>
+}

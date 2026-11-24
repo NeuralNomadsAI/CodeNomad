@@ -1,0 +1,232 @@
+import assert from "node:assert/strict"
+import { describe, it } from "node:test"
+
+import type { RestorableAttachment } from "./client-state-attachments-codec.ts"
+import type { RestorableSessionState, RestorableWorkspaceTabState } from "./client-state-codec.ts"
+import {
+  createRestorableSessionPreservation,
+  createRestoredTabCommitGuard,
+  getPreservedWorkspaceReopenTarget,
+  hasRestoredTabBinding,
+  markPreservedWorkspaceRemoved,
+  markPreservedWorkspaceReopened,
+  markPreservedWorkspaceUnavailable,
+  mergeRestorableSessionState,
+  recordRestoredTab,
+  settleRestoredTab,
+} from "./app-session-snapshot-merge.ts"
+
+const empty = (): RestorableSessionState => ({ tabs: [], activeTabIndex: -1 })
+const session = (tabs: RestorableSessionState["tabs"]): RestorableSessionState => ({ tabs, activeTabIndex: 0 })
+const workspace = (
+  folder: string,
+  occurrence = 0,
+  state: Partial<RestorableWorkspaceTabState> = {},
+): RestorableWorkspaceTabState => ({
+  kind: "workspace", folder, occurrence, drafts: {}, attachments: {}, scrollSnapshots: {},
+  unseenIdleSince: {}, generationRecovery: {}, ...state,
+})
+const attachment = (id: string): RestorableAttachment => ({
+  id, type: "text", display: id, url: "", filename: `${id}.txt`, mediaType: "text/plain",
+  source: { type: "text", value: `${id} content` },
+})
+const scroll = (scrollTop: number) => ({ scrollTop, atBottom: false, updatedAt: 1 })
+
+function workspaceAt(state: RestorableSessionState, index = 0): RestorableWorkspaceTabState {
+  const tab = state.tabs[index]
+  assert.equal(tab?.kind, "workspace")
+  if (tab?.kind !== "workspace") throw new Error("expected workspace tab")
+  return tab
+}
+
+describe("app session snapshot merge", () => {
+  it("keeps the old installation's drafts apart even if the replacement reuses the runtime key", () => {
+    const old = workspace("/same", 0, {
+      backendId: "remote", serverId: "old", workspaceId: "remote~record",
+      drafts: { session: "unsubmitted" }, attachments: { session: [attachment("file")] },
+    })
+    const preservation = createRestorableSessionPreservation(session([old]))
+    const runtimeTabId = "instance:remote~record"
+    recordRestoredTab(preservation, 0, runtimeTabId)
+    const current = workspace("/same", 0, { backendId: "remote", serverId: "new", workspaceId: old.workspaceId })
+    assert.equal(getPreservedWorkspaceReopenTarget(preservation, {
+      runtimeTabId, folder: current.folder, occurrence: 0, backendId: current.backendId, serverId: current.serverId,
+    }), null)
+    const merged = mergeRestorableSessionState(session([current]), preservation, { currentTabIds: [runtimeTabId] })
+    assert.deepEqual(merged.tabs, [current, old])
+  })
+  it("preserves a live workspace opened after the startup snapshot when the backend loses it", () => {
+    const preservation = createRestorableSessionPreservation(session([workspace("/old")]))
+    const current = workspace("/new", 0, { drafts: { prompt: "fresh draft" }, attachments: { prompt: [attachment("file")] } })
+    const unavailable = { runtimeTabId: "instance:live", folder: "/new", occurrence: 0 }
+    markPreservedWorkspaceUnavailable(preservation, unavailable, current)
+    const merged = mergeRestorableSessionState(empty(), preservation)
+    assert.equal(workspaceAt(merged, 1).drafts.prompt, "fresh draft")
+    const reopened = { ...unavailable, runtimeTabId: "instance:reopened" }
+    assert.deepEqual(getPreservedWorkspaceReopenTarget(preservation, reopened)?.snapshot.attachments, current.attachments)
+    markPreservedWorkspaceReopened(preservation, reopened)
+    assert.equal(hasRestoredTabBinding(preservation, 1, reopened.runtimeTabId), true)
+    markPreservedWorkspaceRemoved(preservation, reopened)
+    assert.equal(mergeRestorableSessionState(empty(), preservation).tabs.length, 1, "Explicit removal still wins")
+  })
+
+  for (const settled of [false, true]) it(`does not rebind a ${settled ? "settled" : "pending"} restored window to a later global folder occurrence`, () => {
+    const saved = session([workspace("C:\\work", 3, {
+      activeSessionId: "selected", activeParentSessionId: "selected", drafts: { selected: "window draft" },
+    })])
+    const preservation = createRestorableSessionPreservation(saved)
+    // The old global occurrence3 is restored to a new runtime instance that now
+    // occupies occurrence0. Other windows then create more copies of the folder.
+    recordRestoredTab(preservation, 0, "instance:attached", settled ? new Set() : undefined)
+    const foreign = { runtimeTabId: "instance:other-window", folder: "c:/work", occurrence: 3 }
+    assert.equal(getPreservedWorkspaceReopenTarget(preservation, foreign), null)
+    markPreservedWorkspaceReopened(preservation, foreign)
+    assert.equal(preservation.results[0]?.runtimeTabId, "instance:attached")
+    if (!settled) {
+      assert.equal(hasRestoredTabBinding(preservation, 0, "instance:attached"), true)
+      assert.equal(workspaceAt(mergeRestorableSessionState(session([workspace("C:\\work", 0)]), preservation, {
+        currentTabIds: ["instance:attached"],
+      })).drafts.selected, "window draft")
+      assert.equal(settleRestoredTab(preservation, 0, "instance:attached", "instance:attached", new Set()), true)
+    }
+    markPreservedWorkspaceRemoved(preservation, foreign)
+    markPreservedWorkspaceUnavailable(preservation, foreign)
+    assert.equal(preservation.results[0]?.status, "restored", "Foreign lifecycle events cannot retire this window's binding")
+  })
+
+  it("allows a replacement runtime only after the bound workspace is actually unavailable", () => {
+    const preservation = createRestorableSessionPreservation(session([workspace("/work", 3, { drafts: { s: "draft" } })]))
+    recordRestoredTab(preservation, 0, "instance:old", new Set())
+    markPreservedWorkspaceUnavailable(preservation, { runtimeTabId: "instance:old", folder: "/work", occurrence: 0 })
+    assert.equal(hasRestoredTabBinding(preservation, 0, "instance:old"), false, "Unavailable runtime cannot settle a late hydration")
+    const replacement = { runtimeTabId: "instance:replacement", folder: "/work", occurrence: 3 }
+    assert.equal(getPreservedWorkspaceReopenTarget(preservation, replacement)?.snapshot.drafts.s, "draft")
+    markPreservedWorkspaceReopened(preservation, replacement)
+    assert.equal(hasRestoredTabBinding(preservation, 0, "instance:replacement"), true)
+    const later = { ...replacement, runtimeTabId: "instance:unrelated" }
+    assert.equal(getPreservedWorkspaceReopenTarget(preservation, later), null, "The replacement's new binding is exclusive again")
+  })
+
+  it("retains unsent state after a non-authoritative workspace stop", () => {
+    const saved = session([workspace("/work", 0, { drafts: { missing: "saved", current: "old" } })])
+    const preservation = createRestorableSessionPreservation(saved)
+    recordRestoredTab(preservation, 0, "instance:work", new Set())
+    markPreservedWorkspaceUnavailable(
+      preservation,
+      { runtimeTabId: "instance:work", folder: "/work", occurrence: 0 },
+      workspace("/work", 0, { drafts: { current: "latest unsent draft" } }),
+    )
+
+    assert.deepEqual(workspaceAt(mergeRestorableSessionState(empty(), preservation)).drafts, {
+      missing: "saved",
+      current: "latest unsent draft",
+    })
+  })
+
+  it("keeps current edits and authoritative deletion over preserved state", () => {
+    const saved = session([workspace("/work", 0, {
+      activeParentSessionId: "deleted", activeSessionId: "deleted",
+      drafts: { edited: "saved", deleted: "draft" },
+      attachments: { edited: [attachment("saved")], deleted: [attachment("deleted")] },
+      scrollSnapshots: { edited: scroll(10), deleted: scroll(42) },
+      unseenIdleSince: { deleted: 1_000 }, generationRecovery: { deleted: "working" },
+    })])
+    const current = session([workspace("/work", 0, {
+      drafts: { edited: "current" }, attachments: { edited: [attachment("current")] },
+      scrollSnapshots: { edited: scroll(90) },
+    })])
+    const merged = mergeRestorableSessionState(current, createRestorableSessionPreservation(saved), {
+      currentTabIds: ["instance:work"],
+      currentTabAuthorities: [{
+        drafts: new Set(["edited"]), attachments: new Set(["edited"]),
+        scrollSnapshots: new Set(["edited"]), deletedSessions: new Set(["deleted"]),
+      }],
+    })
+    const tab = workspaceAt(merged)
+
+    assert.equal(tab.drafts.edited, "current")
+    assert.equal(tab.attachments.edited?.[0]?.id, "current")
+    assert.equal(tab.scrollSnapshots.edited?.scrollTop, 90)
+    assert.equal("deleted" in tab.drafts || "deleted" in tab.attachments || "deleted" in tab.scrollSnapshots, false)
+    assert.deepEqual([tab.activeParentSessionId, tab.activeSessionId], [undefined, undefined])
+  })
+
+  it("keeps seen interruptions of unloaded sessions and drops owned or deleted ones", () => {
+    const saved = session([workspace("/work", 0, {
+      seenInterruptions: { unloaded: 5, settled: 6, deleted: 7 },
+      unseenIdleSince: { unloaded: 1, settled: 2, deleted: 3 },
+      generationRecovery: { unloaded: "interrupted", settled: "working", deleted: "interrupted" },
+    })])
+    const current = session([workspace("/work", 0, { seenInterruptions: { loaded: 8 } })])
+    const rows = new Map([["loaded", {}], ["settled", {}]])
+    const merged = mergeRestorableSessionState(current, createRestorableSessionPreservation(saved), {
+      currentTabIds: ["instance:work"],
+      currentTabAuthorities: [{ idleMarkers: rows, generationRecovery: rows, deletedSessions: new Set(["deleted"]) }],
+    })
+    const tab = workspaceAt(merged)
+    assert.deepEqual(tab.seenInterruptions, { unloaded: 5, loaded: 8 })
+    assert.deepEqual(tab.unseenIdleSince, { unloaded: 1 })
+    assert.deepEqual(tab.generationRecovery, { unloaded: "interrupted" })
+  })
+
+  it("rejects a late restore commit after close and reopen", () => {
+    const preservation = createRestorableSessionPreservation(session([workspace("/work")]))
+    const canCommit = createRestoredTabCommitGuard(preservation, 0)
+    markPreservedWorkspaceReopened(preservation, {
+      runtimeTabId: "instance:restore-event", folder: "/work", occurrence: 0,
+    })
+    assert.equal(canCommit(), true)
+
+    markPreservedWorkspaceRemoved(preservation, {
+      runtimeTabId: "instance:restore-event", folder: "/work", occurrence: 0,
+    })
+    markPreservedWorkspaceReopened(preservation, {
+      runtimeTabId: "instance:user-reopened", folder: "/work", occurrence: 0,
+    })
+    assert.equal(canCommit(), false)
+  })
+
+  it("keeps duplicate-folder bindings independent through reorder and close", () => {
+    const saved = session([
+      workspace("/same", 0, { drafts: { first: "first" } }),
+      workspace("/same", 1, { drafts: { second: "second" } }),
+    ])
+    const preservation = createRestorableSessionPreservation(saved)
+    recordRestoredTab(preservation, 0, "instance:first")
+    recordRestoredTab(preservation, 1, "instance:second")
+    const reordered = mergeRestorableSessionState(
+      session([workspace("/same", 1), workspace("/same", 0)]),
+      preservation,
+      { currentTabIds: ["instance:second", "instance:first"] },
+    )
+    assert.equal(workspaceAt(reordered, 0).drafts.second, "second")
+    assert.equal(workspaceAt(reordered, 1).drafts.first, "first")
+
+    markPreservedWorkspaceRemoved(preservation, {
+      runtimeTabId: "instance:first", folder: "/same", occurrence: 0,
+    })
+    assert.equal(mergeRestorableSessionState(empty(), preservation).tabs.length, 1)
+    markPreservedWorkspaceRemoved(preservation, {
+      runtimeTabId: "instance:second", folder: "/same", occurrence: 1,
+    })
+    assert.equal(mergeRestorableSessionState(empty(), preservation).tabs.length, 0)
+  })
+
+  it("keeps an explicitly removed workspace removed through a later unavailable capture", () => {
+    const preservation = createRestorableSessionPreservation(session([
+      workspace("/work", 0, { drafts: { session: "do not restore" } }),
+    ]))
+    recordRestoredTab(preservation, 0, "instance:work")
+    const binding = { runtimeTabId: "instance:work", folder: "/work", occurrence: 0 }
+
+    markPreservedWorkspaceRemoved(preservation, binding)
+    markPreservedWorkspaceUnavailable(
+      preservation,
+      binding,
+      workspace("/work", 0, { drafts: { session: "captured after removal" } }),
+    )
+
+    assert.equal(preservation.results[0]?.status, "removed")
+    assert.deepEqual(mergeRestorableSessionState(empty(), preservation), empty())
+  })
+})

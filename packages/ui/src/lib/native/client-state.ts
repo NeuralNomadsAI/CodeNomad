@@ -1,0 +1,165 @@
+import { invoke } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
+import { isElectronHost, isLocalWindow, isTauriHost } from "../runtime-env"
+import { getLogger } from "../logger"
+import { isStartupStateCommand, type StartupStateCommand, type StartupStateSnapshot } from "./startup-state-command"
+import { clearWebSessionClientState, loadWebSessionClientState, saveWebSessionClientState,
+  setWebSessionRestoreEnabled } from "../web-session-client-state"
+import type { WorkspaceFileDraft } from "../../stores/workspace-file-drafts-codec"
+const LEGACY_WEB_KEYS = ["codenomad-client-snapshot-v1", "codenomad-client-restore-enabled-v1"]
+export type NativeClientStateLoadResult = {
+  isPrimary: boolean
+  restoreEnabled: boolean
+  snapshot: unknown | null
+  partitionProtocolVersion?: 1
+  /** A browser tab's sessionStorage state: its layout values stay in shared localStorage. */
+  webSession?: true
+  recreateWebRecords?: true
+}
+export type NativeClientStatePartitionCommit = {
+  protocolVersion: 1
+  snapshot: unknown
+  partitions: Record<string, string>
+  partitionKeys: string[]
+}
+const SECONDARY_CLIENT_STATE: NativeClientStateLoadResult = { isPrimary: false, restoreEnabled: false, snapshot: null }
+const log = getLogger("actions")
+const accessToken = (() => {
+  const bytes = new Uint8Array(32)
+  globalThis.crypto.getRandomValues(bytes)
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
+})()
+let nativeAccessClaimed = false
+let webSessionOwned = false
+const electronApi = () => (window as Window & { electronAPI?: ElectronAPI }).electronAPI
+function dispatchNative<T>(electronOperation: (api: ElectronAPI | undefined) => Promise<T> | undefined, command: string, args: Record<string, unknown> = {}): Promise<T> | undefined {
+  if (isElectronHost()) return electronOperation(electronApi())
+  if (isTauriHost()) return invoke<T>(command, { accessToken, ...args })
+}
+async function tauriDocumentChallenge(): Promise<string | undefined> {
+  const challenge = (window as Window & { __CODENOMAD_CLIENT_STATE_DOCUMENT__?: Promise<string> }).__CODENOMAD_CLIENT_STATE_DOCUMENT__
+  if (!challenge) return undefined
+  let timeout: number | undefined
+  try {
+    return await Promise.race([challenge, new Promise<never>((_, reject) => {
+      timeout = window.setTimeout(() => reject(new Error("Native client state document challenge unavailable")), 15_000)
+    })])
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+async function claimNativeClientStateAccess(): Promise<boolean> {
+  if (!isLocalWindow()) return false
+  try {
+    const result = await dispatchNative<boolean | void>((api) => api?.claimClientStateAccess?.(accessToken),
+      "client_state_claim_access", isTauriHost() ? { documentChallenge: await tauriDocumentChallenge() } : {})
+    nativeAccessClaimed = isTauriHost() || result === true
+  } catch (error) {
+    nativeAccessClaimed = false
+    log.warn("Client state native access claim failed", error)
+  }
+  return nativeAccessClaimed
+}
+export async function loadNativeClientState(): Promise<NativeClientStateLoadResult> {
+  webSessionOwned = false
+  if (isElectronHost() || isTauriHost()) {
+    if (!await claimNativeClientStateAccess()) return SECONDARY_CLIENT_STATE
+    const loaded = await dispatchNative((api) => api?.loadClientState?.(accessToken), "client_state_load") ?? SECONDARY_CLIENT_STATE
+    if (!isElectronHost()) return loaded
+    const api = electronApi()
+    return {
+      ...loaded,
+      partitionProtocolVersion: loaded.partitionProtocolVersion === 1
+        && typeof api?.commitClientStatePartitions === "function"
+        && typeof api.loadClientStatePartition === "function" ? 1 : undefined,
+    }
+  }
+  try {
+    for (const key of LEGACY_WEB_KEYS) window.localStorage.removeItem(key)
+  } catch {}
+  const web = loadWebSessionClientState()
+  if (!web) return SECONDARY_CLIENT_STATE
+  webSessionOwned = true
+  return { isPrimary: true, ...web, webSession: true }
+}
+// A plain browser tab persists in its own sessionStorage (`web-session-client-state.ts`).
+const persistClientState = (web: () => boolean, native: () => Promise<boolean>): Promise<boolean> =>
+  webSessionOwned ? new Promise<boolean>(resolve => resolve(web())) : native()
+async function mutateNativeClientState(electronOperation: (api: ElectronAPI) => Promise<boolean> | undefined, command: string, args: Record<string, unknown> = {}): Promise<boolean> {
+  if (!nativeAccessClaimed) return false
+  return await dispatchNative((api) => api && electronOperation(api), command, args) ?? false
+}
+export const saveNativeClientState = (snapshot: unknown): Promise<boolean> => persistClientState(
+  // A refused browser write (quota) fails this save only: the tab keeps owning
+  // its state, so later saves retry and Clear/disable stay available.
+  () => {
+    if (!saveWebSessionClientState(snapshot)) throw new Error("Browser session storage refused the client snapshot")
+    return true
+  },
+  () => mutateNativeClientState((api) => api.saveClientState?.(accessToken, snapshot), "client_state_save", { snapshot }))
+export const commitNativeClientStatePartitions = (payload: NativeClientStatePartitionCommit): Promise<boolean> =>
+  mutateNativeClientState((api) => api.commitClientStatePartitions?.(accessToken, payload), "client_state_commit_partitions", { payload })
+export const loadNativeClientStatePartition = async (key: string): Promise<string | null> => {
+  if (!nativeAccessClaimed) return null
+  return await dispatchNative((api) => api?.loadClientStatePartition?.(accessToken, key), "client_state_load_partition", { key }) ?? null
+}
+export function loadNativeFileDrafts(key?: string): Promise<WorkspaceFileDraft[]> | undefined {
+  if (!nativeAccessClaimed) return
+  return dispatchNative(api => api?.loadFileDrafts?.(accessToken, key), "client_state_load_file_drafts", { key })
+}
+export type FileDraftChange = {
+  key: string
+  draft: Omit<WorkspaceFileDraft, "key"> | null
+  expected: Omit<WorkspaceFileDraft, "key"> | null
+}
+export function saveNativeFileDraft(change: FileDraftChange): Promise<boolean> | undefined {
+  if (!nativeAccessClaimed) return
+  return dispatchNative(api => api?.saveFileDraft?.(accessToken, change), "client_state_save_file_draft", { change })
+}
+export const setNativeRestoreEnabled = (enabled: boolean): Promise<boolean> => persistClientState(
+  () => setWebSessionRestoreEnabled(enabled),
+  () => mutateNativeClientState((api) => api.setClientStateRestoreEnabled?.(accessToken, enabled), "client_state_set_restore_enabled", { enabled }))
+export const clearNativeClientState = (): Promise<boolean> => persistClientState(
+  clearWebSessionClientState,
+  () => mutateNativeClientState((api) => api.clearClientState?.(accessToken), "client_state_clear"))
+function acknowledge(command: string, args: Record<string, unknown> = {}): Promise<void> {
+  if (!isTauriHost() || !nativeAccessClaimed) return Promise.resolve()
+  return invoke(command, { accessToken, ...args })
+}
+export const acknowledgeNativeClientStateNavigationFlush = (generation: number) =>
+  acknowledge("client_state_navigation_flushed", { generation })
+export const acknowledgeNativeClientStateRendererFlush = (generation: number) =>
+  acknowledge("client_state_renderer_flushed", { generation })
+
+/**
+ * Lets the host forward startup-state commands from the Preferences window to
+ * this local window only. Tauri replies with this renderer's access proof.
+ */
+export async function installNativeStartupStateCommandHandler(
+  run: (command: StartupStateCommand) => Promise<StartupStateSnapshot>,
+): Promise<() => void> {
+  if (!isLocalWindow()) return () => undefined
+  if (isElectronHost()) {
+    const handler = (command: unknown) => {
+      if (!isStartupStateCommand(command)) return Promise.reject(new Error("Invalid startup state command"))
+      return run(command)
+    }
+    window.__CODENOMAD_STARTUP_STATE_COMMAND__ = handler
+    return () => {
+      if (window.__CODENOMAD_STARTUP_STATE_COMMAND__ === handler) delete window.__CODENOMAD_STARTUP_STATE_COMMAND__
+    }
+  }
+  if (!isTauriHost()) return () => undefined
+  return listen<{ id: number; windowId: unknown; command: unknown }>("client-state:startup-command", ({ payload }) => {
+    // Tauri delivers events to every Any-target listener; act only for this window.
+    if (!Number.isSafeInteger(payload?.id) || payload.windowId !== window.__CODENOMAD_WINDOW_ID__) return
+    if (!isStartupStateCommand(payload.command)) return
+    void run(payload.command)
+      .then((state) => acknowledge("client_state_startup_command_result", { id: payload.id, stateResult: state }))
+      .catch((error) => {
+        log.warn("Startup state command failed", error)
+        return acknowledge("client_state_startup_command_result", { id: payload.id, stateResult: null })
+      })
+      .catch((error) => log.warn("Startup state command result was not delivered", error))
+  })
+}

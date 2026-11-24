@@ -1,0 +1,183 @@
+import { Component, createSignal, For, Show } from "solid-js"
+import { Plus, Trash2, Key, Shield, ShieldOff } from "lucide-solid"
+import { useConfig } from "../stores/preferences"
+import { useI18n } from "../lib/i18n"
+import { SettingsInfoTip } from "./settings/settings-info-tip"
+
+interface EnvironmentVariablesEditorProps {
+  disabled?: boolean
+  /** Settings: the enclosing disclosure carries the title, count and explanation. */
+  bare?: boolean
+}
+
+const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (props) => {
+  const { t } = useI18n()
+  const {
+    serverSettings,
+    addEnvironmentVariable,
+    removeEnvironmentVariable,
+    updateEnvironmentVariables,
+    isSecureEnvVar,
+    toggleSecureEnvVar,
+  } = useConfig()
+  const [envVars, setEnvVars] = createSignal<Record<string, string>>(serverSettings().environmentVariables || {})
+  const [newKey, setNewKey] = createSignal("")
+  const [newValue, setNewValue] = createSignal("")
+  const [newVarSecure, setNewVarSecure] = createSignal(true)
+
+  const entries = () => Object.entries(envVars())
+
+  function handleAddVariable() {
+    const key = newKey().trim()
+    const value = newValue().trim()
+
+    if (!key) return
+
+    addEnvironmentVariable(key, value, newVarSecure())
+    setEnvVars({ ...envVars(), [key]: value })
+    setNewKey("")
+    setNewValue("")
+    setNewVarSecure(true)
+  }
+
+  function handleRemoveVariable(key: string) {
+    removeEnvironmentVariable(key)
+    const { [key]: removed, ...rest } = envVars()
+    setEnvVars(rest)
+  }
+
+  function handleUpdateVariable(key: string, value: string) {
+    const updated = { ...envVars(), [key]: value }
+    setEnvVars(updated)
+    updateEnvironmentVariables(updated)
+  }
+
+  function handleSecureToggle(key: string) {
+    toggleSecureEnvVar(key)
+  }
+
+  function handleKeyPress(e: KeyboardEvent) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault()
+      handleAddVariable()
+    }
+  }
+
+  return (
+    <div class="space-y-3">
+      <Show when={!props.bare}>
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-xs text-muted">
+            {entries().length === 1
+              ? t("envEditor.count.one", { count: entries().length })
+              : t("envEditor.count.other", { count: entries().length })}
+          </span>
+          <SettingsInfoTip text={t("envEditor.help")} help={{ page: "opencode", anchor: "session-environment" }} />
+        </div>
+      </Show>
+
+      {/* Existing variables */}
+      <Show when={entries().length > 0}>
+        <div class="space-y-2">
+          <For each={entries()}>
+            {([key, value]) => (
+              <div class="flex items-center gap-2">
+                <div class="flex-1 min-w-0 flex items-center gap-2">
+                  <Key class="w-3.5 h-3.5 icon-muted flex-shrink-0" />
+                  <input
+                    type="text"
+                    value={key}
+                    readOnly
+                    disabled={props.disabled}
+                    class="flex-1 min-w-0 px-2.5 py-1.5 text-sm bg-surface-secondary border border-base text-muted cursor-not-allowed"
+                    placeholder={t("envEditor.fields.name.placeholder")}
+                    title={t("envEditor.fields.name.readOnlyTitle")}
+                  />
+                  <input
+                    type={isSecureEnvVar(key) ? "password" : "text"}
+                    value={value}
+                    disabled={props.disabled}
+                    onInput={(e) => handleUpdateVariable(key, e.currentTarget.value)}
+                    class="flex-1 min-w-0 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                    placeholder={t("envEditor.fields.value.placeholder")}
+                    autocomplete={isSecureEnvVar(key) ? "new-password" : "off"}
+                    spellcheck={isSecureEnvVar(key) ? false : undefined}
+                    autocapitalize={isSecureEnvVar(key) ? "off" : undefined}
+                  />
+                </div>
+                <button
+                  onClick={() => handleSecureToggle(key)}
+                  disabled={props.disabled}
+                  class={`p-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isSecureEnvVar(key)
+                      ? "icon-accent-hover text-accent"
+                      : "icon-muted icon-accent-hover"
+                  }`}
+                  title={isSecureEnvVar(key) ? t("envEditor.fields.secure.enabled") : t("envEditor.fields.secure.disabled")}
+                >
+                  {isSecureEnvVar(key) ? <Shield class="w-3.5 h-3.5" /> : <ShieldOff class="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  onClick={() => handleRemoveVariable(key)}
+                  disabled={props.disabled}
+                  class="p-1.5 icon-muted icon-danger-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  title={t("envEditor.actions.remove.title")}
+                >
+                  <Trash2 class="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      {/* Add new variable */}
+      <div class="flex items-center gap-2" classList={{ "pt-2 border-t border-base": !props.bare || entries().length > 0 }}>
+        <div class="flex-1 min-w-0 flex items-center gap-2">
+          <Key class="w-3.5 h-3.5 icon-muted flex-shrink-0" />
+          <input
+            type="text"
+            value={newKey()}
+            onInput={(e) => setNewKey(e.currentTarget.value)}
+            onKeyPress={handleKeyPress}
+            disabled={props.disabled}
+            class="flex-1 min-w-0 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            placeholder={t("envEditor.fields.name.placeholder")}
+          />
+          <input
+            type={newVarSecure() ? "password" : "text"}
+            value={newValue()}
+            onInput={(e) => setNewValue(e.currentTarget.value)}
+            onKeyPress={handleKeyPress}
+            disabled={props.disabled}
+            class="flex-1 min-w-0 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            placeholder={t("envEditor.fields.value.placeholder")}
+            autocomplete="new-password"
+          />
+        </div>
+        <button
+          onClick={() => setNewVarSecure(!newVarSecure())}
+          disabled={props.disabled}
+          class={`p-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            newVarSecure()
+              ? "icon-accent-hover text-accent"
+              : "icon-muted icon-accent-hover"
+          }`}
+          title={newVarSecure() ? t("envEditor.fields.secure.enabled") : t("envEditor.fields.secure.disabled")}
+        >
+          {newVarSecure() ? <Shield class="w-3.5 h-3.5" /> : <ShieldOff class="w-3.5 h-3.5" />}
+        </button>
+        <button
+          onClick={handleAddVariable}
+          disabled={props.disabled || !newKey().trim()}
+          class="p-1.5 icon-muted icon-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title={t("envEditor.actions.add.title")}
+        >
+          <Plus class="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export default EnvironmentVariablesEditor

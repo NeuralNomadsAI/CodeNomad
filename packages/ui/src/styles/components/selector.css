@@ -1,0 +1,377 @@
+/* Selector component utilities */
+.selector-trigger {
+  @apply inline-flex items-center justify-between gap-2 px-2 border outline-none transition-colors text-xs min-w-[180px];
+  min-height: var(--selector-height);
+  border-radius: 0;
+  background-color: var(--surface-control);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.selector-trigger:hover {
+  background-color: var(--surface-hover);
+}
+
+.selector-trigger:focus-visible {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
+}
+
+.selector-trigger:disabled,
+.selector-trigger[aria-disabled="true"],
+.selector-trigger[data-disabled],
+.selector-trigger-disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.selector-trigger-label {
+  @apply flex flex-col min-w-0;
+}
+
+.selector-trigger-label--stacked {
+  @apply items-start;
+}
+
+.selector-trigger-label--top {
+  @apply self-start;
+}
+
+.selector-trigger-primary {
+  @apply text-sm font-normal truncate;
+  color: var(--text-primary);
+}
+
+.selector-trigger-primary--align-left {
+  @apply text-start w-full;
+}
+
+.selector-trigger-secondary {
+  @apply text-xs text-start truncate w-full;
+  color: var(--text-muted);
+}
+
+.selector-trigger-icon {
+  @apply flex-shrink-0;
+  color: var(--icon-button-color);
+  opacity: var(--icon-button-idle-opacity);
+}
+
+.selector-trigger-icon svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  transition: transform 150ms ease;
+}
+
+.selector-trigger:is([aria-expanded="true"], [data-expanded]) .selector-trigger-icon svg {
+  transform: rotate(180deg);
+}
+
+.selector-trigger:hover .selector-trigger-icon {
+  color: var(--icon-button-hover-color);
+  opacity: 1;
+}
+
+.selector-trigger-hint {
+  @apply flex-shrink-0;
+  color: var(--text-muted);
+}
+
+.selector-trigger-hint--top {
+  @apply self-start mt-0.5;
+}
+
+.selector-popover {
+  @apply overflow-hidden min-w-[300px];
+  margin-block: var(--space-xs);
+  background-color: var(--surface-overlay);
+  border: 1px solid var(--border-base);
+  z-index: 2200;
+}
+
+.selector-search-container {
+  @apply p-2 border-b;
+  border-color: var(--border-base);
+}
+
+.selector-search-input {
+  @apply w-full px-3 text-xs border outline-none transition-colors;
+  min-height: var(--control-height);
+  border-radius: 0;
+  background-color: var(--surface-field);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.selector-search-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
+}
+
+.selector-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.selector-listbox {
+  @apply max-h-64 overflow-auto p-1;
+  background-color: var(--surface-overlay);
+}
+
+.selector-option {
+  @apply px-3 cursor-pointer outline-none transition-colors flex items-center gap-2 w-full;
+  min-height: 40px;
+  padding-block: 0.625rem;
+  color: var(--text-primary);
+}
+
+.selector-option:hover,
+.selector-option[data-highlighted],
+.selector-option[data-focused] {
+  background-color: var(--menu-item-hover-bg);
+}
+
+.selector-option[data-selected],
+.selector-option-selected,
+.selector-option[data-selected]:hover,
+.selector-option-selected:hover {
+  background-color: var(--menu-item-selected-bg);
+}
+
+.selector-option-content {
+  @apply flex flex-col flex-1 min-w-0;
+}
+
+.selector-option-label {
+  @apply font-normal text-sm;
+  color: var(--text-primary);
+}
+
+.selector-option-description {
+  @apply text-xs;
+  color: var(--text-muted);
+}
+
+.selector-option .remove-binary-button {
+  opacity: 0;
+}
+
+.selector-option:hover .remove-binary-button {
+  opacity: 1;
+}
+
+.remove-binary-button {
+  @apply p-1 transition-colors;
+  border-radius: 0;
+  color: var(--text-muted);
+}
+
+.remove-binary-button:hover {
+  background-color: var(--danger-soft-bg);
+  color: var(--status-error);
+}
+
+.selector-option-indicator {
+  @apply flex-shrink-0 mt-0.5;
+  color: var(--accent-primary);
+}
+
+.selector-option-action {
+  @apply flex items-center justify-center py-1;
+  color: var(--text-muted);
+}
+
+.selector-option-star {
+  @apply p-1 transition-colors flex-shrink-0 mt-0.5;
+  border-radius: 0;
+  color: var(--text-muted);
+}
+
+.selector-option-star[data-active="true"] {
+  color: var(--accent-primary);
+}
+
+.selector-option-star:hover {
+  background-color: var(--surface-hover);
+}
+
+.selector-option-star:focus-visible {
+  @apply ring-2;
+  ring-color: var(--accent-primary);
+}
+
+/* Worktree selector separators */
+.worktree-selector-item {
+  border-bottom: 1px solid var(--border-base);
+}
+
+.worktree-selector-item:last-of-type {
+  border-bottom: none;
+}
+
+.selector-favorites-toggle {
+  @apply p-2 border transition-colors flex items-center justify-center;
+  border-radius: 0;
+  background-color: var(--surface-control);
+  border-color: var(--border-base);
+  color: var(--text-muted);
+}
+
+.selector-favorites-toggle[data-active="true"] {
+  color: var(--accent-primary);
+}
+
+.selector-favorites-toggle:hover {
+  background-color: var(--surface-hover);
+}
+
+.selector-favorites-toggle:focus-visible {
+  @apply ring-2;
+  ring-color: var(--accent-primary);
+}
+
+.selector-favorites-toggle:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.selector-footer {
+  @apply border-t;
+  border-color: var(--border-base);
+  background-color: var(--surface-overlay);
+  position: relative;
+  z-index: 1;
+}
+
+.selector-section {
+  @apply px-3 py-1 border-b;
+  border-color: var(--border-base);
+  background-color: var(--surface-secondary);
+}
+
+.selector-section-title {
+  @apply block text-[11px] font-medium truncate;
+  color: var(--text-muted);
+}
+
+.selector-badge {
+  @apply px-1.5 py-0.5 text-xs font-normal;
+  background-color: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+.selector-badge-version {
+  @apply text-xs;
+  color: var(--text-muted);
+}
+
+.selector-badge-time {
+  @apply text-xs;
+  color: var(--text-muted);
+}
+
+.selector-validation-error {
+  @apply p-2 border;
+  border-radius: 0;
+  background-color: var(--message-error-bg);
+  border-color: var(--status-error);
+  color: var(--status-error);
+}
+
+.selector-validation-error-content {
+  @apply flex items-start gap-2;
+}
+
+.selector-validation-error-icon {
+  @apply w-4 h-4 mt-0.5 flex-shrink-0;
+  color: var(--status-error);
+}
+
+.selector-validation-error-text {
+  @apply text-xs;
+}
+
+.selector-input-group {
+  @apply flex gap-2;
+}
+
+/* The field takes the width; its action keeps its natural size. */
+.selector-input-group > .selector-input {
+  min-width: 0;
+}
+
+.selector-input-group > .selector-button {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.selector-input {
+  @apply flex-1 px-2 text-sm border outline-none transition-colors;
+  min-height: var(--control-height);
+  border-radius: 0;
+  background-color: var(--surface-field);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.selector-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary);
+}
+
+.selector-input::placeholder {
+  color: var(--text-muted);
+}
+
+.selector-button {
+  @apply px-3 text-sm transition-colors cursor-pointer w-full inline-flex items-center justify-center font-medium;
+  gap: 0.375rem;
+  min-height: var(--control-height);
+  border-radius: 0;
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-base);
+}
+
+.selector-button-primary {
+  background-color: var(--accent-primary) !important;
+  color: var(--text-on-accent) !important;
+  border: 1px solid var(--accent-primary) !important;
+}
+
+.selector-button-primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.selector-button-primary:disabled {
+  @apply opacity-50 cursor-not-allowed;
+  background-color: var(--surface-muted);
+}
+
+.selector-button-secondary {
+  background-color: var(--surface-control);
+  color: var(--text-primary);
+  border-color: var(--border-base);
+}
+
+.selector-button-secondary:hover:not(:disabled) {
+  background-color: var(--surface-interactive-hover);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.selector-button-secondary:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.selector-empty-state {
+  @apply p-4 text-center text-sm;
+  color: var(--text-muted);
+}
+
+.selector-loading {
+  @apply flex items-center gap-2;
+  color: var(--text-muted);
+}
+
+.selector-loading-spinner {
+  @apply w-4 h-4;
+  color: var(--accent-primary);
+}

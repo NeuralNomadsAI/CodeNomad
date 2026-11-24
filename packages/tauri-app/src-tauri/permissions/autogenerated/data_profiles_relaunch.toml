@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-data-profiles-relaunch"
+description = "Enables the data_profiles_relaunch command without any pre-configured scope."
+commands.allow = ["data_profiles_relaunch"]
+
+[[permission]]
+identifier = "deny-data-profiles-relaunch"
+description = "Denies the data_profiles_relaunch command without any pre-configured scope."
+commands.deny = ["data_profiles_relaunch"]

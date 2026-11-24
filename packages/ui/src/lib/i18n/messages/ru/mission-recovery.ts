@@ -1,0 +1,10 @@
+export const missionRecoveryMessages = {
+  "missions.recovery.coordinator": "Проверить и восстановить работу координатора",
+  "missions.recovery.report": "Проверить и восстановить отсутствующий отчёт",
+  "missions.recovery.pending": "Проверка возможности восстановления…",
+  "missions.recovery.error.busy": "Активная работа или незавершённое ожидание не позволяют выполнить восстановление. Откройте диалог.",
+  "missions.recovery.error.unknown": "Не удалось проверить активность.",
+  "missions.recovery.error.conflict": "Миссия или цель восстановления изменились. Обновите миссию перед повторной попыткой.",
+  "missions.recovery.error.member": "Сессия этой миссии теперь принадлежит другой активной миссии. Сначала завершите или остановите ту миссию.",
+  "missions.recovery.error.failed": "Восстановление не подтверждено. Обновите миссию перед повторной попыткой.",
+}

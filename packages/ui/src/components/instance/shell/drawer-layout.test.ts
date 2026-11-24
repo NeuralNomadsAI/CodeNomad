@@ -1,0 +1,68 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+
+import { clampEmbeddedDrawerWidth, resolveEmbeddedDrawers } from "./drawer-layout.ts"
+
+const widths = {
+  minimumCenterWidth: 390,
+  minimumLeftWidth: 220,
+  minimumRightWidth: 200,
+  leftWidth: 320,
+  rightWidth: 400,
+  leftOpen: true,
+  rightOpen: true,
+}
+
+test("each drawer hides at the end of its own compression, the right one first", () => {
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 1_200 }), {
+    left: true,
+    right: true,
+    leftWidth: 320,
+    rightWidth: 400,
+  })
+  // The right panel shrinks to its minimum beside the full left panel...
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 910 }), {
+    left: true,
+    right: true,
+    leftWidth: 320,
+    rightWidth: 200,
+  })
+  // ...and hides there; the left panel keeps its width and the conversation takes the room.
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 909 }), {
+    left: true,
+    right: false,
+    leftWidth: 320,
+    rightWidth: 400,
+  })
+  // Then the left panel shrinks to its minimum and hides there.
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 660 }), {
+    left: true,
+    right: false,
+    leftWidth: 270,
+    rightWidth: 400,
+  })
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 610 }), {
+    left: true,
+    right: false,
+    leftWidth: 220,
+    rightWidth: 400,
+  })
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 609 }), {
+    left: false,
+    right: false,
+    leftWidth: 320,
+    rightWidth: 400,
+  })
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 810, leftOpen: false }), {
+    left: false,
+    right: true,
+    leftWidth: 320,
+    rightWidth: 400,
+  })
+})
+
+test("manual drawer resizing stops at the minimum center width", () => {
+  assert.equal(clampEmbeddedDrawerWidth(221, 220, 220, 320), 320)
+  assert.equal(clampEmbeddedDrawerWidth(299, 200, 300, 400), 299)
+  assert.equal(clampEmbeddedDrawerWidth(500, 220, 420, 320), 420)
+})

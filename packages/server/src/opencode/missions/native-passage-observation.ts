@@ -1,0 +1,228 @@
+import { Context, Effect, Option, Predicate, Schema } from "effect"
+import path from "node:path"
+import type { SqlClient } from "effect/sql"
+import { Form } from "@opencode/schema/form"
+import { Permission } from "@opencode/schema/permission"
+import { Shell } from "@opencode/schema/shell"
+import { canonicalAuthority } from "../../missions/authority-protocol"
+import { RECURRENCE_STORAGE_PREFIX, parseRecurrenceDocument, recurrenceDispatchAllowed, type RecurrenceDocument } from "../../missions/recurrence-contract"
+import { stableToken } from "../../missions/journal"
+import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
+import type { MissionNativeRunner } from "./native-service-adapter"
+import { nativeMessageDataSQL } from "./native-message-data"
+import type { NativeMissionSession } from "../../missions/control-types"
+import { acquireNativeSourceFence, nativeBackgroundSQL, assertNativeBackgroundRows, nativeShellBlocksFamily } from "./native-source-fence"
+import { COORDINATOR_INPUT_MARKER, coordinatorInputSchema, type CoordinatorInputOwner, type CoordinatorBaseline } from "../../missions/mission-coordinator-baseline"
+
+const tag = (name: string) => Context.Service<never, unknown>(name)
+const databaseTag = tag("@opencode/storage/Database"), locationTag = tag("@opencode/Location")
+// `@opencode/SessionExecution` is not exposed to plugin or Location contexts (as of the minimum supported OpenCode); the
+// native Session service re-exports its `active` Effect as the set of running session IDs.
+const sessionTag = tag("@opencode/Session"), formTag = tag("@opencode/Form")
+const permissionTag = tag("@opencode/Permission"), shellTag = tag("@opencode/Shell")
+type NativeEffect = Effect.Effect<unknown, unknown>
+const rows = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
+const runningToolsSQL = `SELECT count(*) AS count FROM session_message m, json_each(${nativeMessageDataSQL},'$.content') AS part
+  WHERE m.session_id=? AND m.type='assistant' AND json_extract(part.value,'$.type')='tool'
+  AND json_extract(part.value,'$.state.status') IN ('running','streaming')`
+// Native projects settled busy periods into a durable `idle` message
+// (`outcome: succeeded | failed | interrupted`); the `event` log is only written
+// when Bus persistence is configured, which `serve` leaves off (as of the minimum supported OpenCode).
+const terminalSQL = `SELECT id,seq,type,json_extract(data,'$.outcome') AS outcome FROM session_message
+  WHERE session_id=? ORDER BY seq DESC LIMIT 1`
+export type PassageSessionObservation = {
+  id: string; parentID?: string; projectID: string; directory: string; workspaceID?: string
+  active: boolean; inbox: number; suspended: boolean; runningTools: number
+  failed: boolean; messagePresent: boolean
+  /** Durable input/idle sequence correlation; family quiescence is checked separately. */
+  terminal?: { inputMessageID: string; messageID: string; outcome: "succeeded" | "failed" | "interrupted" }
+  /** An old claim can be waiting for asynchronous native restart recovery. */
+  orphaned?: boolean
+  historical?: boolean
+}
+export interface NativePassageObservation {
+  assertCurrent(): true
+  /** Synchronous fence only for native admission, which runs outside a SQL transaction. */
+  assertScheduleCurrent(document: RecurrenceDocument, dispatch: boolean): true
+  exists(sessionID: string): Promise<boolean>
+  session(sessionID: string, messageID?: string, baseline?: CoordinatorBaseline[number], owner?: CoordinatorInputOwner): Promise<PassageSessionObservation>
+  children(sessionID: string): Promise<string[]>
+  requests(sessionIDs: readonly string[]): Promise<boolean>
+  empty?(session: NativeMissionSession): Promise<() => true>
+}
+
+const serviceStartedAt = Date.now() - process.uptime() * 1000
+
+/** Read-only recognition of the private terminal/background projections before
+ * admitting work. Zero-row queries validate columns/functions without a scan. */
+export const qualifyNativePassageStorage = Effect.fn("missions.qualifyPassageStorage")(function* () {
+  const found = yield* Effect.serviceOption(databaseTag)
+  const database = Option.isSome(found) ? found.value as { db?: { $client?: SqlClient.SqlClient } } : undefined
+  if (!Predicate.isFunction(database?.db?.$client?.unsafe)) throw new Error("Native passage storage unavailable")
+  for (const sql of [
+    "SELECT id,seq,type,json_extract(data,'$.outcome') AS outcome FROM session_message WHERE 0",
+    "SELECT message_id,session_id,ordinal,type,data FROM session_part WHERE 0",
+    "SELECT json_extract(value,'$.recovery.kind') AS kind FROM kv WHERE 0",
+  ]) {
+    const read = database.db!.$client!.unsafe(sql, []).withoutTransform
+    if (!Effect.isEffect(read)) throw new Error("Native passage storage contract unavailable")
+    const result = yield* read
+    if (!Array.isArray(result) || result.length) throw new Error("Native passage storage recognition incomplete")
+  }
+})
+
+/** Read-only native contracts, not signed authority or event replay. Unknown
+ * coverage fails closed. SQL only observes durable inbox/claim and ancestry. */
+export const acquireNativePassageObservation = Effect.fn("missions.acquirePassageObservation")(function* (startedAt = serviceStartedAt, invocationRun?: MissionNativeRunner) {
+  const graph = yield* Effect.context<never>()
+  const get = (key: typeof databaseTag) => {
+    const value = Context.getOption(graph, key)
+    if (Option.isNone(value)) throw new Error("Native passage observation unavailable")
+    return value.value
+  }
+  const database = get(databaseTag) as { db?: { $client?: SqlClient.SqlClient } }
+  const location = get(locationTag), sessions = get(sessionTag) as { active?: unknown }
+  const forms = get(formTag) as { list(): NativeEffect }, permissions = get(permissionTag) as { list(): NativeEffect }
+  const shells = get(shellTag) as { list(): NativeEffect }
+  if (!Predicate.isFunction(database.db?.$client?.unsafe) || !Effect.isEffect(sessions.active)
+    || !Predicate.isFunction(forms.list) || !Predicate.isFunction(permissions.list) || !Predicate.isFunction(shells.list))
+    throw new Error("Native passage contracts unavailable")
+  const run: MissionNativeRunner = invocationRun ?? (effect => Effect.runPromise(effect.pipe(Effect.provide(graph))))
+  const query = (sql: string, params: readonly unknown[]) => run(database.db!.$client!.unsafe(sql, params)
+    .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows))))
+  const activeSet = (value: unknown): ReadonlySet<unknown> => {
+    if (!(value instanceof Set) || value.size > 4096) throw new Error("Native execution coverage unavailable")
+    return value
+  }
+  const running = sessions.active as NativeEffect
+  const sync = (sql: string, params: readonly unknown[]) => Effect.runSync(database.db!.$client!.unsafe(sql, params)
+    .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)), Effect.provide(graph)))
+  const assertCurrent = (): true => {
+    if (Context.get(graph, databaseTag) !== database || Context.get(graph, locationTag) !== location)
+      throw new Error("Native passage Location changed")
+    return true
+  }
+  const sourceFences = yield* acquireNativeSourceFence(assertCurrent)
+  const observation = {
+    assertCurrent,
+    empty: async (session: NativeMissionSession) => {
+      if (await observation.requests([session.id])) throw new Error("Prepared coordinator has pending requests")
+      const proof = sourceFences()
+      proof.preparedSession(session)
+      const guard = (): true => {
+        assertCurrent()
+        proof.current()
+        if (activeSet(Effect.runSync(running.pipe(Effect.provide(graph)))).has(session.id)) throw new Error("Prepared coordinator is active")
+        return true
+      }
+      guard()
+      return guard
+    },
+    assertScheduleCurrent: (document: RecurrenceDocument, dispatch: boolean): true => {
+      assertCurrent()
+      const key = `${RECURRENCE_STORAGE_PREFIX}/project/${stableToken(`${document.projectID}\0${document.projectCanonical}`, 24)}/${document.id}`
+      const prefix = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
+      const raw = sync("SELECT value FROM kv WHERE key=?", [`${prefix}${key}`])[0]?.value
+      if (typeof raw !== "string") throw new Error("Passage schedule unavailable")
+      const fresh = parseRecurrenceDocument(JSON.parse(raw), document.projectID, document.projectCanonical, document.id)
+      if (fresh.pending?.passage.id !== document.pending?.passage.id || !samePassageObservation(fresh.config, document.config)
+        || dispatch && !recurrenceDispatchAllowed(fresh)) throw new Error("Passage schedule changed")
+      return true
+    },
+    exists: async (id: string) => { assertCurrent(); return (await query("SELECT id FROM session_v2 WHERE id=?", [id])).length === 1 },
+    session: async (id: string, messageID?: string, baseline?: CoordinatorBaseline[number], owner?: CoordinatorInputOwner): Promise<PassageSessionObservation> => {
+      assertCurrent()
+      const session = (await query(`SELECT id,parent_id,project_id,directory,workspace_id,time_suspended${owner ? ",metadata" : ""} FROM session_v2 WHERE id=?`, [id]))[0]
+      if (!session || session.id !== id || typeof session.project_id !== "string" || typeof session.directory !== "string")
+        throw new Error("Native passage session unavailable")
+      const count = async (sql: string, params: readonly unknown[]) => {
+        const value = (await query(sql, params))[0]?.count
+        if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error("Native passage coverage unavailable")
+        return Number(value)
+      }
+      // Queued input, admitted or not, lives in the native session inbox.
+      const inbox = await count("SELECT count(*) AS count FROM session_inbox WHERE session_id=?", [id])
+      const runningTools = await count(runningToolsSQL, [id])
+      const active = activeSet(await run(running)).has(id)
+      // seq is the native durable publication order, not message-ID or wall-clock order.
+      // A terminal covers every coalesced drain in its busy period. Requiring the
+      // latest projection to be idle also fences later delivered inputs/steps.
+      let anchor: Record<string, unknown> | undefined = (await query(`SELECT id,seq,type FROM session_message WHERE session_id=?
+        AND ${messageID === undefined ? "type IN ('user','synthetic') ORDER BY seq ASC" : "id=?"} LIMIT 1`,
+      messageID === undefined ? [id] : [id, messageID]))[0]
+      const last = (await query(terminalSQL, [id]))[0]
+      let historical = false
+      const entry = owner ? coordinatorInputSchema.safeParse(JSON.parse(String(session.metadata ?? "{}"))[COORDINATOR_INPUT_MARKER]) : undefined
+      const currentEntry = entry?.success && entry.data.passageID === owner?.passageID && entry.data.missionID === owner.missionID
+        && entry.data.coordinatorSessionID === owner.coordinatorSessionID ? entry.data : undefined
+      if (baseline && messageID === undefined) {
+        if (baseline[0] !== id) throw new Error("Inherited native identity differs")
+        const boundary = baseline[2] === null ? undefined : (await query("SELECT id,seq FROM session_message WHERE session_id=? AND id=?", [id, baseline[2]]))[0]
+        if (baseline[2] !== null && (!boundary || boundary.seq !== baseline[1])) throw new Error("Inherited native boundary unavailable")
+        const expected = baseline[3] ?? currentEntry?.messageID
+        anchor = expected ? (await query("SELECT id,seq,type FROM session_message WHERE session_id=? AND id=?", [id, expected]))[0] : undefined
+        const watermark = (await query("SELECT seq FROM event_sequence WHERE aggregate_id=?", [id]))[0]?.seq
+        if (!Number.isSafeInteger(watermark) || Number(watermark) < baseline[4]) throw new Error("Inherited native sequence unavailable")
+        historical = !expected && !anchor && (last?.seq ?? -1) === baseline[1] && (last?.id ?? null) === baseline[2] && watermark === baseline[4]
+      } else if (owner && messageID === undefined) {
+        anchor = currentEntry ? (await query("SELECT id,seq,type FROM session_message WHERE session_id=? AND id=?", [id, currentEntry.messageID]))[0] : undefined
+      }
+      const terminal = anchor && typeof anchor.id === "string" && ["user", "synthetic"].includes(String(anchor.type))
+        && Number.isSafeInteger(anchor.seq) && Number(anchor.seq) >= 0 && last?.type === "idle" && typeof last.id === "string"
+        && Number.isSafeInteger(last.seq) && Number(last.seq) > Math.max(Number(anchor.seq), baseline?.[1] ?? -1)
+        && ["succeeded", "failed", "interrupted"].includes(String(last.outcome))
+        ? { inputMessageID: anchor.id, messageID: last.id, outcome: last.outcome as "succeeded" | "failed" | "interrupted" } : undefined
+      const correlatedFailures = terminal ? await count(`SELECT count(*) AS count FROM session_message
+        WHERE session_id=? AND seq>? AND seq<=? AND type='idle' AND json_extract(data,'$.outcome')='failed'`,
+      [id, baseline ? baseline[1] : anchor!.seq, last!.seq]) : 0
+      const messagePresent = messageID !== undefined && ((await query("SELECT id FROM session_message WHERE session_id=? AND id=?", [id, messageID])).length === 1
+        || (await query("SELECT id FROM session_inbox WHERE session_id=? AND id=?", [id, messageID])).length === 1)
+      assertCurrent()
+      const claimedAt = session.time_suspended
+      if (claimedAt != null && !Number.isSafeInteger(claimedAt)) throw new Error("Native passage claim unavailable")
+      // Native SQL stores slash-separated Windows paths; the Location graph uses host separators.
+      return { id, projectID: session.project_id, directory: path.normalize(session.directory),
+        ...(session.parent_id == null ? {} : { parentID: String(session.parent_id) }),
+        ...(session.workspace_id == null ? {} : { workspaceID: String(session.workspace_id) }),
+        active, inbox, suspended: claimedAt != null, runningTools,
+        failed: correlatedFailures > 0, messagePresent, ...(terminal ? { terminal } : {}), ...(baseline ? { historical } : {}),
+        orphaned: claimedAt != null && !active && Number(claimedAt) < startedAt }
+    },
+    children: async (id: string) => {
+      assertCurrent()
+      // One bounded read: more rows than the whole-family ceiling is unknown coverage.
+      const children = await query("SELECT id FROM session_v2 WHERE parent_id=? ORDER BY id LIMIT ?", [id, MAX_CONTROL_FAMILY_SESSIONS + 1])
+      if (children.length > MAX_CONTROL_FAMILY_SESSIONS || children.some(row => typeof row.id !== "string"))
+        throw new Error("Native passage family capacity")
+      return children.map(row => row.id as string)
+    },
+    requests: async (sessionIDs: readonly string[]) => {
+      // A completed background child can still have an undelivered notification
+      // which resumes its parent. Native removes this durable record only after
+      // delivery; process-local active and empty inboxes cannot close that gap.
+      const background = await query(nativeBackgroundSQL, [])
+      assertNativeBackgroundRows(background)
+      const read = async (operation: NativeEffect, codec: Schema.Codec<unknown, unknown>) => {
+        const value = await run(operation)
+        Schema.decodeUnknownSync(codec)(value)
+        if (!Array.isArray(value) || value.length > 1024 || value.some(item => !item || typeof item !== "object"))
+          throw new Error("Native passage request coverage unavailable")
+        return value as Record<string, unknown>[]
+      }
+      const [pendingForms, pendingPermissions, runningShells] = await Promise.all([
+        read(forms.list(), Schema.Array(Schema.toType(Form.Info)).check(Schema.isMaxLength(1024))),
+        read(permissions.list(), Schema.Array(Schema.toType(Permission.Request)).check(Schema.isMaxLength(1024))),
+        read(shells.list(), Schema.Array(Schema.toType(Shell.Info)).check(Schema.isMaxLength(1024)))])
+      assertCurrent()
+      // Sessionless pending Forms and uncorrelated running Shells cannot be
+      // safely attributed away. Native shell list returns running records only.
+      const family = new Set(sessionIDs)
+      return [...pendingForms, ...pendingPermissions].some(item => item.sessionID == null || family.has(String(item.sessionID)))
+         || runningShells.some(item => nativeShellBlocksFamily(item, family))
+        || background.some(item => [item.sessionID, item.parentSessionID, item.childSessionID].some(id => typeof id === "string" && family.has(id)))
+    },
+  } satisfies NativePassageObservation
+  return observation
+})
+
+export const samePassageObservation = (a: unknown, b: unknown) => canonicalAuthority(a) === canonicalAuthority(b)

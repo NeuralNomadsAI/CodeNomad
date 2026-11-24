@@ -1,0 +1,220 @@
+import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import test from "node:test"
+import vm from "node:vm"
+
+test("CLI event disposers remove only their own wrapper listeners", () => {
+  const listeners = new Map<string, Set<Function>>()
+  let api: Record<string, Function> | undefined
+  const ipcRenderer = {
+    on(channel: string, listener: Function) {
+      const channelListeners = listeners.get(channel) ?? new Set()
+      channelListeners.add(listener)
+      listeners.set(channel, channelListeners)
+    },
+    removeListener(channel: string, listener: Function) { listeners.get(channel)?.delete(listener) },
+    invoke() {},
+  }
+  vm.runInNewContext(readFileSync(new URL("./index.cjs", import.meta.url), "utf8"), {
+    require: () => ({
+      contextBridge: { exposeInMainWorld(name: string, value: Record<string, Function>) { if (name === "electronAPI") api = value } },
+      ipcRenderer,
+      webUtils: {},
+    }),
+    process: { argv: [] },
+  })
+
+  for (const [subscribe, channel] of [
+    ["onCliStatus", "cli:status"],
+    ["onCliError", "cli:error"],
+    ["onBrowserOpenRequest", "browser-target:open"],
+    ["onBrowserOpenSettled", "browser-target:open-settled"],
+    ["onBrowserOpenDiscovery", "browser-target:discover"],
+    ["onNotificationClick", "notifications:click"],
+  ] as const) {
+    const calls: string[] = []
+    const disposeFirst = api![subscribe]((value: string) => calls.push(`first:${value}`))
+    api![subscribe]((value: string) => calls.push(`second:${value}`))
+    disposeFirst()
+    for (const listener of listeners.get(channel) ?? []) listener({}, "event")
+    assert.deepEqual(calls, ["second:event"])
+  }
+})
+
+test("Preferences preload exposes only section and frame controls", () => {
+  const listeners = new Map<string, Set<Function>>()
+  const exposed = new Map<string, unknown>()
+  const invoked: string[] = []
+  const ipcRenderer = {
+    on(channel: string, listener: Function) {
+      const values = listeners.get(channel) ?? new Set()
+      values.add(listener)
+      listeners.set(channel, values)
+    },
+    removeListener(channel: string, listener: Function) { listeners.get(channel)?.delete(listener) },
+    invoke(channel: string) { invoked.push(channel); return Promise.resolve() },
+  }
+  vm.runInNewContext(readFileSync(new URL("./index.cjs", import.meta.url), "utf8"), {
+    require: () => ({ contextBridge: { exposeInMainWorld: (name: string, value: unknown) => exposed.set(name, value) }, ipcRenderer, webFrame: { getZoomFactor: () => 1.5 }, webUtils: {} }),
+    process: { argv: ["--codenomad-window-context=preferences"] },
+  })
+
+  const api = exposed.get("electronAPI") as Record<string, Function>
+  assert.deepEqual(Object.keys(api), [
+    "onCliStatus", "onCliError", "getCliStatus", "restartCli", "renewManagedSession", "deviceSpeech", "openDialog", "showNotification", "onNotificationClick", "openRemoteWindow", "getZoomFactor",
+    "getPreferencesSection", "getPreferencesRequest", "preferencesReady", "acceptPreferencesRequest", "resolvePreferencesTransition",
+    "openerStartupState", "memoryCleanup", "selectServer", "listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile",
+    "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
+    "minimizeWindow", "toggleMaximizeWindow", "closeWindow",
+  ])
+  assert.equal(exposed.get("__CODENOMAD_WINDOW_CONTEXT__"), "preferences")
+  assert.equal(exposed.get("__CODENOMAD_WINDOW_ID__"), null)
+  assert.equal(api.getZoomFactor(), 1.5, "the frame's own zoom factor")
+  api.getPreferencesSection()
+  api.getPreferencesRequest()
+  api.preferencesReady()
+  api.acceptPreferencesRequest({ section: "providers" })
+  api.resolvePreferencesTransition(4, true)
+  api.openerStartupState("read")
+  api.deviceSpeech({ action: "read" })
+  api.memoryCleanup({ id: "one", scope: "global", workspaceId: "a", directory: "/repo" })
+  api.selectServer({ id: "a", baseUrl: "https://a.test", skipTlsVerify: false })
+  api.listOtherDataProfiles()
+  api.deleteOtherDataProfiles(["default"])
+  api.setNextLaunchDataProfile("dev")
+  api.relaunchIntoNextDataProfile()
+  api.minimizeWindow()
+  api.toggleMaximizeWindow()
+  api.closeWindow()
+  assert.deepEqual(invoked, [
+    "preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:openerStartupState",
+    "device-speech:request", "preferences:memoryCleanup", "preferences:selectServer",
+    "data-profiles:listOthers", "data-profiles:deleteOthers", "data-profiles:setNextLaunch", "data-profiles:relaunch",
+    "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
+  ])
+  // Preferences never receives direct client-state authority.
+  assert.ok(!Object.keys(api).some((key) => /ClientState/.test(key)))
+
+  const sections: string[] = []
+  const dispose = api.onPreferencesSection((section: string) => sections.push(section))
+  for (const listener of listeners.get("preferences:section") ?? []) listener({}, "advanced")
+  dispose()
+  assert.deepEqual(sections, ["advanced"])
+  assert.equal(listeners.get("preferences:section")?.size, 0)
+
+  let closeRequests = 0
+  const disposeClose = api.onPreferencesCloseRequested(() => closeRequests++)
+  for (const listener of listeners.get("preferences:close-requested") ?? []) listener({})
+  disposeClose()
+  assert.equal(closeRequests, 1)
+
+  const transitions: unknown[] = []
+  const disposeTransition = api.onPreferencesTransitionRequested((value: unknown) => transitions.push(value))
+  for (const listener of listeners.get("preferences:transition-requested") ?? []) listener({}, { id: 4 })
+  disposeTransition()
+  assert.deepEqual(transitions, [{ id: 4 }])
+})
+
+test("native titlebar controls remain local and obsolete automation toggles are absent", () => {
+  const source = readFileSync(new URL("./index.cjs", import.meta.url), "utf8")
+  const expose = (argv: string[]) => {
+    let api: Record<string, Function> | undefined
+    vm.runInNewContext(source, {
+      require: () => ({
+        contextBridge: { exposeInMainWorld(name: string, value: Record<string, Function>) { if (name === "electronAPI") api = value } },
+        ipcRenderer: { invoke() {}, on() {}, removeListener() {} },
+        webUtils: {},
+      }),
+      process: { argv },
+    })
+    return api!
+  }
+
+  assert.equal(expose([]).getDeveloperMode, undefined)
+  assert.equal(expose([]).setDeveloperMode, undefined)
+  assert.equal(typeof expose([]).showTitlebarMenu, "function")
+  assert.equal(expose(["--codenomad-window-context=remote"]).getDeveloperMode, undefined)
+  assert.equal(expose(["--codenomad-window-context=remote"]).showTitlebarMenu, undefined)
+  assert.equal(expose(["--codenomad-window-context=preferences"]).getDeveloperMode, undefined)
+  assert.equal(expose(["--codenomad-window-context=preferences"]).showTitlebarMenu, undefined)
+  // Only windows drawing their own title bar read the page zoom.
+  assert.equal(typeof expose([]).getZoomFactor, "function")
+  assert.equal(typeof expose(["--codenomad-window-context=preferences"]).getZoomFactor, "function")
+  assert.equal(expose(["--codenomad-window-context=remote"]).getZoomFactor, undefined)
+  assert.equal(typeof expose([]).deviceSpeech, "function")
+  assert.equal(expose(["--codenomad-window-context=remote"]).deviceSpeech, undefined)
+  // Data-profile management belongs to local and Preferences windows, never remote content.
+  for (const operation of ["listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile"]) {
+    assert.equal(typeof expose([])[operation], "function", operation)
+    assert.equal(typeof expose(["--codenomad-window-context=preferences"])[operation], "function", operation)
+    assert.equal(expose(["--codenomad-window-context=remote"])[operation], undefined, operation)
+  }
+})
+
+test("local windows choose the next launch's profile and relaunch through fixed channels", () => {
+  const calls: unknown[][] = []
+  let api: Record<string, Function> | undefined
+  vm.runInNewContext(readFileSync(new URL("./index.cjs", import.meta.url), "utf8"), {
+    require: () => ({
+      contextBridge: { exposeInMainWorld(name: string, value: Record<string, Function>) { if (name === "electronAPI") api = value } },
+      ipcRenderer: { invoke: (...args: unknown[]) => calls.push(args), on() {}, removeListener() {} }, webUtils: {},
+    }),
+    process: { argv: [] },
+  })
+  api!.setNextLaunchDataProfile("team")
+  api!.relaunchIntoNextDataProfile()
+  assert.deepEqual(calls, [["data-profiles:setNextLaunch", "team"], ["data-profiles:relaunch"]])
+})
+
+test("count-only badge bridge is exposed to local and remote main renderers, never Preferences", () => {
+  const source = readFileSync(new URL("./index.cjs", import.meta.url), "utf8")
+  for (const context of ["local", "remote", "preferences"]) {
+    let api: Record<string, Function>
+    const calls: unknown[][] = []
+    vm.runInNewContext(source, {
+      require: () => ({
+        contextBridge: { exposeInMainWorld(name: string, value: Record<string, Function>) { if (name === "electronAPI") api = value } },
+        ipcRenderer: { invoke: (...args: unknown[]) => calls.push(args), on() {}, removeListener() {} }, webUtils: {},
+      }),
+      process: { argv: [`--codenomad-window-context=${context}`] },
+    })
+    if (context === "preferences") { assert.equal(api!.setNotificationBadge, undefined); continue }
+    api!.setNotificationBadge(12)
+    assert.deepEqual(calls, [["notifications:setBadge", 12]])
+  }
+})
+
+test("remote dictation uses separate fixed bridge channels for the remote and trusted dialog", () => {
+  const source = readFileSync(new URL("./index.cjs", import.meta.url), "utf8")
+  for (const context of ["local", "preferences", "remote", "dictation"]) {
+    const exposed = new Map<string, unknown>()
+    const calls: unknown[][] = []
+    vm.runInNewContext(source, {
+      require: () => ({
+        contextBridge: { exposeInMainWorld: (name: string, value: unknown) => exposed.set(name, value) },
+        ipcRenderer: { invoke: (...args: unknown[]) => calls.push(args) }, webUtils: {},
+      }),
+      process: { argv: [`--codenomad-window-context=${context}`] },
+    })
+    const api = exposed.get("electronAPI") as Record<string, Function>
+    assert.equal(exposed.get("__CODENOMAD_WINDOW_CONTEXT__"), context)
+    const read = { action: "read" }
+    const cancel = { action: "cancel" }
+    if (context === "remote") {
+      assert.equal(api.deviceSpeech, undefined)
+      api.remoteDictation(read)
+      assert.equal(api.remoteMicrophoneLease, true)
+      assert.deepEqual(calls, [["remote-dictation:request", read]])
+    } else {
+      assert.equal(api.remoteDictation, undefined)
+      assert.equal(api.remoteMicrophoneLease, undefined)
+    }
+    if (context === "dictation") {
+      assert.deepEqual(Object.keys(api), ["deviceSpeech", "requestMicrophoneAccess", "settleRemoteDictation"])
+      api.deviceSpeech(read)
+      api.requestMicrophoneAccess()
+      api.settleRemoteDictation(cancel)
+      assert.deepEqual(calls, [["device-speech:request", read], ["media:requestMicrophoneAccess"], ["remote-dictation:settle", cancel]])
+    } else assert.equal(api.settleRemoteDictation, undefined)
+  }
+})

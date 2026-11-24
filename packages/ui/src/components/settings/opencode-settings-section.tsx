@@ -1,0 +1,66 @@
+import { Select } from "@kobalte/core/select"
+import { createMemo, type Component } from "solid-js"
+import { ChevronDown } from "lucide-solid"
+import { useConfig, type ServerLogLevel } from "../../stores/preferences"
+import { useI18n } from "../../lib/i18n"
+import { OpenCodeUpdateCard } from "./opencode-update-card"
+import { OpenCodeExecutableCard } from "./opencode-executable-card"
+import { OpenCodeLoginStartCard } from "./opencode-login-start-card"
+import { OpenCodeLogsAction } from "./opencode-logs-action"
+
+type LogLevelOption = { value: ServerLogLevel; label: string }
+
+export const OpenCodeSettingsSection: Component = () => {
+  const { t } = useI18n()
+  const { serverSettings, updateLogLevel } = useConfig()
+  const logLevelOptions = createMemo<LogLevelOption[]>(() => [
+    { value: "DEBUG", label: t("settings.opencode.logLevel.option.debug") },
+    { value: "INFO", label: t("settings.opencode.logLevel.option.info") },
+    { value: "WARN", label: t("settings.opencode.logLevel.option.warn") },
+    { value: "ERROR", label: t("settings.opencode.logLevel.option.error") },
+  ])
+  const selectedLogLevel = createMemo(
+    () => logLevelOptions().find((option) => option.value === serverSettings().logLevel) ?? logLevelOptions()[0],
+  )
+
+  return (
+    <div class="settings-section-stack">
+      <OpenCodeUpdateCard />
+      <OpenCodeExecutableCard />
+      <OpenCodeLoginStartCard />
+
+      <div class="settings-card">
+        <div class="settings-card-body">
+          <div class="settings-toggle-row settings-toggle-row-compact">
+            <h3 class="settings-card-title">{t("settings.opencode.logLevel.title")}</h3>
+            <Select<LogLevelOption>
+              value={selectedLogLevel()}
+              onChange={(option) => option && updateLogLevel(option.value)}
+              options={logLevelOptions()}
+              optionValue="value"
+              optionTextValue="label"
+              itemComponent={(itemProps) => (
+                <Select.Item item={itemProps.item} class="selector-option">
+                  <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
+                </Select.Item>
+              )}
+            >
+              <Select.Trigger class="selector-trigger" aria-label={t("settings.opencode.logLevel.title")}>
+                <div class="flex-1 min-w-0">
+                  <Select.Value<LogLevelOption>>
+                    {(state) => <span class="selector-trigger-primary selector-trigger-primary--align-left">{state.selectedOption()?.label}</span>}
+                  </Select.Value>
+                </div>
+                <Select.Icon class="selector-trigger-icon"><ChevronDown class="w-3 h-3" /></Select.Icon>
+              </Select.Trigger>
+              <Select.Portal>
+                <Select.Content class="selector-popover"><Select.Listbox class="selector-listbox" /></Select.Content>
+              </Select.Portal>
+            </Select>
+          </div>
+          <OpenCodeLogsAction />
+        </div>
+      </div>
+    </div>
+  )
+}

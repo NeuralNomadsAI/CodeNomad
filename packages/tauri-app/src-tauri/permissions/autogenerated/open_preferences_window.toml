@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-preferences-window"
+description = "Enables the open_preferences_window command without any pre-configured scope."
+commands.allow = ["open_preferences_window"]
+
+[[permission]]
+identifier = "deny-open-preferences-window"
+description = "Denies the open_preferences_window command without any pre-configured scope."
+commands.deny = ["open_preferences_window"]

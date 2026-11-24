@@ -1,0 +1,52 @@
+import type { ToolRenderer } from "../types"
+import { extractDiffPayload, getRelativePath, getToolName, hasVisibleText, isToolStateCompleted, readToolStatePayload } from "../utils"
+import { tGlobal } from "../../../lib/i18n"
+import { getDiffToolSearchText } from "../search-text"
+
+export const editRenderer: ToolRenderer = {
+  tools: ["edit"],
+  getSearchText: getDiffToolSearchText,
+  getAction: () => tGlobal("toolCall.renderer.action.preparingEdit"),
+  getTitle({ toolState }) {
+    const state = toolState()
+    if (!state) return undefined
+    const { input } = readToolStatePayload(state)
+    const filePath =
+      typeof input.filePath === "string" ? input.filePath : typeof input.path === "string" ? input.path : ""
+    if (!filePath) return getToolName("edit")
+    return `${getToolName("edit")} ${getRelativePath(filePath)}`
+  },
+  getOutputChrome({ toolState, toolName }) {
+    const state = toolState()
+    if (!state || state.status === "pending") return undefined
+
+    const diffPayload = extractDiffPayload(toolName(), state)
+    if (diffPayload) {
+      return { language: "diff", getCopyText: () => diffPayload.diffText, suppressInnerHeader: false }
+    }
+
+    const { metadata } = readToolStatePayload(state)
+    const diffText = typeof metadata.diff === "string" ? metadata.diff : null
+    const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
+    const copyText = diffText || fallback
+    if (!copyText) return undefined
+    return { language: "diff", getCopyText: () => copyText, wrapToggle: true, suppressInnerHeader: true }
+  },
+  renderBody({ toolState, toolName, renderDiff, renderMarkdown }) {
+    const state = toolState()
+    if (!state || state.status === "pending") return null
+
+    const diffPayload = extractDiffPayload(toolName(), state)
+    if (diffPayload) {
+      return renderDiff(diffPayload)
+    }
+
+    const { metadata } = readToolStatePayload(state)
+    const diffText = typeof metadata.diff === "string" ? metadata.diff : null
+    const fallback = isToolStateCompleted(state) && typeof state.output === "string" ? state.output : null
+    const value = diffText || fallback
+    if (!hasVisibleText(value)) return null
+
+    return renderMarkdown({ content: value, codeLanguage: "diff", size: "large", disableHighlight: state.status === "running" })
+  },
+}

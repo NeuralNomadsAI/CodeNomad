@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-owned-webview-zoom"
+description = "Enables the owned_webview_zoom command without any pre-configured scope."
+commands.allow = ["owned_webview_zoom"]
+
+[[permission]]
+identifier = "deny-owned-webview-zoom"
+description = "Denies the owned_webview_zoom command without any pre-configured scope."
+commands.deny = ["owned_webview_zoom"]

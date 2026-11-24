@@ -1,0 +1,139 @@
+import assert from "node:assert/strict"
+import { test } from "node:test"
+import { createServer } from "node:http"
+import { mkdtemp, rm } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import { build } from "esbuild"
+import { createRequire } from "node:module"
+import { _electron, type ElectronApplication } from "playwright"
+
+test("the shared engine drives a real Electron preview through the guarded native channel, without a visible window", { timeout: 90_000 }, async t => {
+  const profile = await mkdtemp(path.join(os.tmpdir(), "trial-codenomad-preview-engine-"))
+  let app: ElectronApplication | undefined
+  let cancelObserved!: () => void
+  const cancelled = new Promise<void>(resolve => { cancelObserved = resolve })
+  let imageRequested!: () => void
+  const pendingImage = new Promise<void>(resolve => { imageRequested = resolve })
+  const server = createServer((request, response) => {
+    response.setHeader("Content-Type", "text/html")
+    if (request.url === "/open-slow") {
+      const timer = setTimeout(() => response.writeHead(302, { Location: "/open-complete" }).end(), 11_000)
+      response.on("close", () => clearTimeout(timer))
+      return
+    }
+    if (request.url === "/open-stall") {
+      response.on("close", cancelObserved)
+      return
+    }
+    if (request.url === "/open-with-link") {
+      return response.end('<!doctype html><a href="/open-successor">Follow link</a><img src="/open-image">')
+    }
+    if (request.url === "/open-image") { imageRequested(); return }
+    // Transparent content is not contentful: first contentful paint follows the reveal, and Chromium
+    // drops key and click input until then (or its 500 ms commit-deferral limit).
+    if (request.url === "/late") return response.end(`<!doctype html><body style="opacity:0"><input autofocus><output id="late">Waiting</output>
+      <script>document.addEventListener('keydown', event => { document.getElementById('late').textContent = 'Late:' + event.key })
+      setTimeout(() => { document.body.style.opacity = '1' }, 400)</script></body>`)
+    response.end(`<!doctype html><main><form>
+      <label>Title <input value="Prefilled"></label>
+      <label>Plan <select><option value="custom">Flexible</option><option value="wayfinder">Exploration</option></select></label>
+      <button id="confirm" type="button">Confirm</button><button>Submit</button><output id="result">Pending</output>
+      <script>document.getElementById('confirm').addEventListener('click', () => {
+        document.getElementById('result').textContent = document.querySelector('input').value + ':' + document.querySelector('select').value
+      }); document.querySelector('input').addEventListener('keydown', event => {
+        document.getElementById('result').textContent = 'Key:' + event.key
+      }); let submitted = 0; document.querySelector('form').addEventListener('submit', event => {
+        event.preventDefault(); document.getElementById('result').textContent = 'Submitted:' + (++submitted) + ':' + document.querySelector('input').value
+      })</script></form></main>`)
+  })
+  t.after(async () => {
+    try { await app?.close() }
+    finally {
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
+  const guestURL = `http://127.0.0.1:${(server.address() as { port: number }).port}/`
+  const bundle = path.join(profile, "engine.cjs")
+  await build({ entryPoints: [fileURLToPath(new URL("fixtures/automation-preview-engine.ts", import.meta.url))],
+    outfile: bundle, bundle: true, platform: "node", format: "cjs", external: ["electron"],
+    define: { "import.meta.url": JSON.stringify(pathToFileURL(bundle).href) } })
+  const env = { ...process.env, CODENOMAD_TEST_PROFILE: profile, CODENOMAD_TEST_AUTOMATION_BUNDLE: bundle, CODENOMAD_TEST_GUEST_URL: guestURL }
+  delete env.ELECTRON_RUN_AS_NODE
+  delete env.ELECTRON_NO_ASAR
+  const executablePath = process.env.CODENOMAD_TEST_ELECTRON || createRequire(import.meta.url)("electron") as string
+  app = await _electron.launch({ executablePath,
+    args: ["--no-sandbox", fileURLToPath(new URL("fixtures/automation-preview-electron.cjs", import.meta.url))], env })
+  const running = app
+  const execute = (action: Record<string, unknown>) => running.evaluate(async (_electron, input) =>
+    (globalThis as any).automationPreview.execute(input), action) as Promise<Record<string, any>>
+  // The guest must load before a snapshot; no installed app or foreground window is involved.
+  const page = await running.firstWindow()
+  await page.waitForFunction(() => Boolean(document.querySelector("webview")))
+  const hiddenOwner = { visible: false, focused: false, focusedWindow: false }
+  const { captures, ...prepared } = await running.evaluate(() => (globalThis as any).automationPreview.ready())
+  assert.deepEqual(prepared, { loaded: true, rendered: true, before: hiddenOwner, after: hiddenOwner },
+    "the guest renders before any input while its window stays hidden and unfocused")
+  assert.ok(captures >= 1)
+  const open = (session: string, url: string, timeout: number) => running.evaluate(
+    (_electron, args) => (globalThis as any).automationPreview.open(...args), [session, url, timeout] as const)
+  const slowUrl = `${guestURL}open-slow`
+  assert.deepEqual(await open("slow-session", slowUrl, 30_000), { url: `${guestURL}open-complete` })
+  await assert.rejects(open("stalled-session", `${guestURL}open-stall`, 2500), /expired|timed out/)
+  let wait: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([cancelled, new Promise<never>((_, reject) => { wait = setTimeout(() => reject(new Error("Expired load remained connected")), 1200) })])
+  } finally { clearTimeout(wait) }
+  const openState = (session: string) => running.evaluate(
+    (_electron, id) => (globalThis as any).automationPreview.openState(id), session)
+  assert.notEqual((await openState("stalled-session")).settled.keepGuest, true)
+  const first = `${guestURL}open-with-link`, successor = `${guestURL}open-successor`
+  const superseded = assert.rejects(open("link-session", first, 15_000), /navigation changed/)
+  await Promise.race([pendingImage, superseded.then(() => assert.fail("The open retired before the link click"))])
+  const [navigation] = await Promise.all([
+    running.evaluate((_electron, args) => (globalThis as any).automationPreview.followOpenLink("link-session", ...args), [first, successor]),
+    superseded,
+  ])
+  const { settled } = await openState("link-session")
+  assert.equal(settled.committedUrl, undefined)
+  assert.equal(settled.keepGuest, true)
+  assert.deepEqual(navigation, { url: successor, sameGuest: true })
+  assert.equal((await execute({ action: "wait", text: "Title", gone: false, timeout: 15000 })).found, true,
+    "the actual guest document is loaded before taking accessibility refs")
+  const outline = String((await execute({ action: "snapshot" })).snapshot)
+  assert.match(outline, /textbox "Title"/)
+  const ref = (pattern: RegExp) => new RegExp(`${pattern.source}[^\\n]*?\\[(b\\d+e\\d+)\\]`).exec(outline)![1]
+  const title = ref(/textbox "Title"/), plan = ref(/combobox "Plan"/), confirm = ref(/button "Confirm"/)
+  assert.deepEqual((await execute({ action: "type", ref: title, text: "Pilot", clear: true })).value, "Pilot")
+  await execute({ action: "press", key: "a", ref: title })
+  assert.equal((await execute({ action: "wait", text: "Key:a", gone: false, timeout: 500 })).found, true,
+    "keys reach a newly opened guest with no preceding pointer click")
+  assert.match(String((await execute({ action: "snapshot", ref: title })).snapshot), /value="Pilota"/)
+  await execute({ action: "press", key: "Control+A", ref: title })
+  await execute({ action: "press", key: "Backspace" })
+  assert.doesNotMatch(String((await execute({ action: "snapshot", ref: title })).snapshot), /value=/,
+    "native keyboard shortcuts affect the guest selection and default editing")
+  await execute({ action: "type", ref: title, text: "Pilot", clear: true })
+  assert.match(String((await execute({ action: "press", key: "Tab", ref: title })).focused), /select.*Plan/)
+  await execute({ action: "press", key: "Enter", ref: title })
+  assert.equal((await execute({ action: "wait", text: "Submitted:1:Pilot", gone: false, timeout: 500 })).found, true,
+    "Enter submits once without any prior pointer click")
+  await assert.rejects(execute({ action: "press", key: "ContextMenu", ref: title }), /does not support ContextMenu; use Shift\+F10/)
+  assert.deepEqual((await execute({ action: "select", ref: plan, values: ["Exploration"] })).selected, ["Exploration"])
+  await execute({ action: "click", ref: confirm })
+  assert.equal((await execute({ action: "wait", text: "Pilot:wayfinder", gone: false, timeout: 1000 })).found, true)
+  const scoped = await execute({ action: "snapshot", ref: plan })
+  assert.match(scoped.snapshot, /option "Exploration".*selected/)
+  await running.evaluate(() => (globalThis as any).automationPreview.visible(false))
+  await assert.rejects(execute({ action: "click", ref: confirm }), /visible.*browser/i)
+  await running.evaluate(() => (globalThis as any).automationPreview.visible(true))
+  await running.evaluate(async (_electron, url) => (globalThis as any).automationPreview.navigate(url), `${guestURL}?next`)
+  await assert.rejects(execute({ action: "click", ref: confirm }), /stale ref/)
+  await running.evaluate(async (_electron, url) => (globalThis as any).automationPreview.navigate(url), `${guestURL}late`)
+  await execute({ action: "press", key: "x" })
+  assert.equal((await execute({ action: "wait", text: "Late:x", gone: false, timeout: 500 })).found, true,
+    "a key pressed right after a navigation waits until the page accepts input instead of being dropped")
+})

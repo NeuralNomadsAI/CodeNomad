@@ -1,0 +1,213 @@
+import { For, Show, createMemo, createSignal, type Component } from "solid-js"
+import Switch from "@suid/material/Switch"
+import type { Instance, RawMcpStatus } from "../types/instance"
+import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
+import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { getRootClient } from "../stores/opencode-client"
+import { getLogger } from "../lib/logger"
+import { PluginActivationControls } from "./plugin-activation-controls"
+import { createIntegrationContext } from "./integration-context"
+
+const log = getLogger("session")
+
+type ServiceSection = "mcp" | "plugins"
+
+interface InstanceServiceStatusProps {
+  sections?: ServiceSection[]
+  showSectionHeadings?: boolean
+  pluginsActive?: boolean
+  class?: string
+  initialInstance?: Instance
+}
+
+type ParsedMcpStatus = {
+  name: string
+  status: "running" | "stopped" | "error"
+  error?: string
+}
+
+function parseMcpStatus(status?: RawMcpStatus): ParsedMcpStatus[] {
+  if (!status) return []
+  return status.data.map((server) => {
+    const rawStatus = server.status.status
+    let mapped: ParsedMcpStatus["status"]
+    if (rawStatus === "connected") mapped = "running"
+    else if (rawStatus === "failed") mapped = "error"
+    else mapped = "stopped"
+    return {
+      name: server.name,
+      status: mapped,
+      error: server.status.status === "failed" ? server.status.error : undefined,
+    }
+  })
+}
+
+const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => {
+  const { t } = useI18n()
+  const metadataContext = useOptionalInstanceMetadataContext()
+  const instance = metadataContext?.instance ?? (() => {
+    if (props.initialInstance) {
+      return props.initialInstance
+    }
+    throw new Error("InstanceServiceStatus requires InstanceMetadataProvider or initialInstance prop")
+  })
+  const isLoading = metadataContext?.isLoading ?? (() => false)
+  const refreshMetadata = metadataContext?.refreshMetadata ?? (async () => Promise.resolve())
+  const sections = createMemo<ServiceSection[]>(() => props.sections ?? ["mcp", "plugins"])
+  const includeMcp = createMemo(() => sections().includes("mcp"))
+  const includePlugins = createMemo(() => sections().includes("plugins"))
+  const showHeadings = () => props.showSectionHeadings !== false
+
+  const metadataAccessor = metadataContext?.metadata ?? (() => instance().metadata)
+  const metadata = createMemo(() => metadataAccessor())
+  const hasMcpMetadata = () => metadata()?.mcpStatus !== undefined
+
+  const mcpServers = createMemo(() => parseMcpStatus(metadata()?.mcpStatus ?? undefined))
+
+  const isMcpLoading = () => isLoading() || !hasMcpMetadata()
+  const { location: pluginLocation, session: attachmentSession } = createIntegrationContext(() => instance().id, () => instance().folder)
+
+
+  const [pendingMcpActions, setPendingMcpActions] = createSignal<Record<string, "connect" | "disconnect">>({})
+  const pendingMcpOwners = new Map<string, object>()
+
+  const setPendingMcpAction = (name: string, action?: "connect" | "disconnect") => {
+    setPendingMcpActions((prev) => {
+      const next = { ...prev }
+      if (action) next[name] = action
+      else delete next[name]
+      return next
+    })
+  }
+
+  const toggleMcpServer = async (serverName: string, shouldEnable: boolean) => {
+    const operation = captureBackendOperation(instance().id)
+    if (!operation.current()) return
+    const instanceId = instance().id
+    if (!instance().client) return
+    const action: "connect" | "disconnect" = shouldEnable ? "connect" : "disconnect"
+    pendingMcpOwners.set(serverName, operation)
+    setPendingMcpAction(serverName, action)
+    try {
+      const client = getRootClient(instanceId)
+      const resolved = metadata()?.mcpStatus?.location
+      const location = resolved
+        ? { directory: resolved.directory }
+        : { directory: instance().folder }
+      if (shouldEnable) {
+        await client.mcp.connect({ server: serverName, location }, { signal: operation.signal })
+      } else {
+        await client.mcp.disconnect({ server: serverName, location }, { signal: operation.signal })
+      }
+      if (operation.current()) await refreshMetadata()
+    } catch (error) {
+      log.error("Failed to toggle MCP server", { serverName, action, error })
+    } finally {
+      if (pendingMcpOwners.get(serverName) === operation) {
+        pendingMcpOwners.delete(serverName)
+        setPendingMcpAction(serverName)
+      }
+    }
+  }
+
+  const renderEmptyState = (message: string) => (
+    <p class="right-panel-empty-text" role="status">
+      {message}
+    </p>
+  )
+
+  const renderMcpSection = () => (
+    <section class="space-y-1.5">
+      <Show when={showHeadings()}>
+        <div class="text-xs font-medium text-muted uppercase tracking-wide">
+          {t("instanceServiceStatus.sections.mcp")}
+        </div>
+      </Show>
+      <Show
+        when={!isMcpLoading() && mcpServers().length > 0}
+        fallback={renderEmptyState(isMcpLoading() ? t("instanceServiceStatus.mcp.loading") : t("instanceServiceStatus.mcp.empty"))}
+      >
+        <div class="space-y-1.5">
+          <For each={mcpServers()}>
+            {(server) => {
+              const pendingAction = () => pendingMcpActions()[server.name]
+              const isPending = () => Boolean(pendingAction())
+              const isRunning = () => server.status === "running"
+              const switchDisabled = () => isPending() || !instance().client
+              const statusDotClass = () => {
+                if (isPending()) return "status-dot animate-pulse"
+                // A connected server is idle; only pending operations need motion.
+                if (server.status === "running") return "status-dot ready"
+                if (server.status === "error") return "status-dot error"
+                return "status-dot stopped"
+              }
+              const statusDotStyle = () => (isPending() ? { background: "var(--status-warning)" } : undefined)
+              return (
+                <div class="px-2 py-1.5 border bg-surface-secondary border-base">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-xs text-primary font-medium truncate">{server.name}</span>
+                      <div class="flex items-center gap-3 flex-shrink-0">
+                        <div class="flex items-center gap-1.5 text-xs text-secondary">
+                          <Show when={isPending()}>
+                            <span class="inline-flex animate-spin"><svg class="h-3 w-3" fill="none" viewBox="0 0 24 24">
+                              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                              <path
+                                class="opacity-75"
+                                fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                              />
+                            </svg></span>
+                          </Show>
+                          <div class={statusDotClass()} style={statusDotStyle()} />
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                          <Switch
+                            checked={isRunning()}
+                            disabled={switchDisabled()}
+                            color="success"
+                            size="small"
+                            inputProps={{ "aria-label": t("instanceServiceStatus.mcp.toggleAriaLabel", { name: server.name }) }}
+                            onChange={(_, checked) => {
+                              if (switchDisabled()) return
+                              void toggleMcpServer(server.name, Boolean(checked))
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                  </div>
+                  <Show when={server.error}>
+                    {(error) => (
+                      <div class="text-[11px] mt-1 break-words" style={{ color: "var(--status-error)" }}>
+                        {error()}
+                      </div>
+                    )}
+                  </Show>
+                </div>
+              )
+            }}
+          </For>
+        </div>
+      </Show>
+    </section>
+  )
+
+  return (
+    <div class={props.class}>
+      <Show when={includeMcp()}>{renderMcpSection()}</Show>
+      <Show when={includePlugins()}>
+        <Show when={props.pluginsActive !== false}>
+          <PluginActivationControls
+            instanceId={instance().id}
+            location={pluginLocation()}
+            active={props.pluginsActive}
+            session={attachmentSession()}
+          />
+        </Show>
+      </Show>
+    </div>
+  )
+}
+
+export default InstanceServiceStatus

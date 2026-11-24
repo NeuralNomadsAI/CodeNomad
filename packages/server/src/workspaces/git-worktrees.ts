@@ -1,0 +1,165 @@
+import path from "node:path"
+import { lstat, realpath, stat } from "node:fs/promises"
+import { gitDiscoveryOverridden, validateCheckoutLayout } from "../opencode/session-pruning/checkout-identity"
+import { discoverCheckoutCommonDirectory, readGitCommonDirectory } from "./git-common-directory"
+export { readCheckoutIdentity } from "./git-common-directory"
+import { runGitProcess, runWorktreeGit as git } from "./git-process"
+import { GitRequiredError } from "./git-requirement"
+
+export interface LogLike {
+  debug?: (obj: any, msg?: string) => void
+  warn?: (obj: any, msg?: string) => void
+}
+
+export async function resolveRepoRoot(folder: string, logger?: LogLike): Promise<{ repoRoot: string; isGitRepo: boolean }> {
+  try {
+    return { repoRoot: await git(folder, ["rev-parse", "--show-toplevel"]), isGitRepo: true }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new GitRequiredError(error)
+    logger?.debug?.({ folder, err: error }, "Folder is not a Git repository; using workspace folder as root")
+    return { repoRoot: folder, isGitRepo: false }
+  }
+}
+
+export async function isGitAvailable(folder: string): Promise<boolean> {
+  return git(folder, ["--version"]).then(() => true, error => error.code !== "ENOENT")
+}
+
+// A different physical common directory cannot belong to this local repository,
+// even when independent clones share OpenCode's project ID. This is only a
+// negative preflight; a match still requires the native worktree inventory.
+export async function sharesGitCommonDirectory(left: string, right: string, { strict = false } = {}): Promise<boolean> {
+  try {
+    // Strict discovery preserves verified absence separately from ambiguous/read failures.
+    const read = strict ? discoverCheckoutCommonDirectory : readGitCommonDirectory
+    const [a, b] = await Promise.allSettled([read(left), read(right)])
+    if (a.status === "rejected") throw a.reason
+    if (b.status === "rejected") throw b.reason
+    return a.value !== undefined && a.value === b.value
+  } catch (error) {
+    if (strict) throw error
+    return false
+  }
+}
+
+// Git annotations and branch policy, not another worktree registry. Native
+// OpenCode owns discovery, creation and removal of the physical checkouts.
+export async function readCheckout(directory: string) {
+  const [paths, head, branch] = await Promise.all([
+    git(directory, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--absolute-git-dir"]),
+    git(directory, ["rev-parse", "--verify", "HEAD"]).catch(() => undefined),
+    git(directory, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => undefined),
+  ])
+  const [root, common, gitDirectory] = paths.split(/\r?\n/)
+  return { root: await realpath(root), common: await realpath(common), gitDirectory: await realpath(gitDirectory), head, branch }
+}
+
+// One Git snapshot supplies HEAD/branch annotations for every local checkout.
+// Native OpenCode remains the inventory authority; callers intersect its entries
+// with these registrations and verify each checkout's physical common directory.
+export async function readWorktreeAnnotations(directory: string) {
+  const output = await git(directory, ["worktree", "list", "--porcelain", "-z"])
+  return output.split("\0\0").filter(Boolean).map(record => {
+    const fields = record.split("\0")
+    const root = fields.find(field => field.startsWith("worktree "))?.slice(9)
+    if (!root) throw new Error("Git returned a worktree without a directory")
+    const head = fields.find(field => field.startsWith("HEAD "))?.slice(5)
+    const branch = fields.find(field => field.startsWith("branch refs/heads/"))?.slice(18)
+    return { root, head, branch }
+  })
+}
+
+// Follow each config symlink as Git does, but distinguish it from an absent entry.
+async function configStamp(file: string): Promise<string | null> {
+  const entry = await lstat(file, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null
+    throw error
+  })
+  if (!entry) return null
+  const stamp = ({ dev, ino, size, mtimeNs, ctimeNs }: typeof entry) => `${dev}:${ino}:${size}:${mtimeNs}:${ctimeNs}`
+  if (!entry.isSymbolicLink()) return stamp(entry)
+  const target = await stat(file, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null
+    throw error
+  })
+  return `${stamp(entry)}:${target && stamp(target)}`
+}
+
+export class WorktreeConfigChangedError extends Error {
+  constructor() { super("Git configuration changed during worktree validation") }
+}
+
+export async function createCheckoutRootVerifier(directory: string, local: Parameters<typeof validateCheckoutLayout>[0]) {
+  const files = new Map<string, Promise<string | null>>()
+  const remember = (file: string) => {
+    let stamp = files.get(file)
+    if (!stamp) {
+      stamp = configStamp(file)
+      files.set(file, stamp)
+    }
+    return stamp
+  }
+  await remember(path.join(local.common, "config"))
+  await remember(path.join(local.gitDirectory, "config.worktree"))
+  const readConfig = () => git(directory, ["config", "--null", "--list", "--includes"])
+  const effective = await readConfig()
+  const config = effective.split("\0").map(entry => entry.split("\n", 2))
+  const worktreeConfig = config.some(([key]) => key === "extensions.worktreeconfig")
+  const configuredRoot = gitDiscoveryOverridden() || process.env.GIT_CONFIG !== undefined || config.some(([key, value]) =>
+    key === "core.worktree" || key.startsWith("includeif.") || (key === "core.bare" && value !== "false"))
+  const includes = config.some(([key]) => key === "include.path")
+
+  let usedShortcut = false
+  const verify = async (checkout: string, identity: Parameters<typeof validateCheckoutLayout>[0]) => {
+    const perCheckout = worktreeConfig ? await remember(path.join(identity.gitDirectory, "config.worktree")) : null
+    if (!configuredRoot && perCheckout === null) {
+      // Enabling the extension does not create per-checkout config files.
+      if (!worktreeConfig || await validateCheckoutLayout(identity).then(() => true, () => false)) {
+        usedShortcut = true
+        return
+      }
+    }
+    // Administrative gitdir backlinks describe registration, not necessarily
+    // the effective worktree. Bulk verification yields to queued authority reads.
+    const output = await runGitProcess(checkout, ["rev-parse", "--show-toplevel"], { priority: "background" })
+    const root = output.replace(/\r?\n$/, "")
+    if (await realpath(root) !== await realpath(checkout)) throw new Error("Native worktree entry is not a checkout root")
+  }
+  const assertCurrent = async () => {
+    // Let Git resolve unrestricted include paths; the ordinary scan uses only stats.
+    if (usedShortcut && includes && await readConfig() !== effective) throw new WorktreeConfigChangedError()
+    // Shared config was recorded first; check it last, closest to publication.
+    for (const [file, expected] of [...files].reverse()) {
+      if (await configStamp(file) !== await expected) throw new WorktreeConfigChangedError()
+    }
+  }
+  return { verify, assertCurrent }
+}
+
+export function isValidWorktreeSlug(slug: string): boolean {
+  return Boolean(slug.trim() && slug.length <= 200 && !/[\x00-\x1F\x7F]/.test(slug))
+}
+
+export async function prepareWorktreeBranch(directory: string, branch: string): Promise<{ existing: boolean; revision: string }> {
+  await git(directory, ["check-ref-format", "--branch", branch])
+  const revision = await git(directory, ["rev-parse", "--verify", `refs/heads/${branch}`]).catch(() => undefined)
+  return { existing: Boolean(revision), revision: revision ?? await git(directory, ["rev-parse", "--verify", "HEAD"]) }
+}
+
+/** Whether `revision` tracks the folder `directory` (inside its checkout); a new
+ * checkout of it holds only tracked content. */
+export async function revisionContainsFolder(directory: string, revision: string): Promise<boolean> {
+  const prefix = (await git(directory, ["rev-parse", "--show-prefix"])).replace(/\/$/, "")
+  if (!prefix) return true
+  return git(directory, ["cat-file", "-t", `${revision}:${prefix}`]).then(type => type === "tree", () => false)
+}
+
+export async function attachWorktreeBranch(directory: string, branch: string, existing: boolean): Promise<void> {
+  // Never -B/--force: preserve branch refs and Git's already-checked-out guard.
+  // An existing branch only: never let Git guess one from a same-named remote-tracking branch.
+  await git(directory, ["switch", ...(existing ? ["--no-guess"] : ["-c"]), branch])
+}
+
+export async function gitExcludePath(directory: string): Promise<string> {
+  return path.resolve(directory, await git(directory, ["rev-parse", "--git-path", "info/exclude"]))
+}

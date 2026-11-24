@@ -1,0 +1,214 @@
+import assert from "node:assert/strict"
+import { describe, it } from "node:test"
+
+import { sdkManager } from "../lib/sdk-manager.ts"
+import { serverApi } from "../lib/api-client.ts"
+import type { Session } from "../types/session.ts"
+import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
+import { messageStoreBus } from "./message-v2/bus.ts"
+import { loadMessages } from "./session-api.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data.ts"
+import { getSessionMessagesLoadError, messagesLoaded, setActiveSession, setSessions } from "./session-state.ts"
+
+const sessionId = "session"
+const model = { providerID: "provider", id: "model" }
+
+function session(instanceId: string): Session {
+  return {
+    id: sessionId, instanceId, parentId: null, title: sessionId, agent: "build", model: { providerId: "provider", modelId: "model" },
+    status: "working", retry: null, idleSince: null, generationRecovery: null, runtimeStatusKnown: true,
+    version: "1", projectID: "project", location: { directory: "/work" }, cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
+  }
+}
+
+const streaming = (id: string, text = "BASE") => ({
+  id, type: "assistant", agent: "build", model, time: { created: 1 }, content: [{ type: "text", text }],
+})
+
+const displayedText = (instanceId: string, messageId: string) => Object.values(messageStoreBus.getOrCreate(instanceId)
+  .getMessage(messageId)?.parts ?? {}).map((part: any) => String(part.data?.text ?? "")).join("")
+
+const cases = [
+  { name: "the reducer already holds the streaming message", arm: true, created: false },
+  { name: "the reducer missed the streaming message's start", arm: false, created: false },
+  { name: "a new step starts during the fetch", arm: false, created: true },
+]
+
+describe("session-api running-session open", () => {
+  it("keeps a page ahead of SSE in order while the live reducer catches up", async () => {
+    const instanceId = "session-api-page-ahead-of-events"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/work", kind: "root" }] }) as any
+    // Deliberately use IDs and timestamps whose sort order differs from native
+    // sequence: only the page and event order establish transcript positions.
+    const user = { id: "msg_z_user", type: "user", text: "First prompt", time: { created: 200 } }
+    const first = { ...streaming("msg_a_first", "First step"), time: { created: 100 } }
+    const later = { ...streaming("msg_b_later", "Later step"), time: { created: 50 } }
+    const page = [user, first, later]
+    const client: any = { session: { active: async () => ({ [sessionId]: {} }) },
+      message: { list: async () => ({ data: [...page].reverse(), cursor: {} }) } }
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId)]])))
+    setActiveSession(instanceId, sessionId)
+    let sequence = 0
+    const native = (type: string, payload: Record<string, unknown>) => handleInstanceInvalidation(instanceId, {
+      id: `evt_${++sequence}`, type, created: sequence, location: { directory: "/work" }, data: { sessionID: sessionId, ...payload },
+    } as any)
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const expected = page.map(row => row.id)
+    try {
+      native("session.inbox.enqueued", { inboxID: user.id, item: { type: "user", payload: { text: user.text }, delivery: "steer" } })
+      native("session.inbox.delivered", { inboxID: user.id })
+      native("session.step.started", { assistantMessageID: first.id, agent: "build", model, started: 100 })
+      native("session.text.started", { assistantMessageID: first.id })
+      native("session.text.delta", { assistantMessageID: first.id, ordinal: 0, delta: "First step" })
+      await loadMessages(instanceId, sessionId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), expected)
+
+      // HTTP already includes the later step; SSE still carries the first one's
+      // final events. Reprojection must keep the later step after its prompt.
+      native("session.text.ended", { assistantMessageID: first.id, ordinal: 0, text: "First step" })
+      assert.deepEqual(store.getSessionMessageIds(sessionId), expected)
+      native("session.step.started", { assistantMessageID: later.id, agent: "build", model, started: 50 })
+      native("session.text.started", { assistantMessageID: later.id })
+      native("session.text.ended", { assistantMessageID: later.id, ordinal: 0, text: "Later step" })
+      assert.deepEqual(store.getSessionMessageIds(sessionId), expected)
+      assert.equal(displayedText(instanceId, later.id), "Later step")
+
+      native("session.step.started", { assistantMessageID: "msg_new", agent: "build", model, started: 300 })
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [...expected, "msg_new"])
+    } finally {
+      serverApi.fetchWorktrees = originalFetchWorktrees
+      destroyOpenCodeData(instanceId)
+      messageStoreBus.unregisterInstance(instanceId)
+      setSessions(previous => { const next = new Map(previous); next.delete(instanceId); return next })
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("a reseeded page ahead of SSE ignores the delayed starts of the fragments it holds", async () => {
+    const instanceId = "session-api-page-ahead-reseeded"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/work", kind: "root" }] }) as any
+    const user = { id: "msg_z_user", type: "user", text: "First prompt", time: { created: 200 } }
+    const first = { ...streaming("msg_a_first", "First step"), time: { created: 100 } }
+    const later = {
+      ...streaming("msg_b_later", "Later step"), time: { created: 50 },
+      content: [{ type: "reasoning", text: "Thought", time: { created: 51, completed: 52 } }, { type: "text", text: "Later step" },
+        { type: "tool", id: "tool_1", name: "read", time: { created: 53 }, state: { status: "running", input: {}, metadata: {} } }],
+    }
+    const page = [user, first, later]
+    const client: any = { session: { active: async () => ({ [sessionId]: {} }) },
+      message: { list: async () => ({ data: [...page].reverse(), cursor: {} }) } }
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId)]])))
+    setActiveSession(instanceId, sessionId)
+    let sequence = 0
+    const native = (type: string, payload: Record<string, unknown>) => handleInstanceInvalidation(instanceId, {
+      id: `evt_${++sequence}`, type, created: sequence, location: { directory: "/work" }, data: { sessionID: sessionId, ...payload },
+    } as any)
+    const parts = (messageId: string) => Object.values(messageStoreBus.getOrCreate(instanceId).getMessage(messageId)?.parts ?? {})
+      .map((part: any) => part.data?.type)
+    try {
+      native("session.inbox.enqueued", { inboxID: user.id, item: { type: "user", payload: { text: user.text }, delivery: "steer" } })
+      native("session.inbox.delivered", { inboxID: user.id })
+      native("session.step.started", { assistantMessageID: first.id, agent: "build", model, started: 100 })
+      native("session.text.started", { assistantMessageID: first.id, ordinal: 0 })
+      native("session.text.delta", { assistantMessageID: first.id, ordinal: 0, delta: "First step" })
+      await loadMessages(instanceId, sessionId)
+      // The asynchronous reseed lands before the delayed events of the later step.
+      for (let turn = 0; turn < 3; turn += 1) await new Promise<void>((resolve) => setImmediate(resolve))
+
+      native("session.text.ended", { assistantMessageID: first.id, ordinal: 0, text: "First step" })
+      native("session.step.started", { assistantMessageID: later.id, agent: "build", model, started: 50 })
+      native("session.reasoning.started", { assistantMessageID: later.id, ordinal: 0 })
+      native("session.reasoning.delta", { assistantMessageID: later.id, ordinal: 0, delta: "Thought" })
+      native("session.reasoning.ended", { assistantMessageID: later.id, ordinal: 0, text: "Thought" })
+      native("session.text.started", { assistantMessageID: later.id, ordinal: 0 })
+      native("session.text.delta", { assistantMessageID: later.id, ordinal: 0, delta: "Later step" })
+      native("session.text.ended", { assistantMessageID: later.id, ordinal: 0, text: "Later step" })
+      native("session.tool.input.started", { assistantMessageID: later.id, id: "tool_1", name: "read" })
+      assert.equal(displayedText(instanceId, first.id), "First step")
+      assert.equal(displayedText(instanceId, later.id), "ThoughtLater step", "a delayed start duplicated a fragment the page held")
+      assert.deepEqual(parts(later.id), ["reasoning", "text", "tool"])
+
+      // Fragments the page does not hold still start normally.
+      native("session.text.started", { assistantMessageID: later.id, ordinal: 1 })
+      native("session.text.delta", { assistantMessageID: later.id, ordinal: 1, delta: " and more" })
+      native("session.tool.input.started", { assistantMessageID: later.id, id: "tool_2", name: "read" })
+      assert.equal(displayedText(instanceId, later.id), "ThoughtLater step and more")
+      assert.deepEqual(parts(later.id), ["reasoning", "text", "tool", "text", "tool"])
+    } finally {
+      serverApi.fetchWorktrees = originalFetchWorktrees
+      destroyOpenCodeData(instanceId)
+      messageStoreBus.unregisterInstance(instanceId)
+      setSessions(previous => { const next = new Map(previous); next.delete(instanceId); return next })
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  for (const { name, arm, created } of cases) {
+    it(`loads the latest window of a streaming session (${name})`, async () => {
+      const instanceId = `session-api-running-open-${arm ? "warm" : created ? "created" : "cold"}`
+      const originalFetchWorktrees = serverApi.fetchWorktrees
+      serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/work", kind: "root" }] }) as any
+      const client: any = { session: { active: async () => ({}) } }
+      ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+      addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+      setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId)]])))
+      setActiveSession(instanceId, sessionId)
+      let sequence = 0
+      const native = (type: string, payload: Record<string, unknown>) => handleInstanceInvalidation(instanceId, {
+        id: `evt_${++sequence}`, type, created: sequence, data: { sessionID: sessionId, ...payload }, location: { directory: "/work" },
+      } as any)
+      const reads: number[] = []
+      client.message = {
+        list: async (input: { limit?: number }) => {
+          reads.push(input.limit ?? 0)
+          await new Promise<void>((resolve) => setImmediate(resolve))
+          // The session keeps streaming during every fetch window.
+          native("session.text.delta", { assistantMessageID: "msg_1", ordinal: 0, delta: "X" })
+          if (created && reads.length === 1) native("session.step.started", { assistantMessageID: "msg_2", agent: "build", model, started: 2 })
+          return { data: [streaming("msg_1")], cursor: {} }
+        },
+      }
+      if (arm) {
+        applyOpenCodeDataEvent(instanceId, "/work", { id: "arm-step", type: "session.step.started", created: 1,
+          data: { sessionID: sessionId, assistantMessageID: "msg_1", agent: "build", model, started: 1 } } as any)
+        applyOpenCodeDataEvent(instanceId, "/work", { id: "arm-text", type: "session.text.started", created: 1,
+          data: { sessionID: sessionId, assistantMessageID: "msg_1" } } as any)
+        applyOpenCodeDataEvent(instanceId, "/work", { id: "arm-base", type: "session.text.delta", created: 1,
+          data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "BASE" } } as any)
+      }
+      try {
+        await loadMessages(instanceId, sessionId)
+
+        assert.ok(!getSessionMessagesLoadError(instanceId, sessionId), "a streaming session failed to load")
+        assert.ok(messagesLoaded().get(instanceId)?.has(sessionId))
+        assert.equal(reads[0], 200)
+        assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), created ? ["msg_1", "msg_2"] : ["msg_1"])
+        assert.equal(displayedText(instanceId, "msg_1"), arm ? "BASEX" : "BASE", "the load rewound or lost streamed text")
+
+        // A reducer without rows is seeded from the loaded page without another
+        // read, so later deltas for the streaming message reach the display.
+        for (let turn = 0; turn < 3; turn += 1) await new Promise<void>((resolve) => setImmediate(resolve))
+        assert.deepEqual(reads, [200], "seeding the reducer must not read the transcript again")
+        if (created) return
+        native("session.text.delta", { assistantMessageID: "msg_1", ordinal: 0, delta: "Y" })
+        assert.equal(displayedText(instanceId, "msg_1"), arm ? "BASEXY" : "BASEY", "streaming froze after the load")
+      } finally {
+        serverApi.fetchWorktrees = originalFetchWorktrees
+        destroyOpenCodeData(instanceId)
+        messageStoreBus.unregisterInstance(instanceId)
+        setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+        removeInstance(instanceId, { authoritative: false })
+        sdkManager.destroyClientsForInstance(instanceId)
+      }
+    })
+  }
+})

@@ -1,0 +1,395 @@
+.message-stream-container {
+  @apply relative flex-1 min-h-0 flex flex-col overflow-hidden;
+}
+
+.connection-status {
+  @apply grid items-center px-4 py-2 gap-4;
+  grid-template-columns: 1fr auto 1fr;
+  grid-template-areas: "info shortcut meta";
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--border-base);
+}
+
+.connection-status-menu {
+  display: none;
+  grid-area: menu;
+}
+
+.connection-status--compact {
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "menu shortcut meta"
+    "info info info";
+  row-gap: 0.5rem;
+}
+
+.connection-status--compact .connection-status-menu {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.connection-status--compact .connection-status-info {
+  justify-self: stretch;
+  width: 100%;
+  justify-content: center;
+  text-align: center;
+}
+
+.connection-status--compact .connection-status-usage {
+  justify-content: center;
+  width: 100%;
+}
+
+.connection-status--compact .connection-status-shortcut {
+  justify-self: center;
+}
+
+.connection-status--compact .connection-status-meta {
+  justify-self: end;
+}
+
+.session-sidebar-menu-button {
+  @apply inline-flex items-center justify-center border px-2 py-1 text-sm font-medium;
+  border-color: var(--border-base);
+  background-color: transparent;
+  color: var(--text-primary);
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.session-sidebar-menu-button:hover {
+  background-color: var(--surface-hover);
+}
+
+.session-sidebar-menu-button:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-secondary);
+}
+
+.session-sidebar-menu-icon {
+  font-size: var(--font-size-base);
+  line-height: 1;
+}
+
+.status-indicator {
+  @apply flex items-center gap-1.5 text-xs;
+  color: var(--text-muted);
+}
+
+.status-indicator .status-dot {
+  @apply w-2 h-2 rounded-full;
+}
+
+.status-indicator .status-text {
+  display: inline-block;
+}
+
+@media (max-width: 1024px) {
+  .status-indicator .status-text {
+    display: none;
+  }
+}
+
+.connection-status-info {
+  @apply flex flex-wrap items-center gap-3 text-sm font-medium;
+  grid-area: info;
+  justify-self: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.connection-status-usage {
+  @apply flex flex-wrap items-center justify-center gap-2 text-xs;
+  color: var(--text-primary);
+}
+
+.connection-status-shortcut {
+  grid-area: shortcut;
+  justify-self: center;
+  text-align: center;
+}
+
+.connection-status-meta {
+  grid-area: meta;
+  justify-self: end;
+}
+
+.connection-status-text {
+  color: var(--text-muted);
+}
+
+.connection-status-shortcut-action {
+  @apply flex items-center justify-center gap-2;
+}
+
+.connection-status-button {
+  @apply inline-flex items-center gap-2 px-3 py-1 text-sm font-medium border transition-colors;
+  border-color: var(--border-base);
+  background-color: var(--surface-canvas);
+  color: var(--text-primary);
+}
+
+/* Make the command palette trigger stand out in the header. */
+.connection-status-button.command-palette-button {
+  border-radius: 0;
+  @apply text-sm px-2 py-1 border border-base transition-colors;
+  background-color: var(--surface-canvas);
+  color: var(--text-primary);
+}
+
+.connection-status-button.command-palette-button:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.connection-status-button:hover {
+  background-color: var(--surface-hover);
+}
+
+.connection-status-button:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-secondary);
+}
+
+.connection-status-shortcut-hint {
+  @apply inline-flex items-center;
+  color: var(--text-secondary);
+}
+
+@media (pointer: coarse) {
+  .connection-status-shortcut-hint {
+    display: none;
+  }
+
+  .connection-status-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .connection-status {
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      "menu shortcut meta"
+      "info info info";
+    row-gap: 0.5rem;
+  }
+
+  .connection-status-menu {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+  }
+
+  .connection-status-info {
+    justify-self: stretch;
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .connection-status-usage {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .connection-status-shortcut {
+    justify-self: center;
+  }
+
+  .connection-status-meta {
+    justify-self: end;
+  }
+}
+
+.message-scroll-button-wrapper {
+  position: absolute;
+  inset-inline-end: 1rem;
+  bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.message-scroll-controls {
+  display: flex;
+  flex-direction: row;
+  gap: 0.25rem;
+}
+
+.message-scroll-button {
+  @apply inline-flex items-center justify-center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  border: 1px solid var(--border-base);
+  background-color: transparent;
+  color: var(--text-primary);
+  box-shadow: var(--scroll-elevation-shadow);
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.message-scroll-button:hover {
+  background-color: var(--surface-hover);
+  transform: translateY(-1px);
+}
+
+.message-scroll-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface-canvas), 0 0 0 4px var(--accent-primary);
+}
+
+.message-scroll-icon {
+  font-size: var(--font-size-lg);
+  color: var(--accent-primary);
+}
+
+.message-quote-popover {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.message-quote-button-group {
+  pointer-events: auto;
+  display: inline-flex;
+  border-radius: 0;
+  border: 1px solid var(--list-item-highlight-border);
+  background-color: var(--list-item-highlight-bg-solid);
+  box-shadow: var(--panel-shadow);
+  overflow: hidden;
+}
+
+.message-quote-button {
+  pointer-events: auto;
+  @apply inline-flex items-center justify-center;
+  padding: 0.35rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: none;
+  background-color: transparent;
+  color: var(--text-primary);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.message-quote-button + .message-quote-button {
+  border-inline-start: 1px solid var(--list-item-highlight-border);
+}
+
+.message-quote-button:hover {
+  background-color: var(--surface-hover);
+}
+
+.message-quote-button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent-primary);
+}
+
+.message-search-popover {
+  max-height: var(--window-visible-height, none);
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  width: min(38rem, calc(100vw - 2rem));
+  border: 1px solid var(--border-base);
+  box-shadow: var(--panel-shadow);
+}
+
+.message-search-container {
+  padding: 0.625rem 0.75rem;
+}
+
+.message-search-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.message-search-input {
+  min-width: 8rem;
+}
+
+.message-search-count {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.message-search-button {
+  @apply inline-flex items-center justify-center border transition-colors;
+  width: 2rem;
+  height: 2rem;
+  border-color: var(--border-base);
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.message-search-button:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.message-search-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.message-search-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-primary);
+}
+
+.message-search-empty {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--border-base);
+}
+
+.message-stream-block[data-search-result="true"] {
+  border-radius: 0;
+}
+
+.message-stream-block[data-search-active="true"] {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent-primary) 70%, transparent);
+}
+
+.session-search-match {
+  border-radius: 0;
+  background-color: color-mix(in oklab, #fde047 58%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, #eab308 62%, transparent);
+  color: inherit;
+  padding: 0 0.08em;
+}
+
+.session-search-match-active {
+  background-color: #facc15;
+  box-shadow: 0 0 0 2px #ca8a04;
+  color: #111827;
+}
+
+@media (max-width: 640px) {
+  .message-search-popover {
+    top: 0.5rem;
+    width: calc(100vw - 1rem);
+  }
+
+  .message-search-input-row {
+    gap: 0.375rem;
+  }
+
+  .message-search-count {
+    max-width: 4.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

@@ -1,0 +1,808 @@
+import { Component, createSignal, createEffect, createMemo, For, Show, on, onCleanup } from "solid-js"
+import { captureBackendOperation } from "../lib/backend-operation"
+import type { Agent } from "../types/session"
+import type { CommandInfo, SkillInfo } from "@opencode/client"
+import { backendOf } from "../lib/backend-client"
+import { useI18n } from "../lib/i18n"
+import { getLogger } from "../lib/logger"
+import { backendEvents as serverEvents } from "../lib/server-events"
+import { getRootClient } from "../stores/opencode-client"
+import { splitDisplayPath } from "./unified-picker-path"
+const log = getLogger("actions")
+
+
+const SEARCH_RESULT_LIMIT = 100
+const SEARCH_DEBOUNCE_MS = 200
+
+type LoadingState = "idle" | "listing" | "search"
+
+interface FileItem {
+  path: string
+  relativePath: string
+  added?: number
+  removed?: number
+  isGitFile: boolean
+  isDirectory: boolean
+}
+
+function formatDisplayPath(basePath: string, isDirectory: boolean) {
+  if (!isDirectory) {
+    return basePath
+  }
+  const trimmed = basePath.replace(/\/+$/, "")
+  return trimmed.length > 0 ? `${trimmed}/` : "./"
+}
+
+function isRootPath(value: string) {
+  return value === "." || value === "./" || value === "/"
+}
+
+function normalizeRelativePath(basePath: string, isDirectory: boolean) {
+  if (isRootPath(basePath)) {
+    return "."
+  }
+  const withoutPrefix = basePath.replace(/^\.\/+/, "")
+  if (isDirectory) {
+    const trimmed = withoutPrefix.replace(/\/+$/, "")
+    return trimmed || "."
+  }
+  return withoutPrefix
+}
+
+function normalizeQuery(rawQuery: string) {
+  const trimmed = rawQuery.trim()
+  if (!trimmed) {
+    return ""
+  }
+  // Don't normalize "." - it's used for workspace root
+  return trimmed.replace(/^(\.\/)+/, "").replace(/^\/+/, "")
+}
+
+function mapEntriesToFileItems(entries: { path: string; type: "file" | "directory" }[]): FileItem[] {
+  return entries.map((entry) => {
+    const isDirectory = entry.type === "directory"
+    return {
+      path: formatDisplayPath(entry.path, isDirectory),
+      relativePath: normalizeRelativePath(entry.path, isDirectory),
+      isDirectory,
+      isGitFile: false,
+    }
+  })
+}
+
+type PickerItem =
+  | { type: "agent"; agent: Agent }
+  | { type: "skill"; skill: SkillSummary }
+  | { type: "file"; file: FileItem }
+  | { type: "command"; command: CommandInfo }
+
+type SkillSummary = Pick<SkillInfo, "id" | "name" | "description">
+
+export type PickerSelectAction = "click" | "tab" | "enter" | "shiftEnter"
+
+interface UnifiedPickerProps {
+  open: boolean
+  mode?: "mention" | "command"
+  onSelect: (item: PickerItem, action: PickerSelectAction) => void
+  onClose: () => void
+  agents: Agent[]
+  commands?: CommandInfo[]
+  searchQuery: string
+  textareaRef?: HTMLTextAreaElement
+  workspaceId: string
+  directory?: string
+}
+
+const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
+  const { t } = useI18n()
+  const mode = () => props.mode ?? "mention"
+
+  const [files, setFiles] = createSignal<FileItem[]>([])
+  const [filteredAgents, setFilteredAgents] = createSignal<Agent[]>([])
+  const [skills, setSkills] = createSignal<SkillSummary[]>([])
+  const [skillsLoading, setSkillsLoading] = createSignal(false)
+  const [skillsError, setSkillsError] = createSignal(false)
+  const [selectedIndex, setSelectedIndex] = createSignal(0)
+  const [loadingState, setLoadingState] = createSignal<LoadingState>("idle")
+  const [allFiles, setAllFiles] = createSignal<FileItem[]>([])
+  const [isInitialized, setIsInitialized] = createSignal(false)
+  const [cachedWorkspaceId, setCachedWorkspaceId] = createSignal<string | null>(null)
+ 
+  let containerRef: HTMLDivElement | undefined
+  let scrollContainerRef: HTMLDivElement | undefined
+  let lastWorkspaceId: string | null = null
+  let lastQuery = ""
+  let lastCommandQuery = ""
+  let inflightWorkspaceId: string | null = null
+  let inflightSnapshotPromise: Promise<FileItem[]> | null = null
+  let inflightSnapshotSignal: AbortSignal | undefined
+  let activeRequestId = 0
+  let queryDebounceTimer: ReturnType<typeof setTimeout> | null = null
+ 
+  function resetScrollPosition() {
+    setTimeout(() => {
+      if (scrollContainerRef) {
+        scrollContainerRef.scrollTop = 0
+        scrollContainerRef.scrollLeft = 0
+      }
+    }, 0)
+  }
+ 
+  function applyFileResults(nextFiles: FileItem[]) {
+    setFiles(nextFiles)
+    setSelectedIndex(0)
+    resetScrollPosition()
+  }
+ 
+  async function fetchWorkspaceSnapshot(workspaceId: string): Promise<FileItem[]> {
+    const operation = captureBackendOperation(workspaceId)
+    operation.signal.throwIfAborted()
+    if (inflightWorkspaceId === workspaceId && inflightSnapshotSignal === operation.signal && inflightSnapshotPromise) {
+      return inflightSnapshotPromise
+    }
+    inflightSnapshotSignal = operation.signal
+    inflightWorkspaceId = workspaceId
+    const request = backendOf(workspaceId).api
+      .listWorkspaceFiles(workspaceId, ".", props.directory, operation.signal)
+      .then((entries) => mapEntriesToFileItems(entries))
+      .then((snapshot) => {
+        operation.signal.throwIfAborted()
+        setAllFiles(snapshot)
+        setCachedWorkspaceId(workspaceId)
+        return snapshot
+      })
+      .catch((error) => {
+        if (!operation.current()) throw error
+        log.error(`[UnifiedPicker] Failed to load workspace files:`, error)
+        setAllFiles([])
+        setCachedWorkspaceId(null)
+        throw error
+      })
+      .finally(() => {
+        if (inflightSnapshotPromise === request) {
+          inflightWorkspaceId = null
+          inflightSnapshotPromise = null
+          inflightSnapshotSignal = undefined
+        }
+      })
+ 
+    inflightSnapshotPromise = request
+    return request
+  }
+ 
+  async function ensureWorkspaceSnapshot(workspaceId: string) {
+    if (cachedWorkspaceId() === workspaceId && allFiles().length > 0) {
+      return allFiles()
+    }
+ 
+    return fetchWorkspaceSnapshot(workspaceId)
+  }
+ 
+  let searchController: AbortController | undefined
+
+  async function loadFilesForQuery(rawQuery: string, workspaceId: string) {
+    searchController?.abort()
+    const controller = new AbortController()
+    searchController = controller
+    const operation = captureBackendOperation(workspaceId, controller.signal)
+    if (!operation.current()) return
+    const normalizedQuery = normalizeQuery(rawQuery)
+    const requestId = ++activeRequestId
+    const hasCachedSnapshot =
+      !normalizedQuery && cachedWorkspaceId() === workspaceId && allFiles().length > 0
+    const mode: LoadingState = normalizedQuery ? "search" : hasCachedSnapshot ? "idle" : "listing"
+    if (mode !== "idle") {
+      setLoadingState(mode)
+    } else {
+      setLoadingState("idle")
+    }
+
+    try {
+      if (!normalizedQuery) {
+        const snapshot = await ensureWorkspaceSnapshot(workspaceId)
+        if (!operation.current() || !shouldApplyResults(requestId, workspaceId)) {
+          return
+        }
+        applyFileResults(snapshot)
+        return
+      }
+
+      const results = await backendOf(workspaceId).api.searchWorkspaceFiles(workspaceId, normalizedQuery, {
+        limit: SEARCH_RESULT_LIMIT,
+        signal: operation.signal,
+        directory: props.directory,
+      })
+      if (!operation.current() || !shouldApplyResults(requestId, workspaceId)) {
+        return
+      }
+      applyFileResults(mapEntriesToFileItems(results))
+    } catch (error) {
+      if (!operation.current()) return
+      if (workspaceId === props.workspaceId) {
+        log.error(`[UnifiedPicker] Failed to fetch files:`, error)
+        if (shouldApplyResults(requestId, workspaceId)) {
+          applyFileResults([])
+        }
+      }
+    } finally {
+      if (operation.current() && shouldFinalizeRequest(requestId, workspaceId)) {
+        setLoadingState("idle")
+      }
+    }
+  }
+
+  function clearQueryDebounce() {
+    if (queryDebounceTimer) {
+      clearTimeout(queryDebounceTimer)
+      queryDebounceTimer = null
+    }
+  }
+
+  function scheduleLoadFilesForQuery(rawQuery: string, workspaceId: string, immediate = false) {
+    searchController?.abort()
+    activeRequestId += 1
+    clearQueryDebounce()
+    const normalizedQuery = normalizeQuery(rawQuery)
+    const shouldDebounce = !immediate && normalizedQuery.length > 0
+    const operation = captureBackendOperation(workspaceId)
+    if (!operation.current()) return
+    if (shouldDebounce) {
+      queryDebounceTimer = setTimeout(() => {
+        queryDebounceTimer = null
+        if (!operation.current()) return
+        void loadFilesForQuery(rawQuery, workspaceId)
+      }, SEARCH_DEBOUNCE_MS)
+      return
+    }
+    void loadFilesForQuery(rawQuery, workspaceId)
+  }
+
+  function shouldApplyResults(requestId: number, workspaceId: string) {
+    return props.open && workspaceId === props.workspaceId && requestId === activeRequestId
+  }
+
+ 
+  function shouldFinalizeRequest(requestId: number, workspaceId: string) {
+    return workspaceId === props.workspaceId && requestId === activeRequestId
+  }
+ 
+  function resetPickerState() {
+    searchController?.abort()
+    clearQueryDebounce()
+    setFiles([])
+    setAllFiles([])
+    setFilteredAgents([])
+    setSkills([])
+    setSkillsLoading(false)
+    setSkillsError(false)
+    setCachedWorkspaceId(null)
+    setIsInitialized(false)
+    setSelectedIndex(0)
+    setLoadingState("idle")
+    lastWorkspaceId = null
+    lastQuery = ""
+    lastCommandQuery = ""
+    activeRequestId += 1
+  }
+
+  onCleanup(() => {
+    searchController?.abort()
+    clearQueryDebounce()
+  })
+  createEffect(on(() => serverEvents.signalForInstance(props.workspaceId), () => {
+    inflightWorkspaceId = null; inflightSnapshotPromise = null
+    resetPickerState()
+  }, { defer: true }))
+
+  createEffect(() => {
+    if (!props.open) {
+      resetPickerState()
+      return
+    }
+
+    if (mode() !== "mention") {
+      // Command mode doesn't use file snapshots.
+      return
+    }
+
+    const workspaceChanged = lastWorkspaceId !== props.workspaceId
+    const queryChanged = lastQuery !== props.searchQuery
+
+    if (queryChanged) {
+      // Reset selectedIndex to 0 when query changes to avoid ghost state
+      // This ensures proper highlighting when navigating back to root or changing queries
+      setSelectedIndex(0)
+      resetScrollPosition()
+    }
+
+    if (!isInitialized() || workspaceChanged || queryChanged) {
+      setIsInitialized(true)
+      lastWorkspaceId = props.workspaceId
+      lastQuery = props.searchQuery
+      const shouldSkipDebounce = workspaceChanged || normalizeQuery(props.searchQuery).length === 0
+      scheduleLoadFilesForQuery(props.searchQuery, props.workspaceId, shouldSkipDebounce)
+    }
+  })
+
+  // Skills come from the owning native Location. The list is fetched when the
+  // @ menu opens and refreshed on skill/config updates while it stays open,
+  // with concurrent refreshes coalesced and late responses fenced.
+  createEffect(() => {
+    if (!props.open || mode() !== "mention") return
+    const workspaceId = props.workspaceId
+    const directory = props.directory ?? ""
+    if (!workspaceId || !directory) return
+    let disposed = false, inFlight = false, trailing = false
+    const operation = captureBackendOperation(workspaceId, undefined, () => !disposed)
+    const releaseLoading = () => { if (!disposed) setSkillsLoading(false) }
+    operation.signal.addEventListener("abort", releaseLoading, { once: true })
+    setSkills([])
+    setSkillsError(false)
+    const load = () => {
+      if (!operation.current()) return
+      if (inFlight) { trailing = true; return }
+      inFlight = true
+      setSkillsLoading(true)
+      void (async () => getRootClient(workspaceId).skill.list({ location: { directory } }, { signal: operation.signal }))().then(
+        (response) => {
+          if (!operation.current()) return
+          if (trailing) { inFlight = false; trailing = false; load(); return }
+          setSkills((response.data ?? []).map(({ id, name, description }) => ({ id, name, description })))
+          setSkillsError(false)
+          inFlight = false
+          setSkillsLoading(false)
+        },
+        (error) => {
+          if (!operation.current()) return
+          if (trailing) { inFlight = false; trailing = false; load(); return }
+          log.error(`[UnifiedPicker] Failed to load skills:`, error)
+          setSkillsError(true)
+          inFlight = false
+          setSkillsLoading(false)
+        },
+      )
+    }
+    const unsubscribe = serverEvents.on("instance.event", payload => {
+      if (payload.type !== "instance.event" || payload.instanceId !== workspaceId) return
+      if (["skill.updated", "config.updated"].includes(payload.event.type)) load()
+    })
+    const status = serverEvents.on("instance.eventStatus", payload => {
+      if (payload.type === "instance.eventStatus" && payload.instanceId === workspaceId && payload.status === "connected") load()
+    })
+    const reconnect = serverEvents.forInstance(() => workspaceId).onOpen(() => load())
+    onCleanup(() => { disposed = true; operation.signal.removeEventListener("abort", releaseLoading); unsubscribe(); status(); reconnect() })
+    load()
+  })
+
+  const filteredSkills = createMemo(() => {
+    if (mode() !== "mention") return []
+    const query = props.searchQuery.trim().toLowerCase()
+    if (!query) return skills()
+    return skills().filter((skill) =>
+      skill.name.toLowerCase().includes(query) ||
+      (skill.description ?? "").toLowerCase().includes(query),
+    )
+  })
+
+  createEffect(() => {
+    if (!props.open) return
+    if (mode() !== "mention") return
+
+    const query = props.searchQuery.toLowerCase()
+    const visibleAgents = props.agents.filter((agent) => !agent.hidden)
+    const filtered = query
+      ? visibleAgents.filter(
+          (agent) =>
+            agent.name.toLowerCase().includes(query) ||
+            (agent.description && agent.description.toLowerCase().includes(query)),
+        )
+      : visibleAgents
+
+    setFilteredAgents(filtered)
+  })
+
+  const filteredCommands = createMemo(() => {
+    if (mode() !== "command") return []
+    const q = props.searchQuery.trim().toLowerCase()
+    const source = props.commands ?? []
+    if (!q) return source
+    return source.filter((cmd) => {
+      const nameMatch = cmd.name.toLowerCase().includes(q)
+      const descMatch = (cmd.description ?? "").toLowerCase().includes(q)
+      return nameMatch || descMatch
+    })
+  })
+
+  createEffect(() => {
+    if (!props.open) return
+    if (mode() !== "command") return
+
+    const query = props.searchQuery
+    const count = filteredCommands().length
+
+    if (query !== lastCommandQuery) {
+      lastCommandQuery = query
+      setSelectedIndex(0)
+      resetScrollPosition()
+      return
+    }
+
+    if (count <= 0) {
+      if (selectedIndex() !== 0) {
+        setSelectedIndex(0)
+      }
+      return
+    }
+
+    const current = selectedIndex()
+    if (current < 0) {
+      setSelectedIndex(0)
+      return
+    }
+    if (current >= count) {
+      setSelectedIndex(count - 1)
+    }
+  })
+
+  const allItems = (): PickerItem[] => {
+    const items: PickerItem[] = []
+    if (mode() === "command") {
+      filteredCommands().forEach((command) => items.push({ type: "command", command }))
+      return items
+    }
+
+    // Add root directory as first item only when query is EXACTLY "." or "./" (not "./docs/")
+    const isExactRootQuery = props.searchQuery === "." || props.searchQuery === "./"
+    if (mode() === "mention" && isExactRootQuery) {
+      const rootFile: FileItem = {
+        path: ".",
+        relativePath: ".",
+        isDirectory: true,
+        isGitFile: false,
+      }
+      items.push({ type: "file", file: rootFile })
+    }
+
+    // Match the placeholder and the rendered groups: files, agents, then skills.
+    files().forEach((file) => items.push({ type: "file", file }))
+    // Don't show agents or skills for exact root path queries
+    if (!isExactRootQuery) {
+      filteredAgents().forEach((agent) => items.push({ type: "agent", agent }))
+      filteredSkills().forEach((skill) => items.push({ type: "skill", skill }))
+    }
+    return items
+  }
+
+  function scrollToSelected() {
+    setTimeout(() => {
+      const selectedElement = containerRef?.querySelector('[data-picker-selected="true"]')
+      if (selectedElement) {
+        selectedElement.scrollIntoView({ block: "nearest", behavior: "smooth" })
+      }
+    }, 0)
+  }
+
+  function handleSelect(item: PickerItem) {
+    props.onSelect(item, "click")
+  }
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if (!props.open) return
+
+    const items = allItems()
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault()
+      e.stopPropagation()
+      setSelectedIndex((prev) => Math.min(prev + 1, items.length - 1))
+      scrollToSelected()
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault()
+      e.stopPropagation()
+      setSelectedIndex((prev) => Math.max(prev - 1, 0))
+      scrollToSelected()
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault()
+      e.stopPropagation()
+      // Solid delegates textarea key handlers at document too, so propagation
+      // alone cannot keep modified submit shortcuts out of this listener.
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey || e.altKey)) return
+      const selected = items[selectedIndex()]
+      if (selected) {
+        const action: PickerSelectAction = e.key === "Tab" ? "tab" : e.shiftKey ? "shiftEnter" : "enter"
+        props.onSelect(selected, action)
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault()
+      e.stopPropagation()
+      props.onClose()
+    }
+  }
+
+  createEffect(() => {
+    if (props.open) {
+      document.addEventListener("keydown", handleKeyDown)
+      onCleanup(() => {
+        document.removeEventListener("keydown", handleKeyDown)
+      })
+    }
+  })
+
+  const commandCount = () => filteredCommands().length
+  const agentCount = () => filteredAgents().length
+  const skillCount = () => filteredSkills().length
+  const fileCount = () => files().length
+  const isLoading = () => mode() === "mention" && loadingState() !== "idle"
+  const loadingMessage = () => {
+    if (loadingState() === "search") {
+      return t("unifiedPicker.loading.searching")
+    }
+    if (loadingState() === "listing") {
+      return t("unifiedPicker.loading.loadingWorkspace")
+    }
+    return ""
+  }
+ 
+  return (
+
+    <Show when={props.open}>
+      <div
+        ref={containerRef}
+        class="dropdown-surface bottom-full left-0 mb-1"
+        data-prompt-picker
+      >
+        <div class="dropdown-header">
+          <div class="dropdown-header-title">
+            <Show when={mode() === "command"} fallback={t("unifiedPicker.title.mention")}>
+              {t("unifiedPicker.title.command")}
+            </Show>
+            <Show when={isLoading()}>
+              <span class="ml-2">{loadingMessage()}</span>
+            </Show>
+          </div>
+        </div>
+
+        <div ref={scrollContainerRef} class="dropdown-content max-h-60 overflow-x-auto">
+          <Show when={(mode() === "command" ? commandCount() === 0 : agentCount() === 0 && skillCount() === 0 && fileCount() === 0 && !skillsLoading())}>
+            <div class="dropdown-empty">{t("unifiedPicker.empty")}</div>
+          </Show>
+          <Show when={mode() === "mention" && skillsLoading()}>
+            <div class="dropdown-empty">{t("promptInput.skills.loading")}</div>
+          </Show>
+          <Show when={mode() === "mention" && skillsError()}>
+            <div class="dropdown-empty" role="alert">{t("promptInput.skills.error")}</div>
+          </Show>
+
+          <Show when={mode() === "command" && commandCount() > 0}>
+            <div class="dropdown-section-header">{t("unifiedPicker.sections.commands")}</div>
+            <For each={filteredCommands()}>
+              {(command, index) => {
+                const isSelected = () => index() === selectedIndex()
+                return (
+                  <div
+                    class={`dropdown-item ${isSelected() ? "dropdown-item-highlight" : ""}`}
+                    data-picker-selected={isSelected()}
+                    onClick={() => props.onSelect({ type: "command", command }, "click")}
+                  >
+                    <div class="flex items-start gap-2">
+                      <svg class="dropdown-icon-accent h-4 w-4 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                      </svg>
+                      <div class="flex-1">
+                        <div class="text-sm font-medium">/{command.name}</div>
+                        <Show when={command.description}>
+                          <div class="mt-0.5 text-xs" style="color: var(--text-muted)">
+                            {(command.description ?? "").length > 80 ? (command.description ?? "").slice(0, 80) + "..." : command.description}
+                          </div>
+                        </Show>
+                      </div>
+                    </div>
+                  </div>
+                )
+              }}
+            </For>
+          </Show>
+
+          <Show when={mode() === "mention" && (fileCount() > 0 || props.searchQuery === "." || props.searchQuery === "./")}>
+            <div class="dropdown-section-header">
+              {t("unifiedPicker.sections.files")}
+            </div>
+            <Show when={props.searchQuery === "." || props.searchQuery === "./"}>
+              <div
+                class={`dropdown-item py-1.5 ${
+                  selectedIndex() === 0 ? "dropdown-item-highlight" : ""
+                }`}
+                data-picker-selected={selectedIndex() === 0}
+                onClick={() => {
+                  const rootFile: FileItem = {
+                    path: ".",
+                    relativePath: ".",
+                    isDirectory: true,
+                    isGitFile: false,
+                  }
+                  props.onSelect({ type: "file", file: rootFile }, "click")
+                }}
+              >
+                <div class="flex items-center gap-2 text-sm">
+                  <svg class="dropdown-icon h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                    />
+                  </svg>
+                  <span class="font-mono">. {t("unifiedPicker.sections.workspaceRoot")}</span>
+                </div>
+              </div>
+            </Show>
+            <For each={files()}>
+              {(file) => {
+                const itemIndex = () => allItems().findIndex(
+                  (item) => item.type === "file" && item.file.relativePath === file.relativePath,
+                )
+                const isFolder = file.isDirectory
+                const displayPath = splitDisplayPath(file.path)
+                return (
+                  <div
+                    class={`dropdown-item py-1.5 ${
+                      itemIndex() === selectedIndex() ? "dropdown-item-highlight" : ""
+                    }`}
+                    data-picker-selected={itemIndex() === selectedIndex()}
+                    onClick={() => props.onSelect({ type: "file", file }, "click")}
+                  >
+                    <div class="flex min-w-full w-max items-center gap-2 text-sm">
+                      <Show
+                        when={isFolder}
+                        fallback={
+                          <svg class="dropdown-icon h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                            />
+                          </svg>
+                        }
+                      >
+                        <svg class="dropdown-icon-accent h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                          />
+                        </svg>
+                      </Show>
+                      <span class="min-w-0 flex-1" title={file.path}>
+                        <span class="sr-only">{file.path}</span>
+                        <span aria-hidden="true">
+                          <span class="block whitespace-nowrap">
+                            {displayPath.name}
+                          </span>
+                          <Show when={displayPath.parent}>
+                            <span class="block whitespace-nowrap text-[11px]" style="color: var(--text-muted)">{displayPath.parent}/</span>
+                          </Show>
+                          <Show when={displayPath.directory && displayPath.directory !== displayPath.parent}>
+                            <span class="block whitespace-nowrap text-[10px]" style="color: var(--text-muted)">{displayPath.directory}</span>
+                          </Show>
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+                )
+              }}
+            </For>
+          </Show>
+          <Show when={mode() === "mention" && agentCount() > 0 && !(props.searchQuery === "." || props.searchQuery === "./")}>
+            <div class="dropdown-section-header">
+              {t("unifiedPicker.sections.agents")}
+            </div>
+            <For each={filteredAgents()}>
+              {(agent) => {
+                const itemIndex = () => allItems().findIndex(
+                  (item) => item.type === "agent" && item.agent.name === agent.name,
+                )
+                return (
+                  <div
+                    class={`dropdown-item ${
+                      itemIndex() === selectedIndex() ? "dropdown-item-highlight" : ""
+                    }`}
+                    data-picker-selected={itemIndex() === selectedIndex()}
+                    onClick={() => props.onSelect({ type: "agent", agent }, "click")}
+                  >
+                    <div class="flex items-start gap-2">
+                      <svg
+                        class="dropdown-icon-accent h-4 w-4 mt-0.5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                        />
+                      </svg>
+                      <div class="flex-1">
+                        <div class="flex items-center gap-2">
+                          <span class="text-sm font-medium">{agent.name}</span>
+                          <Show when={agent.mode === "subagent"}>
+                            <span class="dropdown-badge">
+                              {t("unifiedPicker.badge.subagent")}
+                            </span>
+                          </Show>
+                        </div>
+                        <Show when={agent.description}>
+                          <div class="mt-0.5 text-xs" style="color: var(--text-muted)">
+                            {agent.description && agent.description.length > 80
+                              ? agent.description.slice(0, 80) + "..."
+                              : agent.description}
+                          </div>
+                        </Show>
+                      </div>
+                    </div>
+                  </div>
+                )
+              }}
+            </For>
+          </Show>
+
+          <Show when={mode() === "mention" && skillCount() > 0 && !(props.searchQuery === "." || props.searchQuery === "./")}>
+            <div class="dropdown-section-header">
+              {t("unifiedPicker.sections.skills")}
+            </div>
+            <For each={filteredSkills()}>
+              {(skill) => {
+                const itemIndex = () => allItems().findIndex(
+                  (item) => item.type === "skill" && item.skill.id === skill.id,
+                )
+                return (
+                  <div
+                    class={`dropdown-item ${
+                      itemIndex() === selectedIndex() ? "dropdown-item-highlight" : ""
+                    }`}
+                    data-picker-selected={itemIndex() === selectedIndex()}
+                    onClick={() => props.onSelect({ type: "skill", skill }, "click")}
+                  >
+                    <div class="flex items-start gap-2">
+                      <svg
+                        class="dropdown-icon-accent h-4 w-4 mt-0.5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+                        />
+                      </svg>
+                      <div class="flex-1">
+                        <div class="flex items-center gap-2">
+                          <span class="text-sm font-medium">{skill.name}</span>
+                        </div>
+                        <Show when={skill.description}>
+                          <div class="mt-0.5 text-xs" style="color: var(--text-muted)">
+                            {skill.description && skill.description.length > 100
+                              ? skill.description.slice(0, 100) + "..."
+                              : skill.description}
+                          </div>
+                        </Show>
+                      </div>
+                    </div>
+                  </div>
+                )
+              }}
+            </For>
+          </Show>
+        </div>
+
+      </div>
+    </Show>
+  )
+}
+
+export default UnifiedPicker

@@ -1,0 +1,517 @@
+import { randomBytes } from "node:crypto"
+import { isSessionNotFoundError, type LocationRef, type OpenCodeEvent } from "@opencode/client"
+import { readLocationRef } from "../opencode/compatibility/location"
+import { runtimeIdentity } from "../opencode/compatibility/runtime"
+import { EventBus } from "../events/bus"
+import { Logger } from "../logger"
+import { WorkspaceManager } from "./manager"
+import { nativeEventConnections, type ServiceConnection } from "./opencode-service"
+import { InstanceStreamStatus } from "../api-types"
+import { InstanceEventQueue } from "./instance-event-queue"
+import { integrationEventForRelay } from "../opencode/integrations/events"
+
+const RECONNECT_DELAY_MS = 1000
+const LOCATION_OWNER_CACHE_MS = 2000
+const SESSION_LOCATION_CACHE_MS = 2000
+const ROUTING_RESYNC_MIN_MS = 5000
+const ROUTING_RESYNC_MAX_MS = 60_000
+const SESSION_RECIPIENT_LIMIT = 4096
+/** A session lookup that failed after its retry, or returned an unreadable location. */
+const UNRESOLVED = Symbol("unresolved session location")
+type SessionLocation = LocationRef | undefined | typeof UNRESOLVED
+const GLOBAL_EVENT_TYPES = new Set([
+  "agent.updated",
+  "command.updated",
+  "config.updated",
+  "credential.switched",
+  "credential.updated",
+  "integration.updated",
+  "installation.update-available",
+  "installation.updated",
+  "mcp.resources.changed",
+  "mcp.status.changed",
+  "models-dev.refreshed",
+  "model.updated",
+  "plugin.updated",
+  "provider.updated",
+  "reference.updated",
+  "server.connected",
+  "skill.updated",
+  "websearch.updated",
+  "worktree.updated",
+])
+
+interface InstanceEventBridgeOptions {
+  workspaceManager: WorkspaceManager
+  eventBus: EventBus
+  logger: Logger
+}
+
+interface EventRoute {
+  current: () => boolean
+  signal: AbortSignal
+  queue: InstanceEventQueue
+  key: string
+  payload: object
+  bytes: number
+  recipients: Array<{ id: string; epoch: number }>
+  receivedAt: number
+}
+
+/** Opaque per-source identity, issued randomly and held by the relay. The
+ * token covers the same fields connection validation compares (url, runtime
+ * version/pid, auth) — the tuple itself never leaves the process. Subscribers
+ * see only the token: it is stable across same-source reconnects, rotates on
+ * replacement, and nothing a client could recompute or correlate across
+ * backends derives from it. */
+function daemonSourceKey(connection: ServiceConnection): string {
+  const identity = runtimeIdentity(connection.endpoint)
+  return JSON.stringify([
+    connection.endpoint.url,
+    identity?.version ?? null,
+    identity?.pid ?? null,
+    connection.endpoint.auth?.username ?? null,
+    connection.endpoint.auth?.password ?? null,
+  ])
+}
+
+export class InstanceEventBridge {
+  private readonly controller = new AbortController()
+  private status: InstanceStreamStatus = "connecting"
+  private generation = 0
+  private task?: Promise<void>
+  /** The attributed source of the current shared stream and its opaque token.
+   * Exactly one entry: a reconnect of the same source keeps its token, a
+   * replacement drops the superseded source's credential-bearing key with it,
+   * and relay disposal releases both. */
+  private daemonSource?: { key: string; token: string }
+  private readonly locationOwners = new Map<string, { expiresAt: number; owns: Promise<boolean> }>()
+  private ownershipRevision = 0
+  private lastSlowWarning = -Infinity
+  private readonly workspaceEpochs = new Map<string, number>()
+  private readonly sessionLocations = new Map<string, { expiresAt: number; location: Promise<SessionLocation> }>()
+  /** Bounded, least recently delivered first; survives ownership invalidation. */
+  private readonly sessionRecipients = new Map<string, Set<string>>()
+  private readonly ptyLocations = new Map<string, LocationRef>()
+  private readonly shellLocations = new Map<string, LocationRef>()
+  private readonly routingResyncs = new Map<string, { next: number; interval: number; timer?: ReturnType<typeof setTimeout> }>()
+  private readonly onWorkspaceStarted = (event: { workspace: { id: string } }) => {
+    this.advanceWorkspace(event.workspace.id)
+    this.clearLocationCaches()
+    if (!this.task) this.task = this.run()
+    else this.publishStatus(event.workspace.id, this.status)
+  }
+  private readonly onWorkspaceStopped = (event: { workspaceId: string }) => {
+    this.advanceWorkspace(event.workspaceId)
+    this.clearLocationCaches()
+    this.clearRoutingResync(event.workspaceId)
+    this.forgetSessionRecipient(undefined, event.workspaceId)
+    this.publishStatus(event.workspaceId, "disconnected", "workspace stopped")
+  }
+  private readonly onWorkspaceError = (event: { workspace: { id: string } }) => {
+    this.advanceWorkspace(event.workspace.id)
+    this.clearLocationCaches()
+    this.clearRoutingResync(event.workspace.id)
+    this.forgetSessionRecipient(undefined, event.workspace.id)
+    this.publishStatus(event.workspace.id, "disconnected", "workspace error")
+  }
+  private readonly onWorktreesChanged = () => this.invalidateOwners()
+
+  constructor(private readonly options: InstanceEventBridgeOptions) {
+    const bus = this.options.eventBus
+    bus.on("workspace.started", this.onWorkspaceStarted)
+    bus.on("workspace.stopped", this.onWorkspaceStopped)
+    bus.on("workspace.error", this.onWorkspaceError)
+    bus.on("workspace.worktreesChanged", this.onWorktreesChanged)
+  }
+
+  shutdown() {
+    this.controller.abort()
+    this.clearRoutingResync()
+    // Release the current source's credential-bearing key and its token.
+    this.daemonSource = undefined
+    const bus = this.options.eventBus
+    bus.off("workspace.started", this.onWorkspaceStarted)
+    bus.off("workspace.stopped", this.onWorkspaceStopped)
+    bus.off("workspace.error", this.onWorkspaceError)
+    bus.off("workspace.worktreesChanged", this.onWorktreesChanged)
+    for (const workspace of this.options.workspaceManager.list()) {
+      this.publishStatus(workspace.id, "disconnected")
+    }
+  }
+
+  private async run() {
+    while (!this.controller.signal.aborted) {
+      this.generation += 1
+      this.clearLocationCaches()
+      // Reconnecting reconciles every instance, including pending routing pulses.
+      this.clearRoutingResync()
+      this.updateStatus("connecting")
+      const attempt = new AbortController()
+      let failure: Error | undefined
+      const queue = new InstanceEventQueue(error => { failure = error; attempt.abort() })
+      const abort = () => { attempt.abort(); queue.close() }
+      this.controller.signal.addEventListener("abort", abort, { once: true })
+      const current = () => !attempt.signal.aborted && !this.controller.signal.aborted
+      try {
+        const events = await this.options.workspaceManager.subscribeToSharedService(attempt.signal)
+        let confirmed = false
+        for await (const incoming of events) {
+          if (!current()) break
+          const event = integrationEventForRelay(incoming)
+          if (!event) continue
+          if (!confirmed) {
+            if (event.type !== "server.connected") {
+              throw new Error(`Shared OpenCode event stream started with ${event.type}, expected server.connected`)
+            }
+            confirmed = true
+            this.updateStatus("connected")
+          }
+          if (event.type === "worktree.updated") {
+            this.options.workspaceManager.invalidateWorktrees()
+            this.invalidateOwners()
+          }
+          const receivedAt = Date.now()
+          const bytes = Buffer.byteLength(JSON.stringify(event))
+          const key = this.eventKey(event)
+          const recipients = this.options.workspaceManager.list().map(workspace => ({
+            id: workspace.id, epoch: this.workspaceEpochs.get(workspace.id) ?? 0,
+          }))
+          queue.enqueue(`resolve:${key}`, bytes, () => this.publishEvent(event, {
+             current, signal: attempt.signal, queue, key, bytes, payload: event, recipients, receivedAt,
+           }), event)
+        }
+        if (!this.controller.signal.aborted) throw failure ?? new Error("Shared OpenCode event stream ended")
+      } catch (error) {
+        attempt.abort()
+        queue.close()
+        if (this.controller.signal.aborted) return
+        const reason = failure ?? error
+        this.options.logger.warn({ err: reason }, "Shared OpenCode event stream disconnected")
+        this.updateStatus("error", reason instanceof Error ? reason.message : String(reason))
+        await this.delay(RECONNECT_DELAY_MS)
+      } finally {
+        attempt.abort()
+        queue.close()
+        this.controller.signal.removeEventListener("abort", abort)
+      }
+    }
+  }
+
+  private async publishEvent(event: OpenCodeEvent, route: EventRoute) {
+    if (!route.current()) return
+    if (event.type === "server.connected") {
+      const connection = nativeEventConnections.get(event)
+      if (connection) {
+        const key = daemonSourceKey(connection)
+        if (this.daemonSource?.key !== key) {
+          this.daemonSource = { key, token: randomBytes(16).toString("hex") }
+        }
+        event = { ...event, data: { ...event.data, daemon: this.daemonSource.token } } as OpenCodeEvent
+      }
+    }
+    const sessionId = this.sessionId(event)
+    const ptyId = this.ptyId(event)
+    const shellId = this.shellId(event)
+    const envelope = event.location ? readLocationRef(event.location) : undefined
+    if (event.type === "session.moved" && sessionId) {
+      this.sessionLocations.delete(sessionId)
+      const destination = readLocationRef(event.data.location)
+      if (destination) {
+        this.deliverEvent(event, envelope, route, destination)
+        return
+      }
+    }
+
+    // A scoped event is native location authority, not merely a cwd hint. Keep
+    // that full pair for subsequent locationless PTY/Shell/session events.
+    const resolved = event.location ? envelope
+      : (ptyId ? this.ptyLocations.get(ptyId) : undefined)
+        ?? this.ptyInfoLocation(event)
+        ?? (shellId ? this.shellLocations.get(shellId) : undefined)
+        ?? this.shellInfoLocation(event)
+        ?? (sessionId ? await this.resolveSessionLocation(sessionId, route.signal) : undefined)
+    if (!route.current()) return
+    const location = resolved === UNRESOLVED ? undefined : resolved
+    if (!location) {
+      if (GLOBAL_EVENT_TYPES.has(event.type)) {
+        this.deliverEvent(event, undefined, route)
+        return
+      }
+      if (event.type === "session.deleted" && sessionId) {
+        // Deletion can make session.get return 404 before the event arrives. Session IDs are
+        // service-global, so notifying every logical workspace cannot delete another session.
+        this.deliverEvent(event, undefined, route)
+        this.sessionLocations.delete(sessionId)
+        return
+      }
+      // An unreadable session location cannot name its owner: the session's
+      // recent recipients (every recipient when none is known) reconcile
+      // instead of losing the event silently.
+      if (resolved === UNRESOLVED && sessionId) this.requestSessionResync(sessionId, route)
+      return
+    }
+    // The moved envelope can refer to the old location. The next locationless
+    // event must resolve the native session rather than cache that old owner.
+    if (sessionId && event.type !== "session.moved") {
+      this.sessionLocations.set(sessionId, {
+        expiresAt: Date.now() + SESSION_LOCATION_CACHE_MS,
+        location: Promise.resolve(location),
+      })
+    }
+    if (ptyId) this.ptyLocations.set(ptyId, location)
+    if (shellId) this.shellLocations.set(shellId, location)
+
+    this.deliverEvent(event, location, route)
+    if (event.type === "session.deleted" && sessionId) this.sessionLocations.delete(sessionId)
+    if (event.type === "pty.deleted" && ptyId) this.ptyLocations.delete(ptyId)
+    if (event.type === "shell.deleted" && shellId) this.shellLocations.delete(shellId)
+  }
+
+  private eventKey(event: OpenCodeEvent): string {
+    const session = this.sessionId(event)
+    if (session) return `session:${session}`
+    const pty = this.ptyId(event)
+    if (pty) return `pty:${pty}`
+    const shell = this.shellId(event)
+    if (shell) return `shell:${shell}`
+    const location = event.location ? readLocationRef(event.location) : undefined
+    return `location:${JSON.stringify([location?.directory, location?.workspaceID])}`
+  }
+
+  private deliverEvent(event: OpenCodeEvent, location: LocationRef | undefined, route: EventRoute, destination?: LocationRef): void {
+    const resolvedAt = Date.now()
+    const sessionId = this.sessionId(event)
+    // Like native location subscriptions, a move reaches both owners. A
+    // recipient of the session's earlier events learns that it left even
+    // when the envelope names only its destination.
+    for (const { id: instanceId, epoch } of route.recipients) {
+      const current = () => route.current() && (this.workspaceEpochs.get(instanceId) ?? 0) === epoch
+      route.queue.enqueue(`deliver:${JSON.stringify([instanceId, route.key])}`, route.bytes, async () => {
+        if (!current()) return
+        const lookupStarted = Date.now()
+        const heldSession = Boolean(destination && sessionId && this.sessionRecipients.get(sessionId)?.has(instanceId))
+        let allowed: boolean
+        let ownsDestination: boolean
+        let lookupFailed: boolean
+        let revision: number
+        const owns = (candidate: LocationRef) => this.resolveLocationOwner(instanceId, candidate, current, route.signal).catch(() => {
+          lookupFailed = true
+          return false
+        })
+        do {
+          revision = this.ownershipRevision
+          lookupFailed = false
+          allowed = heldSession || (!location && !destination) || (!!location && await owns(location))
+          // An unreadable source does not settle ownership of the destination.
+          if (!current()) return
+          ownsDestination = !!destination && await owns(destination)
+          allowed ||= ownsDestination
+          if (!current()) return
+        } while (revision !== this.ownershipRevision)
+        if (!allowed && lookupFailed) {
+          this.requestRoutingResync(instanceId)
+          return
+        }
+        // Stopped recipients and work from an earlier connection never publish.
+        if (!this.options.workspaceManager.list().some(workspace => workspace.id === instanceId)) return
+        const now = Date.now()
+        const upstreamAgeMs = "created" in event && typeof event.created === "number" ? route.receivedAt - event.created : undefined
+        if ((now - route.receivedAt >= 1000 || (upstreamAgeMs ?? 0) >= 1000) && now - this.lastSlowWarning >= 10_000) {
+          this.lastSlowWarning = now
+          this.options.logger.warn({ instanceId, eventType: event.type, pending: route.queue.pending,
+            routingMs: now - route.receivedAt, ownershipMs: now - lookupStarted,
+            locationMs: resolvedAt - route.receivedAt, recipientQueueMs: lookupStarted - resolvedAt,
+            upstreamAgeMs,
+          }, "Slow instance event routing")
+        }
+        if (allowed) this.options.eventBus.publish({ type: "instance.event", instanceId, event })
+        if (!sessionId) return
+        // A recipient that received this session's events and is now refused
+        // without a move cannot tell an unreadable checkout from a foreign one:
+        // it reconciles. A location it never owned stays a silent rejection.
+        if (event.type === "session.moved" && ownsDestination) this.rememberSessionRecipient(sessionId, instanceId)
+        else if (event.type === "session.moved" || event.type === "session.deleted") this.forgetSessionRecipient(sessionId, instanceId)
+        else if (allowed) this.rememberSessionRecipient(sessionId, instanceId)
+        else if (location && this.sessionRecipients.get(sessionId)?.has(instanceId)) this.requestRoutingResync(instanceId)
+      }, route.payload)
+    }
+  }
+
+  private sessionId(event: OpenCodeEvent): string | undefined {
+    const data = event.data as { sessionID?: unknown; form?: { sessionID?: unknown } }
+    const sessionId = data.sessionID ?? (event.type === "form.created" ? data.form?.sessionID : undefined)
+    return typeof sessionId === "string" && sessionId && sessionId !== "global" ? sessionId : undefined
+  }
+
+  private ptyId(event: OpenCodeEvent): string | undefined {
+    if (!event.type.startsWith("pty.")) return undefined
+    const data = event.data as { id?: unknown; info?: { id?: unknown } }
+    const id = data.id ?? data.info?.id
+    return typeof id === "string" && id ? id : undefined
+  }
+
+  private ptyInfoLocation(event: OpenCodeEvent): LocationRef | undefined {
+    if (event.type !== "pty.created" && event.type !== "pty.updated") return undefined
+    const cwd = (event.data as { info?: { cwd?: unknown } }).info?.cwd
+    return typeof cwd === "string" && cwd ? { directory: cwd } : undefined
+  }
+
+  private shellId(event: OpenCodeEvent): string | undefined {
+    if (!event.type.startsWith("shell.")) return undefined
+    const data = event.data as { id?: unknown; info?: { id?: unknown } }
+    const id = data.id ?? data.info?.id
+    return typeof id === "string" && id ? id : undefined
+  }
+
+  private shellInfoLocation(event: OpenCodeEvent): LocationRef | undefined {
+    if (event.type !== "shell.created") return undefined
+    const cwd = (event.data as { info?: { cwd?: unknown } }).info?.cwd
+    return typeof cwd === "string" && cwd ? { directory: cwd } : undefined
+  }
+
+  /** A missing session resolves to no location; a lookup that still fails
+   * after its retry, or an unreadable location, resolves to UNRESOLVED. */
+  private resolveSessionLocation(sessionId: string, signal: AbortSignal): Promise<SessionLocation> {
+    const now = Date.now()
+    const cached = this.sessionLocations.get(sessionId)
+    if (cached && cached.expiresAt > now) return cached.location
+
+    const resolve = () => this.options.workspaceManager.getSharedServiceClient()
+      .then((client) => client.session.get({ sessionID: sessionId }, { signal }))
+      .then((session) => readLocationRef(session.location))
+    const location = resolve().catch((error): Promise<SessionLocation> | undefined => {
+      if (signal.aborted || isSessionNotFoundError(error)) return undefined
+      return resolve().catch((retryError) => {
+        if (signal.aborted || isSessionNotFoundError(retryError)) return undefined
+        this.options.logger.warn({ err: retryError, sessionId }, "Failed to resolve instance event session location")
+        return UNRESOLVED
+      })
+    })
+    const entry = { expiresAt: Number.POSITIVE_INFINITY, location }
+    this.sessionLocations.set(sessionId, entry)
+    const settle = () => { entry.expiresAt = Date.now() + SESSION_LOCATION_CACHE_MS }
+    void location.then(settle, settle)
+    return location
+  }
+
+  /** Recipients that received this session's events; a later negative or
+   * unreadable answer for them is ambiguous rather than a foreign location. */
+  private rememberSessionRecipient(sessionId: string, instanceId: string): void {
+    const recipients = this.sessionRecipients.get(sessionId)
+    if (recipients?.has(instanceId)) return
+    this.sessionRecipients.delete(sessionId)
+    this.sessionRecipients.set(sessionId, new Set(recipients).add(instanceId))
+    if (this.sessionRecipients.size > SESSION_RECIPIENT_LIMIT) {
+      this.sessionRecipients.delete(this.sessionRecipients.keys().next().value!)
+    }
+  }
+
+  private forgetSessionRecipient(sessionId: string | undefined, instanceId: string): void {
+    for (const [id, recipients] of this.sessionRecipients) {
+      if (sessionId !== undefined && id !== sessionId) continue
+      recipients.delete(instanceId)
+      if (!recipients.size) this.sessionRecipients.delete(id)
+    }
+  }
+
+  /** An unresolvable session event pulses the recipients it reached before,
+   * or every current recipient when it reached none. */
+  private requestSessionResync(sessionId: string, route: EventRoute): void {
+    const known = this.sessionRecipients.get(sessionId)
+    for (const { id, epoch } of route.recipients) {
+      if (known && !known.has(id)) continue
+      if ((this.workspaceEpochs.get(id) ?? 0) === epoch) this.requestRoutingResync(id)
+    }
+  }
+
+  private resolveLocationOwner(instanceId: string, location: LocationRef, current: () => boolean, signal: AbortSignal): Promise<boolean> {
+    const now = Date.now()
+    const key = JSON.stringify([instanceId, location.directory, location.workspaceID])
+    const cached = this.locationOwners.get(key)
+    if (cached && cached.expiresAt > now) return cached.owns
+
+    const resolve = () => location.workspaceID === undefined
+      ? this.options.workspaceManager.ownsDirectory(instanceId, location.directory, "event")
+      : this.options.workspaceManager.ownsLocation(instanceId, location, undefined, { signal, purpose: "event" })
+    const owns = Promise.resolve().then(resolve).catch(() => current() ? resolve() : false)
+    const entry = { expiresAt: Number.POSITIVE_INFINITY, owns }
+    this.locationOwners.set(key, entry)
+    void owns.then(() => { entry.expiresAt = Date.now() + LOCATION_OWNER_CACHE_MS }, error => {
+      // Never cache a failure: the next event for this location looks it up again.
+      if (this.locationOwners.get(key) === entry) this.locationOwners.delete(key)
+      if (current()) this.options.logger.warn({ err: error, instanceId, location }, "Failed to resolve instance event location owner")
+    })
+    return owns
+  }
+
+  /** Pulses one instance's status (error, then connected) so its clients run their
+   * reconnect reconciliation for an event that could not be routed. Leading and
+   * trailing; the interval doubles while failures persist and resets after a quiet one. */
+  private requestRoutingResync(instanceId: string): void {
+    const state = this.routingResyncs.get(instanceId)
+    if (state?.timer) return
+    const now = Date.now()
+    if (!state || now >= state.next) {
+      this.pulseRoutingResync(instanceId, ROUTING_RESYNC_MIN_MS)
+      return
+    }
+    state.timer = setTimeout(() => this.pulseRoutingResync(instanceId, Math.min(state.interval * 2, ROUTING_RESYNC_MAX_MS)), state.next - now)
+    state.timer.unref?.()
+  }
+
+  private pulseRoutingResync(instanceId: string, interval: number): void {
+    this.routingResyncs.set(instanceId, { next: Date.now() + interval, interval })
+    if (this.status !== "connected" || !this.options.workspaceManager.list().some(workspace => workspace.id === instanceId)) return
+    this.publishStatus(instanceId, "error", "event routing failed")
+    this.publishStatus(instanceId, "connected")
+  }
+
+  private clearRoutingResync(instanceId?: string): void {
+    for (const [id, state] of this.routingResyncs) {
+      if (instanceId !== undefined && id !== instanceId) continue
+      clearTimeout(state.timer)
+      this.routingResyncs.delete(id)
+    }
+  }
+
+  private invalidateOwners(): void {
+    this.ownershipRevision++
+    this.locationOwners.clear()
+  }
+
+  private advanceWorkspace(id: string): void {
+    this.workspaceEpochs.set(id, (this.workspaceEpochs.get(id) ?? 0) + 1)
+  }
+
+  private clearLocationCaches(): void {
+    this.invalidateOwners()
+    this.sessionLocations.clear()
+    this.ptyLocations.clear()
+    this.shellLocations.clear()
+  }
+
+  private updateStatus(status: InstanceStreamStatus, reason?: string) {
+    this.status = status
+    for (const workspace of this.options.workspaceManager.list()) {
+      this.publishStatus(workspace.id, status, reason)
+    }
+  }
+
+  private publishStatus(instanceId: string, status: InstanceStreamStatus, reason?: string) {
+    this.options.logger.debug({ instanceId, status, reason }, "Instance event status updated")
+    this.options.eventBus.publish({ type: "instance.eventStatus", instanceId, status, generation: this.generation, reason })
+  }
+
+  private delay(duration: number) {
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timeout)
+        this.controller.signal.removeEventListener("abort", done)
+        resolve()
+      }
+      const timeout = setTimeout(done, duration)
+      this.controller.signal.addEventListener("abort", done, { once: true })
+    })
+  }
+}

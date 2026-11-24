@@ -1,0 +1,204 @@
+import assert from "node:assert/strict"
+import { after, before, test } from "node:test"
+import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
+import { borrowFixture } from "./fixture-borrow"
+import { chromium, type Browser, type Page, type Route } from "playwright"
+import type { MissionMap } from "../../../server/src/api-types"
+import type {} from "./fixtures/mission-editor-lifetime"
+import { pausedMissionScheduleReceipt } from "./mission-scheduled-fixture"
+
+let browser: Browser, url: string
+before(async () => {
+  const fixture = await borrowFixture({
+      name: "mission-create-refusals",
+      routes: [
+        { path: "/create-refusals", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-editor-lifetime.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
+})
+after(async () => { await browser?.close(); })
+
+const OBJECTIVE = "Objective"
+const UNCONFIRMED = "native creation result is unconfirmed"
+const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } },
+  roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } } }
+function created(body: Record<string, unknown>): MissionMap {
+  return { version: 1, id: "msn_created", projectID: "project", projectCanonical: "/fixture", title: body.title as string, objective: body.objective as string,
+    template: "custom", status: "active", runState: "prepared", coordinatorSessionId: "ses_coordinator", revision: 1, createdAt: 1, updatedAt: 1,
+    history: [], historyTruncated: false, frontier: [], claims: [], actors: [], tasks: [], reports: [] }
+}
+
+/** Answers one-time creation POSTs through `answer`; every request is recorded. */
+async function setup(page: Page, answer: (route: Route, attempt: number, body: Record<string, unknown>) => Promise<void> | void) {
+  const errors: string[] = [], attempts: Array<Record<string, unknown>> = []
+  page.setDefaultTimeout(15_000); page.setDefaultNavigationTimeout(60_000)
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: {
+    location: { directory: "/fixture" }, capability: null, effectiveDepth: null, project: null } }))
+  await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }))
+  await page.route("**/api/workspaces/fixture/missions**", route => {
+    const request = route.request(), path = new URL(request.url()).pathname
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
+    if (request.method() === "GET") return route.fulfill({ json: path.endsWith("/missions/recurrence")
+      ? { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] }
+      : { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
+    if (request.method() === "POST" && path.endsWith("/missions")) {
+      const body = request.postDataJSON(); attempts.push(body)
+      return answer(route, attempts.length, body)
+    }
+    return route.fulfill({ json: {} })
+  })
+  await page.goto(url)
+  await page.getByRole("button", { name: "Create mission", exact: true }).click()
+  const form = page.locator("form.mission-editor")
+  return { errors, attempts, form, objective: form.getByLabel(OBJECTIVE, { exact: true }), submit: form.locator('button[type="submit"]') }
+}
+const submitReady = (page: Page) => page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+
+test("pre-send creation refusals keep the draft, re-enable Create and explain the refusal", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+  const refusals = [
+    { status: 503, json: { error: "Mission plugin unavailable", code: "creation-unavailable" }, message: /Missions are not available right now\. Try again shortly\./ },
+    { status: 409, json: { error: "Worktree deletion is in progress", code: "creation-worktree-deleting" }, message: /Wait for the worktree deletion to finish, then try again\./ },
+  ]
+  try {
+    const fixture = await setup(page, (route, attempt, body) => attempt <= refusals.length
+      ? route.fulfill({ status: refusals[attempt - 1]!.status, json: refusals[attempt - 1]!.json })
+      : route.fulfill({ json: { mission: created(body) } }))
+    await fixture.objective.fill("Survives transient refusals")
+    for (const refusal of refusals) {
+      await submitReady(page)
+      await fixture.submit.click()
+      await page.getByRole("alert").filter({ hasText: refusal.message }).waitFor()
+      assert.doesNotMatch(await page.getByRole("alert").innerText(), new RegExp(UNCONFIRMED))
+      assert.equal(await page.evaluate(() => window.missionEditorLifetime.held()), undefined, "no window-wide hold remains")
+      assert.equal(await fixture.objective.inputValue(), "Survives transient refusals")
+      assert.equal(await fixture.objective.isDisabled(), false)
+      await submitReady(page)
+    }
+    await fixture.submit.click()
+    await fixture.form.waitFor({ state: "detached" })
+    assert.equal(fixture.attempts.length, 3, "only explicit user submissions were sent")
+    assert.equal(new Set(fixture.attempts.map(body => body.requestId)).size, 1, "an unchanged draft keeps its request identity")
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+/** Scheduled creation: answers scheduled POSTs through `answer`. */
+async function setupDaily(page: Page, answer: (route: Route, attempt: number) => Promise<void> | void) {
+  const fixture = await setup(page, route => route.abort())
+  const attempts: Array<Record<string, unknown>> = []
+  await page.route("**/api/workspaces/fixture/missions/scheduled", route => {
+    if (route.request().method() !== "POST") return route.fallback()
+    attempts.push(route.request().postDataJSON())
+    return answer(route, attempts.length)
+  })
+  await fixture.objective.fill("Review merged changes daily")
+  await fixture.form.getByLabel("Criterion 1 type", { exact: true }).selectOption("daily")
+  await fixture.form.getByLabel("Criterion 1 time", { exact: true }).fill("07:30")
+  return { ...fixture, attempts }
+}
+
+test("daily pre-send refusals keep the draft and Create available with the same request identity", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+  const refusals = [
+    { status: 400, json: { error: "Invalid schedule input", code: "schedule-input-invalid" }, message: /could not be saved/ },
+    { status: 401, json: { error: "Human authentication required", code: "schedule-human-required" }, message: /could not be saved/ },
+  ]
+  try {
+    const fixture = await setupDaily(page, async (route, attempt) => attempt <= refusals.length
+      ? route.fulfill({ status: refusals[attempt - 1]!.status, json: refusals[attempt - 1]!.json })
+      : route.fulfill({ json: await pausedMissionScheduleReceipt(route.request().postDataJSON()) }))
+    for (const refusal of refusals) {
+      await submitReady(page)
+      await fixture.submit.click()
+      await page.getByRole("alert").filter({ hasText: refusal.message }).waitFor()
+      assert.equal(await fixture.objective.inputValue(), "Review merged changes daily")
+      assert.equal(await fixture.objective.isDisabled(), false)
+    }
+    await submitReady(page)
+    await fixture.submit.click()
+    await fixture.form.waitFor({ state: "detached" })
+    assert.equal(fixture.attempts.length, refusals.length + 1, "only explicit user submissions were sent")
+    assert.equal(new Set(fixture.attempts.map(body => body.requestID)).size, 1, "an unchanged draft keeps its request identity")
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("a daily codeless or uncertain failure stays held without a resend", async () => {
+  for (const json of [{ error: "Recurrence creation unavailable or uncertain" }, { error: "settlement unknown", code: "creation-uncertain" }]) {
+    const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+    try {
+      const fixture = await setupDaily(page, route => route.fulfill({ status: json.code ? 409 : 503, json }))
+      await submitReady(page)
+      await fixture.submit.click()
+      await page.waitForFunction(() => (document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+      await fixture.form.evaluate(element => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+      await page.waitForTimeout(200)
+      assert.equal(await fixture.submit.isDisabled(), true, JSON.stringify(json))
+      assert.equal(fixture.attempts.length, 1, "no automatic or manual replay")
+      assert.deepEqual(fixture.errors, [])
+    } finally { await page.close() }
+  }
+})
+
+test("a codeless server failure stays an exact uncertain hold without a resend", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+  try {
+    const fixture = await setup(page, route => route.fulfill({ status: 503, json: { error: "Mission plugin unavailable" } }))
+    await fixture.objective.fill("Possibly committed")
+    await submitReady(page)
+    await fixture.submit.click()
+    await page.waitForFunction(() => Boolean(window.missionEditorLifetime.held()))
+    assert.equal(await fixture.form.locator("[role=alert]").count(), 0)
+    assert.equal(await fixture.submit.isDisabled(), true)
+    assert.equal((await page.evaluate(() => window.missionEditorLifetime.held()))?.requestId, fixture.attempts[0]!.requestId)
+    await page.waitForTimeout(200)
+    assert.equal(fixture.attempts.length, 1)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("a newer editor whose adopted pending hold becomes uncertain keeps its unsent draft silently", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+  let release!: () => void
+  const reply = new Promise<void>(resolve => { release = resolve })
+  try {
+    const fixture = await setup(page, async route => {
+      await reply
+      return route.fulfill({ status: 409, json: { error: "Mission creation settlement is unknown", code: "creation-uncertain" } })
+    })
+    await fixture.objective.fill("First pending create")
+    await submitReady(page)
+    await fixture.submit.click()
+    await page.waitForFunction(() => document.querySelector('form.mission-editor button[type="submit"]')?.textContent !== "Create")
+    await fixture.form.getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    await fixture.objective.fill("Newer unsent draft")
+    await submitReady(page)
+    await fixture.submit.click()
+    release()
+    await page.waitForFunction(() => Boolean(window.missionEditorLifetime.held()))
+    assert.equal(await fixture.form.locator("[role=alert]").count(), 0)
+    assert.equal(await fixture.objective.inputValue(), "Newer unsent draft", "the unsent draft is not replaced or misattributed")
+    assert.equal(await fixture.submit.isDisabled(), true)
+    assert.equal(await fixture.form.getByRole("button", { name: "Save configuration", exact: true }).isDisabled(), false, "the unsent draft can still be kept as a configuration")
+    assert.equal((await page.evaluate(() => window.missionEditorLifetime.held()))?.objective, "First pending create")
+    await page.waitForTimeout(200)
+    assert.equal(fixture.attempts.length, 1, "the newer draft was never sent")
+
+    // Reopening shows the held original.
+    await fixture.form.getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    assert.equal(await fixture.objective.inputValue(), "First pending create")
+    assert.equal(await fixture.form.locator("[role=alert]").count(), 0)
+    assert.deepEqual(fixture.errors, [])
+  } finally { release(); await page.close() }
+})

@@ -1,0 +1,165 @@
+import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from "solid-js"
+import type { FileSystemEntry } from "../../../../../../server/src/api-types"
+import { backendOf } from "../../../../lib/backend-client"
+import type { captureBackendOperation } from "../../../../lib/backend-operation"
+import { backgroundReads } from "../../../../lib/background-read-queue"
+import { createDebouncedRefresh, filesystemInvalidationVersion } from "../../../../lib/filesystem-events"
+
+interface TreeState {
+  directories: Map<string, FileSystemEntry[]>
+  expanded: Set<string>
+  selected: string | null
+}
+type TreeRow = FileSystemEntry & { depth: number; parent: string }
+export function useWorkspaceTree(instanceId: string, directory: Accessor<string>, active: Accessor<boolean>, capture?: typeof captureBackendOperation) {
+  const empty = (): TreeState => ({ directories: new Map(), expanded: new Set(["."]), selected: null })
+  const cache = new Map<string, { state: TreeState; versions: Map<string, number> }>()
+  const [state, setState] = createSignal<TreeState>(empty())
+  const [errors, setErrors] = createSignal(new Map<string, string>())
+  const [busy, setBusy] = createSignal(new Set<string>())
+  const requests = new Map<string, AbortController>()
+  let current = directory()
+  let dirty = false
+  let forcePending = false
+  const versionFor = (path: string) => filesystemInvalidationVersion(instanceId, directory(), path)
+  // Filesystem-invalidation version seen by each loaded directory. Reopening a
+  // directory serves its cached children unless the filesystem changed since
+  // they were read; collapsed subtrees are never re-read on expand.
+  let loadedVersions = new Map<string, number>()
+
+  async function load(path: string, force = false) {
+    if (!active() || requests.has(path) || (!force && state().directories.has(path))) return
+    const scope = directory(), controller = new AbortController()
+    const operation = capture?.(instanceId, controller.signal)
+    const signal = operation?.signal ?? controller.signal
+    if (signal.aborted) return
+    const version = versionFor(path)
+    requests.set(path, controller)
+    setBusy(new Set(requests.keys()))
+    setErrors(previous => { const next = new Map(previous); next.delete(path); return next })
+    try {
+      const entries = await backgroundReads.run(signal,
+        () => backendOf(instanceId).api.listWorkspaceFiles(instanceId, path, scope, signal), "visible")
+      if (signal.aborted || directory() !== scope) return
+      const nextEntries = new Map(entries.map(entry => [entry.path, entry]))
+      const replaced = new Set((state().directories.get(path) ?? []).filter(entry => {
+        const next = nextEntries.get(entry.path)
+        return entry.type === "directory" && (!next || next.type !== "directory"
+          || Boolean(entry.directoryIdentity && next.directoryIdentity && entry.directoryIdentity !== next.directoryIdentity))
+      }).map(entry => entry.path))
+      const invalidated = (candidate: string) => {
+        for (let key = candidate; key && key !== "."; key = key.includes("/") ? key.slice(0, key.lastIndexOf("/")) : "") {
+          if (replaced.has(key)) return true
+        }
+        return false
+      }
+      if (replaced.size) {
+        for (const key of loadedVersions.keys()) if (invalidated(key)) loadedVersions.delete(key)
+        for (const [key, pending] of requests) if (invalidated(key)) { pending.abort(); requests.delete(key) }
+      }
+      loadedVersions.set(path, version)
+      setState(previous => {
+        const directories = new Map(previous.directories)
+        if (replaced.size) for (const key of directories.keys()) if (invalidated(key)) directories.delete(key)
+        directories.set(path, entries.slice().sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name)))
+        return { ...previous, directories }
+      })
+      // A replacement can expose a still-expanded path (and then its expanded
+      // descendants). Reload only those stale visible listings and bind new watches.
+      if (hasStaleVisibleDirectories()) dirty = true
+    } catch (error) {
+      if (!signal.aborted) setErrors(previous => new Map(previous).set(path, error instanceof Error ? error.message : String(error)))
+    } finally {
+      if (requests.get(path) === controller) { requests.delete(path); setBusy(new Set(requests.keys())) }
+    }
+  }
+  function cancel() {
+    requests.forEach(controller => controller.abort())
+    requests.clear()
+    setBusy(new Set<string>())
+  }
+  const directories = createMemo(() => state().directories)
+  const expanded = createMemo(() => state().expanded)
+  const rows = createMemo<TreeRow[]>((previous = []) => {
+    const existing = new Map(previous.map(row => [row.path, row]))
+    const result: TreeRow[] = []
+    const visit = (path: string, depth: number) => {
+      for (const entry of directories().get(path) ?? []) {
+        const row = existing.get(entry.path)
+        result.push(row && row.name === entry.name && row.type === entry.type && row.depth === depth && row.parent === path
+          ? row : { ...entry, depth, parent: path })
+        if (entry.type === "directory" && expanded().has(entry.path)) visit(entry.path, depth + 1)
+      }
+    }
+    visit(".", 1)
+    return result
+  })
+  function toggle(path: string) {
+    const opening = !state().expanded.has(path)
+    setState(previous => {
+      const expanded = new Set(previous.expanded)
+      if (opening) expanded.add(path); else expanded.delete(path)
+      return { ...previous, expanded }
+    })
+    if (!opening) return
+    // Cache-first expand: reuse loaded children unless the filesystem changed
+    // since they were read. Only the reopened visible subtree revalidates.
+    if (loadedVersions.get(path) !== versionFor(path)) {
+      void load(path, true)
+      for (const row of rows()) {
+        if (row.type === "directory" && row.path.startsWith(`${path}/`) && state().expanded.has(row.path)
+          && loadedVersions.get(row.path) !== versionFor(row.path)) {
+          void load(row.path, true)
+        }
+      }
+    } else void load(path)
+  }
+  function refresh(force = true) {
+    forcePending ||= force
+    if (!active()) { dirty = true; return }
+    if (requests.size) { dirty = true; return }
+    dirty = false
+    const all = forcePending
+    forcePending = false
+    if (all || loadedVersions.get(".") !== versionFor(".")) void load(".", true)
+    for (const row of rows()) if (row.type === "directory" && state().expanded.has(row.path)
+      && (all || loadedVersions.get(row.path) !== versionFor(row.path))) void load(row.path, true)
+  }
+  const debounced = createDebouncedRefresh(() => refresh(false))
+  createEffect(on(() => capture?.(instanceId).signal, signal => {
+    cancel(); debounced.cancel()
+    if (signal && !signal.aborted) refresh(true)
+  }, { defer: true }))
+  const hasStaleVisibleDirectories = () => {
+    return loadedVersions.get(".") !== versionFor(".") || rows().some(row =>
+      row.type === "directory" && state().expanded.has(row.path) && loadedVersions.get(row.path) !== versionFor(row.path))
+  }
+  createEffect(on(busy, value => { if (!value.size && dirty && active()) debounced.trigger() }))
+  createEffect(on(directory, value => {
+    cancel()
+    debounced.cancel()
+    cache.set(current, { state: state(), versions: loadedVersions })
+    if (cache.size > 8) cache.delete(cache.keys().next().value!)
+    current = value
+    forcePending = false
+    const cached = cache.get(value)
+    loadedVersions = cached?.versions ?? new Map()
+    setState(cached?.state ?? empty())
+    setErrors(new Map())
+    dirty = hasStaleVisibleDirectories()
+  }))
+  createEffect(on(() => active() ? directory() : null, value => {
+    if (value === null) { cancel(); return }
+    // Cache-first: a visited directory keeps its rows. Pending invalidations
+    // revalidate through the debounced refresh below.
+    if (!state().directories.has(".")) void load(".", true)
+    else if (dirty || hasStaleVisibleDirectories()) refresh(false)
+  }))
+  createEffect(on(() => filesystemInvalidationVersion(instanceId, directory()), () => {
+    dirty = true
+    if (active()) debounced.trigger()
+  }, { defer: true }))
+  onCleanup(() => { cancel(); debounced.cancel() })
+  return { rows, state, busy, errors, toggle, refresh, load,
+    select: (path: string) => setState(previous => ({ ...previous, selected: path })) }
+}

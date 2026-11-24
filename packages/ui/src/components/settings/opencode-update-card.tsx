@@ -1,0 +1,17 @@
+import { onMount, type Component } from "solid-js"
+import { useI18n } from "../../lib/i18n"
+import { refreshOpenCodeSetup } from "../../stores/opencode-setup"
+import { OpenCodeSetupPanel } from "./opencode-setup-panel"
+
+export const OpenCodeUpdateCard: Component = () => {
+  const { t } = useI18n()
+  onMount(() => void refreshOpenCodeSetup())
+  return <section class="settings-card">
+    <div class="settings-card-header"><div>
+      <h3 class="settings-card-title">{t("settings.opencode.update.title")}</h3>
+    </div></div>
+    <div class="settings-card-body">
+      <OpenCodeSetupPanel />
+    </div>
+  </section>
+}

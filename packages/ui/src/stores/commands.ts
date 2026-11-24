@@ -1,0 +1,46 @@
+import { createSignal } from "solid-js"
+import type { CommandInfo, LocationRef, OpenCodeClient } from "@opencode/client"
+import { requestLocationOptions, toRequestLocation } from "./request-locations"
+import { backendEvents } from "../lib/server-events"
+
+const [commandMap, setCommandMap] = createSignal<Map<string, CommandInfo[]>>(new Map())
+const commandRequestIds = new Map<string, number>()
+let nextCommandRequestId = 0
+
+export async function fetchCommands(
+  instanceId: string,
+  client: OpenCodeClient,
+  location?: LocationRef,
+): Promise<boolean> {
+  const signal = backendEvents.signalForInstance(instanceId)
+  if (signal?.aborted) return false
+  const requestId = ++nextCommandRequestId
+  commandRequestIds.set(instanceId, requestId)
+  let commands: CommandInfo[]
+  try {
+    commands = await client.command.list(location ? { location: toRequestLocation(location) } : undefined, requestLocationOptions(location)).then((result) => result.data)
+  } catch {
+    return false
+  }
+  if (signal?.aborted || commandRequestIds.get(instanceId) !== requestId) return false
+  setCommandMap((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, commands)
+    return next
+  })
+  return true
+}
+
+export function getCommands(instanceId: string): CommandInfo[] {
+  return commandMap().get(instanceId) ?? []
+}
+
+export function clearCommands(instanceId: string): void {
+  commandRequestIds.delete(instanceId)
+  setCommandMap((prev) => {
+    if (!prev.has(instanceId)) return prev
+    const next = new Map(prev)
+    next.delete(instanceId)
+    return next
+  })
+}

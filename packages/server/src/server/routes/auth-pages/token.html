@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CodeNomad</title>
+    <style>
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        background: #0b0b0f;
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+      }
+      .card {
+        width: 420px;
+        max-width: calc(100vw - 32px);
+        background: #14141c;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 14px;
+        padding: 24px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 12px;
+      }
+      p {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.7);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      .error {
+        margin-top: 12px;
+        color: #ff6b6b;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Connecting…</h1>
+      <p>Finalizing local authentication.</p>
+      <div id="error" class="error" style="display: none"></div>
+    </div>
+
+    <script>
+      const token = (location.hash || "").replace(/^#/, "").trim()
+      const errorEl = document.getElementById("error")
+      const showError = (msg) => {
+        errorEl.textContent = msg
+        errorEl.style.display = "block"
+      }
+
+      async function run() {
+        if (!token) {
+          showError("Missing bootstrap token.")
+          return
+        }
+
+        try {
+          const res = await fetch("/api/auth/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+            credentials: "include",
+          })
+
+          if (!res.ok) {
+            let message = ""
+            try {
+              const json = await res.json()
+              message = json && json.error ? String(json.error) : ""
+            } catch {
+              message = ""
+            }
+            showError(message || `Token exchange failed (${res.status})`)
+            return
+          }
+
+          window.location.replace("/")
+        } catch (e) {
+          showError(e && e.message ? e.message : String(e))
+        }
+      }
+
+      run()
+    </script>
+  </body>
+</html>

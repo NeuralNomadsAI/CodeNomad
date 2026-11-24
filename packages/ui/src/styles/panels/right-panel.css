@@ -1,0 +1,620 @@
+/* Right Panel / Drawer specific styles */
+
+/* Right panel tab bar - browser-style tabs */
+.right-panel-tab-bar {
+  flex: 0 0 var(--panel-header-height);
+  min-height: var(--panel-header-height);
+  background-color: var(--surface-shade-light);
+  background-image: linear-gradient(to top, var(--tab-border) 1px, transparent 1px);
+  border-bottom: 0;
+  position: relative;
+  padding-inline: 0;
+  padding-block: 0;
+}
+
+.right-panel-tab-bar .tab-container {
+  @apply flex items-center justify-between gap-1 px-2;
+  padding-block: 0;
+  align-items: center;
+  height: 100%;
+}
+
+/* Keep the shortcuts (close/pin) fixed; only the tabs should scroll. */
+.right-panel-tab-bar .tab-scroll {
+  position: relative;
+  z-index: 1;
+  width: auto;
+  min-width: 0;
+}
+
+/* Shortcuts on the left side - match left drawer icon colors */
+.tab-strip-shortcuts {
+  @apply flex items-center gap-1 flex-shrink-0;
+  /* Centre on the shared header action line, level with the panel toggles. */
+  align-self: flex-start;
+  height: calc(2 * var(--panel-header-action-center));
+  color: var(--text-muted);
+}
+
+/* Browser-style tabs - using INSTANCE tab color scheme */
+.right-panel-tab {
+  @apply inline-flex items-center gap-2 px-4 py-2 text-sm font-normal transition-all duration-150 relative;
+  font-family: var(--font-family-sans);
+  cursor: grab;
+  outline: none;
+  border: 1px solid var(--tab-border);
+  border-inline-start-width: 0;
+  border-radius: 0;
+  z-index: 1;
+}
+
+.right-panel-tab-draggable {
+  display: inline-flex;
+}
+
+.right-panel-tab-draggable-active {
+  opacity: 0.75;
+}
+
+.right-panel-tab:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-secondary);
+}
+
+.right-panel-tab-active {
+  background-color: var(--surface-secondary);
+  border-top: 1px solid var(--tab-border);
+  border-bottom-color: var(--surface-secondary);
+  color: var(--tab-active-text);
+  z-index: 2;
+}
+
+.right-panel-tab-draggable:first-child .right-panel-tab {
+  border-inline-start: 1px solid var(--tab-border);
+}
+
+.right-panel-tab-inactive {
+  background-color: var(--surface-shade-light);
+  border-inline-end-color: var(--tab-border);
+  border-bottom-color: var(--tab-border);
+  color: var(--tab-inactive-text);
+}
+
+.right-panel-tab-inactive:hover {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+  color: var(--tab-inactive-text);
+}
+
+.right-panel-tab-active:hover,
+.file-list-item-active:hover {
+  background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
+}
+
+.files-header-icon-button {
+  @apply inline-flex items-center justify-center shrink-0 border border-base transition-colors;
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
+  background-color: var(--surface-canvas);
+  color: var(--icon-button-color);
+  opacity: var(--icon-button-idle-opacity);
+}
+
+.files-header-icon-button:hover {
+  background-color: var(--surface-hover);
+  color: var(--icon-button-hover-color);
+  opacity: 1;
+}
+
+.files-header-icon-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.file-list-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--surface-secondary);
+  border-inline-start: 1px solid var(--border-base);
+  /* Monaco uses layered positioned elements; keep overlay well above it. */
+  z-index: 200;
+}
+
+.file-list-scroll {
+  @apply flex-1 overflow-y-auto min-h-0;
+}
+
+.file-list-item {
+  @apply px-2 py-1 border-b cursor-pointer transition-all duration-150;
+  border-color: var(--border-base);
+  background-color: transparent;
+}
+
+.file-list-item:last-child {
+  @apply border-b-0;
+}
+
+.file-list-item:not(.file-list-item-active):hover {
+  background-color: var(--surface-hover-overlay);
+}
+
+.file-list-item-active {
+  border-inline-start: 2px solid var(--accent-primary);
+  background-color: color-mix(in oklab, var(--accent-primary) 10%, transparent);
+  box-shadow: none;
+}
+
+.git-change-commit-box {
+  @apply flex flex-col gap-2 px-2 py-2 border-b;
+  border-color: var(--border-base);
+  background-color: var(--surface-secondary);
+}
+
+.git-change-commit-input-wrap {
+  position: relative;
+}
+
+.git-change-commit-input {
+  @apply w-full min-h-[32px] px-2 py-1.5 pr-20 text-xs border border-base resize-y;
+  border-radius: 0;
+  background-color: var(--surface-field);
+  color: var(--text-primary);
+}
+
+.git-change-commit-input::placeholder {
+  color: var(--text-muted);
+}
+
+.git-change-commit-button {
+  @apply inline-flex items-center justify-center self-start px-3 py-1.5 text-xs font-medium border border-base transition-colors;
+  border-radius: 0;
+  background-color: var(--surface-canvas);
+  color: var(--text-primary);
+}
+
+.git-change-commit-button-overlay {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 1;
+  align-self: auto;
+  padding: 0.25rem 0.5rem;
+}
+
+.git-change-commit-button-overlay:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+.git-change-commit-button-overlay:hover {
+  background-color: var(--surface-hover);
+}
+
+.git-change-commit-button:hover:not(:disabled) {
+  background-color: var(--surface-hover);
+}
+
+.git-change-commit-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.git-change-section {
+  @apply border-b last:border-b-0;
+  border-color: var(--border-divider);
+}
+
+.git-change-section-header {
+  @apply w-full flex items-center justify-between gap-2 px-2 py-1 text-left;
+  background-color: var(--surface-secondary);
+  color: var(--text-secondary);
+}
+
+.git-change-section-header:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.git-change-section-header-main {
+  @apply flex items-center gap-2 min-w-0;
+}
+
+.git-change-section-chevron {
+  @apply inline-flex items-center justify-center shrink-0;
+}
+
+.git-change-section-title {
+  @apply text-[11px] font-semibold uppercase tracking-wide;
+}
+
+.git-change-section-count {
+  @apply text-[10px] px-1.5 py-0.5 shrink-0;
+  background-color: var(--surface-inset);
+  color: var(--text-muted);
+  border: 1px solid var(--border-base);
+}
+
+.git-change-context-widget-host {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  overflow: visible;
+  z-index: 20;
+  pointer-events: auto;
+}
+
+.git-change-context-widget {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 0;
+  background-color: var(--accent-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 70%, white 30%);
+  color: white;
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 500;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+
+.file-list-item-additions {
+  color: var(--session-status-idle-fg);
+}
+
+.file-list-item-deletions {
+  color: var(--session-status-working-fg);
+}
+
+/* File viewer panel */
+.file-viewer-panel {
+  @apply flex flex-col min-h-0;
+  background-color: transparent;
+}
+
+.file-viewer-toolbar {
+  @apply flex items-center gap-1;
+}
+
+.file-viewer-toolbar-button {
+  @apply text-[11px] px-2 py-1 border border-base transition-colors;
+  border-radius: 0;
+  background-color: var(--surface-canvas);
+  color: var(--text-secondary);
+}
+
+.file-viewer-toolbar-icon-button {
+  @apply inline-flex items-center justify-center shrink-0 border border-base transition-colors;
+  width: var(--icon-button-size);
+  height: var(--icon-button-size);
+  background-color: var(--surface-canvas);
+  color: var(--icon-button-color);
+  opacity: var(--icon-button-idle-opacity);
+}
+
+.file-viewer-toolbar-icon-button:hover {
+  background-color: var(--surface-hover);
+  color: var(--icon-button-hover-color);
+  opacity: 1;
+}
+
+:is(.files-header-icon-button, .file-viewer-toolbar-icon-button) svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.file-viewer-toolbar-button:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.file-viewer-toolbar-button.active {
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--accent-primary);
+}
+
+.file-viewer-content {
+  @apply flex-1 p-4 overflow-auto min-h-0;
+}
+
+.file-viewer-content--monaco {
+  @apply flex-1 overflow-hidden min-h-0;
+  padding: 0;
+}
+
+.monaco-viewer {
+  width: 100%;
+  height: 100%;
+  direction: ltr;
+  position: relative;
+}
+
+.git-change-context-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="unified"] .line-numbers {
+  text-align: left !important;
+  padding-left: 4px;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .line-numbers,
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.modified .line-numbers {
+  text-align: left !important;
+  padding-left: 4px;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .glyph-margin {
+  width: 0 !important;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .line-numbers {
+  left: 0 !important;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .cldr.delete-sign {
+  left: var(--split-original-delete-sign-left, 14px) !important;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .margin,
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .margin-view-zones,
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .margin-view-overlays {
+  width: var(--split-original-gutter-width, 24px) !important;
+}
+
+.file-viewer-content--monaco .monaco-viewer[data-view-mode="split"] .editor.original .editor-scrollable {
+  left: var(--split-original-gutter-width, 24px) !important;
+  width: calc(100% - var(--split-original-gutter-width, 24px)) !important;
+}
+
+/* Status tab layout */
+.status-tab-container {
+  @apply flex flex-col h-full min-h-0;
+}
+
+/* Accordion improvements for right panel */
+.right-panel-accordion {
+  @apply flex flex-col;
+}
+
+.right-panel-accordion-item {
+  border-bottom: 1px solid var(--border-base);
+  background-color: var(--surface-secondary);
+}
+
+.right-panel-accordion-header-row {
+  @apply flex items-center gap-2;
+  color: var(--text-secondary);
+  transition: color 150ms, background-color 150ms;
+}
+
+.right-panel-accordion-header-row:hover {
+  background-color: var(--surface-hover-overlay);
+  color: var(--text-primary);
+}
+
+.right-panel-accordion-header-row .right-panel-accordion-trigger {
+  flex: 1 1 auto;
+}
+
+.right-panel-accordion-header-row .section-info-trigger {
+  flex: 0 0 auto;
+}
+
+.right-panel-accordion-trigger {
+  @apply w-full flex items-center justify-between px-3 py-2 text-xs font-medium transition-colors;
+  color: var(--text-secondary);
+  background-color: transparent;
+}
+
+.right-panel-accordion-trigger:hover {
+  background-color: transparent;
+  color: var(--text-primary);
+}
+
+.section-left {
+  @apply flex items-center;
+  flex-shrink: 0;
+}
+
+.right-panel-accordion-chevron {
+  @apply h-4 w-4;
+  color: var(--text-muted);
+  opacity: var(--icon-button-idle-opacity);
+  transition: color 150ms, opacity 150ms, transform 150ms ease;
+}
+
+.right-panel-section-grip {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin-inline-end: 0.75rem;
+  color: var(--text-muted);
+  opacity: var(--icon-button-idle-opacity);
+  cursor: grab;
+  transition: color 150ms, opacity 150ms;
+}
+
+.right-panel-accordion-trigger:hover .right-panel-accordion-chevron,
+.right-panel-section-grip:hover {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+
+.right-panel-accordion-content {
+  @apply w-full px-3 pb-3 text-sm;
+  color: var(--text-primary);
+  min-height: 0;
+}
+
+.right-panel-accordion-content [data-accordion-content] {
+  min-height: 0;
+}
+
+.right-panel-section-draggable-active {
+  opacity: 0.75;
+}
+
+.right-panel-customization-popover {
+  position: absolute;
+  top: 2.75rem;
+  inset-inline-start: 0.5rem;
+  z-index: 20;
+  width: min(18rem, calc(100% - 1rem));
+  border: 1px solid var(--border-base);
+  background-color: var(--surface-secondary);
+  box-shadow: var(--popover-shadow);
+  padding: 0.5rem;
+}
+
+.right-panel-customization-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+}
+
+.right-panel-customization-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.right-panel-customization-row-indent {
+  padding-inline-start: 1.5rem;
+}
+
+.right-panel-customization-label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-primary);
+  font-size: 0.75rem;
+}
+
+.right-panel-customization-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-base);
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1rem;
+  padding: 0.25rem 0.5rem;
+  transition: color 150ms, background-color 150ms;
+}
+
+.right-panel-customization-button:hover:not(:disabled) {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+}
+
+.right-panel-customization-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
+}
+
+/* Section info tooltip */
+.section-info-trigger {
+  @apply inline-flex items-center justify-center p-0.5 transition-colors;
+  border-radius: 0;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  border: none;
+  background-color: transparent;
+  opacity: var(--icon-button-idle-opacity);
+  transition: color 150ms, opacity 150ms;
+}
+
+.section-info-trigger:hover {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+
+.section-info-trigger:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-secondary);
+  opacity: 1;
+}
+
+.right-panel-accordion-header-row .section-info-trigger:hover {
+  opacity: 1;
+}
+
+.status-tab-container .right-panel-accordion-content .border {
+  border-width: 1px;
+  border-color: color-mix(in srgb, var(--border-base) 50%, transparent);
+}
+
+.section-label {
+  margin-inline-start: 2px;
+}
+
+.section-info-icon {
+  @apply w-3 h-3;
+}
+
+@media (hover: none) {
+  .section-info-trigger {
+    opacity: 0.7;
+  }
+}
+
+.section-info-tooltip {
+  @apply max-w-xs px-3 py-2 text-xs border shadow-lg;
+  border-radius: 0;
+  /* A multi-part explanation puts each part on its own line. */
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  background-color: var(--surface-overlay);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+  z-index: 9999;
+}
+
+/* Empty states */
+.right-panel-empty {
+  @apply flex flex-col items-center justify-center text-center gap-2;
+  color: var(--text-muted);
+  font-style: italic;
+  font-weight: 400;
+  opacity: 0.55;
+}
+
+.right-panel-empty--left {
+  @apply items-start justify-start text-start w-full;
+}
+
+.right-panel-empty-text {
+  font-size: 0.75rem;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+.right-panel-accordion-content .tool-call-todo-empty {
+  padding: 0;
+  font-size: 0.75rem;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--text-muted);
+  opacity: 0.55;
+}

@@ -1,0 +1,129 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import vm from "node:vm"
+import type { BrowserWindow } from "electron"
+import { forwardOpenerStartupState, runStartupStateCommandInWindow, startupStateTargetId, type StartupStateCommand } from "./opener-startup-state"
+import { PreferencesWindowRegistry } from "./preferences-window"
+import type { RendererFlushWindow } from "./renderer-client-state-flush"
+
+function renderer(id: string, url = "http://127.0.0.1:3000/app", callback: ((command: unknown) => unknown) | undefined = undefined) {
+  const commands: unknown[] = []
+  const handler = callback ?? ((command: unknown) => {
+    commands.push(command)
+    return Promise.resolve({ isPrimary: true, restoreEnabled: command !== "disable-restore" })
+  })
+  const page = { location: { origin: new URL(url).origin }, __CODENOMAD_STARTUP_STATE_COMMAND__: handler }
+  let destroyed = false
+  const window: RendererFlushWindow = {
+    isDestroyed: () => destroyed,
+    webContents: {
+      isDestroyed: () => destroyed,
+      getURL: () => url,
+      executeJavaScript: async (source: string) => vm.runInNewContext(source, { window: page, URL }),
+    },
+  }
+  return { id, window, page, commands, destroy: () => { destroyed = true } }
+}
+
+function fakePreferencesWindow() {
+  return {
+    webContents: { isDestroyed: () => false, on: () => undefined, send: () => undefined },
+    isDestroyed: () => false, isMinimized: () => false, restore() {}, show() {}, focus() {}, on: () => undefined,
+  } as unknown as BrowserWindow
+}
+
+test("startup commands run only through the exact opener renderer callback", async () => {
+  const a = renderer("window-a")
+  const trusted = (url: string) => url.startsWith("http://127.0.0.1:3000/")
+  assert.deepEqual(await runStartupStateCommandInWindow(a.window, "disable-restore", trusted), { isPrimary: true, restoreEnabled: false })
+  assert.deepEqual(a.commands, ["disable-restore"])
+
+  const untrusted = renderer("remote", "https://outside.example/app")
+  assert.equal(await runStartupStateCommandInWindow(untrusted.window, "clear", trusted), null)
+  assert.deepEqual(untrusted.commands, [])
+
+  const loading = renderer("loading")
+  delete (loading.page as Record<string, unknown>).__CODENOMAD_STARTUP_STATE_COMMAND__
+  assert.equal(await runStartupStateCommandInWindow(loading.window, "read", trusted), null)
+  a.destroy()
+  assert.equal(await runStartupStateCommandInWindow(a.window, "read", trusted), null)
+  assert.equal(await runStartupStateCommandInWindow(undefined, "read", trusted), null)
+
+  const forged = renderer("forged", undefined, () => ({ isPrimary: "yes" }))
+  await assert.rejects(runStartupStateCommandInWindow(forged.window, "read", trusted), /Invalid startup state/)
+  const hung = renderer("hung", undefined, () => new Promise(() => {}))
+  await assert.rejects(runStartupStateCommandInWindow(hung.window, "read", trusted, 10), /timed out after 10ms/)
+})
+
+test("Preferences follows the latest opener and fences stale or orphaned mutations", async () => {
+  const registry = new PreferencesWindowRegistry()
+  const preferences = fakePreferencesWindow()
+  const windows = new Map([["window-a", renderer("window-a")], ["window-b", renderer("window-b")]])
+  const trusted = () => true
+  const run = (openerId: string, command: StartupStateCommand) => runStartupStateCommandInWindow(windows.get(openerId)?.window, command, trusted)
+  // As in main.ts: a live opener answers, otherwise the most recently used local window.
+  const live = (id: string) => Boolean(windows.get(id) && !windows.get(id)!.window.isDestroyed())
+  let recent: string | undefined = "window-a"
+  const forwardFor = (owner: PreferencesWindowRegistry, window: BrowserWindow, command: StartupStateCommand, epoch?: number) => {
+    let opener = owner.opener(window)!
+    const id = startupStateTargetId(opener.id, live, recent)
+    if (id && id !== opener.id) opener = owner.adoptOpener(window, id)!
+    return forwardOpenerStartupState(opener, command, epoch, run)
+  }
+  const forward = (command: StartupStateCommand, epoch?: number) => forwardFor(registry, preferences, command, epoch)
+
+  registry.register(preferences, { section: "general" }, "window-a")
+  const first = await forward("read")
+  assert.deepEqual(first, { epoch: first.epoch, state: { isPrimary: true, restoreEnabled: true }, applied: false })
+  assert.deepEqual(await forward("disable-restore", first.epoch), { epoch: first.epoch, state: { isPrimary: true, restoreEnabled: false }, applied: true })
+
+  // Re-opening from the same window keeps the epoch; another window rotates it.
+  registry.reuse({ section: "general" }, "window-a")
+  assert.equal(registry.opener(preferences)!.epoch, first.epoch)
+  registry.reuse({ section: "general" }, "window-b")
+  const second = registry.opener(preferences)!
+  assert.equal(second.id, "window-b")
+  assert.ok(second.epoch > first.epoch)
+
+  // A change prepared against A is never applied to B.
+  assert.deepEqual(await forward("clear", first.epoch), { epoch: second.epoch, state: { isPrimary: true, restoreEnabled: true }, applied: false })
+  assert.deepEqual(await forward("clear"), { epoch: second.epoch, state: { isPrimary: true, restoreEnabled: true }, applied: false })
+  assert.deepEqual(windows.get("window-a")!.commands, ["read", "disable-restore"])
+  assert.deepEqual(windows.get("window-b")!.commands, ["read", "read"])
+
+  // A closed opener hands over to the most recent local window, which becomes the
+  // opener: a change prepared for B degrades to a read of A, then applies to A.
+  windows.get("window-b")!.destroy()
+  const handed = await forward("enable-restore", second.epoch)
+  assert.ok(handed.epoch > second.epoch)
+  assert.deepEqual(handed, { epoch: handed.epoch, state: { isPrimary: true, restoreEnabled: true }, applied: false })
+  assert.equal(registry.opener(preferences)!.id, "window-a")
+  assert.deepEqual(await forward("enable-restore", handed.epoch), { epoch: handed.epoch, state: { isPrimary: true, restoreEnabled: true }, applied: true })
+  assert.deepEqual(windows.get("window-a")!.commands, ["read", "disable-restore", "read", "enable-restore"])
+  // With no live window to adopt, the closed opener answers nothing.
+  windows.get("window-a")!.destroy()
+  recent = undefined
+  assert.deepEqual(await forward("read"), { epoch: handed.epoch, state: null, applied: false })
+  windows.set("window-a", renderer("window-a"))
+
+  // A restored Preferences window has no host-observed opener: it adopts the most recent window.
+  recent = "window-a"
+  const restoredRegistry = new PreferencesWindowRegistry()
+  const restored = fakePreferencesWindow()
+  restoredRegistry.register(restored, { section: "general" })
+  assert.equal(restoredRegistry.opener(restored)!.id, undefined)
+  const adopted = await forwardFor(restoredRegistry, restored, "read")
+  assert.deepEqual(adopted.state, { isPrimary: true, restoreEnabled: true })
+  assert.equal(restoredRegistry.opener(restored)!.id, "window-a")
+  assert.deepEqual(windows.get("window-a")!.commands, ["read"])
+  assert.equal(restoredRegistry.opener(preferences), undefined)
+  assert.equal(restoredRegistry.adoptOpener(preferences, "window-a"), undefined, "only the current Preferences window adopts")
+})
+
+test("startup state targets a live opener, otherwise the most recent local window", () => {
+  const live = (id: string) => id !== "closed"
+  assert.equal(startupStateTargetId("window-a", live, "window-b"), "window-a")
+  assert.equal(startupStateTargetId("closed", live, "window-b"), "window-b")
+  assert.equal(startupStateTargetId(undefined, live, "window-b"), "window-b")
+  assert.equal(startupStateTargetId(undefined, live, undefined), undefined)
+})

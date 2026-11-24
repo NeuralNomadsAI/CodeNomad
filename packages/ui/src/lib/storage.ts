@@ -1,0 +1,431 @@
+import type { InstanceData, WorkspaceEventPayload } from "../../../server/src/api-types"
+import { serverApi, type ServerApi } from "./api-client"
+import { backendEvents, type ServerEvents } from "./server-events"
+import { getLogger } from "./logger"
+import type { MissionPreferenceExpectation } from "./mission-preferences-document"
+
+const log = getLogger("actions")
+const OWNER_READ_TIMEOUT_MS = 10_000
+
+export type OwnerBucket = Record<string, any>
+
+/** The write was acknowledged, but no ordered owner snapshot could be obtained. */
+export class ConfigOwnerReconciliationPendingError extends Error {
+  readonly code = "owner-reconciliation-pending"
+  readonly mutationCommitted = true
+  constructor(readonly owner: string) { super("Saved configuration owner requires explicit reconciliation") }
+}
+
+const DEFAULT_INSTANCE_DATA: InstanceData = {
+  messageHistory: [],
+  agentModelSelections: {},
+}
+
+function isDeepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) {
+    return true
+  }
+
+  if (typeof a === "object" && a !== null && typeof b === "object" && b !== null) {
+
+    try {
+      return JSON.stringify(a) === JSON.stringify(b)
+    } catch (error) {
+      log.warn("Failed to compare config objects", error)
+    }
+  }
+
+  return false
+}
+
+export class ServerStorage {
+  private configOwnerCache = new Map<string, OwnerBucket>()
+  private stateOwnerCache = new Map<string, OwnerBucket>()
+  private configOwnerLoadPromises = new Map<string, Promise<OwnerBucket>>()
+  private configOwnerEpochs = new Map<string, number>()
+  private configInvalidationEpoch = 0
+  private stateOwnerLoadPromises = new Map<string, Promise<OwnerBucket>>()
+  private configOwnerListeners = new Map<string, Set<(value: OwnerBucket) => void>>()
+  private stateOwnerListeners = new Map<string, Set<(value: OwnerBucket) => void>>()
+  private instanceDataCache = new Map<string, InstanceData>()
+  private instanceDataListeners = new Map<string, Set<(data: InstanceData) => void>>()
+  private instanceLoadPromises = new Map<string, Promise<InstanceData>>()
+  private pendingWrites = new Set<Promise<unknown>>()
+  private readonly api: ServerApi
+  private ownerAuthority?: AbortSignal
+  private ownerWrites = new Map<string, Set<Promise<unknown>>>()
+  private ownerBarriers = new Map<string, Promise<void>>()
+
+  /** Owner documents belong to an attachment, even when its client is reused. */
+  bindOwnerAuthority(authority: AbortSignal): void {
+    if (this.ownerAuthority === authority) return
+    this.ownerAuthority = authority
+    const clear = () => {
+      if (this.ownerAuthority !== authority) return
+      this.configInvalidationEpoch++
+      this.configOwnerCache.clear()
+      this.stateOwnerCache.clear()
+      this.configOwnerLoadPromises.clear()
+      this.stateOwnerLoadPromises.clear()
+    }
+    clear()
+    for (const [document, writes] of this.ownerWrites) {
+      const barrier = Promise.allSettled([...writes]).then(() => {
+        if (this.ownerBarriers.get(document) !== barrier) return
+        this.ownerBarriers.delete(document)
+        // Events received while waiting can describe a preceding commit.
+        const cache = document.startsWith("config/") ? this.configOwnerCache : this.stateOwnerCache
+        cache.delete(document.slice(document.indexOf("/") + 1))
+      })
+      this.ownerBarriers.set(document, barrier)
+    }
+    authority.addEventListener("abort", clear, { once: true })
+  }
+
+  private async waitForOwnerWrites(document: string, authority: AbortSignal | undefined): Promise<void> {
+    const barrier = this.ownerBarriers.get(document)
+    if (barrier) {
+      // A timeout refuses the read/edit; the sent write and its barrier stay owned.
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([barrier, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Storage owner write pending; explicit reload required")), OWNER_READ_TIMEOUT_MS)
+        })])
+      } finally { clearTimeout(timer) }
+    }
+    this.assertOwnerAuthority(authority)
+  }
+
+  private writeOwner(document: string, send: () => Promise<OwnerBucket>): Promise<OwnerBucket> {
+    const authority = this.ownerAuthority
+    this.assertOwnerAuthority(authority)
+    const dispatch = () => {
+      this.assertOwnerAuthority(authority)
+      const write = this.trackWrite(send())
+      let writes = this.ownerWrites.get(document)
+      if (!writes) this.ownerWrites.set(document, writes = new Set())
+      writes.add(write)
+      void write.finally(() => {
+        writes.delete(write)
+        if (!writes.size && this.ownerWrites.get(document) === writes) this.ownerWrites.delete(document)
+      }).catch(() => undefined)
+      return write
+    }
+    return this.ownerBarriers.has(document) ? this.waitForOwnerWrites(document, authority).then(dispatch) : dispatch()
+  }
+
+  private assertOwnerAuthority(authority: AbortSignal | undefined): void {
+    if (authority?.aborted || authority !== this.ownerAuthority) throw new Error("Backend unavailable: revoked storage authority")
+  }
+
+  /** Defaults to the local backend; another backend passes its own API and events. */
+  constructor(options: { api: ServerApi; events: Pick<ServerEvents, "on"> } = { api: serverApi, events: backendEvents.forInstance(() => undefined) }) {
+    this.api = options.api
+    const events = options.events
+    events.on("storage.configChanged", (event: WorkspaceEventPayload) => {
+      if (event.type !== "storage.configChanged") return
+      this.setOwnerCache("config", event.owner, event.value)
+    })
+
+    events.on("storage.stateChanged", (event: WorkspaceEventPayload) => {
+      if (event.type !== "storage.stateChanged") return
+      this.setOwnerCache("state", event.owner, event.value)
+    })
+
+    events.on("instance.dataChanged", (event) => {
+      if (event.type !== "instance.dataChanged") return
+      this.setInstanceDataCache(event.instanceId, event.data)
+    })
+  }
+
+  async loadConfigOwner(owner: string): Promise<OwnerBucket> {
+    const authority = this.ownerAuthority
+    this.assertOwnerAuthority(authority)
+    if (this.ownerBarriers.has(`config/${owner}`)) await this.waitForOwnerWrites(`config/${owner}`, authority)
+    const cached = this.configOwnerCache.get(owner)
+    if (cached) return cached
+
+    if (!this.configOwnerLoadPromises.has(owner)) {
+      const promise = this.readConfigOwner(owner)
+        .finally(() => {
+          if (this.configOwnerLoadPromises.get(owner) === promise) this.configOwnerLoadPromises.delete(owner)
+        })
+      this.configOwnerLoadPromises.set(owner, promise)
+    }
+
+    return this.configOwnerLoadPromises.get(owner)!
+  }
+
+  patchConfigOwner(owner: string, patch: unknown): Promise<OwnerBucket> {
+    const authority = this.ownerAuthority
+    this.assertOwnerAuthority(authority)
+    const epoch = this.configOwnerEpochs.get(owner) ?? 0, invalidation = this.configInvalidationEpoch
+    return this.writeOwner(`config/${owner}`, () => this.api.patchConfigOwner<OwnerBucket>(owner, patch)
+      .then(updated => { this.assertOwnerAuthority(authority); return this.acceptConfigWrite(owner, epoch, invalidation, updated) }))
+  }
+
+  async revalidateUiConfigOwner(): Promise<OwnerBucket> {
+    return this.readStableConfigOwner("ui")
+  }
+
+  private async readConfigOwner(owner: string): Promise<OwnerBucket> {
+    const authority = this.ownerAuthority
+    this.assertOwnerAuthority(authority)
+    const epoch = this.configOwnerEpochs.get(owner) ?? 0, invalidation = this.configInvalidationEpoch
+    const value = await this.api.fetchConfigOwner<OwnerBucket>(owner)
+    this.assertOwnerAuthority(authority)
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid configuration owner response")
+    // A completed older GET cannot supersede a newer native event or write.
+    if (epoch !== (this.configOwnerEpochs.get(owner) ?? 0) || invalidation !== this.configInvalidationEpoch) {
+      const current = this.configOwnerCache.get(owner)
+      if (!current) throw new Error("Configuration changed during read; reload")
+      return current
+    }
+    this.setOwnerCache("config", owner, value)
+    return value
+  }
+
+  patchMissionPreferences(patch: unknown, expected: MissionPreferenceExpectation[]): Promise<OwnerBucket> {
+    const authority = this.ownerAuthority
+    this.assertOwnerAuthority(authority)
+    const epoch = this.configOwnerEpochs.get("ui") ?? 0, invalidation = this.configInvalidationEpoch
+    return this.writeOwner("config/ui", () => this.api.patchMissionPreferences<OwnerBucket>(patch, expected)
+      .then(updated => { this.assertOwnerAuthority(authority); return this.acceptConfigWrite("ui", epoch, invalidation, updated) }))
+  }
+
+  private acceptConfigWrite(owner: string, epoch: number, invalidation: number, updated: OwnerBucket): OwnerBucket | Promise<OwnerBucket> {
+    // An intervening event may precede OR follow this write. Neither the ACK nor
+    // that cache has a certified order. Read native owner authority, never replay.
+    if (epoch !== (this.configOwnerEpochs.get(owner) ?? 0) || invalidation !== this.configInvalidationEpoch) {
+      return this.reconcileConfigWrite(owner)
+    }
+    this.setOwnerCache("config", owner, updated)
+    return updated
+  }
+
+  private async reconcileConfigWrite(owner: string): Promise<OwnerBucket> {
+    try { return await this.readStableConfigOwner(owner) }
+    catch { throw new ConfigOwnerReconciliationPendingError(owner) }
+  }
+
+  private async readStableConfigOwner(owner: string): Promise<OwnerBucket> {
+    const authority = this.ownerAuthority
+    if (this.ownerBarriers.has(`config/${owner}`)) await this.waitForOwnerWrites(`config/${owner}`, authority)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      this.assertOwnerAuthority(authority)
+      const epoch = this.configOwnerEpochs.get(owner) ?? 0, invalidation = this.configInvalidationEpoch
+      try {
+        const value = await this.api.fetchConfigOwner<OwnerBucket>(owner, AbortSignal.timeout(OWNER_READ_TIMEOUT_MS))
+        this.assertOwnerAuthority(authority)
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue
+        // This strict read must not substitute a potentially older display cache.
+        if (epoch !== (this.configOwnerEpochs.get(owner) ?? 0) || invalidation !== this.configInvalidationEpoch) continue
+        this.setOwnerCache("config", owner, value)
+        return value
+      } catch { /* A bounded read-only retry is not mutation replay. */ }
+    }
+    throw new Error("Configuration owner could not be read authoritatively; explicit reload required")
+  }
+
+  async loadStateOwner(owner: string): Promise<OwnerBucket> {
+    const authority = this.ownerAuthority
+    this.assertOwnerAuthority(authority)
+    if (this.ownerBarriers.has(`state/${owner}`)) await this.waitForOwnerWrites(`state/${owner}`, authority)
+    const cached = this.stateOwnerCache.get(owner)
+    if (cached) return cached
+
+    if (!this.stateOwnerLoadPromises.has(owner)) {
+      const promise = this.api
+        .fetchStateOwner<OwnerBucket>(owner)
+        .then((value) => {
+          this.assertOwnerAuthority(authority)
+          this.setOwnerCache("state", owner, value)
+          return value
+        })
+        .finally(() => {
+          if (this.stateOwnerLoadPromises.get(owner) === promise) this.stateOwnerLoadPromises.delete(owner)
+        })
+      this.stateOwnerLoadPromises.set(owner, promise)
+    }
+
+    return this.stateOwnerLoadPromises.get(owner)!
+  }
+
+  patchStateOwner(owner: string, patch: unknown): Promise<OwnerBucket> {
+    const authority = this.ownerAuthority
+    this.assertOwnerAuthority(authority)
+    return this.writeOwner(`state/${owner}`, () => this.api.patchStateOwner<OwnerBucket>(owner, patch).then((updated) => {
+      this.assertOwnerAuthority(authority)
+      this.setOwnerCache("state", owner, updated)
+      return updated
+    }))
+  }
+
+  async loadInstanceData(instanceId: string): Promise<InstanceData> {
+    const cached = this.instanceDataCache.get(instanceId)
+    if (cached) {
+      return cached
+    }
+
+    if (!this.instanceLoadPromises.has(instanceId)) {
+      const promise = this.api
+        .readInstanceData(instanceId)
+        .then((data) => {
+          const normalized = this.normalizeInstanceData(data)
+          this.setInstanceDataCache(instanceId, normalized)
+          return normalized
+        })
+        .finally(() => {
+          this.instanceLoadPromises.delete(instanceId)
+        })
+
+      this.instanceLoadPromises.set(instanceId, promise)
+    }
+
+    return this.instanceLoadPromises.get(instanceId)!
+  }
+
+  saveInstanceData(instanceId: string, data: InstanceData): Promise<void> {
+    const normalized = this.normalizeInstanceData(data)
+    return this.trackWrite(this.api.writeInstanceData(instanceId, normalized).then(() => {
+      this.setInstanceDataCache(instanceId, normalized)
+    }))
+  }
+
+  deleteInstanceData(instanceId: string): Promise<void> {
+    return this.trackWrite(this.api.deleteInstanceData(instanceId).then(() => {
+      this.setInstanceDataCache(instanceId, DEFAULT_INSTANCE_DATA)
+    }))
+  }
+
+  async flushWrites(): Promise<void> {
+    while (this.pendingWrites.size > 0) {
+      await Promise.allSettled(this.pendingWrites)
+    }
+  }
+
+  onConfigOwnerChanged(owner: string, listener: (value: OwnerBucket) => void): () => void {
+    if (!this.configOwnerListeners.has(owner)) {
+      this.configOwnerListeners.set(owner, new Set())
+    }
+    const bucket = this.configOwnerListeners.get(owner)!
+    bucket.add(listener)
+    const cached = this.configOwnerCache.get(owner)
+    if (cached) {
+      listener(cached)
+    }
+    return () => {
+      bucket.delete(listener)
+      if (bucket.size === 0) {
+        this.configOwnerListeners.delete(owner)
+      }
+    }
+  }
+
+  onStateOwnerChanged(owner: string, listener: (value: OwnerBucket) => void): () => void {
+    if (!this.stateOwnerListeners.has(owner)) {
+      this.stateOwnerListeners.set(owner, new Set())
+    }
+    const bucket = this.stateOwnerListeners.get(owner)!
+    bucket.add(listener)
+    const cached = this.stateOwnerCache.get(owner)
+    if (cached) {
+      listener(cached)
+    }
+    return () => {
+      bucket.delete(listener)
+      if (bucket.size === 0) {
+        this.stateOwnerListeners.delete(owner)
+      }
+    }
+  }
+
+  onInstanceDataChanged(instanceId: string, listener: (data: InstanceData) => void): () => void {
+    if (!this.instanceDataListeners.has(instanceId)) {
+      this.instanceDataListeners.set(instanceId, new Set())
+    }
+    const bucket = this.instanceDataListeners.get(instanceId)!
+    bucket.add(listener)
+    const cached = this.instanceDataCache.get(instanceId)
+    if (cached) {
+      listener(cached)
+    }
+    return () => {
+      bucket.delete(listener)
+      if (bucket.size === 0) {
+        this.instanceDataListeners.delete(instanceId)
+      }
+    }
+  }
+
+  private setOwnerCache(kind: "config" | "state", owner: string, value: OwnerBucket) {
+    if (this.ownerAuthority?.aborted) return
+    if (owner === "*") {
+      // Full-doc updates are not tracked owner-by-owner; invalidate caches.
+      if (kind === "config") {
+        this.configInvalidationEpoch++
+        this.configOwnerCache.clear()
+      } else {
+        this.stateOwnerCache.clear()
+      }
+      return
+    }
+
+    const cache = kind === "config" ? this.configOwnerCache : this.stateOwnerCache
+    if (kind === "config") this.configOwnerEpochs.set(owner, (this.configOwnerEpochs.get(owner) ?? 0) + 1)
+    const listeners = kind === "config" ? this.configOwnerListeners : this.stateOwnerListeners
+
+    const previous = cache.get(owner)
+    if (previous && isDeepEqual(previous, value)) {
+      cache.set(owner, value)
+      return
+    }
+    cache.set(owner, value)
+    const bucket = listeners.get(owner)
+    if (!bucket) return
+    for (const listener of bucket) {
+      listener(value)
+    }
+  }
+
+  /** Joins `flushWrites`, which native shutdown awaits; callers chaining writes track the whole chain. */
+  trackWrite<T>(write: Promise<T>): Promise<T> {
+    this.pendingWrites.add(write)
+    void write.finally(() => this.pendingWrites.delete(write)).catch(() => undefined)
+    return write
+  }
+
+  private normalizeInstanceData(data?: InstanceData | null): InstanceData {
+    const source = data ?? DEFAULT_INSTANCE_DATA
+    const messageHistory = Array.isArray(source.messageHistory) ? [...source.messageHistory] : []
+    const agentModelSelections = { ...(source.agentModelSelections ?? {}) }
+    return {
+      ...source,
+      messageHistory,
+      agentModelSelections,
+    }
+  }
+
+  private setInstanceDataCache(instanceId: string, data: InstanceData) {
+    const normalized = this.normalizeInstanceData(data)
+    const previous = this.instanceDataCache.get(instanceId)
+    if (previous && isDeepEqual(previous, normalized)) {
+      this.instanceDataCache.set(instanceId, normalized)
+      return
+    }
+    this.instanceDataCache.set(instanceId, normalized)
+    this.notifyInstanceDataChanged(instanceId, normalized)
+  }
+
+  private notifyInstanceDataChanged(instanceId: string, data: InstanceData) {
+    const listeners = this.instanceDataListeners.get(instanceId)
+    if (!listeners) {
+      return
+    }
+    for (const listener of listeners) {
+      listener(data)
+    }
+  }
+}
+
+export const storage = new ServerStorage()

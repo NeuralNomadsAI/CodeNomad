@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preferences-opener-startup-state"
+description = "Enables the preferences_opener_startup_state command without any pre-configured scope."
+commands.allow = ["preferences_opener_startup_state"]
+
+[[permission]]
+identifier = "deny-preferences-opener-startup-state"
+description = "Denies the preferences_opener_startup_state command without any pre-configured scope."
+commands.deny = ["preferences_opener_startup_state"]

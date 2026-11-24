@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-workspace-target"
+description = "Enables the open_workspace_target command without any pre-configured scope."
+commands.allow = ["open_workspace_target"]
+
+[[permission]]
+identifier = "deny-open-workspace-target"
+description = "Denies the open_workspace_target command without any pre-configured scope."
+commands.deny = ["open_workspace_target"]

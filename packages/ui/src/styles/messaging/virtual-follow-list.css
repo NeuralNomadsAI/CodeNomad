@@ -1,0 +1,70 @@
+.virtual-follow-list-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  width: 100%;
+}
+
+.message-stream {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: auto;
+  outline: none;
+  background-color: var(--surface-canvas);
+  color: inherit;
+
+  /* Scrolling optimizations */
+  overscroll-behavior-y: contain;
+  /* Prevents scroll chaining to parent elements */
+  will-change: scroll-position;
+  /* GPU acceleration hint for smoother scrolling */
+  -webkit-overflow-scrolling: touch;
+  /* Momentum scrolling on iOS */
+
+  /* Prevent browser scroll anchoring fighting our virtualization compensation. */
+  overflow-anchor: none;
+}
+
+.message-stream [data-virtual-follow-key],
+.virtual-follow-list-before {
+  /* Virtua disables container hit testing while scrolling. Message and header
+     controls and nested tool scrollers must still receive input at the visible target. */
+  pointer-events: auto;
+}
+
+.virtual-follow-list-before {
+  /* Include child margins in the header row Virtua measures. */
+  display: flow-root;
+}
+
+.virtual-follow-list-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  /* Ensure it doesn't affect layout at all */
+  height: 0;
+  overflow: visible;
+}
+
+.virtual-follow-list-overlay > * {
+  pointer-events: auto;
+}
+
+.virtual-follow-list-controls-container {
+  position: absolute;
+  bottom: calc(var(--space-xs) + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+}
+
+.message-stream-placeholder {
+  display: block;
+  width: 100%;
+  position: relative;
+  background-color: transparent;
+}

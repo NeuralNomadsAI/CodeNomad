@@ -1,0 +1,1151 @@
+import type { MissionExecution } from "./execution"
+import { MISSION_BRIEFING_RESPONSES_MAX, briefingSourcesExist, isAutomaticBriefing, parseMissionBriefing, type MissionBriefing, type MissionBriefingResponse } from "./briefing"
+export type { MissionBriefing, MissionBriefingItem, MissionBriefingResponse } from "./briefing"
+import type { MissionTaskExecutionMode } from "./task-execution-mode"
+export type { MissionTaskExecutionMode } from "./task-execution-mode"
+import type { MissionSummary } from "./mission-summary"
+import type { MissionBodyDescriptors } from "./mission-content-wire"
+import type { MissionPanelMap } from "./mission-panel-map"
+export type { MissionSummary } from "./mission-summary"
+export type { MissionPanelBriefing, MissionPanelExecutionMode, MissionPanelMap, MissionPanelPlanChange, MissionPanelReport, MissionPanelTask } from "./mission-panel-map"
+import { controlReceiptID, hasInvalidControlHistory, isReportReceipt, reportNotificationID } from "./receipt-identity"
+import { hasInvalidReportNotificationHistory, isCoordinatorNotificationReport, sameNativeCall } from "./native-report-provenance"
+import { hasUnsettledNativeExecution, parseNativeCallObservation, projectNativeCallObservation, type MissionNativeExecution, type NativeCallObservation } from "./native-call-observation"
+import { nativeCallObservationID } from "./native-call-reconciliation"
+import { projectLifecycle, type MissionControlRequestedEvent, type MissionControlAppliedEvent, type MissionRunState, type MissionLifecycleOperation } from "./lifecycle-model"
+import { orderedLifecycle, type ReadRangeEvent } from "./ordered-lifecycle"
+
+export const MISSION_SCHEMA_VERSION = 1 as const
+/** Stored entries of one mission's journal range, receipts and tombstone included,
+ * and the read bound of that range; a project holds any number of missions. */
+export const MISSION_MAX_EVENTS = 2_000
+/** Deletion capacity: tombstone, one receipt per actor and, for unified documents,
+ * one document-cleanup receipt. */
+export function missionTerminalShare(actors: number, documentCleanup = false): number {
+  return 1 + actors + Number(documentCleanup)
+}
+/** Room ordinary writes leave in a mission's range so that one Stop and then
+ * its deletion always fit, however many actors it has. */
+export function missionLifecycleReserve(actors: number, documentCleanup = false): number {
+  return 1 + actors + missionTerminalShare(actors, documentCleanup)
+}
+export const MISSION_MAX_HISTORY = 50
+
+export type MissionJsonValue = null | boolean | number | string | readonly MissionJsonValue[] | {
+  readonly [key: string]: MissionJsonValue
+}
+
+export type MissionTemplateId = "custom" | "debug" | "wayfinder" | "delivery" | "compare"
+export type MissionStatus = "active" | "completed" | "failed" | "stopped"
+export type MissionTaskStatus =
+  | "blocked"
+  | "ready"
+  | "dispatching"
+  | "queued"
+  | "completed"
+  | "needs-input"
+  | "failed"
+  | "withdrawn"
+export type MissionReportOutcome = "completed" | "blocked" | "failed"
+export type MissionActorRuntimeStatus = "working" | "idle" | "unknown"
+export type MissionActorActivityState =
+  | "running"
+  | "queued"
+  | "background"
+  | "permission"
+  | "form"
+  | "idle-without-report"
+  | "missing"
+  | "unknown"
+
+export interface MissionActorActivity {
+  sessionId: string
+  state: MissionActorActivityState
+}
+
+export interface MissionActivityProjection {
+  generatedAt: number
+  missions: Array<{
+    missionId: string
+    actors: MissionActorActivity[]
+    /** Observed native membership for display only, never task/actor authority.
+     * `partial`: the members of the actors this refresh read; the others read as unknown. */
+    family?: {
+      state: "observed" | "partial" | "unknown"
+      members: Array<{
+        sessionId: string
+        parentSessionId?: string
+        actorSessionId: string
+        taskKey?: string
+        kind: "declared" | "ordinary"
+      }>
+    }
+  }>
+}
+
+export interface MissionLocation {
+  directory: string
+  workspaceID?: string
+}
+
+export interface MissionActor {
+  sessionId: string
+  kind: "coordinator" | "specialist"
+  managed: boolean
+  title: string
+  roles: string[]
+  location: MissionLocation
+  joinedAt: number
+  runtimeStatus?: MissionActorRuntimeStatus
+}
+
+export interface MissionReport {
+  id: string
+  taskKey: string
+  sessionId: string
+  outcome: MissionReportOutcome
+  summary: string
+  evidence: string[]
+  next: string[]
+  artifact?: MissionJsonValue
+  late?: boolean
+  nativeCall?: MissionNativeBinding
+  delivery?: "coordinator-notification" | "native-return" | "coordinator-readout"
+  notificationStatus?: "pending" | "admitted"
+  createdAt: number
+  /** Body descriptors, in the mission's own `reports` of list and mission reads only. */
+  bodies?: MissionBodyDescriptors
+}
+
+export interface MissionTask {
+  id: string
+  key: string
+  title: string
+  brief: string
+  role: string
+  execution?: MissionExecution
+  executionMode?: MissionTaskExecutionMode
+  /** Derived by the reducer; never accepted from task declarations. */
+  contractGeneration?: number
+  blockedBy: string[]
+  replacesTaskKey?: string
+  replacedByTaskKey?: string
+  status: MissionTaskStatus
+  actorSessionId?: string
+  admissionId?: string
+  delivery?: "queue" | "steer"
+  nativeBinding?: MissionNativeBinding & { nativeReturned?: true }
+  nativeExecution?: MissionNativeExecution
+  createdAt: number
+  updatedAt: number
+  report?: MissionReport
+  lateReports?: MissionReport[]
+  outstandingExecution: boolean
+  /** Body descriptors, in list and mission reads only. */
+  bodies?: MissionBodyDescriptors
+}
+
+export interface MissionDependencyUpdate {
+  taskKey: string
+  blockedBy: string[]
+}
+
+export interface MissionDependencyChange {
+  taskKey: string
+  before: string[]
+  after: string[]
+}
+
+export interface MissionRetiredTask {
+  taskKey: string
+  replacementTaskKey?: string
+}
+
+export interface MissionPlanChange {
+  /** Exact accepted human edit identity, retained with its bounded history. */
+  requestID?: string
+  revision: number
+  source?: "user" | "coordinator"
+  actorSessionId?: string
+  reason?: string
+  objective?: { before: string; after: string }
+  notes?: { before?: string; after?: string }
+  addedTaskKeys: string[]
+  retiredTasks: MissionRetiredTask[]
+  dependencyUpdates: MissionDependencyChange[]
+  createdAt: number
+  /** Body descriptors, in list and mission reads only. */
+  bodies?: MissionBodyDescriptors
+}
+
+export interface MissionMap {
+  creationDefaults?: import("./creation-defaults").MissionCreationMetadata
+  document?: import("./mission-document-one-time").MissionDocumentSummary
+  version: typeof MISSION_SCHEMA_VERSION
+  id: string
+  projectID: string
+  projectCanonical: string
+  /** Short creation label; absent for historical missions (UI derives one). */
+  title?: string
+  /** Author session and optional source mission: read-only hand-off visibility. */
+  preparedBy?: { missionId?: string; coordinatorSessionId: string }
+  objective: string
+  notes?: string
+  template: MissionTemplateId
+  profiles?: import("./playbook-profiles").MissionProfiles
+  taskMode?: import("./task-execution-mode").MissionTaskMode
+  status: MissionStatus
+  runState?: MissionRunState
+  control?: MissionLifecycleOperation
+  controlUnavailable?: boolean
+  notificationUnavailable?: boolean
+  summary?: string
+  /** Project-wide order of the finish in effect (`MissionJournal.appendFinish`): later
+   * finishes have larger numbers, whatever deletions, reloads and clocks did. */
+  finishSequence?: number
+  briefing?: MissionBriefing
+  /** Exact request identities of the most recent accepted briefings, oldest
+   * first, so a superseded requested response is still recognizable. */
+  briefingResponses?: MissionBriefingResponse[]
+  coordinatorSessionId: string
+  actors: MissionActor[]
+  tasks: MissionTask[]
+  reports: MissionReport[]
+  frontier: string[]
+  claims: string[]
+  createdAt: number
+  updatedAt: number
+  revision: number
+  history: MissionPlanChange[]
+  historyTruncated: boolean
+  /** Body descriptors (`missions/mission-body-descriptors.ts`), in list and mission reads only:
+   * the reducer never writes them, so content values never include them. */
+  bodies?: MissionBodyDescriptors
+}
+
+export type MissionCleanupReason = "children" | "shared" | "moved" | "identity" | "guarded"
+export interface MissionCleanup {
+  missionID: string
+  deletionID: string
+  requestID: string
+  expectedRevision: number
+  deleteManagedSessions: boolean
+  objective: string
+  removed: number
+  retained: number
+  pending: number
+  documentPending?: boolean
+  reasons: MissionCleanupReason[]
+  createdAt: number
+}
+
+export interface MissionSnapshot {
+  controlUnavailable?: boolean
+  notificationUnavailable?: boolean
+  version: typeof MISSION_SCHEMA_VERSION
+  projectID: string
+  generatedAt: number
+  missions: MissionMap[]
+  discardedEvents: number
+  cleanups?: MissionCleanup[]
+  cleanupUnavailable?: boolean
+}
+
+/** The plugin's `list` read: compact maps (`compactMissionMap`) of the open missions
+ * and the included ones, plus a row for every live map. `summaries` is omitted, with
+ * the same `summariesVersion`, when the caller already holds that version. */
+export interface MissionList extends Omit<MissionSnapshot, "missions"> {
+  missions: MissionPanelMap[]
+  summaries?: MissionSummary[]
+  summariesVersion: string
+}
+
+/** The plugin's `mission` read: one mission's range, its map compact and absent when it
+ * holds no live map, with that range's cleanups and the project damage flags. The
+ * admission read answers the same shape with the full map (`MissionRead<MissionMap>`). */
+export interface MissionRead<Map extends MissionPanelMap = MissionPanelMap> {
+  version: typeof MISSION_SCHEMA_VERSION
+  projectID: string
+  generatedAt: number
+  mission?: Map
+  cleanups: MissionCleanup[]
+  cleanupUnavailable?: boolean
+  controlUnavailable?: boolean
+  notificationUnavailable?: boolean
+}
+
+/** Without `summariesVersion` every live map is in `missions`. */
+export interface MissionListAvailableResponse extends Omit<MissionSnapshot, "missions"> {
+  available: true
+  missions: MissionPanelMap[]
+  activity: MissionActivityProjection
+  summaries?: MissionSummary[]
+  summariesVersion?: string
+}
+
+export type MissionReadResponse<Map extends MissionPanelMap = MissionPanelMap> = (MissionRead<Map> & { available: true }) | MissionListUnavailableResponse
+
+/** Why Missions cannot be read: this backend has no local bridge to run them
+ * (`host-unavailable`), OpenCode has not loaded the plugin or it does not answer
+ * (`plugin-unavailable`), the plugin failed to load (`plugin-failed`), or the
+ * workspace connection is not ready (`workspace-unavailable`). */
+export type MissionUnavailableReason = "host-unavailable" | "plugin-unavailable" | "plugin-failed" | "workspace-unavailable"
+
+export interface MissionListUnavailableResponse {
+  available: false
+  reason: MissionUnavailableReason
+  missions: []
+}
+
+export type MissionListResponse = MissionListAvailableResponse | MissionListUnavailableResponse
+
+interface MissionEventBase {
+  version: typeof MISSION_SCHEMA_VERSION
+  id: string
+  missionID: string
+  projectID: string
+  createdAt: number
+}
+
+export interface MissionCreatedEvent extends MissionEventBase {
+  startOnCreation?: boolean
+  creationDefaults?: import("./creation-defaults").MissionCreationMetadata
+  type: "mission.created"
+  projectCanonical: string
+  title?: string
+  objective: string
+  notes?: string
+  template: MissionTemplateId
+  profiles?: import("./playbook-profiles").MissionProfiles
+  taskMode?: import("./task-execution-mode").MissionTaskMode
+  coordinator: {
+    sessionID: string
+    title: string
+    location: MissionLocation
+  }
+  requestID?: string
+  prepared?: boolean
+  /** Author session (the stable coordinatorSessionID field) and optional source mission; read-only visibility. */
+  preparedBy?: { missionID?: string; coordinatorSessionID: string }
+}
+
+export interface MissionUpdatedEvent extends MissionEventBase {
+  type: "mission.updated"
+  requestID: string
+  expectedRevision: number
+  notesSpecified: boolean
+  objective: string
+  notes?: string
+}
+
+export interface MissionPreparedEvent extends Omit<MissionCreatedEvent, "type" | "prepared" | "preparedBy" | "requestID"> {
+  type: "mission.prepared"
+  requestID: string
+  expectedRevision: number
+  fingerprint: string
+}
+
+export interface MissionDeletedEvent extends MissionEventBase {
+  type: "mission.deleted"
+  requestID: string
+  expectedRevision: number
+  deleteManagedSessions?: boolean
+  cleanupTargets?: Array<{ sessionID: string; location: MissionLocation }>
+  documentCleanup?: true
+}
+
+export interface MissionDocumentCleanedEvent extends MissionEventBase {
+  type: "mission.document-cleaned"
+  deletionID: string
+}
+
+export interface MissionSessionCleanedEvent extends MissionEventBase {
+  type: "mission.session-cleaned"
+  deletionID: string
+  sessionID: string
+  outcome: "removed" | "retained"
+  reason?: MissionCleanupReason
+}
+
+export interface MissionRevisedEvent extends MissionEventBase {
+  type: "mission.revised"
+  requestID: string
+  expectedRevision: number
+  actorSessionID: string
+  reason: string
+  objective?: string
+  notesSpecified: boolean
+  notes?: string
+  retiredTasks: MissionRetiredTask[]
+  addedTasks: Array<{
+    id: string
+    key: string
+    title: string
+    brief: string
+    role: string
+    execution?: MissionExecution
+    executionMode?: MissionTaskExecutionMode
+    blockedBy: string[]
+    replacesTaskKey?: string
+  }>
+  dependencyUpdates: MissionDependencyUpdate[]
+}
+
+export interface MissionTaskCreatedEvent extends MissionEventBase {
+  type: "task.created"
+  task: {
+    id: string
+    key: string
+    title: string
+    brief: string
+    role: string
+    execution?: MissionExecution
+    executionMode?: MissionTaskExecutionMode
+    blockedBy: string[]
+  }
+}
+
+export interface MissionTaskDispatchingEvent extends MissionEventBase {
+  type: "task.dispatching"
+  taskKey: string
+  actor: {
+    sessionID: string
+    title: string
+    location: MissionLocation
+    managed: boolean
+  }
+  admissionID: string
+  delivery: "queue" | "steer"
+}
+
+export interface MissionTaskDispatchedEvent extends MissionEventBase {
+  type: "task.dispatched"
+  taskKey: string
+}
+
+/** Native tool identity, not an inbox admission or a business report receipt. */
+export interface MissionNativeBinding {
+  generation: number
+  parentSessionID: string
+  toolCallID: string
+  parentMessageID: string
+}
+
+export interface MissionTaskNativeBoundEvent extends MissionEventBase {
+  type: "task.native-bound"
+  taskKey: string
+  actor: MissionTaskDispatchingEvent["actor"]
+  binding: MissionNativeBinding
+}
+
+export interface MissionTaskNativeReturnedEvent extends MissionEventBase {
+  type: "task.native-returned"
+  taskKey: string
+  binding: MissionNativeBinding
+  childSessionID: string
+}
+
+export interface MissionTaskNativeCallStartedEvent extends MissionEventBase {
+  type: "task.native-call-started"
+  taskKey: string
+  childSessionID: string
+  binding: MissionNativeBinding
+}
+
+export interface MissionTaskNativeCallEndedEvent extends MissionEventBase {
+  type: "task.native-call-ended"
+  taskKey: string
+  childSessionID: string
+  binding: MissionNativeBinding
+  outcome: "returned" | "error"
+}
+
+export interface MissionTaskNativeCallObservedEvent extends MissionEventBase {
+  type: "task.native-call-observed"
+  taskKey: string
+  childSessionID: string
+  binding: MissionNativeBinding
+  observation: NativeCallObservation
+}
+
+export interface MissionTaskReportedEvent extends MissionEventBase {
+  type: "task.reported"
+  report: MissionReport
+}
+
+export interface MissionReportNotifiedEvent extends MissionEventBase {
+  type: "report.notified"
+  reportID: string
+  admissionID: string
+}
+
+export interface MissionFinishedEvent extends MissionEventBase {
+  type: "mission.finished"
+  outcome: "completed" | "failed"
+  summary: string
+  /** The project's finish number, absent from isolated recurrence passages. */
+  sequence?: number
+  /** Exact original control/message and durable native failure, not a task report. */
+  nativeFailure?: { operationID: string; sessionID: string; messageID: string; evidenceID: string; inputDigest: string }
+}
+
+/** The user resumed a failed mission through coordinator recovery: it is active again. */
+export interface MissionReopenedEvent extends MissionEventBase {
+  type: "mission.reopened"
+  expectedRevision: number
+}
+
+export interface MissionBriefedEvent extends MissionEventBase {
+  type: "mission.briefed"
+  actorSessionID: string
+  briefing: MissionBriefing
+}
+
+export type MissionEvent =
+  | MissionControlRequestedEvent
+  | MissionControlAppliedEvent
+  | MissionCreatedEvent
+  | MissionUpdatedEvent
+  | MissionPreparedEvent
+  | MissionDeletedEvent
+  | MissionSessionCleanedEvent
+  | MissionDocumentCleanedEvent
+  | MissionRevisedEvent
+  | MissionTaskCreatedEvent
+  | MissionTaskDispatchingEvent
+  | MissionTaskDispatchedEvent
+  | MissionTaskNativeBoundEvent
+  | MissionTaskNativeReturnedEvent
+  | MissionTaskNativeCallStartedEvent
+  | MissionTaskNativeCallEndedEvent
+  | MissionTaskNativeCallObservedEvent
+  | MissionTaskReportedEvent
+  | MissionReportNotifiedEvent
+  | MissionFinishedEvent
+  | MissionReopenedEvent
+  | MissionBriefedEvent
+
+export function reduceMissionEvents(events: readonly MissionEvent[], now = Date.now()): MissionSnapshot {
+  const ordered = [...events].sort(compareEvents)
+  const discarded = { count: 0 }
+  const groups = new Map<string, MissionEvent[]>()
+  for (const event of ordered) {
+    const group = groups.get(event.missionID) ?? []
+    group.push(event)
+    groups.set(event.missionID, group)
+  }
+
+  const missions = [...groups.values()].flatMap((group) => {
+    const mission = reduceMission(group, discarded)
+    return mission ? [mission] : []
+  }).sort((left, right) => right.updatedAt - left.updatedAt)
+
+  return {
+    version: MISSION_SCHEMA_VERSION,
+    projectID: missions[0]?.projectID ?? events[0]?.projectID ?? "",
+    generatedAt: now,
+    missions,
+    discardedEvents: discarded.count,
+    ...(hasInvalidControlHistory(events) ? { controlUnavailable: true } : {}),
+    ...(hasInvalidReportNotificationHistory(events) ? { notificationUnavailable: true } : {}),
+  }
+}
+
+/** Every plan change one mission's events record (its `missionView` events), exactly as
+ * the reducer derives them: the map's `history` is the last `MISSION_MAX_HISTORY` of
+ * these. Empty when the events hold no live map. */
+export function missionPlanChanges(events: readonly MissionEvent[], missionID: string): MissionPlanChange[] {
+  const changes: MissionPlanChange[] = []
+  const live = reduceMission(events.filter(event => event.missionID === missionID).sort(compareEvents), { count: 0 }, changes)
+  return live ? changes : []
+}
+
+interface OrderedMissionSource {
+  /** First creation in the range, including when it follows other events. */
+  created?: MissionCreatedEvent
+  /** Read by unique event key; undefined means confirmed absence, errors reject the fold. */
+  readEvent: ReadRangeEvent
+  /** Latest reported event in the range with this logical report ID. A legacy
+   * report's ID need not be its event key. Required only for notification integrity. */
+  readReport: (id: string) => MissionTaskReportedEvent | undefined
+  /** Stream plan changes and the source keys of any before/after text. Use only
+   * if finish returns a live map. Resolve old text by point-reading those keys. */
+  onChange?: (change: MissionPlanChange, source: MissionChangeSource) => void
+  onTask?: (key: string, eventID: string) => void
+  onReport?: (id: string, eventID: string) => void
+}
+
+interface MissionChangeSource {
+  eventID: string
+  objective?: { before: string; after: string }
+  notes?: { before: string; after: string }
+}
+
+/** Superset of lookups append can need, for adapters that prefetch in the
+ * transaction before visiting a batch. IDs are scoped to that batch's range. */
+export function orderedMissionLookups(batch: readonly MissionEvent[]) {
+  const events = new Set<string>(), reports = new Set<string>()
+  for (const event of batch) {
+    if (event.type === "mission.control-requested") {
+      for (const target of event.targets) events.add(controlReceiptID(event.id, target.sessionID))
+    }
+    if (event.type === "mission.control-applied") events.add(event.operationID)
+    if (event.type === "task.reported") events.add(reportNotificationID(event.missionID, event.report.id))
+    if (event.type === "report.notified") reports.add(event.reportID)
+  }
+  return { events, reports }
+}
+
+/** Cold-open reducer for one validated, immutable mission range with unique event
+ * keys, in compareEvents order. `append` and its lookups are synchronous so
+ * the source can prefetch per batch within the observation (including lookahead).
+ * A failed append invalidates the fold. After interruption, replay the source;
+ * position alone is insufficient to resume without the correlated reducer state. */
+export function createOrderedMissionFold(source: OrderedMissionSource) {
+  const { created, readEvent, readReport, onChange, onTask, onReport } = source
+  const creationID = created?.id
+  const scope = created && { missionID: created.missionID, projectID: created.projectID }
+  const lifecycle = orderedLifecycle(readEvent)
+  const discarded = { count: 0 }
+  const admitted = new Set<string>()
+  let cursor: Pick<MissionEvent, "id" | "createdAt"> | undefined
+  let notificationUnavailable = false
+  let observedCreation = false, deleted = false, closed = false, busy = false, revision = 0
+  let objectiveSource = creationID, notesSource = creationID
+  let reducer = created && missionMapReducer(created, discarded, lifecycle.project, (change, event) => {
+    if (!onChange) return
+    const source: MissionChangeSource = { eventID: event.id }
+    if (change.objective) {
+      source.objective = { before: objectiveSource!, after: event.id }
+      objectiveSource = event.id
+    }
+    // An update can reset notes even when its history row omits the notes pair.
+    if (change.notes) source.notes = { before: notesSource!, after: event.id }
+    if (event.type !== "mission.revised" || event.notesSpecified) notesSource = event.id
+    onChange(change, source)
+  }, onTask)
+
+  function append(batch: readonly MissionEvent[]) {
+    if (closed || busy) throw new Error("Ordered mission fold is closed or busy")
+    busy = true
+    try {
+      for (const event of batch) {
+        if (scope && (event.projectID !== scope.projectID || event.missionID !== scope.missionID)) {
+          throw new Error("Event outside the ordered mission range")
+        }
+        if (cursor && compareEvents(cursor, event) >= 0) throw new Error("Unordered mission range")
+        cursor = { id: event.id, createdAt: event.createdAt }
+        revision++
+        if (!observedCreation && event.type === "mission.created") {
+          if (event.id !== creationID) throw new Error("Mismatched ordered mission range creation")
+          observedCreation = true
+        }
+        if (event.type === "mission.deleted") {
+          deleted = true
+          reducer = undefined
+          admitted.clear()
+        }
+        if (event.type === "mission.created" || event.type === "mission.control-requested" || event.type === "mission.control-applied") {
+          lifecycle.apply(event, revision)
+        }
+        if (event.type === "report.notified" && !notificationUnavailable) {
+          const report = readReport(event.reportID)
+          if (!report || !isReportReceipt(event, report, event.reportID)) notificationUnavailable = true
+        }
+        reducer?.apply(event)
+        if (event.type === "task.reported") {
+          const id = event.report.id
+          const accepted = reducer?.lastReport() === event.report
+          if (accepted) onReport?.(id, event.id)
+          if (!notificationUnavailable || (accepted && isCoordinatorNotificationReport(event.report))) {
+            const slot = readEvent(reportNotificationID(event.missionID, id))
+            if (slot) {
+              if (!isReportReceipt(slot, event, id) || !isCoordinatorNotificationReport(event.report)) notificationUnavailable = true
+              else if (accepted) admitted.add(id)
+            }
+          }
+        }
+      }
+    } catch (error) {
+      closed = true
+      throw error
+    } finally {
+      busy = false
+    }
+  }
+  function project() {
+    if (closed || busy) throw new Error("Ordered mission fold is closed or busy")
+    if (creationID !== undefined && !observedCreation) throw new Error("Missing ordered mission range creation")
+    const control = lifecycle.project()
+    const mission = reducer?.finish(control, id => admitted.has(id), notificationUnavailable)
+    return {
+      mission,
+      discardedEvents: !scope ? revision : deleted ? 0 : discarded.count,
+      ...(control.controlUnavailable ? { controlUnavailable: true } : {}),
+      ...(notificationUnavailable ? { notificationUnavailable: true } : {}),
+    }
+  }
+  function finish() {
+    const result = project()
+    closed = true
+    reducer = undefined
+    admitted.clear()
+    return result
+  }
+  return { append, finish, project, inputSources: () => ({ objective: objectiveSource, notes: notesSource }) }
+}
+
+function reduceMission(events: readonly MissionEvent[], discarded: { count: number }, changes?: MissionPlanChange[]): MissionMap | undefined {
+  const created = events.find((event): event is MissionCreatedEvent => event.type === "mission.created")
+  if (!created) {
+    discarded.count += events.length
+    return undefined
+  }
+
+  if (events.some((event) => event.type === "mission.deleted")) return undefined
+
+  let prefixLifecycle: ReturnType<typeof projectLifecycle> | undefined
+  const lifecycleEvents: MissionEvent[] = []
+  const reducer = missionMapReducer(created, discarded, () => prefixLifecycle ??= projectLifecycle(lifecycleEvents),
+    change => { changes?.push(change) })
+  for (const event of events) {
+    reducer.apply(event)
+    if (event.type === "mission.created" || event.type === "mission.control-requested" || event.type === "mission.control-applied") {
+      lifecycleEvents.push(event)
+      prefixLifecycle = undefined
+    }
+  }
+  return reducer.finish(projectLifecycle(events),
+    id => events.some(event => isReportReceipt(event, created, id)), hasInvalidReportNotificationHistory(events))
+}
+
+/** Shared transitions for array and ordered range reads. Presentation mutates the
+ * derived tasks, so `finish` consumes this reducer. */
+function missionMapReducer({ objective: initialObjective, notes: initialNotes, ...created }: MissionCreatedEvent, discarded: { count: number },
+  lifecycleBefore: () => ReturnType<typeof projectLifecycle>,
+  onChange: (change: MissionPlanChange, event: MissionPreparedEvent | MissionUpdatedEvent | MissionRevisedEvent) => void,
+  onTask?: (key: string, eventID: string) => void) {
+  const tasks = new Map<string, MissionTask>()
+  const nativeCallHistory = new Map<string, { toolCalls: Set<string>; messages: Set<string>; calls: MissionNativeBinding[] }>()
+  // An old completed report cannot settle a later explicitly started call.
+  const nativeReportedExecutions = new Set<string>()
+  const actors = new Map<string, MissionActor>()
+  const reports: MissionReport[] = []
+  const history: MissionPlanChange[] = []
+  let historyTruncated = false
+  function recordChange(change: MissionPlanChange, event: MissionPreparedEvent | MissionUpdatedEvent | MissionRevisedEvent) {
+    onChange(change, event)
+    history.push(change)
+    if (history.length > MISSION_MAX_HISTORY) {
+      history.shift()
+      historyTruncated = true
+    }
+  }
+  let status: MissionStatus = "active"
+  let objective = initialObjective
+  let notes = initialNotes
+  let briefing: MissionBriefing | undefined
+  const briefingResponses: MissionBriefingResponse[] = []
+  let updatedAt = -Infinity
+
+  actors.set(created.coordinator.sessionID, {
+    sessionId: created.coordinator.sessionID,
+    kind: "coordinator",
+    managed: false,
+    title: created.coordinator.title,
+    roles: ["coordinator"],
+    location: created.coordinator.location,
+    joinedAt: created.createdAt,
+  })
+
+  let stoppedForReports = false
+  // Index of the finish in effect: a resumed failure no longer finishes the mission.
+  let finish: Pick<MissionFinishedEvent, "summary" | "sequence"> | undefined
+  let finishIndex = -1, firstStop = -1, revision = 0
+  function apply(event: MissionEvent) {
+    const index = revision++
+    const beforeUpdatedAt = updatedAt
+    updatedAt = Math.max(updatedAt, event.createdAt)
+    if (firstStop < 0 && event.type === "mission.control-requested" && event.action === "stop") firstStop = index
+    if (event.projectID !== created.projectID || event.missionID !== created.missionID) {
+      discarded.count += 1
+      return
+    }
+    if (event.type === "mission.control-requested" && event.action === "stop") stoppedForReports = true
+    if (event.type === "mission.prepared") {
+      if (event.expectedRevision !== index || tasks.size || status !== "active"
+        || lifecycleBefore().runState !== "prepared") { discarded.count++; return }
+      created = { ...created, title: event.title, template: event.template, profiles: event.profiles,
+        taskMode: event.taskMode, coordinator: event.coordinator }
+      actors.clear()
+      actors.set(event.coordinator.sessionID, { sessionId: event.coordinator.sessionID, kind: "coordinator", managed: false,
+        title: event.coordinator.title, roles: ["coordinator"], location: event.coordinator.location, joinedAt: event.createdAt })
+    }
+    if (event.type === "mission.updated" || event.type === "mission.prepared") {
+      const previousObjective = objective
+      const previousNotes = notes
+      objective = event.objective
+      notes = event.notes
+      recordChange({
+        revision: event.expectedRevision + 1,
+        source: "user",
+        requestID: event.requestID,
+        objective: { before: previousObjective, after: objective },
+        ...(event.type === "mission.prepared" || event.notesSpecified ? { notes: { before: previousNotes, after: notes } } : {}),
+        addedTaskKeys: [],
+        retiredTasks: [],
+        dependencyUpdates: [],
+        createdAt: event.createdAt,
+      }, event)
+      return
+    }
+    if (event.type === "mission.deleted") return
+    if (event.type === "mission.briefed") {
+      const value = parseMissionBriefing(event.briefing)
+      const lifecycle = lifecycleBefore()
+      if (!value || event.actorSessionID !== created.coordinator.sessionID || status !== "active" || stoppedForReports
+        || value.id !== event.id || value.createdAt !== event.createdAt || value.basedOnRevision !== index
+        || value.basedOnUpdatedAt !== beforeUpdatedAt
+        || ["prepared", "paused", "stopped"].includes(lifecycle.runState ?? "running") || lifecycle.control?.pending.length
+        || !briefingSourcesExist({ tasks: [...tasks.values()] }, value)) { discarded.count++; return }
+      briefing = value
+      if (isAutomaticBriefing(value)) return
+      briefingResponses.push({ requestID: value.requestID, briefingID: value.id })
+      if (briefingResponses.length > MISSION_BRIEFING_RESPONSES_MAX) briefingResponses.shift()
+      return
+    }
+    if (event.type === "mission.revised") {
+      const previousObjective = objective
+      const previousNotes = notes
+      if (event.objective !== undefined) objective = event.objective
+      if (event.notesSpecified) notes = event.notes
+      for (const retired of event.retiredTasks) {
+        const task = tasks.get(retired.taskKey)
+        if (!task || task.status === "withdrawn") { discarded.count += 1; continue }
+        task.status = "withdrawn"
+        task.replacedByTaskKey = retired.replacementTaskKey
+        task.updatedAt = event.createdAt
+      }
+      const dependencyChanges: MissionDependencyChange[] = []
+      for (const update of event.dependencyUpdates) {
+        const task = tasks.get(update.taskKey)
+        if (!task || task.status === "withdrawn") { discarded.count += 1; continue }
+        const after = [...new Set(update.blockedBy)]
+        if (after.length === task.blockedBy.length && after.every(key => task.blockedBy.includes(key))) continue
+        // Active/report bindings cannot be revoked by a hostile direct event.
+        const generation = task.contractGeneration
+        if (task.actorSessionId || task.nativeBinding || task.admissionId || task.report
+          || (task.status !== "ready" && task.status !== "blocked")
+          || generation === undefined || !Number.isSafeInteger(generation) || generation < 1
+          || generation >= Number.MAX_SAFE_INTEGER) { discarded.count += 1; continue }
+        dependencyChanges.push({ taskKey: update.taskKey, before: [...task.blockedBy], after })
+        task.blockedBy = after
+        task.contractGeneration = generation + 1
+        task.updatedAt = event.createdAt
+      }
+      for (const added of event.addedTasks) {
+        if (tasks.has(added.key)) { discarded.count += 1; continue }
+        tasks.set(added.key, {
+          ...added,
+          contractGeneration: 1,
+          blockedBy: [...new Set(added.blockedBy)],
+          status: "ready",
+          outstandingExecution: false,
+          createdAt: event.createdAt,
+          updatedAt: event.createdAt,
+        })
+        onTask?.(added.key, event.id)
+      }
+      recordChange({
+        revision: event.expectedRevision + 1,
+        source: "coordinator",
+        actorSessionId: event.actorSessionID,
+        reason: event.reason,
+        ...(event.objective === undefined ? {} : { objective: { before: previousObjective, after: objective } }),
+        ...(!event.notesSpecified ? {} : { notes: { before: previousNotes, after: notes } }),
+        addedTaskKeys: event.addedTasks.map((task) => task.key),
+        retiredTasks: event.retiredTasks.map((task) => ({ ...task })),
+        dependencyUpdates: dependencyChanges,
+        createdAt: event.createdAt,
+      }, event)
+      return
+    }
+    if (event.type === "task.created") {
+      if (tasks.has(event.task.key)) {
+        discarded.count += 1
+        return
+      }
+      tasks.set(event.task.key, {
+        ...event.task,
+        contractGeneration: 1,
+        blockedBy: [...new Set(event.task.blockedBy)],
+        status: "ready",
+        outstandingExecution: false,
+        createdAt: event.createdAt,
+        updatedAt: event.createdAt,
+      })
+      onTask?.(event.task.key, event.id)
+      return
+    }
+    if (event.type === "task.native-bound") {
+      const task = tasks.get(event.taskKey)
+      const existing = actors.get(event.actor.sessionID)
+      if (!task || task.status !== "ready" || task.report || task.actorSessionId || task.nativeBinding
+        || task.executionMode?.kind === "independent"
+        || stoppedForReports || event.binding.generation !== task.contractGeneration
+        || task.blockedBy.some(key => tasks.get(key)?.status !== "completed")
+        || !actors.has(event.binding.parentSessionID) || event.binding.parentSessionID === event.actor.sessionID
+        || (existing && (existing.kind !== "specialist" || existing.managed !== event.actor.managed
+          || existing.title !== event.actor.title || existing.location.directory !== event.actor.location.directory
+          || existing.location.workspaceID !== event.actor.location.workspaceID))) {
+        discarded.count += 1
+        return
+      }
+      task.actorSessionId = event.actor.sessionID
+      task.nativeBinding = { ...event.binding }
+      task.nativeExecution = { binding: { ...event.binding } }
+      nativeCallHistory.set(task.key, { toolCalls: new Set([event.binding.toolCallID]), messages: new Set([event.binding.parentMessageID]),
+        calls: [{ ...event.binding }] })
+      // Queued means business work awaits its explicit report, not inbox ACK.
+      task.status = "queued"
+      task.updatedAt = event.createdAt
+      if (existing) {
+        if (!existing.roles.includes(task.role)) existing.roles.push(task.role)
+      } else {
+        actors.set(event.actor.sessionID, {
+          sessionId: event.actor.sessionID, kind: "specialist", managed: event.actor.managed,
+          title: event.actor.title, roles: [task.role], location: event.actor.location, joinedAt: event.createdAt,
+        })
+      }
+      return
+    }
+    if (event.type === "task.native-call-started") {
+      const task = tasks.get(event.taskKey)
+      const original = task?.nativeBinding
+      const history = nativeCallHistory.get(event.taskKey)
+      if (!task || !original || !task.nativeExecution?.ended || hasUnsettledNativeExecution(task) || !history || stoppedForReports
+        || task.status === "withdrawn" || task.actorSessionId !== event.childSessionID
+        || !actors.has(event.childSessionID) || !actors.has(event.binding.parentSessionID)
+        || event.binding.generation !== original.generation || event.binding.generation !== task.contractGeneration
+        || event.binding.parentSessionID !== original.parentSessionID
+        || history.toolCalls.has(event.binding.toolCallID) || history.messages.has(event.binding.parentMessageID)) {
+        discarded.count += 1
+        return
+      }
+      task.nativeExecution = { binding: { ...event.binding } }
+      history.toolCalls.add(event.binding.toolCallID)
+      history.messages.add(event.binding.parentMessageID)
+      history.calls.push({ ...event.binding })
+      nativeReportedExecutions.delete(task.key)
+      task.updatedAt = event.createdAt
+      return
+    }
+    if (event.type === "task.native-returned" || event.type === "task.native-call-ended") {
+      const task = tasks.get(event.taskKey)
+      const binding = task?.nativeBinding
+      const execution = task?.nativeExecution
+      if (!task || !binding || !execution || execution.ended || task.actorSessionId !== event.childSessionID
+        || !sameNativeCall(execution.binding, event.binding)
+        || (event.type === "task.native-returned" && !sameNativeCall(binding, event.binding))
+        || (execution.launch && execution.launch.mode !== "foreground")) {
+        discarded.count += 1
+        return
+      }
+      // Error is an observed executor termination, not OS descendant suspension.
+      execution.ended = event.type === "task.native-returned" ? "returned" : event.outcome
+      if (execution.ended === "returned" && sameNativeCall(binding, event.binding)) binding.nativeReturned = true
+      task.updatedAt = event.createdAt
+      return
+    }
+    if (event.type === "task.native-call-observed") {
+      const task = tasks.get(event.taskKey), execution = task?.nativeExecution
+      const observation = parseNativeCallObservation(event.observation)
+      if (!task || !execution || !observation || event.id !== nativeCallObservationID({ ...event, binding: event.binding }, observation)
+        || task.actorSessionId !== event.childSessionID || event.binding.generation !== task.contractGeneration
+        || !sameNativeCall(execution.binding, event.binding)
+        || observation.source.sessionID !== (observation.kind === "child-uncorrelated" ? event.childSessionID : event.binding.parentSessionID)) {
+        discarded.count += 1; return
+      }
+      task.nativeExecution = projectNativeCallObservation(execution, observation)
+      if (!task.nativeExecution.observationConflict && task.nativeExecution.launch?.mode === "foreground"
+        && task.nativeExecution.ended === "returned" && task.nativeBinding && sameNativeCall(task.nativeBinding, event.binding)) task.nativeBinding.nativeReturned = true
+      task.updatedAt = event.createdAt
+      return
+    }
+    if (event.type === "task.dispatching") {
+      const task = tasks.get(event.taskKey)
+      if (!task || task.report || task.nativeBinding) {
+        discarded.count += 1
+        return
+      }
+      task.actorSessionId = event.actor.sessionID
+      task.admissionId = event.admissionID
+      task.delivery = event.delivery
+      task.status = "dispatching"
+      task.updatedAt = event.createdAt
+      const existing = actors.get(event.actor.sessionID)
+      if (existing) {
+        if (!existing.roles.includes(task.role)) existing.roles.push(task.role)
+      } else {
+        actors.set(event.actor.sessionID, {
+          sessionId: event.actor.sessionID,
+          kind: "specialist",
+          managed: event.actor.managed,
+          title: event.actor.title,
+          roles: [task.role],
+          location: event.actor.location,
+          joinedAt: event.createdAt,
+        })
+      }
+      return
+    }
+    if (event.type === "task.dispatched") {
+      const task = tasks.get(event.taskKey)
+      if (!task || !task.actorSessionId || task.report || task.nativeBinding) {
+        discarded.count += 1
+        return
+      }
+      task.status = "queued"
+      task.updatedAt = event.createdAt
+      return
+    }
+    if (event.type === "task.reported") {
+      const task = tasks.get(event.report.taskKey)
+      const call = event.report.nativeCall
+      const historical = Boolean((task?.status === "withdrawn" || stoppedForReports) && event.report.late)
+      const readout = event.report.delivery === "coordinator-readout"
+      if (!task || (readout ? event.report.sessionId !== created.coordinator.sessionID
+        || task.executionMode?.kind !== "native" || Boolean(call) || historical
+        || task.status === "blocked" || stoppedForReports : task.actorSessionId !== event.report.sessionId)
+        || (task.executionMode?.kind === "native" && !call && !readout)
+        || (event.report.delivery === "native-return" && !call)
+        || (call && (task.executionMode?.kind === "independent" || !task.nativeBinding
+          || call.generation !== task.contractGeneration
+          || !nativeCallHistory.get(task.key)?.calls.some(binding => sameNativeCall(binding, call))
+          || (!historical && !sameNativeCall(task.nativeExecution?.binding, call))
+          || reports.some(report => report.id === event.report.id)))) {
+        discarded.count += 1
+        return
+      }
+      // Historical invocation evidence cannot settle a different pending call.
+      const reportsCurrentCall = !readout && task.nativeBinding && (!call || sameNativeCall(task.nativeExecution?.binding, call))
+      if (historical && (!task.report || call)) {
+        if (reportsCurrentCall) nativeReportedExecutions.add(task.key)
+        task.lateReports = [...(task.lateReports ?? []), event.report]
+        task.updatedAt = event.createdAt
+        reports.push(event.report)
+        return
+      }
+      if (task.report || task.status === "withdrawn" || event.report.late) {
+        discarded.count += 1
+        return
+      }
+      task.report = event.report
+      if (reportsCurrentCall) nativeReportedExecutions.add(task.key)
+      task.status = event.report.outcome === "completed"
+        ? "completed"
+        : event.report.outcome === "blocked" ? "needs-input" : "failed"
+      task.updatedAt = event.createdAt
+      reports.push(event.report)
+      return
+    }
+    if (event.type === "report.notified") {
+      const report = reports.find(report => report.id === event.reportID)
+      if (report && !isCoordinatorNotificationReport(report)) discarded.count += 1
+      return
+    }
+    if (event.type === "mission.finished") {
+      status = event.outcome
+      finishIndex = index
+      finish = { summary: event.summary, sequence: event.sequence }
+      return
+    }
+    if (event.type === "mission.reopened") {
+      // Only a failure can be resumed, at the exact revision the user saw.
+      if (status !== "failed" || event.expectedRevision !== index) { discarded.count += 1; return }
+      status = "active"
+      finishIndex = -1
+      finish = undefined
+    }
+  }
+
+  function project(lifecycle: ReturnType<typeof projectLifecycle>, admitted: (reportID: string) => boolean,
+    notificationUnavailable: boolean): MissionMap {
+    const projectedTasks = [...tasks.values()].map(task => ({ ...task }))
+    let projectedStatus = status
+    for (const task of projectedTasks) {
+      task.outstandingExecution = task.status === "withdrawn" && Boolean(task.nativeBinding
+        ? task.nativeExecution?.observationConflict || task.nativeExecution?.launch && task.nativeExecution.launch.mode !== "foreground" ? hasUnsettledNativeExecution(task)
+          : !task.nativeExecution?.ended && !nativeReportedExecutions.has(task.key)
+        : task.admissionId && !task.report && (task.lateReports?.length ?? 0) === 0)
+      if (task.status === "ready") {
+        const waiting = task.blockedBy.some((key) => tasks.get(key)?.status !== "completed")
+        task.status = waiting ? "blocked" : "ready"
+      }
+    }
+
+    // Denial receipts in the normal final-report/native-settlement interval do
+    // not rewrite the already recorded terminal result. A prior Stop remains terminal.
+    const finishedBeforeStop = finishIndex >= 0 && finishIndex < firstStop
+    if (lifecycle.runState === "stopped" && !finishedBeforeStop) {
+      projectedStatus = "stopped"
+      for (const task of projectedTasks) {
+        if (["ready", "blocked", "queued", "dispatching"].includes(task.status)) task.status = "withdrawn"
+        task.outstandingExecution = Boolean(task.nativeBinding
+          ? task.nativeExecution?.observationConflict || task.nativeExecution?.launch && task.nativeExecution.launch.mode !== "foreground" ? hasUnsettledNativeExecution(task)
+            : !task.nativeExecution?.ended && !nativeReportedExecutions.has(task.key)
+          : task.actorSessionId && lifecycle.control?.pending.includes(task.actorSessionId) && task.admissionId
+            && !task.report && !task.lateReports?.length)
+      }
+    }
+    const taskList = projectedTasks.sort((left, right) => left.createdAt - right.createdAt || left.key.localeCompare(right.key))
+    const notificationStatus = (report: MissionReport): MissionReport => report.delivery === "coordinator-readout" ? { ...report } : ({
+      ...report,
+      notificationStatus: isCoordinatorNotificationReport(report)
+        && admitted(report.id) ? "admitted" : "pending",
+    })
+    for (const task of taskList) {
+      if (task.report) task.report = notificationStatus(task.report)
+      if (task.lateReports) task.lateReports = task.lateReports.map(notificationStatus)
+    }
+    return {
+      version: MISSION_SCHEMA_VERSION,
+      id: created.missionID,
+      projectID: created.projectID,
+      projectCanonical: created.projectCanonical,
+      ...(created.title === undefined ? {} : { title: created.title }),
+      ...(created.preparedBy === undefined ? {} : { preparedBy: {
+        ...(created.preparedBy.missionID === undefined ? {} : { missionId: created.preparedBy.missionID }),
+        coordinatorSessionId: created.preparedBy.coordinatorSessionID } }),
+      objective,
+      notes,
+      ...(briefing ? { briefing } : {}),
+      ...(briefingResponses.length ? { briefingResponses } : {}),
+      template: created.template,
+      taskMode: created.taskMode ?? "native",
+      ...(created.profiles === undefined ? {} : { profiles: structuredClone(created.profiles) }),
+      ...(created.creationDefaults === undefined ? {} : { creationDefaults: structuredClone(created.creationDefaults) }),
+      status: projectedStatus,
+      ...lifecycle,
+      ...(notificationUnavailable ? { notificationUnavailable: true } : {}),
+      summary: finish?.summary,
+      ...(finish?.sequence !== undefined ? { finishSequence: finish.sequence } : {}),
+      coordinatorSessionId: created.coordinator.sessionID,
+      actors: [...actors.values()].sort((left, right) => left.joinedAt - right.joinedAt),
+      tasks: taskList,
+      reports: reports.slice().sort((left, right) => left.createdAt - right.createdAt).map(notificationStatus),
+      frontier: taskList.filter((task) => task.status === "ready").map((task) => task.key),
+      claims: taskList.filter((task) => task.status === "dispatching" || task.status === "queued").map((task) => task.key),
+      createdAt: created.createdAt,
+      updatedAt,
+      revision,
+      history,
+      historyTruncated,
+    }
+  }
+  return { apply, finish: project, lastReport: () => reports.at(-1) }
+}
+
+export function compareEvents(left: Pick<MissionEvent, "createdAt" | "id">, right: Pick<MissionEvent, "createdAt" | "id">): number {
+  return left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+}

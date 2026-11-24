@@ -1,0 +1,49 @@
+/* Settings → Notifications: where each category goes (screen, history, system).
+   Row rhythm and dividers match .settings-toggle-row. */
+.notification-routing {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.notification-routing :is(th, td) {
+  padding: var(--space-sm) 0;
+  border-top: 1px solid var(--border-row);
+}
+
+.notification-routing thead th {
+  padding-top: 0;
+  border-top: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.notification-routing th[scope="row"] {
+  text-align: start;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.notification-routing td {
+  width: 6rem;
+  text-align: center;
+}
+
+.notification-routing input {
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.notification-routing input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .notification-routing td {
+    width: 4.5rem;
+  }
+}

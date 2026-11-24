@@ -1,0 +1,100 @@
+//! Native renderer lifetime signals, installed once on owned primary webviews.
+//! Native subscriptions capture only a weak host, never their COM/GObject or a
+//! strong AppHandle, so there is no runtime/handler ownership cycle.
+use tauri::Webview;
+
+#[cfg(windows)]
+fn main_renderer_exited(
+    kind: webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND,
+) -> bool {
+    use webview2_com::Microsoft::Web::WebView2::Win32::*;
+    matches!(
+        kind,
+        COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED
+            | COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED
+    )
+}
+
+pub(crate) fn bind(webview: &Webview, on_terminated: impl Fn() + Send + 'static) {
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        if let Err(error) = webview.with_webview(move |platform| {
+            #[cfg(windows)]
+            {
+                use webview2_com::{
+                    Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND,
+                    ProcessFailedEventHandler,
+                };
+                let result = (|| -> webview2_com::Result<()> {
+                    let core = unsafe { platform.controller().CoreWebView2()? };
+                    let handler =
+                        ProcessFailedEventHandler::create(Box::new(move |_sender, args| {
+                            let Some(args) = args else { return Ok(()) };
+                            let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+                            unsafe { args.ProcessFailedKind(&mut kind)? };
+                            if main_renderer_exited(kind) {
+                                on_terminated();
+                            }
+                            Ok(())
+                        }));
+                    let mut token = 0;
+                    unsafe { core.add_ProcessFailed(&handler, &mut token)? };
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    eprintln!(
+                        "[renderer-lifetime] failed to register termination handler: {error}"
+                    );
+                }
+            }
+            #[cfg(target_os = "linux")]
+            {
+                use webkit2gtk::WebViewExt;
+                platform
+                    .inner()
+                    .connect_web_process_terminated(move |_view, _reason| {
+                        // All WebKit reasons terminate this view's web process:
+                        // crash, memory limit, or explicit native termination.
+                        on_terminated();
+                    });
+            }
+        }) {
+            eprintln!("[renderer-lifetime] failed to access termination hook: {error}");
+        }
+    }
+    // Without a Builder::on_web_content_process_terminate hook, Tauri's runtime
+    // reloads a webview whose Darwin renderer terminated; the reload's page start
+    // resets the count. Registering that app-wide hook would replace the reload.
+    // Do not replace WKWebView's runtime-owned navigation delegate or poll it.
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let _ = (webview, on_terminated);
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use webview2_com::Microsoft::Web::WebView2::Win32::*;
+
+    #[test]
+    fn renderer_termination_policy_ignores_frames_hangs_and_auxiliary_processes() {
+        assert!(main_renderer_exited(
+            COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED
+        ));
+        assert!(main_renderer_exited(
+            COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED
+        ));
+        for kind in [
+            COREWEBVIEW2_PROCESS_FAILED_KIND_FRAME_RENDER_PROCESS_EXITED,
+            COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE,
+            COREWEBVIEW2_PROCESS_FAILED_KIND_UTILITY_PROCESS_EXITED,
+            COREWEBVIEW2_PROCESS_FAILED_KIND_GPU_PROCESS_EXITED,
+            COREWEBVIEW2_PROCESS_FAILED_KIND_SANDBOX_HELPER_PROCESS_EXITED,
+            COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_PLUGIN_PROCESS_EXITED,
+            COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_BROKER_PROCESS_EXITED,
+            COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED,
+            COREWEBVIEW2_PROCESS_FAILED_KIND(-1),
+        ] {
+            assert!(!main_renderer_exited(kind));
+        }
+    }
+}

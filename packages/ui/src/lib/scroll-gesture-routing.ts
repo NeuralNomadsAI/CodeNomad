@@ -1,0 +1,218 @@
+import { canScrollInDirection, markScrollMetricsStale, scrollElementMetrics } from "../components/virtual-follow-behavior"
+
+/** Controls that consume a pointer press: neither middle-button autoscroll nor a selection drag starts on them. */
+export const POINTER_CONTROL_SELECTOR = "a[href],button,input,textarea,select,[contenteditable]:not([contenteditable='false']),[role='button'],[role='textbox']"
+
+const WHEEL_GESTURE_IDLE_MS = 180
+const MIDDLE_DEAD_ZONE_PX = 8
+
+/** The axes along which `node` is a scroll container with overflowing content. */
+export function scrollAxes(node: HTMLElement) {
+  const style = getComputedStyle(node)
+  const scrolls = (overflow: string) => /^(auto|scroll|overlay)$/.test(overflow)
+  return {
+    x: scrolls(style.overflowX) && node.scrollWidth > node.clientWidth + 1,
+    y: scrolls(style.overflowY) && node.scrollHeight > node.clientHeight + 1,
+  }
+}
+
+/** A nested-scroller walk result, keyed by the event target it started from. */
+interface NestedScrollerProbe {
+  root: HTMLElement
+  direction: "up" | "down"
+  result: HTMLElement | null
+  /** The ancestor chain from the target up to (excluding) `root`, for identity revalidation. */
+  chain: Element[]
+  /** Every chain member the walk consulted, with the geometry that decided the answer. */
+  consulted: { element: HTMLElement; scrollTop: number; scrollHeight: number; clientHeight: number }[]
+}
+
+const nestedScrollerProbes = new WeakMap<Element, NestedScrollerProbe>()
+
+/** A cached probe still stands by its answer while the ancestor chain is the same nodes and no consulted member's geometry moved (measured live, never through the shared per-epoch cache: an unobserved resize — a delayed image shrinking a nested report — must invalidate the answer). */
+function nestedScrollerProbeValid(probe: NestedScrollerProbe, target: Element, root: HTMLElement): boolean {
+  let node: Element | null = target
+  let index = 0
+  while (node && node !== root) {
+    if (probe.chain[index] !== node) return false
+    index += 1
+    node = node.parentElement
+  }
+  if (index !== probe.chain.length) return false
+  for (const { element, scrollTop, scrollHeight, clientHeight } of probe.consulted) {
+    if (!element.isConnected) return false
+    if (element.scrollTop !== scrollTop || element.scrollHeight !== scrollHeight || element.clientHeight !== clientHeight) return false
+  }
+  return true
+}
+
+/** Nested-scroller test for gesture routing: the innermost scroller from `target`
+ * up to, excluding, `root` that can still scroll vertically in `direction` consumes
+ * the gesture. The transcript's own intent check still walks ancestors separately.
+ * The walk is cached per target: a wheel gesture re-validates the chain and the
+ * consulted geometry (through the shared per-frame measurement) instead of
+ * resolving styles and layout for every ancestor on every event. A computed
+ * `overflow` flip on an ancestor without any scroll, resize or observation in
+ * between is out of scope. */
+export function findNestedScroller(root: HTMLElement, target: EventTarget | null, direction: "up" | "down"): HTMLElement | null {
+  if (!(target instanceof Element)) return null
+  const cached = nestedScrollerProbes.get(target)
+  if (cached && cached.root === root && cached.direction === direction && nestedScrollerProbeValid(cached, target, root)) return cached.result
+  // The walk decides on live geometry: content may have changed since the
+  // last measured epoch without anything observing it.
+  markScrollMetricsStale()
+  const chain: Element[] = []
+  const consulted: NestedScrollerProbe["consulted"] = []
+  for (let node: Element | null = target; node && node !== root; node = node.parentElement) {
+    chain.push(node)
+    if (!(node instanceof HTMLElement)) continue
+    const metrics = scrollElementMetrics(node)
+    consulted.push({ element: node, scrollTop: metrics.offset, scrollHeight: metrics.scrollHeight, clientHeight: metrics.clientHeight })
+    // The edge test first skips style resolution for most ancestors.
+    if (canScrollInDirection(metrics, direction) && scrollAxes(node).y) {
+      nestedScrollerProbes.set(target, { root, direction, result: node, chain, consulted })
+      return node
+    }
+  }
+  nestedScrollerProbes.set(target, { root, direction, result: null, chain, consulted })
+  return null
+}
+
+/** Effective CSS zoom of `element`. The app zooms natively (1 here); CSS zoom still scales input. */
+export function getElementZoom(element: Element) {
+  return element.currentCSSZoom || 1
+}
+
+/** Scroller pixels per wheel delta unit: pixel deltas are page pixels, so 1/zoom under CSS zoom (measured). */
+export function wheelDeltaUnit(event: WheelEvent, element: HTMLElement) {
+  return event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? element.clientHeight
+    : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? parseFloat(getComputedStyle(element).lineHeight) || 16 : 1 / getElementZoom(element)
+}
+
+function middleTargets(root: HTMLElement, target: EventTarget | null) {
+  const owners: { x?: HTMLElement; y?: HTMLElement } = {}
+  for (let node = target instanceof Element ? target : null; node; node = node.parentElement) {
+    if (node instanceof HTMLElement) {
+      const axes = scrollAxes(node)
+      if (axes.x) owners.x ??= node
+      if (axes.y) owners.y ??= node
+    }
+    if (node === root) break
+  }
+  return owners
+}
+
+/** Keep an in-progress gesture on its starting scroller, not whatever row
+ * virtualization or pointer movement happens to place under the cursor next.
+ * `onRootWheel` receives each wheel event that `root` itself scrolls, so its
+ * owner needs no second nested-scroller walk. */
+export function attachScrollGestureRouting(root: HTMLElement, onRootWheel?: (event: WheelEvent) => void): () => void {
+  let wheelOwner: HTMLElement | undefined
+  let wheelAt = -Infinity
+  let middle: { owners: ReturnType<typeof middleTargets>; pointerId: number; x: number; y: number; dx: number; dy: number; time: number } | undefined
+  let frame: number | undefined
+
+  const wheel = (event: WheelEvent) => {
+    const direction = event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null
+    const target = direction ? findNestedScroller(root, event.target, direction) ?? root : root
+    // Leave zoom, native horizontal/Shift-wheel, uncancellable input and
+    // synthetic intent (including the redispatch below, already routed) alone.
+    if (!event.isTrusted || !direction || event.ctrlKey || event.shiftKey || event.deltaX !== 0 || !event.cancelable || event.defaultPrevented) {
+      if (event.isTrusted) wheelOwner = undefined
+      if (target === root) onRootWheel?.(event)
+      return
+    }
+    const now = performance.now()
+    // At an edge, chain only to an ancestor of the owner, never a new shell
+    // passing under the cursor during the same gesture.
+    wheelOwner = !wheelOwner?.isConnected || !root.contains(wheelOwner) || now - wheelAt > WHEEL_GESTURE_IDLE_MS
+      ? target
+      : findNestedScroller(root, wheelOwner, direction) ?? root
+    wheelAt = now
+    const owner = wheelOwner
+    if (owner === target) {
+      if (owner === root) onRootWheel?.(event)
+      return
+    }
+    // The redispatch reports a transcript owner itself.
+    event.preventDefault()
+    event.stopPropagation()
+    owner.dispatchEvent(new WheelEvent("wheel", { deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode, bubbles: true }))
+    const unit = wheelDeltaUnit(event, owner)
+    owner.scrollBy({ left: event.deltaX * unit, top: event.deltaY * unit, behavior: "instant" })
+  }
+
+  const stopMiddle = () => {
+    const active = middle
+    middle = undefined
+    if (frame !== undefined) cancelAnimationFrame(frame)
+    frame = undefined
+    if (active && root.hasPointerCapture(active.pointerId)) root.releasePointerCapture(active.pointerId)
+    if (active) root.style.cursor = previousCursor
+  }
+  let previousCursor = ""
+  const tick = (time: number) => {
+    frame = undefined
+    const active = middle
+    if (!active) return
+    if (Object.values(active.owners).some(owner => !root.contains(owner) || !owner.getClientRects().length)) return stopMiddle()
+    const elapsed = Math.min(time - active.time, 32) / 16.67
+    active.time = time
+    const speed = (distance: number) => Math.sign(distance) * Math.max(0, Math.abs(distance) - MIDDLE_DEAD_ZONE_PX) / 6
+    active.owners.x?.scrollBy({ left: speed(active.dx) * elapsed, behavior: "instant" })
+    active.owners.y?.scrollBy({ top: speed(active.dy) * elapsed, behavior: "instant" })
+    frame = requestAnimationFrame(tick)
+  }
+  const down = (event: PointerEvent) => {
+    if (!event.isTrusted || event.button !== 1 || event.defaultPrevented) return
+    // Preserve middle-click link opening and editable/control behavior.
+    if (event.target instanceof Element && event.target.closest(POINTER_CONTROL_SELECTOR)) return
+    stopMiddle()
+    wheelOwner = undefined
+    const owners = middleTargets(root, event.target)
+    if (!owners.x && !owners.y) return
+    event.preventDefault()
+    middle = { owners, pointerId: event.pointerId, x: event.clientX, y: event.clientY, dx: 0, dy: 0, time: performance.now() }
+    previousCursor = root.style.cursor
+    root.style.cursor = "all-scroll"
+    root.setPointerCapture(event.pointerId)
+    frame = requestAnimationFrame(tick)
+    // Do not stop propagation: both nested and transcript follow controllers
+    // must relinquish automatic writes before the first drag frame.
+  }
+  const move = (event: PointerEvent) => {
+    if (!middle || event.pointerId !== middle.pointerId) return
+    if ((event.buttons & 4) === 0) return stopMiddle()
+    middle.dx = event.clientX - middle.x
+    middle.dy = event.clientY - middle.y
+  }
+  const end = (event: PointerEvent) => {
+    if (middle && event.pointerId === middle.pointerId) stopMiddle()
+  }
+  const visibility = () => { if (document.hidden) stopMiddle() }
+  // Any scroll under `root` (its own or a nested scroller's; scroll events do
+  // not bubble but still pass capture listeners) may have moved geometry the
+  // shared measurement and the nested-scroller probes cached.
+  const scrolled = () => markScrollMetricsStale()
+  root.addEventListener("wheel", wheel, { capture: true, passive: false })
+  root.addEventListener("scroll", scrolled, { capture: true, passive: true })
+  root.addEventListener("pointerdown", down, true)
+  root.addEventListener("pointermove", move)
+  root.addEventListener("pointerup", end)
+  root.addEventListener("pointercancel", end)
+  root.addEventListener("lostpointercapture", end)
+  window.addEventListener("blur", stopMiddle)
+  document.addEventListener("visibilitychange", visibility)
+  return () => {
+    stopMiddle()
+    root.removeEventListener("wheel", wheel, true)
+    root.removeEventListener("scroll", scrolled, true)
+    root.removeEventListener("pointerdown", down, true)
+    root.removeEventListener("pointermove", move)
+    root.removeEventListener("pointerup", end)
+    root.removeEventListener("pointercancel", end)
+    root.removeEventListener("lostpointercapture", end)
+    window.removeEventListener("blur", stopMiddle)
+    document.removeEventListener("visibilitychange", visibility)
+  }
+}

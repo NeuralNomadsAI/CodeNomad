@@ -1,0 +1,1828 @@
+import assert from "node:assert/strict"
+import { describe, it } from "node:test"
+import { createEffect, createRoot } from "solid-js"
+import { messageStoreBus } from "./message-v2/bus.ts"
+import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
+import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, invalidateOpenCodeSessionContent, observeNonEventSettlement, projectOpenCodeMessages, seedOpenCodeSessionMessages, syncOpenCodeSessionInbox } from "./opencode-data.ts"
+import { emptyLatestWindow } from "./message-v2/message-window.ts"
+import { getRootClient } from "./opencode-client.ts"
+import { sdkManager } from "../lib/sdk-manager.ts"
+import { sseManager } from "../lib/sse-manager.ts"
+import { serverApi } from "../lib/api-client.ts"
+import { addInstance, removeInstance } from "./instances.ts"
+import { setActiveSession, setSessions } from "./session-state.ts"
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
+async function waitForReplay(done: () => boolean): Promise<void> {
+  // Replay now crosses macrotask boundaries; a single setImmediate only
+  // observes an intermediate chunk, not necessarily the settled projection.
+  for (let turn = 0; turn < 500 && !done(); turn++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  }
+  assert.ok(done(), "cooperative transcript replay did not settle")
+}
+
+function stubAuthoritativeSession(client: any, sessionId: string, messages: () => Promise<any>) {
+  client.session.get = async () => ({
+    id: sessionId, title: sessionId, projectID: "project", location: { directory: "/work" },
+    time: { created: 1, updated: 1 }, cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  })
+  client.session.active = async () => ({})
+  client.session.inbox = { list: async () => [] }
+  client.permission.list = async () => []
+  client.session.form.list = async () => []
+  client.message.list = messages
+}
+
+describe("OpenCode data projection", () => {
+  it("uses createData to reduce messages, permissions, and forms", () => {
+    const instanceId = "opencode-data"
+    const base = { sessionID: "session", assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } })
+      apply("session.text.started", base)
+      apply("session.text.delta", { ...base, ordinal: 0, delta: "hello" })
+      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" })
+      apply("session.tool.called", { ...base, id: "tool", input: { command: "pwd" } }, 2)
+      const data = apply("session.tool.success", { ...base, id: "tool", content: [{ type: "text", text: "ok" }], metadata: {} }, 3)
+      projectOpenCodeMessages(instanceId, "session", data)
+
+      const message = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
+      assert.equal((message?.parts["assistant-text-0"]?.data as any)?.text, "hello")
+      assert.equal((message?.parts.tool?.data as any)?.state.output, "ok")
+
+      const permissionData = apply("permission.asked", { id: "permission", sessionID: "session", action: "read", resources: ["*"] })
+      assert.equal(permissionData.session.permission.list("session")?.[0]?.id, "permission")
+
+      const formData = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "form", type: "form.created", created: 4, location: { directory: "/work" },
+        data: { form: { id: "form", sessionID: "session", title: "Input", fields: [] } },
+      } as any)
+      assert.equal(formData.session.form.list("session")?.[0]?.id, "form")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("projects streamed-step timing with native assistant text", () => {
+    const instanceId = "opencode-data-content-update"
+    const sessionId = "session"
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created: number) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.text.started", base, 2)
+      apply("session.text.delta", { ...base, ordinal: 0, delta: "draft" }, 3)
+      const data = apply("session.step.streamed", base, 4)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.equal((store.getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text, "draft")
+      assert.equal(store.getMessageInfo("assistant")?.time?.streamed, 4)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("merges the first live event into REST-loaded history", () => {
+    const instanceId = "opencode-data-rest-history"
+    const sessionId = "session"
+    const infos = new Map()
+    const history = Array.from({ length: 100 }, (_, index) => {
+      const item = {
+        id: `history-${index}`,
+        type: "assistant",
+        agent: "build",
+        model: { providerID: "provider", id: "model" },
+        time: { created: index + 1, completed: index + 1 },
+        content: [],
+      } as any
+      const normalized = normalizeSessionMessage(sessionId, item)
+      infos.set(normalized.info.id, normalized.info)
+      return normalized.message
+    })
+
+    try {
+      seedSessionMessagesV2(instanceId, { id: sessionId }, history, infos)
+      const data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "live", type: "session.step.started", created: 101,
+        data: {
+          sessionID: sessionId,
+          assistantMessageID: "live",
+          agent: "build",
+          model: { providerID: "provider", id: "model" },
+        },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+
+      const ids = messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId)
+      assert.equal(ids.length, 101)
+      assert.equal(ids.includes("history-0"), true)
+      assert.equal(ids.includes("live"), true)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("does not revise unchanged historical messages during repeated projection", () => {
+    const instanceId = "opencode-data-unchanged"
+    const sessionId = "session"
+    try {
+      const data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "live", type: "session.step.started", created: 1,
+        data: {
+          sessionID: sessionId,
+          assistantMessageID: "assistant",
+          agent: "build",
+          model: { providerID: "provider", id: "model" },
+        },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const revision = store.getMessage("assistant")?.revision
+
+      projectOpenCodeMessages(instanceId, sessionId, data)
+
+      assert.equal(store.getMessage("assistant")?.revision, revision)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("clears normalized messages from an authoritative empty SDK projection", () => {
+    const instanceId = "opencode-data-authoritative-empty"
+    const sessionId = "session"
+    try {
+      let data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "message", type: "session.step.started", created: 1,
+        data: { sessionID: sessionId, assistantMessageID: "message", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "revert", type: "session.revert.committed", created: 2,
+        data: { sessionID: sessionId, to: "message" },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, data, false)
+
+      assert.deepEqual(data.session.message.list(sessionId), [])
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
+    } finally {
+      destroyOpenCodeData(instanceId)
+      messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("bounds the settled live reducer and resident projection to one message window", async () => {
+    const instanceId = "opencode-data-bounded"
+    const sessionId = "session"
+    try {
+      let data!: ReturnType<typeof applyOpenCodeDataEvent>
+      for (let index = 0; index < 205; index += 1) {
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `live-${index}`,
+          type: "session.step.started",
+          created: index + 1,
+          data: {
+            sessionID: sessionId,
+            assistantMessageID: `live-${index}`,
+            agent: "build",
+            model: { providerID: "provider", id: "model" },
+          },
+        } as any, (next) => projectOpenCodeMessages(instanceId, sessionId, next))
+        projectOpenCodeMessages(instanceId, sessionId, data)
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `ended-${index}`, type: "session.step.ended", created: index + 2,
+          data: { sessionID: sessionId, assistantMessageID: `live-${index}`, finish: "stop" },
+        } as any, (next) => projectOpenCodeMessages(instanceId, sessionId, next))
+        projectOpenCodeMessages(instanceId, sessionId, data)
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        assert.ok(data.session.message.list(sessionId).length <= 200)
+      }
+
+      await waitForReplay(() => Boolean(messageStoreBus.getOrCreate(instanceId).getMessage("live-204")))
+      const ids = messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId)
+      assert.equal(ids.length, 200)
+      assert.equal(ids.includes("live-0"), false)
+      assert.equal(ids.includes("live-204"), true)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("does not evict another message when compaction completion updates its running row", async () => {
+    const instanceId = "opencode-data-compaction-boundary"
+    const sessionId = "session"
+    try {
+      let data!: ReturnType<typeof applyOpenCodeDataEvent>
+      for (let index = 0; index < 200; index += 1) {
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `start-${index}`, type: "session.step.started", created: index * 2 + 1,
+          data: { sessionID: sessionId, assistantMessageID: `m${index}`, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `end-${index}`, type: "session.step.ended", created: index * 2 + 2,
+          data: { sessionID: sessionId, assistantMessageID: `m${index}`, finish: "stop" },
+        } as any)
+      }
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "compact", type: "session.compaction.started", created: 401,
+        data: { sessionID: sessionId, inputID: "compact", reason: "manual" },
+      } as any)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "compact-end", type: "session.compaction.ended", created: 402,
+        data: { sessionID: sessionId, reason: "manual", text: "summary" },
+      } as any)
+
+      assert.equal(data.session.message.list(sessionId).length, 200)
+      assert.ok(data.session.message.get(sessionId, "m1"))
+      assert.equal((data.session.message.get(sessionId, "compact") as any).status, "completed")
+    } finally {
+      destroyOpenCodeData(instanceId)
+    }
+  })
+
+  it("bounds one transcript without disposing instance data or replaying boundary events", async () => {
+    const instanceId = "opencode-data-isolated-bound"
+    const primary = applyOpenCodeDataEvent(instanceId, "/work", {
+      id: "permission", type: "permission.asked", created: 1,
+      data: { id: "permission", sessionID: "other", action: "read", resources: ["*"] },
+    } as any)
+    try {
+      for (let index = 0; index <= 200; index += 1) {
+        let data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `live-${index}`, type: "session.step.started", created: index + 1,
+          data: { sessionID: "session", assistantMessageID: `live-${index}`, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any, (next) => projectOpenCodeMessages(instanceId, "session", next))
+        projectOpenCodeMessages(instanceId, "session", data)
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `ended-${index}`, type: "session.step.ended", created: index + 2,
+          data: { sessionID: "session", assistantMessageID: `live-${index}`, finish: "stop" },
+        } as any, (next) => projectOpenCodeMessages(instanceId, "session", next))
+        projectOpenCodeMessages(instanceId, "session", data)
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+      const current = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "replied", type: "permission.replied", created: 203,
+        data: { sessionID: "other", requestID: "missing" },
+      } as any)
+
+      assert.strictEqual(current, primary)
+      assert.equal(current.session.permission.list("other")?.[0]?.id, "permission")
+      const ids = messageStoreBus.getOrCreate(instanceId).getSessionMessageIds("session")
+      assert.equal(ids.length, 200)
+      assert.equal(ids.includes("live-200"), true)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("preserves SDK step, snapshot, reasoning, cancel, and revert semantics through rotation", async () => {
+    const instanceId = "opencode-data-rotation-parity"
+    const sessionId = "session"
+    try {
+      let data!: ReturnType<typeof applyOpenCodeDataEvent>
+      for (let index = 0; index < 199; index += 1) {
+        const id = `m${String(index).padStart(3, "0")}`
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id, type: "session.step.started", created: index + 1,
+          data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `ended-${id}`, type: "session.step.ended", created: index + 2,
+          data: { sessionID: sessionId, assistantMessageID: id, finish: "stop" },
+        } as any)
+      }
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "m199", type: "session.step.started", created: 200,
+        data: { sessionID: sessionId, assistantMessageID: "m199", agent: "build", model: { providerID: "provider", id: "model" }, snapshot: "prior-start" },
+      } as any)
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "m200", type: "session.step.started", created: 201,
+        data: { sessionID: sessionId, assistantMessageID: "m200", agent: "build", model: { providerID: "provider", id: "model" }, snapshot: "next-start" },
+      } as any)
+      applyOpenCodeDataEvent(instanceId, "/work", { id: "reason-start", type: "session.reasoning.started", created: 202, data: { sessionID: sessionId, assistantMessageID: "m200", native: { phase: "start" } } } as any)
+      applyOpenCodeDataEvent(instanceId, "/work", { id: "reason-delta", type: "session.reasoning.delta", created: 203, data: { sessionID: sessionId, assistantMessageID: "m200", delta: "thinking" } } as any)
+      applyOpenCodeDataEvent(instanceId, "/work", { id: "reason-end", type: "session.reasoning.ended", created: 204, data: { sessionID: sessionId, assistantMessageID: "m200", text: "thought", native: { phase: "done" } } } as any)
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "next-end", type: "session.step.ended", created: 205,
+        data: { sessionID: sessionId, assistantMessageID: "m200", finish: "stop", snapshot: "next-end" },
+      } as any)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      const prior = data.session.message.get(sessionId, "m199") as any
+      const next = data.session.message.get(sessionId, "m200") as any
+      assert.equal(prior.time.completed, 201)
+      assert.equal(prior.snapshot.start, "prior-start")
+      assert.deepEqual(next.snapshot, { start: "next-start", end: "next-end" })
+      assert.equal(next.content[0].text, "thought")
+      assert.deepEqual(next.content[0].native, { phase: "done" })
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      assert.equal(data.session.message.list(sessionId).length, 200)
+
+      const store = messageStoreBus.getOrCreate(instanceId)
+      data = applyOpenCodeDataEvent(instanceId, "/work", { id: "cancel", type: "session.inbox.cancelled", created: 206, data: { sessionID: sessionId, inboxID: "m010" } } as any)
+      data = applyOpenCodeDataEvent(instanceId, "/work", { id: "revert", type: "session.revert.committed", created: 207, data: { sessionID: sessionId, to: "m199" } } as any)
+      assert.equal(data.session.message.get(sessionId, "m010"), undefined)
+      assert.equal(data.session.message.get(sessionId, "m199"), undefined)
+      assert.equal(data.session.message.get(sessionId, "m200"), undefined)
+
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "m300", type: "session.step.started", created: 208,
+        data: { sessionID: sessionId, assistantMessageID: "m300", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      assert.ok(data.session.message.get(sessionId, "m300"))
+      assert.ok(store.getMessage("m300"))
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("keeps a synchronous 1000-event burst within the hard reducer ceiling", async () => {
+    const instanceId = "opencode-data-active-bound"
+    const sessionId = "session"
+    try {
+      let data!: ReturnType<typeof applyOpenCodeDataEvent>
+      for (let index = 0; index < 1000; index += 1) {
+        const id = `m${String(index).padStart(4, "0")}`
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id, type: "session.step.started", created: index + 1,
+          data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+        assert.ok(data.session.message.list(sessionId).length <= 200)
+      }
+      await waitForReplay(() => data.session.message.list(sessionId).at(-1)?.id === "m0999")
+
+      const messages = data.session.message.list(sessionId) as any[]
+      assert.ok(messages.length <= 200)
+      assert.equal(messages.at(-1)?.id, "m0999")
+      assert.equal(messages.at(-1)?.time.completed, undefined)
+      assert.ok(messages.slice(0, -1).every((message) => message.time.completed !== undefined))
+
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "text", type: "session.text.started", created: 261,
+        data: { sessionID: sessionId, assistantMessageID: "m0999" },
+      } as any)
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "delta", type: "session.text.delta", created: 262,
+        data: { sessionID: sessionId, assistantMessageID: "m0999", ordinal: 0, delta: "still active" },
+      } as any)
+      await waitForReplay(() => (data.session.message.get(sessionId, "m0999") as any)?.content?.[0]?.text === "still active")
+      assert.equal((data.session.message.get(sessionId, "m0999") as any).content[0].text, "still active")
+    } finally {
+      destroyOpenCodeData(instanceId)
+    }
+  })
+
+  it("serializes an event injected while the SDK snapshot sync is awaited", async () => {
+    const instanceId = "opencode-data-rotation-serialization"
+    const sessionId = "session"
+    let deferredApplications = 0
+    try {
+      let data!: ReturnType<typeof applyOpenCodeDataEvent>
+      for (let index = 0; index < 200; index += 1) {
+        const id = `m${String(index).padStart(3, "0")}`
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id, type: "session.step.started", created: index * 2 + 1,
+          data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `${id}-end`, type: "session.step.ended", created: index * 2 + 2,
+          data: { sessionID: sessionId, assistantMessageID: id, finish: "stop" },
+        } as any)
+      }
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "m200", type: "session.step.started", created: 401,
+        data: { sessionID: sessionId, assistantMessageID: "m200", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any, () => { deferredApplications += 1 })
+      queueMicrotask(() => {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: "m201", type: "session.step.started", created: 402,
+          data: { sessionID: sessionId, assistantMessageID: "m201", agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any, () => { deferredApplications += 1 })
+      })
+      await waitForReplay(() => deferredApplications === 2)
+
+      const ids = data.session.message.list(sessionId).map((message) => message.id)
+      assert.equal(deferredApplications, 2)
+      assert.equal(new Set(ids).size, ids.length)
+      assert.equal((data.session.message.get(sessionId, "m200") as any).time.completed, 402)
+      assert.equal((data.session.message.get(sessionId, "m201") as any).time.completed, undefined)
+    } finally {
+      destroyOpenCodeData(instanceId)
+    }
+  })
+
+  it("applies queued cancellation and revert removal after preceding projections", async () => {
+    for (const mutation of ["cancel", "revert"] as const) {
+      const instanceId = `opencode-data-queued-${mutation}`
+      const sessionId = "session"
+      const targetId = "z-target"
+      const store = messageStoreBus.getOrCreate(instanceId)
+      let mutationApplied = false
+      const applyProjection = (data: ReturnType<typeof applyOpenCodeDataEvent>) => {
+        projectOpenCodeMessages(instanceId, sessionId, data)
+        if (mutation === "cancel") store.removeMessage(targetId, sessionId)
+        else for (const id of store.getSessionMessageIds(sessionId)) if (id >= targetId) store.removeMessage(id, sessionId)
+      }
+      try {
+        let data!: ReturnType<typeof applyOpenCodeDataEvent>
+        for (let index = 0; index < 200; index += 1) {
+          const id = `m${String(index).padStart(3, "0")}`
+          data = applyOpenCodeDataEvent(instanceId, "/work", {
+            id, type: "session.step.started", created: index * 2 + 1,
+            data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+          } as any)
+          data = applyOpenCodeDataEvent(instanceId, "/work", {
+            id: `end-${id}`, type: "session.step.ended", created: index * 2 + 2,
+            data: { sessionID: sessionId, assistantMessageID: id, finish: "stop" },
+          } as any)
+        }
+        projectOpenCodeMessages(instanceId, sessionId, data)
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: "append", type: "session.inbox.enqueued", created: 401,
+          data: { sessionID: sessionId, inboxID: targetId, item: { type: "user", payload: { text: "queued" }, delivery: "queue" } },
+        } as any, (next) => projectOpenCodeMessages(instanceId, sessionId, next))
+        data = applyOpenCodeDataEvent(instanceId, "/work", mutation === "cancel"
+          ? { id: "cancel", type: "session.inbox.cancelled", created: 402, data: { sessionID: sessionId, inboxID: targetId } } as any
+          : { id: "revert", type: "session.revert.committed", created: 402, data: { sessionID: sessionId, to: targetId } } as any,
+        (next) => { applyProjection(next); mutationApplied = true })
+        applyProjection(data)
+        await waitForReplay(() => mutationApplied)
+
+        assert.equal(data.session.message.get(sessionId, targetId), undefined)
+        assert.equal(store.getMessage(targetId), undefined)
+      } finally {
+        destroyOpenCodeData(instanceId)
+        messageStoreBus.unregisterInstance(instanceId)
+      }
+    }
+  })
+
+  it("does not swap or callback after deletion or reconnect during a fresh sync", async () => {
+    for (const invalidation of ["delete", "reconnect"] as const) {
+      const instanceId = `opencode-data-fresh-${invalidation}`
+      const sessionId = "session"
+      const pending = deferred<any>()
+      const client = getRootClient(instanceId)
+      let callbacks = 0
+      stubAuthoritativeSession(client, sessionId, () => pending.promise)
+      if (invalidation === "reconnect") {
+        client.location.get = (async () => ({ directory: "/work" })) as any
+        client.vcs.get = (async () => ({ location: { directory: "/work" }, data: {} })) as any
+        client.project.list = (async () => []) as any
+      }
+      try {
+        let stale!: ReturnType<typeof applyOpenCodeDataEvent>
+        for (let index = 0; index < 4296; index += 1) {
+          const id = `m${String(index).padStart(4, "0")}`
+          stale = applyOpenCodeDataEvent(instanceId, "/work", {
+            id, type: "session.step.started", created: index + 1,
+            data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+          } as any, () => { callbacks += 1 })
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 40))
+        if (invalidation === "delete") {
+          applyOpenCodeDataEvent(instanceId, "/work", { id: "delete", type: "session.deleted", created: 5000, data: { sessionID: sessionId } } as any)
+        } else {
+          applyOpenCodeDataEvent(instanceId, "/work", { id: "connect", type: "server.connected", created: 5000, data: {} } as any)
+        }
+        pending.resolve({ data: [{ id: "stale", type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, content: [], time: { created: 1 } }], cursor: {} })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+
+        assert.equal(callbacks, 0)
+        const current = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: "current", type: "session.step.started", created: 6000,
+          data: { sessionID: sessionId, assistantMessageID: "current", agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+        assert.equal(current.session.message.get(sessionId, "stale"), undefined)
+        assert.notStrictEqual(current, stale)
+      } finally {
+        destroyOpenCodeData(instanceId)
+        sdkManager.destroyClientsForInstance(instanceId)
+      }
+    }
+  })
+
+  it("does not double-apply text, reasoning, or tool deltas already in the stable snapshot", async () => {
+    const instanceId = "opencode-data-stable-deltas"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const authoritative = {
+      id: "target", type: "assistant", agent: "build", model: { providerID: "provider", id: "model" },
+      content: [
+        { type: "text", text: "hello" },
+        { type: "reasoning", text: "thought", time: { created: 201, completed: 202 } },
+        { type: "tool", id: "tool", name: "read", time: { created: 203, ran: 204, completed: 205 }, state: { status: "completed", input: {}, metadata: {}, content: [] } },
+      ],
+      time: { created: 200 },
+    }
+    let reads = 0
+    let callbacks = 0
+    let freshData: ReturnType<typeof applyOpenCodeDataEvent> | undefined
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      return { data: [authoritative], cursor: {} }
+    })
+    try {
+      for (let index = 0; index < 199; index += 1) {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `seed-${index}`, type: "session.step.started", created: index * 2 + 1,
+          data: { sessionID: sessionId, assistantMessageID: `seed-${index}`, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `seed-${index}-end`, type: "session.step.ended", created: index * 2 + 2,
+          data: { sessionID: sessionId, assistantMessageID: `seed-${index}`, finish: "stop" },
+        } as any)
+      }
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "target", type: "session.step.started", created: 200,
+        data: { sessionID: sessionId, assistantMessageID: "target", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      const queued: any[] = [
+        { id: "next", type: "session.step.started", created: 201, data: { sessionID: sessionId, assistantMessageID: "next", agent: "build", model: { providerID: "provider", id: "model" } } },
+        { id: "text-start", type: "session.text.started", created: 202, data: { sessionID: sessionId, assistantMessageID: "target" } },
+        { id: "text-delta", type: "session.text.delta", created: 203, data: { sessionID: sessionId, assistantMessageID: "target", ordinal: 0, delta: "hello" } },
+        { id: "reason-start", type: "session.reasoning.started", created: 204, data: { sessionID: sessionId, assistantMessageID: "target" } },
+        { id: "reason-delta", type: "session.reasoning.delta", created: 205, data: { sessionID: sessionId, assistantMessageID: "target", delta: "thought" } },
+        { id: "tool-start", type: "session.tool.input.started", created: 206, data: { sessionID: sessionId, assistantMessageID: "target", id: "tool", name: "read" } },
+        { id: "tool-delta", type: "session.tool.input.delta", created: 207, data: { sessionID: sessionId, assistantMessageID: "target", id: "tool", delta: "{}" } },
+        { id: "tool-call", type: "session.tool.called", created: 208, data: { sessionID: sessionId, assistantMessageID: "target", id: "tool", input: {} } },
+      ]
+      while (queued.length < 4096) {
+        const index = queued.length
+        queued.push({ id: `overflow-${index}`, type: "session.step.started", created: 300 + index, data: {
+          sessionID: sessionId, assistantMessageID: `overflow-${index}`, agent: "build", model: { providerID: "provider", id: "model" },
+        } })
+      }
+      for (const event of queued) {
+        applyOpenCodeDataEvent(instanceId, "/work", event, () => { callbacks += 1 }, (next) => {
+          freshData = next
+          projectOpenCodeMessages(instanceId, sessionId, next, false)
+        })
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 50))
+
+      assert.equal(reads, 1)
+      assert.equal(callbacks, 0)
+      const content = (freshData?.session.message.get(sessionId, "target") as any)?.content
+      assert.equal(content.filter((part: any) => part.type === "text").length, 1)
+      assert.equal(content.find((part: any) => part.type === "text")?.text, "hello")
+      assert.equal(content.filter((part: any) => part.type === "reasoning").length, 1)
+      assert.equal(content.find((part: any) => part.type === "reasoning")?.text, "thought")
+      assert.equal(content.filter((part: any) => part.type === "tool").length, 1)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("invalidates one fresh sync for permission and form collapse bursts", async () => {
+    const instanceId = "opencode-data-singleflight"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const firstRead = deferred<any>()
+    const stable = { id: "stable", type: "assistant", agent: "build", model: { providerID: "provider", id: "model" }, content: [], time: { created: 9000 } }
+    let reads = 0
+    let active = 0
+    let maxActive = 0
+    let callbacks = 0
+    let freshData: ReturnType<typeof applyOpenCodeDataEvent> | undefined
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      try {
+        if (reads === 1) return await firstRead.promise
+        return { data: [stable], cursor: {} }
+      } finally {
+        active -= 1
+      }
+    })
+    try {
+      for (let index = 0; index < 4296; index += 1) {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `seed-${index}`, type: "session.step.started", created: index + 1,
+          data: { sessionID: sessionId, assistantMessageID: `seed-${index}`, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any, () => { callbacks += 1 }, (next) => { freshData = next })
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 40))
+      assert.equal(reads, 1)
+
+      for (let burst = 0; burst < 3; burst += 1) {
+        for (let index = 0; index < 20; index += 1) {
+          const id = `burst-${burst}-${index}`
+          const event = index % 2 === 0
+            ? { id, type: "permission.asked", created: 5000 + burst * 20 + index,
+                data: { id: `permission-${burst}-${index}`, sessionID: sessionId, action: "read", resources: ["*"] } }
+            : { id, type: "form.created", created: 5000 + burst * 20 + index, location: { directory: "/work" },
+                data: { form: { id: `form-${burst}-${index}`, sessionID: sessionId, title: "Input", fields: [] } } }
+          applyOpenCodeDataEvent(instanceId, "/work", event as any, () => { callbacks += 1 }, (next) => { freshData = next })
+        }
+      }
+      assert.equal(reads, 1)
+      assert.equal(maxActive, 1)
+
+      firstRead.resolve({ data: [{ ...stable, id: "stale" }], cursor: {} })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(freshData, undefined)
+      await new Promise<void>((resolve) => setTimeout(resolve, 40))
+
+      assert.equal(reads, 2)
+      assert.equal(maxActive, 1)
+      assert.equal(callbacks, 0)
+      const stableData = freshData as ReturnType<typeof applyOpenCodeDataEvent> | undefined
+      assert.ok(stableData?.session.message.get(sessionId, "stable"))
+      assert.equal(stableData?.session.message.get(sessionId, "stale"), undefined)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("keeps a post-revert native message from the fresh authoritative snapshot", async () => {
+    const instanceId = "opencode-data-fresh-revert"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const m300 = {
+      id: "m300", type: "assistant", agent: "build", model: { providerID: "provider", id: "model" },
+      content: [], time: { created: 5000 },
+    }
+    let freshData: ReturnType<typeof applyOpenCodeDataEvent> | undefined
+    let callbacks = 0
+    stubAuthoritativeSession(client, sessionId, async () => ({ data: [m300], cursor: {} }))
+    try {
+      for (let index = 0; index < 200; index += 1) {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `seed-${index}`, type: "session.step.started", created: index + 1,
+          data: { sessionID: sessionId, assistantMessageID: `seed-${index}`, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+      }
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "queued", type: "session.step.started", created: 300,
+        data: { sessionID: sessionId, assistantMessageID: "queued", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any, () => { callbacks += 1 })
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "revert", type: "session.revert.committed", created: 301,
+        data: { sessionID: sessionId, to: "m200" },
+      } as any, () => { callbacks += 1 })
+      for (let index = 0; index < 4094; index += 1) {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `overflow-${index}`, type: "session.step.started", created: 400 + index,
+          data: { sessionID: sessionId, assistantMessageID: `overflow-${index}`, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any, () => { callbacks += 1 }, (next) => {
+          freshData = next
+          projectOpenCodeMessages(instanceId, sessionId, next, false)
+        })
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 50))
+
+      assert.equal(callbacks, 0)
+      assert.ok(freshData?.session.message.get(sessionId, "m300"))
+      assert.ok(messageStoreBus.getOrCreate(instanceId).getMessage("m300"))
+    } finally {
+      destroyOpenCodeData(instanceId)
+      messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("preserves queued inbox cancellation across append overflow", async () => {
+    const instanceId = "opencode-data-overflow-cancel"
+    const sessionId = "session"
+    const targetId = "queued-inbox"
+    const client = getRootClient(instanceId)
+    const store = messageStoreBus.getOrCreate(instanceId)
+    let reads = 0
+    let callbacks = 0
+    let freshData: ReturnType<typeof applyOpenCodeDataEvent> | undefined
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      return { data: [], cursor: {} }
+    })
+    const project = (data: ReturnType<typeof applyOpenCodeDataEvent>) => projectOpenCodeMessages(instanceId, sessionId, data)
+    const cancel = (data: ReturnType<typeof applyOpenCodeDataEvent>) => {
+      callbacks += 1
+      project(data)
+      store.removeMessage(targetId, sessionId)
+    }
+    try {
+      let data!: ReturnType<typeof applyOpenCodeDataEvent>
+      for (let index = 0; index < 200; index += 1) {
+        const id = `seed-${index}`
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id, type: "session.step.started", created: index * 2 + 1,
+          data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `${id}-end`, type: "session.step.ended", created: index * 2 + 2,
+          data: { sessionID: sessionId, assistantMessageID: id, finish: "stop" },
+        } as any)
+      }
+      project(data)
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "admit", type: "session.inbox.enqueued", created: 401,
+        data: { sessionID: sessionId, inboxID: targetId, item: { type: "user", payload: { text: "cancel me" }, delivery: "queue" } },
+      } as any, (next) => { callbacks += 1; project(next) }, (next) => {
+        freshData = next
+        projectOpenCodeMessages(instanceId, sessionId, next, false)
+      })
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "cancel", type: "session.inbox.cancelled", created: 402,
+        data: { sessionID: sessionId, inboxID: targetId },
+      } as any, cancel)
+      for (let index = 0; index < 4200; index += 1) {
+        const id = `overflow-${index}`
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id, type: "session.step.started", created: 500 + index,
+          data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any, () => { callbacks += 1 })
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 50))
+
+      assert.equal(reads, 1)
+      assert.equal(callbacks, 0)
+      assert.equal(freshData?.session.message.get(sessionId, targetId), undefined)
+      assert.equal(store.getMessage(targetId), undefined)
+      assert.ok((freshData?.session.message.list(sessionId).length ?? 0) <= 200)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("replaces stale inbox, permission, and form state with the fresh native state", async () => {
+    const instanceId = "opencode-data-fresh-complete-state"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    let freshData: ReturnType<typeof applyOpenCodeDataEvent> | undefined
+    stubAuthoritativeSession(client, sessionId, async () => ({ data: [], cursor: {} }))
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "permission", type: "permission.asked", created: 1,
+        data: { id: "permission", sessionID: sessionId, action: "read", resources: ["*"] },
+      } as any)
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "form", type: "form.created", created: 2, location: { directory: "/work" },
+        data: { form: { id: "form", sessionID: sessionId, title: "Input", fields: [] } },
+      } as any)
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "inbox", type: "session.inbox.enqueued", created: 3,
+        data: { sessionID: sessionId, inboxID: "inbox", item: { type: "user", payload: { text: "stale" }, delivery: "queue" } },
+      } as any)
+      for (let index = 0; index < 199; index += 1) {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `seed-${index}`, type: "session.step.started", created: 10 + index,
+          data: { sessionID: sessionId, assistantMessageID: `seed-${index}`, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+      }
+      for (let index = 0; index < 4096; index += 1) {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `overflow-${index}`, type: "session.step.started", created: 500 + index,
+          data: { sessionID: sessionId, assistantMessageID: `overflow-${index}`, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any, undefined, (next) => { freshData = next })
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 50))
+
+      assert.deepEqual(freshData?.session.pending.list(sessionId), [])
+      assert.deepEqual(freshData?.session.input.list(sessionId), [])
+      assert.deepEqual(freshData?.session.permission.list(sessionId), [])
+      assert.deepEqual(freshData?.session.form.list(sessionId), [])
+      assert.equal(freshData?.session.message.get(sessionId, "inbox"), undefined)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("keeps 5000 state events out of the queue and converges after quiet", async () => {
+    const instanceId = "opencode-data-state-overflow"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const firstRead = deferred<any>()
+    const authoritative: any[] = []
+    let messageReads = 0
+    let callbacks = 0
+    let freshData: ReturnType<typeof applyOpenCodeDataEvent> | undefined
+    stubAuthoritativeSession(client, sessionId, async () => {
+      messageReads += 1
+      if (messageReads === 1) return firstRead.promise
+      return { data: [], cursor: {} }
+    })
+    client.permission.list = async () => authoritative
+    try {
+      for (let index = 0; index < 4296; index += 1) {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `seed-${index}`, type: "session.step.started", created: index + 1,
+          data: { sessionID: sessionId, assistantMessageID: `seed-${index}`, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 40))
+      assert.equal(messageReads, 1)
+
+      let liveData!: ReturnType<typeof applyOpenCodeDataEvent>
+      for (let index = 0; index < 5000; index += 1) {
+        const permission = { id: `permission-${index}`, sessionID: sessionId, action: "read", resources: ["*"] }
+        authoritative.push(permission)
+        liveData = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: permission.id, type: "permission.asked", created: 5000 + index, data: permission,
+        } as any, () => { callbacks += 1 }, (next) => { freshData = next })
+      }
+      assert.equal(messageReads, 1)
+      assert.equal(callbacks, 0)
+      assert.equal(liveData.session.permission.list(sessionId)?.length ?? 0, 0)
+      firstRead.resolve({ data: [], cursor: {} })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(freshData, undefined)
+      await new Promise<void>((resolve) => setTimeout(resolve, 40))
+
+      assert.equal(messageReads, 2)
+      assert.equal(callbacks, 0)
+      const stableData = freshData as ReturnType<typeof applyOpenCodeDataEvent> | undefined
+      assert.equal(stableData?.session.permission.list(sessionId)?.length, 5000)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("retries a failed overflow resync in a quiet session", async () => {
+    const instanceId = "opencode-data-overflow-retry"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const authoritative = {
+      id: "recovered", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" }, content: [],
+      time: { created: 5000 },
+    }
+    let reads = 0
+    let freshData: ReturnType<typeof applyOpenCodeDataEvent> | undefined
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      if (reads === 1) throw new Error("temporary failure")
+      return { data: [authoritative], cursor: {} }
+    })
+    try {
+      let data!: ReturnType<typeof applyOpenCodeDataEvent>
+      for (let index = 0; index < 200; index += 1) {
+        const id = `seed-${index}`
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id, type: "session.step.started", created: index * 2 + 1,
+          data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `${id}-end`, type: "session.step.ended", created: index * 2 + 2,
+          data: { sessionID: sessionId, assistantMessageID: id, finish: "stop" },
+        } as any)
+      }
+      for (let index = 0; index < 4200; index += 1) {
+        const id = `overflow-${index}`
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id, type: "session.step.started", created: 500 + index,
+          data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any, undefined, (next) => {
+          freshData = next
+          projectOpenCodeMessages(instanceId, sessionId, next, false)
+        })
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 40))
+      assert.equal(reads, 1)
+      await new Promise<void>((resolve) => setTimeout(resolve, 100))
+
+      assert.equal(reads, 2)
+      assert.deepEqual(freshData?.session.message.list(sessionId).map((message) => message.id), ["recovered"])
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["recovered"])
+    } finally {
+      destroyOpenCodeData(instanceId)
+      messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("tracks more than 200 cancellations with one scalar revision", () => {
+    const instanceId = "opencode-data-mutation-revision"
+    const sessionId = "session"
+    try {
+      for (let index = 0; index <= 200; index += 1) {
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `cancel-${index}`, type: "session.inbox.cancelled", created: index + 1,
+          data: { sessionID: sessionId, inboxID: `m${String(index).padStart(3, "0")}` },
+        } as any)
+      }
+      assert.equal(getOpenCodeMutationRevision(instanceId, sessionId), 201)
+    } finally {
+      destroyOpenCodeData(instanceId)
+    }
+  })
+
+  it("drops per-session message revision state on deletion", () => {
+    const instanceId = "opencode-data-message-revision-cleanup"
+    const sessionId = "session"
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "message", type: "session.step.started", created: 1,
+        data: { sessionID: sessionId, assistantMessageID: "message", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      assert.equal(getOpenCodeMessageRevision(instanceId, sessionId), 1)
+
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "deleted", type: "session.deleted", created: 2, data: { sessionID: sessionId },
+      } as any)
+      assert.equal(getOpenCodeMessageRevision(instanceId, sessionId), 0)
+    } finally {
+      destroyOpenCodeData(instanceId)
+    }
+  })
+
+  it("projects a rotation-boundary model selection with exactly one authoritative message fetch", async () => {
+    const instanceId = "opencode-data-single-side-effect"
+    const sessionId = "session"
+    sseManager.seedStatus(instanceId, "connected")
+    const client = getRootClient(instanceId)
+    let reads = 0
+    let applied = 0
+    client.session.message.get = async ({ messageID }: { messageID: string }) => {
+      reads += 1
+      return { id: messageID, type: "model-switched", model: { providerID: "provider", id: "next" }, time: { created: 500 } }
+    }
+    try {
+      let data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "seed", type: "session.step.started", created: 1,
+        data: { sessionID: sessionId, assistantMessageID: "seed", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      data.session.remember({
+        id: sessionId, title: sessionId, projectID: "project", location: { directory: "/work" },
+        time: { created: 1, updated: 1 }, cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      } as any)
+      for (let index = 1; index < 200; index += 1) {
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `fill-${index}`, type: "session.step.started", created: index + 1,
+          data: { sessionID: sessionId, assistantMessageID: `fill-${index}`, agent: "build", model: { providerID: "provider", id: "model" } },
+        } as any)
+        data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `end-${index}`, type: "session.step.ended", created: index + 2,
+          data: { sessionID: sessionId, assistantMessageID: `fill-${index}`, finish: "stop" },
+        } as any)
+      }
+      data = applyOpenCodeDataEvent(instanceId, "/work", { id: "evt_model", type: "session.model.selected", created: 501, data: { sessionID: sessionId, model: { providerID: "provider", id: "next" } } } as any,
+        (next) => { applied += 1; projectOpenCodeMessages(instanceId, sessionId, next) })
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      // With a connected transport, the native client inserts the event immediately
+      // and refreshes its authoritative message once. Rotation must not replay
+      // the event and duplicate that SDK-owned refresh.
+      assert.equal(reads, 1)
+      assert.equal(applied, 1)
+      assert.ok(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).includes("msg_model"))
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("drops stale live state before a reconnect generation", () => {
+    const instanceId = "opencode-data-reconnect"
+    const event = (id: string) => ({
+      id, type: "session.step.started", created: 1,
+      data: { sessionID: "session", assistantMessageID: id, agent: "build", model: { providerID: "provider", id: "model" } },
+    } as any)
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", event("old"))
+      destroyOpenCodeData(instanceId)
+      const data = applyOpenCodeDataEvent(instanceId, "/work", event("new"))
+      assert.deepEqual(data.session.message.list("session").map((message) => message.id), ["new"])
+    } finally {
+      destroyOpenCodeData(instanceId)
+    }
+  })
+
+  it("drops stale live projection after server.connected without clearing REST state", () => {
+    const instanceId = "opencode-data-server-connected"
+    const client = getRootClient(instanceId)
+    ;(client.session as any).active = async () => ({})
+    ;(client.location as any).get = async () => ({ directory: "/work" })
+    ;(client.vcs as any).get = async () => ({ location: { directory: "/work" }, data: { branch: "main" } })
+    ;(client.project as any).list = async () => []
+    try {
+      const before = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "old",
+        type: "session.step.started",
+        created: 1,
+        data: {
+          sessionID: "session", assistantMessageID: "old", agent: "build",
+          model: { providerID: "provider", id: "model" },
+        },
+      } as any)
+      projectOpenCodeMessages(instanceId, "session", before)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds("session"), ["old"])
+
+      const after = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "connected", type: "server.connected", created: 2, data: {},
+      } as any)
+      assert.notStrictEqual(after, before)
+      assert.deepEqual(after.session.message.list("session"), [])
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds("session"), ["old"])
+
+      const rest = normalizeSessionMessage("session", {
+        id: "rest", type: "assistant", agent: "build", model: { providerID: "provider", id: "model" },
+        time: { created: 2, completed: 2 }, content: [],
+      } as any)
+      seedSessionMessagesV2(instanceId, { id: "session" }, [rest.message], new Map([[rest.info.id, rest.info]]))
+
+      const live = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "new", type: "session.step.started", created: 3,
+        data: {
+          sessionID: "session", assistantMessageID: "new", agent: "build",
+          model: { providerID: "provider", id: "model" },
+        },
+      } as any)
+      projectOpenCodeMessages(instanceId, "session", live)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds("session"), ["rest", "new"])
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("rebinds inbox observers after server.connected", () => {
+    const instanceId = "opencode-data-inbox-reconnect"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    ;(client.location as any).get = async () => ({ directory: "/work" })
+    ;(client.vcs as any).get = async () => ({ location: { directory: "/work" }, data: {} })
+    ;(client.project as any).list = async () => []
+    let ids: string[] = []
+    const dispose = createRoot((dispose) => {
+      createEffect(() => {
+        ids = getOpenCodeSessionInbox(instanceId, sessionId, "/work").map((item) => item.id)
+      })
+      return dispose
+    })
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "queued", type: "session.inbox.enqueued", created: 1,
+        data: { sessionID: sessionId, inboxID: "queued", item: { type: "user", payload: { text: "old" }, delivery: "queue" } },
+      } as any)
+      assert.deepEqual(ids, ["queued"])
+
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "connected", type: "server.connected", created: 2, data: {},
+      } as any)
+      assert.deepEqual(ids, [])
+    } finally {
+      dispose()
+      destroyOpenCodeData(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("replaces the optimistic prompt part with its native projection", () => {
+    const instanceId = "opencode-data-optimistic-prompt"
+    const sessionId = "session"
+    const messageId = "message"
+    const store = messageStoreBus.getOrCreate(instanceId)
+    try {
+      store.upsertMessage({
+        id: messageId,
+        sessionId,
+        role: "user",
+        status: "sending",
+        isEphemeral: true,
+        parts: [{ id: "optimistic-text", type: "text", text: "ping", messageID: messageId, sessionID: sessionId } as any],
+      })
+      store.markSendPending(messageId)
+      const data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "inbox-event",
+        type: "session.inbox.enqueued",
+        created: 1,
+        durable: { aggregateID: sessionId, seq: 1, version: 1 },
+        data: {
+          sessionID: sessionId,
+          inboxID: messageId,
+          item: { type: "user", payload: { text: "ping" }, delivery: "queue" },
+        },
+      } as any)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+
+      const message = store.getMessage(messageId)
+      assert.deepEqual(message?.partIds, [`${messageId}-text`])
+      assert.equal((message?.parts[`${messageId}-text`]?.data as any)?.text, "ping")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("reconciles a tool stranded pending after settlement", async () => {
+    const instanceId = "opencode-data-stranded-tool"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // The persisted truth: the tool ran and completed. The live reducer never
+    // saw `session.tool.called` (lost across a disconnect window), so its part
+    // is still `streaming` — rendered as "pending" — and the later success was
+    // swallowed by the reducer's running-status guard. With no connected
+    // stream, the SDK's own settlement refresh is dropped; the terminal event
+    // finishes that read itself and publishes it.
+    const authoritative = {
+      id: "assistant", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 3 },
+      content: [{
+        type: "tool", id: "tool", name: "bash", time: { created: 2, completed: 3 },
+        state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
+      }],
+    }
+    let reads = 0
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      return { data: [authoritative], cursor: {} }
+    })
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
+      const data = apply("session.tool.success", { ...base, id: "tool", content: [{ type: "text", text: "ok" }], metadata: {} }, 3)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      const stranded = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
+      assert.equal((stranded?.parts.tool?.data as any)?.state?.status, "pending")
+
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      applyOpenCodeDataEvent(instanceId, "/work", settled)
+      finishOpenCodeDataEvent(instanceId, settled)
+
+      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
+      assert.ok(reads >= 1, "the settlement read ran without a connected stream")
+      const healed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.status, "completed")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.output, "ok")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("reconciles a stranded tool while the stream is connected", async () => {
+    const instanceId = "opencode-data-stranded-tool-connected"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // Connected, the SDK reducer starts its own settlement refresh; the
+    // terminal event only has to share that read and publish its result.
+    const authoritative = {
+      id: "assistant", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 3 },
+      content: [{
+        type: "tool", id: "tool", name: "bash", time: { created: 2, completed: 3 },
+        state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
+      }],
+    }
+    stubAuthoritativeSession(client, sessionId, async () => ({ data: [authoritative], cursor: {} }))
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    try {
+      sseManager.seedStatus(instanceId, "connected")
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      applyOpenCodeDataEvent(instanceId, "/work", settled)
+      finishOpenCodeDataEvent(instanceId, settled)
+
+      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
+      const healed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.status, "completed")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.output, "ok")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("keeps a new round streaming while the settlement read is in flight", async () => {
+    const instanceId = "opencode-data-stranded-tool-inflight"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const authoritative = {
+      id: "assistant", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 3 },
+      content: [{
+        type: "tool", id: "tool", name: "bash", time: { created: 2, completed: 3 },
+        state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
+      }],
+    }
+    const read = deferred<{ data: unknown[]; cursor: Record<string, string> }>()
+    stubAuthoritativeSession(client, sessionId, () => read.promise)
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      applyOpenCodeDataEvent(instanceId, "/work", settled)
+      finishOpenCodeDataEvent(instanceId, settled)
+
+      // A new round starts while the settlement read is held in flight.
+      const next = { sessionID: sessionId, assistantMessageID: "round-2" }
+      const round = apply("session.step.started", { ...next, agent: "build", model: { providerID: "provider", id: "model" } }, 10)
+      apply("session.text.started", next, 11)
+      const streamed = apply("session.text.delta", { ...next, ordinal: 0, delta: "kept" }, 12)
+      projectOpenCodeMessages(instanceId, sessionId, streamed)
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("round-2")?.parts["round-2-text-0"]?.data as any)?.text, "kept")
+
+      read.resolve({ data: [authoritative], cursor: {} })
+      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
+      const store = messageStoreBus.getOrCreate(instanceId)
+      // A same-round stream does not supersede the settlement's publication:
+      // the read lands with the round's rows intact and the tool healed.
+      assert.equal((store.getMessage("round-2")?.parts["round-2-text-0"]?.data as any)?.text, "kept", "the in-flight round keeps its events")
+      assert.equal((store.getMessage("assistant")?.parts.tool?.data as any)?.state?.status, "completed", "the stranded tool heals")
+      const after = apply("session.text.delta", { ...next, ordinal: 0, delta: " too" }, 13)
+      projectOpenCodeMessages(instanceId, sessionId, after)
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("round-2")?.parts["round-2-text-0"]?.data as any)?.text, "kept too", "streaming continues after the read lands")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("publishes a settlement read despite a late same-round tool success", async () => {
+    const instanceId = "opencode-data-stranded-tool-late-success"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // Review repro: the settlement read is held in flight, the stranded tool's
+    // late `success` arrives without a new execution, then the read resolves.
+    // Same-round activity must not suppress the publication: the reducer's
+    // authoritative page heals the display.
+    const authoritative = {
+      id: "assistant", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 3 },
+      content: [{
+        type: "tool", id: "tool", name: "bash", time: { created: 2, completed: 3 },
+        state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
+      }],
+    }
+    const read = deferred<{ data: unknown[]; cursor: Record<string, string> }>()
+    stubAuthoritativeSession(client, sessionId, () => read.promise)
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      applyOpenCodeDataEvent(instanceId, "/work", settled)
+      finishOpenCodeDataEvent(instanceId, settled)
+      // The stranded tool's terminal event arrives late, same round: the SDK
+      // guard swallows it (the part is still streaming), and it must not fence
+      // the held read's publication.
+      apply("session.tool.success", { ...base, id: "tool", content: [{ type: "text", text: "ok" }], metadata: {} }, 5)
+
+      read.resolve({ data: [authoritative], cursor: {} })
+      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
+      const healed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.status, "completed")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.output, "ok")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("keeps a completed read-image part completed while later rounds stream", async () => {
+    const instanceId = "opencode-data-image-rounds"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // Repro of the reported flip: read-image tool results completed in one
+    // round reverted to "running" (image gone) while the agent kept working in
+    // later rounds, healing only at settlement, then flipping again. The
+    // daemon always serves such parts completed (persisted at tool success),
+    // so any regression is a stale re-delivered `session.tool.called` — the
+    // reducer overwrites terminal state unconditionally.
+    const image = { type: "file", mime: "image/jpeg", uri: `data:image/jpeg;base64,${"A".repeat(64)}` }
+    const pageFor = (ids: string[]) => ({
+      data: ids.map((id, index) => ({
+        id, type: "assistant", agent: "build",
+        model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" },
+        time: { created: index * 10 + 1, streamed: index * 10 + 2, completed: index * 10 + 8 },
+        content: [{
+          type: "tool", id: `tool-${id}`, name: "read", time: { created: index * 10 + 3, ran: index * 10 + 4, completed: index * 10 + 7 },
+          state: { status: "completed", input: { path: `/tmp/shot-${id}.png` }, metadata: {}, content: [{ type: "text", text: "Image read successfully" }, image] },
+        }],
+      })),
+      cursor: {},
+    })
+    stubAuthoritativeSession(client, sessionId, async () => pageFor(["step-1"]))
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    const store = () => messageStoreBus.getOrCreate(instanceId)
+    const state = (messageId: string, partId: string) =>
+      (store().getMessage(messageId)?.parts[partId]?.data as any)?.state
+    const imageCount = (messageId: string, partId: string) => {
+      const content = state(messageId, partId)?.content
+      return Array.isArray(content) ? content.filter((item: any) => item?.type === "file").length : -1
+    }
+    try {
+      // Round 1 reads an image through the live event stream.
+      const round1 = { sessionID: sessionId, assistantMessageID: "step-1" }
+      apply("session.step.started", { ...round1, agent: "build", model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" } }, 1)
+      apply("session.tool.input.started", { ...round1, id: "tool-step-1", name: "read" }, 2)
+      apply("session.tool.called", { ...round1, id: "tool-step-1", input: { path: "/tmp/shot-1.png" }, executed: false }, 3)
+      const completed = apply("session.tool.success", { ...round1, id: "tool-step-1", content: [{ type: "text", text: "Image read successfully" }, image], metadata: {} }, 4)
+      projectOpenCodeMessages(instanceId, sessionId, completed)
+      assert.equal(state("step-1", "tool-step-1")?.status, "completed")
+      assert.equal(imageCount("step-1", "tool-step-1"), 1, "the image content is resident")
+
+      // Round 2 streams and calls other tools; the settled read stays settled.
+      const round2 = { sessionID: sessionId, assistantMessageID: "step-2" }
+      apply("session.step.started", { ...round2, agent: "build", model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" } }, 10)
+      apply("session.text.started", round2, 11)
+      apply("session.tool.input.started", { ...round2, id: "tool-step-2", name: "bash" }, 13)
+      const running = apply("session.tool.called", { ...round2, id: "tool-step-2", input: { command: "adb shell screencap" }, executed: false }, 14)
+      projectOpenCodeMessages(instanceId, sessionId, running)
+      assert.equal(state("step-2", "tool-step-2")?.status, "running", "round 2's tool runs")
+      assert.equal(state("step-1", "tool-step-1")?.status, "completed", "round 1's read stays completed")
+      assert.equal(imageCount("step-1", "tool-step-1"), 1)
+
+      // A stale `called` for the settled read — re-delivered after its success —
+      // must not regress it to "running" (which hid the image until the next
+      // settlement read healed it).
+      const stale = apply("session.tool.called", { ...round1, id: "tool-step-1", input: { path: "/tmp/shot-1.png" }, executed: false }, 15)
+      projectOpenCodeMessages(instanceId, sessionId, stale)
+      assert.equal(state("step-1", "tool-step-1")?.status, "completed", "a stale called never regresses a settled tool")
+      assert.equal(imageCount("step-1", "tool-step-1"), 1, "the image content stays")
+
+      // A later `called` for a still-streaming tool is legitimate and applies.
+      const round3 = { sessionID: sessionId, assistantMessageID: "step-3" }
+      apply("session.step.started", { ...round3, agent: "build", model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" } }, 20)
+      apply("session.tool.input.started", { ...round3, id: "tool-step-3", name: "read" }, 21)
+      const called = apply("session.tool.called", { ...round3, id: "tool-step-3", input: { path: "/tmp/shot-3.png" }, executed: false }, 22)
+      projectOpenCodeMessages(instanceId, sessionId, called)
+      assert.equal(state("step-3", "tool-step-3")?.status, "running", "a fresh called still applies")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("reconciles a stranded tool from a liveness-observed settlement", async () => {
+    const instanceId = "opencode-data-liveness-settled"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // The settlement event itself was lost across a disconnect window, so no
+    // terminal event will finish the SDK read. The liveness pass's activity
+    // read is the only settlement evidence; its observation must finish the
+    // same read and publish it (session-api reports the observation).
+    const authoritative = {
+      id: "assistant", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 3 },
+      content: [{
+        type: "tool", id: "tool", name: "bash", time: { created: 2, completed: 3 },
+        state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
+      }],
+    }
+    let reads = 0
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      return { data: [authoritative], cursor: {} }
+    })
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    // A reducer an earlier sync completed (opened, seeded or reconnected) must still read.
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [])
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
+      const data = apply("session.tool.success", { ...base, id: "tool", content: [{ type: "text", text: "ok" }], metadata: {} }, 3)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status, "pending")
+
+      observeNonEventSettlement(instanceId, sessionId)
+
+      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
+      assert.equal(reads, 1, "the liveness-observed settlement finished the read")
+      const healed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.status, "completed")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.output, "ok")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("suppresses the liveness-observed publication when a newer execution was admitted", async () => {
+    const instanceId = "opencode-data-liveness-newer-round"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const authoritative = {
+      id: "assistant", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 3 },
+      content: [{
+        type: "tool", id: "tool", name: "bash", time: { created: 2, completed: 3 },
+        state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
+      }],
+    }
+    const read = deferred<{ data: unknown[]; cursor: Record<string, string> }>()
+    stubAuthoritativeSession(client, sessionId, () => read.promise)
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    // A reducer an earlier sync completed (opened, seeded or reconnected) must still read.
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [])
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
+      const data = apply("session.tool.success", { ...base, id: "tool", content: [{ type: "text", text: "ok" }], metadata: {} }, 3)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+
+      observeNonEventSettlement(instanceId, sessionId)
+
+      // A new round's start was admitted while the observation's read is held.
+      const next = { sessionID: sessionId, assistantMessageID: "round-2" }
+      apply("session.execution.started", { sessionID: sessionId }, 10)
+      apply("session.step.started", { ...next, agent: "build", model: { providerID: "provider", id: "model" } }, 11)
+      apply("session.text.started", next, 12)
+      const streamed = apply("session.text.delta", { ...next, ordinal: 0, delta: "kept" }, 13)
+      projectOpenCodeMessages(instanceId, sessionId, streamed)
+
+      read.resolve({ data: [authoritative], cursor: {} })
+      // Wait until the observation's read landed in the reducer, then let its
+      // completion run before checking that nothing was published.
+      await waitForReplay(() => (streamed.session.message.get(sessionId, "assistant") as any)
+        ?.content?.find((part: any) => part.type === "tool")?.state?.status === "completed")
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("round-2")?.parts["round-2-text-0"]?.data as any)?.text, "kept")
+      // The newer admitted execution fences the observation's publication; the
+      // newer round's own settlement reconciles instead.
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status, "pending", "a newer execution supersedes the observation's publication")
+
+      // The fenced read still reconciled the reducer: the next projection (as
+      // the event dispatcher runs for the newer round's settlement) shows it.
+      const settled = { id: "evt_settled-2", type: "session.execution.succeeded", created: 20, data: { sessionID: sessionId } } as any
+      projectOpenCodeMessages(instanceId, sessionId, applyOpenCodeDataEvent(instanceId, "/work", settled))
+      finishOpenCodeDataEvent(instanceId, settled)
+      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("round-2")?.parts["round-2-text-0"]?.data as any)?.text, "kept", "the round keeps its events")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("reconciles a delivered queued prompt through an authoritative inbox sync", async () => {
+    const instanceId = "opencode-data-inbox-delivery"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // The queued prompt was delivered while its delivery events were lost:
+    // the reducer still lists it, the authoritative inbox does not, and the
+    // delivered user message never reached the transcript. The sync's
+    // disappearance evidence owes the settlement read.
+    const delivered = {
+      id: "user", type: "user", text: "queued prompt", time: { created: 1, completed: 1 },
+    }
+    let reads = 0
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      return { data: [delivered], cursor: {} }
+    })
+    // A reducer an earlier sync completed (opened, seeded or reconnected) must still read.
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [])
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "enqueue", type: "session.inbox.enqueued", created: 1,
+        data: { sessionID: sessionId, inboxID: "queued", item: { type: "user", payload: { text: "queued prompt" }, delivery: "queue" } },
+      } as any)
+      assert.deepEqual(getOpenCodeSessionInbox(instanceId, sessionId, "/work").map((item) => item.id), ["queued"])
+
+      await syncOpenCodeSessionInbox(instanceId, sessionId, "/work")
+
+      assert.deepEqual(getOpenCodeSessionInbox(instanceId, sessionId, "/work").map((item) => item.id), [], "the queue reflects the authoritative delivery")
+      await waitForReplay(() => Boolean(messageStoreBus.getOrCreate(instanceId).getMessage("user")))
+      const healed = messageStoreBus.getOrCreate(instanceId).getMessage("user")
+      assert.equal(healed?.role, "user")
+      const text = healed && Object.values(healed.parts)
+        .map((entry: unknown) => (entry as { data?: { type?: string; text?: string } })?.data)
+        .find((part) => part?.type === "text")?.text
+      assert.equal(text, "queued prompt", "the delivered prompt's user message is admitted")
+      assert.equal(reads, 1, "the disappearance owed one settlement read")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("keeps another session's live reducer after a terminal event", () => {
+    const instanceId = "opencode-data-session-isolation"
+    const event = (sessionID: string, type: string, data: Record<string, unknown> = {}) => ({
+      id: `evt_${sessionID}-${type}`, type, created: 1,
+      data: { sessionID, assistantMessageID: `${sessionID}-assistant`, ...data },
+    } as any)
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.step.started", {
+        agent: "build", model: { providerID: "provider", id: "model" },
+      }))
+      const settled = event("settled", "session.execution.succeeded")
+      applyOpenCodeDataEvent(instanceId, "/work", settled)
+      finishOpenCodeDataEvent(instanceId, settled)
+      applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.text.started"))
+      const data = applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.text.delta", { ordinal: 0, delta: "kept" }))
+      projectOpenCodeMessages(instanceId, "active", data)
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("active-assistant")?.parts["active-assistant-text-0"]?.data as any)?.text, "kept")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("does not project live events into a historical window", () => {
+    const instanceId = "opencode-data-history-window"
+    const sessionId = "session"
+    const store = messageStoreBus.getOrCreate(instanceId)
+    try {
+      const rest = normalizeSessionMessage(sessionId, {
+        id: "old", type: "assistant", agent: "build", model: { providerID: "provider", id: "model" },
+        time: { created: 1, completed: 1 }, content: [],
+      } as any)
+      seedSessionMessagesV2(instanceId, { id: sessionId }, [rest.message], new Map([[rest.info.id, rest.info]]))
+      store.setMessageWindow(sessionId, { kind: "history", resumeCursor: "c1", newerCursors: [null] })
+      const data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "live", type: "session.step.started", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: "live", agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      if (!store.getMessageWindow(sessionId) || store.getMessageWindow(sessionId)?.kind === "latest") projectOpenCodeMessages(instanceId, sessionId, data)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["old"])
+      store.setMessageWindow(sessionId, emptyLatestWindow())
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["old", "live"])
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("reconciles delivered prompts to the authoritative page order", async () => {
+    const instanceId = "opencode-data-delivery-order"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // Native storage, oldest first; the daemon appends a prompt's row at its
+    // delivery, so the page owns the delivered prompt's position.
+    const stored: any[] = []
+    stubAuthoritativeSession(client, sessionId, async () => ({ data: [...stored].reverse(), cursor: {} }))
+    const apply = (event: any) => {
+      const data = applyOpenCodeDataEvent(instanceId, "/work", event)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+    }
+    try {
+      apply({ id: "enqueue-1", type: "session.inbox.enqueued", created: 1, data: {
+        sessionID: sessionId, inboxID: "q1", item: { type: "user", payload: { text: "first" }, delivery: "steer" },
+      } })
+      apply({ id: "enqueue-2", type: "session.inbox.enqueued", created: 2, data: {
+        sessionID: sessionId, inboxID: "q2", item: { type: "user", payload: { text: "second" }, delivery: "steer" },
+      } })
+      apply({ id: "enqueue-3", type: "session.inbox.enqueued", created: 3, data: {
+        sessionID: sessionId, inboxID: "q3", item: { type: "user", payload: { text: "third" }, delivery: "steer" },
+      } })
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["q1", "q2", "q3"])
+
+      for (const [index, id] of ["q1", "q2", "q3"].entries()) {
+        stored.push({ id, type: "user", text: `${["first", "second", "third"][index]} prompt`, time: { created: 10 + index } })
+        apply({ id: `deliver-${id}`, type: "session.inbox.delivered", created: 10 + index, data: { sessionID: sessionId, inboxID: id } })
+      }
+      await waitForReplay(() => messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).join() === "q1,q2,q3")
+
+      apply({ id: "reply", type: "session.step.started", created: 20, data: {
+        sessionID: sessionId, assistantMessageID: "reply", agent: "build", model: { providerID: "provider", id: "model" }, started: 20,
+      } })
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["q1", "q2", "q3", "reply"],
+        "the burst's steers keep the authoritative page order above the reply")
+
+      // An authoritative content replacement (pruning shape) carries no
+      // ordering side state into the next projection.
+      invalidateOpenCodeSessionContent(instanceId, sessionId)
+      apply({ id: "after-replacement", type: "session.text.started", created: 21, data: { sessionID: sessionId, assistantMessageID: "reply" } })
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["q1", "q2", "q3", "reply"],
+        "an authoritative replacement keeps the reconciled order")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+})
+
+describe("frame-batched content reduction", () => {
+  const model = { providerID: "provider", id: "model" }
+
+  function setup(instanceId: string) {
+    const sessionId = "session"
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    apply("session.step.started", { ...base, agent: "build", model }, 1)
+    const data = apply("session.text.started", { ...base, ordinal: 0 }, 2)
+    const rowText = () => {
+      const row = data.session.message.get(sessionId, "assistant") as any
+      return (row?.content ?? []).filter((part: any) => part.type === "text").map((part: any) => part.text).join("")
+    }
+    return { apply, data, base, rowText, sessionId }
+  }
+
+  it("reduces a burst of content deltas with one subscriber notification, in order", () => {
+    const instanceId = "content-batch-merge"
+    const { apply, data, base, rowText, sessionId } = setup(instanceId)
+    try {
+      let runs = 0
+      let observed = ""
+      const dispose = createRoot((dispose) => {
+        createEffect(() => {
+          runs += 1
+          observed = rowText()
+        })
+        return dispose
+      })
+      assert.equal(runs, 1)
+      assert.equal(observed, "")
+
+      for (const [index, chunk] of ["a", "b", "c", "d", "e"].entries()) {
+        apply("session.text.delta", { ...base, ordinal: 0, delta: chunk }, 3 + index)
+      }
+
+      assert.equal(runs, 1, "buffered deltas must not notify Solid subscribers per event")
+      assert.equal(observed, "", "buffered deltas are not yet reduced into the store")
+
+      projectOpenCodeMessages(instanceId, sessionId, data)
+
+      assert.equal(runs, 2, "the flushed batch notifies subscribers exactly once")
+      assert.equal(observed, "abcde", "the batch reduces in admission order")
+      assert.equal(
+        (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text,
+        "abcde",
+        "the projection publishes the batched reduction",
+      )
+      dispose()
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("delivers a non-delta event only after buffered deltas have reduced", () => {
+    const instanceId = "content-batch-barrier"
+    const { apply, data, base, rowText, sessionId } = setup(instanceId)
+    try {
+      apply("session.text.delta", { ...base, ordinal: 0, delta: "one " }, 3)
+      apply("session.text.delta", { ...base, ordinal: 0, delta: "two" }, 4)
+
+      apply("session.text.ended", { ...base, ordinal: 0, text: "final text" }, 5)
+
+      assert.equal(rowText(), "final text", "the ending reduces after the buffered deltas, in the same task")
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      assert.equal(
+        (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text,
+        "final text",
+      )
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("drains buffered deltas on its own wake without an explicit flush", async () => {
+    const instanceId = "content-batch-wake"
+    const { apply, rowText, sessionId, data } = setup(instanceId)
+    try {
+      apply("session.text.delta", { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "x" }, 3)
+      apply("session.text.delta", { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "y" }, 4)
+      apply("session.text.delta", { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "z" }, 5)
+      assert.equal(rowText(), "", "deltas buffer before the wake")
+
+      await waitForReplay(() => rowText() === "xyz")
+
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      assert.equal(
+        (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text,
+        "xyz",
+      )
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("still records divergence at admission for a buffered delta with a missed start", async () => {
+    const instanceId = "content-batch-divergence"
+    const sessionId = "session"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/work", kind: "root" }] }) as any
+    let reads = 0
+    const client: any = {
+      session: {
+        active: async () => ({}),
+        get: async () => ({ id: sessionId, location: { directory: "/work" }, time: { created: 1, updated: 1 } }),
+        inbox: { list: async () => [] },
+        form: { list: async () => [] },
+      },
+      permission: { list: async () => [] },
+      message: { list: async () => { reads += 1; return { data: [], cursor: {} } } },
+    }
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, {
+      id: sessionId, instanceId, title: sessionId, parentId: null, location: { directory: "/work" },
+      status: "working", agent: "build", model: { providerId: "provider", modelId: "model" }, time: { created: 1, updated: 1 },
+    } as any]])))
+    setActiveSession(instanceId, sessionId)
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "start", type: "session.step.started", created: 1,
+        data: { sessionID: sessionId, assistantMessageID: "assistant", agent: "build", model },
+      } as any)
+      // No session.text.started: the fragment's start was missed, so the
+      // delta must record its divergence when it is admitted, exactly as the
+      // synchronous path does, and start the repair read before any frame
+      // flush could have run (the wake is a timer in this environment).
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "delta", type: "session.text.delta", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "orphan" },
+      } as any)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      assert.ok(reads > 0, "the divergence repair read starts at admission, not at the frame flush")
+    } finally {
+      serverApi.fetchWorktrees = originalFetchWorktrees
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("keeps working after a destroyed transcript leaves buffered deltas behind", async () => {
+    const instanceId = "content-batch-destroy"
+    const { apply, base, sessionId } = setup(instanceId)
+    try {
+      apply("session.text.delta", { ...base, ordinal: 0, delta: "gone" }, 3)
+      apply("session.deleted", { sessionID: sessionId }, 4)
+      await waitForReplay(() => true)
+
+      apply("session.step.started", { sessionID: sessionId, assistantMessageID: "next", agent: "build", model }, 5)
+      const data = apply("session.text.started", { sessionID: sessionId, assistantMessageID: "next", ordinal: 0 }, 6)
+      apply("session.text.delta", { sessionID: sessionId, assistantMessageID: "next", ordinal: 0, delta: "ok" }, 7)
+
+      await waitForReplay(() => {
+        const row = data.session.message.get(sessionId, "next") as any
+        return (row?.content ?? []).some((part: any) => part.type === "text" && part.text === "ok")
+      })
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+})

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-wake-lock-start"
+description = "Enables the wake_lock_start command without any pre-configured scope."
+commands.allow = ["wake_lock_start"]
+
+[[permission]]
+identifier = "deny-wake-lock-start"
+description = "Denies the wake_lock_start command without any pre-configured scope."
+commands.deny = ["wake_lock_start"]

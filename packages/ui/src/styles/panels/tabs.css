@@ -1,0 +1,313 @@
+/* Primary tab strip */
+.tab-bar {
+  @apply border-b;
+  border-color: var(--border-base);
+}
+
+.tab-bar-instance {
+  background-color: var(--surface-secondary);
+  background-image: linear-gradient(to top, var(--tab-border) 1px, transparent 1px);
+  position: relative;
+  border-bottom: 0;
+}
+
+.tab-container {
+  @apply flex items-center justify-between gap-1 px-2 py-1;
+}
+
+.tab-scroll {
+  @apply w-full;
+  overflow-x: auto;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tab-bar-instance .tab-scroll {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  width: auto;
+  overflow-y: hidden;
+}
+
+.tab-bar-instance .tab-container {
+  padding-block: 0;
+  /* Preserve the previous strip's outer height, including its baseline. */
+  height: calc(var(--chrome-height) + var(--space-xs) + var(--scrollbar-size) + 1px);
+}
+
+:is(.tab-bar-instance, .right-panel-tab-bar) :is(.tab-strip, .tab-strip-tabs, .tab-draggable, .right-panel-tab-draggable) {
+  height: 100%;
+  align-items: stretch;
+}
+
+/* Fixed content height reserves the scrollbar lane even when overflow is absent.
+   scrollbar-gutter only reserves inline gutters, not this horizontal lane. */
+.tab-bar-instance .tab-strip,
+.right-panel-tab-bar .tab-strip {
+  height: calc(var(--chrome-height) + var(--space-xs) - 1px);
+}
+
+.tab-bar-instance .tab-draggable > div {
+  height: 100%;
+  display: flex;
+}
+
+:is(.tab-bar-instance, .right-panel-tab-bar) :is(.tab-base, .tab-pill, .right-panel-tab) {
+  height: 100%;
+  padding-block: 0;
+}
+
+/* The strip only takes its tabs' width, so the new-instance button follows the
+   last tab and stays pinned at the strip's end once the tabs overflow. */
+.tab-bar-instance .tab-scroll-frame {
+  flex: 0 1 auto;
+}
+
+.tab-strip-new {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  align-self: flex-end;
+  height: calc(var(--chrome-height) + var(--space-xs) - 1px);
+  margin-inline-end: auto;
+}
+
+.tab-bar-actions {
+  @apply flex items-center gap-1 flex-shrink-0;
+  position: relative;
+  padding-inline-start: var(--space-sm);
+}
+
+.tab-bar-actions::before {
+  content: "";
+  position: absolute;
+  inset-block: calc(-1 * var(--space-xs));
+  inset-inline-start: 0;
+  width: 1px;
+  background-color: var(--border-base);
+}
+
+.tab-strip {
+  @apply flex items-center gap-2 px-1;
+  min-width: 100%;
+}
+
+.tab-strip-tabs {
+  @apply flex items-center flex-shrink-0;
+}
+
+.tab-draggable {
+  @apply flex-shrink-0;
+  user-select: none;
+  transition: transform 140ms ease, opacity 140ms ease;
+}
+
+.tab-draggable-active {
+  opacity: 0.72;
+  position: relative;
+  z-index: 20;
+  transition: none;
+}
+
+.tab-draggable .tab-base,
+.tab-draggable .tab-pill,
+.tab-draggable .tab-pill-button {
+  cursor: grab;
+}
+
+.tab-draggable .tab-base:active,
+.tab-draggable .tab-pill:active,
+.tab-draggable .tab-pill-button:active {
+  cursor: grabbing;
+}
+
+.tab-shortcuts {
+  @apply flex items-center gap-2 flex-shrink-0;
+}
+
+.tab-remote-button {
+  @apply flex-shrink-0;
+}
+
+.tab-base {
+  @apply inline-flex items-center gap-2 px-3 py-2 max-w-[200px] transition-colors text-sm font-normal;
+  font-family: var(--font-family-sans);
+  outline: none;
+  border: 1px solid var(--tab-border);
+  border-inline-start-width: 0;
+  border-radius: 0;
+}
+
+.tab-base:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-base);
+}
+
+.tab-active {
+  background-color: var(--tab-active-bg);
+  color: var(--tab-active-text);
+  border-top: 1px solid var(--tab-border);
+  border-bottom-color: transparent;
+  max-width: 300px;
+}
+
+.tab-bar-instance .tab-active,
+.tab-bar-instance .tab-active:hover {
+  background-color: var(--surface-shade-light);
+  border-bottom-color: var(--surface-shade-light);
+}
+
+.tab-bar-instance .tab-active {
+  position: relative;
+}
+
+.tab-bar-instance .tab-draggable:first-child :is(.tab-base, .tab-pill) {
+  border-inline-start: 1px solid var(--tab-border);
+}
+
+.tab-inactive {
+  background-color: var(--tab-inactive-bg);
+  border-inline-end-color: var(--tab-border);
+  border-bottom-color: var(--tab-border);
+  color: var(--tab-inactive-text);
+}
+
+.tab-bar-instance .tab-inactive {
+  background-color: var(--surface-secondary);
+}
+
+.tab-inactive:hover {
+  background-color: var(--tab-inactive-hover-bg);
+  color: var(--tab-inactive-text);
+}
+
+.tab-active:hover {
+  background-color: var(--tab-active-hover-bg);
+}
+
+.tab-label {
+  @apply truncate;
+}
+
+.tab-close {
+  @apply opacity-100 hover:bg-red-500 hover:text-white p-0.5 transition-all cursor-pointer;
+}
+
+.tab-close:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: inherit;
+}
+
+/* Instance tabs: session-status dots should be lighter/softer than list/status pills. */
+.tab-base .status-indicator.session-status.session-working {
+  --session-status-dot: color-mix(in oklab, var(--session-status-working-fg) 55%, var(--surface-base));
+}
+
+.tab-base .status-indicator.session-status.session-compacting {
+  --session-status-dot: color-mix(in oklab, var(--session-status-compacting-fg) 55%, var(--surface-base));
+}
+
+.tab-base .status-indicator.session-status.session-idle {
+  --session-status-dot: color-mix(in oklab, var(--session-status-idle-fg) 55%, var(--surface-base));
+}
+
+.tab-base .status-indicator.session-status.session-permission {
+  --session-status-dot: color-mix(in oklab, var(--session-status-permission-fg) 55%, var(--surface-base));
+}
+
+/* Dark mode: keep dots vivid (avoid muddy mixes). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .tab-base .status-indicator.session-status.session-working {
+    --session-status-dot: var(--session-status-working-fg);
+  }
+  :root:not([data-theme]) .tab-base .status-indicator.session-status.session-compacting {
+    --session-status-dot: var(--session-status-compacting-fg);
+  }
+  :root:not([data-theme]) .tab-base .status-indicator.session-status.session-idle {
+    --session-status-dot: var(--session-status-idle-fg);
+  }
+  :root:not([data-theme]) .tab-base .status-indicator.session-status.session-permission {
+    --session-status-dot: var(--session-status-permission-fg);
+  }
+}
+
+[data-theme="dark"] .tab-base .status-indicator.session-status.session-working {
+  --session-status-dot: var(--session-status-working-fg);
+}
+
+[data-theme="dark"] .tab-base .status-indicator.session-status.session-compacting {
+  --session-status-dot: var(--session-status-compacting-fg);
+}
+
+[data-theme="dark"] .tab-base .status-indicator.session-status.session-idle {
+  --session-status-dot: var(--session-status-idle-fg);
+}
+
+[data-theme="dark"] .tab-base .status-indicator.session-status.session-permission {
+  --session-status-dot: var(--session-status-permission-fg);
+}
+
+.new-tab-button {
+  @apply inline-flex items-center justify-center w-8 h-8 flex-shrink-0 transition-colors;
+  background-color: var(--new-tab-bg);
+  color: var(--new-tab-text);
+}
+
+.new-tab-button:hover {
+  background-color: var(--new-tab-hover-bg);
+}
+
+.new-tab-button:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-base);
+}
+
+.tab-notification-badge {
+  position: absolute;
+  top: 2px;
+  inset-inline-end: 2px;
+  color: var(--accent-primary);
+  font-size: 0.5625rem;
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  pointer-events: none;
+}
+
+.tab-pill {
+  @apply inline-flex items-center gap-1 px-3 py-2 max-w-[220px] text-sm;
+  background-color: var(--tab-inactive-bg);
+  color: var(--tab-inactive-text);
+  border: 1px solid var(--tab-border);
+  border-inline-start-width: 0;
+  border-radius: 0;
+  outline: none;
+}
+
+.tab-pill:focus-visible {
+  @apply ring-2 ring-offset-1;
+  ring-color: var(--accent-primary);
+  ring-offset-color: var(--surface-base);
+}
+
+.tab-pill-active {
+  background-color: var(--surface-shade-light);
+  color: var(--tab-active-text);
+  border-top: 1px solid var(--tab-border);
+  border-bottom-color: var(--surface-shade-light);
+}
+
+.tab-pill-button {
+  @apply truncate;
+}
+
+.tab-pill-close {
+  @apply inline-flex items-center justify-center w-5 h-5 text-xs;
+}
+
+.tab-pill-close:hover {
+  background-color: var(--new-tab-hover-bg);
+}

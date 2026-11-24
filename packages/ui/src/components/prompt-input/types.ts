@@ -1,0 +1,48 @@
+import type { SessionInboxUserPayload } from "@opencode/client"
+import type { JSX } from "solid-js"
+import type { Attachment } from "../../types/attachment"
+
+export type PromptMode = "normal" | "shell"
+export type PickerMode = "mention" | "command"
+export type PromptInsertMode = "quote" | "code"
+export type PromptDelivery = "steer" | "queue"
+
+export interface PromptInputApi {
+  insertSelection(text: string, mode: PromptInsertMode): void
+  insertComment(text: string): void
+  expandTextAttachment(attachmentId: string): void
+  removeAttachment(attachmentId: string): void
+  setPromptText(text: string, opts?: { focus?: boolean }): void
+  restoreQueuedPrompt(text: string, payload: SessionInboxUserPayload): void
+  getPromptText(): string
+  getMode(): PromptMode
+  focus(): void
+}
+
+export interface PromptInputProps {
+  instanceId: string
+  instanceFolder: string
+  sessionId: string
+
+  // Used to scope global "type-to-focus" behavior.
+  isActive?: boolean
+  // Expanded shell-owned requests temporarily take priority over saved composer height.
+  interruptionExpanded?: boolean
+
+  // Phone/tablet layouts should keep the expanded prompt more compact.
+  onSend: (prompt: string, attachments: Attachment[], delivery: PromptDelivery, restoredPayload?: SessionInboxUserPayload,
+    admitDelivery?: () => PromptDelivery) => Promise<void>
+  onCommand?: (commandName: string, args: string) => Promise<void>
+  onRunShell?: (command: string) => Promise<void>
+  disabled?: boolean
+  // Keeps typing available but refuses every send (prompt, command, shell) until cleared.
+  sendBlocked?: boolean
+  escapeInDebounce?: boolean
+  isSessionBusy?: boolean
+  onAbortSession?: () => Promise<void>
+  onBackgroundSession?: () => Promise<void>
+  footerControls?: JSX.Element
+  /** Receives the cell beside the footer, under the session's timeline rail. */
+  footerCornerRef?: (element: HTMLDivElement) => void
+  registerPromptInputApi?: (api: PromptInputApi) => void | (() => void)
+}

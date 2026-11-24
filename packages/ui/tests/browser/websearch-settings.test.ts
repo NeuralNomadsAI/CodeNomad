@@ -1,0 +1,208 @@
+import assert from "node:assert/strict"
+import { after, before, test } from "node:test"
+import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
+import { chromium, type Browser } from "playwright"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+let browser: Browser, url: string
+before(async () => {
+  const fixture = await borrowFixture({
+      name: "websearch-settings",
+      routes: [
+        { path: "/fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/websearch-settings.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
+})
+after(async () => { await browser?.close() })
+test("web settings use explicit scopes, native keys, no mutation replay and fence late writes", async () => {
+  const page = await browser.newPage({ viewport: { width: 380, height: 1000 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(`${url}?project`)
+    // All websearch controls live in Settings, never in Status.
+    assert.equal(await page.getByLabel("Default search", { exact: true }).count(), 0)
+    assert.equal(await page.getByLabel("For the current project", { exact: true }).count(), 0)
+    assert.equal(await page.getByText("Search provider API keys", { exact: true }).count(), 0)
+    await page.goto(url)
+    await page.getByLabel("For the current project", { exact: true }).selectOption("off")
+    await page.waitForFunction(() => document.querySelector('select[title="Search in this project: Disabled"]'))
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.writes), [{ location: { directory: "/a" }, scope: "project", provider: false }])
+    await page.evaluate(() => (window as any).fixture.reject())
+    await page.getByLabel("For the current project", { exact: true }).selectOption("default")
+    await page.getByRole("alert").waitFor()
+    assert.equal(await page.getByLabel("For the current project", { exact: true }).inputValue(), "off")
+    assert.equal((await page.evaluate(() => (window as any).fixture.writes)).length, 2)
+    await page.evaluate(() => (window as any).fixture.setDirectory("/b"))
+    await page.waitForFunction(() => document.querySelector('select[title="Search in this project: Alpha"]'))
+    assert.equal(await page.getByLabel("For the current project", { exact: true }).inputValue(), "default")
+    await page.goto(url)
+    await page.getByLabel("Default search", { exact: true }).waitFor()
+    assert.equal(await page.getByLabel("For the current project", { exact: true }).count(), 1)
+    assert.equal(await page.getByText("Search in this project: Alpha", { exact: true }).count(), 0)
+    await page.locator(".websearch-provider-connections .providers-connect-select").waitFor()
+    assert.equal(await page.locator("summary").count(), 0)
+    assert.equal(await page.evaluate(() => (window as any).fixture.integrationLists()), 1)
+    assert.equal(await page.getByLabel("API key", { exact: true }).count(), 0)
+    await page.getByRole("button", { name: "Connect", exact: true }).click()
+    await page.getByLabel("API key", { exact: true }).fill("fixture-secret")
+    await page.locator(".providers-connect-panel").getByRole("button", { name: "Connect", exact: true }).click()
+    await page.getByLabel("API key", { exact: true }).waitFor({ state: "detached" })
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.keys), [{ integrationID: "alpha", key: "fixture-secret", location: { directory: "/a" } }])
+    assert.match(await page.locator(".websearch-provider-connections .providers-connect-select").innerText(), /Alpha/)
+    assert.equal(await page.getByLabel("Default search", { exact: true }).inputValue(), "provider:alpha")
+    assert.match(await page.locator(".providers-card-meta").innerText(), /From environment: ALPHA_API_KEY \(read-only\)/)
+    await page.getByRole("button", { name: "Remove saved auth: Alpha — Saved key", exact: true }).first().click()
+    await page.waitForFunction(() => (window as any).fixture.keys.length === 2)
+    assert.deepEqual((await page.evaluate(() => (window as any).fixture.keys))[1], { credentialID: "key-id" })
+    if (process.env.CODENOMAD_WEB_SETTINGS_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_WEB_SETTINGS_CAPTURE, fullPage: true })
+    assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true,
+      JSON.stringify(await page.locator("main").evaluate(el => [...el.querySelectorAll("*")].filter(child => child.getBoundingClientRect().right > el.getBoundingClientRect().right).map(child => [child.tagName, child.className, child.getBoundingClientRect().width]))))
+    await page.evaluate(() => (window as any).fixture.hold())
+    await page.getByLabel("Default search", { exact: true }).selectOption("provider:random")
+    await page.evaluate(() => (window as any).fixture.setDirectory("/b"))
+    await page.waitForFunction(() => (document.querySelector('select[aria-label="Default search"]') as HTMLSelectElement)?.value === "provider:alpha")
+    await page.evaluate(() => (window as any).fixture.release())
+    assert.equal(await page.getByLabel("Default search", { exact: true }).inputValue(), "provider:alpha")
+    assert.deepEqual(errors, [])
+  } catch (error) {
+    console.error(errors, await page.locator("body").innerText())
+    throw error
+  } finally { await page.close() }
+})
+
+test("Providers separates Models and Web search with shared row and input styling", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 1000 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(`${url}?preview`)
+    await page.getByRole("heading", { name: "Models", exact: true }).waitFor()
+    await page.getByRole("heading", { name: "Web search", exact: true }).waitFor()
+    assert.equal(await page.getByRole("heading", { name: "Configured Providers", exact: true }).count(), 0)
+    await page.locator(".providers-card-title").filter({ hasText: "OpenAI" }).waitFor()
+    assert.equal(await page.getByRole("region", { name: "Models", exact: true }).getByRole("heading", { name: "Alpha", exact: true }).count(), 0)
+    // Models is open and Web search folded: only the Models catalog and its two account lists are read.
+    assert.equal(await page.evaluate(() => (window as any).fixture.integrationLists()), 3)
+    assert.equal(await page.getByRole("region", { name: "Web search", exact: true }).count(), 0)
+    await page.getByRole("heading", { name: "Web search", exact: true }).click()
+    // Opening the group reads its search catalog on demand.
+    await page.waitForFunction(() => (window as any).fixture.integrationLists() === 4)
+    const search = page.getByRole("region", { name: "Web search", exact: true })
+    await search.getByRole("button", { name: "Connect", exact: true }).click()
+    await page.getByLabel("API key", { exact: true }).waitFor()
+    assert.equal(await search.evaluate(el => {
+      const list = el.querySelector(".providers-list-section")!
+      const defaults = el.querySelector(".websearch-settings-defaults")!
+      return Boolean(list.compareDocumentPosition(defaults) & Node.DOCUMENT_POSITION_FOLLOWING)
+    }), true)
+    for (const width of [900, 380]) {
+      await page.setViewportSize({ width, height: 1000 })
+      assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
+    }
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("Images reads only while open, writes one Global setting at a time and hides what the runtime lacks", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 1000 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  const images = () => page.evaluate(() => (window as any).fixture.images)
+  try {
+    await page.goto(`${url}?preview`)
+    await page.getByRole("heading", { name: "Images", exact: true }).waitFor()
+    assert.equal((await images()).reads, 0, "a folded Images group reads nothing")
+    await page.getByRole("heading", { name: "Images", exact: true }).click()
+    const group = page.getByRole("region", { name: "Images", exact: true })
+    const generation = group.getByLabel("Image generation", { exact: true })
+    await generation.waitFor()
+    assert.equal((await images()).reads, 1)
+    assert.deepEqual(await generation.locator("option").allInnerTexts(), ["Off", "On, automatic model", "GPT Image 2"])
+    assert.equal(await generation.inputValue(), "auto", "an unset image setting reads as on, as OpenCode reads it")
+
+    await generation.selectOption("model:openai/gpt-image-2")
+    await page.waitForFunction(() => (document.querySelector('select[aria-label="Image generation"]') as HTMLSelectElement)?.value === "model:openai/gpt-image-2")
+    await group.getByLabel("Store images once", { exact: true }).check()
+    await page.waitForFunction(() => (document.querySelector('input[aria-label="Store images once"]') as HTMLInputElement)?.checked)
+    assert.deepEqual((await images()).writes, [
+      { location: { directory: "/a" }, generation: "openai/gpt-image-2" },
+      { location: { directory: "/a" }, mediaStorage: true },
+    ])
+    await group.getByText("Another OpenCode configuration applies here: images stay inside each message.", { exact: true }).waitFor()
+    assert.equal(await group.locator('p[title="/a/opencode.jsonc"]').count(), 1, "the deciding document's path is the caption's tooltip")
+    assert.equal(await group.getByText("Image models could not be loaded.", { exact: true }).count(), 0)
+
+    await page.evaluate(() => (window as any).fixture.reject())
+    await generation.selectOption("off")
+    await group.getByRole("alert").waitFor()
+    assert.equal(await generation.inputValue(), "model:openai/gpt-image-2", "a failed write keeps the saved choice")
+    assert.equal((await images()).writes.length, 3, "a failed write is not replayed")
+    if (process.env.CODENOMAD_IMAGE_SETTINGS_CAPTURE) await group.screenshot({ path: process.env.CODENOMAD_IMAGE_SETTINGS_CAPTURE })
+    for (const width of [900, 380]) {
+      await page.setViewportSize({ width, height: 1000 })
+      assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
+    }
+
+    await page.evaluate(() => { (window as any).fixture.images.blocked = true; (window as any).fixture.setDirectory("/c") })
+    await group.getByText("Saving here would hide other OpenCode settings. Change these options in that configuration file instead.", { exact: true }).waitFor()
+    assert.equal(await group.locator('p[title="/global/opencode.json"]').count(), 1)
+    assert.equal(await group.getByLabel("Image generation", { exact: true }).isDisabled(), true)
+    assert.equal(await group.getByLabel("Store images once", { exact: true }).isDisabled(), true)
+
+    // The project's own block decides storage: the box shows that value without a caption, and saving fixes it.
+    await page.evaluate(() => { const fixture = (window as any).fixture; fixture.images.blocked = false; fixture.images.project = true; fixture.setDirectory("/d") })
+    await page.waitForFunction(() => {
+      const box = document.querySelector('input[aria-label="Store images once"]') as HTMLInputElement | null
+      return box && !box.disabled && !box.checked
+    })
+    assert.equal((await images()).mediaStorage, true, "the Global choice is on while this project's block turns it off")
+    assert.equal(await group.locator('p[title$="opencode.jsonc"]').count(), 0)
+    await group.getByLabel("Store images once", { exact: true }).check()
+    await page.waitForFunction(() => (document.querySelector('input[aria-label="Store images once"]') as HTMLInputElement)?.checked)
+    assert.deepEqual((await images()).writes.at(-1), { location: { directory: "/d" }, mediaStorage: true })
+
+    await page.evaluate(() => { const fixture = (window as any).fixture; fixture.images.project = false; fixture.images.supported = false; fixture.setDirectory("/b") })
+    await group.getByText("The connected OpenCode version has no image settings.", { exact: true }).waitFor()
+    assert.equal(await group.getByLabel("Image generation", { exact: true }).count(), 0)
+    assert.equal(await group.getByLabel("Store images once", { exact: true }).count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("search connection failures are not replayed and late replies preserve the new context's draft", async () => {
+  const page = await browser.newPage({ viewport: { width: 700, height: 1000 }, locale: "en-US" })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url)
+    const connect = page.locator(".providers-connect-bar").getByRole("button", { name: "Connect", exact: true })
+    const submit = page.locator(".providers-connect-panel").getByRole("button", { name: "Connect", exact: true })
+    await connect.click()
+    await page.getByLabel("API key", { exact: true }).fill("failed-fixture-key")
+    await page.evaluate(() => (window as any).fixture.reject())
+    await submit.click()
+    await page.getByRole("alert").waitFor()
+    assert.equal(await page.getByLabel("API key", { exact: true }).inputValue(), "failed-fixture-key")
+    assert.equal((await page.evaluate(() => (window as any).fixture.keys)).length, 1)
+    assert.equal((await page.evaluate(() => (window as any).fixture.writes)).length, 0)
+
+    await page.evaluate(() => (window as any).fixture.hold())
+    await submit.click()
+    await page.evaluate(() => (window as any).fixture.setDirectory("/b"))
+    await page.getByLabel("API key", { exact: true }).waitFor({ state: "detached" })
+    await connect.click()
+    assert.equal(await page.getByLabel("API key", { exact: true }).inputValue(), "")
+    await page.getByLabel("API key", { exact: true }).fill("new-context-draft")
+    await page.evaluate(() => (window as any).fixture.release())
+    // Let the old promise settle before checking the still-open new form.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(await page.getByLabel("API key", { exact: true }).inputValue(), "new-context-draft")
+    assert.equal((await page.evaluate(() => (window as any).fixture.keys)).length, 2)
+  } finally { await page.close() }
+})

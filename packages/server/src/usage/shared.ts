@@ -1,0 +1,166 @@
+import type { ProviderUsageWindow } from "../api-types"
+import type { AuthEntry, AuthFile, ProviderResult, ProviderUsage } from "./types"
+
+const REQUEST_TIMEOUT_MS = 15_000
+
+export function getAuthEntry(auth: AuthFile, aliases: readonly string[]): AuthEntry | null {
+  for (const alias of aliases) {
+    const value = auth[alias]
+    if (typeof value === "string" && value.trim()) return { token: value.trim() }
+    if (value && typeof value === "object" && !Array.isArray(value)) return value as AuthEntry
+  }
+  return null
+}
+
+export function getOAuthEntry(auth: AuthFile, aliases: readonly string[]): AuthEntry | null {
+  for (const alias of aliases) {
+    const value = auth[alias]
+    if (value && typeof value === "object" && !Array.isArray(value) && (value as AuthEntry).type === "oauth") {
+      const entry = value as AuthEntry
+      if (getString(entry.access) || getString(entry.token)) return entry
+    }
+  }
+  return null
+}
+
+export function getString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+export function getCredential(auth: AuthFile, aliases: readonly string[], fields: readonly string[]): string | null {
+  for (const alias of aliases) {
+    const raw = auth[alias]
+    const entry = typeof raw === "string" && raw.trim()
+      ? { token: raw.trim() }
+      : raw && typeof raw === "object" && !Array.isArray(raw) ? raw as AuthEntry : null
+    if (!entry) continue
+    for (const field of fields) {
+      const value = getString(entry[field])
+      if (value) return value
+    }
+  }
+  return null
+}
+
+export function decodeJwtClaims(token: string): Record<string, any> | null {
+  try {
+    const payload = token.split(".")[1]
+    return payload ? JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) : null
+  } catch {
+    return null
+  }
+}
+
+export function oauthTokenNeedsRefresh(entry: AuthEntry, skewMs = 120_000): boolean {
+  const access = getString(entry.access) ?? getString(entry.token)
+  if (!access) return true
+  const deadline = Date.now() + skewMs
+  const storedExpiry = Number(entry.expires)
+  if (Number.isFinite(storedExpiry) && storedExpiry <= deadline) return true
+  const jwtExpiry = Number(decodeJwtClaims(access)?.exp) * 1000
+  return Number.isFinite(jwtExpiry) && jwtExpiry <= deadline
+}
+
+export function asObject(value: unknown): Record<string, any> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : null
+}
+
+export function toNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+export function toTimestamp(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value < 1_000_000_000_000 ? value * 1000 : value
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value)
+    return Number.isNaN(parsed) ? null : parsed
+  }
+  return null
+}
+
+export const formatMoney = (value: number | null): string | null =>
+  value === null || !Number.isFinite(value) ? null : value.toFixed(2)
+
+export function toUsageWindow(input: {
+  usedPercent: number | null
+  windowSeconds?: number | null
+  resetAt?: number | null
+  valueLabel?: string | null
+}): ProviderUsageWindow {
+  const usedPercent = input.usedPercent === null ? null : Math.max(0, Math.min(100, input.usedPercent))
+  return {
+    usedPercent,
+    remainingPercent: usedPercent === null ? null : 100 - usedPercent,
+    windowSeconds: input.windowSeconds ?? null,
+    resetAt: input.resetAt ?? null,
+    ...(input.valueLabel ? { valueLabel: input.valueLabel } : {}),
+  }
+}
+
+export function resolveWindowLabel(windowSeconds: number | null): string {
+  if (!windowSeconds) return "usage"
+  if (windowSeconds % 86_400 === 0) {
+    const days = windowSeconds / 86_400
+    return days === 7 ? "weekly" : `${days}d`
+  }
+  if (windowSeconds % 3600 === 0) return `${windowSeconds / 3600}h`
+  return `${windowSeconds}s`
+}
+
+export function result(
+  providerId: string,
+  providerName: string,
+  input: { ok: boolean; configured: boolean; usage?: ProviderUsage; error?: string; status?: number }
+    & Pick<ProviderResult, "unavailableReason" | "providerErrorCode" | "unavailableAction">,
+): ProviderResult {
+  return {
+    providerId,
+    providerName,
+    ok: input.ok,
+    configured: input.configured,
+    usage: input.usage ?? null,
+    fetchedAt: Date.now(),
+    ...(input.error ? { error: input.error } : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.unavailableReason ? { unavailableReason: input.unavailableReason } : {}),
+    ...(input.providerErrorCode ? { providerErrorCode: input.providerErrorCode } : {}),
+    ...(input.unavailableAction ? { unavailableAction: input.unavailableAction } : {}),
+  }
+}
+
+export function notConfigured(providerId: string, providerName: string): ProviderResult {
+  return result(providerId, providerName, { ok: false, configured: false, error: "Not configured" })
+}
+
+/** Retain only HTTP status and an explicitly allowlisted code; bodies may echo credentials. */
+export class ProviderHttpError extends Error {
+  constructor(readonly status: number, readonly code?: string) { super(`Provider returned HTTP ${status}`) }
+}
+
+export async function fetchJson(url: string, init: RequestInit = {}): Promise<any> {
+  const response = await fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+  if (!response.ok) throw new ProviderHttpError(response.status)
+  return response.json()
+}
+
+export async function safeFetch(
+  providerId: string,
+  providerName: string,
+  operation: () => Promise<ProviderUsage>,
+): Promise<ProviderResult> {
+  try {
+    return result(providerId, providerName, { ok: true, configured: true, usage: await operation() })
+  } catch (error) {
+    return result(providerId, providerName, {
+      ok: false,
+      configured: true,
+      error: error instanceof Error ? error.message : "Request failed",
+      ...(error instanceof ProviderHttpError ? { status: error.status } : {}),
+    })
+  }
+}

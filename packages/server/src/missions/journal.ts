@@ -1,0 +1,1100 @@
+import { controlReceiptID, hasInvalidControlHistory, isControlReceipt, recurrenceMessageID, stableToken } from "./receipt-identity"
+export { stableToken } from "./receipt-identity"
+
+import {
+  MISSION_MAX_EVENTS,
+  MISSION_SCHEMA_VERSION,
+  missionLifecycleReserve,
+  missionTerminalShare,
+  reduceMissionEvents,
+  compareEvents,
+  type MissionEvent,
+  type MissionJsonValue,
+  type MissionLocation,
+  type MissionMap,
+  type MissionReport,
+  type MissionRevisedEvent,
+  type MissionSnapshot,
+  type MissionTemplateId,
+} from "./model"
+import { runMissionExclusive } from "./exclusive"
+import { parseMissionBriefing } from "./briefing"
+import { parseExecution } from "./execution"
+import { parseExecutionMode } from "./task-execution-mode"
+import { hasInvalidReportNotificationHistory, parseNativeBinding, parseNativeCall } from "./native-report-provenance"
+import { parseMissionNativeAcknowledgement } from "./lifecycle-schema"
+import { parseMissionProfiles, validateMissionProfiles } from "./playbook-profiles"
+import { parseMissionCreationDefaults } from "./creation-defaults"
+import { parseMissionTitle } from "./mission-title"
+import { missionTaskModeInputSchema } from "./task-execution-mode"
+import { parseNativeCallObservation } from "./native-call-observation"
+import { nativeCallObservationID } from "./native-call-reconciliation"
+import { SETTLED_CLEANUP_HISTORY, cleanupReceiptID, documentCleanupReceiptID, hasInvalidCleanupHistory, orderMissionCleanups,
+  isCleanupReason, isCleanupReceipt, isDocumentCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
+import { parseDeletionRecord, planDeletionPurge, type MissionDeletionRecord } from "./journal-purge"
+import { MissionJournalIndex, noteMissionJournalWrite, type MissionIndexHints, type MissionIndexRange, type SynchronousHint } from "./journal-index"
+import { MISSION_DOCUMENT_PREFIX } from "./mission-document"
+import type { NativeJournalRange } from "../opencode/missions/native-journal-range"
+import { foldJournalRange, type CachedJournalFold } from "./journal-range-view"
+
+// Storage generation, independent of the event wire/schema version. No legacy reads.
+export const MISSION_JOURNAL_STORAGE_PREFIX = "codenomad-missions/v2"
+const PAGE_SIZE = 100
+const MAX_TEXT = 20_000
+const MAX_SHORT_TEXT = 240
+// One intent's native target fan-out, independent of journal history length.
+const MAX_INTENT_TARGETS = 2_000
+const RANGE_CACHE_COUNT = 64
+const RANGE_CACHE_SOURCE_BYTES = 64 * 1024 * 1024
+// A key's mission range, relative to the project prefix; anything else lies outside every range.
+const RANGE = /^\/([A-Za-z0-9_-]{3,100})\//
+const MISSION_FULL = `Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit of this mission`
+const RANGE_OVER_BOUND = `Mission journal exceeds the ${MISSION_MAX_EVENTS}-event safety limit of one mission`
+type CapacityIntent = Extract<MissionEvent, { type: "mission.deleted" | "mission.control-requested" }>
+type CapacitySlot = { intent: CapacityIntent; sessionID: string }
+  | { intent: Extract<MissionEvent, { type: "mission.deleted" }>; document: true }
+type CapacityEntries = { count: number; events: MissionEvent[] }
+/** `unreadable`: missions whose deletion record could not be read, kept as damage. */
+interface Observation { events: MissionEvent[]; discardedEvents: number; purged: MissionEvent[]; unreadable: string[] }
+type SelectedSnapshot = MissionSnapshot & { latestUpdatedAt?: number; otherDocuments?: Pick<MissionMap, "id" | "coordinatorSessionId" | "document">[] }
+
+/** One mission's range reduced like a snapshot: `mission` is absent when the
+ * range holds no live map (deleted, purged, damaged or unknown). */
+export interface MissionView extends Omit<MissionSnapshot, "missions"> {
+  missionID: string
+  mission?: MissionMap
+  events: MissionEvent[]
+}
+
+export interface MissionStorage {
+  /** Qualified native capability, scoped to this ordinary project. */
+  readonly range?: NativeJournalRange
+  get(key: string): Promise<MissionJsonValue | undefined>
+  /** Async adapters repeat current after preparation; not a native commit proof. */
+  set(key: string, value: MissionJsonValue, current?: () => void): Promise<void>
+  /** Purge-capable storage only; without it settled deletions stay in the journal. */
+  remove?(key: string): Promise<void>
+  scan(options: { prefix: string; after?: string; limit?: number }): Promise<{
+    entries: readonly { key: string; value: MissionJsonValue }[]
+    next?: string
+  }>
+  /** Set by adapters that map the journal's keys onto another physical namespace
+   * (recurrence passages): their writes never reach the ordinary journal. */
+  readonly isolated?: true
+}
+
+export class MissionJournal {
+  readonly projectToken: string
+  /** Activation-local LRU. Charge source bytes as a conservative weight for the
+   * retained map and fold, which include scalar state as well as live bodies. */
+  private readonly rangeViews = new Map<string, CachedJournalFold & {
+    range: MissionIndexRange; bytes: number
+  }>()
+  private rangeViewBytes = 0
+
+  /** `index`: the plugin activation's shared index; without one, `readHints` builds its own. */
+  constructor(
+    private readonly storage: MissionStorage,
+    private readonly projectID: string,
+    projectCanonical: string,
+    private readonly now: () => number = Date.now,
+    private index?: MissionJournalIndex,
+  ) {
+    this.projectToken = stableToken(`${projectID}\0${projectCanonical}`, 24)
+    if (index && storage.isolated) throw new Error("Isolated mission journals are not indexed")
+    index?.attach(this.projectToken)
+  }
+
+  /** Reads the cross-mission index hints under the append exclusion. They may miss
+   * writes outside this process's write generation until the next rebuild, so they
+   * never authorize a write or native effect (`MissionJournalIndex`). `read` only
+   * extracts values synchronously and must not keep the hints: range reads
+   * (`missionView`) happen after `readHints` resolves. A thenable result rejects. */
+  readHints<T>(read: (hints: MissionIndexHints) => SynchronousHint<T>): Promise<T> {
+    if (this.storage.isolated) return Promise.reject(new Error("Isolated mission journals are not indexed"))
+    if (!this.index) { this.index = new MissionJournalIndex(); this.index.attach(this.projectToken) }
+    const index = this.index
+    return runMissionExclusive(`append:${this.projectToken}`, () => index.read({
+      scan: visit => this.scanRanges(visit),
+      range: missionID => this.projectRange(missionID),
+    }, read))
+  }
+
+  /** Initial panel discovery boundary, ordered against every finish and surviving purge.
+   * Read before directory traversal; gaps count too. Corruption/unavailability rejects. */
+  finishHighWater(): Promise<number> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      const value = await this.storage.get(missionFinishCounterKey(this.projectToken))
+      return value === undefined ? 0 : parseFinishCounter(value, this.projectID)
+    })
+  }
+
+  /** Every ordinary write attempt, before it starts: the index re-reads that mission. */
+  private written(missionID: string): void {
+    if (this.storage.isolated) return
+    // Counted with or without an index: other journals' indexes see it as foreign.
+    const generation = noteMissionJournalWrite(this.projectToken)
+    this.index?.written(missionID, generation)
+  }
+
+  /** A paginated scan must not straddle a purge's removals, so observations take
+   * the append exclusion (FIFO, shared by bundle incarnations). Holders of that
+   * exclusion use `observe`; storage adapters must never read the journal. */
+  async events(): Promise<{ events: MissionEvent[]; discardedEvents: number }> {
+    const { events, discardedEvents } = await runMissionExclusive(`append:${this.projectToken}`, () => this.observe())
+    return { events, discardedEvents }
+  }
+
+  /** One mission's share of `events()`: its key range `<prefix>/<missionID>/`,
+   * read under the same exclusion, parsing, bound and purge resolution. Entries
+   * outside every mission range count only in the project observation. */
+  async missionEvents(missionID: string): Promise<{ events: MissionEvent[]; discardedEvents: number }> {
+    const { events, discardedEvents } = await runMissionExclusive(`append:${this.projectToken}`, () => this.observeMission(missionID))
+    return { events, discardedEvents }
+  }
+
+  /** One mission's share of `snapshot()`, reduced from its range alone. Its
+   * damage flags and discarded count are this range's own; the project values are
+   * their aggregate plus damage outside every mission range. */
+  async missionView(missionID: string): Promise<MissionView> {
+    return this.range(missionID, await runMissionExclusive(`append:${this.projectToken}`, () => this.observeMission(missionID))).view
+  }
+
+  /** Business state without the historical event collection. */
+  async missionProjection(missionID: string): Promise<Omit<MissionView, "events">> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () =>
+      structuredClone((await this.projectRange(missionID)).view))
+  }
+
+  /** Only projected output leaves the lane. The projector may point-read a
+   * document, but must not enter the journal again. */
+  async readProjection<T>(missionID: string, read: (view: Readonly<Omit<MissionView, "events">>,
+    provenance?: { digest: string; sources: ReturnType<CachedJournalFold["inputSources"]>;
+      taskSources: ReadonlyMap<string, string>; reportSources: ReadonlyMap<string, string> }) => T | Promise<T>): Promise<T> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      const { view } = await this.projectRange(missionID)
+      const cached = this.rangeViews.get(missionID)
+      return structuredClone(await read(view, cached && { digest: cached.digest, sources: cached.inputSources(),
+        taskSources: cached.taskSources, reportSources: cached.reportSources }))
+    })
+  }
+
+  readDisplay(missionID: string, pick?: (value: string) => string | undefined, slot?: "tasks" | "pins") {
+    return isSafeKey(missionID) ? this.storage.range?.readDisplay?.(missionID, pick, slot) : undefined
+  }
+
+  saveDisplay(missionID: string, digest: string, value: string, slot?: "tasks" | "pins") {
+    return this.storage.range?.saveDisplay?.(missionID, digest, value, slot)
+  }
+
+  /** An old objective is resolved by provenance and two point reads, fenced by
+   * the same exact incarnation/stamp. A byte hash cannot fence A → B → A. */
+  async changeObjective(missionID: string, revision: number): Promise<{ revision: number; value: { before: string; after: string } } | undefined> {
+    if (!this.storage.range) return
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      const { view } = await this.projectRange(missionID)
+      const cached = this.rangeViews.get(missionID)
+      const source = cached?.digest.includes("/") && cached.objectives.get(revision)
+      if (!view.mission || !cached || !source) return
+      const objective = async (id: string) => {
+        const event = await this.event(missionID, id)
+        return event && "objective" in event ? event.objective : undefined
+      }
+      const before = await objective(source.before), after = await objective(source.after)
+      await this.projectRange(missionID)
+      if (this.rangeViews.get(missionID)?.digest !== cached.digest || before === undefined || after === undefined) return
+      return { revision: view.mission.revision, value: { before, after } }
+    })
+  }
+
+  private async projectRange(missionID: string): Promise<MissionIndexRange> {
+    if (!this.storage.range || !isSafeKey(missionID)) return this.range(missionID, await this.observeMission(missionID))
+    const cached = this.rangeViews.get(missionID)
+    this.rangeViews.delete(missionID)
+    this.rangeViewBytes -= cached?.bytes ?? 0
+    const result = await foldJournalRange(this.storage.range, missionID, cached)
+    if (result.unchanged && cached) {
+      this.cacheRange(missionID, cached)
+      return cached.range
+    }
+    if (result.unchanged) throw new Error("Missing Mission journal projection")
+    const malformed = result.observation.discardedEvents
+    if (!result.advanced && !result.created && result.validEvents) {
+      // A missing creation can be an interrupted purge. The sidecar is outside
+      // this range, so these views are never cached.
+      if (await this.readRecord(missionID).catch(() => undefined)) return this.range(missionID, {
+        events: [], discardedEvents: malformed, unreadable: [], purged: [],
+      })
+      return this.range(missionID, await this.observeMission(missionID))
+    }
+    const previous = result.advanced ? cached?.range : undefined
+    if (result.advanced && !previous) throw new Error("Missing previous Mission journal projection")
+    const events = result.advanced ? previous!.view.events : result.references
+    const cleanups = result.advanced ? previous!.view.cleanups : result.cleanups
+    const cleanupUnavailable = result.advanced ? previous!.view.cleanupUnavailable : result.cleanupUnavailable
+    const first = result.advanced ? previous!.first : result.first
+    const view: MissionView = { missionID, version: MISSION_SCHEMA_VERSION, projectID: this.projectID,
+      generatedAt: this.now(), events, cleanups,
+      discardedEvents: result.discardedEvents + malformed,
+      ...(result.mission ? { mission: result.mission } : {}),
+      ...(result.controlUnavailable || malformed ? { controlUnavailable: true as const } : {}),
+      ...(result.notificationUnavailable || malformed ? { notificationUnavailable: true as const } : {}),
+      ...(cleanupUnavailable || malformed ? { cleanupUnavailable: true as const } : {}) }
+    if (result.mission) {
+      const { advance, project, objectives, inputSources, taskSources, reportSources } = result.advanced ? cached! : result
+      this.cacheRange(missionID, { digest: result.observation.digest, advance, project, objectives, inputSources, taskSources, reportSources, bytes: result.observation.bytes,
+        range: { view, uncertain: false, first } })
+    }
+    return { view, uncertain: false, first }
+  }
+
+  private cacheRange(missionID: string, cached: CachedJournalFold & {
+    range: MissionIndexRange; bytes: number
+  }): void {
+    if (cached.bytes > RANGE_CACHE_SOURCE_BYTES) return
+    while (this.rangeViews.size >= RANGE_CACHE_COUNT || this.rangeViewBytes + cached.bytes > RANGE_CACHE_SOURCE_BYTES) {
+      const oldest = this.rangeViews.keys().next().value!
+      this.rangeViewBytes -= this.rangeViews.get(oldest)!.bytes
+      this.rangeViews.delete(oldest)
+    }
+    this.rangeViews.set(missionID, cached)
+    this.rangeViewBytes += cached.bytes
+  }
+
+  private range(missionID: string, { events, discardedEvents, unreadable }: Observation): MissionIndexRange {
+    const { missions: [mission], ...view } = this.reduce(events, discardedEvents)
+    return { view: { ...view, missionID, ...(mission ? { mission } : {}), events }, uncertain: unreadable.length > 0 }
+  }
+
+  private async observeMission(missionID: string): Promise<Observation> {
+    // No unsafe ID owns a range: entries there never parse as events.
+    if (!isSafeKey(missionID)) return { events: [], discardedEvents: 0, purged: [], unreadable: [] }
+    if (!this.storage.range) return this.observe(`${this.prefix()}/${missionID}/`)
+    const events: MissionEvent[] = []
+    const { discardedEvents } = await this.storage.range.readOrdered(missionID, batch => { events.push(...batch) })
+    return this.resolve(events, discardedEvents)
+  }
+
+  /** A group without its creation event whose mission left a deletion record is
+   * a purge in progress (or a late write after it): it leaves the observation.
+   * Every other incomplete group remains damage evidence. */
+  private async observe(prefix = this.prefix()): Promise<Observation> {
+    const { events, discardedEvents } = await this.scanEvents(prefix)
+    return this.resolve(events, discardedEvents)
+  }
+
+  private async scanEvents(prefix: string, capacity?: CapacityEntries & { prefix: string }) {
+    const events: MissionEvent[] = []
+    let discardedEvents = 0
+    const bound = this.rangeBound()
+    let after: string | undefined
+    do {
+      const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
+      for (const entry of page.entries) {
+        bound(entry.key)
+        const event = this.parseEntry(entry.key, entry.value)
+        if (capacity && entry.key.startsWith(capacity.prefix)) {
+          capacity.count++
+          if (event) capacity.events.push(event)
+        }
+        if (!event) discardedEvents += 1
+        else events.push(event)
+      }
+      after = page.next
+    } while (after)
+    return { events, discardedEvents }
+  }
+
+  /** No mission range, nor the entries outside every range together, is read
+   * past `MISSION_MAX_EVENTS`; a whole project has no bound of its own.
+   * Returns the counted key's mission. */
+  private rangeBound(): (key: string) => string | undefined {
+    const prefix = this.prefix(), counts = new Map<string, number>()
+    return key => {
+      const missionID = key.startsWith(prefix) ? RANGE.exec(key.slice(prefix.length))?.[1] : undefined
+      const count = (counts.get(missionID ?? "") ?? 0) + 1
+      if (count > MISSION_MAX_EVENTS && (!missionID || !this.storage.range)) throw new Error(RANGE_OVER_BOUND)
+      counts.set(missionID ?? "", count)
+      return missionID
+    }
+  }
+
+  /** The index build: one key-ordered scan of the project, resolved and reduced
+   * one mission range at a time like `observeMission`, under the same read bound.
+   * Returns the entries outside every range. */
+  private async scanRanges(visit: (range: MissionIndexRange) => void): Promise<number> {
+    if (this.storage.range) {
+      const { missionIDs, stray } = await this.storage.range.listRanges()
+      for (const missionID of missionIDs) visit(await this.projectRange(missionID))
+      return stray
+    }
+    const prefix = this.prefix(), bound = this.rangeBound()
+    let stray = 0, group: { missionID: string; events: MissionEvent[]; discardedEvents: number } | undefined
+    const flush = async () => { if (group) visit(this.range(group.missionID, await this.resolve(group.events, group.discardedEvents))) }
+    let after: string | undefined
+    do {
+      const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
+      for (const entry of page.entries) {
+        const missionID = bound(entry.key)
+        if (!missionID) { stray++; continue }
+        if (group?.missionID !== missionID) { await flush(); group = { missionID, events: [], discardedEvents: 0 } }
+        const event = this.parseEntry(entry.key, entry.value)
+        if (event) group.events.push(event)
+        else group.discardedEvents++
+      }
+      after = page.next
+    } while (after)
+    await flush()
+    return stray
+  }
+
+  private async resolve(events: MissionEvent[], discardedEvents: number): Promise<Observation> {
+    const created = new Set(events.flatMap(event => event.type === "mission.created" ? [event.missionID] : []))
+    const purged = new Set<string>(), unreadable: string[] = []
+    for (const missionID of new Set(events.map(event => event.missionID))) {
+      if (created.has(missionID)) continue
+      // Unreadable records keep the group as damage, never as proof of a purge.
+      if (await this.readRecord(missionID).catch(() => { unreadable.push(missionID); return undefined })) purged.add(missionID)
+    }
+    return { events: events.filter(event => !purged.has(event.missionID)), discardedEvents,
+      purged: events.filter(event => purged.has(event.missionID)), unreadable }
+  }
+
+  /** The record a purged deleted mission leaves. Read on every storage: only
+   * purging and the deletion reserve need removal support. */
+  async deletionRecord(missionID: string): Promise<MissionDeletionRecord | undefined> {
+    return isSafeKey(missionID) ? this.readRecord(missionID) : undefined
+  }
+
+  /** Removes settled deleted missions beyond the recent cleanup history (all of
+   * them when `all`), plus leftovers of interrupted purges. Returns removed entries. */
+  purgeDeleted(options: { all?: boolean } = {}): Promise<number> {
+    return runMissionExclusive(`append:${this.projectToken}`, () => this.purgeUnlocked(options.all ?? false))
+  }
+
+  private async purgeUnlocked(all: boolean): Promise<number> {
+    const storage = this.storage
+    if (!storage.remove) return 0
+    const { events, discardedEvents, purged } = await this.observe()
+    let removed = 0
+    for (const event of purged) { this.written(event.missionID); await storage.remove(this.eventKey(event.missionID, event.id)); removed++ }
+    // Damaged storage cannot establish settled cleanup, receipts or membership.
+    if (discardedEvents || hasInvalidCleanupHistory(events) || hasInvalidControlHistory(events)
+      || hasInvalidReportNotificationHistory(events)) return removed
+    for (const purge of planDeletionPurge(events, all ? 0 : SETTLED_CLEANUP_HISTORY)) {
+      // The record is durable before the first removal and never removed.
+      const key = this.recordKey(purge.missionID)
+      const existing = await storage.get(key)
+      if (existing === undefined) { this.written(purge.missionID); await storage.set(key, purge.record as unknown as MissionJsonValue) }
+      else if (parseDeletionRecord(existing, this.projectID, purge.missionID)?.deletionID !== purge.record.deletionID) continue
+      this.written(purge.missionID)
+      for (const event of purge.events) { await storage.remove(this.eventKey(event.missionID, event.id)); removed++ }
+    }
+    return removed
+  }
+
+  private async readRecord(missionID: string): Promise<MissionDeletionRecord | undefined> {
+    const value = await this.storage.get(this.recordKey(missionID))
+    if (value === undefined) return undefined
+    const record = parseDeletionRecord(value, this.projectID, missionID)
+    if (!record) throw new Error("Mission deletion record is damaged")
+    return record
+  }
+
+  async snapshot(selected?: string): Promise<SelectedSnapshot> {
+    if (this.storage.range) return runMissionExclusive(`append:${this.projectToken}`, () => this.projectSnapshot(selected))
+    const { events, discardedEvents } = await this.events()
+    return this.reduce(events, discardedEvents)
+  }
+
+  private async projectSnapshot(selected?: string): Promise<SelectedSnapshot> {
+    const missions: { map: MissionMap; first?: Pick<MissionEvent, "id" | "createdAt"> }[] = [], cleanups: NonNullable<MissionSnapshot["cleanups"]> = []
+    const otherDocuments: NonNullable<SelectedSnapshot["otherDocuments"]> = []
+    let discardedEvents = 0, cleanupUnavailable = false, controlUnavailable = false, notificationUnavailable = false, latestUpdatedAt = 0
+    const stray = await this.scanRanges(({ view, first }) => {
+      discardedEvents += view.discardedEvents
+      cleanupUnavailable ||= Boolean(view.cleanupUnavailable)
+      controlUnavailable ||= Boolean(view.controlUnavailable)
+      notificationUnavailable ||= Boolean(view.notificationUnavailable)
+      if (view.mission) latestUpdatedAt = Math.max(latestUpdatedAt, view.mission.updatedAt)
+      if (view.mission && (selected === undefined || selected === view.missionID)) missions.push({ map: view.mission, first: first ?? view.events.reduce<MissionEvent | undefined>(
+        (early, event) => !early || compareEvents(event, early) < 0 ? event : early, undefined) })
+      else if (view.mission) otherDocuments.push({ id: view.mission.id, coordinatorSessionId: view.mission.coordinatorSessionId })
+      for (const cleanup of view.cleanups ?? []) cleanups.push(structuredClone(cleanup))
+    })
+    // Stray entries are malformed across all three journals of receipts.
+    discardedEvents += stray
+    if (stray) cleanupUnavailable = controlUnavailable = notificationUnavailable = true
+    missions.sort((a, b) => b.map.updatedAt - a.map.updatedAt || (a.first && b.first ? compareEvents(a.first, b.first) : 0))
+    return { version: MISSION_SCHEMA_VERSION, generatedAt: this.now(), projectID: this.projectID, discardedEvents,
+      cleanups: orderMissionCleanups(cleanups), ...(selected === undefined ? {} : { latestUpdatedAt, otherDocuments }),
+      ...(cleanupUnavailable ? { cleanupUnavailable: true } : {}),
+      ...(controlUnavailable ? { controlUnavailable: true } : {}),
+      ...(notificationUnavailable ? { notificationUnavailable: true } : {}),
+      missions: missions.map(({ map }) => {
+        const published = structuredClone(map)
+        if (controlUnavailable) published.controlUnavailable = true
+        if (notificationUnavailable) published.notificationUnavailable = true
+        return published
+      }) }
+  }
+
+  private reduce(events: readonly MissionEvent[], discardedEvents: number): MissionSnapshot {
+    const snapshot = reduceMissionEvents(events, this.now())
+    snapshot.projectID = this.projectID
+    snapshot.discardedEvents += discardedEvents
+    // Damaged storage cannot establish complete pending/settled intent.
+    snapshot.cleanups = projectMissionCleanups(events)
+    if (discardedEvents || hasInvalidCleanupHistory(events)) snapshot.cleanupUnavailable = true
+    if (discardedEvents || hasInvalidControlHistory(events)) snapshot.controlUnavailable = true
+    if (discardedEvents || hasInvalidReportNotificationHistory(events)) snapshot.notificationUnavailable = true
+    for (const mission of snapshot.missions) {
+      if (snapshot.controlUnavailable) mission.controlUnavailable = true
+      if (snapshot.notificationUnavailable) mission.notificationUnavailable = true
+    }
+    return snapshot
+  }
+
+  append(event: MissionEvent, current?: () => void): Promise<void> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () => { await this.appendUnlocked(event, current) })
+  }
+
+  /** Reuse the authoritative publication read for capacity and the returned map.
+   * The append lane holds the observation through the write. Unguarded display hints
+   * never enter this path. Callers must serialize business admission separately. */
+  appendWithSnapshot(event: MissionEvent, current?: () => void): Promise<SelectedSnapshot> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      if (this.storage.range) {
+        await this.appendUnlocked(event, current)
+        return this.projectSnapshot(event.missionID)
+      }
+      const missionID = safeKey(event.missionID)
+      const capacity = { prefix: `${this.prefix()}/${missionID}/`, count: 0, events: [] as MissionEvent[] }
+      const observed = await this.scanEvents(this.prefix(), capacity)
+      const added = await this.appendUnlocked(event, current, capacity)
+      if (added) observed.events.push(added)
+      const { events } = await this.resolve(observed.events, observed.discardedEvents)
+      return this.reduce(events, observed.discardedEvents)
+    })
+  }
+
+  /** Appends a finish with the project's next finish number. The counter lives beside
+   * the deletion records, outside every mission range: it costs no journal capacity
+   * and survives deletion, purge, reloads, new controls and clock changes, so a later
+   * finish always has a larger number. Advanced under the append exclusion, after the
+   * capacity check; a refused or failed write leaves at most a gap. An exact replay
+   * (whatever its number) returns the stored finish. Isolated passages keep none. */
+  appendFinish(event: Extract<MissionEvent, { type: "mission.finished" }>, current?: () => void): Promise<MissionEvent> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      const existing = await this.event(event.missionID, event.id)
+      if (existing) {
+        const unnumbered = (value: unknown) => JSON.stringify({ ...parseMissionEvent(JSON.parse(JSON.stringify(value))), sequence: undefined })
+        if (unnumbered(existing) !== unnumbered(event)) throw new Error("Mission event identity collision")
+        return existing
+      }
+      if (this.storage.isolated) { await this.appendUnlocked(event, current); return event }
+      const key = missionFinishCounterKey(this.projectToken), stored = await this.storage.get(key)
+      const counter = stored === undefined ? 0 : parseFinishCounter(stored, this.projectID)
+      const finish = { ...event, sequence: counter + 1 }
+      if (!await this.fits(finish.missionID, finish)) throw new Error(MISSION_FULL)
+      this.written(finish.missionID)
+      current?.()
+      await this.storage.set(key, { version: 1, projectID: this.projectID, finishes: finish.sequence }, current)
+      await this.appendUnlocked(finish, current)
+      return finish
+    })
+  }
+
+  async event(missionID: string, eventID: string): Promise<MissionEvent | undefined> {
+    const key = this.eventKey(missionID, eventID)
+    if (this.storage.range) return this.storage.range.readEvent(missionID, eventID)
+    const value = await this.storage.get(key)
+    if (value === undefined) return undefined
+    const parsed = this.parseEntry(key, value)
+    if (!parsed) {
+      throw new Error("Mission event storage identity mismatch")
+    }
+    return parsed
+  }
+
+  /** Refuses, before any side effect, an `event` (or `count` more ordinary entries
+   * of mission `request`) that its mission's range cannot hold. */
+  async assertCanAppend(request: MissionEvent | string, count = 1): Promise<void> {
+    const event = typeof request === "string" ? undefined
+      : this.parseEntry(this.eventKey(request.missionID, request.id), JSON.parse(JSON.stringify(request)))
+    if (typeof request !== "string" && !event) throw new Error("Mission event is not durable owned JSON")
+    if (!await this.fits(event?.missionID ?? request as string, event ?? count)) throw new Error(MISSION_FULL)
+  }
+
+  /** Capacity is one mission's own: only its range is read, whatever the project holds.
+   * Stored entries plus pending reserved receipts never exceed `MISSION_MAX_EVENTS`.
+   * Ordinary writes keep the lifecycle reserve of the actors they leave the mission
+   * with; a Stop keeps the deletion's share; a deletion and reserved receipts spend
+   * the rest. Actors only join through ordinary writes, so after any ordinary
+   * write one Stop (at most one target per actor) fits, and after it the deletion
+   * (at most one cleanup target per actor) still fits. */
+  private async fits(missionID: string, request: MissionEvent | number, entries?: CapacityEntries): Promise<boolean> {
+    if (this.storage.range) {
+      const actor = typeof request === "number" ? undefined : eventActors(request)[0]
+      if (actor) {
+        // Bound the distinct actor IDs that can later become Stop or cleanup targets,
+        // independently of the number of events. Reuse does not add a target.
+        const actors = new Set<string>()
+        let known = false
+        await this.storage.range.readOrdered(missionID, batch => {
+          for (const event of batch) for (const id of eventActors(event)) {
+            if (id === actor) known = true
+            else if (actors.size < MAX_INTENT_TARGETS) actors.add(id)
+          }
+        })
+        if (!known && actors.size >= MAX_INTENT_TARGETS) {
+          throw new Error(`Mission reached its ${MAX_INTENT_TARGETS}-actor safety limit`)
+        }
+      }
+      return true
+    }
+    const capacity = await this.storedCapacity(missionID, entries)
+    const slots = capacity.cleanupSlots, used = capacity.count + slots.size
+    if (typeof request === "number") return used + request + missionLifecycleReserve(capacity.actors.size, capacity.document) <= MISSION_MAX_EVENTS
+    const kept = request.type === "mission.deleted" || this.matchesCapacityReceipt(request, slots) ? 0
+      : request.type === "mission.control-requested" && request.action === "stop" ? missionTerminalShare(capacity.actors.size, capacity.document)
+        : missionLifecycleReserve(new Set([...capacity.actors, ...eventActors(request)]).size, capacity.document)
+    return used + this.requiredCapacity(request, slots) + kept <= MISSION_MAX_EVENTS
+  }
+
+  private async appendUnlocked(event: MissionEvent, current?: () => void, entries?: CapacityEntries): Promise<MissionEvent | undefined> {
+    if (event.projectID !== this.projectID) throw new Error("Mission event belongs to another project")
+    const normalized = JSON.parse(JSON.stringify(event)) as unknown
+    const parsed = parseMissionEvent(normalized)
+    if (!parsed) throw new Error("Mission event is not durable JSON")
+    const stored = JSON.parse(JSON.stringify(parsed)) as MissionJsonValue
+    const key = this.eventKey(parsed.missionID, parsed.id)
+    const existing = await this.storage.get(key)
+    if (existing !== undefined) {
+      if (JSON.stringify(existing) !== JSON.stringify(stored)) throw new Error("Mission event identity collision")
+      return
+    }
+    if (!await this.fits(parsed.missionID, parsed, entries)) throw new Error(MISSION_FULL)
+    this.written(parsed.missionID)
+    current?.()
+    await this.storage.set(key, stored, current)
+    return parsed
+  }
+
+  private requiredCapacity(event: MissionEvent, slots: Map<string, CapacitySlot>): number {
+    if (this.matchesCapacityReceipt(event, slots)) return 0
+    // A newer Stop replaces only its pending start/pause slots; physical events
+    // and cleanup reservations remain counted.
+    const superseded = event.type === "mission.control-requested" && event.action === "stop"
+      ? [...slots.values()].filter(({ intent }) => intent.type === "mission.control-requested" && intent.action !== "stop"
+        && intent.projectID === event.projectID && intent.missionID === event.missionID
+        && event.expectedRevision > intent.expectedRevision
+        && compareEvents(event, intent) > 0).length : 0
+    return 1 + (event.type === "mission.deleted" ? event.cleanupTargets?.length ?? 0 : 0)
+      + (event.type === "mission.deleted" && event.documentCleanup ? 1 : 0)
+      + (event.type === "mission.control-requested" ? event.targets.length : 0) - superseded
+  }
+
+  private async storedCapacity(missionID: string, entries?: CapacityEntries): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot>; actors: Set<string>; document: boolean }> {
+    const prefix = `${this.prefix()}/${safeKey(missionID)}/`
+    let count = 0
+    // Every session a valid entry admits as an actor: a superset of the map's actors.
+    const actors = new Set<string>()
+    // Physical deterministic receipt keys include mission scope. Retain the
+    // original intent/target as well: a different event kind cannot spend them.
+    const cleanupSlots = new Map<string, CapacitySlot>()
+    const receipts: MissionEvent[] = []
+    const latestControls = new Map<string, Extract<MissionEvent, { type: "mission.control-requested" }>>()
+    const reserve = (intent: CapacityIntent, sessionID: string) => {
+      const id = intent.type === "mission.deleted" ? cleanupReceiptID(intent.id, sessionID)
+        : controlReceiptID(intent.id, sessionID)
+      cleanupSlots.set(this.eventKey(intent.missionID, id), { intent, sessionID })
+    }
+    const collect = (event: MissionEvent) => {
+      for (const sessionID of eventActors(event)) actors.add(sessionID)
+      if (event.type === "mission.deleted") {
+        for (const target of event.cleanupTargets ?? []) reserve(event, target.sessionID)
+        if (event.documentCleanup) cleanupSlots.set(this.eventKey(event.missionID, documentCleanupReceiptID(event.id)), { intent: event, document: true })
+      } else if (event.type === "mission.session-cleaned" || event.type === "mission.document-cleaned") receipts.push(event)
+      else if (event.type === "mission.control-requested") {
+        const previous = latestControls.get(event.missionID)
+        if (!previous || compareEvents(event, previous) > 0) latestControls.set(event.missionID, event)
+      } else if (event.type === "mission.control-applied") receipts.push(event)
+    }
+    if (entries) {
+      count = entries.count
+      for (const event of entries.events) collect(event)
+    } else {
+      let after: string | undefined
+      do {
+        const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
+        count += page.entries.length
+        if (count > MISSION_MAX_EVENTS) throw new Error(RANGE_OVER_BOUND)
+        for (const { key, value } of page.entries) {
+          // Invalid entries count toward capacity but supply no receipt authority.
+          const event = this.parseEntry(key, value)
+          if (event) collect(event)
+        }
+        after = page.next
+      } while (after)
+    }
+    for (const operation of latestControls.values()) {
+      for (const target of operation.targets) reserve(operation, target.sessionID)
+    }
+    for (const receipt of receipts) if (this.matchesCapacityReceipt(receipt, cleanupSlots)) cleanupSlots.delete(this.eventKey(receipt.missionID, receipt.id))
+    // Presence only reserves capacity; it grants no document authority. An unreadable
+    // sidecar refuses the append. Isolated passage adapters accept only journal keys.
+    const document = !this.storage.isolated && await this.storage.get(`${MISSION_DOCUMENT_PREFIX}/project/${this.projectToken}/missions/${safeKey(missionID)}`) !== undefined
+    return { count, cleanupSlots, actors, document }
+  }
+
+  private matchesCapacityReceipt(event: MissionEvent, slots: Map<string, CapacitySlot>): boolean {
+    const slot = slots.get(this.eventKey(event.missionID, event.id))
+    if (!slot) return false
+    if ("document" in slot) return isDocumentCleanupReceipt(event, slot.intent)
+    const { intent, sessionID } = slot
+    return intent.type === "mission.deleted" ? isCleanupReceipt(event, intent, sessionID)
+      : isControlReceipt(event, intent, sessionID)
+  }
+
+  private parseEntry(key: string, value: unknown): MissionEvent | undefined {
+    const event = parseMissionEvent(value)
+    return event && event.projectID === this.projectID && isSafeKey(event.missionID) && isSafeKey(event.id)
+      && key === this.eventKey(event.missionID, event.id) ? event : undefined
+  }
+
+  private eventKey(missionID: string, eventID: string): string {
+    return `${this.prefix()}/${safeKey(missionID)}/${safeKey(eventID)}`
+  }
+
+  private prefix(): string {
+    return `${MISSION_JOURNAL_STORAGE_PREFIX}/${this.projectToken}`
+  }
+
+  private recordKey(missionID: string): string {
+    return missionDeletionRecordKey(this.projectToken, missionID)
+  }
+}
+
+// Beside, never under, the scanned journal prefix: records cost no journal capacity.
+export function missionDeletionRecordKey(projectToken: string, missionID: string): string {
+  return `${MISSION_JOURNAL_STORAGE_PREFIX}/deleted/${projectToken}/${safeKey(missionID)}`
+}
+
+/** The project's finish counter (`appendFinish`), beside the deletion records. */
+export function missionFinishCounterKey(projectToken: string): string {
+  return `${MISSION_JOURNAL_STORAGE_PREFIX}/finishes/${projectToken}`
+}
+
+function parseFinishCounter(value: MissionJsonValue, projectID: string): number {
+  const counter = record(value) ? value as Record<string, unknown> : undefined
+  if (!counter || counter.version !== 1 || counter.projectID !== projectID || !Number.isSafeInteger(counter.finishes) || Number(counter.finishes) < 0) {
+    throw new Error("Mission finish counter is damaged")
+  }
+  return Number(counter.finishes)
+}
+
+/** Sessions an event admits as mission actors (`reduceMission`), which the lifecycle reserve covers. */
+function eventActors(event: MissionEvent): string[] {
+  return event.type === "mission.created" || event.type === "mission.prepared" ? [event.coordinator.sessionID]
+    : event.type === "task.dispatching" || event.type === "task.native-bound" ? [event.actor.sessionID] : []
+}
+
+function safeKey(value: string): string {
+  if (!isSafeKey(value)) throw new Error("Mission journal key is invalid")
+  return value
+}
+
+function isSafeKey(value: string): boolean {
+  return /^[A-Za-z0-9_-]{3,100}$/.test(value)
+}
+
+export function parseMissionEvent(input: unknown): MissionEvent | undefined {
+  if (!record(input) || input.version !== MISSION_SCHEMA_VERSION || !baseEvent(input)) return undefined
+  switch (input.type) {
+    case "mission.prepared": {
+      if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
+        || typeof input.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(input.fingerprint)) return undefined
+      const creation = parseMissionEvent({ ...input, type: "mission.created", prepared: true })
+      if (creation?.type !== "mission.created") return undefined
+      const { type: _type, prepared: _prepared, preparedBy: _author, ...fields } = creation
+      return { ...fields, type: "mission.prepared", requestID: input.requestID,
+        expectedRevision: Number(input.expectedRevision), fingerprint: input.fingerprint }
+    }
+    case "mission.briefed": {
+      const briefing = parseMissionBriefing(input.briefing)
+      if (!briefing || !text(input.actorSessionID, MAX_SHORT_TEXT) || briefing.id !== input.id || briefing.createdAt !== input.createdAt) return undefined
+      return { ...eventBase(input), type: "mission.briefed", actorSessionID: input.actorSessionID, briefing }
+    }
+    case "mission.created": {
+      const templateID = input.template
+      if (!text(input.projectCanonical, MAX_TEXT) || !text(input.objective, MAX_TEXT)
+        || !template(templateID) || !record(input.coordinator)) return undefined
+      const location = parseLocation(input.coordinator.location)
+      if (!location || !text(input.coordinator.sessionID, MAX_SHORT_TEXT)
+        || !text(input.coordinator.title, MAX_SHORT_TEXT)) return undefined
+      if (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT)) return undefined
+      if (input.title !== undefined && parseMissionTitle(input.title) !== input.title) return undefined
+      if (input.prepared !== undefined && typeof input.prepared !== "boolean") return undefined
+      const preparedBy = input.preparedBy
+      if (input.startOnCreation !== undefined && typeof input.startOnCreation !== "boolean") return undefined
+      if (preparedBy !== undefined && (!record(preparedBy) || !onlyFields(preparedBy, ["missionID", "coordinatorSessionID"])
+        || preparedBy.missionID !== undefined && !text(preparedBy.missionID, MAX_SHORT_TEXT)
+        || !text(preparedBy.coordinatorSessionID, MAX_SHORT_TEXT))) return undefined
+      if (input.taskMode !== undefined && !missionTaskModeInputSchema.safeParse(input.taskMode).success) return undefined
+      let profiles, creationDefaults
+      try {
+        profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(templateID, profiles)
+        if (input.creationDefaults !== undefined) creationDefaults = parseMissionCreationDefaults(templateID, input.creationDefaults)
+      }
+      catch { return undefined }
+      return {
+        ...eventBase(input),
+        type: "mission.created",
+        projectCanonical: input.projectCanonical,
+        ...(input.title === undefined ? {} : { title: input.title as string }),
+        objective: input.objective,
+        notes: input.notes as string | undefined,
+        template: templateID,
+        ...(input.taskMode === undefined ? {} : { taskMode: missionTaskModeInputSchema.parse(input.taskMode) }),
+        ...(profiles === undefined ? {} : { profiles }),
+        ...(creationDefaults === undefined ? {} : { creationDefaults }),
+        coordinator: {
+          sessionID: input.coordinator.sessionID,
+          title: input.coordinator.title,
+          location,
+        },
+        ...(input.requestID === undefined ? {} : { requestID: input.requestID as string }),
+        ...(input.prepared === undefined ? {} : { prepared: input.prepared as boolean }),
+        ...(preparedBy === undefined ? {} : { preparedBy: {
+          ...(preparedBy.missionID === undefined ? {} : { missionID: preparedBy.missionID as string }),
+          coordinatorSessionID: preparedBy.coordinatorSessionID as string } }),
+        ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation as boolean }),
+      }
+    }
+    case "mission.control-requested": {
+      if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
+        || !["start", "pause", "stop"].includes(String(input.action))) return undefined
+      const targets = parseIntentTargets(input.targets)
+      if (!targets) return undefined
+      // A graceful Pause interrupts nothing and has no targets; every other control has some.
+      const graceful = input.graceful
+      if (graceful !== undefined && (graceful !== true || input.action !== "pause")) return undefined
+      if (graceful ? targets.length : !targets.length) return undefined
+      const recurrence = input.recurrence
+      if (recurrence !== undefined && (!record(recurrence) || input.action !== "start"
+        || !text(recurrence.grantID, MAX_SHORT_TEXT) || !text(recurrence.passageID, MAX_SHORT_TEXT)
+        || !text(recurrence.messageID, MAX_SHORT_TEXT) || !text(recurrence.coordinatorSessionID, MAX_SHORT_TEXT)
+        || recurrence.passageID !== input.requestID
+        || recurrence.messageID !== recurrenceMessageID(recurrence.passageID))) return undefined
+      if (recurrence !== undefined && (targets.length !== 1 || targets[0].sessionID !== recurrence.coordinatorSessionID)) return undefined
+      return { ...eventBase(input), type: "mission.control-requested", requestID: input.requestID, expectedRevision: Number(input.expectedRevision), action: input.action as "start" | "pause" | "stop", targets,
+        ...(graceful ? { graceful: true as const } : {}),
+        ...(recurrence === undefined ? {} : { recurrence: { grantID: recurrence.grantID as string, passageID: recurrence.passageID as string,
+          messageID: recurrence.messageID as string, coordinatorSessionID: recurrence.coordinatorSessionID as string } }) }
+    }
+    case "mission.control-applied": {
+      if (!text(input.operationID, MAX_SHORT_TEXT) || !text(input.sessionID, MAX_SHORT_TEXT)) return undefined
+      const nativeAcknowledgement = input.nativeAcknowledgement === undefined ? undefined
+        : parseMissionNativeAcknowledgement(input.nativeAcknowledgement)
+      if (input.nativeAcknowledgement !== undefined && (!nativeAcknowledgement
+        || nativeAcknowledgement.missionID !== input.missionID || nativeAcknowledgement.operationID !== input.operationID
+        || nativeAcknowledgement.sessionID !== input.sessionID)) return undefined
+      return { ...eventBase(input), type: "mission.control-applied", operationID: input.operationID, sessionID: input.sessionID,
+        ...(nativeAcknowledgement === undefined ? {} : { nativeAcknowledgement }) }
+    }
+    case "mission.updated":
+      if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
+        || typeof input.notesSpecified !== "boolean" || !text(input.objective, MAX_TEXT)
+        || (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT))) return undefined
+      return { ...eventBase(input), type: "mission.updated", requestID: input.requestID, expectedRevision: Number(input.expectedRevision), notesSpecified: input.notesSpecified, objective: input.objective, notes: input.notes as string | undefined }
+    case "mission.deleted": {
+      if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1) return undefined
+      if (input.deleteManagedSessions !== undefined && typeof input.deleteManagedSessions !== "boolean") return undefined
+      if (input.documentCleanup !== undefined && input.documentCleanup !== true) return undefined
+      const cleanupTargets = input.cleanupTargets === undefined ? undefined : parseIntentTargets(input.cleanupTargets)
+      if (input.deleteManagedSessions === true ? !cleanupTargets : input.cleanupTargets !== undefined) return undefined
+      return {
+        ...eventBase(input), type: "mission.deleted", requestID: input.requestID, expectedRevision: Number(input.expectedRevision),
+        ...(input.deleteManagedSessions === undefined ? {} : { deleteManagedSessions: input.deleteManagedSessions }),
+        ...(cleanupTargets === undefined ? {} : { cleanupTargets }),
+        ...(input.documentCleanup === true ? { documentCleanup: true as const } : {}),
+      }
+    }
+    case "mission.session-cleaned":
+      if (!text(input.deletionID, MAX_SHORT_TEXT) || !text(input.sessionID, MAX_SHORT_TEXT)
+        || (input.outcome !== "removed" && input.outcome !== "retained")) return undefined
+      return { ...eventBase(input), type: "mission.session-cleaned", deletionID: input.deletionID, sessionID: input.sessionID, outcome: input.outcome,
+        ...(input.outcome === "retained" && isCleanupReason(input.reason) ? { reason: input.reason } : {}) }
+    case "mission.document-cleaned":
+      if (!text(input.deletionID, MAX_SHORT_TEXT)) return undefined
+      return { ...eventBase(input), type: "mission.document-cleaned", deletionID: input.deletionID }
+    case "mission.revised": {
+      if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
+        || !text(input.actorSessionID, MAX_SHORT_TEXT) || !text(input.reason, 2_000)
+        || (input.objective !== undefined && !text(input.objective, MAX_TEXT))
+        || typeof input.notesSpecified !== "boolean"
+        || (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT))
+        || !Array.isArray(input.retiredTasks) || input.retiredTasks.length > 24
+        || !Array.isArray(input.addedTasks) || input.addedTasks.length > 24
+        || !Array.isArray(input.dependencyUpdates)) return undefined
+      const retiredTasks: MissionRevisedEvent["retiredTasks"] = []
+      for (const retired of input.retiredTasks) {
+        if (!record(retired) || !text(retired.taskKey, MAX_SHORT_TEXT)
+          || (retired.replacementTaskKey !== undefined && !text(retired.replacementTaskKey, MAX_SHORT_TEXT))) return undefined
+        retiredTasks.push({ taskKey: retired.taskKey, ...(retired.replacementTaskKey === undefined ? {} : { replacementTaskKey: retired.replacementTaskKey }) })
+      }
+      const addedTasks: MissionRevisedEvent["addedTasks"] = []
+      for (const added of input.addedTasks) {
+        if (!record(added) || !text(added.id, MAX_SHORT_TEXT) || !text(added.key, MAX_SHORT_TEXT)
+          || !onlyFields(added, ["id", "key", "title", "brief", "role", "execution", "executionMode", "blockedBy", "replacesTaskKey"])
+          || !text(added.title, MAX_SHORT_TEXT) || !text(added.brief, MAX_TEXT) || !text(added.role, MAX_SHORT_TEXT)
+          || (added.replacesTaskKey !== undefined && !text(added.replacesTaskKey, MAX_SHORT_TEXT))
+          || !stringArray(added.blockedBy, 24, MAX_SHORT_TEXT)) return undefined
+        let execution
+        let executionMode
+        try { execution = parseExecution(added.execution); executionMode = parseExecutionMode(added.executionMode) } catch { return undefined }
+        addedTasks.push({
+          id: added.id, key: added.key, title: added.title, brief: added.brief, role: added.role,
+          ...(execution === undefined ? {} : { execution }), blockedBy: added.blockedBy,
+          ...(added.replacesTaskKey === undefined ? {} : { replacesTaskKey: added.replacesTaskKey }),
+          ...(executionMode === undefined ? {} : { executionMode }),
+        })
+      }
+      // Each update rewrites one distinct task: no more updates than the mission has tasks.
+      const dependencyUpdates: MissionRevisedEvent["dependencyUpdates"] = [], updated = new Set<string>()
+      for (const update of input.dependencyUpdates) {
+        if (!record(update) || !onlyFields(update, ["taskKey", "blockedBy"])
+          || !text(update.taskKey, MAX_SHORT_TEXT) || !stringArray(update.blockedBy, 24, MAX_SHORT_TEXT)
+          || updated.has(update.taskKey)) return undefined
+        updated.add(update.taskKey)
+        dependencyUpdates.push({ taskKey: update.taskKey, blockedBy: update.blockedBy })
+      }
+      return {
+        ...eventBase(input), type: "mission.revised", requestID: input.requestID,
+        expectedRevision: Number(input.expectedRevision), actorSessionID: input.actorSessionID,
+        reason: input.reason, objective: input.objective as string | undefined,
+        notesSpecified: input.notesSpecified, notes: input.notes as string | undefined,
+        retiredTasks, addedTasks, dependencyUpdates,
+      }
+    }
+    case "task.created": {
+      if (!record(input.task) || !text(input.task.id, MAX_SHORT_TEXT) || !text(input.task.key, MAX_SHORT_TEXT)
+        || !onlyFields(input.task, ["id", "key", "title", "brief", "role", "execution", "executionMode", "blockedBy"])
+        || !text(input.task.title, MAX_SHORT_TEXT) || !text(input.task.brief, MAX_TEXT)
+        || !text(input.task.role, MAX_SHORT_TEXT) || !stringArray(input.task.blockedBy, 24, MAX_SHORT_TEXT)) return undefined
+      let execution
+      let executionMode
+      try { execution = parseExecution(input.task.execution); executionMode = parseExecutionMode(input.task.executionMode) } catch { return undefined }
+      return {
+        ...eventBase(input),
+        type: "task.created",
+        task: {
+          id: input.task.id,
+          key: input.task.key,
+          title: input.task.title,
+          brief: input.task.brief,
+          role: input.task.role,
+          ...(execution === undefined ? {} : { execution }),
+          ...(executionMode === undefined ? {} : { executionMode }),
+          blockedBy: input.task.blockedBy,
+        },
+      }
+    }
+    case "task.native-bound": {
+      if (!onlyFields(input, ["version", "id", "missionID", "projectID", "createdAt", "type", "taskKey", "actor", "binding"])
+        || !text(input.taskKey, MAX_SHORT_TEXT) || !record(input.actor)
+        || !onlyFields(input.actor, ["sessionID", "title", "location", "managed"])
+        || !nativeID(input.actor.sessionID) || !text(input.actor.title, MAX_SHORT_TEXT)
+        || typeof input.actor.managed !== "boolean") return undefined
+      const binding = parseNativeBinding(input.binding)
+      const location = parseLocation(input.actor.location)
+      if (!binding || !location || !onlyFields(input.actor.location, ["directory", "workspaceID"])) return undefined
+      return {
+        ...eventBase(input), type: "task.native-bound", taskKey: input.taskKey,
+        actor: { sessionID: input.actor.sessionID, title: input.actor.title, location, managed: input.actor.managed }, binding,
+      }
+    }
+    case "task.native-call-observed": {
+      if (!onlyFields(input, ["version", "id", "missionID", "projectID", "createdAt", "type", "taskKey", "binding", "childSessionID", "observation"])
+        || !text(input.taskKey, MAX_SHORT_TEXT) || !nativeID(input.childSessionID)) return undefined
+      const binding = parseNativeBinding(input.binding), observation = parseNativeCallObservation(input.observation)
+      if (!binding || !observation || input.id !== nativeCallObservationID({ projectID: input.projectID, missionID: input.missionID,
+        taskKey: input.taskKey, binding, childSessionID: input.childSessionID }, observation)) return undefined
+      return { ...eventBase(input), type: "task.native-call-observed", taskKey: input.taskKey,
+        binding, childSessionID: input.childSessionID, observation }
+    }
+    case "task.native-returned":
+    case "task.native-call-started":
+    case "task.native-call-ended": {
+      if (!onlyFields(input, ["version", "id", "missionID", "projectID", "createdAt", "type", "taskKey", "binding", "childSessionID",
+        ...(input.type === "task.native-call-ended" ? ["outcome"] : [])])
+        || !text(input.taskKey, MAX_SHORT_TEXT) || !nativeID(input.childSessionID)) return undefined
+      const binding = parseNativeBinding(input.binding)
+      if (!binding) return undefined
+      if (input.type === "task.native-call-ended") {
+        if (input.outcome !== "returned" && input.outcome !== "error") return undefined
+        return { ...eventBase(input), type: input.type, taskKey: input.taskKey, binding, childSessionID: input.childSessionID, outcome: input.outcome }
+      }
+      return { ...eventBase(input), type: input.type, taskKey: input.taskKey, binding, childSessionID: input.childSessionID }
+    }
+    case "task.dispatching": {
+      if (!text(input.taskKey, MAX_SHORT_TEXT) || !record(input.actor)
+        || !text(input.actor.sessionID, MAX_SHORT_TEXT) || !text(input.actor.title, MAX_SHORT_TEXT)
+        || typeof input.actor.managed !== "boolean"
+        || !text(input.admissionID, MAX_SHORT_TEXT) || !delivery(input.delivery)) return undefined
+      const location = parseLocation(input.actor.location)
+      if (!location) return undefined
+      return {
+        ...eventBase(input), type: "task.dispatching", taskKey: input.taskKey,
+        actor: { sessionID: input.actor.sessionID, title: input.actor.title, location, managed: input.actor.managed },
+        admissionID: input.admissionID, delivery: input.delivery,
+      }
+    }
+    case "task.dispatched":
+      return text(input.taskKey, MAX_SHORT_TEXT)
+        ? { ...eventBase(input), type: "task.dispatched", taskKey: input.taskKey }
+        : undefined
+    case "task.reported": {
+      const report = parseReport(input.report)
+      return report ? { ...eventBase(input), type: "task.reported", report } : undefined
+    }
+    case "report.notified":
+      // Preserve historical wrong-kind receipt evidence for slot validation,
+      // but never accept native routing/provenance or derived state here.
+      return !["nativeCall", "delivery", "binding", "generation", "nativeReturned", "notificationStatus", "outcome"]
+        .some(field => Object.prototype.hasOwnProperty.call(input, field))
+        && text(input.reportID, MAX_SHORT_TEXT) && text(input.admissionID, MAX_SHORT_TEXT)
+        ? { ...eventBase(input), type: "report.notified", reportID: input.reportID, admissionID: input.admissionID }
+        : undefined
+    case "mission.reopened":
+      return onlyFields(input, ["version", "id", "type", "missionID", "projectID", "createdAt", "expectedRevision"])
+        && Number.isSafeInteger(input.expectedRevision) && Number(input.expectedRevision) >= 1
+        ? { ...eventBase(input), type: "mission.reopened", expectedRevision: Number(input.expectedRevision) }
+        : undefined
+    case "mission.finished": {
+      const failure = input.nativeFailure
+      if (failure !== undefined && (input.outcome !== "failed" || !record(failure)
+        || !onlyFields(failure, ["operationID", "sessionID", "messageID", "evidenceID", "inputDigest"])
+        || !nativeID(failure.operationID) || !nativeID(failure.sessionID)
+        || !nativeID(failure.messageID) || !nativeID(failure.evidenceID)
+        || typeof failure.inputDigest !== "string" || !/^[a-f0-9]{64}$/.test(failure.inputDigest))) return undefined
+      if (input.sequence !== undefined && (!Number.isSafeInteger(input.sequence) || Number(input.sequence) < 1)) return undefined
+      return (input.outcome === "completed" || input.outcome === "failed") && text(input.summary, MAX_TEXT)
+        ? { ...eventBase(input), type: "mission.finished", outcome: input.outcome, summary: input.summary,
+          ...(input.sequence === undefined ? {} : { sequence: Number(input.sequence) }),
+          ...(failure === undefined ? {} : { nativeFailure: { operationID: failure.operationID as string,
+            sessionID: failure.sessionID as string, messageID: failure.messageID as string, evidenceID: failure.evidenceID as string,
+            inputDigest: failure.inputDigest as string } }) }
+        : undefined
+    }
+    default:
+      return undefined
+  }
+}
+
+function nativeID(value: unknown): value is string {
+  return text(value, MAX_SHORT_TEXT) && !/[\s\x00-\x1f\x7f]/.test(value)
+}
+
+function onlyFields(value: Record<string, unknown>, fields: readonly string[]): boolean {
+  return Object.keys(value).every(key => fields.includes(key))
+}
+
+function parseReport(input: unknown): MissionReport | undefined {
+  if (!record(input) || !text(input.id, MAX_SHORT_TEXT) || !text(input.taskKey, MAX_SHORT_TEXT)
+    || !onlyFields(input, ["id", "taskKey", "sessionId", "outcome", "summary", "evidence", "next", "artifact", "late", "nativeCall", "delivery", "createdAt"])
+    || !text(input.sessionId, MAX_SHORT_TEXT) || !text(input.summary, MAX_TEXT)
+    || !["completed", "blocked", "failed"].includes(String(input.outcome))
+    || !stringArray(input.evidence, 12, 2_000) || !stringArray(input.next, 12, 2_000)
+    || !Number.isSafeInteger(input.createdAt) || Number(input.createdAt) <= 0
+    || (input.artifact !== undefined && !isJsonValue(input.artifact))
+    || (input.late !== undefined && typeof input.late !== "boolean")
+    || (input.delivery !== undefined && input.delivery !== "coordinator-notification" && input.delivery !== "native-return"
+      && input.delivery !== "coordinator-readout")) return undefined
+  let nativeCall
+  try { nativeCall = parseNativeCall(input.nativeCall) } catch { return undefined }
+  return {
+    id: input.id,
+    taskKey: input.taskKey,
+    sessionId: input.sessionId,
+    outcome: input.outcome as MissionReport["outcome"],
+    summary: input.summary,
+    evidence: input.evidence,
+    next: input.next,
+    artifact: input.artifact,
+    ...(input.late === undefined ? {} : { late: input.late }),
+    ...(nativeCall === undefined ? {} : { nativeCall }),
+    ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
+    createdAt: Number(input.createdAt),
+  }
+}
+
+function baseEvent(value: Record<string, unknown>): boolean {
+  return text(value.id, MAX_SHORT_TEXT) && text(value.missionID, MAX_SHORT_TEXT)
+    && text(value.projectID, MAX_SHORT_TEXT) && Number.isSafeInteger(value.createdAt) && Number(value.createdAt) > 0
+}
+
+function eventBase(value: Record<string, unknown>) {
+  return {
+    version: MISSION_SCHEMA_VERSION,
+    id: value.id as string,
+    missionID: value.missionID as string,
+    projectID: value.projectID as string,
+    createdAt: Number(value.createdAt),
+  }
+}
+
+function parseIntentTargets(input: unknown): Array<{ sessionID: string; location: MissionLocation }> | undefined {
+  if (!Array.isArray(input) || input.length > MAX_INTENT_TARGETS) return undefined
+  const seen = new Set<string>(), targets: Array<{ sessionID: string; location: MissionLocation }> = []
+  for (const target of input) {
+    if (!record(target) || !text(target.sessionID, MAX_SHORT_TEXT) || seen.has(target.sessionID)) return undefined
+    const location = parseLocation(target.location)
+    if (!location) return undefined
+    seen.add(target.sessionID)
+    targets.push({ sessionID: target.sessionID, location })
+  }
+  return targets
+}
+
+function parseLocation(input: unknown): MissionLocation | undefined {
+  if (!record(input) || !text(input.directory, MAX_TEXT)) return undefined
+  if (input.workspaceID !== undefined && !text(input.workspaceID, MAX_SHORT_TEXT)) return undefined
+  return input.workspaceID === undefined
+    ? { directory: input.directory }
+    : { directory: input.directory, workspaceID: input.workspaceID as string }
+}
+
+function template(value: unknown): value is MissionTemplateId {
+  return value === "custom" || value === "debug" || value === "wayfinder" || value === "delivery" || value === "compare"
+}
+
+function delivery(value: unknown): value is "queue" | "steer" {
+  return value === "queue" || value === "steer"
+}
+
+function stringArray(value: unknown, maxItems: number, maxLength: number): value is string[] {
+  return Array.isArray(value) && value.length <= maxItems && value.every((item) => text(item, maxLength))
+}
+
+function text(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength
+}
+
+function boundedText(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.length <= maxLength
+}
+
+function record(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isJsonValue(value: unknown, depth = 0): value is MissionJsonValue {
+  if (value === undefined) return false
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true
+  if (typeof value === "number") return Number.isFinite(value)
+  if (depth >= 20) return false
+  if (Array.isArray(value)) return value.every((item) => isJsonValue(item, depth + 1))
+  return record(value) && Object.values(value).every((item) => isJsonValue(item, depth + 1))
+}

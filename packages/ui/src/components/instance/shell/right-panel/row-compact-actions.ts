@@ -1,0 +1,96 @@
+import { onCleanup } from "solid-js"
+
+const px = (value: string) => Number.parseFloat(value) || 0
+
+type Measurement = () => (() => void) | undefined
+const pendingMeasurements = new Set<Measurement>()
+let scheduledFrame = 0
+function scheduleMeasurement(measure: Measurement) {
+  pendingMeasurements.add(measure)
+  if (scheduledFrame) return
+  scheduledFrame = requestAnimationFrame(() => {
+    scheduledFrame = 0
+    const pending = [...pendingMeasurements]
+    pendingMeasurements.clear()
+    // Read every row before changing any DOM. Per-row read/write callbacks
+    // repeatedly laid out the entire inventory when thousands of files mounted.
+    const updates = pending.map(read => read())
+    for (const update of updates) update?.()
+  })
+}
+
+// Width of the row content ignoring the overflow trigger, so hidden inline
+// actions stay measurable. Text nodes are measured with a Range because the
+// label truncates with ellipsis.
+function rowContentWidth(element: Element): number {
+  if (element.matches(".action-overflow-trigger")) return 0
+  const style = getComputedStyle(element)
+  if (style.display === "none") return 0
+  if (element instanceof SVGElement || element.matches("button:not(.git-panel-file-main), .workspace-tree-spacer")) {
+    return element.getBoundingClientRect().width
+  }
+  const widths: number[] = []
+  for (const child of element.childNodes) {
+    if (child instanceof Element) widths.push(rowContentWidth(child))
+    else if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim()) {
+      const range = document.createRange()
+      range.selectNode(child)
+      widths.push(range.getBoundingClientRect().width)
+    }
+  }
+  const visible = widths.filter((width) => width > 0)
+  const stacked = style.flexDirection === "column"
+  return (stacked ? Math.max(0, ...visible) : visible.reduce((a, b) => a + b, 0))
+    + (stacked ? 0 : Math.max(0, visible.length - 1) * px(style.columnGap))
+    + px(style.paddingLeft) + px(style.paddingRight) + px(style.borderLeftWidth) + px(style.borderRightWidth)
+}
+
+// Toggle data-compact on a file row: inline icon buttons while they fit, the
+// shared overflow menu only when they don't. An open menu stays mounted
+// across resizes; hidden actions stay measurable but inert.
+export function observeRowOverflow(element: HTMLElement) {
+  const row = element.parentElement
+  if (!row) return
+  let disposed = false
+  const measure = () => {
+    if (disposed || !element.isConnected || !row.getBoundingClientRect().width) return
+    const menu = element.querySelector<HTMLButtonElement>(".action-overflow-trigger")
+    const inline = element.querySelector<HTMLElement>(".file-row-inline-actions")
+    if (!menu || !inline) return
+    // Budget against the entire row, not the shrink-wrapped action group.
+    // The menu replaces inline actions; it must not add to their width budget.
+    const required = rowContentWidth(row)
+    const available = row.getBoundingClientRect().width
+    const next = menu.hasAttribute("data-expanded") || required > available + 0.5
+    if (element.dataset.compact === String(next)) return
+    const active = document.activeElement
+    const hadActionFocus = active instanceof Element && element.contains(active)
+      && active.matches(".file-row-inline-actions button, .action-overflow-trigger")
+    return () => {
+      if (disposed || !element.isConnected) return
+      element.dataset.compact = String(next)
+      inline.inert = next
+      if (hadActionFocus) queueMicrotask(() => {
+        if (disposed || !element.isConnected) return
+        const target = next ? menu : element.querySelector<HTMLButtonElement>(".file-row-inline-actions button:not(:disabled)")
+        target?.focus({ preventScroll: true })
+      })
+    }
+  }
+  const schedule = () => { if (!disposed) scheduleMeasurement(measure) }
+  const resize = new ResizeObserver(schedule)
+  resize.observe(row)
+  resize.observe(element)
+  const mutation = new MutationObserver(schedule)
+  mutation.observe(row, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["data-expanded"] })
+  document.fonts?.addEventListener("loadingdone", schedule)
+  schedule()
+  onCleanup(() => {
+    disposed = true
+    pendingMeasurements.delete(measure)
+    if (!pendingMeasurements.size) { cancelAnimationFrame(scheduledFrame); scheduledFrame = 0 }
+    resize.disconnect()
+    mutation.disconnect()
+    document.fonts?.removeEventListener("loadingdone", schedule)
+  })
+}

@@ -1,0 +1,6 @@
+.websearch-results { display: grid; gap: 0.75rem; list-style: none; padding: 0; margin: 0; }
+.websearch-results li { padding-block-end: 0.75rem; border-block-end: 1px solid var(--border-base); min-width: 0; }
+.websearch-results a { color: var(--accent-primary); font-weight: var(--font-weight-semibold); overflow-wrap: anywhere; }
+.websearch-result-source { color: var(--text-secondary); font-size: 0.8em; overflow-wrap: anywhere; }
+.websearch-results p { white-space: pre-wrap; overflow-wrap: anywhere; margin-block: 0.25rem 0; }
+.form-request[data-websearch-provider="true"] .form-request-options { display: grid; grid-template-columns: 1fr; }

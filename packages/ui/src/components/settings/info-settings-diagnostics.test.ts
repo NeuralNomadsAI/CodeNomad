@@ -1,0 +1,241 @@
+import assert from "node:assert/strict"
+import { describe, it } from "node:test"
+
+import type { ServerMeta } from "../../../../server/src/api-types"
+import { buildBugReportEnvironment, buildDiagnosticReport, getServerOperatingSystem } from "./info-settings-diagnostics"
+
+const labels = {
+  reportTitle: "CodeNomad Diagnostic Report",
+  generated: "Generated",
+  serverVersion: "Server version",
+  serverOs: "Server operating system",
+  serverArch: "Server architecture",
+  uiVersion: "UI version",
+  uiSource: "UI source",
+  runtime: "Client runtime",
+  platform: "Client platform",
+  windowContext: "Window context",
+  os: "Client operating system",
+  listeningMode: "Listening mode",
+  bindHost: "Bind host",
+  localListener: "Local listener",
+  remoteListener: "Remote listener",
+  workspaceRoot: "Workspace root",
+  candidateAddresses: "Candidate addresses",
+  opencodeVersion: "OpenCode Version",
+  opencodeService: "Running service",
+  modes: { local: "local", all: "all", specific: "specific" },
+  scopes: { external: "external", internal: "internal", loopback: "loopback" },
+}
+
+const meta: ServerMeta = {
+  localUrl: "http://127.0.0.1:9899",
+  remoteUrl: "https://192.168.1.20:9898",
+  eventsUrl: "http://127.0.0.1:9899/api/events",
+  host: "0.0.0.0",
+  listeningMode: "all",
+  localPort: 9899,
+  remotePort: 9898,
+  hostLabel: "0.0.0.0",
+  workspaceRoot: "/home/user/projects",
+  addresses: [
+    { ip: "192.168.1.20", family: "ipv4", scope: "external", remoteUrl: "https://192.168.1.20:9898" },
+    { ip: "127.0.0.1", family: "ipv4", scope: "loopback", remoteUrl: "https://127.0.0.1:9898" },
+  ],
+  serverVersion: "1.2.3",
+  system: { platform: "linux", arch: "arm64" },
+  ui: { version: "1.2.3", source: "bundled" },
+}
+
+describe("buildDiagnosticReport", () => {
+  it("separates remote backend OS and architecture from the Windows client", () => {
+    const report = buildDiagnosticReport(meta, "Windows x64",
+      { host: "web", platform: "desktop", windowContext: "remote" }, labels)
+    assert.match(report, /Server operating system: Linux/)
+    assert.match(report, /Server architecture: arm64/)
+    assert.match(report, /Client operating system: Windows x64/)
+    assert.match(report, /Client runtime: web/)
+  })
+
+  it("does not substitute the client OS when an older server omits system metadata", () => {
+    const report = buildDiagnosticReport({ ...meta, system: undefined }, "Windows x64",
+      { host: "tauri", platform: "desktop", windowContext: "remote" }, labels)
+    assert.match(report, /Server operating system: —/)
+    assert.match(report, /Server architecture: —/)
+    assert.match(report, /Client operating system: Windows x64/)
+  })
+
+  it("includes the OpenCode version, and the running service only when it differs", () => {
+    const runtime = { host: "tauri", platform: "desktop", windowContext: "local" }
+    const at = new Date("2026-08-10T12:00:00.000Z")
+    const same = buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at, { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.29" })
+    assert.match(same, /OpenCode Version: 2\.0\.29/)
+    assert.doesNotMatch(same, /Running service/)
+    const differing = buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at, { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.28" })
+    assert.match(differing, /OpenCode Version: 2\.0\.29\nRunning service: 2\.0\.28/)
+    assert.match(buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at, { opencodeDaemon: "2.0.28" }), /OpenCode Version: 2\.0\.28/)
+    assert.match(buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at), /OpenCode Version: —/)
+  })
+
+  it("prefers the server's readable OS release over its platform family", () => {
+    const named = { ...meta, system: { platform: "win32", arch: "x64", name: "Windows 11 (10.0.26200)" } }
+    assert.equal(getServerOperatingSystem(named), "Windows 11 (10.0.26200)")
+    assert.match(buildDiagnosticReport(named, "Windows 11 x64", { host: "tauri", platform: "desktop", windowContext: "local" }, labels),
+      /Server operating system: Windows 11 \(10\.0\.26200\)/)
+  })
+
+  it("formats native platform names and preserves unfamiliar server platforms", () => {
+    for (const [platform, expected] of [["win32", "Windows"], ["darwin", "macOS"], ["linux", "Linux"], ["freebsd", "freebsd"]]) {
+      assert.equal(getServerOperatingSystem({ ...meta, system: { platform, arch: "x64" } }), expected)
+    }
+    assert.equal(getServerOperatingSystem(null), "—")
+  })
+  it("includes effective connectivity details and candidate addresses", () => {
+    const report = buildDiagnosticReport(
+      meta,
+      "Linux x86_64",
+      { host: "tauri", platform: "desktop", windowContext: "local" },
+      labels,
+      new Date("2026-08-10T12:00:00.000Z"),
+    )
+
+    assert.match(report, /Generated: 2026-08-10T12:00:00\.000Z/)
+    assert.match(report, /Listening mode: all/)
+    assert.match(report, /Bind host: 0\.0\.0\.0/)
+    assert.match(report, /Local listener: http:\/\/127\.0\.0\.1:9899/)
+    assert.match(report, /Remote listener: https:\/\/192\.168\.1\.20:9898/)
+    assert.match(report, /Candidate addresses: 2/)
+    assert.match(report, /ipv4\/external: https:\/\/192\.168\.1\.20:9898/)
+  })
+
+  it("uses explicit fallbacks when server metadata is unavailable", () => {
+    const report = buildDiagnosticReport(
+      null,
+      "Unknown",
+      { host: "web", platform: "web", windowContext: "remote" },
+      labels,
+      new Date("2026-08-10T12:00:00.000Z"),
+    )
+
+    assert.match(report, /Server version: —/)
+    assert.match(report, /Server operating system: —/)
+    assert.match(report, /Server architecture: —/)
+    assert.match(report, /Remote listener: —/)
+    assert.match(report, /Candidate addresses: 0/)
+  })
+
+  it("uses caller-provided labels for exported reports", () => {
+    const report = buildDiagnosticReport(
+      meta,
+      "Linux x86_64",
+      { host: "tauri", platform: "desktop", windowContext: "local" },
+      {
+        ...labels,
+        reportTitle: "Rapport de diagnostic CodeNomad",
+        generated: "Généré",
+        listeningMode: "Mode d’écoute",
+        modes: { ...labels.modes, all: "Toutes les interfaces réseau" },
+        scopes: { ...labels.scopes, external: "Réseau" },
+      },
+      new Date("2026-08-10T12:00:00.000Z"),
+    )
+
+    assert.match(report, /Rapport de diagnostic CodeNomad/)
+    assert.match(report, /Généré: 2026-08-10T12:00:00\.000Z/)
+    assert.match(report, /Mode d’écoute: Toutes les interfaces réseau/)
+    assert.match(report, /ipv4\/Réseau:/)
+  })
+
+  it("identifies a specific interface and omits its unreachable loopback candidate", () => {
+    const report = buildDiagnosticReport(
+      { ...meta, host: "192.168.1.20", addresses: meta.addresses },
+      "Linux x86_64",
+      { host: "electron", platform: "desktop", windowContext: "local" },
+      labels,
+      new Date("2026-08-10T12:00:00.000Z"),
+    )
+
+    assert.match(report, /Listening mode: specific/)
+    assert.match(report, /Candidate addresses: 1/)
+    assert.doesNotMatch(report, /https:\/\/127\.0\.0\.1:9898/)
+  })
+
+  it("retains only the configured concrete loopback address", () => {
+    const report = buildDiagnosticReport(
+      {
+        ...meta,
+        host: "127.0.0.2",
+        listeningMode: "local",
+        remoteUrl: "https://127.0.0.2:9898",
+        addresses: [
+          { ip: "127.0.0.1", family: "ipv4", scope: "loopback", remoteUrl: "https://127.0.0.1:9898" },
+          { ip: "127.0.0.2", family: "ipv4", scope: "loopback", remoteUrl: "https://127.0.0.2:9898" },
+        ],
+      },
+      "Windows x64",
+      { host: "electron", platform: "desktop", windowContext: "local" },
+      labels,
+      new Date("2026-08-10T12:00:00.000Z"),
+    )
+
+    assert.match(report, /Listening mode: local/)
+    assert.match(report, /Candidate addresses: 1/)
+    assert.match(report, /https:\/\/127\.0\.0\.2:9898/)
+    assert.doesNotMatch(report, /https:\/\/127\.0\.0\.1:9898/)
+  })
+
+  it("recognizes expanded IPv6 wildcards and concrete IPv6 loopback binds", () => {
+    const wildcard = buildDiagnosticReport(
+      { ...meta, host: "0:0:0:0:0:0:0:0", addresses: [] },
+      "Linux arm64",
+      { host: "tauri", platform: "desktop", windowContext: "local" },
+      labels,
+      new Date("2026-08-10T12:00:00.000Z"),
+    )
+    const loopback = buildDiagnosticReport(
+      {
+        ...meta,
+        host: "::1",
+        listeningMode: "local",
+        remoteUrl: "https://[::1]:9898",
+        addresses: [
+          { ip: "127.0.0.1", family: "ipv4", scope: "loopback", remoteUrl: "https://127.0.0.1:9898" },
+          { ip: "::1", family: "ipv6", scope: "loopback", remoteUrl: "https://[::1]:9898" },
+        ],
+      },
+      "Linux arm64",
+      { host: "tauri", platform: "desktop", windowContext: "local" },
+      labels,
+      new Date("2026-08-10T12:00:00.000Z"),
+    )
+
+    assert.match(wildcard, /Listening mode: all/)
+    assert.match(loopback, /Listening mode: local/)
+    assert.match(loopback, /ipv6\/loopback: https:\/\/\[::1\]:9898/)
+    assert.doesNotMatch(loopback, /https:\/\/127\.0\.0\.1:9898/)
+  })
+})
+
+describe("buildBugReportEnvironment", () => {
+  it("reports differing versions and the web browser without network or path details", () => {
+    const environment = buildBugReportEnvironment({ ...meta, ui: { version: "1.2.4-dev", source: "downloaded" } }, "Windows x64",
+      { host: "web", platform: "mobile", windowContext: "remote" },
+      { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.28", userAgent: "Mozilla/5.0 Test" })
+    assert.deepEqual(environment, {
+      codenomadVersion: "1.2.3 (UI 1.2.4-dev)",
+      opencodeVersion: "2.0.29 (running daemon 2.0.28)",
+      operatingSystem: "Windows x64",
+      additionalContext: "- Client: Web browser (mobile, remote window)\n- UI source: downloaded\n- Server OS: Linux arm64\n- Browser: Mozilla/5.0 Test",
+    })
+    assert.doesNotMatch(JSON.stringify(environment), /192\.168|127\.0\.0\.1|\/home\/user/)
+  })
+
+  it("keeps a single version and omits the browser agent on desktop hosts", () => {
+    const environment = buildBugReportEnvironment(meta, "macOS arm64", { host: "electron", platform: "desktop", windowContext: "local" },
+      { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.29", userAgent: "Electron UA" })
+    assert.equal(environment.codenomadVersion, "1.2.3")
+    assert.equal(environment.opencodeVersion, "2.0.29")
+    assert.doesNotMatch(environment.additionalContext, /Electron UA/)
+    assert.equal(buildBugReportEnvironment(null, "Unknown", { host: "tauri", platform: "desktop", windowContext: "local" }, {}).opencodeVersion, "")
+  })
+})

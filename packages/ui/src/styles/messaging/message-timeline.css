@@ -1,0 +1,240 @@
+.message-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0rem;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  position: relative;
+  /* Isolate stacking context so sidebar z-indices don't compete with
+     Portals (Command Palette, modals) that live at the body level. */
+  isolation: isolate;
+}
+
+.message-layout--with-timeline {
+  grid-template-columns: minmax(0, 1fr) 40px;
+}
+
+.message-stream-shell {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+ }
+
+
+.message-stream-shell .message-stream {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.message-timeline-sidebar {
+  width: 40px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 100;
+  background-color: var(--surface-secondary);
+  box-shadow: inset 1px 0 var(--border-base);
+}
+
+.message-timeline {
+  --message-timeline-segment-gap: 0.35rem;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow-y: auto;
+  overflow-x: visible;
+  border-radius: 0;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.message-timeline-segment {
+  width: 100%;
+  min-height: 1.25rem;
+  border-radius: 0;
+  border: 1px solid transparent;
+  background-color: transparent;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  opacity: 0.65;
+  transition: opacity 0.2s ease, transform 0.15s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+}
+
+.message-timeline-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* Short, neutral separators distinguish adjacent markers without boxing them. */
+.message-timeline-segment::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  inset-inline: 30%;
+  height: 1px;
+  background-color: var(--border-divider);
+  pointer-events: none;
+}
+
+.message-timeline-segment:is(:hover, :focus-visible, :active, .message-timeline-segment-active)::after {
+  opacity: 0;
+}
+
+.message-timeline-item-spacer {
+  flex: none;
+  width: 100%;
+}
+
+.message-timeline-label {
+  position: relative;
+  z-index: 3;
+  flex: none;
+}
+
+.message-timeline-segment.message-timeline-segment-hidden {
+  display: none !important;
+}
+
+.message-timeline-segment-active {
+  opacity: 1;
+  border-color: currentColor;
+  background-color: var(--selection-neutral-strong-bg);
+}
+
+.message-timeline-segment:hover,
+.message-timeline-segment:focus-visible,
+.message-timeline-segment:active {
+  opacity: 1;
+  border-color: currentColor;
+  background-color: var(--selection-neutral-strong-bg);
+  transform: none;
+  outline: none;
+}
+
+.message-timeline-segment:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--surface-canvas), inset 0 0 0 4px var(--accent-primary);
+}
+
+.message-timeline-user {
+  color: var(--message-user-border);
+}
+
+.message-timeline-assistant {
+  color: var(--message-assistant-border);
+}
+
+.message-timeline-tool {
+  color: var(--message-tool-border);
+}
+
+.message-timeline-reasoning,
+.message-timeline-system {
+  color: var(--text-secondary);
+}
+
+.message-timeline-segment.message-timeline-segment-permission {
+  color: var(--session-status-permission-fg);
+}
+
+.message-timeline-compaction-auto {
+  color: var(--session-status-compacting-fg);
+}
+
+.message-timeline-compaction-manual {
+  color: var(--session-status-compacting-fg);
+}
+
+.message-timeline-label {
+  pointer-events: none;
+}
+
+.message-timeline-label-full {
+  display: none;
+}
+
+.message-timeline-label-short {
+  display: inline-flex;
+  line-height: 1;
+  align-items: center;
+  justify-content: center;
+}
+
+.message-timeline-icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.message-preview {
+  width: 360px;
+  max-height: 420px;
+  overflow: auto;
+  border-radius: 0;
+  border: 1px solid var(--border-base);
+  background-color: var(--surface-overlay);
+  box-shadow: var(--panel-shadow-strong);
+  padding: 0.75rem;
+}
+
+.message-preview .message-item-base {
+  font-size: 0.85rem;
+}
+
+/* Spacing is rendered by the measured item wrapper so virtua can account for it. */
+
+.message-timeline-container {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.message-timeline-segment-search-match {
+  border-color: #eab308 !important;
+  background-color: color-mix(in oklab, #fde047 62%, var(--surface-secondary)) !important;
+  color: #111827 !important;
+  box-shadow: 0 0 0 1px color-mix(in oklab, #eab308 72%, transparent) !important;
+}
+
+.message-timeline-segment-search-active,
+.message-timeline-segment-search-active:hover,
+.message-timeline-segment-search-active:focus-visible {
+  border-color: #ca8a04 !important;
+  background-color: #facc15 !important;
+  color: #111827 !important;
+  box-shadow: 0 0 0 2px #ca8a04, 0 0 0 4px color-mix(in oklab, #facc15 34%, transparent) !important;
+  transform: none !important;
+}
+
+@media (pointer: coarse) {
+  .message-layout--with-timeline {
+    grid-template-columns: minmax(0, 1fr) var(--touch-target-size);
+  }
+
+  .message-timeline-sidebar {
+    width: var(--touch-target-size);
+  }
+
+  .message-timeline-segment {
+    min-height: var(--control-height-sm);
+  }
+}

@@ -1,0 +1,817 @@
+import type { ModelRef, SessionInboxDelivery, SessionInboxUserPayload, SessionMessageInfo, SessionPromptInput } from "@opencode/client"
+import { isSessionBusyError } from "@opencode/client"
+import type { Attachment } from "../types/attachment"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { promptSkills } from "../lib/prompt-skills"
+import { preparePromptDisplayText } from "../lib/prompt-display-metadata"
+import { tGlobal } from "../lib/i18n"
+import { instances } from "./instances"
+import { getRootClient } from "./opencode-client"
+import { pruneMessageContent } from "./session-pruning"
+import { planSessionTechnicalPartDeletion, executeSessionTechnicalPartDeletion } from "./session-history"
+export type { SessionTechnicalPartDeletionPlan } from "./session-history"
+import { canonicalContent } from "../../../server/src/opencode/session-pruning/revision"
+import type { ClientPart } from "../types/message"
+
+import { preferencesOf, setAgentModelPreference } from "./preferences"
+import { beginSessionGenerationAdmission, providers, sessions, setActiveParentSession, withSession } from "./session-state"
+import { createSession } from "./session-api"
+import { showAlertDialog } from "./alerts"
+import type { Session } from "../types/session"
+import { isSessionBusy } from "./session-status"
+import { getDefaultModel, isModelValid } from "./session-models"
+import { updateSessionInfo } from "./message-v2/session-info"
+import { messageStoreBus } from "./message-v2/bus"
+import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
+import { normalizeSessionMessage } from "./message-v2/normalizers"
+import { getLogger } from "../lib/logger"
+import { clearConversationPlaybackForSession } from "./conversation-speech"
+import { syncSessionInstructions } from "./session-instructions"
+import { serializeSessionAction } from "./session-action-queue"
+import { beginGesture } from "./session-surface"
+import { activeSessionId } from "./session-selection-state"
+import { capturePromptAcknowledgement } from "./session-prompt-ack"
+
+const log = getLogger("actions")
+const technicalPartUpdates = new Map<string, { signal: AbortSignal; running: Promise<void> }>()
+
+function admitSessionAction<T>(
+  instanceId: string,
+  sessionId: string,
+  action: (signal: AbortSignal, dispatched: () => void) => Promise<T>,
+  options?: { optimisticGeneration?: boolean },
+): Promise<T> {
+  return serializeSessionAction(instanceId, sessionId, async (signal) => {
+    const admission = options?.optimisticGeneration === false
+      ? undefined
+      : beginSessionGenerationAdmission(instanceId, sessionId)
+    let dispatched = false
+    try {
+      const result = await action(signal, () => { dispatched = true })
+      admission?.complete()
+      return result
+    } catch (error) {
+      if (signal.aborted && dispatched) admission?.complete()
+      else admission?.rollback()
+      throw error
+    }
+  })
+}
+
+// One creation at a time per instance for user-triggered entries (sidebar
+// button, new-session hotkey, command palette): while the action's creation is
+// pending, further triggers are ignored instead of stacking duplicate requests.
+// The guard deliberately lives at the UI-action layer, not in createSession:
+// distinct flows such as the draft composer's first-prompt creation call
+// createSession directly and stay independent, and every call keeps sending its
+// own request with its own model/generation.
+const pendingNewSessions = new Map<string, { signal: AbortSignal; running: Promise<Session | null> }>()
+
+/**
+ * Creates and activates a new session for a user-triggered entry point (sidebar
+ * button, new-session hotkey, command palette). Failures — including a rejected
+ * create request on a stalled network — surface as an alert instead of silence.
+ * Returns the created session even when a newer gesture supersedes selection, or null when creation failed.
+ */
+function startNewSession(instanceId: string, agent?: string): Promise<Session | null> {
+  const operation = captureBackendOperation(instanceId)
+  const pending = pendingNewSessions.get(instanceId)
+  if (pending?.signal === operation.signal) return pending.running
+  const intent = beginGesture({ instanceId, sessionId: activeSessionId().get(instanceId) ?? null })
+  const attempt = (async () => {
+    try {
+      operation.signal.throwIfAborted()
+      const session = await createSession(instanceId, agent)
+      if (!operation.current()) return session
+      setActiveParentSession(instanceId, session.id, intent)
+      return session
+    } catch (error) {
+      if (!operation.current()) return null
+      log.error("Failed to create session:", error)
+      showAlertDialog(tGlobal("sessionList.actions.newSession.failedMessage"), {
+        title: tGlobal("sessionList.actions.newSession.failedTitle"),
+        variant: "error",
+      })
+      return null
+    }
+  })().finally(() => {
+    if (pendingNewSessions.get(instanceId)?.running === attempt) pendingNewSessions.delete(instanceId)
+  })
+  pendingNewSessions.set(instanceId, { signal: operation.signal, running: attempt })
+  return attempt
+}
+
+export function stageSessionRevert(instanceId: string, sessionId: string, messageId: string): Promise<void> {
+  const owner = instances().get(instanceId)?.client
+  return serializeSessionAction(instanceId, sessionId, async (signal) => {
+    const assertCurrent = () => {
+      signal.throwIfAborted()
+      if (!owner || instances().get(instanceId)?.client !== owner || !sessions().get(instanceId)?.has(sessionId)) {
+        throw new Error("Instance not ready")
+      }
+    }
+    assertCurrent()
+    const client = getRootClient(instanceId)
+    const input = { sessionID: sessionId, messageID: messageId }
+    const options = { signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) }
+    try {
+      await client.session.revert.stage(input, options)
+    } catch (error) {
+      // The native response, not potentially stale UI status, decides whether
+      // interruption is required. Idle undo never interrupts another session.
+      if (!isSessionBusyError(error)) throw error
+      assertCurrent()
+      await client.session.interrupt({ sessionID: sessionId, resume: false }, options)
+      assertCurrent()
+      // Interrupt acknowledges acceptance before execution cleanup settles.
+      await client.session.wait({ sessionID: sessionId }, options)
+      assertCurrent()
+      await client.session.revert.stage(input, options)
+    }
+    if (!signal.aborted) assertCurrent()
+  })
+}
+
+function serializeTechnicalPartUpdate(
+  instanceId: string,
+  sessionId: string,
+  messageId: string,
+  update: () => Promise<void>,
+): Promise<void> {
+  const operation = captureBackendOperation(instanceId)
+  const key = `${instanceId}:${sessionId}:${messageId}`
+  const previous = technicalPartUpdates.get(key)
+  const current = (previous?.signal === operation.signal ? previous.running : Promise.resolve()).catch(() => undefined).then(() => {
+    operation.signal.throwIfAborted()
+    return update()
+  })
+  const settled = current.finally(() => {
+    if (technicalPartUpdates.get(key)?.running === settled) technicalPartUpdates.delete(key)
+  })
+  technicalPartUpdates.set(key, { signal: operation.signal, running: settled })
+  return settled
+}
+
+function getVariantKeysForModel(instanceId: string, model: { providerId: string; modelId: string }): string[] {
+  if (!model.providerId || !model.modelId) return []
+  const instanceProviders = providers().get(instanceId) || []
+  const provider = instanceProviders.find((p) => p.id === model.providerId)
+  const match = provider?.models.find((m) => m.id === model.modelId)
+  return match?.variantKeys ?? []
+}
+
+function getThinkingVariantToSend(instanceId: string, model: { providerId: string; modelId: string }): string | undefined {
+  const selected = preferencesOf(instanceId).getModelThinkingSelection(model)
+  if (!selected) return undefined
+  const keys = getVariantKeysForModel(instanceId, model)
+  if (keys.length === 0) return undefined
+  return keys.includes(selected) ? selected : undefined
+}
+
+function getNativeModel(instanceId: string, model: { providerId: string; modelId: string }): ModelRef {
+  const nativeModel: ModelRef = { providerID: model.providerId, id: model.modelId }
+  const variant = getThinkingVariantToSend(instanceId, model)
+  if (variant) nativeModel.variant = variant
+  return nativeModel
+}
+
+function getAgentMention(text: string, name: string): { start: number; end: number; text: string } | undefined {
+  const mentionText = `@${name}`
+  const start = text.indexOf(mentionText)
+  return start < 0 ? undefined : { start, end: start + mentionText.length, text: mentionText }
+}
+
+const ID_LENGTH = 26
+const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+let lastTimestamp = 0
+let localCounter = 0
+
+function randomBase62(length: number): string {
+  let result = ""
+  const cryptoObj = (globalThis as unknown as { crypto?: Crypto }).crypto
+  if (cryptoObj && typeof cryptoObj.getRandomValues === "function") {
+    const bytes = new Uint8Array(length)
+    cryptoObj.getRandomValues(bytes)
+    for (let i = 0; i < length; i++) {
+      result += BASE62_CHARS[bytes[i] % BASE62_CHARS.length]
+    }
+  } else {
+    for (let i = 0; i < length; i++) {
+      const idx = Math.floor(Math.random() * BASE62_CHARS.length)
+      result += BASE62_CHARS[idx]
+    }
+  }
+  return result
+}
+
+function createId(prefix: string): string {
+  const timestamp = Date.now()
+  if (timestamp !== lastTimestamp) {
+    lastTimestamp = timestamp
+    localCounter = 0
+  }
+  localCounter++
+
+  const value = (BigInt(timestamp) << BigInt(12)) + BigInt(localCounter)
+  const bytes = new Array<number>(6)
+  for (let i = 0; i < 6; i++) {
+    const shift = BigInt(8 * (5 - i))
+    bytes[i] = Number((value >> shift) & BigInt(0xff))
+  }
+  const hex = bytes.map((b) => b.toString(16).padStart(2, "0")).join("")
+  const random = randomBase62(ID_LENGTH - 12)
+
+  return `${prefix}_${hex}${random}`
+}
+
+async function sendMessage(
+  instanceId: string,
+  sessionId: string,
+  prompt: string,
+  attachments: Attachment[] = [],
+  options: { delivery?: SessionInboxDelivery | (() => SessionInboxDelivery); restoredPayload?: SessionInboxUserPayload;
+    pendingDelivery?: SessionInboxDelivery; preserveNativeProfile?: boolean;
+    admissionCurrent?: () => boolean; prepareAdmission?: () => Promise<void> } = {},
+): Promise<string> {
+  const operation = captureBackendOperation(instanceId, undefined, options.admissionCurrent)
+  operation.signal.throwIfAborted()
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const instanceSessions = sessions().get(instanceId)
+  const session = instanceSessions?.get(sessionId)
+  if (!session) {
+    throw new Error("Session not found")
+  }
+
+  const messageId = createId("msg")
+  const textPartId = createId("prt")
+
+  const preparedPrompt = preparePromptDisplayText(prompt, attachments)
+  const skills = promptSkills(attachments, preparedPrompt.promptToSend, options.restoredPayload)
+  const restoredDisplayText = options.restoredPayload?.metadata?.displayText
+  if (typeof restoredDisplayText === "string" && options.restoredPayload?.text.startsWith(restoredDisplayText)) {
+    preparedPrompt.promptToSend += options.restoredPayload.text.slice(restoredDisplayText.length)
+  }
+  const optimisticParts: any[] = [
+    {
+      id: textPartId,
+      type: "text" as const,
+      text: preparedPrompt.promptToSend,
+      renderCache: undefined,
+    },
+  ]
+
+  const files: Array<NonNullable<SessionPromptInput["files"]>[number]> = []
+  const agents: Array<NonNullable<SessionPromptInput["agents"]>[number]> = []
+  const remapMention = (mention: { text: string } | undefined) => {
+    if (!mention) return undefined
+    const start = prompt.indexOf(mention.text)
+    return start < 0 ? undefined : { text: mention.text, start, end: start + mention.text.length }
+  }
+  const restoredFiles = [...(options.restoredPayload?.files ?? [])]
+
+  if (attachments.length > 0) {
+    for (const att of attachments) {
+      const source = att.source
+      if (source.type === "file") {
+        const partId = createId("prt")
+        const restoredIndex = restoredFiles.findIndex((file) => {
+          const uri = file.source.type === "uri" ? file.source.uri : `data:${file.mime};base64,${file.data}`
+          return uri === att.url
+        })
+        const restored = restoredIndex < 0 ? undefined : restoredFiles.splice(restoredIndex, 1)[0]
+        const mention = remapMention(restored?.mention)
+        files.push({
+          uri: att.url,
+          name: att.filename,
+          ...(restored?.description ? { description: restored.description } : {}),
+          ...(mention ? { mention } : {}),
+        })
+        optimisticParts.push({
+          id: partId,
+          type: "file" as const,
+          url: att.url,
+          mime: source.mime,
+          filename: att.filename,
+          synthetic: true,
+        })
+      } else if (source.type === "skill") {
+        optimisticParts.push({ id: createId("prt"), type: "skill", skillId: source.id, name: source.name })
+      } else if (source.type === "agent") {
+        const mention = getAgentMention(preparedPrompt.promptToSend, source.name)
+          ?? remapMention(options.restoredPayload?.agents?.find((agent) => agent.name === source.name)?.mention)
+        if (!agents.some((agent) => agent.name === source.name)) {
+          agents.push({ name: source.name, ...(mention ? { mention } : {}) })
+        }
+      } else if (source.type === "text") {
+        const display: string | undefined = att.display
+        const value: unknown = source.value
+        const isPastedPlaceholder = typeof display === "string" && /^pasted #\d+/.test(display)
+        const isPathPlaceholder = typeof display === "string" && /^path:/.test(display)
+
+        // Skip path: attachments from being sent as separate parts (content is already in prompt)
+        // Skip pasted placeholders too (already resolved in prompt)
+        if (isPastedPlaceholder || isPathPlaceholder || typeof value !== "string") {
+          continue
+        }
+
+        const partId = createId("prt")
+        preparedPrompt.promptToSend += `\n\n${value}`
+        optimisticParts.push({
+          id: partId,
+          type: "text" as const,
+          text: value,
+          renderCache: undefined,
+        })
+      }
+    }
+  }
+
+  const store = messageStoreBus.getOrCreate(instanceId)
+  let projected = false
+  const resolveDelivery = typeof options.delivery === "function" ? options.delivery : undefined
+  let delivery = typeof options.delivery === "function" ? undefined : options.delivery
+  function projectSend() {
+    const existing = projected ? store.getMessage(messageId) : undefined
+    if (existing?.status === "sending") return
+    const now = Date.now()
+    store.upsertMessage({
+      id: messageId,
+      sessionId,
+      role: "user",
+      status: "sending",
+      parts: optimisticParts,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      isEphemeral: true,
+      clientPromptDisplayMetadata: preparedPrompt.displayMetadata,
+    })
+    store.markSendPending(messageId)
+    projected = true
+  }
+  function reconcileSend() {
+    clearConversationPlaybackForSession(instanceId, sessionId)
+    if (delivery === "queue") {
+      if (projected) store.removeMessage(messageId, sessionId)
+      projected = false
+    } else {
+      projectSend()
+      store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
+    }
+  }
+  if (!options.prepareAdmission) {
+    if (!resolveDelivery) reconcileSend()
+    // Show the draft's immediate echo without dropping an old row until admission commits to steering.
+    else if (options.pendingDelivery === "steer") projectSend()
+  }
+
+  withSession(instanceId, sessionId, () => {
+    /* trigger reactivity for legacy session data */
+  })
+
+  const requestBody = {
+    // Send the optimistic message id so the server confirms THIS send under
+    // the same id. Hydration then reconciles by identity (same id in the
+    // snapshot) instead of content matching, and the SSE echo updates the
+    // existing record in place — no duplicate bubble, no ambiguity between
+    // identical texts.
+    id: messageId,
+    text: preparedPrompt.promptToSend,
+    ...(files.length > 0 ? { files } : {}),
+    ...(agents.length > 0 ? { agents } : {}),
+    ...(skills.length ? { skills } : {}),
+    ...(options.restoredPayload ? { metadata: { ...options.restoredPayload.metadata, displayText: prompt } } : {}),
+  }
+
+  try {
+    return await admitSessionAction(instanceId, sessionId, async (signal, dispatched) => {
+      const assertCurrent = () => {
+        signal.throwIfAborted()
+        if (!operation.current()) throw new Error("Session action view changed")
+      }
+      // Preparation can establish the view predicate (for example, load the latest message window).
+      operation.signal.throwIfAborted()
+      if (options.prepareAdmission) await options.prepareAdmission()
+      assertCurrent()
+      const currentInstance = instances().get(instanceId)
+      const currentSession = sessions().get(instanceId)?.get(sessionId)
+      if (!currentInstance?.client) throw new Error("Instance not ready")
+      if (!currentSession) throw new Error("Session not found")
+      const client = getRootClient(instanceId)
+      await syncSessionInstructions(client, instanceId, sessionId, signal, operation.current)
+      assertCurrent()
+      if (resolveDelivery) {
+        delivery = resolveDelivery()
+      }
+      if (resolveDelivery || options.prepareAdmission) reconcileSend()
+      if (delivery !== "queue" && !options.preserveNativeProfile) {
+        if (currentSession.agent) await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent }, { signal })
+        assertCurrent()
+        if (currentSession.model.providerId && currentSession.model.modelId) {
+          await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, currentSession.model) }, { signal })
+        }
+      }
+      assertCurrent()
+      const input = { sessionID: sessionId, ...requestBody, ...(delivery ? { delivery } : {}),
+        ...(delivery === "queue" ? { resume: false } : {}) }
+      log.info("session.prompt", { instanceId, sessionId, requestBody: input })
+      const onAccepted = delivery !== "queue" ? capturePromptAcknowledgement(instanceId, sessionId) : undefined
+      dispatched()
+      const result = await client.session.prompt(input, { signal })
+      const confirmedId = result?.id || messageId
+      if (signal.aborted || operation.signal.aborted) return confirmedId
+      onAccepted?.()
+      if (projected && confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
+      if (projected) store.acceptSend(confirmedId)
+      return confirmedId
+    })
+  } catch (error) {
+    if (!operation.signal.aborted && projected) store.failSend(messageId)
+    log.error("Failed to send prompt", error)
+    throw error
+  }
+}
+
+async function executeCustomCommand(
+  instanceId: string,
+  sessionId: string,
+  commandName: string,
+  args: string,
+): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) {
+    throw new Error("Session not found")
+  }
+
+  await admitSessionAction(instanceId, sessionId, async (signal) => {
+    if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
+    if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
+    const client = getRootClient(instanceId)
+    await syncSessionInstructions(client, instanceId, sessionId, signal)
+    signal.throwIfAborted()
+    await client.session.command({ sessionID: sessionId, name: commandName, text: args, delivery: "steer" }, { signal })
+  }, { optimisticGeneration: false })
+}
+
+async function runShellCommand(instanceId: string, sessionId: string, command: string): Promise<void> {
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) {
+    throw new Error("Session not found")
+  }
+
+  await admitSessionAction(instanceId, sessionId, async (signal, dispatched) => {
+    if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
+    if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
+    const client = getRootClient(instanceId)
+    await syncSessionInstructions(client, instanceId, sessionId, signal)
+    signal.throwIfAborted()
+    dispatched()
+    await client.session.shell({ sessionID: sessionId, command }, { signal })
+  })
+}
+
+async function abortSession(instanceId: string, sessionId: string): Promise<void> {
+  const { signal } = captureBackendOperation(instanceId)
+  signal.throwIfAborted()
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const client = getRootClient(instanceId)
+
+  log.info("abortSession", { instanceId, sessionId })
+
+  try {
+    // Match the TUI: interrupt the selected execution, not its session tree.
+    // Cancelling background children can publish completion notifications that
+    // wake this parent again after its interruption has already settled.
+    log.info("session.interrupt", { instanceId, sessionId })
+    await client.session.interrupt({ sessionID: sessionId, resume: true }, { signal })
+    log.info("abortSession complete", { instanceId, sessionId })
+  } catch (error) {
+    log.error("Failed to abort session", error)
+    throw error
+  }
+}
+
+// Selection and prompt setup both write native session context. Order the
+// entire operation (including its local snapshot/rollback) with admissions so
+// a prompt waiting on instructions cannot later overwrite a successful choice.
+function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
+  return serializeSessionAction(instanceId, sessionId, (signal) => applySessionAgent(instanceId, sessionId, agent, signal))
+}
+
+async function applySessionAgent(instanceId: string, sessionId: string, agent: string, signal: AbortSignal): Promise<void> {
+  const instanceSessions = sessions().get(instanceId)
+  const session = instanceSessions?.get(sessionId)
+  if (!session) {
+    throw new Error("Session not found")
+  }
+
+  const nextModel = await getDefaultModel(instanceId, agent)
+  signal.throwIfAborted()
+  const shouldApplyModel = isModelValid(instanceId, nextModel)
+  const previousAgent = session.agent
+  const previousModel = session.model
+
+  withSession(instanceId, sessionId, (current) => {
+    current.agent = agent
+    if (shouldApplyModel) {
+      current.model = nextModel
+    }
+  })
+
+  try {
+    if (!isSessionBusy(instanceId, sessionId)) {
+      await getRootClient(instanceId).session.switchAgent({ sessionID: sessionId, agent }, { signal })
+      if (signal.aborted) return
+      if (shouldApplyModel) {
+        await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, nextModel) }, { signal })
+      }
+    }
+  } catch (error) {
+    if (signal.aborted) throw error
+    withSession(instanceId, sessionId, (current) => {
+      if (current.agent !== agent) return false
+      current.agent = previousAgent
+      if (
+        shouldApplyModel &&
+        current.model.providerId === nextModel.providerId &&
+        current.model.modelId === nextModel.modelId
+      ) {
+        current.model = previousModel
+      }
+    })
+    throw error
+  }
+
+  if (signal.aborted) return
+  if (agent && shouldApplyModel) {
+    await setAgentModelPreference(instanceId, agent, nextModel)
+  }
+
+  if (!signal.aborted && shouldApplyModel) {
+    updateSessionInfo(instanceId, sessionId)
+  }
+}
+
+function updateSessionModel(
+  instanceId: string,
+  sessionId: string,
+  model: { providerId: string; modelId: string },
+): Promise<void> {
+  return serializeSessionAction(instanceId, sessionId, (signal) => applySessionModel(instanceId, sessionId, model, signal))
+}
+
+async function applySessionModel(
+  instanceId: string,
+  sessionId: string,
+  model: { providerId: string; modelId: string },
+  signal: AbortSignal,
+): Promise<void> {
+  const instanceSessions = sessions().get(instanceId)
+  const session = instanceSessions?.get(sessionId)
+  if (!session) {
+    throw new Error("Session not found")
+  }
+
+  if (!isModelValid(instanceId, model)) {
+    log.warn("Invalid model selection", model)
+    return
+  }
+
+  withSession(instanceId, sessionId, (current) => {
+    current.model = model
+    current.modelSelectionPending = true
+  })
+
+  const nativeModel = getNativeModel(instanceId, model)
+  const releasePending = () => withSession(instanceId, sessionId, (current, previous) => {
+    if (previous.model !== model || !current.modelSelectionPending) return false
+    delete current.modelSelectionPending
+  })
+  try {
+    // Native model selection is supported during execution too. Keeping this
+    // local until the next prompt lets a session refresh restore the old model.
+    await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel }, { signal })
+    if (signal.aborted) { releasePending(); return }
+    withSession(instanceId, sessionId, (current) => {
+      // Confirmation is a new selection revision even if its values match the
+      // optimistic choice. Catalog reads started during the write captured that
+      // earlier object and must not publish their pre-write native model later.
+      current.model = { ...model }
+      delete current.modelSelectionPending
+    })
+  } catch (error) {
+    if (signal.aborted) { releasePending(); throw error }
+    withSession(instanceId, sessionId, (current) => {
+      delete current.modelSelectionPending
+      if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return
+      current.model = session.model
+    })
+    throw error
+  }
+
+  if (session.agent) {
+    await setAgentModelPreference(instanceId, session.agent, model)
+  }
+  if (signal.aborted) return
+  preferencesOf(instanceId).addRecentModelPreference(model)
+
+  updateSessionInfo(instanceId, sessionId)
+}
+
+async function renameSession(instanceId: string, sessionId: string, nextTitle: string): Promise<void> {
+  const operation = captureBackendOperation(instanceId)
+  operation.signal.throwIfAborted()
+  const instance = instances().get(instanceId)
+  if (!instance || !instance.client) {
+    throw new Error("Instance not ready")
+  }
+
+  const client = getRootClient(instanceId)
+
+  const session = sessions().get(instanceId)?.get(sessionId)
+  if (!session) {
+    throw new Error("Session not found")
+  }
+
+  const trimmedTitle = nextTitle.trim()
+  if (!trimmedTitle) {
+    throw new Error("Session title is required")
+  }
+
+  await client.session.update({ sessionID: sessionId, title: trimmedTitle }, { signal: operation.signal })
+  if (!operation.current()) return
+
+  withSession(instanceId, sessionId, (current) => {
+    current.title = trimmedTitle
+    const time = { ...(current.time ?? {}) }
+    time.updated = Date.now()
+    current.time = time
+  })
+}
+
+async function compactSession(instanceId: string, sessionId: string): Promise<void> {
+  await admitSessionAction(instanceId, sessionId, async (signal, dispatched) => {
+    if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
+    if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
+    dispatched()
+    await getRootClient(instanceId).session.compact({ sessionID: sessionId }, { signal })
+  })
+}
+
+function applyUpdatedMessage(instanceId: string, sessionId: string, source: SessionMessageInfo): void {
+  const { message, info } = normalizeSessionMessage(sessionId, source)
+  const store = messageStoreBus.getOrCreate(instanceId)
+  store.upsertMessage({
+    id: message.id,
+    sessionId: message.sessionId,
+    role: message.type,
+    status: message.status,
+    createdAt: message.timestamp,
+    updatedAt: message.timestamp,
+    parts: message.parts,
+  })
+  store.setMessageInfo(info.id, info)
+}
+
+function technicalPartIdentity(part: ClientPart | undefined): string | undefined {
+  if (part?.type === "tool") return canonicalContent({ type: part.type, id: part.id })
+  if (part?.type !== "reasoning") return undefined
+  // Only strip client decoration. In particular, opaque provider state and
+  // absent timestamps are identity evidence, not wildcards. Canonicalization
+  // tolerates object key reordering without weakening the payload comparison.
+  const { id, sessionID, messageID, renderCache, pendingPermission, ...content } = part
+  return canonicalContent(content)
+}
+
+async function deleteSelectedMessageTechnicalParts(
+  instanceId: string,
+  sessionId: string,
+  messageId: string,
+  partIds: string[],
+): Promise<void> {
+  const operation = captureBackendOperation(instanceId)
+  const record = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
+  const targets = Array.from(new Set(partIds)).map((partId) => ({
+    partId,
+    part: record?.parts[partId]?.data,
+    identity: technicalPartIdentity(record?.parts[partId]?.data),
+  }))
+  if (record?.sessionId !== sessionId || record.role !== "assistant" || !["complete", "error"].includes(record.status)
+    || targets.length === 0
+    || targets.some(({ part }) => part?.type !== "tool" && part?.type !== "reasoning")) {
+    throw new Error(tGlobal("session.pruning.not_deletable"))
+  }
+
+  const originalIdentities = record.partIds.map((id) => technicalPartIdentity(record.parts[id]?.data))
+  if (targets.some(({ identity }) => identity === undefined
+    || originalIdentities.filter((candidate) => candidate === identity).length !== 1)) {
+    // A duplicate in the selected snapshot stays ambiguous even if another
+    // client removes one occurrence before our read. Never select its survivor.
+    throw new Error(tGlobal("session.pruning.conflict"))
+  }
+
+  return serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
+    operation.signal.throwIfAborted()
+    const client = getRootClient(instanceId)
+    const message = await client.session.message.get({ sessionID: sessionId, messageID: messageId }, { signal: operation.signal })
+    operation.signal.throwIfAborted()
+    if (message.type !== "assistant" || !message.time.completed) {
+      throw new Error(tGlobal("session.pruning.not_deletable"))
+    }
+    const freshIdentities = normalizeSessionMessage(sessionId, message).message.parts.map(technicalPartIdentity)
+    const indexes = new Set(targets.map((selected) => {
+      const matches = freshIdentities.flatMap((identity, index) => identity === selected.identity ? [index] : [])
+      // Local array positions can be stale after another client's prune. Never
+      // guess between duplicate reasoning blocks without a stable identity.
+      return matches.length === 1 ? matches[0] : -1
+    }))
+    if (indexes.has(-1)) {
+      throw new Error(tGlobal("session.pruning.conflict"))
+    }
+
+    await pruneMessageContent(instanceId, sessionId, message, [...indexes], (updated) => applyUpdatedMessage(instanceId, sessionId, updated), operation.signal)
+  })
+}
+
+async function deleteMessagePart(instanceId: string, sessionId: string, messageId: string, partId: string): Promise<void> {
+  await deleteSelectedMessageTechnicalParts(instanceId, sessionId, messageId, [partId])
+}
+
+async function deleteMessageTechnicalParts(instanceId: string, sessionId: string, messageId: string, partIds?: string[]): Promise<void> {
+  const operation = captureBackendOperation(instanceId)
+  if (partIds) {
+    await deleteSelectedMessageTechnicalParts(instanceId, sessionId, messageId, partIds)
+    return
+  }
+  await serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
+    operation.signal.throwIfAborted()
+    const client = getRootClient(instanceId)
+    const message = await client.session.message.get({ sessionID: sessionId, messageID: messageId }, { signal: operation.signal })
+    operation.signal.throwIfAborted()
+    if (message.type !== "assistant" || !message.time.completed) throw new Error(tGlobal("session.pruning.not_deletable"))
+    const content = message.content.filter((part) => part.type !== "tool" && part.type !== "reasoning")
+    if (content.length === message.content.length) return
+    const indexes = message.content.flatMap((part, index) => part.type === "tool" || part.type === "reasoning" ? [index] : [])
+    await pruneMessageContent(instanceId, sessionId, message, indexes, (updated) => applyUpdatedMessage(instanceId, sessionId, updated), operation.signal)
+  })
+}
+
+async function deleteTechnicalPartGroup(
+  instanceId: string,
+  sessionId: string,
+  parts: Array<{ messageId: string; partId: string }>,
+): Promise<void> {
+  const operation = captureBackendOperation(instanceId)
+  const byMessage = new Map<string, string[]>()
+  for (const part of parts) {
+    const partIds = byMessage.get(part.messageId) ?? []
+    partIds.push(part.partId)
+    byMessage.set(part.messageId, partIds)
+  }
+  for (const [messageId, partIds] of byMessage) {
+    operation.signal.throwIfAborted()
+    await deleteMessageTechnicalParts(instanceId, sessionId, messageId, partIds)
+  }
+}
+
+async function backgroundSession(instanceId: string, sessionId: string): Promise<void> {
+  const { signal } = captureBackendOperation(instanceId)
+  signal.throwIfAborted()
+  await getRootClient(instanceId).session.background({ sessionID: sessionId }, { signal })
+}
+
+export {
+  abortSession,
+  backgroundSession,
+  executeCustomCommand,
+  compactSession,
+  deleteMessagePart,
+  deleteMessageTechnicalParts,
+  deleteTechnicalPartGroup,
+  executeSessionTechnicalPartDeletion,
+  planSessionTechnicalPartDeletion,
+  renameSession,
+  runShellCommand,
+  sendMessage,
+  startNewSession,
+  updateSessionAgent,
+  updateSessionModel,
+}

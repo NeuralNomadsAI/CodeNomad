@@ -1,0 +1,82 @@
+/* components/settings/data-profiles-settings.tsx: the profiles folded in the startup
+   card, one row each, the next launch's chosen by radio. */
+.profile-manager-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.profile-manager-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) 0;
+  border-top: 1px solid var(--border-row);
+}
+
+.profile-manager-entry:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.profile-manager-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.profile-manager-choice > input {
+  margin-top: 0.2rem;
+  accent-color: var(--accent-primary);
+}
+
+.profile-manager-choice:has(> input:disabled) {
+  cursor: default;
+}
+
+.profile-manager-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.profile-manager-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.profile-manager-tag {
+  margin-inline-start: var(--space-sm);
+  font-weight: normal;
+  color: var(--text-muted);
+}
+
+.profile-manager-meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.profile-manager-actions,
+.profile-manager-restart {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  margin-top: var(--space-sm);
+}
+
+.profile-manager-actions {
+  justify-content: space-between;
+}
+
+.profile-manager-new {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}

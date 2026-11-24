@@ -1,0 +1,29 @@
+{
+  "name": "@neuralnomads/codenomad-session-pruning",
+  "version": "0.1.0-experimental.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./rpc": "./contract.ts"
+  },
+  "files": [
+    "index.ts", "claim-fence.ts", "contract.ts", "database-path.ts", "location.ts", "planner.ts", "plugin.ts",
+    "preview-store.ts", "revision.ts", "service.ts", "storage-path.ts",
+    "history-contract.ts", "history-store.ts", "history-service.ts", "history-content.ts",
+    "history-ranking.ts", "history-ranked-contract.ts", "history-ranked-store.ts", "history-ranked-service.ts",
+    "history-ranked-prefilter.ts", "history-ranked-cursor.ts",
+    "checkout-identity.ts", "history-ranked-ownership.ts",
+    "assets-contract.ts", "assets-store.ts", "media-blob.ts",
+    "assets-gallery-contract.ts", "assets-gallery-proof.ts", "assets-gallery.ts", "assets-conversation.ts",
+    "history-database.ts", "navigation-contract.ts", "navigation-store.ts",
+    "navigation-scope.ts", "outline-index.ts", "outline-layout.ts", "outline-preview.ts",
+    "transaction.ts", "message-storage.ts", "native-assistant-content.ts",
+    "user-files.ts", "user-file-contract.ts", "user-file-reference.ts", "permission-rules-contract.ts"
+  ],
+  "dependencies": {
+    "@opencode/plugin": "2.3.2",
+    "@opencode/schema": "2.3.2",
+    "zod": "^4.6.6"
+  }
+}

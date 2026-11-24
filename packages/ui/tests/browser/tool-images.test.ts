@@ -1,0 +1,192 @@
+import assert from "node:assert/strict"
+import { after, before, test } from "node:test"
+import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
+import { chromium, type Browser, type Page } from "playwright"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+
+let browser: Browser, url: string
+before(async () => {
+  const fixture = await borrowFixture({
+      name: "tool-images",
+      routes: [
+        { path: "/fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/tool-images.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
+})
+after(async () => { await browser?.close() })
+
+async function withPage(run: (page: Page) => Promise<void>) {
+  const page = await browser.newPage({ viewport: { width: 900, height: 1000 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await run(page)
+    assert.deepEqual(errors, [])
+  } catch (error) {
+    console.error("Image fixture failure", errors, await page.locator("main").innerText(),
+      await page.locator(".tool-call-output-images").evaluateAll(elements => elements.map(el => el.outerHTML.slice(0, 1500))))
+    throw error
+  } finally { await page.close() }
+}
+
+/** Event-driven projections coalesce onto the next animation frame. */
+const frames = (page: Page) => page.evaluate(() =>
+  new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+
+async function decodedImages(page: Page, count: number) {  await page.waitForFunction(count => {
+    const images = Array.from(document.querySelectorAll<HTMLImageElement>(".tool-call-output-images img"))
+    return images.length === count && images.every(img => img.complete && img.naturalWidth === 800)
+  }, count)
+  assert.equal((await page.locator("main").innerText()).includes("base64"), false)
+}
+
+test("MCP images render with text on native live completion and historical reload", async () => withPage(async page => {
+  await page.evaluate(() => (window as any).fixture.start())
+  assert.equal(await page.locator(".tool-call-output-images img").count(), 0)
+  await page.evaluate(() => (window as any).fixture.finish())
+  await decodedImages(page, 2)
+  await page.getByText("Generated 2 images. Saved successfully.", { exact: true }).waitFor()
+  assert.equal(await page.getByRole("img", { name: "generated.png", exact: true }).count(), 1)
+  assert.equal(await page.getByRole("img", { name: "Image 2", exact: true }).count(), 1)
+  await page.evaluate(() => (window as any).fixture.reload())
+  await decodedImages(page, 2)
+  await page.setViewportSize({ width: 380, height: 1000 })
+  assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
+  if (process.env.CODENOMAD_IMAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_IMAGE_CAPTURE, fullPage: true })
+}))
+
+test("a Markdown image of a local file shows the transcript's image of that path, never a broken image", async () => withPage(async page => {
+  const answer = page.locator(".fixture-answer")
+  const label = answer.locator('span.markdown-local-image[title="C:/Users/me/Temp/images/sheep.png"]')
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("none"))
+  await answer.getByText("Un petit mouton", { exact: true }).waitFor()
+  assert.equal(await answer.locator("img").count(), 0, "without a transcript image the alt text stays")
+  assert.equal(await answer.locator('span.markdown-local-image[title="C:/Users/me/missing.png"]').innerText(), "Absent")
+
+  // A matching image that fails to load returns to the alt text, never a broken icon.
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("broken"))
+  await answer.locator('span.markdown-local-image[data-failed-source="data:image/png;base64,broken"]').waitFor()
+  assert.equal(await answer.locator("img").count(), 0)
+  assert.equal(await label.innerText(), "Un petit mouton")
+
+  // The read tool's image of that path arrives: the same rendered answer resolves it.
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("valid"))
+  await page.waitForFunction(() => {
+    const image = document.querySelector<HTMLImageElement>(".fixture-answer img.markdown-local-image")
+    return Boolean(image?.complete && image.naturalWidth === 800 && image.alt === "Un petit mouton")
+  })
+  assert.match(await answer.locator("img.markdown-local-image").getAttribute("src") ?? "", /^data:image\/png;base64,/)
+  assert.equal(await answer.locator("span.markdown-local-image").innerText(), "Absent", "an unmatched path keeps its alt text")
+  // Removing the read result removes its image from the answer too.
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("none"))
+  await label.waitFor()
+  assert.equal(await answer.locator("img").count(), 0)
+  assert.equal(await label.innerText(), "Un petit mouton")
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("valid"))
+  await answer.locator("img.markdown-local-image").waitFor()
+  await page.setViewportSize({ width: 380, height: 1000 })
+  assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
+  if (process.env.CODENOMAD_LOCAL_IMAGE_CAPTURE) await answer.screenshot({ path: process.env.CODENOMAD_LOCAL_IMAGE_CAPTURE })
+}))
+
+test("image-only output works for generic and specialized tools and obeys collapse", async () => withPage(async page => {
+  for (const name of ["forge-painter_txt2img", "read"]) {
+    await page.evaluate(name => (window as any).fixture.history("only", name), name)
+    await decodedImages(page, 1)
+    const header = page.locator(".tool-call-header").first()
+    await header.click()
+    assert.equal(await page.locator(".tool-call-output-images img").count(), 0)
+    await header.click()
+    await decodedImages(page, 1)
+  }
+  await page.evaluate(() => (window as any).fixture.history("empty"))
+  await page.getByText("Text-only result", { exact: true }).waitFor()
+  assert.equal(await page.locator(".tool-call-output-images").count(), 0)
+}))
+
+test("failed and unsupported image sources have a fallback and a later replacement recovers", async () => withPage(async page => {
+  for (const kind of ["broken", "unsafe"]) {
+    await page.evaluate(kind => (window as any).fixture.history(kind), kind)
+    await page.getByText("Unable to display this image.", { exact: true }).waitFor()
+    assert.equal(await page.locator(".tool-call-output-images img").count(), 0)
+    assert.equal((await page.locator("main").innerText()).includes("base64"), false)
+    await page.evaluate(() => (window as any).fixture.history("only"))
+    await decodedImages(page, 1)
+  }
+  assert.equal(await page.evaluate(() => (window as any).unexpectedNavigation), undefined)
+}))
+
+test("a tool image deferred by its transcript page loads from CodeNomad's session-media route", async () => withPage(async page => {
+  const { path, base64 } = await page.evaluate(() => (window as any).fixture.deferred()) as { path: string; base64: string }
+  const requested: string[] = []
+  await page.route("**/session-media/**", route => {
+    const pathname = new URL(route.request().url()).pathname
+    requested.push(pathname)
+    return pathname === path ? route.fulfill({ contentType: "image/png", body: Buffer.from(base64, "base64") })
+      : route.fulfill({ status: 404, contentType: "application/json", body: "{}" })
+  })
+  await page.evaluate(() => (window as any).fixture.history("deferred", "read"))
+  await decodedImages(page, 1)
+  assert.deepEqual(requested, [path])
+  assert.equal(await page.getByRole("img", { name: "generated.png", exact: true }).count(), 1)
+  // An image CodeNomad can no longer serve (pruned, undone) gets the fallback.
+  await page.evaluate(() => (window as any).fixture.history("deferred-missing", "read"))
+  await page.getByText("Unable to display this image.", { exact: true }).waitFor()
+  assert.equal(requested.length, 2)
+}))
+
+test("an interrupted shell call shows its output so far as output and only the notice as error", async () => withPage(async page => {
+  await page.evaluate(() => (window as any).fixture.interruptedShell())
+  const error = page.locator(".tool-call-error-content")
+  await error.waitFor()
+  assert.match(await error.textContent() ?? "", /Command interrupted by the user \(shell ID: sh_1\)/)
+  assert.doesNotMatch(await error.textContent() ?? "", /PARTIAL_LINE/)
+  const output = page.locator(".tool-call pre", { hasText: "PARTIAL_LINE_1" }).first()
+  await output.waitFor()
+  assert.match(await output.textContent() ?? "", /npm test\s+PARTIAL_LINE_1\nPARTIAL_LINE_2/)
+}))
+
+test("Code Mode indents a compact JSON result and keeps its logs", async () => withPage(async page => {
+  await page.evaluate(() => (window as any).fixture.execute("json"))
+  const block = page.locator(".tool-call-execute pre", { hasText: '"answer"' }).first()
+  await block.waitFor()
+  const text = await block.textContent() ?? ""
+  assert.match(text, /\{\n\s+"answer": 42,\n\s+"items": \[\n\s+"a",/)
+  assert.match(text, /Logs:\nhello/)
+  assert.doesNotMatch(text, /\{"answer":42/)
+}))
+
+test("Code Mode renders native progress, nested errors, script, images and historical output", async () => withPage(async page => {
+  await page.evaluate(() => (window as any).fixture.execute("running"))
+  await page.locator(".execute-calls").waitFor()
+  assert.equal(await page.locator('.execute-call-status[data-status="running"]').count(), 2)
+  const firstCall = page.locator(".execute-calls summary").first()
+  await firstCall.click()
+  await firstCall.focus()
+  await page.evaluate(() => (window as any).fixture.execute("progress"))
+  await frames(page)
+  assert.equal(await page.locator(".execute-calls li").count(), 3)
+  assert.equal(await page.locator(".execute-calls details").first().getAttribute("open"), "")
+  assert.equal(await firstCall.evaluate(el => el === document.activeElement), true)
+  await page.evaluate(() => (window as any).fixture.execute("complete"))
+  await decodedImages(page, 2)
+  await page.locator('.execute-call-status[data-status="completed"]').waitFor()
+  assert.equal(await page.locator('.execute-calls [data-status="error"]').count(), 1)
+  await page.locator(".execute-calls summary").first().click()
+  await page.getByText('"sky"', { exact: false }).first().waitFor()
+  assert.match(await page.locator(".tool-call-execute").innerText(), /Promise\.all/)
+  assert.match(await page.locator(".tool-call-execute").innerText(), /\/fixture\/output.txt/)
+  await page.evaluate(() => (window as any).fixture.execute("history"))
+  await decodedImages(page, 2)
+  assert.equal(await page.locator('.execute-calls [data-status="error"]').count(), 1)
+  await page.setViewportSize({ width: 380, height: 1000 })
+  assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
+  if (process.env.CODENOMAD_EXECUTE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_EXECUTE_CAPTURE, fullPage: true })
+}))

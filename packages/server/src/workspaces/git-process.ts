@@ -1,0 +1,95 @@
+import { Worker } from "node:worker_threads"
+
+interface GitProcessOptions { timeout?: number; maxBuffer?: number; priority?: "foreground" | "background"; encoding?: "utf8" | "base64"; env?: NodeJS.ProcessEnv }
+interface GitRequest extends GitProcessOptions { id: number; directory: string; args: string[]; env: NodeJS.ProcessEnv }
+interface GitResponse { id: number; stdout: string; stderr: string; error?: { message: string; code?: string | number | null } }
+
+// Even asynchronous execFile spends synchronous time creating a Windows process.
+// Keep that work off the HTTP/SSE thread. The worker is self-contained so the same
+// entry works in compiled desktop resources and TypeScript test runners. The loader
+// is a bound parameter: bundlers rewrite free `require` (esbuild: `__require`), which
+// does not exist in the eval worker and silently made every bundled Git call fail.
+function workerMain(load: NodeJS.Require) {
+  const { parentPort } = load("node:worker_threads") as typeof import("node:worker_threads")
+  const { execFile } = load("node:child_process") as typeof import("node:child_process")
+  const queue: GitRequest[] = []
+  const foreground: GitRequest[] = []
+  let running = 0
+  let bypassed = 0
+  const scheduler = { pump() {
+    while (running < 2 && (foreground.length || queue.length)) {
+      // Bound overtakes: a fresh ownership read can depend on a bulk probe.
+      const nextForeground = foreground.length && (!queue.length || bypassed < 8)
+      const request = (nextForeground ? foreground.shift() : queue.shift())!
+      bypassed = nextForeground && queue.length ? bypassed + 1 : 0
+      running += 1
+      execFile("git", ["-C", request.directory, ...request.args], {
+        encoding: "buffer", windowsHide: true, maxBuffer: request.maxBuffer ?? 1024 * 1024,
+        env: request.env, timeout: request.timeout,
+      }, (error, stdout, stderr) => {
+        parentPort!.postMessage({ id: request.id, stdout: stdout.toString(request.encoding ?? "utf8"), stderr: stderr.toString("utf8"),
+          ...(error ? { error: { message: error.message, code: error.code } } : {}),
+        } satisfies GitResponse)
+        running -= 1
+        scheduler.pump()
+      })
+    }
+  } }
+  parentPort!.on("message", (request: GitRequest) => {
+    const target = request.priority === "foreground" ? foreground : queue
+    target.push(request)
+    scheduler.pump()
+  })
+}
+
+let worker: Worker | undefined
+let sequence = 0
+const pending = new Map<number, { resolve: (stdout: string) => void; reject: (error: Error) => void }>()
+
+function getWorker(): Worker {
+  if (worker) return worker
+  const created = new Worker(`(${workerMain.toString()})(require)`, { eval: true, execArgv: [] })
+  worker = created
+  const failed = (error: Error) => {
+    if (worker !== created) return
+    worker = undefined
+    for (const task of pending.values()) task.reject(error)
+    pending.clear()
+  }
+  created.on("error", failed)
+  created.on("exit", code => failed(new Error(`Git process worker exited (${code})`)))
+  created.on("message", (response: GitResponse) => {
+    const task = pending.get(response.id)
+    if (!task) return
+    pending.delete(response.id)
+    if (response.error) task.reject(Object.assign(new Error(response.error.message), {
+      code: response.error.code, stdout: response.stdout, stderr: response.stderr,
+    }))
+    else task.resolve(response.stdout)
+    if (pending.size === 0) created.unref()
+  })
+  created.unref()
+  return created
+}
+
+export function runWorktreeGit(directory: string, args: string[], timeout?: number, env?: NodeJS.ProcessEnv): Promise<string> {
+  // Ownership and inventory reads must not wait behind an entire display batch.
+  return runGitProcess(directory, args, { timeout, priority: "foreground", env }).then(stdout => stdout.replace(/\r?\n$/, ""))
+}
+
+// Content/diff readers need exact bytes decoded as UTF-8, including the final newline.
+export function runGitProcess(directory: string, args: string[], options: GitProcessOptions = {}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const current = getWorker()
+    const id = ++sequence
+    pending.set(id, { resolve, reject })
+    current.ref()
+    try {
+      current.postMessage({ id, directory, args, ...options, env: { ...process.env, ...options.env } } satisfies GitRequest)
+    } catch (error) {
+      pending.delete(id)
+      if (pending.size === 0) current.unref()
+      reject(error)
+    }
+  })
+}

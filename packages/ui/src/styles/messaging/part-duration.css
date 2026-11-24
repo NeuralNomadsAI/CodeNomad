@@ -1,0 +1,27 @@
+/* Elapsed time in reasoning and tool headers (components/part-duration.tsx).
+ * Always visible but muted, so slow steps can be spotted while scanning. In
+ * tool headers it follows the status ("✓ Completed 12s") through the summary's
+ * own gap, just before the header actions, which reserve their space while
+ * hidden, so nothing moves when they appear on hover. */
+.part-duration {
+  flex: 0 0 auto;
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Short of room (components/tool-status-compaction.ts), the status keeps its
+ * icon and the duration ("✓ 4s") before the title truncates; the word stays in
+ * its tooltip and accessible name, and stays measurable while hidden. */
+.tool-call-header-status {
+  position: relative;
+}
+
+.tool-call-summary[data-status-compact="true"] .tool-call-header-status-label {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}

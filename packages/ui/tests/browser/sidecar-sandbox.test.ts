@@ -1,0 +1,85 @@
+import assert from "node:assert/strict"
+import { after, before, test } from "node:test"
+import { fileURLToPath } from "node:url"
+import { chromium, type Browser, type Page } from "playwright"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { createServer, type ViteDevServer } from "vite"
+import solid from "vite-plugin-solid"
+
+let server: ViteDevServer, browser: Browser, url: string
+before(async () => {
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+    plugins: [shutdown.plugin, solid(), { name: "sidecar-sandbox-fixture", configureServer(s) {
+      s.middlewares.use("/sidecar-sandbox-fixture", async (_req, res) => {
+        res.setHeader("Content-Type", "text/html")
+        res.end(await s.transformIndexHtml("/sidecar-sandbox-fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/sidecar-sandbox.tsx"></script></body></html>'))
+      })
+      for (const path of ["/sidecars/fixture", "/sidecar-sandbox-guest"]) {
+        s.middlewares.use(path, (_req: unknown, res: { setHeader(k: string, v: string): void; end(body: string): void }) => {
+          res.setHeader("Content-Type", "text/html")
+          res.end('<html><body>Sandbox fixture <a id="guest-link" href="https://example.com/guest" target="_blank">guest link</a></body></html>')
+        })
+      }
+    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
+    server: { host: "127.0.0.1", port: 0, allowedHosts: ["insecure.test"], hmr: false, watch: null },
+  }).catch(async error => { await cache.dispose(); throw error })
+  shutdown.own(server)
+  await server.listen()
+  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/sidecar-sandbox-fixture`
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
+})
+after(async () => { await browser?.close(); await server?.close() })
+
+const sandboxTokens = async (page: Page, selector: string): Promise<string[]> =>
+  (await page.locator(`${selector} iframe`).evaluate((frame) =>
+    (frame.getAttribute("sandbox") ?? "").split(" ").filter(Boolean))) as string[]
+
+test("SideCar frames stay same-origin while preview frames remain isolated", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.locator("#sidecar-root iframe").waitFor()
+    await page.locator("#preview-root iframe").waitFor()
+
+    const sidecarSandbox = await sandboxTokens(page, "#sidecar-root")
+    assert.deepEqual(
+      new Set(sidecarSandbox),
+      new Set(["allow-scripts", "allow-forms", "allow-modals", "allow-popups", "allow-downloads", "allow-same-origin"]),
+    )
+
+    const previewSandbox = new Set(await sandboxTokens(page, "#preview-root"))
+    assert.equal(previewSandbox.has("allow-same-origin"), false)
+    assert.equal(previewSandbox.has("allow-scripts"), true)
+    // A remote client's host path capability shares the application origin, so it never gains it either.
+    await page.locator("#path-preview-root iframe").waitFor()
+    assert.equal(new Set(await sandboxTokens(page, "#path-preview-root")).has("allow-same-origin"), false)
+  } finally {
+    await page.close()
+  }
+})
+
+test("in a native Tauri window a SideCar's new-window links open through the host opener; previews stay fenced", async () => {
+  const page = await browser.newPage()
+  await page.context().route("https://example.com/**", route => route.fulfill({ contentType: "text/html", body: "external" }))
+  try {
+    await page.goto(`${url}?tauri`)
+    const popups: string[] = []
+    page.on("popup", popup => { popups.push(popup.url()); void popup.close() })
+    await page.frameLocator("#sidecar-root iframe").locator("#guest-link").click()
+    await page.waitForFunction(() => (window as any).tauriCalls.length > 0)
+    assert.deepEqual(await page.evaluate(() => (window as any).tauriCalls),
+      [{ command: "open_external_url", args: { url: "https://example.com/guest" } }])
+
+    // An opaque preview document has no access to the host opener.
+    await page.frameLocator("#preview-root iframe").locator("#guest-link").click()
+    await page.waitForTimeout(500)
+    assert.equal((await page.evaluate(() => (window as any).tauriCalls)).length, 1)
+    assert.deepEqual(popups, ["https://example.com/guest"], "the preview keeps the browser's own popup")
+  } finally {
+    await page.close()
+  }
+})

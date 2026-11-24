@@ -1,0 +1,11 @@
+::highlight(codenomad-search) {
+  background-color: color-mix(in oklab, #fde047 58%, transparent);
+  color: inherit;
+}
+
+::highlight(codenomad-search-active) {
+  background-color: #facc15;
+  color: #111827;
+  text-decoration: underline;
+  text-decoration-color: #ca8a04;
+}

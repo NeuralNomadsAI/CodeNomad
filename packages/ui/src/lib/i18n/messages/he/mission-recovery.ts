@@ -1,0 +1,10 @@
+export const missionRecoveryMessages = {
+  "missions.recovery.coordinator": "בדיקה ושחזור של המתאם",
+  "missions.recovery.report": "בדיקה ושחזור של הדוח החסר",
+  "missions.recovery.pending": "בודק אם ניתן לבצע שחזור…",
+  "missions.recovery.error.busy": "עבודה פעילה או המתנה שלא נפתרה מונעות שחזור. יש לפתוח את השיחה.",
+  "missions.recovery.error.unknown": "לא ניתן היה לאמת את הפעילות.",
+  "missions.recovery.error.conflict": "המשימה או יעד השחזור השתנו. יש לרענן את המשימה לפני ניסיון נוסף.",
+  "missions.recovery.error.member": "שיחה של משימה זו שייכת כעת למשימה פעילה אחרת. סיימו או עצרו קודם את המשימה ההיא.",
+  "missions.recovery.error.failed": "השחזור טרם אושר. יש לרענן את המשימה לפני ניסיון נוסף.",
+}

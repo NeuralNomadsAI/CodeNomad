@@ -1,0 +1,44 @@
+/* Missions panel header (mission-picker.tsx `MissionPanelHeader`): the panel-wide
+   toolbar (create, preferences, refresh) aligned to the end, then the selection
+   line: its icon toolbar (mounted by mission-action-bar.tsx, or the same buttons
+   disabled while nothing is selected) and the mission filter in the remaining width.
+   No rule between the two lines; one rule under the header (mission-control.css).
+   A panel too narrow for the filter beside the toolbar wraps it onto its own line. */
+.mission-control-header > .mission-picker { display: grid; flex: 1 1 auto; gap: var(--space-xs); min-width: 0; }
+.mission-picker-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; min-width: 0; }
+.mission-picker-selection { display: flex; flex-wrap: wrap-reverse; align-items: center; gap: var(--space-xs); min-width: 0; }
+.mission-picker-selection[hidden] { display: none; }
+.mission-picker-selection-actions > div { display: contents; }
+.mission-picker-selection-actions:empty { display: none; }
+.mission-picker-selection-actions:not(:empty) + .mission-picker-idle-actions { display: none; }
+.mission-picker-idle-actions > .mission-action-feedback { display: none; }
+.mission-picker-search { flex: 1 1 8rem; min-width: 0; min-height: var(--control-height-sm); }
+
+/* Rows (`MissionRows`) reuse the session rows; they span the panel edge to edge.
+   The flag carries the mark on the session status palette (mission-picker-model.ts). */
+.mission-rows { margin-inline: calc(-1 * var(--space-sm)); }
+.mission-rows[hidden] { display: none; }
+.mission-rows > ul { margin: 0; padding: 0; list-style: none; }
+.mission-row-mark { position: relative; display: inline-flex; align-items: flex-start; flex: 0 0 16px; width: 16px; height: 20px; }
+.mission-row-mark[data-mark="waiting"]::after { content: ""; position: absolute; top: 19px; left: 4px; width: 8px; height: 1px; background: var(--text-secondary); }
+.mission-row-flag { color: var(--text-muted); }
+.mission-row-flag[data-mark="working"] { color: var(--session-status-working-fg); }
+.mission-row-flag[data-mark="permission"] { color: var(--session-status-permission-fg); }
+.mission-row-flag[data-mark="done"] { color: var(--session-status-idle-fg); }
+.mission-row-flag:is([data-mark="paused"], [data-mark="interrupted"]) { color: var(--status-warning); }
+.mission-row-flag:is([data-mark="prepared"], [data-mark="waiting"]) { color: var(--accent-primary); }
+/* An expanded row's children: its task rows span the panel like subsession rows,
+   each with its own separator; other content (a schedule's detail, the brief name
+   field, command feedback) is indented under the row. */
+.mission-row-children:empty, .mission-row-children[hidden] { display: none; }
+.mission-row-children > .mission-detail { padding-block: 0; gap: 0; border-block-end: 0; }
+.mission-row-children > :not(.mission-detail, .mission-tree), .mission-row-children > .mission-detail > :not(.mission-tree),
+.mission-row-children .mission-tree > :not(.mission-flow) {
+  padding: var(--space-xs) var(--space-sm) var(--space-xs) calc(var(--space-sm) + var(--space-lg));
+}
+.mission-picker-empty { padding: var(--space-xs) var(--space-sm); color: var(--text-muted); font-size: var(--font-size-xs); }
+.mission-list-paging { display: flex; align-items: center; min-height: 36px; padding: var(--space-xs) var(--space-sm); overflow-anchor: none; }
+
+@media (pointer: coarse) {
+  .mission-picker-search { min-height: var(--touch-target-size); }
+}

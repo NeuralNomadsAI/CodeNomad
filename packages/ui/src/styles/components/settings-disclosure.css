@@ -1,0 +1,66 @@
+/* The single Settings disclosure: secondary content folded below a short,
+   muted summary with the native marker (OpenCode version details model). */
+.settings-disclosure {
+  border-top: 1px solid var(--border-base);
+  padding-top: 0.75rem;
+}
+
+.settings-disclosure > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.settings-disclosure > summary:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 3px;
+}
+
+.settings-disclosure[open] > summary {
+  margin-bottom: 0.75rem;
+}
+
+/* A summary may carry a heading for navigation; it keeps the summary's look. */
+.settings-disclosure > summary > :is(h3, h4) {
+  display: inline;
+  font: inherit;
+  color: inherit;
+}
+
+/* A disclosure that is a whole card (Providers groups, environment variables):
+   the card supplies the spacing and the section separator. */
+.settings-card > .settings-disclosure:only-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+/* Top-level folded groups (Providers): the separator between them spans the
+   whole content pane, and each later group gets the first group's top space. */
+.settings-card.settings-group-card {
+  margin-inline: calc(-1 * var(--settings-scroll-inline-padding, 0px));
+  padding-inline: var(--settings-scroll-inline-padding, 0px);
+}
+
+.settings-group-card + .settings-group-card {
+  padding-top: calc(0.875rem + var(--space-md));
+}
+
+.settings-env-disclosure > summary .settings-env-count {
+  margin-inline-start: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+}
+
+.settings-env-disclosure > summary .settings-scope-badge {
+  float: inline-end;
+}
+
+@media (max-width: 640px) {
+  /* Touch target without changing the summary's visual weight. */
+  .settings-disclosure > summary {
+    min-height: 2.5rem;
+    align-content: center;
+  }
+}

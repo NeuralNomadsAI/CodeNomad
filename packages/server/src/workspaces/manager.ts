@@ -1,0 +1,1344 @@
+import path from "path"
+import { spawnSync } from "child_process"
+import { randomUUID } from "node:crypto"
+import { realpath } from "node:fs/promises"
+import type { Endpoint } from "@opencode/client/service"
+import type { LocationGetOutput, LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode/client"
+import { EventBus } from "../events/bus"
+import type { SettingsService } from "../settings/service"
+import type { BinaryResolver } from "../settings/binaries"
+import { FileSystemBrowser } from "../filesystem/browser"
+import { searchWorkspaceFiles, WorkspaceFileSearchOptions } from "../filesystem/search"
+import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
+import { WorkspaceFileWatches } from "./file-watches"
+import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../api-types"
+import { Logger } from "../logger"
+import {
+  buildServiceLaunchSpec,
+  parseWslUncPath,
+  resolveWslHostDirectory,
+  resolveWslServiceDirectory,
+  type ServiceLaunchSpec,
+} from "./spawn"
+import {
+  HostOpenCodeService,
+  hostOpenCodeServiceIdentity,
+  startupEnvironmentHash,
+} from "./host-opencode-service"
+import {
+  OpenCodeSharedService,
+  type OpenCodeServiceLifecycle,
+  type OpenCodeSharedServiceOptions,
+} from "./opencode-service"
+import { WslOpenCodeService } from "./wsl-opencode-service"
+import { invalidateWorktreeCache, isPathOwnedByWorktree, isPathWithinWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
+import { listNativeWorktrees, createNativeWorktree, removeNativeWorktree } from "./native-worktrees"
+import { initializeNativeGit } from "./git-init"
+import { WorktreeInventory, WORKTREE_OWNERSHIP_RESTART_LIMIT } from "./worktree-inventory"
+import { sessionEnvironment } from "./session-environment"
+import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
+import { GitRequiredError, requireHostGit } from "./git-requirement"
+import { readLocationRef } from "../opencode/compatibility/location"
+import type { TemporaryFolderRegistry } from "./temporary-workspaces"
+
+const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
+const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
+const MAX_EARLY_CREATION_CANCELLATIONS = 1024
+const WORKSPACE_STATE = Symbol("workspaceState")
+type ManagerTimeout = number | NodeJS.Timeout
+type WorkspaceStopDetails = { temporaryRetained?: true }
+
+async function ownershipRealpath(directory: string, strict = false): Promise<string | undefined> {
+  try { return await realpath(directory) }
+  catch (error) { if (strict) throw error }
+}
+
+interface LocationOwnershipOptions {
+  signal?: AbortSignal
+  purpose?: "request" | "event"
+  strict?: boolean
+  media?: { current: () => void }
+}
+type MediaOwnership = { client: OpenCodeClient; signal: AbortSignal; current: () => void }
+
+interface SharedService {
+  acquire?: () => Promise<import("./opencode-service").ServiceConnection>
+  existingConnection?: () => import("./opencode-service").ServiceConnection | undefined
+  fetch?: () => Promise<typeof fetch>
+  endpoint: (options?: OpenCodeSharedServiceOptions) => Promise<Endpoint>
+  client: (options?: OpenCodeSharedServiceOptions) => Promise<OpenCodeClient>
+  headers: (options?: OpenCodeSharedServiceOptions, requestOptions?: { deadlineAt?: number }) => Promise<{ authorization: string } | undefined>
+  validateLocation: (location: LocationRef, requestOptions?: { signal?: AbortSignal; deadlineAt?: number }, serviceOptions?: OpenCodeSharedServiceOptions) => Promise<LocationGetOutput>
+  subscribe: (requestOptions?: { signal?: AbortSignal }, serviceOptions?: OpenCodeSharedServiceOptions) => Promise<AsyncIterable<OpenCodeEvent>>
+  invalidate?: () => void
+  shutdown: (options?: { timeoutMs?: number }) => Promise<void>
+}
+
+export function binaryPathsEqual(left: string, right: string, platform = process.platform): boolean {
+  const leftWsl = parseWslUncPath(left)
+  const rightWsl = parseWslUncPath(right)
+  if (leftWsl || rightWsl) {
+    return Boolean(
+      leftWsl
+      && rightWsl
+      && leftWsl.distro.toLowerCase() === rightWsl.distro.toLowerCase()
+      && leftWsl.linuxPath === rightWsl.linuxPath,
+    )
+  }
+  return platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right
+}
+
+interface WorkspaceManagerOptions {
+  startServiceCommand?: import("./opencode-cli-service").OpenCodeCliServiceDependencies["execFile"]
+  rootDir: string
+  /** Folders opened as temporary workspaces until kept or discarded. */
+  temporaryFolders?: TemporaryFolderRegistry
+  settings: SettingsService
+  binaryResolver: BinaryResolver
+  eventBus: EventBus
+  logger: Logger
+  sharedService?: SharedService
+  prepareDesktopPlugins?: (
+    launch: ServiceLaunchSpec,
+    connection: import("./opencode-service").ServiceConnection,
+    deadlineAt?: number,
+  ) => Promise<boolean>
+  /** Startup marker wait, or fresh observed registration for an authorized Location. */
+  desktopPluginsReady?: (target?: import("../opencode/desktop-plugin-lifecycle").DesktopPluginReadinessTarget) => Promise<void>
+  shutdownTimeoutMs?: number
+  launchSettlementTimeoutMs?: number
+  launchTimeoutMs?: number
+  now?: () => number
+  setTimeout?: (callback: () => void, delayMs: number) => ManagerTimeout
+  clearTimeout?: (timer: ManagerTimeout) => void
+  platform?: NodeJS.Platform
+  wslServiceDirectoryResolver?: (directory: string, distro: string, timeoutMs: number) => string | null | Promise<string | null>
+  wslHostDirectoryResolver?: (directory: string, distro: string, timeoutMs: number) => string | null | Promise<string | null>
+  wslServiceLifecycleFactory?: (
+    spec: Extract<ServiceLaunchSpec, { kind: "wsl" }>,
+    timeoutMs: number,
+    startupEnvironment: NodeJS.ProcessEnv,
+  ) => OpenCodeServiceLifecycle
+  hostServiceLifecycleFactory?: (
+    spec: Extract<ServiceLaunchSpec, { kind: "host" }>,
+    timeoutMs: number,
+    startupEnvironment: NodeJS.ProcessEnv,
+  ) => OpenCodeServiceLifecycle
+}
+
+export function isWindowsHostPath(directory: string): boolean {
+  return /^[A-Za-z]:[\\/]|^(?:\\\\|\/\/)/.test(directory)
+}
+
+export function canonicalWorktreeIdentity(directory: string, platform = process.platform): string {
+  const wsl = parseWslUncPath(directory)
+  if (wsl) return `wsl:${wsl.distro.toLowerCase()}:${wsl.linuxPath}`
+  const identity = path.normalize(directory)
+  return platform === "win32" ? identity.toLowerCase() : identity
+}
+
+interface WorkspaceRecord extends WorkspaceDescriptor {
+  location?: LocationRef
+  wslDistro?: string
+  [WORKSPACE_STATE]: WorkspaceState
+}
+
+interface WorkspaceState {
+  mediaOwnershipRevision: number
+  abortController: AbortController
+  settlement?: Promise<void>
+  cleanupSettlement?: Promise<WorkspaceDescriptor>
+  deletePromise?: Promise<WorkspaceDescriptor | undefined>
+  published: boolean
+  stoppedPublished: boolean
+  creationClaims: Map<string, CreationRequestState>
+  creationRetained: boolean
+  serviceOptions?: OpenCodeSharedServiceOptions
+}
+export class WorkspaceLaunchCancelledError extends Error {
+  constructor(workspaceId: string) {
+    super(`Workspace ${workspaceId} launch was cancelled`)
+    this.name = "WorkspaceLaunchCancelledError"
+  }
+}
+export class WorkspaceLaunchTimeoutError extends Error {
+  readonly code = "WORKSPACE_LAUNCH_TIMEOUT"
+  readonly retryable = true
+  constructor(workspaceId: string | undefined, timeoutMs: number) {
+    super(`${workspaceId ? `Workspace ${workspaceId}` : "Workspace"} did not finish launching within ${timeoutMs}ms`)
+    this.name = "WorkspaceLaunchTimeoutError"
+  }
+}
+export class WorkspaceCleanupTimeoutError extends Error {
+  readonly code = "WORKSPACE_CLEANUP_TIMEOUT"
+  readonly retryable = true
+  constructor(operation: string, timeoutMs: number) {
+    super(`Workspace ${operation} did not finish within ${timeoutMs}ms; cleanup can be retried`)
+    this.name = "WorkspaceCleanupTimeoutError"
+  }
+}
+export class WorkspaceShutdownError extends AggregateError {
+  readonly code = "WORKSPACE_SHUTDOWN_FAILED"
+  readonly retryable = true
+  constructor(errors: unknown[]) {
+    super(errors, `Failed to stop ${errors.length} workspace${errors.length === 1 ? "" : "s"} during shutdown; cleanup can be retried`)
+    this.name = "WorkspaceShutdownError"
+  }
+}
+export interface WorkspaceCreateResult {
+  workspace: WorkspaceDescriptor
+  created: boolean
+}
+export interface WorkspaceCreateOptions {
+  requestId?: string
+}
+type CreationRequestState = "owner" | "cancelled" | "released"
+export class WorkspaceManager {
+  private readonly workspaces = new Map<string, WorkspaceRecord>()
+  private readonly deletingWorktreeRoots = new Set<string>()
+  private readonly cancelledCreationRequests = new Set<string>()
+  private readonly pendingCreationRequests = new Set<string>()
+  private readonly earlyCreationCancellations = new Map<string, number>()
+  private activeWorkspaceCreations = 0
+  private shuttingDown = false
+  private readonly sharedService: SharedService
+  private serviceAuthorization?: string
+  private warnedLegacyServiceEnvironment = false
+  private readonly fileWatches: WorkspaceFileWatches
+
+  constructor(private readonly options: WorkspaceManagerOptions) {
+    this.sharedService = options.sharedService ?? new OpenCodeSharedService()
+    this.fileWatches = new WorkspaceFileWatches(
+      (workspaceId, changes) => options.eventBus.publish({ type: "workspace.filesChanged", workspaceId, changes }),
+      error => options.logger.warn({ err: error }, "Workspace directory observation unavailable"),
+    )
+  }
+  list(): WorkspaceDescriptor[] {
+    return Array.from(this.workspaces.values())
+      .filter((record) => record[WORKSPACE_STATE].published)
+  }
+
+  get(id: string): WorkspaceDescriptor | undefined {
+    const record = this.workspaces.get(id)
+    return record?.[WORKSPACE_STATE].published ? record : undefined
+  }
+
+  /** Capture the published occurrence before asynchronous owned reads. */
+  captureWorkspaceOperation(id: string) {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    const signal = record[WORKSPACE_STATE].abortController.signal
+    const current = (): true => {
+      signal.throwIfAborted()
+      if (this.workspaces.get(id) !== record || !record[WORKSPACE_STATE].published) throw new WorkspaceLaunchCancelledError(id)
+      return true
+    }
+    current()
+    return { signal, current }
+  }
+
+  getInstanceAuthorizationHeader(id: string): string | undefined {
+    return this.workspaces.get(id)?.[WORKSPACE_STATE].published ? this.serviceAuthorization : undefined
+  }
+
+  getServiceDirectory(id: string): string | undefined {
+    const record = this.workspaces.get(id)
+    return record?.[WORKSPACE_STATE].published ? record.location?.directory ?? record.path : undefined
+  }
+
+  getServiceLocation(id: string): LocationRef | undefined {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    return record.location ?? { directory: record.path }
+  }
+
+  async getSharedServiceEndpoint(id: string): Promise<Endpoint | undefined> {
+    if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
+    try {
+      const [endpoint, headers] = await Promise.all([this.sharedService.endpoint(), this.sharedService.headers()])
+      this.serviceAuthorization = headers?.authorization
+      return endpoint
+    } catch (error) {
+      this.options.logger.warn({ err: error }, "Shared OpenCode service is unavailable")
+      return undefined
+    }
+  }
+
+  get temporaryFolders(): TemporaryFolderRegistry | undefined {
+    return this.options.temporaryFolders
+  }
+
+  /** A kept temporary folder becomes an ordinary project in every open record. */
+  clearTemporary(folder: string): void {
+    for (const record of this.workspaces.values()) {
+      if (record.path === folder) delete record.temporary
+    }
+  }
+
+  getSharedServiceClient(): Promise<OpenCodeClient> {
+    return this.sharedService.client()
+  }
+
+  /** Targeted callers supply captured connection and pre-authorized Location fences. */
+  desktopPluginsReady(target?: import("../opencode/desktop-plugin-lifecycle").DesktopPluginReadinessTarget): Promise<void> {
+    if (target) {
+      target.signal.throwIfAborted()
+      target.connection.assertCurrent()
+      target.assertCurrent()
+      if (!this.options.desktopPluginsReady) return Promise.reject(new Error("Pruning Location readiness unavailable"))
+    }
+    return this.options.desktopPluginsReady?.(target) ?? Promise.resolve()
+  }
+
+  async reserveWorktreeDeletion(directory: string): Promise<() => void> {
+    const submitted = path.isAbsolute(directory) ? directory : path.resolve(this.options.rootDir, directory)
+    const target = canonicalWorktreeIdentity(await realpath(submitted).catch(() => path.normalize(submitted)), this.options.platform)
+    if (Array.from(this.deletingWorktreeRoots).some((root) => pathsOverlap(root, target))) {
+      throw new Error("Worktree deletion is already in progress")
+    }
+    if (Array.from(this.workspaces.values()).some((workspace) => (
+      pathContains(target, canonicalWorktreeIdentity(workspace.path, this.options.platform))
+    ))) {
+      throw new Error("Worktree is open as another workspace")
+    }
+    this.deletingWorktreeRoots.add(target)
+    return () => this.deletingWorktreeRoots.delete(target)
+  }
+
+  getSharedServiceFetch(): Promise<typeof fetch> {
+    return this.sharedService.fetch ? this.sharedService.fetch() : Promise.resolve(globalThis.fetch)
+  }
+
+  async getSharedServiceConnection(id: string): Promise<import("./opencode-service").ServiceConnection | undefined> {
+    if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
+    return this.sharedService.acquire?.()
+  }
+
+  getExistingSharedServiceConnection(id: string): import("./opencode-service").ServiceConnection | undefined {
+    if (!this.workspaces.get(id)?.[WORKSPACE_STATE].published) return undefined
+    return this.sharedService.existingConnection?.()
+  }
+
+  invalidateSharedServiceConnection(): void {
+    this.sharedService.invalidate?.()
+  }
+
+  async ownsDirectory(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<boolean> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return false
+    if (directory === record.path || directory === record.location?.directory) return true
+    if (await this.ownsHostDirectory(record, directory, purpose)) return true
+    if (!record.wslDistro) return false
+    const hostDirectory = await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+    return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory, purpose))
+  }
+
+  // Strict probes reject unreadable ownership instead of turning it into a negative.
+  async ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient, { signal, purpose = "request", strict = false, media }: LocationOwnershipOptions = {}): Promise<boolean> {
+    signal?.throwIfAborted()
+    media?.current()
+    // OpenCode V2 identifies locations by directory; a retired workspace selector
+    // is never authorized, whatever directory it names.
+    if (location.workspaceID !== undefined) return false
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return false
+    if (media) {
+      if (!client || !signal) throw new Error("Media ownership context unavailable")
+      const state = record[WORKSPACE_STATE]
+      const captured: WorkspaceRecord = { ...record, [WORKSPACE_STATE]: state,
+        wslDistro: record.wslDistro, location: { ...(record.location ?? { directory: record.path }) } }
+      const directory = location.directory
+      const current = () => {
+        signal.throwIfAborted()
+        media.current()
+        state.abortController.signal.throwIfAborted()
+        if (this.workspaces.get(id) !== record || !state.published) throw new WorkspaceLaunchCancelledError(id)
+      }
+      const context = { client, signal, current }
+      for (let restarts = 0; ; restarts++) {
+        current()
+        const revision = state.mediaOwnershipRevision
+        const owned = await this.serviceDirectoryForRecord(captured, directory, purpose, true, context)
+        current()
+        if (state.mediaOwnershipRevision === revision) return Boolean(owned)
+        if (restarts >= WORKTREE_OWNERSHIP_RESTART_LIMIT) throw new Error("Worktree ownership inventory changed repeatedly")
+      }
+    }
+    return Boolean(await this.resolveLocationPlacement(id, location, { signal, purpose, strict }))
+  }
+
+  async resolveLocationPlacement(id: string, location: LocationRef, { signal, purpose = "request", strict = false }: Omit<LocationOwnershipOptions, "media"> = {}): Promise<{ directory: string; listWorktreeSlug?: string } | undefined> {
+    signal?.throwIfAborted()
+    if (location.workspaceID !== undefined) return undefined
+    const placement = await this.resolveServicePlacement(id, location.directory, purpose, strict)
+    signal?.throwIfAborted()
+    return placement
+  }
+
+  async getServiceDirectoryForPath(id: string, directory: string, { purpose = "request", strict = false }: Pick<LocationOwnershipOptions, "purpose" | "strict"> = {}): Promise<string | undefined> {
+    return (await this.resolveServicePlacement(id, directory, purpose, strict))?.directory
+  }
+
+  private async resolveServicePlacement(id: string, directory: string, purpose: "request" | "event", strict: boolean) {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    return this.serviceDirectoryForRecord(record, directory, purpose, strict)
+  }
+
+  private async serviceDirectoryForRecord(record: WorkspaceRecord, directory: string,
+    purpose: "request" | "event", strict = false, media?: MediaOwnership): Promise<{ directory: string; listWorktreeSlug?: string } | undefined> {
+    media?.current()
+    // Directory authorization does not need the checkout's Git mutation identity.
+    // Resolve aliases against the explicitly opened folder without spawning Git.
+    if (!record.wslDistro) {
+      const [target, root] = await Promise.all([
+        media ? realpath(directory).catch(error => { if (error.code !== "ENOENT") throw error }) : ownershipRealpath(directory, strict),
+        ownershipRealpath(record.path, strict),
+      ])
+      media?.current()
+      if (target && target === root) return { directory: target, listWorktreeSlug: "root" }
+    }
+    const owned = await this.resolveOwnedWorktree(record, directory, purpose, strict, media)
+    media?.current()
+    if (!owned) return undefined
+    const listWorktreeSlug = owned.exact ? owned.slug : undefined
+    if (!record.wslDistro) return { directory: owned.directory, listWorktreeSlug }
+    const translated = await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+    media?.current()
+    if (strict && !translated) throw new Error("WSL service directory translation unavailable")
+    return translated ? { directory: translated, listWorktreeSlug } : undefined
+  }
+
+  async getWorktreeIdentityForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    const owned = await this.resolveOwnedWorktree(record, directory, purpose)
+    if (!owned) return undefined
+    return canonicalWorktreeIdentity(owned.worktreeDirectory)
+  }
+
+  async getServicePathForPath(id: string, candidate: string): Promise<string | undefined> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published || !await this.ownsPath(id, candidate)) return undefined
+    if (!record.wslDistro) return candidate
+    return await this.resolveWslServiceDirectory(candidate, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+      ?? (path.posix.isAbsolute(candidate) ? candidate : undefined)
+  }
+
+  getServicePathStyle(id: string): "win32" | "posix" | undefined {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    const platform = this.options.platform ?? process.platform
+    return record.wslDistro || platform !== "win32" ? "posix" : "win32"
+  }
+
+  getServiceWslDistro(id: string): string | undefined {
+    const record = this.workspaces.get(id)
+    return record?.[WORKSPACE_STATE].published ? record.wslDistro : undefined
+  }
+
+  /** Translate a path reported by the authenticated daemon for local filesystem access. */
+  async getHostPathForServicePath(id: string, servicePath: string): Promise<string | undefined> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return undefined
+    if (!record.wslDistro) return servicePath
+    return await this.resolveWslHostDirectory(servicePath, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
+  }
+
+  private async nativeWorktreeContext(id: string, purpose: "request" | "event" = "request") {
+    const record = this.workspaces.get(id)
+    const location = this.getServiceLocation(id)
+    if (!record || !location) throw new Error("Workspace has no native location")
+    // An adapter without connection lifecycle (no acquire/observation) only wraps an
+    // already-connected client, so its client cannot start or provision OpenCode.
+    const lifecycle = Boolean(this.sharedService.acquire || this.sharedService.existingConnection)
+    const client = purpose === "event" && lifecycle
+      ? this.getExistingSharedServiceConnection(id)?.client
+      : await this.getSharedServiceClient()
+    if (!client) throw new Error("OpenCode has no existing connection")
+    return {
+      client, location, workspacePath: record.path,
+      toHost: async (directory: string) => record.wslDistro
+        ? this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+        : directory,
+    }
+  }
+
+  private readonly worktreeInventory = new WorktreeInventory({
+    load: (id) => this.nativeWorktreeContext(id).then(listNativeWorktrees),
+    changed: (id) => {
+      const record = this.workspaces.get(id)
+      if (record) record[WORKSPACE_STATE].mediaOwnershipRevision++
+      invalidateWorktreeCache(id)
+      invalidateWorktreeCache(`event:${id}`)
+      this.eventWorktreeInventory.invalidate(id)
+      this.options.eventBus.publish({ type: "workspace.worktreesChanged", workspaceId: id })
+    },
+    failed: (id, error) => this.options.logger.warn({ workspaceId: id, err: error }, "Failed to refresh worktree inventory"),
+    now: () => this.now(),
+  })
+
+  getWorktrees(id: string, mode: "cached" | "validated" | "fresh" = "cached") {
+    return this.worktreeInventory.read(id, mode)
+  }
+
+  // Registered-only reads cannot acquire a connection or join discovery scans. They retain all native,
+  // physical Git, mutation and disposal checks used by the ordinary catalogue.
+  private readonly eventWorktreeInventory = new WorktreeInventory({
+    load: (id) => this.nativeWorktreeContext(id, "event").then(context => listNativeWorktrees(context, { refresh: false })),
+    changed: (id) => {
+      const record = this.workspaces.get(id)
+      if (record) record[WORKSPACE_STATE].mediaOwnershipRevision++
+      invalidateWorktreeCache(`event:${id}`)
+      this.options.eventBus.publish({ type: "workspace.worktreesChanged", workspaceId: id })
+    },
+    failed: (id, error) => this.options.logger.debug({ id, err: error }, "Event worktree inventory refresh failed"),
+    now: () => this.now(),
+  })
+
+  private async ownershipWorktrees(id: string, refresh: boolean | undefined, purpose: "request" | "event", strict = false) {
+    const mode = refresh ? "fresh" : "validated"
+    return (await (purpose === "event"
+      ? this.eventWorktreeInventory.read(id, mode, { strict })
+      : strict ? this.worktreeInventory.read(id, mode, { strict }) : this.getWorktrees(id, mode))).worktrees
+  }
+
+  invalidateWorktrees(mode: "lazy" | "blocking" = "lazy"): void {
+    for (const record of this.workspaces.values()) record[WORKSPACE_STATE].mediaOwnershipRevision++
+    this.worktreeInventory.invalidate(undefined, mode)
+    this.eventWorktreeInventory.invalidate(undefined, mode)
+    invalidateWorktreeCache()
+  }
+
+  async createWorktree(id: string, branch: string, fromSlug?: string, revision?: string) {
+    await requireHostGit()
+    try { return await createNativeWorktree(await this.nativeWorktreeContext(id), branch, fromSlug, revision) }
+    finally { this.invalidateWorktrees("blocking") }
+  }
+
+  async removeWorktree(id: string, serviceDirectory: string, force: boolean) {
+    await requireHostGit()
+    try { return await removeNativeWorktree(await this.nativeWorktreeContext(id), serviceDirectory, force) }
+    finally { this.invalidateWorktrees("blocking") }
+  }
+
+  /** Native `vcs.init` for the explicitly opened folder; callers hold its deletion fence. */
+  async initializeGit(id: string) {
+    await requireHostGit()
+    try { return await initializeNativeGit(await this.nativeWorktreeContext(id)) }
+    finally { this.invalidateWorktrees("blocking") }
+  }
+
+  private async ownsHostDirectory(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request"): Promise<boolean> {
+    const [target, root] = await Promise.all([
+      ownershipRealpath(directory), ownershipRealpath(record.path),
+    ])
+    if (target && target === root) return true
+    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return false
+    return (await resolveOwnedWorktreePath({
+      workspaceId: purpose === "event" ? `event:${record.id}` : record.id,
+      workspacePath: record.path,
+      directory,
+      loadWorktrees: (refresh) => this.ownershipWorktrees(record.id, refresh, purpose),
+      logger: this.options.logger,
+    })) !== null
+  }
+
+  private async resolveOwnedWorktree(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request", strict = false, media?: MediaOwnership) {
+    media?.current()
+    const hostDirectory = record.wslDistro
+      ? isWindowsHostPath(directory)
+        ? directory
+        : await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+      : directory
+    media?.current()
+    if (!hostDirectory) {
+      if (strict) throw new Error("WSL host directory translation unavailable")
+      return null
+    }
+    const [target, root] = await Promise.all([
+      media ? realpath(hostDirectory).catch(error => { if (error.code !== "ENOENT") throw error }) : ownershipRealpath(hostDirectory, strict),
+      ownershipRealpath(record.path, strict),
+    ])
+    media?.current()
+    // The explicitly opened folder is already authority. Do not require native
+    // discovery (or a second connection) to authorize that exact local directory.
+    if (target && target === root) {
+      try {
+        const { repoRoot } = await resolveRepoRoot(root)
+        media?.current()
+        const worktreeDirectory = await realpath(repoRoot)
+        media?.current()
+        return { slug: "root", directory: target, worktreeDirectory, exact: true }
+      } catch (error) {
+        media?.current()
+        if (!(error instanceof GitRequiredError)) throw error
+        // Without Git only the explicitly opened physical folder is authority.
+        // The deletion fence compares ancestor/descendant identities as well,
+        // covering a checkout parent even if Git disappears or returns mid-send.
+        return { slug: "root", directory: target, worktreeDirectory: root, exact: true }
+      }
+    }
+    if (target && root && !isPathWithinWorktree(root, target)) {
+      const shared = await sharesGitCommonDirectory(root, target, { strict })
+      media?.current()
+      if (!shared) return null
+    }
+    media?.current()
+    const owned = await resolveOwnedWorktreePath({
+      workspaceId: purpose === "event" ? `event:${record.id}` : record.id,
+      workspacePath: record.path,
+      directory: hostDirectory,
+      media,
+      strict,
+      loadWorktrees: media ? async () => {
+        media.current()
+        const inventory = await listNativeWorktrees({ client: media.client, location: record.location!, workspacePath: record.path,
+          toHost: async directory => {
+            media.current()
+            const host = record.wslDistro
+              ? await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) : directory
+            media.current()
+            return host
+          } }, { media })
+        media.current()
+        return inventory.worktrees
+      } : (refresh) => this.ownershipWorktrees(record.id, refresh, purpose, strict),
+      logger: this.options.logger,
+    })
+    media?.current()
+    return owned
+  }
+
+  async ownsPath(id: string, candidate: string): Promise<boolean> {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return false
+    if (await this.ownsHostPath(record, candidate)) return true
+    if (!record.wslDistro) return false
+    const hostPath = await this.resolveWslHostDirectory(candidate, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+    return Boolean(hostPath && await this.ownsHostPath(record, hostPath))
+  }
+
+  private ownsHostPath(record: WorkspaceRecord, candidate: string): Promise<boolean> {
+    return isPathOwnedByWorktree({
+      workspaceId: record.id,
+      workspacePath: record.path,
+      candidate,
+      loadWorktrees: async (refresh) => (await this.getWorktrees(record.id, refresh ? "fresh" : "validated")).worktrees,
+      logger: this.options.logger,
+    })
+  }
+
+  subscribeToSharedService(signal?: AbortSignal): Promise<AsyncIterable<OpenCodeEvent>> {
+    return this.sharedService.subscribe({ signal })
+  }
+
+  findReadyInstanceIdByBinary(binaryPath: string): string | undefined {
+    const resolvedPath = this.resolveBinaryPath(binaryPath)
+    return this.list().find((workspace) => {
+      return workspace.status === "ready" && binaryPathsEqual(workspace.binaryId, resolvedPath)
+    })?.id
+  }
+
+  private async fileBrowserRoot(workspaceId: string, directory?: string): Promise<string> {
+    const workspace = this.requireWorkspace(workspaceId)
+    if (!directory) return workspace.path
+    const owned = await this.resolveOwnedWorktree(workspace, directory)
+    if (!owned) throw new Error("Directory is not owned by this workspace")
+    return owned.directory
+  }
+
+  async listFiles(workspaceId: string, relativePath = ".", directory?: string): Promise<FileSystemEntry[]> {
+    const record = this.requireWorkspace(workspaceId)
+    const root = await this.fileBrowserRoot(workspaceId, directory)
+    const browser = new FileSystemBrowser({ rootDir: root })
+    return browser.list(relativePath, { observeDirectory: target => this.fileWatches.observe(workspaceId, root, target,
+      () => !this.shuttingDown && this.workspaces.get(workspaceId) === record && !record[WORKSPACE_STATE].abortController.signal.aborted) })
+  }
+
+  async searchFiles(workspaceId: string, query: string, options?: WorkspaceFileSearchOptions, directory?: string): Promise<FileSystemEntry[]> {
+    return searchWorkspaceFiles(await this.fileBrowserRoot(workspaceId, directory), query, options)
+  }
+
+  async readFile(workspaceId: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
+    const workspace = this.requireWorkspace(workspaceId)
+    const browser = new FileSystemBrowser({ rootDir: workspace.path })
+    const encoding = options?.encoding ?? "utf-8"
+    const contents = await (encoding === "base64" ? browser.readFileBase64(relativePath) : browser.readFile(relativePath))
+    return {
+      workspaceId,
+      relativePath,
+      contents,
+      encoding,
+    }
+  }
+
+  async previewFile(workspaceId: string, relativePath: string, directory?: string): Promise<WorkspaceFileResponse> {
+    const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
+    const result = await browser.readFileContent(relativePath, { encoding: "base64" })
+    return { workspaceId, relativePath, contents: result.contents, encoding: "base64" }
+  }
+
+  async readFileInDirectory(workspaceId: string, directory: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
+    this.requireWorkspace(workspaceId)
+    const browser = new FileSystemBrowser({ rootDir: directory })
+    const encoding = options?.encoding ?? "utf-8"
+    const contents = await (encoding === "base64" ? browser.readFileBase64(relativePath) : browser.readFile(relativePath))
+    return {
+      workspaceId,
+      relativePath,
+      contents,
+      encoding,
+    }
+  }
+
+  async writeFile(workspaceId: string, relativePath: string, contents: string): Promise<void> {
+    const workspace = this.requireWorkspace(workspaceId)
+    const browser = new FileSystemBrowser({ rootDir: workspace.path })
+    await browser.writeFile(relativePath, contents)
+  }
+
+  async writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string): Promise<void> {
+    const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
+    await browser.writeFile(relativePath, contents)
+  }
+
+  async create(
+    folder: string,
+    name?: string,
+    options: WorkspaceCreateOptions = {},
+  ): Promise<WorkspaceCreateResult> {
+    if (options.requestId) this.beginCreationRequest(options.requestId)
+    let creationCounted = false
+    let settlementTracked = false
+    const launchTimeoutMs = Math.max(1, this.options.launchTimeoutMs ?? DEFAULT_LAUNCH_TIMEOUT_MS)
+    const launchDeadlineAt = this.now() + launchTimeoutMs
+    try {
+      const submittedPath = path.isAbsolute(folder) ? path.normalize(folder) : path.resolve(this.options.rootDir, folder)
+      const workspacePath = await this.withLaunchDeadline(
+        realpath(submittedPath).then((resolved) => path.normalize(resolved), () => submittedPath),
+        undefined,
+        launchDeadlineAt,
+        launchTimeoutMs,
+      )
+      const workspaceIdentity = canonicalWorktreeIdentity(workspacePath, this.options.platform)
+      if (Array.from(this.deletingWorktreeRoots).some((root) => pathContains(root, workspaceIdentity))) {
+        throw new Error("Workspace directory is being removed")
+      }
+      if (options.requestId && this.cancelledCreationRequests.has(options.requestId)) {
+        throw new Error(`Workspace creation request ${options.requestId} was cancelled`)
+      }
+      if (this.shuttingDown) {
+        throw new Error("Workspace manager is shutting down")
+      }
+      if (this.activeWorkspaceCreations >= MAX_ACTIVE_WORKSPACE_CREATIONS) {
+        throw new Error("Too many workspace creations are already in progress")
+      }
+      this.activeWorkspaceCreations += 1
+      creationCounted = true
+      const record = this.reserveWorkspace(workspacePath, name, options, launchDeadlineAt)
+      const creation = this.startCreation(record, launchDeadlineAt, launchTimeoutMs)
+      settlementTracked = true
+      void record[WORKSPACE_STATE].settlement!.then(() => { this.activeWorkspaceCreations -= 1 })
+      return this.finishCreation(await creation, options.requestId, record)
+    } finally {
+      if (creationCounted && !settlementTracked) this.activeWorkspaceCreations -= 1
+      if (options.requestId) this.finishCreationRequest(options.requestId)
+    }
+  }
+  private reserveWorkspace(
+    workspacePath: string,
+    name: string | undefined,
+    options: WorkspaceCreateOptions,
+    launchDeadlineAt: number,
+  ): WorkspaceRecord {
+    const id = randomUUID()
+    const binary = this.options.binaryResolver.resolveDefault()
+    const resolvedBinaryPath = this.resolveBinaryPath(binary.path, Math.max(1, launchDeadlineAt - this.now()))
+    clearWorkspaceSearchCache(workspacePath)
+
+    this.options.logger.info({ workspaceId: id, folder: workspacePath, binary: resolvedBinaryPath }, "Creating workspace")
+
+    const proxyPath = `/workspaces/${id}/instance`
+
+
+    const record = {
+      id,
+      requestId: options.requestId,
+      path: workspacePath,
+      name,
+      status: "starting",
+      proxyPath,
+      binaryId: resolvedBinaryPath,
+      binaryLabel: binary.label,
+      binaryVersion: binary.version,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...(this.options.temporaryFolders?.has(workspacePath) ? { temporary: true } : {}),
+    } as WorkspaceRecord
+    Object.defineProperties(record, {
+      wslDistro: { value: undefined, writable: true },
+      [WORKSPACE_STATE]: { value: {
+        mediaOwnershipRevision: 0,
+        abortController: new AbortController(),
+        published: false,
+        stoppedPublished: false,
+        creationClaims: new Map(options.requestId ? [[options.requestId, "owner"]] : []),
+        creationRetained: options.requestId === undefined,
+      } },
+    })
+
+    this.workspaces.set(id, record)
+    return record
+  }
+  private startCreation(record: WorkspaceRecord,
+    launchDeadlineAt: number, launchTimeoutMs: number): Promise<WorkspaceCreateResult> {
+    const launch = this.createResolvedWorkspace(record, launchDeadlineAt)
+    const creation = this.createWithDeadline(record, launchDeadlineAt, launchTimeoutMs, launch)
+    record[WORKSPACE_STATE].settlement = launch.then(() => undefined, () => undefined)
+    return creation
+  }
+  private async createWithDeadline(record: WorkspaceRecord,
+    launchDeadlineAt: number, launchTimeoutMs: number,
+    launch: Promise<WorkspaceCreateResult>): Promise<WorkspaceCreateResult> {
+    const timeoutMs = Math.max(1, launchDeadlineAt - this.now())
+    const state = record[WORKSPACE_STATE]
+    let timeout: ManagerTimeout | null = (this.options.setTimeout ?? setTimeout)(() => {
+      timeout = null
+      if (!state.abortController.signal.aborted) {
+        state.abortController.abort(new WorkspaceLaunchTimeoutError(record.id, launchTimeoutMs))
+      }
+    }, timeoutMs)
+    try {
+      const deadline = new Promise<never>((_resolve, reject) => {
+        state.abortController.signal.addEventListener("abort", () => reject(state.abortController.signal.reason), { once: true })
+      })
+      return await Promise.race([launch, deadline])
+    } finally {
+      if (timeout) (this.options.clearTimeout ?? clearTimeout)(timeout)
+    }
+  }
+
+  private async withLaunchDeadline<T>(operation: Promise<T>, workspaceId: string | undefined,
+    deadlineAt: number, launchTimeoutMs: number): Promise<T> {
+    const timeoutMs = Math.max(1, deadlineAt - this.now())
+    let timeout: ManagerTimeout | null = null
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = (this.options.setTimeout ?? setTimeout)(() => {
+        timeout = null
+        reject(new WorkspaceLaunchTimeoutError(workspaceId, launchTimeoutMs))
+      }, timeoutMs)
+    })
+    try {
+      return await Promise.race([operation, deadline])
+    } finally {
+      if (timeout) (this.options.clearTimeout ?? clearTimeout)(timeout)
+    }
+  }
+  private async createResolvedWorkspace(
+    record: WorkspaceRecord,
+    launchDeadlineAt: number,
+  ): Promise<WorkspaceCreateResult> {
+    const state = record[WORKSPACE_STATE]
+    const { id, path: workspacePath, binaryId: resolvedBinaryPath } = record
+    try {
+      const launch = buildServiceLaunchSpec(resolvedBinaryPath, {
+        platform: this.options.platform,
+      })
+      const serviceOptions = await this.setupServiceOptions(resolvedBinaryPath, launchDeadlineAt)
+      state.serviceOptions = serviceOptions
+      this.throwIfCancelled(record)
+      record.wslDistro = launch.kind === "wsl" ? launch.distro : undefined
+      const serviceDirectory = launch.kind === "wsl"
+        ? await this.requireWslServiceDirectory(workspacePath, launch.distro, launchDeadlineAt - this.now())
+        : workspacePath
+      record.location = { directory: serviceDirectory }
+      this.throwIfCancelled(record)
+      const [headersResult, locationResult] = await Promise.allSettled([
+        this.sharedService.headers(serviceOptions, { deadlineAt: launchDeadlineAt }),
+        this.sharedService.validateLocation(
+          { directory: serviceDirectory },
+          { signal: state.abortController.signal, deadlineAt: launchDeadlineAt },
+          serviceOptions,
+        ),
+      ])
+      this.throwIfCancelled(record)
+      if (locationResult.status === "fulfilled") {
+        record.location = readLocationRef(locationResult.value)
+      }
+      if (headersResult.status === "rejected") throw headersResult.reason
+      if (locationResult.status === "rejected") throw locationResult.reason
+      this.serviceAuthorization = headersResult.value?.authorization
+      this.throwIfCancelled(record)
+      state.published = true
+      this.options.eventBus.publish({ type: "workspace.created", workspace: record })
+      this.throwIfCancelled(record)
+
+      record.status = "ready"
+      record.updatedAt = new Date().toISOString()
+      this.options.eventBus.publish({ type: "workspace.started", workspace: record })
+      this.options.logger.info({ workspaceId: id, location: record.location }, "Workspace ready")
+      return { workspace: record, created: true }
+    } catch (error) {
+      const launchFailure = state.abortController.signal.aborted ? state.abortController.signal.reason : error
+      if (!state.deletePromise) {
+        this.removeRecord(id, record, state.published)
+      }
+      this.options.logger.error({ workspaceId: id, err: launchFailure }, "Workspace failed to start")
+      throw launchFailure
+    }
+  }
+
+  delete(id: string, event?: WorkspaceStopDetails): Promise<WorkspaceDescriptor | undefined> {
+    const record = this.workspaces.get(id)
+    if (!record) return Promise.resolve(undefined)
+    const state = record[WORKSPACE_STATE]
+    if (!state.abortController.signal.aborted) {
+      state.abortController.abort(new WorkspaceLaunchCancelledError(id))
+    }
+    if (!state.deletePromise) {
+      let deletePromise!: Promise<WorkspaceDescriptor | undefined>
+      deletePromise = this.cleanupDeletedWorkspace(id, record, event).catch((error) => {
+        if (state.deletePromise === deletePromise) state.deletePromise = undefined
+        throw error
+      })
+      state.deletePromise = deletePromise
+    }
+    return state.deletePromise
+  }
+
+  releaseCreationRequest(id: string, requestId: string): boolean {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) return false
+    const state = record[WORKSPACE_STATE]
+    const claim = state.creationClaims.get(requestId)
+    if (claim === "released") return true
+    if (claim !== "owner") return false
+    state.creationClaims.set(requestId, "released")
+    state.creationRetained = true
+    this.refreshCreationRequestId(record)
+    return true
+  }
+
+  async cancelCreationRequest(requestId: string): Promise<void> {
+    const deletions: Promise<WorkspaceDescriptor | undefined>[] = []
+    let releasedClaimFound = false
+    let claimFound = false
+    for (const [workspaceId, record] of this.workspaces) {
+      const state = record[WORKSPACE_STATE]
+      const claim = state.creationClaims.get(requestId)
+      if (claim === undefined) continue
+      claimFound = true
+      if (claim === "released") {
+        releasedClaimFound = true
+        continue
+      }
+      state.creationClaims.set(requestId, "cancelled")
+      this.refreshCreationRequestId(record)
+      if (!state.creationRetained && !this.hasActiveCreationClaims(state)) {
+        deletions.push(this.delete(workspaceId, { temporaryRetained: true }))
+      }
+    }
+    if (!releasedClaimFound) {
+      if (this.pendingCreationRequests.has(requestId)) this.cancelledCreationRequests.add(requestId)
+      else if (!claimFound && !this.shuttingDown) {
+        // Keepalive cancellation can reach the relay before the original POST.
+        this.earlyCreationCancellations.delete(requestId)
+        this.earlyCreationCancellations.set(requestId, this.now() + DEFAULT_LAUNCH_TIMEOUT_MS)
+        if (this.earlyCreationCancellations.size > MAX_EARLY_CREATION_CANCELLATIONS) {
+          this.earlyCreationCancellations.delete(this.earlyCreationCancellations.keys().next().value!)
+        }
+      }
+    }
+    await Promise.all(deletions)
+  }
+
+  private finishCreation(
+    result: WorkspaceCreateResult,
+    requestId: string | undefined,
+    record: WorkspaceRecord,
+  ): WorkspaceCreateResult {
+    const requestState = requestId ? record[WORKSPACE_STATE].creationClaims.get(requestId) : undefined
+    if (requestId && (requestState === "cancelled" || this.cancelledCreationRequests.has(requestId))) {
+      throw new Error(`Workspace creation request ${requestId} was cancelled`)
+    }
+    const ownsCreation = requestId !== undefined && requestState === "owner"
+    return {
+      workspace: { ...result.workspace, requestId: ownsCreation ? requestId : undefined },
+      created: result.created && (requestId === undefined || ownsCreation),
+    }
+  }
+
+  private refreshCreationRequestId(record: WorkspaceRecord): void {
+    record.requestId = Array.from(record[WORKSPACE_STATE].creationClaims)
+      .find(([, claim]) => claim === "owner")?.[0]
+  }
+
+  private hasActiveCreationClaims(state: WorkspaceState): boolean {
+    return Array.from(state.creationClaims.values()).some((claim) => claim === "owner")
+  }
+
+  private beginCreationRequest(requestId: string): void {
+    if ((this.earlyCreationCancellations.get(requestId) ?? 0) > this.now()) {
+      throw new Error(`Workspace creation request ${requestId} was cancelled`)
+    }
+    this.earlyCreationCancellations.delete(requestId)
+    const claimed = Array.from(this.workspaces.values())
+      .some((record) => record[WORKSPACE_STATE].creationClaims.has(requestId))
+    if (this.pendingCreationRequests.has(requestId) || claimed) {
+      throw new Error(`Workspace creation request ${requestId} is already in use`)
+    }
+    this.pendingCreationRequests.add(requestId)
+  }
+
+  private finishCreationRequest(requestId: string): void {
+    this.pendingCreationRequests.delete(requestId)
+    this.cancelledCreationRequests.delete(requestId)
+  }
+
+  async shutdown() {
+    this.shuttingDown = true
+    this.fileWatches.close()
+    this.options.logger.info("Shutting down all workspaces")
+    const shutdownTimeoutMs = Math.max(1, this.options.shutdownTimeoutMs ?? 10000)
+    const deadlineAt = this.now() + shutdownTimeoutMs
+    const records = Array.from(this.workspaces.entries())
+    for (const [id, record] of records) {
+      const state = record[WORKSPACE_STATE]
+      if (!state.abortController.signal.aborted) state.abortController.abort(new WorkspaceLaunchCancelledError(id))
+    }
+    const settlements = records.map(([, record]) => {
+      const state = record[WORKSPACE_STATE]
+      return state.cleanupSettlement ?? state.deletePromise ?? state.settlement ?? Promise.resolve()
+    })
+    const stopFailures: unknown[] = []
+    if (settlements.length) {
+      await this.withTimeout(Promise.allSettled(settlements), shutdownTimeoutMs, "shutdown")
+        .then((results) => {
+          stopFailures.push(...results.flatMap((result) => result.status === "rejected" ? [result.reason] : []))
+        })
+        .catch((error) => stopFailures.push(error))
+    }
+    for (const [id, record] of records) this.removeRecord(id, record, true, "stopped")
+    this.cancelledCreationRequests.clear()
+    this.pendingCreationRequests.clear()
+    this.earlyCreationCancellations.clear()
+    const remaining = Math.max(1, deadlineAt - this.now())
+    await this.withTimeout(
+      this.sharedService.shutdown({ timeoutMs: remaining }),
+      remaining,
+      "shared service shutdown",
+    ).catch((error) => stopFailures.push(error))
+    if (stopFailures.length) throw new WorkspaceShutdownError(stopFailures)
+  }
+
+  private async withTimeout<T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    let timeout: ManagerTimeout | null = null
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = (this.options.setTimeout ?? setTimeout)(() => {
+        timeout = null
+        reject(new WorkspaceCleanupTimeoutError(label, timeoutMs))
+      }, timeoutMs)
+    })
+
+    try {
+      return await Promise.race([operation, deadline])
+    } finally {
+      if (timeout) (this.options.clearTimeout ?? clearTimeout)(timeout)
+    }
+  }
+
+  private requireWorkspace(id: string): WorkspaceRecord {
+    const record = this.workspaces.get(id)
+    if (!record?.[WORKSPACE_STATE].published) throw new Error("Workspace not found")
+    return record
+  }
+
+  private throwIfCancelled(record: WorkspaceRecord): void {
+    record[WORKSPACE_STATE].abortController.signal.throwIfAborted()
+  }
+
+  private async cleanupDeletedWorkspace(id: string, record: WorkspaceRecord, event?: WorkspaceStopDetails): Promise<WorkspaceDescriptor> {
+    const timeoutMs = Math.max(1, this.options.launchSettlementTimeoutMs ?? 5000)
+    const state = record[WORKSPACE_STATE]
+    const cleanup = state.cleanupSettlement ?? (async () => {
+      await state.settlement!
+      this.removeRecord(id, record, true, "deleted", event)
+      return record
+    })()
+    state.cleanupSettlement = cleanup
+    void cleanup.catch(() => {
+      if (state.cleanupSettlement === cleanup) state.cleanupSettlement = undefined
+    })
+    return this.withTimeout(cleanup, timeoutMs, `${id} cleanup`)
+  }
+
+  private async requireWslServiceDirectory(directory: string, distro: string, timeoutMs = DEFAULT_LAUNCH_TIMEOUT_MS): Promise<string> {
+    const translated = timeoutMs > 0 ? await this.resolveWslServiceDirectory(directory, distro, timeoutMs) : null
+    if (!translated) {
+      throw new Error(`Unable to translate workspace location for WSL distro "${distro}": ${directory}`)
+    }
+    return translated
+  }
+
+  private resolveWslServiceDirectory(directory: string, distro: string, timeoutMs: number): Promise<string | null> {
+    if (this.options.wslServiceDirectoryResolver) {
+      return Promise.resolve(this.options.wslServiceDirectoryResolver(directory, distro, timeoutMs))
+    }
+    return resolveWslServiceDirectory(directory, distro, undefined, timeoutMs)
+  }
+
+  private resolveWslHostDirectory(directory: string, distro: string, timeoutMs: number): Promise<string | null> {
+    if (this.options.wslHostDirectoryResolver) {
+      return Promise.resolve(this.options.wslHostDirectoryResolver(directory, distro, timeoutMs))
+    }
+    return resolveWslHostDirectory(directory, distro, undefined, timeoutMs)
+  }
+
+  async setupServiceOptions(binary: string, deadlineAt = Date.now() + DEFAULT_LAUNCH_TIMEOUT_MS): Promise<OpenCodeSharedServiceOptions> {
+    const launch = buildServiceLaunchSpec(binary, { platform: this.options.platform })
+    const timeoutMs = Math.max(1, deadlineAt - this.now())
+    const startupEnvironment = launch.kind === "wsl"
+      ? await this.wslStartupEnvironment(this.serviceStartupEnvironment(), launch.distro, deadlineAt)
+      : this.serviceStartupEnvironment()
+    return {
+      kind: "lifecycle",
+      identity: launch.kind === "host"
+        ? hostOpenCodeServiceIdentity({ binary: launch.binary, platform: launch.platform, startupEnvironment })
+        : `wsl:${launch.distro.trim().toLowerCase()}:${path.posix.normalize(launch.binary)}:env:${startupEnvironmentHash(startupEnvironment, "linux")}`,
+      lifecycle: launch.kind === "host"
+        ? this.createHostServiceLifecycle(launch, timeoutMs, startupEnvironment)
+        : this.createWslServiceLifecycle(launch, timeoutMs, startupEnvironment),
+      prepareDesktopPlugins: this.options.prepareDesktopPlugins
+        ? (connection, deadline) => this.options.prepareDesktopPlugins!(launch, connection, deadline) : undefined,
+    }
+  }
+
+  assertSetupExecutionHost(binary: string): void {
+    const launch = buildServiceLaunchSpec(binary, { platform: this.options.platform })
+    for (const record of this.workspaces.values()) {
+      const distro = launch.kind === "wsl" ? launch.distro.toLowerCase() : undefined
+      if (record.wslDistro?.toLowerCase() !== distro) throw new Error("Close workspaces before changing the OpenCode execution host")
+    }
+  }
+
+  async reconnectAfterSetup(binary: string): Promise<void> {
+    this.assertSetupExecutionHost(binary)
+    const options = await this.setupServiceOptions(binary)
+    // This disposes client authority only; it never stops the shared daemon.
+    await this.sharedService.shutdown()
+    for (const record of this.workspaces.values()) {
+      record[WORKSPACE_STATE].serviceOptions = options
+      record.binaryId = binary
+    }
+    this.serviceAuthorization = (await this.sharedService.headers(options))?.authorization
+  }
+
+  async reloadConfigurationAfterSetup(binary: string, assertCurrent: () => void): Promise<void> {
+    assertCurrent()
+    if (!this.sharedService.acquire) throw new Error("OpenCode connection acquisition unavailable")
+    await this.reconnectAfterSetup(binary)
+    const connection = await this.sharedService.acquire()
+    assertCurrent()
+    connection.assertCurrent()
+    await connection.client.location.reload({ signal: AbortSignal.timeout(30_000) })
+    connection.assertCurrent()
+  }
+
+  private createWslServiceLifecycle(
+    spec: Extract<ServiceLaunchSpec, { kind: "wsl" }>,
+    timeoutMs: number,
+    startupEnvironment: NodeJS.ProcessEnv,
+  ): OpenCodeServiceLifecycle {
+    return this.options.wslServiceLifecycleFactory?.(spec, timeoutMs, startupEnvironment)
+      ?? new WslOpenCodeService({
+        distro: spec.distro,
+        binary: spec.binary,
+        startupEnvironment,
+        timeoutMs,
+      }, { startFile: this.options.startServiceCommand })
+  }
+
+  private createHostServiceLifecycle(
+    spec: Extract<ServiceLaunchSpec, { kind: "host" }>,
+    timeoutMs: number,
+    startupEnvironment: NodeJS.ProcessEnv,
+  ): OpenCodeServiceLifecycle {
+    return this.options.hostServiceLifecycleFactory?.(spec, timeoutMs, startupEnvironment)
+      ?? new HostOpenCodeService({
+        binary: spec.binary,
+        platform: spec.platform,
+        startupEnvironment,
+        timeoutMs,
+      }, { startFile: this.options.startServiceCommand })
+  }
+
+  async getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>> {
+    const record = this.workspaces.get(id)
+    if (!record || record.status !== "ready") throw new Error("Workspace is not ready")
+    const configured = await this.options.settings.readEnvironmentForAdmission(signal)
+    return sessionEnvironment(configured, { distro: record.wslDistro, platform: this.options.platform, signal })
+  }
+
+  private serviceStartupEnvironment(): NodeJS.ProcessEnv {
+    const configured = this.options.settings.getOwner("config", "server").environmentVariables
+    const environment: NodeJS.ProcessEnv = {}
+    const omitted: string[] = []
+    if (configured && typeof configured === "object" && !Array.isArray(configured)) {
+      for (const [key, value] of Object.entries(configured)) {
+        if (typeof value !== "string") continue
+        if (["OPENCODE_DB", "XDG_STATE_HOME"].includes(key.toUpperCase())) {
+          omitted.push(key)
+          continue
+        }
+        if (!key || key.includes("=") || key.includes("\0") || value.includes("\0")) {
+          throw new Error(`Invalid OpenCode service environment variable name: ${key || "(empty)"}`)
+        }
+        environment[key] = value
+      }
+    }
+    if (omitted.length && !this.warnedLegacyServiceEnvironment) {
+      this.warnedLegacyServiceEnvironment = true
+      this.options.logger.warn(
+        { variables: omitted },
+        "Ignoring legacy OpenCode storage ownership variables for the global daemon",
+      )
+    }
+    if (process.env.NODE_EXTRA_CA_CERTS !== undefined) {
+      for (const key of Object.keys(environment)) {
+        if (key.toUpperCase() === "NODE_EXTRA_CA_CERTS") delete environment[key]
+      }
+      environment.NODE_EXTRA_CA_CERTS = process.env.NODE_EXTRA_CA_CERTS
+    }
+    return environment
+  }
+
+  private async wslStartupEnvironment(environment: NodeJS.ProcessEnv, distro: string, deadlineAt: number): Promise<NodeJS.ProcessEnv> {
+    let caKey: string | undefined
+    let caValue: string | undefined
+    for (const [key, value] of Object.entries(environment)) {
+      if (key.toUpperCase() !== "NODE_EXTRA_CA_CERTS") continue
+      if (caKey === undefined || key === "NODE_EXTRA_CA_CERTS") {
+        caKey = key
+        caValue = value
+      }
+      delete environment[key]
+    }
+    if (caKey === undefined) return environment
+    if (caValue && !path.posix.isAbsolute(caValue) && path.win32.isAbsolute(caValue)) {
+      const remaining = deadlineAt - this.now()
+      const translated = remaining > 0 ? await this.resolveWslServiceDirectory(caValue, distro, remaining) : null
+      if (!translated) {
+        throw new Error(`Unable to translate NODE_EXTRA_CA_CERTS for WSL distro "${distro}": ${caValue}`)
+      }
+      caValue = translated
+    }
+    environment.NODE_EXTRA_CA_CERTS = caValue
+    return environment
+  }
+
+  private now(): number {
+    return (this.options.now ?? Date.now)()
+  }
+
+  private removeRecord(
+    id: string,
+    record: WorkspaceRecord,
+    publishStopped: boolean,
+    reason: "deleted" | "stopped" = "deleted",
+    event?: WorkspaceStopDetails,
+  ): void {
+    if (this.workspaces.get(id) !== record) return
+    this.workspaces.delete(id)
+    this.fileWatches.forget(id)
+    this.worktreeInventory.forget(id)
+    this.eventWorktreeInventory.forget(id)
+    invalidateWorktreeCache(id)
+    invalidateWorktreeCache(`event:${id}`)
+    clearWorkspaceSearchCache(record.path)
+    if (publishStopped) this.publishStopped(record, reason, event)
+  }
+
+  private publishStopped(record: WorkspaceRecord, reason: "deleted" | "stopped" = "stopped", event?: WorkspaceStopDetails): void {
+    const state = record[WORKSPACE_STATE]
+    if (!state.published || state.stoppedPublished) return
+    state.stoppedPublished = true
+    record.status = "stopped"
+    record.error = undefined
+    this.options.eventBus.publish({ type: "workspace.stopped", workspaceId: record.id, reason, ...event })
+  }
+
+  resolveBinaryPath(identifier: string, timeoutMs = DEFAULT_LAUNCH_TIMEOUT_MS): string {
+    if (!identifier) {
+      return identifier
+    }
+
+    const looksLikePath = identifier.includes("/") || identifier.includes("\\") || identifier.startsWith(".")
+    if (path.isAbsolute(identifier) || looksLikePath) {
+      return identifier
+    }
+
+    const locator = process.platform === "win32" ? "where" : "which"
+
+    try {
+      const result = spawnSync(locator, [identifier], { encoding: "utf8", timeout: Math.max(1, timeoutMs), windowsHide: true })
+      if (result.status === 0 && result.stdout) {
+        const candidates = result.stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .filter((line) => !/^INFO:/i.test(line))
+
+        if (candidates.length > 0) {
+          const resolved = this.pickBinaryCandidate(candidates)
+          this.options.logger.debug({ identifier, resolved, candidates }, "Resolved binary path from system PATH")
+          return resolved
+        }
+      } else if (result.error) {
+        this.options.logger.warn({ identifier, err: result.error }, "Failed to resolve binary path via locator command")
+      }
+    } catch (error) {
+      this.options.logger.warn({ identifier, err: error }, "Failed to resolve binary path from system PATH")
+    }
+
+    return identifier
+  }
+
+  private pickBinaryCandidate(candidates: string[]): string {
+    if (process.platform !== "win32") {
+      return candidates[0] ?? ""
+    }
+
+    const extensionPreference = [".exe", ".cmd", ".bat", ".ps1"]
+
+    for (const ext of extensionPreference) {
+      const match = candidates.find((candidate) => candidate.toLowerCase().endsWith(ext))
+      if (match) {
+        return match
+      }
+    }
+
+    return candidates[0] ?? ""
+  }
+}
+
+function pathContains(parent: string, child: string): boolean {
+  const left = parseWorktreeIdentity(parent)
+  const right = parseWorktreeIdentity(child)
+  if (left || right) {
+    if (!left || !right || left.distro !== right.distro) return false
+    const relative = path.posix.relative(left.linuxPath, right.linuxPath)
+    return relative === "" || (relative !== ".." && !relative.startsWith("../") && !path.posix.isAbsolute(relative))
+  }
+  const relative = path.relative(parent, child)
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  return pathContains(left, right) || pathContains(right, left)
+}
+
+function parseWorktreeIdentity(identity: string): { distro: string; linuxPath: string } | undefined {
+  const match = /^wsl:([^:]+):(\/.*)$/.exec(identity)
+  return match ? { distro: match[1]!, linuxPath: match[2]! } : undefined
+}

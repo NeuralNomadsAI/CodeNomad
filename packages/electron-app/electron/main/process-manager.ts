@@ -1,0 +1,719 @@
+import { spawn, type ChildProcess } from "child_process"
+import { randomUUID } from "node:crypto"
+import { app } from "electron"
+import { createRequire } from "module"
+import { EventEmitter } from "events"
+import { existsSync, readFileSync } from "fs"
+import os from "os"
+import path from "path"
+import { fileURLToPath } from "url"
+import { parse as parseYaml } from "yaml"
+import { BACKEND_RUNTIME_ENVIRONMENT } from "./backend-runtime"
+import { getProcessStartIdentityAsync } from "./client-state-process-identity"
+import {
+  CLI_STOP_DEADLINE_MS,
+  captureInitialProcessTree,
+  captureProcessTree,
+  forceCapturedProcessTree,
+  mergeCapturedProcessTrees,
+  stopManagedChild,
+  type CapturedProcessTree,
+} from "./process-stop"
+import { WindowsProcessWorker } from "./windows-process-worker"
+import { SerializedLifecycle } from "./serialized-lifecycle"
+import { resolveManagedProcessExit, shouldReportManagedProcessError } from "./process-exit"
+import { getUserShellEnv, supportsUserShell } from "./user-shell"
+import { resolveShellEnvironment, restoreDesktopProfileEnvironment } from "./shell-environment"
+import { dispatchNativeRequest, isClosedPipeError, parseNativeRequest } from "./native-request"
+import { startNativeService } from "./native-service-start"
+
+const nodeRequire = createRequire(import.meta.url)
+const mainFilename = fileURLToPath(import.meta.url)
+const mainDirname = path.dirname(mainFilename)
+
+const BOOTSTRAP_TOKEN_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:"
+const MANAGED_SESSION_PREFIX = "CODENOMAD_MANAGED_SESSION:"
+const SERVER_SHUTDOWN_COMPLETE = "CODENOMAD_SHUTDOWN_STATUS:complete"
+const SERVER_SHUTDOWN_INCOMPLETE = "CODENOMAD_SHUTDOWN_STATUS:incomplete"
+const SESSION_COOKIE_NAME_PREFIX = "codenomad_session"
+type CliState = "starting" | "ready" | "error" | "stopped"
+type ListeningMode = "local" | "all"
+
+export interface CliStatus {
+  state: CliState
+  pid?: number
+  port?: number
+  url?: string
+  error?: string
+}
+
+export interface CliLogEntry {
+  stream: "stdout" | "stderr"
+  message: string
+}
+
+interface StartOptions {
+  dev: boolean
+}
+
+interface CliEntryResolution {
+  entry: string
+  runner: "node" | "tsx"
+  runnerPath?: string
+  nodeBinaryPath: string
+  nodeArgs?: string[]
+}
+
+const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
+
+function isYamlPath(filePath: string): boolean {
+  const lower = filePath.toLowerCase()
+  return lower.endsWith(".yaml") || lower.endsWith(".yml")
+}
+
+function isJsonPath(filePath: string): boolean {
+  return filePath.toLowerCase().endsWith(".json")
+}
+
+function resolveConfigPaths(raw?: string): { configYamlPath: string; legacyJsonPath: string } {
+  const target = raw && raw.trim().length > 0 ? raw.trim() : DEFAULT_CONFIG_PATH
+  const resolved = resolveConfigPath(target)
+
+  if (isYamlPath(resolved)) {
+    const baseDir = path.dirname(resolved)
+    return { configYamlPath: resolved, legacyJsonPath: path.join(baseDir, "config.json") }
+  }
+
+  if (isJsonPath(resolved)) {
+    const baseDir = path.dirname(resolved)
+    return { configYamlPath: path.join(baseDir, "config.yaml"), legacyJsonPath: resolved }
+  }
+
+  // Treat as directory.
+  return {
+    configYamlPath: path.join(resolved, "config.yaml"),
+    legacyJsonPath: path.join(resolved, "config.json"),
+  }
+}
+
+function resolveConfigPath(configPath?: string): string {
+  const target = configPath && configPath.trim().length > 0 ? configPath : DEFAULT_CONFIG_PATH
+  if (target.startsWith("~/")) {
+    return path.join(os.homedir(), target.slice(2))
+  }
+  return path.resolve(target)
+}
+
+function resolveHostForMode(mode: ListeningMode): string {
+  return mode === "local" ? "127.0.0.1" : "0.0.0.0"
+}
+
+function readListeningModeFromConfig(): ListeningMode {
+  try {
+    const { configYamlPath, legacyJsonPath } = resolveConfigPaths(process.env.CLI_CONFIG)
+
+    let parsed: any = null
+    if (existsSync(configYamlPath)) {
+      const content = readFileSync(configYamlPath, "utf-8")
+      parsed = parseYaml(content)
+    } else if (existsSync(legacyJsonPath)) {
+      const content = readFileSync(legacyJsonPath, "utf-8")
+      parsed = JSON.parse(content)
+    } else {
+      return "local"
+    }
+
+    const mode = parsed?.server?.listeningMode ?? parsed?.preferences?.listeningMode
+    if (mode === "local" || mode === "all") {
+      return mode
+    }
+  } catch (error) {
+    console.warn("[cli] failed to read listening mode from config", error)
+  }
+  return "local"
+}
+
+export declare interface CliProcessManager {
+  on(event: "status", listener: (status: CliStatus) => void): this
+  on(event: "ready", listener: (status: CliStatus) => void): this
+  on(event: "bootstrapToken", listener: (token: string) => void): this
+  on(event: "log", listener: (entry: CliLogEntry) => void): this
+  on(event: "exit", listener: (status: CliStatus) => void): this
+  on(event: "error", listener: (error: Error) => void): this
+}
+
+let backendProfileScope: { profile: string; configIdentity: string } | undefined
+
+/** Records the resolved data profile the backend uses as its Mission profile scope
+ * (`CODENOMAD_UPDATE_CHANNEL`/`CODENOMAD_PROFILE_CONFIG_IDENTITY` on the backend only). */
+export function setBackendProfileScope(scope: { profile: string; configIdentity: string }): void {
+  backendProfileScope = { ...scope }
+}
+
+export class CliProcessManager extends EventEmitter {
+  private readonly desktopProfile = {
+    CODENOMAD_UPDATE_CHANNEL: backendProfileScope?.profile,
+    CODENOMAD_PROFILE_CONFIG_IDENTITY: backendProfileScope?.configIdentity,
+    CLI_CONFIG: process.env.CLI_CONFIG,
+  }
+  private child?: ChildProcess
+  private childStartIdentity?: Promise<string | undefined>
+  private processWorker?: WindowsProcessWorker
+  private initialProcessTree?: Promise<CapturedProcessTree | undefined>
+  private capturedProcessTree?: CapturedProcessTree
+  private processTreeRefresh?: ReturnType<typeof setTimeout>
+  private status: CliStatus = { state: "stopped" }
+  private stdoutBuffer = ""
+  private stderrBuffer = ""
+  private bootstrapToken: string | null = null
+  private authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
+  private requestedStop = false
+  private managedSessionRequest?: { child: ChildProcess; id: string; settle(value?: string): void }
+  private cancelPendingStart?: (error: Error) => void
+  private shutdownStatus: "complete" | "incomplete" | null = null
+  private lifecycle = new SerializedLifecycle()
+
+  constructor(private readonly nativeRequestHandler?: (method: string, params: unknown, deadline: number, checkAdmission: () => void) => Promise<unknown>) {
+    super()
+  }
+
+  start(options: StartOptions): Promise<CliStatus> {
+    return this.lifecycle.enqueue(() => this.startNow(options))
+  }
+
+  restart(options: StartOptions): Promise<CliStatus> {
+    return this.lifecycle.enqueue(async () => {
+      await this.stopNow()
+      if (this.lifecycle.stopped) throw new Error("CLI process manager is shutting down")
+      return this.startNow(options)
+    })
+  }
+
+  stop(): Promise<void> {
+    return this.lifecycle.enqueue(() => this.stopNow())
+  }
+
+  shutdown(): Promise<void> {
+    return this.lifecycle.stop(() => this.stopNow(), () => {
+      this.requestedStop = true
+      this.cancelPendingStart?.(new Error("CLI startup interrupted by shutdown"))
+    })
+  }
+
+  recoverAfterFailedShutdown(options: StartOptions): Promise<CliStatus> {
+    return this.lifecycle.resume(() => this.startNow(options))
+  }
+
+  private async startNow(options: StartOptions): Promise<CliStatus> {
+    if (this.lifecycle.stopped) throw new Error("CLI process manager is shutting down")
+    if (this.child) {
+      await this.stopNow()
+      if (this.child) throw new Error("CLI process did not exit before restart")
+      if (this.lifecycle.stopped) throw new Error("CLI startup interrupted by shutdown")
+    }
+
+    this.stdoutBuffer = ""
+    this.stderrBuffer = ""
+    this.bootstrapToken = null
+    this.authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
+    this.requestedStop = false
+    this.shutdownStatus = null
+    this.childStartIdentity = undefined
+    this.processWorker?.dispose()
+    this.processWorker = undefined
+    this.initialProcessTree = undefined
+    this.capturedProcessTree = undefined
+    clearTimeout(this.processTreeRefresh)
+    this.updateStatus({ state: "starting", port: undefined, pid: undefined, url: undefined, error: undefined })
+
+    const listeningMode = this.resolveListeningMode()
+    const host = resolveHostForMode(listeningMode)
+    const args = this.buildCliArgs(options, host)
+    const cliEntry = await this.awaitStartupStep(this.resolveCliEntry(options))
+    if (this.lifecycle.stopped) throw new Error("CLI startup interrupted by shutdown")
+
+    console.info(
+      `[cli] launching CodeNomad CLI (${options.dev ? "dev" : "prod"}) using ${cliEntry.runner} at ${cliEntry.entry} (host=${host})`,
+    )
+
+    let env = supportsUserShell() ? getUserShellEnv() : { ...process.env }
+    if (supportsUserShell()) {
+      const controller = new AbortController()
+      try {
+        const discovered = await this.awaitStartupStep(resolveShellEnvironment(cliEntry.nodeBinaryPath, controller.signal))
+        env = discovered.env
+        cliEntry.nodeBinaryPath = discovered.executable
+      } catch {
+        console.warn("[cli] shell environment unavailable; using inherited application environment")
+      } finally {
+        controller.abort()
+      }
+      if (this.lifecycle.stopped) throw new Error("CLI startup interrupted by shutdown")
+    }
+    restoreDesktopProfileEnvironment(env, this.desktopProfile)
+    Object.assign(env, BACKEND_RUNTIME_ENVIRONMENT)
+    env.CODENOMAD_NATIVE_PARENT = "1"
+    delete env.npm_config_prefix
+    delete env.NPM_CONFIG_PREFIX
+
+    const spawnDetails = this.buildDirectSpawn(cliEntry, args)
+
+    const child = spawn(spawnDetails.command, spawnDetails.args, {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+      shell: false,
+      detached: process.platform !== "win32",
+    })
+
+    console.info(`[cli] spawn command: ${spawnDetails.command} ${spawnDetails.args.join(" ")}`)
+    if (!child.pid) {
+      console.error("[cli] spawn failed: no pid")
+    }
+
+    this.child = child
+    if (child.pid && process.platform === "win32") {
+      const worker = this.processWorker = new WindowsProcessWorker()
+      // PowerShell/compiler startup runs alongside the CLI, outside shutdown's
+      // enforcement reserve. Subsequent snapshots reuse this native helper.
+      const capture = async (): Promise<CapturedProcessTree | undefined> => {
+        const tree = await captureProcessTree(child.pid!, "win32", worker.run, 15_000)
+        if (this.child !== child || child.exitCode !== null || child.signalCode !== null) return undefined
+        const rootIdentity = tree?.members.find(({ pid }) => pid === child.pid)?.startIdentity
+        this.capturedProcessTree = mergeCapturedProcessTrees(this.capturedProcessTree, tree, child.pid!, rootIdentity)
+        // Retain identities across root exit. Final enforcement refreshes membership
+        // again, using the native helper or the fallback termination batch.
+        if (!this.requestedStop) this.processTreeRefresh = setTimeout(() => { void capture() }, 5_000)
+        return this.capturedProcessTree
+      }
+      this.initialProcessTree = capture()
+      this.childStartIdentity = this.initialProcessTree.then((tree) => tree?.members.find(({ pid }) => pid === child.pid)?.startIdentity)
+    } else {
+      this.childStartIdentity = child.pid ? getProcessStartIdentityAsync(child.pid, 1_500) : Promise.resolve(undefined)
+    }
+    this.updateStatus({ pid: child.pid ?? undefined })
+
+    const stdout = child.stdout as NodeJS.ReadableStream | undefined
+    const stderr = child.stderr as NodeJS.ReadableStream | undefined
+    child.stdin?.on("error", (error) => {
+      if (!isClosedPipeError(error)) console.warn("[cli] stdin error", error)
+    })
+
+    stdout?.on("data", (data: Buffer) => {
+      if (this.child !== child) return
+      this.handleStream(data.toString(), "stdout", child)
+    })
+
+    stderr?.on("data", (data: Buffer) => {
+      if (this.child !== child) return
+      this.handleStream(data.toString(), "stderr", child)
+    })
+
+    child.on("error", (error) => {
+      if (!shouldReportManagedProcessError(this.requestedStop, this.child === child)) return
+      console.error("[cli] failed to start CLI:", error)
+      this.updateStatus({ state: "error", error: error.message })
+      this.emit("error", error)
+    })
+
+    child.on("exit", (code, signal) => {
+      const exit = resolveManagedProcessExit(this.status.error, code, signal, this.requestedStop, this.child === child)
+      if (!exit) return
+      const failed = exit.state === "error"
+      const error = exit.error
+      console.info(`[cli] exit (code=${code}, signal=${signal || ""})${error ? ` error=${error}` : ""}`)
+      this.updateStatus({ state: exit.state, error })
+      if (failed && error) {
+        this.emit("error", new Error(error))
+      }
+      this.emit("exit", this.status)
+      this.child = undefined
+      this.childStartIdentity = undefined
+      clearTimeout(this.processTreeRefresh)
+      if (!this.requestedStop) this.processWorker?.dispose()
+    })
+
+    return new Promise<CliStatus>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.handleTimeout()
+        finish(reject, new Error("CLI startup timeout"))
+      }, 60000)
+
+      const finish = <T>(settle: (value: T) => void, value: T) => {
+        clearTimeout(timeout)
+        this.off("ready", onReady)
+        this.off("error", onError)
+        if (this.cancelPendingStart === cancel) this.cancelPendingStart = undefined
+        settle(value)
+      }
+      const onReady = (status: CliStatus) => finish(resolve, status)
+      const onError = (error: Error) => finish(reject, error)
+      const cancel = (error: Error) => finish(reject, error)
+      this.cancelPendingStart = cancel
+      this.once("ready", onReady)
+      this.once("error", onError)
+    })
+  }
+
+  private async stopNow(): Promise<void> {
+    const child = this.child
+    if (!child) {
+      this.updateStatus({ state: "stopped" })
+      return
+    }
+
+    const spawnedChild = child
+
+    this.requestedStop = true
+    clearTimeout(this.processTreeRefresh)
+
+    const pid = spawnedChild.pid
+    if (!pid) {
+      this.child = undefined
+      this.updateStatus({ state: "stopped" })
+      return
+    }
+
+    const isAlreadyExited = () => spawnedChild.exitCode !== null || spawnedChild.signalCode !== null
+
+    const deadlineAt = Date.now() + CLI_STOP_DEADLINE_MS
+    const worker = this.processWorker
+    const spawnedIdentity = this.childStartIdentity ?? Promise.resolve(undefined)
+    const { tree: initialCapture, rootStartIdentity } = await captureInitialProcessTree(
+      pid,
+      process.platform,
+      worker?.run,
+      () => spawnedIdentity,
+      deadlineAt,
+    )
+    let processTree = mergeCapturedProcessTrees(this.capturedProcessTree ?? await this.initialProcessTree, initialCapture, pid, rootStartIdentity)
+    let enforcement: Promise<boolean> | null = null
+    const forceProcessTree = (enforcementDeadline = deadlineAt) => {
+      if (enforcement) return enforcement
+      enforcement = (async () => {
+        const latest = await captureProcessTree(pid, process.platform, worker?.run, Math.min(1_500, enforcementDeadline - Date.now()), false)
+        processTree = mergeCapturedProcessTrees(processTree, latest, pid, rootStartIdentity)
+        return processTree ? forceCapturedProcessTree(processTree, undefined, worker?.run, process.kill, { deadlineAt: enforcementDeadline }) : false
+      })().finally(() => { enforcement = null })
+      return enforcement
+    }
+
+    let forceConfirmed = false
+    const enforceIncompleteCleanup = () => {
+      void forceProcessTree().then((confirmed) => {
+        forceConfirmed = confirmed
+        if (!confirmed) console.warn(`[cli] immediate enforcement after incomplete cleanup was not confirmed (pid=${pid})`)
+      }, (error) => {
+        console.warn(`[cli] immediate enforcement after incomplete cleanup failed (pid=${pid})`, error)
+        forceConfirmed = false
+      })
+    }
+    this.once("shutdownIncomplete", enforceIncompleteCleanup)
+
+    try {
+      await stopManagedChild({
+        child: spawnedChild,
+        isExited: isAlreadyExited,
+        force: async (forceDeadline) => forceConfirmed || await forceProcessTree(forceDeadline),
+        isCleanupComplete: () => this.shutdownStatus === "complete",
+        deadlineMs: CLI_STOP_DEADLINE_MS,
+        deadlineAt,
+        forceReserveMs: 5_000,
+        warn: (message, error) => console.warn(`[cli] ${message} (pid=${pid})`, error ?? ""),
+      })
+    } finally {
+      this.off("shutdownIncomplete", enforceIncompleteCleanup)
+    }
+    if (this.shutdownStatus !== "complete") {
+      console.warn(`[cli] CLI exited without a complete graceful-shutdown handshake (status=${this.shutdownStatus ?? "missing"})`)
+    }
+    console.info("[cli] CLI process exited")
+    worker?.dispose()
+    if (this.child === spawnedChild) {
+      this.child = undefined
+      this.childStartIdentity = undefined
+      this.updateStatus({ state: "stopped" })
+    }
+  }
+
+  getStatus(): CliStatus {
+    return { ...this.status }
+  }
+
+  getAuthCookieName(): string {
+    return this.authCookieName
+  }
+
+  private awaitStartupStep<T>(operation: Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const finish = () => {
+        if (this.cancelPendingStart !== cancel) return false
+        this.cancelPendingStart = undefined
+        return true
+      }
+      const cancel = (error: Error) => { if (finish()) reject(error) }
+      this.cancelPendingStart = cancel
+      operation.then(
+        (value) => { if (finish()) resolve(value) },
+        (error) => { if (finish()) reject(error) },
+      )
+    })
+  }
+
+  private resolveListeningMode(): ListeningMode {
+    return readListeningModeFromConfig()
+  }
+
+  private handleTimeout() {
+    const timedOutChild = this.child
+    if (timedOutChild) {
+      const pid = timedOutChild.pid
+      if (pid) {
+        const deadlineAt = Date.now() + 5_000
+        const worker = this.processWorker
+        const spawnedIdentity = this.childStartIdentity ?? Promise.resolve(undefined)
+        void captureInitialProcessTree(pid, process.platform, worker?.run, () => spawnedIdentity, deadlineAt).then(async ({ tree, rootStartIdentity }) => {
+          const baseline = mergeCapturedProcessTrees(this.capturedProcessTree ?? await this.initialProcessTree, tree, pid, rootStartIdentity)
+          const latest = await captureProcessTree(pid, process.platform, worker?.run, Math.min(1_500, deadlineAt - Date.now()), false)
+          const processTree = mergeCapturedProcessTrees(baseline, latest, pid, rootStartIdentity)
+          const forced = processTree ? await forceCapturedProcessTree(processTree, undefined, worker?.run, process.kill, { deadlineAt }) : false
+          if (!forced) console.warn(`[cli] startup-timeout process tree cleanup was not confirmed (pid=${pid})`)
+          else if (this.child === timedOutChild) {
+            this.child = undefined
+            this.childStartIdentity = undefined
+            worker?.dispose()
+          }
+        }).catch((error) => console.warn(`[cli] startup-timeout process tree cleanup failed (pid=${pid})`, error))
+      }
+    }
+    this.updateStatus({ state: "error", error: "CLI did not start in time" })
+    this.emit("error", new Error("CLI did not start in time"))
+  }
+
+  private handleStream(chunk: string, stream: "stdout" | "stderr", child: ChildProcess) {
+    if (stream === "stdout") {
+      this.stdoutBuffer += chunk
+      this.processBuffer("stdout", child)
+    } else {
+      this.stderrBuffer += chunk
+      this.processBuffer("stderr", child)
+    }
+  }
+
+  private processBuffer(stream: "stdout" | "stderr", child: ChildProcess) {
+    const buffer = stream === "stdout" ? this.stdoutBuffer : this.stderrBuffer
+    const lines = buffer.split("\n")
+    const trailing = lines.pop() ?? ""
+
+    if (stream === "stdout") {
+      this.stdoutBuffer = trailing
+    } else {
+      this.stderrBuffer = trailing
+    }
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+
+      if (stream === "stdout" && trimmed.startsWith("CODENOMAD_NATIVE_REQUEST:")) {
+        const request = parseNativeRequest(trimmed)
+        if (request) {
+          void dispatchNativeRequest(
+            child,
+            request,
+            (method, params, deadline, checkAdmission) => method === "opencode.service.start"
+              ? startNativeService(params, deadline)
+              : this.nativeRequestHandler?.(method, params, deadline, checkAdmission) ?? Promise.reject(new Error(`Unsupported native method: ${method}`)),
+            () => this.child === child && !this.requestedStop,
+          )
+        }
+        continue
+      }
+
+      if (trimmed === SERVER_SHUTDOWN_COMPLETE) {
+        if (this.shutdownStatus === "incomplete") continue
+        this.shutdownStatus = "complete"
+        console.info("[cli] server confirmed graceful shutdown")
+        continue
+      }
+      if (trimmed === SERVER_SHUTDOWN_INCOMPLETE) {
+        if (this.shutdownStatus === "incomplete") continue
+        this.shutdownStatus = "incomplete"
+        console.warn("[cli] server reported incomplete cleanup; requesting final process-tree enforcement")
+        this.emit("shutdownIncomplete")
+        continue
+      }
+      if (trimmed.startsWith(MANAGED_SESSION_PREFIX)) {
+        const match = /^([a-f0-9-]{36}) ([-_A-Za-z0-9]{43}|-)$/.exec(trimmed.slice(MANAGED_SESSION_PREFIX.length))
+        const pending = this.managedSessionRequest
+        if (stream === "stdout" && pending && pending.child === child && match?.[1] === pending.id)
+          pending.settle(match[2] === "-" ? undefined : match[2])
+        continue
+      }
+
+      if (trimmed.startsWith(BOOTSTRAP_TOKEN_PREFIX)) {
+        const token = trimmed.slice(BOOTSTRAP_TOKEN_PREFIX.length).trim()
+        if (token && !this.bootstrapToken) {
+          this.bootstrapToken = token
+          this.emit("bootstrapToken", token)
+        }
+        continue
+      }
+
+      console.info(`[cli][${stream}] ${trimmed}`)
+      this.emit("log", { stream, message: trimmed })
+
+      const localUrl = this.extractLocalUrl(trimmed)
+      if (localUrl && this.status.state === "starting") {
+        let port: number | undefined
+        try {
+          port = Number(new URL(localUrl).port) || undefined
+        } catch {
+          port = undefined
+        }
+        console.info(`[cli] ready on ${localUrl}`)
+        this.updateStatus({ state: "ready", port, url: localUrl })
+        this.emit("ready", this.status)
+      }
+    }
+  }
+
+  private extractLocalUrl(line: string): string | null {
+    const match = line.match(/^Local\s+Connection\s+URL\s*:\s*(https?:\/\/\S+)\s*$/i)
+    if (!match) {
+      return null
+    }
+    return match[1] ?? null
+  }
+
+  async renewManagedSession(install: (url: string, session: string) => Promise<void>): Promise<boolean> {
+    const child = this.child, url = this.status.url
+    const current = () => !!child && this.child === child && !this.requestedStop
+      && this.status.state === "ready" && this.status.url === url
+    if (!current() || !url || !child?.stdin?.writable || this.managedSessionRequest) return false
+    const id = randomUUID()
+    const session = await new Promise<string | undefined>(resolve => {
+      const settle = (value?: string) => {
+        if (this.managedSessionRequest?.id !== id) return
+        this.managedSessionRequest = undefined
+        clearTimeout(timer)
+        resolve(value)
+      }
+      const timer = setTimeout(settle, 3000)
+      this.managedSessionRequest = { child, id, settle }
+      child.stdin!.write(`codenomad:renew-session ${id}\n`, error => { if (error) settle() })
+    })
+    if (!session || !current()) return false
+    await install(url, session)
+    return current()
+  }
+
+  private updateStatus(patch: Partial<CliStatus>) {
+    this.status = { ...this.status, ...patch }
+    this.emit("status", this.status)
+  }
+
+  private buildCliArgs(options: StartOptions, host: string): string[] {
+    const args = ["serve", "--host", host, "--generate-token", "--auth-cookie-name", this.authCookieName, "--unrestricted-root"]
+
+    if (options.dev) {
+      // Dev: run plain HTTP + Vite dev server proxy.
+      args.push("--https", "false", "--http", "true")
+      // Avoid collisions with an already-running server (and dual-stack ::/0.0.0.0 quirks)
+      // by forcing an ephemeral port in dev.
+      args.push("--http-port", "0")
+    } else {
+      // Prod desktop: always keep loopback HTTP enabled.
+      args.push("--https", "true", "--http", "true")
+    }
+
+    if (options.dev) {
+      const devServer = process.env.VITE_DEV_SERVER_URL || process.env.ELECTRON_RENDERER_URL || "http://localhost:3000"
+      const rawLogLevel = (process.env.CLI_LOG_LEVEL ?? "info").trim()
+      const logLevel = rawLogLevel.length > 0 ? rawLogLevel.toLowerCase() : "info"
+      args.push("--ui-dev-server", devServer, "--log-level", logLevel)
+    }
+
+    return args
+  }
+
+  private buildDirectSpawn(cliEntry: CliEntryResolution, args: string[]) {
+    if (cliEntry.runner === "tsx") {
+      return { command: cliEntry.nodeBinaryPath, args: [...(cliEntry.nodeArgs ?? []), cliEntry.runnerPath!, cliEntry.entry, ...args] }
+    }
+
+    return { command: cliEntry.nodeBinaryPath, args: [...(cliEntry.nodeArgs ?? []), cliEntry.entry, ...args] }
+  }
+
+  private async resolveCliEntry(options: StartOptions): Promise<CliEntryResolution> {
+    if (options.dev) {
+      const tsxPath = this.resolveTsx()
+      if (!tsxPath) {
+        throw new Error("tsx is required to run the CLI in development mode. Please install dependencies.")
+      }
+      const devEntry = this.resolveDevEntry()
+      return { entry: devEntry, runner: "tsx", runnerPath: tsxPath, nodeBinaryPath: process.execPath }
+    }
+
+    return {
+      entry: this.resolveProdEntry(),
+      runner: "node",
+      nodeBinaryPath: process.execPath,
+      nodeArgs: ["--experimental-specifier-resolution=node"],
+    }
+  }
+ 
+  private resolveTsx(): string | null {
+    const candidates: Array<string | (() => string)> = [
+      () => nodeRequire.resolve("tsx/cli"),
+      () => nodeRequire.resolve("tsx/dist/cli.mjs"),
+      () => nodeRequire.resolve("tsx/dist/cli.cjs"),
+      path.resolve(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs"),
+      path.resolve(process.cwd(), "node_modules", "tsx", "dist", "cli.cjs"),
+      path.resolve(process.cwd(), "..", "node_modules", "tsx", "dist", "cli.mjs"),
+      path.resolve(process.cwd(), "..", "node_modules", "tsx", "dist", "cli.cjs"),
+      path.resolve(process.cwd(), "..", "..", "node_modules", "tsx", "dist", "cli.mjs"),
+      path.resolve(process.cwd(), "..", "..", "node_modules", "tsx", "dist", "cli.cjs"),
+      path.resolve(app.getAppPath(), "..", "node_modules", "tsx", "dist", "cli.mjs"),
+      path.resolve(app.getAppPath(), "..", "node_modules", "tsx", "dist", "cli.cjs"),
+    ]
+ 
+    for (const candidate of candidates) {
+      try {
+        const resolved = typeof candidate === "function" ? candidate() : candidate
+        if (resolved && existsSync(resolved)) {
+          return resolved
+        }
+      } catch {
+        continue
+      }
+    }
+ 
+    return null
+  }
+ 
+  private resolveDevEntry(): string {
+    const entry = path.resolve(process.cwd(), "..", "server", "src", "index.ts")
+    if (!existsSync(entry)) {
+      throw new Error(`Dev CLI entry not found at ${entry}. Run npm run dev:electron from the repository root after installing dependencies.`)
+    }
+    return entry
+  }
+ 
+  private resolveProdEntry(): string {
+    const candidates = [
+      path.join(process.resourcesPath, "server", "dist", "bin.js"),
+      path.join(mainDirname, "../resources/server/dist/bin.js"),
+      path.resolve(process.cwd(), "..", "server", "dist", "bin.js"),
+    ]
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        return candidate
+      }
+    }
+
+    throw new Error("Unable to locate the packaged CodeNomad server entrypoint (dist/bin.js). Rebuild the desktop bundle.")
+  }
+
+}

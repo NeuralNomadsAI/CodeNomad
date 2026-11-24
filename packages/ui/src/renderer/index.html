@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CodeNomad</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        background-color: #1a1a1a;
+        color: #e0e0e0;
+      }
+    </style>
+    <script>
+      ;(function () {
+        try {
+          document.documentElement.setAttribute('data-theme', 'dark')
+        } catch (error) {
+          const rawConsole = globalThis?.["console"]
+          rawConsole?.warn?.('Failed to apply initial theme', error)
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

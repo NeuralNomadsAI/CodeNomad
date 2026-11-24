@@ -1,0 +1,4 @@
+.mission-advance-summary { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: var(--text-secondary); }
+.mission-task-reader details { margin-block: 0.75rem; }
+.mission-task-reader summary { cursor: pointer; font-size: var(--font-size-sm); color: var(--text-secondary); }
+.mission-task-reader details[open] summary { margin-block-end: 0.75rem; }

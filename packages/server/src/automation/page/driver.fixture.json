@@ -1,0 +1,12 @@
+[
+  {"nodeId":"root","role":{"value":"RootWebArea"},"childIds":["heading","button","field","check","select","group"]},
+  {"nodeId":"heading","parentId":"root","backendDOMNodeId":10,"role":{"value":"heading"},"name":{"value":"Checkout"},"properties":[{"name":"level","value":{"value":2}}]},
+  {"nodeId":"button","parentId":"root","backendDOMNodeId":11,"role":{"value":"button"},"name":{"value":"Save"},"childIds":["text"]},
+  {"nodeId":"text","parentId":"button","role":{"value":"StaticText"},"name":{"value":"Save"}},
+  {"nodeId":"field","parentId":"root","backendDOMNodeId":12,"role":{"value":"textbox"},"name":{"value":"Name"},"value":{"value":"é漢🙂"},"properties":[{"name":"focused","value":{"value":true}}]},
+  {"nodeId":"check","parentId":"root","backendDOMNodeId":13,"role":{"value":"checkbox"},"name":{"value":"Remember"},"properties":[{"name":"checked","value":{"value":"mixed"}}]},
+  {"nodeId":"select","parentId":"root","backendDOMNodeId":14,"role":{"value":"combobox"},"name":{"value":"Plan"},"childIds":["option"]},
+  {"nodeId":"option","parentId":"select","backendDOMNodeId":15,"role":{"value":"option"},"name":{"value":"Pro"},"properties":[{"name":"selected","value":{"value":true}},{"name":"disabled","value":{"value":true}}]},
+  {"nodeId":"group","parentId":"root","ignored":true,"childIds":["quantity"]},
+  {"nodeId":"quantity","parentId":"group","backendDOMNodeId":16,"role":{"value":"spinbutton"},"name":{"value":"Quantity"},"value":{"value":3}}
+]

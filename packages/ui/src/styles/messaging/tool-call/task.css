@@ -1,0 +1,146 @@
+.tool-call-task-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: 0;
+}
+
+.tool-call-task-section {
+  border: 1px solid var(--tool-call-border-color, var(--border-base));
+  overflow: hidden;
+  background-color: transparent;
+  border-radius: 0;
+}
+
+.tool-call-task-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--message-part-header-gap);
+  flex-wrap: nowrap;
+  min-height: 1.6rem;
+  padding: 0 var(--space-sm);
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--tool-call-border-color, var(--border-base));
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-title-font-size);
+  line-height: var(--message-part-header-title-line-height);
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tool-call-task-section-title {
+  font-weight: var(--font-weight-semibold);
+  flex: 0 0 auto;
+}
+
+.tool-call-task-section-meta {
+  font-family: var(--message-part-header-font-family);
+  font-size: var(--message-part-header-type-font-size);
+  font-weight: var(--message-part-header-type-font-weight);
+  line-height: var(--message-part-header-title-line-height);
+  color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-call-task-section-body {
+  background-color: var(--surface-code);
+}
+
+.tool-call-task-section-body .tool-call-markdown {
+  padding: var(--space-md);
+}
+
+.tool-call-task-container {
+  padding: 0;
+}
+
+/* Steps list should be flush (no inset padding). */
+.tool-call-task-section-body .tool-call-task-container.tool-call-markdown {
+  padding: 0;
+}
+
+/* Keep task lists compact vs prompt/output panes. */
+.tool-call-task-container.tool-call-markdown {
+  max-height: calc(var(--tool-call-max-height-compact, calc(25 * 1.4em)) / 2);
+}
+
+/* Prompt + output panes: slightly taller than tasks. */
+.tool-call-task-section-body > .tool-call-markdown:not(.tool-call-task-container) {
+  max-height: calc(var(--tool-call-max-height-compact, calc(25 * 1.4em)) * 2 / 3);
+}
+
+.tool-call-task-empty {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+  color: var(--text-muted);
+  padding: 0.5rem;
+}
+
+.tool-call-task-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin: 0;
+}
+
+/* Nested tool calls (child session tool timeline) */
+.tool-call-task-summary .tool-call {
+  position: relative;
+}
+
+.tool-call-task-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem 0.35rem 0.75rem;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family-mono);
+  line-height: 1.35;
+  background-color: var(--surface-secondary);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.tool-call-task-item + .tool-call-task-item {
+  margin-top: 0.1rem;
+}
+
+.tool-call-task-item:hover {
+  background-color: var(--surface-hover);
+}
+
+.tool-call-task-icon {
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.tool-call-task-label {
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+  font-size: inherit;
+}
+
+.tool-call-task-separator {
+  color: var(--text-muted);
+  font-size: inherit;
+}
+
+.tool-call-task-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-call-task-status {
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}

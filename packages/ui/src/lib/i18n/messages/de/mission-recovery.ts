@@ -1,0 +1,10 @@
+export const missionRecoveryMessages = {
+  "missions.recovery.coordinator": "Koordinator prüfen und wiederaufnehmen",
+  "missions.recovery.report": "Fehlenden Bericht prüfen und wiederherstellen",
+  "missions.recovery.pending": "Voraussetzungen für die Wiederaufnahme werden geprüft…",
+  "missions.recovery.error.busy": "Native Arbeit oder ein ungeklärter Wartezustand verhindert die Wiederaufnahme. Öffnen Sie die Unterhaltung.",
+  "missions.recovery.error.unknown": "Die Aktivität konnte nicht geprüft werden.",
+  "missions.recovery.error.conflict": "Die Mission oder das Wiederaufnahmeziel hat sich geändert. Aktualisieren Sie die Mission vor einem erneuten Versuch.",
+  "missions.recovery.error.member": "Eine Sitzung dieser Mission gehört inzwischen zu einer anderen aktiven Mission. Beenden oder stoppen Sie diese zuerst.",
+  "missions.recovery.error.failed": "Wiederaufnahme unbestätigt. Aktualisieren Sie die Mission vor einem erneuten Versuch.",
+}

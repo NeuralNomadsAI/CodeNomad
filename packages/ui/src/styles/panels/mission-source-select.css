@@ -1,0 +1,6 @@
+.mission-source-select { min-width: 0; }
+.mission-source-select .selector-trigger { width: 100%; min-width: 0; }
+.mission-source-popover { display: flex; flex-direction: column; min-width: var(--kb-popper-anchor-width); max-width: calc(100vw - 2 * var(--space-sm)); max-height: var(--kb-popper-content-available-height); }
+.mission-source-popover .selector-listbox { min-height: 0; flex: 1 1 auto; }
+.mission-source-popover .selector-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mission-source-end { height: 1px; overflow-anchor: none; }

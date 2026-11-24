@@ -1,0 +1,737 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+
+import type { OpenCodeClient, ShellInfo } from "@opencode/client"
+
+import { projectMissionActivity } from "./activity"
+import { MISSION_FAMILY_TREE_TTL_MS, MissionActivityCache } from "./activity-cache"
+import { assertNativeMissionRecoveryReady } from "./native-recovery-observation"
+import { observeActiveDescendant } from "./native-session-family"
+import type { MissionActor, MissionMap, MissionSnapshot, MissionTask } from "./model"
+
+const location = { directory: "/owned/repo" }
+
+function actor(sessionId: string, kind: MissionActor["kind"] = "specialist"): MissionActor {
+  return { sessionId, kind, managed: kind === "specialist", title: sessionId, roles: [kind], location, joinedAt: 1 }
+}
+
+function task(sessionId: string, report = false): MissionTask {
+  return {
+    id: `task-${sessionId}`, key: `task-${sessionId}`, title: "Task", brief: "Brief", role: "implementer",
+    blockedBy: [], status: report ? "completed" : "queued", actorSessionId: sessionId, admissionId: `admission-${sessionId}`,
+    createdAt: 1, updatedAt: 1, outstandingExecution: false,
+    ...(report ? { report: { id: "report", taskKey: `task-${sessionId}`, sessionId, outcome: "completed" as const,
+      summary: "Done", evidence: [], next: [], notificationStatus: "admitted" as const, createdAt: 2 } } : {}),
+  }
+}
+
+function snapshot(actors: MissionActor[], tasks: MissionTask[] = []): MissionSnapshot {
+  const mission: MissionMap = {
+    version: 1, id: "msn_1", projectID: "project-1", projectCanonical: "canonical", objective: "Objective",
+    template: "custom", status: "active", coordinatorSessionId: actors.find(item => item.kind === "coordinator")?.sessionId ?? "coordinator",
+    actors, tasks, reports: [], frontier: [], claims: [], createdAt: 1, updatedAt: 1, revision: 1,
+    history: [], historyTruncated: false,
+  }
+  return { version: 1, projectID: "project-1", generatedAt: 1, missions: [mission], discardedEvents: 0 }
+}
+
+function native(options: {
+  active?: Record<string, { type: "running" }>
+  inbox?: Record<string, unknown[]>
+  shells?: ShellInfo[]
+  forms?: Array<{ sessionID: string }>
+  permissions?: Array<{ sessionID: string }>
+  sessions?: Record<string, { projectID?: string; directory?: string; workspaceID?: string; outcome?: "succeeded"; parentID?: string }>
+  incompleteTree?: boolean
+  fail?: "active" | "inbox" | "forms" | "children"
+} = {}): OpenCodeClient {
+  const responseLocation = { directory: location.directory }
+  return {
+    session: {
+      active: async () => { if (options.fail === "active") throw new Error("active failed"); return options.active ?? {} },
+      get: async ({ sessionID }: { sessionID: string }) => {
+        const value = options.sessions?.[sessionID]
+        if (value === undefined && options.sessions) throw { status: 404 }
+        return { id: sessionID, projectID: value?.projectID ?? "project-1", location: { directory: value?.directory ?? location.directory, workspaceID: value?.workspaceID },
+          parentID: value?.parentID, outcome: value?.outcome, time: { created: 1, updated: 1 }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }
+      },
+      list: async ({ parentID }: { parentID: string }) => {
+        if (options.fail === "children") throw new Error("children failed")
+        return { data: Object.entries(options.sessions ?? {}).filter(([, session]) => session.parentID === parentID).map(([id, session]) => ({
+          id, parentID: session.parentID, projectID: session.projectID ?? "project-1", location: { directory: session.directory ?? location.directory, workspaceID: session.workspaceID },
+        })), cursor: { next: options.incompleteTree ? "more" : null } }
+      },
+      inbox: { list: async ({ sessionID }: { sessionID: string }) => {
+        if (options.fail === "inbox") throw new Error("inbox failed")
+        return options.inbox?.[sessionID] ?? []
+      } },
+    },
+    shell: { list: async () => ({ location: responseLocation, data: options.shells ?? [] }) },
+    form: { list: async () => {
+      if (options.fail === "forms") throw new Error("forms failed")
+      return { location: responseLocation, data: options.forms ?? [] }
+    } },
+    permission: { request: { list: async () => ({ location: responseLocation, data: options.permissions ?? [] }) } },
+  } as unknown as OpenCodeClient
+}
+
+async function states(options: Parameters<typeof native>[0], actors: MissionActor[], tasks: MissionTask[] = [], owns = true) {
+  const result = await projectMissionActivity({
+    client: native(options), snapshot: snapshot(actors, tasks), workspaceID: "workspace-1", now: () => 42,
+    ownsLocation: async () => owns,
+  })
+  assert.equal(result.generatedAt, 42)
+  return Object.fromEntries(result.missions[0]!.actors.map(item => [item.sessionId, item.state]))
+}
+
+test("native active state wins over an old successful outcome", async () => {
+  assert.deepEqual(await states({ active: { specialist: { type: "running" } }, sessions: { specialist: { outcome: "succeeded" } } },
+    [actor("specialist")], [task("specialist")]), { specialist: "running" })
+})
+
+test("projects an associated running Shell while its actor session is idle", async () => {
+  const shell: ShellInfo = { id: "shell", status: "running", command: "test", cwd: location.directory, shell: "sh", file: "out",
+    metadata: { sessionID: "specialist" }, time: { started: 1 } }
+  assert.deepEqual(await states({ shells: [shell], sessions: { specialist: {} } }, [actor("specialist")], [task("specialist")]),
+    { specialist: "background" })
+})
+
+test("uncorrelated running Shells cannot establish idle in projection or recovery", async () => {
+  for (const metadata of [undefined, null, {}, { sessionID: undefined }, { sessionID: null },
+    { sessionID: 42 }, { sessionID: false }, { sessionID: "" }, { sessionID: " " }]) {
+    const shell = { id: "shell", status: "running", command: "test", cwd: location.directory, shell: "sh", file: "out",
+      ...(metadata === undefined ? {} : { metadata }), time: { started: 1 } } as unknown as ShellInfo
+    const client = native({ shells: [shell], sessions: { specialist: { outcome: "succeeded" } } })
+    let mutations = 0
+    client.session.environment = async () => { mutations++; throw new Error("Unexpected mutation") }
+    client.session.synthetic = async () => { mutations++; throw new Error("Unexpected mutation") }
+    client.session.interrupt = async () => { mutations++; throw new Error("Unexpected mutation") }
+    const result = await projectMissionActivity({ client, snapshot: snapshot([actor("specialist")], [task("specialist")]),
+      workspaceID: "workspace-1", ownsLocation: async () => true })
+    assert.equal(result.missions[0].actors[0].state, "unknown", JSON.stringify(metadata))
+    await assert.rejects(assertNativeMissionRecoveryReady(client, await client.session.get({ sessionID: "specialist" }),
+      new AbortController().signal), error => Boolean(error && typeof error === "object" && "code" in error && error.code === "recovery-busy"))
+    assert.equal(mutations, 0)
+  }
+})
+
+test("known unrelated or finished Shells do not obscure proven idle, while descendants retain background activity", async () => {
+  const sessions = { specialist: {}, child: { parentID: "specialist" } }
+  const actors = [actor("specialist")], tasks = [task("specialist")]
+  for (const [status, metadata] of [["running", { sessionID: "unrelated" }], ["completed", {}], ["failed", {}]] as const) {
+    const shell = { id: "shell", status, metadata } as unknown as ShellInfo
+    assert.deepEqual(await states({ sessions, shells: [shell] }, actors, tasks), { specialist: "idle-without-report" })
+    const client = native({ sessions, shells: [shell] })
+    await assertNativeMissionRecoveryReady(client, await client.session.get({ sessionID: "specialist" }), new AbortController().signal)
+  }
+  const childShell: ShellInfo = { id: "shell", status: "running", metadata: { sessionID: "child" }, command: "test",
+    cwd: location.directory, shell: "sh", file: "out", time: { started: 1 } }
+  assert.deepEqual(await states({ sessions, shells: [childShell] },
+    actors, tasks), { specialist: "background" })
+})
+
+test("unattributed Shells do not erase positive execution, wait or queued-input evidence", async () => {
+  const shell: ShellInfo = { id: "shell", status: "running", metadata: {}, command: "test", cwd: location.directory,
+    shell: "sh", file: "out", time: { started: 1 } }
+  const base = { sessions: { specialist: {} }, shells: [shell] }
+  const actors = [actor("specialist")], tasks = [task("specialist")]
+  assert.deepEqual(await states({ ...base, active: { specialist: { type: "running" } } }, actors, tasks), { specialist: "running" })
+  assert.deepEqual(await states({ ...base, forms: [{ sessionID: "global" }] }, actors, tasks), { specialist: "form" })
+  assert.deepEqual(await states({ ...base, permissions: [{ sessionID: "specialist" }] }, actors, tasks), { specialist: "permission" })
+  assert.deepEqual(await states({ ...base, inbox: { specialist: [{ id: "pending" }] } }, actors, tasks), { specialist: "queued" })
+})
+
+test("an idle coordinator of a running mission owes its final report unless a report is still being delivered", async () => {
+  const coordinator = [actor("coordinator", "coordinator")]
+  assert.deepEqual(await states({ sessions: { coordinator: {} } }, coordinator), { coordinator: "idle-without-report" })
+  assert.deepEqual(await states({ sessions: { coordinator: {} }, inbox: { coordinator: [{ id: "pending" }] } }, coordinator), { coordinator: "queued" })
+  const project = async (patch: Partial<MissionMap>) => {
+    const value = snapshot(coordinator)
+    const result = await projectMissionActivity({ client: native({ sessions: { coordinator: {} } }), workspaceID: "workspace-1",
+      snapshot: { ...value, missions: [{ ...value.missions[0]!, ...patch }] }, ownsLocation: async () => true })
+    return result.missions[0]!.actors[0]!.state
+  }
+  const report = { id: "report", taskKey: "task", sessionId: "specialist", outcome: "completed" as const, summary: "Done",
+    evidence: [], next: [], createdAt: 2 }
+  assert.equal(await project({ reports: [{ ...report, notificationStatus: "pending" }] }), "unknown")
+  assert.equal(await project({ reports: [{ ...report, notificationStatus: "admitted" }] }), "idle-without-report")
+  assert.equal(await project({ reports: [{ ...report, delivery: "native-return", notificationStatus: "pending" }] }), "idle-without-report",
+    "a native return never wakes the coordinator through a notification")
+  for (const patch of [{ runState: "paused" }, { runState: "prepared" }, { status: "completed" }, { status: "failed" }] as const) {
+    assert.equal(await project(patch), "unknown", JSON.stringify(patch))
+  }
+})
+
+test("projects pending Forms and permissions without changing plan state", async () => {
+  const actors = [actor("form-owner"), actor("permission-owner")]
+  const result = await states({ sessions: { "form-owner": {}, "permission-owner": {} }, forms: [{ sessionID: "form-owner" }],
+    permissions: [{ sessionID: "permission-owner" }] }, actors, actors.map(item => task(item.sessionId)))
+  assert.deepEqual(result, { "form-owner": "form", "permission-owner": "permission" })
+})
+
+test("idle roots project their bounded native descendants rather than declaring missing reports prematurely", async () => {
+  const sessions = { specialist: {}, child: { parentID: "specialist" }, grandchild: { parentID: "child" } }
+  const actors = [actor("specialist")], tasks = [task("specialist")]
+  assert.deepEqual(await states({ sessions, active: { grandchild: { type: "running" } } }, actors, tasks), { specialist: "background" })
+  assert.deepEqual(await states({ sessions, inbox: { child: [{ id: "pending" }] } }, actors, tasks), { specialist: "queued" })
+  assert.deepEqual(await states({ sessions, forms: [{ sessionID: "grandchild" }] }, actors, tasks), { specialist: "form" })
+  assert.deepEqual(await states({ sessions, permissions: [{ sessionID: "child" }] }, actors, tasks), { specialist: "permission" })
+  assert.deepEqual(await states({ sessions, forms: [{ sessionID: "global" }] }, actors, tasks), { specialist: "form" })
+  assert.deepEqual(await states({ sessions, permissions: [{ sessionID: "global" }] }, actors, tasks), { specialist: "permission" })
+  for (const options of [
+    { sessions, fail: "children" as const }, { sessions, incompleteTree: true },
+    { sessions: { ...sessions, child: { parentID: "specialist", directory: "/moved" } } },
+    { sessions: { ...sessions, child: { parentID: "specialist", projectID: "foreign" } } },
+  ]) assert.deepEqual(await states(options, actors, tasks), { specialist: "unknown" })
+})
+
+test("moved actors never trigger inbox or descendant reads", async () => {
+  const client = native({ sessions: { specialist: { directory: "/moved" } } })
+  let inboxes = 0, trees = 0
+  client.session.inbox.list = async () => { inboxes++; return [] }
+  client.session.list = async () => { trees++; return { data: [], cursor: { next: null } } }
+  const result = await projectMissionActivity({ client, snapshot: snapshot([actor("specialist")], [task("specialist")]),
+    workspaceID: "workspace-1", ownsLocation: async () => true })
+  assert.equal(result.missions[0].actors[0].state, "unknown")
+  assert.equal(inboxes, 0)
+  assert.equal(trees, 0)
+})
+
+test("uses unknown for partial reads and foreign or moved actors, and missing only for an authoritative 404", async () => {
+  assert.deepEqual(await states({ fail: "forms", sessions: { specialist: {} } }, [actor("specialist")], [task("specialist")]),
+    { specialist: "unknown" })
+  assert.deepEqual(await states({ sessions: { specialist: { projectID: "foreign" } } }, [actor("specialist")], [task("specialist")]),
+    { specialist: "unknown" })
+  assert.deepEqual(await states({ sessions: { specialist: { directory: "/owned/other" } } }, [actor("specialist")], [task("specialist")]),
+    { specialist: "unknown" })
+  assert.deepEqual(await states({ sessions: {} }, [actor("specialist")], [task("specialist")]), { specialist: "missing" })
+  assert.deepEqual(await states({ sessions: { specialist: {} } }, [actor("specialist")], [task("specialist")], false),
+    { specialist: "unknown" })
+})
+
+test("distinguishes queued assignment and idle work lacking a report", async () => {
+  assert.deepEqual(await states({ sessions: { specialist: {} }, inbox: { specialist: [{ id: "queued" }] } },
+    [actor("specialist")], [task("specialist")]), { specialist: "queued" })
+  assert.deepEqual(await states({ sessions: { specialist: {} } }, [actor("specialist")], [task("specialist")]),
+    { specialist: "idle-without-report" })
+})
+
+test("deduplicates bounded native actor and location reads across missions", async () => {
+  let gets = 0
+  let inboxes = 0
+  let locationReads = 0
+  const client = native({ sessions: { specialist: {} } }) as OpenCodeClient & Record<string, unknown>
+  const get = client.session.get
+  const inbox = client.session.inbox.list
+  const shellList = client.shell.list
+  client.session.get = async (...args: Parameters<typeof get>) => { gets += 1; return get(...args) }
+  client.session.inbox.list = async (...args: Parameters<typeof inbox>) => { inboxes += 1; return inbox(...args) }
+  client.shell.list = async (...args: Parameters<typeof shellList>) => { locationReads += 1; return shellList(...args) }
+  const first = snapshot([actor("specialist")], [task("specialist")])
+  first.missions.push({ ...first.missions[0]!, id: "msn_2" })
+
+  const result = await projectMissionActivity({ client, snapshot: first, workspaceID: "workspace-1", ownsLocation: async () => true })
+  assert.equal(result.missions.length, 2)
+  assert.equal(gets, 1)
+  assert.equal(inboxes, 1)
+  assert.equal(locationReads, 1)
+})
+
+test("many missions keep native reads bounded and observe running, then other active missions first", async () => {
+  let gets = 0
+  // Both edge actors are natively running: observed ones read as running, unobserved as unknown.
+  const client = native({ active: { prepared_19_6: { type: "running" }, prepared_19_7: { type: "running" } } }) as OpenCodeClient & Record<string, unknown>
+  const get = client.session.get
+  client.session.get = async (...args: Parameters<typeof get>) => { gets += 1; return get(...args) }
+  const base = snapshot([actor("unused")]).missions[0]!
+  // Newest first: 20 prepared and 30 completed missions of 8 actors each, then the oldest one running.
+  const missions: MissionMap[] = [
+    ...Array.from({ length: 20 }, (_, index) => ({ ...base, id: `msn_prepared_${index}`, runState: "prepared" as const,
+      actors: Array.from({ length: 8 }, (_, slot) => actor(`prepared_${index}_${slot}`)), tasks: [] })),
+    ...Array.from({ length: 30 }, (_, index) => ({ ...base, id: `msn_done_${index}`, status: "completed" as const,
+      actors: Array.from({ length: 8 }, (_, slot) => actor(`done_${index}_${slot}`)), tasks: [] })),
+    { ...base, id: "msn_running", actors: [actor("running_worker")], tasks: [task("running_worker")] },
+  ]
+  const result = await projectMissionActivity({ client, snapshot: { ...snapshot([]), missions }, workspaceID: "workspace-1", ownsLocation: async () => true })
+  const state = (id: string, slot = 0) => result.missions.find(item => item.missionId === id)!.actors[slot]!.state
+  assert.equal(result.missions.length, 51)
+  assert.equal(gets, 160, "one bounded read budget, however many missions")
+  assert.equal(state("msn_running"), "idle-without-report", "the oldest running mission is observed first")
+  assert.equal(state("msn_prepared_19", 6), "running", "then the other active missions")
+  assert.equal(state("msn_prepared_19", 7), "unknown", "the 161st actor is beyond the budget")
+  assert.equal(state("msn_done_0"), "unknown")
+})
+
+const binding = { generation: 1, parentSessionID: "coordinator", toolCallID: "call-one", parentMessageID: "message-one" }
+function nativeTask(): MissionTask {
+  const value = task("specialist")
+  delete value.admissionId
+  value.nativeBinding = binding
+  value.nativeExecution = { binding, ended: "returned" }
+  return value
+}
+
+test("native-bound idle missing reports and descendant queues need no invented admission ID", async () => {
+  const value = nativeTask(), before = structuredClone(value)
+  const sessions = { specialist: {}, child: { parentID: "specialist" } }
+  assert.deepEqual(await states({ sessions }, [actor("specialist")], [value]), { specialist: "idle-without-report" })
+  assert.deepEqual(await states({ sessions, inbox: { child: [{ id: "native-pending" }] } }, [actor("specialist")], [value]), { specialist: "queued" })
+  assert.equal(value.admissionId, undefined)
+  assert.deepEqual(value, before)
+})
+
+test("active continuation with an old completed report projects actual native activity, not historical completion", async () => {
+  const value = nativeTask()
+  Object.assign(value, { status: "completed", report: task("specialist", true).report,
+    nativeBinding: { ...binding, nativeReturned: true },
+    nativeExecution: { binding: { ...binding, toolCallID: "call-two", parentMessageID: "message-two" } } })
+  const sessions = { specialist: { outcome: "succeeded" as const }, child: { parentID: "specialist" } }
+  assert.deepEqual(await states({ sessions, active: { specialist: { type: "running" } } }, [actor("specialist")], [value]), { specialist: "running" })
+  assert.deepEqual(await states({ sessions, active: { child: { type: "running" } } }, [actor("specialist")], [value]), { specialist: "background" })
+  assert.deepEqual(await states({ sessions }, [actor("specialist")], [value]), { specialist: "unknown" }, "unsettled recorded call cannot prove idle")
+  assert.deepEqual(await states({ sessions, inbox: { specialist: [{ id: "pending-continuation" }] } }, [actor("specialist")], [value]), { specialist: "queued" })
+})
+
+test("native failed-call settlement does not infer withdrawn outstanding work from historical binding", async () => {
+  const value = nativeTask()
+  value.status = "withdrawn"
+  value.nativeExecution = { binding: { ...binding, toolCallID: "call-two", parentMessageID: "message-two" }, ended: "error" }
+  const sessions = { specialist: {} }, actors = [actor("specialist")]
+  assert.deepEqual(await states({ sessions }, actors, [value]), { specialist: "unknown" })
+  assert.equal(value.outstandingExecution, false)
+  value.outstandingExecution = true
+  assert.deepEqual(await states({ sessions }, actors, [value]), { specialist: "idle-without-report" })
+  value.report = task("specialist", true).report
+  assert.deepEqual(await states({ sessions }, actors, [value]), { specialist: "unknown" })
+})
+
+test("partial current native evidence cannot be projected as proven idle-without-report", async () => {
+  const value = nativeTask()
+  value.nativeBinding = { ...binding, nativeReturned: true }
+  delete value.nativeExecution
+  assert.deepEqual(await states({ sessions: { specialist: {} } }, [actor("specialist")], [value]), { specialist: "unknown" })
+  value.nativeExecution = { binding: { ...binding, generation: 2 }, ended: "returned" }
+  assert.deepEqual(await states({ sessions: { specialist: {} } }, [actor("specialist")], [value]), { specialist: "unknown" })
+})
+
+test("full-Location actor changes are rejected before reading inboxes or descendants", async () => {
+  for (const [recorded, actual] of [[undefined, "foreign"], ["owned", undefined], ["owned", "foreign"]]) {
+    const selected = actor("specialist")
+    selected.location = { ...location, workspaceID: recorded }
+    const client = native({ sessions: { specialist: { workspaceID: actual } } })
+    let reads = 0
+    client.session.inbox.list = async () => { reads++; return [] }
+    client.session.list = async () => { reads++; return { data: [], cursor: {} } }
+    const result = await projectMissionActivity({ client, snapshot: snapshot([selected], [nativeTask()]), workspaceID: "workspace-1", ownsLocation: async () => true })
+    assert.equal(result.missions[0].actors[0].state, "unknown")
+    assert.equal(reads, 0)
+  }
+})
+
+test("same-directory foreign-workspace descendants fail projection and recovery closed", async () => {
+  const sessions = { specialist: {}, child: { parentID: "specialist" }, grandchild: { parentID: "child", workspaceID: "foreign" } }
+  assert.deepEqual(await states({ sessions }, [actor("specialist")], [nativeTask()]), { specialist: "unknown" })
+  const client = native({ sessions })
+  await assert.rejects(assertNativeMissionRecoveryReady(client, await client.session.get({ sessionID: "specialist" }), new AbortController().signal),
+    error => Boolean(error && typeof error === "object" && "code" in error && error.code === "recovery-unknown"))
+})
+
+test("paused and stopped maps retain truthful activity without authorizing execution or recovery", async () => {
+  for (const state of ["paused", "stopped"] as const) {
+    const value = nativeTask(), map = snapshot([actor("specialist")], [value])
+    map.missions[0].runState = state
+    if (state === "stopped") { map.missions[0].status = "stopped"; value.status = "withdrawn"; value.outstandingExecution = true }
+    const before = structuredClone(map)
+    for (const active of [false, true]) {
+      const result = await projectMissionActivity({ client: native({ sessions: { specialist: {} }, active: active ? { specialist: { type: "running" } } : {} }),
+        snapshot: map, workspaceID: "workspace-1", ownsLocation: async () => true })
+      assert.equal(result.missions[0].actors[0].state, active ? "running" : "idle-without-report")
+    }
+    assert.deepEqual(map, before)
+  }
+})
+
+test("stale contract generations stay unknown while positive native activity remains visible", async () => {
+  const value = nativeTask()
+  value.contractGeneration = binding.generation + 1
+  const sessions = { specialist: {} }, actors = [actor("specialist")]
+  assert.deepEqual(await states({ sessions }, actors, [value]), { specialist: "unknown" })
+  assert.deepEqual(await states({ sessions, active: { specialist: { type: "running" } } }, actors, [value]), { specialist: "running" })
+})
+
+test("observed families reuse existing catalog reads, deduplicate inboxes and retain actual hierarchy", async () => {
+  const actors = [actor("coordinator", "coordinator"), actor("specialist")]
+  const sessions = { coordinator: {}, middle: { parentID: "coordinator" }, specialist: { parentID: "middle" }, leaf: { parentID: "specialist" } }
+  const client = native({ sessions })
+  let gets = 0, lists = 0, inboxes = 0
+  const get = client.session.get, list = client.session.list, inbox = client.session.inbox.list
+  client.session.get = async (...args: Parameters<typeof get>) => { gets++; return get(...args) }
+  client.session.list = async (...args: Parameters<typeof list>) => { lists++; return list(...args) }
+  client.session.inbox.list = async (...args: Parameters<typeof inbox>) => { inboxes++; return inbox(...args) }
+  const map = snapshot(actors), before = structuredClone(map)
+  const result = await projectMissionActivity({ client, snapshot: map, workspaceID: "workspace-1", ownsLocation: async () => true,
+    isCurrent: () => true, now: () => 42 })
+  assert.equal(result.generatedAt, 42)
+  assert.deepEqual(result.missions[0].family, { state: "observed", members: [
+    { sessionId: "coordinator", actorSessionId: "coordinator", kind: "declared" },
+    { sessionId: "middle", parentSessionId: "coordinator", actorSessionId: "coordinator", kind: "ordinary" },
+    { sessionId: "specialist", parentSessionId: "middle", actorSessionId: "specialist", kind: "declared" },
+    { sessionId: "leaf", parentSessionId: "specialist", actorSessionId: "specialist", kind: "ordinary" },
+  ] })
+  assert.equal(gets, 2)
+  assert.equal(lists, 6, "no second family catalog to build display membership")
+  assert.equal(inboxes, 4, "overlapping declared-actor families read each inbox once")
+  assert.deepEqual(map, before)
+})
+
+test("an absent currentness callback never claims observed membership or changes legacy actor activity", async () => {
+  const result = await projectMissionActivity({ client: native({ sessions: { specialist: {} } }),
+    snapshot: snapshot([actor("specialist")], [task("specialist")]), workspaceID: "workspace-1", ownsLocation: async () => true })
+  assert.deepEqual(result.missions[0].family, { state: "unknown", members: [] })
+  assert.equal(result.missions[0].actors[0].state, "idle-without-report")
+})
+
+test("missing, moved, foreign or failed observations clear the whole mission membership", async () => {
+  const base = { coordinator: {}, specialist: { parentID: "coordinator" }, child: { parentID: "specialist" } }
+  const actors = [actor("coordinator", "coordinator"), actor("specialist")]
+  for (const options of [
+    { sessions: { coordinator: {} } },
+    { sessions: { ...base, specialist: { parentID: "coordinator", directory: "/moved" } } },
+    { sessions: { ...base, child: { parentID: "specialist", workspaceID: "foreign" } } },
+    { sessions: base, fail: "active" as const }, { sessions: base, fail: "inbox" as const },
+    { sessions: base, fail: "forms" as const }, { sessions: base, fail: "children" as const },
+    { sessions: base, incompleteTree: true },
+  ]) {
+    const result = await projectMissionActivity({ client: native(options), snapshot: snapshot(actors), workspaceID: "workspace-1",
+      ownsLocation: async () => true, isCurrent: () => true })
+    assert.deepEqual(result.missions[0].family, { state: "unknown", members: [] })
+  }
+})
+
+test("inconsistent parents across otherwise valid root reads invalidate both mission families", async () => {
+  const client = native({ sessions: { left: {}, right: {} } })
+  client.session.list = async ({ parentID } = {}) => ({ data: parentID === "left" || parentID === "right" ? [
+    { id: "same-child", parentID, projectID: "project-1", location },
+  ] : [], cursor: { next: null } }) as Awaited<ReturnType<typeof client.session.list>>
+  const map = snapshot([actor("left")])
+  map.missions.push({ ...snapshot([actor("right")]).missions[0], id: "other-mission" })
+  const result = await projectMissionActivity({ client, snapshot: map, workspaceID: "workspace-1", ownsLocation: async () => true,
+    isCurrent: () => true })
+  assert.ok(result.missions.every(mission => mission.family?.state === "unknown" && mission.family.members.length === 0))
+})
+
+test("currentness rejection at entry performs no client or ownership reads", async () => {
+  const client = native()
+  let reads = 0
+  client.session.get = async () => { reads++; throw new Error("Unexpected read") }
+  const result = await projectMissionActivity({ client, snapshot: snapshot([actor("specialist")]), workspaceID: "workspace-1",
+    ownsLocation: async () => { reads++; return true }, isCurrent: () => false })
+  assert.equal(reads, 0)
+  assert.deepEqual(result.missions[0].family, { state: "unknown", members: [] })
+  assert.equal(result.missions[0].actors[0].state, "unknown")
+})
+
+test("connection/deletion fences after each awaited phase discard membership and positive actor state", async () => {
+  for (const phase of ["get", "ownership", "children", "inbox", "active", "shell", "form", "permission"] as const) {
+    let current = true
+    // Inboxes are read only for an actor whose queued input would decide its state.
+    const client = phase === "inbox" ? native({ sessions: { specialist: {} }, inbox: { specialist: [{ id: "pending" }] } })
+      : native({ sessions: { specialist: {} }, active: { specialist: { type: "running" } } })
+    if (phase === "get") { const read = client.session.get; client.session.get = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
+    if (phase === "children") { const read = client.session.list; client.session.list = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
+    if (phase === "inbox") { const read = client.session.inbox.list; client.session.inbox.list = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
+    if (phase === "active") { const read = client.session.active; client.session.active = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
+    if (phase === "shell") { const read = client.shell.list; client.shell.list = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
+    if (phase === "form") { const read = client.form.list; client.form.list = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
+    if (phase === "permission") { const read = client.permission.request.list; client.permission.request.list = async (...args: Parameters<typeof read>) => { const value = await read(...args); current = false; return value } }
+    const result = await projectMissionActivity({ client, snapshot: snapshot([actor("specialist")], phase === "inbox" ? [task("specialist")] : []), workspaceID: "workspace-1",
+      ownsLocation: async () => { if (phase === "ownership") current = false; return true }, isCurrent: () => current })
+    assert.deepEqual(result.missions[0].family, { state: "unknown", members: [] }, phase)
+    assert.equal(result.missions[0].actors[0].state, "unknown", phase)
+  }
+})
+
+test("a currentness failure during final projection generation fences the returned display", async () => {
+  let current = true
+  const result = await projectMissionActivity({ client: native({ sessions: { specialist: {} } }), snapshot: snapshot([actor("specialist")]),
+    workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => current, now: () => { current = false; return 123 } })
+  assert.equal(result.generatedAt, 123)
+  assert.deepEqual(result.missions[0].family, { state: "unknown", members: [] })
+  assert.equal(result.missions[0].actors[0].state, "unknown")
+})
+
+test("ordinary descendants do not consume actor capacity or create authority/report metadata", async () => {
+  const sessions: NonNullable<Parameters<typeof native>[0]>["sessions"] = { specialist: {} }
+  for (let i = 0; i < 32; i++) sessions![`child-${i}`] = { parentID: "specialist" }
+  const map = snapshot([actor("specialist")]), before = structuredClone(map)
+  const result = await projectMissionActivity({ client: native({ sessions }), snapshot: map, workspaceID: "workspace-1",
+    ownsLocation: async () => true, isCurrent: () => true })
+  assert.equal(result.missions[0].family?.state, "observed")
+  assert.equal(result.missions[0].family?.members.length, 33)
+  assert.equal(result.missions[0].actors.length, 1)
+  assert.deepEqual(map, before)
+  assert.ok(result.missions[0].family?.members.every(member => Object.keys(member).every(key =>
+    ["sessionId", "parentSessionId", "actorSessionId", "taskKey", "kind"].includes(key))))
+})
+
+test("fake native reads stay at fixed concurrency across roots and inboxes", async () => {
+  const sessions: NonNullable<Parameters<typeof native>[0]>["sessions"] = {}
+  const actors = Array.from({ length: 8 }, (_, i) => actor(`root-${i}`))
+  for (const value of actors) {
+    sessions![value.sessionId] = {}
+    for (let i = 0; i < 4; i++) sessions![`${value.sessionId}-child-${i}`] = { parentID: value.sessionId }
+  }
+  const client = native({ sessions })
+  let pending = 0, peak = 0
+  const track = <Args extends unknown[], Result>(read: (...args: Args) => Promise<Result>) => async (...args: Args) => {
+    pending++; peak = Math.max(peak, pending)
+    try { await Promise.resolve(); return await read(...args) } finally { pending-- }
+  }
+  client.session.get = track(client.session.get)
+  client.session.list = track(client.session.list)
+  client.session.inbox.list = track(client.session.inbox.list)
+  client.session.active = track(client.session.active)
+  client.shell.list = track(client.shell.list)
+  client.form.list = track(client.form.list)
+  client.permission.request.list = track(client.permission.request.list)
+  const result = await projectMissionActivity({ client, snapshot: snapshot(actors), workspaceID: "workspace-1",
+    ownsLocation: async () => true, isCurrent: () => true })
+  assert.equal(result.missions[0].family?.state, "observed")
+  assert.equal(result.missions[0].family?.members.length, 40)
+  assert.ok(peak > 1 && peak <= 4, `peak ${peak}`)
+  assert.equal(pending, 0)
+})
+
+test("a mission with more actors than one refresh observes stays within the actor read budget", async () => {
+  const sessions: NonNullable<Parameters<typeof native>[0]>["sessions"] = {}
+  const actors = Array.from({ length: 200 }, (_, i) => actor(`root-${String(i).padStart(3, "0")}`))
+  for (const value of actors) sessions![value.sessionId] = {}
+  const client = native({ sessions })
+  const read = new Set<string>()
+  const get = client.session.get
+  client.session.get = async (...args: Parameters<typeof get>) => { read.add(args[0].sessionID); return get(...args) }
+  const result = await projectMissionActivity({ client, snapshot: snapshot(actors), workspaceID: "workspace-1",
+    ownsLocation: async () => true, isCurrent: () => true })
+  assert.equal(read.size, 160)
+  const states = result.missions[0].actors.map(value => value.state)
+  assert.equal(states.length, 200)
+  assert.ok(states.slice(160).every(state => state === "unknown"), "actors beyond the budget read as unknown")
+  // The family lists the members of the actors read, and says it is partial.
+  assert.equal(result.missions[0].family?.state, "partial")
+  assert.deepEqual(result.missions[0].family?.members.map(member => member.sessionId), actors.slice(0, 160).map(value => value.sessionId))
+})
+
+test("beyond the actor budget, actors asking for an answer and then those with open work are read first", async () => {
+  const sessions: NonNullable<Parameters<typeof native>[0]>["sessions"] = {}
+  const actors = Array.from({ length: 200 }, (_, i) => actor(`root-${String(i).padStart(3, "0")}`))
+  for (const value of actors) sessions![value.sessionId] = {}
+  // root-195's request comes from a grandchild; root-190 asks itself; root-180 has queued work.
+  Object.assign(sessions!, { "child-195": { parentID: "root-195" }, "grandchild-195": { parentID: "child-195" } })
+  const client = native({ sessions, forms: [{ sessionID: "root-190" }], permissions: [{ sessionID: "grandchild-195" }] })
+  const read = new Set<string>()
+  const get = client.session.get
+  client.session.get = async (...args: Parameters<typeof get>) => { read.add(args[0].sessionID); return get(...args) }
+  const result = await projectMissionActivity({ client, snapshot: snapshot(actors, [task("root-180")]), workspaceID: "workspace-1",
+    ownsLocation: async () => true, isCurrent: () => true })
+  const state = (id: string) => result.missions[0].actors.find(value => value.sessionId === id)!.state
+  assert.equal(state("root-190"), "form")
+  assert.equal(state("root-195"), "permission")
+  assert.equal(state("root-180"), "idle-without-report")
+  // Then the idle actors in mission order, as many as still fit: root-000 to root-156.
+  const roots = [...read].filter(id => id.startsWith("root-"))
+  assert.equal(roots.length, 160)
+  assert.deepEqual([roots.includes("root-156"), roots.includes("root-157"), roots.includes("root-199")], [true, false, false])
+  // Two ancestry reads attribute the grandchild's request.
+  assert.deepEqual([...read].filter(id => !id.startsWith("root-")).sort(), ["child-195", "grandchild-195"])
+  const family = result.missions[0].family!
+  assert.equal(family.state, "partial")
+  assert.deepEqual(family.members.filter(member => member.actorSessionId === "root-195").map(member => member.sessionId),
+    ["root-195", "child-195", "grandchild-195"])
+  assert.equal(family.members.some(member => member.actorSessionId === "root-199"), false)
+})
+
+test("beyond the actor budget, a gracefully paused mission's finishing steps are read with running missions' work", async () => {
+  const sessions: NonNullable<Parameters<typeof native>[0]>["sessions"] = { "paused-a": {}, "paused-b": {} }
+  const actors = Array.from({ length: 200 }, (_, i) => actor(`root-${String(i).padStart(3, "0")}`))
+  for (const value of actors) sessions![value.sessionId] = {}
+  const running = snapshot(actors, actors.map(value => task(value.sessionId))).missions[0]
+  // Just paused, so listed first; its actors still finish their steps.
+  const pausedActors = [actor("paused-a"), actor("paused-b")]
+  const paused: MissionMap = { ...snapshot(pausedActors, pausedActors.map(value => task(value.sessionId))).missions[0], id: "msn_paused",
+    runState: "paused", control: { id: "control", missionID: "msn_paused", requestID: "pause", expectedRevision: 1, action: "pause", graceful: true,
+      targets: [], pending: [] } }
+  const result = await projectMissionActivity({ client: native({ sessions, active: { "paused-a": { type: "running" } } }),
+    snapshot: { ...snapshot([]), missions: [paused, running] }, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true })
+  const states = Object.fromEntries(result.missions.find(mission => mission.missionId === "msn_paused")!.actors.map(value => [value.sessionId, value.state]))
+  assert.deepEqual(states, { "paused-a": "running", "paused-b": "idle-without-report" })
+})
+
+test("a mission of 40 actors is observed as a whole", async () => {
+  const sessions: NonNullable<Parameters<typeof native>[0]>["sessions"] = {}
+  const actors = Array.from({ length: 40 }, (_, i) => actor(`root-${i}`))
+  for (const value of actors) sessions![value.sessionId] = {}
+  const result = await projectMissionActivity({ client: native({ sessions }), snapshot: snapshot(actors), workspaceID: "workspace-1",
+    ownsLocation: async () => true, isCurrent: () => true })
+  assert.equal(result.missions[0].family?.state, "observed")
+  assert.equal(result.missions[0].family?.members.length, 40)
+})
+
+test("a shared declared-root observation cannot contradict another mission's ordinary descendant", async () => {
+  for (const missing of [false, true]) {
+    const client = native({ sessions: { owner: {}, other: { parentID: "owner", workspaceID: "moved" } } })
+    const get = client.session.get
+    client.session.get = async (...args: Parameters<typeof get>) => {
+      if (missing && args[0].sessionID === "other") throw { status: 404 }
+      return get(...args)
+    }
+    client.session.list = async ({ parentID } = {}) => ({ data: parentID === "owner"
+      ? [{ id: "other", parentID: "owner", projectID: "project-1", location }] : [], cursor: { next: null } }) as Awaited<ReturnType<typeof client.session.list>>
+    const map = snapshot([actor("owner")])
+    map.missions.push({ ...snapshot([actor("other")]).missions[0], id: "other-mission" })
+    const result = await projectMissionActivity({ client, snapshot: map, workspaceID: "workspace-1",
+      ownsLocation: async () => true, isCurrent: () => true })
+    assert.ok(result.missions.every(mission => mission.family?.state === "unknown" && mission.family.members.length === 0))
+  }
+})
+
+test("cross-mission native parent edges cannot fill holes in complete catalogs or form hidden cycles", async () => {
+  for (const cycle of [false, true]) {
+    const client = native({ sessions: { left: { ...(cycle ? { parentID: "right" } : {}) }, right: { parentID: "left" } } })
+    client.session.list = async () => ({ data: [], cursor: { next: null } })
+    const map = snapshot([actor("left")])
+    map.missions.push({ ...snapshot([actor("right")]).missions[0], id: "other-mission" })
+    const result = await projectMissionActivity({ client, snapshot: map, workspaceID: "workspace-1",
+      ownsLocation: async () => true, isCurrent: () => true })
+    assert.deepEqual(result.missions[0].family, { state: "unknown", members: [] })
+    assert.deepEqual(result.missions[1].family, { state: "unknown", members: [] })
+  }
+})
+
+test("an oversized family still projects the actor's own permission or Form before running", async () => {
+  const sessions: Record<string, { parentID?: string }> = { coordinator: {} }
+  for (let index = 0; index < 40; index++) sessions[`child-${index}`] = { parentID: "coordinator" }
+  const active = { coordinator: { type: "running" as const } }
+  const coordinator = [actor("coordinator", "coordinator")]
+  assert.deepEqual(await states({ sessions, active, permissions: [{ sessionID: "coordinator" }] }, coordinator), { coordinator: "permission" })
+  assert.deepEqual(await states({ sessions, active, forms: [{ sessionID: "coordinator" }] }, coordinator), { coordinator: "form" })
+  assert.deepEqual(await states({ sessions, active }, coordinator), { coordinator: "running" })
+})
+
+test("oversized-family probes share one bounded read budget after the location reads", async () => {
+  const sessions: Record<string, { parentID?: string }> = {}
+  const roots = ["root-a", "root-b", "root-c"]
+  for (const root of roots) {
+    sessions[root] = {}
+    for (let index = 0; index < 40; index++) sessions[`${root}-child-${index}`] = { parentID: root }
+  }
+  const active: Record<string, { type: "running" }> = {}
+  for (let index = 0; index < 300; index++) { sessions[`unrelated-${index}`] = {}; active[`unrelated-${index}`] = { type: "running" } }
+  const client = native({ sessions, active }), log: string[] = []
+  const get = client.session.get.bind(client.session), forms = client.form.list.bind(client.form)
+  client.session.get = (async (input: { sessionID: string }, options?: unknown) => {
+    if (input.sessionID.startsWith("unrelated-")) log.push("probe")
+    return get(input as never, options as never)
+  }) as typeof client.session.get
+  client.form.list = (async (...args: Parameters<typeof forms>) => { log.push("forms"); return forms(...args) }) as typeof client.form.list
+  const result = await projectMissionActivity({ client, snapshot: snapshot(roots.map(root => actor(root))), workspaceID: "workspace-1",
+    ownsLocation: async () => true })
+  assert.deepEqual(result.missions[0].actors.map(item => item.state), ["unknown", "unknown", "unknown"])
+  assert.ok(log.filter(item => item === "probe").length <= 128, `one shared budget: ${log.filter(item => item === "probe").length}`)
+  assert.ok(log.indexOf("forms") >= 0 && log.indexOf("forms") < log.indexOf("probe"), "location reads precede the probe")
+})
+
+test("the ancestry probe skips inactive entries before its cap and continues through cached parents", async () => {
+  const sessions: Record<string, { parentID?: string }> = { root: {}, child: { parentID: "root" }, grandchild: { parentID: "child" }, stray: {} }
+  const active: Record<string, unknown> = {}
+  for (let index = 0; index < 300; index++) active[`idle-${index}`] = undefined
+  active.grandchild = { type: "running" }
+  assert.equal(await observeActiveDescendant(native({ sessions }), "root", active, new AbortController().signal), true)
+  const exhausted = { stray: { type: "running" }, grandchild: { type: "running" } }
+  assert.equal(await observeActiveDescendant(native({ sessions }), "root", exhausted, new AbortController().signal,
+    { known: new Map([["grandchild", { parentID: "child" }], ["child", { parentID: "root" }]]), maxReads: 0 }), true,
+    "an exhausted budget on one chain does not end the probe")
+})
+
+test("a family beyond the display cap with an active descendant is background, and recovery is busy rather than unknown", async () => {
+  const sessions: Record<string, { parentID?: string }> = { coordinator: {} }
+  for (let index = 0; index < 40; index++) sessions[`child-${index}`] = { parentID: "coordinator" }
+  sessions["grandchild"] = { parentID: "child-39" }
+  const active = { grandchild: { type: "running" as const } }
+  assert.deepEqual(await states({ sessions, active }, [actor("coordinator", "coordinator")]), { coordinator: "background" })
+  assert.deepEqual(await states({ sessions }, [actor("coordinator", "coordinator")]), { coordinator: "unknown" },
+    "without positive evidence an oversized family stays unknown")
+  const client = native({ sessions, active })
+  await assert.rejects(assertNativeMissionRecoveryReady(client, await client.session.get({ sessionID: "coordinator" }), new AbortController().signal),
+    error => Boolean(error && typeof error === "object" && "code" in error && error.code === "recovery-busy"))
+})
+
+/** Counts the native reads of one client by kind. */
+function counted(client: OpenCodeClient) {
+  const counts = { get: 0, list: 0, inbox: 0 }
+  const get = client.session.get, list = client.session.list, inbox = client.session.inbox.list
+  client.session.get = (async (...args: Parameters<typeof get>) => { counts.get++; return get(...args) }) as typeof get
+  client.session.list = (async (...args: Parameters<typeof list>) => { counts.list++; return list(...args) }) as typeof list
+  client.session.inbox.list = (async (...args: Parameters<typeof inbox>) => { counts.inbox++; return inbox(...args) }) as typeof inbox
+  return counts
+}
+
+test("inboxes are read only for actors whose queued input decides their state", async () => {
+  const sessions = { running: {}, done: {}, owed: {}, "owed-child": { parentID: "owed" } }
+  const client = native({ sessions, active: { running: { type: "running" } }, inbox: { "owed-child": [{ id: "pending" }] } })
+  const counts = counted(client)
+  const result = await projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true,
+    snapshot: snapshot([actor("running"), actor("done"), actor("owed")], [task("running"), task("done", true), task("owed")]) })
+  assert.deepEqual(Object.fromEntries(result.missions[0].actors.map(item => [item.sessionId, item.state])),
+    { running: "running", done: "unknown", owed: "queued" })
+  assert.equal(counts.inbox, 2, "only the owed actor's family (root and child), not the running or settled actors")
+})
+
+test("a kept family tree is reused until a structural event, a stream gap or its TTL", async () => {
+  let now = 0
+  const cache = new MissionActivityCache(() => now)
+  const client = native({ sessions: { specialist: {}, child: { parentID: "specialist" } } })
+  const counts = counted(client)
+  const observe = () => projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache,
+    snapshot: snapshot([actor("specialist")]) })
+  const first = await observe()
+  const listed = counts.list
+  assert.ok(listed > 0)
+  const second = await observe()
+  assert.equal(counts.list, listed, "the second read reuses the tree")
+  assert.deepEqual(second.missions[0].family, first.missions[0].family)
+  assert.equal(counts.get, 2, "the actor root itself is read every time")
+  cache.observeEvent({ type: "session.created" })
+  await observe()
+  assert.equal(counts.list, listed * 2, "a structural event reads the tree again")
+  cache.observeEvent({ type: "session.execution.started" })
+  await observe()
+  assert.equal(counts.list, listed * 2, "activity events keep it")
+  cache.observeStatus("workspace-1", "disconnected")
+  await observe(); await observe()
+  assert.equal(counts.list, listed * 4, "nothing is kept while an event stream is down")
+  cache.observeStatus("workspace-1", "connected")
+  await observe(); await observe()
+  assert.equal(counts.list, listed * 5)
+  now += MISSION_FAMILY_TREE_TTL_MS
+  await observe()
+  assert.equal(counts.list, listed * 6, "an expired tree is read again")
+  // Another connection's client starts empty.
+  const other = native({ sessions: { specialist: {} } })
+  const otherCounts = counted(other)
+  await projectMissionActivity({ client: other, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache,
+    snapshot: snapshot([actor("specialist")]) })
+  assert.ok(otherCounts.list > 0)
+})
+
+test("a deleted actor session is read once, then shown missing without native reads", async () => {
+  const cache = new MissionActivityCache()
+  const client = native({ sessions: { specialist: {} } })
+  const counts = counted(client)
+  const observe = () => projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache,
+    snapshot: snapshot([actor("specialist"), actor("deleted")]) })
+  const state = (result: Awaited<ReturnType<typeof observe>>) => result.missions[0].actors.find(item => item.sessionId === "deleted")?.state
+  assert.equal(state(await observe()), "missing")
+  const reads = counts.get
+  assert.equal(state(await observe()), "missing")
+  assert.equal(counts.get, reads + 1, "only the live actor is read again")
+})

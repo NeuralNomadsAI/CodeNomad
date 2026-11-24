@@ -1,0 +1,172 @@
+import assert from "node:assert/strict"
+import { after, before, test } from "node:test"
+import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
+import { chromium, type Browser, type Page } from "playwright"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { waitForSearchHighlights } from "./search-highlight-assertions"
+
+let browser: Browser, url: string
+before(async () => {
+  const fixture = await borrowFixture({
+      name: "system-messages",
+      routes: [
+        { path: "/system-fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/system-messages.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
+})
+after(async () => { await browser?.close() })
+async function open(run: (page: Page) => Promise<void>, query = "") {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 800 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    await page.goto(url + query)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.getByText("Normal assistant response", { exact: true }).waitFor()
+    await run(page)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+}
+const system = '[data-message-kind="system"]'
+async function toggleSystemDisclosure(page: Page) {
+  await page.locator(system).getByRole("button").focus()
+  await page.keyboard.press("Enter")
+}
+test("system context is hidden by default, including live instructions and reloads", async () => open(async page => {
+  assert.equal(await page.locator(system).count(), 0)
+  assert.equal(await page.getByText(/Today's date is now/).count(), 0)
+  assert.equal((await page.evaluate(() => (window as any).fixture.matches())).length, 0)
+  await page.evaluate(() => (window as any).fixture.live())
+  await page.waitForFunction(() => (window as any).fixture.snapshot().ids.length === 4)
+  assert.equal(await page.locator(system).count(), 0)
+  await page.evaluate(() => (window as any).fixture.reload())
+  assert.equal(await page.locator(system).count(), 0)
+  assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).ids.length, 3)
+}))
+
+test("popup controls preserve content, synchronize Chat settings, and survive reopening", async () => open(async page => {
+  for (const [label, icon] of [["System", "info"], ["shell", "terminal"], ["read", "book-open"],
+    ["glob", "search"], ["Other", "layout-grid"]] as const) {
+    const settingsRow = page.locator("#chat-settings .settings-expansion-row").filter({ hasText: label })
+    assert.equal(await settingsRow.locator(`svg.lucide-${icon}`).count(), 1, `${label} uses the shared content icon`)
+  }
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  const row = page.getByRole("group", { name: "System", exact: true })
+  await row.getByRole("button", { name: "Show System", exact: true }).click()
+  await page.locator(system).waitFor()
+  assert.equal(await page.locator(`${system} button > :first-child.lucide-chevron-right:not(.rotate-90)`).count(), 1)
+  assert.equal(await page.locator(`${system} pre`).count(), 0)
+  assert.equal(await page.locator(`${system} [data-message-role="assistant"]`).count(), 0)
+  assert.equal(await page.locator(system).getByRole("button", { name: /Fork|Copy|Speak/ }).count(), 0)
+  assert.equal((await page.evaluate(() => (window as any).fixture.matches())).length, 1)
+  await row.getByRole("button", { name: "Expand System", exact: true }).click()
+  const content = page.locator(`${system} pre`)
+  await content.waitFor()
+  assert.equal(await page.locator(`${system} button > :first-child.lucide-chevron-right.rotate-90`).count(), 1)
+  assert.equal(await content.textContent(), (await page.evaluate(() => (window as any).fixture.snapshot())).nativeText)
+  await page.keyboard.press("Escape")
+  assert.equal(await page.locator('#chat-settings .settings-expansion-row').filter({ hasText: "System" }).locator(".selector-trigger-primary").textContent(), "Expanded")
+  await page.reload()
+  await page.waitForFunction(() => Boolean((window as any).fixture))
+  await page.locator(`${system} pre`).waitFor()
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  await row.getByRole("button", { name: "Hide System", exact: true }).click()
+  await page.waitForFunction(() => !document.querySelector('[data-message-kind="system"]'))
+  await page.reload()
+  await page.waitForFunction(() => Boolean((window as any).fixture))
+  assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).visibility, "hidden")
+  assert.equal(await page.locator(system).count(), 0)
+}))
+
+test("visible live notices render as System and obey local and global disclosure", async () => open(async page => {
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  const row = page.getByRole("group", { name: "System", exact: true })
+  await row.getByRole("button", { name: "Show System", exact: true }).click()
+  await page.keyboard.press("Escape")
+  await page.evaluate(() => (window as any).fixture.live())
+  await page.waitForFunction(() => document.querySelectorAll('[data-message-kind="system"]').length === 2)
+  const live = page.locator(system).filter({ hasText: "Instructions updated" })
+  await live.getByRole("button").click()
+  assert.equal(await live.locator("pre").textContent(), "Live system context")
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  await row.getByRole("button", { name: "Expand System", exact: true }).click()
+  await row.getByRole("button", { name: "Collapse System", exact: true }).click()
+  assert.equal(await page.locator(`${system} pre`).count(), 0)
+}))
+
+test("search highlights system occurrences and restores highlights after disclosure changes", async () => open(async page => {
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  const row = page.getByRole("group", { name: "System", exact: true })
+  await row.getByRole("button", { name: "Show System", exact: true }).click()
+  await page.keyboard.press("Escape")
+  await page.keyboard.press("Control+f")
+  await page.getByPlaceholder("Search current chat...").fill("system-reminder")
+  assert.deepEqual(await waitForSearchHighlights(page, system, 1, true), ["system-reminder"])
+  assert.deepEqual(await waitForSearchHighlights(page, system, 2), ["system-reminder", "system-reminder"])
+  await toggleSystemDisclosure(page)
+  assert.equal(await page.locator(`${system} pre`).count(), 0)
+  await toggleSystemDisclosure(page)
+  await page.locator(`${system} pre`).waitFor({ timeout: 5000 })
+  assert.deepEqual(await waitForSearchHighlights(page, system, 1, true), ["system-reminder"])
+  await toggleSystemDisclosure(page)
+  await toggleSystemDisclosure(page)
+  await waitForSearchHighlights(page, system, 1, true)
+}))
+
+test("search refreshes on system visibility changes and still finds assistant text", async () => open(async page => {
+  await page.keyboard.press("Control+f")
+  const query = page.getByPlaceholder("Search current chat...")
+  await query.fill("Today's date")
+  await page.getByText("No matches", { exact: true }).waitFor()
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  const row = page.getByRole("group", { name: "System", exact: true })
+  await row.getByRole("button", { name: "Show System", exact: true }).click()
+  assert.deepEqual(await waitForSearchHighlights(page, system, 1, true), ["Today's date"])
+  await row.getByRole("button", { name: "Hide System", exact: true }).click()
+  await page.keyboard.press("Escape")
+  await page.getByText("No matches", { exact: true }).waitFor()
+  assert.equal(await page.locator(system).count(), 0)
+  await query.fill("Normal assistant")
+  assert.deepEqual(await waitForSearchHighlights(page, "body", 1, true), ["Normal assistant"])
+  assert.ok((await page.evaluate(() => (window as any).fixture.snapshot())).messageReads < 10,
+    "paging must not subscribe the search effect to its own window mutations")
+}))
+const errorRows = async (page: Page, last: string) => {
+  await page.getByText(last, { exact: false }).waitFor()
+  return (await page.locator(".message-error-block").allTextContents()).map(text => text.trim())
+}
+test("a failed step's error shows once, after its last text, not again for the run", async () => open(async page => {
+  assert.deepEqual(await errorRows(page, "Quota reached for this account"), ["⚠️ Quota reached for this account"])
+  const rows = page.locator('[data-message-id="msg_04"][data-view="message-item"]')
+  assert.equal(await rows.count(), 2)
+  assert.equal(await rows.filter({ hasText: "After the tool" }).locator(".message-error-block").count(), 1)
+  assert.equal(await page.locator('[data-message-id="msg_05"]').count(), 0)
+}, "?failed=duplicate"))
+test("a run that failed between steps shows its cause without an empty Copy action", async () => open(async page => {
+  assert.deepEqual(await errorRows(page, "Run failed before the next model step"), ["⚠️ Run failed before the next model step"])
+  const row = page.locator('[data-message-id="msg_05"][data-view="message-item"]')
+  assert.equal(await row.getByRole("button", { name: "Copy", exact: true }).count(), 0)
+  // Successful runs keep their idle control record invisible.
+  assert.equal(await page.getByText(/^idle$/).count(), 0)
+}, "?failed=between"))
+test("exhausted restarts explain the failure after the interrupted step", async () => open(async page => {
+  assert.deepEqual(await errorRows(page, "Execution was interrupted repeatedly"), [
+    "⚠️ Request was aborted",
+    "⚠️ Execution was interrupted repeatedly and will not be resumed automatically.",
+  ])
+}, "?failed=exhausted"))
+for (const scenario of ["reasoning", "tools"]) {
+  test(`a step that failed after streaming only ${scenario} shows its error once`, async () => open(async page => {
+    const rows = await errorRows(page, "Quota reached for this account")
+    assert.equal(rows.length, 1, rows.join(" | "))
+    assert.ok(rows[0].endsWith("Quota reached for this account"))
+    // The step owns the failure: the run's duplicate idle record stays hidden.
+    assert.equal(await page.locator('[data-message-id="msg_05"]').count(), 0)
+    assert.equal(await page.locator('[data-message-id="msg_04"] .message-error-block').count(), 1)
+  }, `?failed=${scenario}`))
+}

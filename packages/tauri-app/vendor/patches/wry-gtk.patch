@@ -1,0 +1,149 @@
+--- a/src/webkitgtk/mod.rs
++++ b/src/webkitgtk/mod.rs
+@@ -2,7 +2,6 @@
+ // SPDX-License-Identifier: Apache-2.0
+ // SPDX-License-Identifier: MIT
+ 
+-#[cfg(feature = "x11")]
+ use dpi::LogicalPosition;
+ use dpi::LogicalSize;
+ use ffi::CookieManageExt;
+@@ -91,7 +90,6 @@
+   #[cfg(any(debug_assertions, feature = "devtools"))]
+   is_inspector_open: Arc<AtomicBool>,
+   pending_scripts: Arc<Mutex<Option<Vec<String>>>>,
+-  is_in_fixed_parent: bool,
+ 
+   #[cfg(feature = "x11")]
+   x11: Option<X11Data>,
+@@ -323,7 +321,7 @@
+ 
+     web_context.register_automation(webview.clone());
+ 
+-    let is_in_fixed_parent = Self::add_to_container(&webview, container, &attributes);
++    Self::add_to_container(&webview, container, &attributes);
+ 
+     #[cfg(any(debug_assertions, feature = "devtools"))]
+     let is_inspector_open = Self::attach_inspector_handlers(&webview);
+@@ -339,7 +337,6 @@
+       webview,
+       pending_scripts: Arc::new(Mutex::new(Some(Vec::new()))),
+ 
+-      is_in_fixed_parent,
+       #[cfg(feature = "x11")]
+       x11: None,
+ 
+@@ -688,12 +685,10 @@
+     }
+   }
+ 
+-  fn add_to_container<W>(webview: &WebView, container: &W, attributes: &WebViewAttributes) -> bool
++  fn add_to_container<W>(webview: &WebView, container: &W, attributes: &WebViewAttributes)
+   where
+     W: IsA<gtk::Container>,
+   {
+-    let mut is_in_fixed_parent = false;
+-
+     let container_type = container.type_().name();
+     if container_type == "GtkBox" {
+       container
+@@ -720,12 +715,10 @@
+         .unwrap()
+         .put(webview, x, y);
+ 
+-      is_in_fixed_parent = true;
+     } else {
+       container.add(webview);
+     }
+ 
+-    is_in_fixed_parent
+   }
+ 
+   fn attach_ipc_handler(webview: WebView, ipc_handler: Box<dyn Fn(Request<String>)>) {
+@@ -735,10 +728,14 @@
+       .expect("WebView does not have UserContentManager");
+ 
+     // Connect before registering as recommended by the docs
++    let webview = webview.downgrade();
+     manager.connect_script_message_received(None, move |_m, msg| {
+       #[cfg(feature = "tracing")]
+       let _span = tracing::info_span!(parent: None, "wry::ipc::handle").entered();
+ 
++      let Some(webview) = webview.upgrade() else {
++        return;
++      };
+       if let Some(js) = msg.js_value() {
+         let uri = webview.uri().map(|u| u.to_string()).unwrap_or_default();
+         match Request::builder().uri(uri).body(js.to_string()) {
+@@ -968,6 +965,20 @@
+     }
+ 
+     let (size, _) = self.webview.allocated_size();
++    if let Some(parent) = self
++      .webview
++      .parent()
++      .and_then(|p| p.downcast::<gtk::Fixed>().ok())
++    {
++      // Hidden widgets can have a stale allocation. Read GtkFixed's retained
++      // layout so sequential position/size updates preserve both coordinates.
++      let x = parent.child_property::<i32>(&self.webview, "x");
++      let y = parent.child_property::<i32>(&self.webview, "y");
++      let (width, height) = self.webview.size_request();
++      bounds.position = LogicalPosition::new(x, y).into();
++      bounds.size = LogicalSize::new(width.max(1), height.max(1)).into();
++      return Ok(bounds);
++    }
+     bounds.size = LogicalSize::new(size.width(), size.height()).into();
+ 
+     Ok(bounds)
+@@ -988,7 +999,15 @@
+       window.size_allocate(&gtk::Allocation::new(0, 0, width, height));
+     }
+ 
+-    if self.is_in_fixed_parent {
++    if let Some(parent) = self
++      .webview
++      .parent()
++      .and_then(|p| p.downcast::<gtk::Fixed>().ok())
++    {
++      // Persist both properties in GtkFixed's layout state so the next parent
++      // allocation (resize, hide/show, menu changes) preserves the rectangle.
++      self.webview.set_size_request(width, height);
++      parent.move_(&self.webview, x, y);
+       self
+         .webview
+         .size_allocate(&gtk::Allocation::new(x, y, width, height));
+@@ -1237,6 +1256,7 @@
+       .parent()
+       .and_then(|p| p.dynamic_cast::<gtk::Container>().ok())
+     {
++      let bounds = self.bounds()?;
+       parent.remove(&self.webview);
+ 
+       let container_type = container.type_().name();
+@@ -1246,10 +1266,21 @@
+           .unwrap()
+           .pack_start(&self.webview, true, true, 0);
+       } else if container_type == "GtkFixed" {
+-        container
+-          .dynamic_cast_ref::<gtk::Fixed>()
+-          .unwrap()
+-          .put(&self.webview, 0, 0);
++        let size = bounds
++          .size
++          .to_logical::<i32>(self.webview.scale_factor() as f64);
++        self.webview.set_size_request(size.width, size.height);
++        container.dynamic_cast_ref::<gtk::Fixed>().unwrap().put(
++          &self.webview,
++          bounds
++            .position
++            .to_logical::<i32>(self.webview.scale_factor() as f64)
++            .x,
++          bounds
++            .position
++            .to_logical::<i32>(self.webview.scale_factor() as f64)
++            .y,
++        );
+       } else {
+         container.add(&self.webview);
+       }

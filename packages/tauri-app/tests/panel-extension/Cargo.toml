@@ -1,0 +1,11 @@
+[package]
+name = "codenomad-panel-extension-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+tauri = { version = "2.12.5", features = ["unstable"] }
+
+[build-dependencies]
+tauri-build = "2.7.4"

@@ -1,0 +1,387 @@
+import { fetch } from "undici"
+import type { OpenCodeUpdateResponse, OpenCodeUpdateStatus } from "../api-types"
+import type { SettingsService } from "../settings/service"
+import { BinaryResolver, type ResolvedBinary } from "../settings/binaries"
+import type { WorkspaceManager } from "../workspaces/manager"
+import { probeBinaryVersion, probeBinaryVersionAsync } from "../workspaces/spawn"
+import { compareVersionStrings, stripTagPrefix } from "../releases/release-monitor"
+import { assertSupportedOpenCode, isBelowOpenCodeMinimum, MINIMUM_OPENCODE_VERSION, RECOMMENDED_OPENCODE_VERSION, UnsupportedOpenCodeError } from "../opencode/runtime-support"
+import { contractProfile, runtimeIdentity } from "../opencode/compatibility/runtime"
+import { createRuntimeTransport } from "../opencode/compatibility/transport"
+import type { Endpoint } from "@opencode/client/service"
+import { bundledNpm } from "./npm-runtime"
+import { isRetiredInstallation } from "./retired-installation"
+import { installSharedOpenCode, LegacyReplacementError, prepareForeignProbe, sharedInstallationPlan, sharedInstallPrefix } from "./shared-installation"
+import { InstallationBusyError } from "./installation-lock"
+import type { OpenCodeServiceLifecycle } from "../workspaces/opencode-service"
+import { parseWslUncPath } from "../workspaces/spawn"
+
+const OPENCODE_REGISTRY_URL = "https://registry.npmjs.org/-/package/%40opencode%2Fcli/dist-tags"
+export const TARGET_OPENCODE_CHANNEL = "latest"
+const inFlightUpgrades = new Map<string, Promise<OpenCodeUpdateResponse>>()
+type ServiceAction = "start" | "restart" | "reload"
+
+type UpgradeResult = { success: true; version: string } | { success: false; error: string }
+/** `replaceLegacy` names the exact OpenCode 1.x installation the user confirmed. */
+export type UpgradeOptions = { replaceLegacy?: { path: string; version: string } }
+export type InstallationNotice = Pick<OpenCodeUpdateStatus, "legacyReplacement" | "foreignInstallation">
+
+export interface OpenCodeUpdateServiceDeps {
+  /** Settles bounded, asynchronous inputs (foreign `--version` probes) before resolution. */
+  prepareInstallation?: (options: { recheck?: boolean }) => Promise<void>
+  resolveBinary: () => ResolvedBinary
+  probeBinary: (path: string) => ReturnType<typeof probeBinaryVersion> | Promise<ReturnType<typeof probeBinaryVersion>>
+  resolveLatestVersion: () => Promise<string>
+  canUpgradeBinary: (binary: ResolvedBinary) => boolean
+  upgradeBinary: (binary: ResolvedBinary, target: string, options: UpgradeOptions) => Promise<UpgradeResult>
+  /** Legacy npm replacement and untouched foreign installations for an upgradable binary. */
+  inspectInstallation?: (binary: ResolvedBinary) => InstallationNotice
+  lifecycle?: (binary: ResolvedBinary) => Promise<OpenCodeServiceLifecycle>
+  reconnect?: (binary: ResolvedBinary) => Promise<void>
+  admitActivation?: (binary: ResolvedBinary) => void
+  reload?: (binary: ResolvedBinary, assertCurrent: () => void) => Promise<void>
+  inspectRuntime?: (endpoint: Endpoint) => Promise<{ reload: boolean }>
+  /** An installed login start follows a verified installation; its failure never fails the update. */
+  refreshLoginStart?: () => Promise<void>
+}
+
+export class OpenCodeUpdateError extends Error {
+  constructor(
+    readonly code:
+      | "binary_unavailable"
+      | "unsupported_binary"
+      | "update_check_failed"
+      | "upgrade_failed"
+      | "upgrade_verification_failed"
+      | "legacy_replacement_required"
+      | "legacy_removed_install_failed"
+      | "legacy_partially_removed",
+    message: string,
+  ) {
+    super(message)
+    this.name = "OpenCodeUpdateError"
+  }
+}
+
+export class OpenCodeUpdateService {
+  private activation?: { binaryPath: string; action: ServiceAction; pending: Promise<OpenCodeUpdateStatus> }
+
+  constructor(private readonly deps: OpenCodeUpdateServiceDeps) {}
+
+  /** `recheck` is an explicit user check: cached probe results are refreshed. */
+  async getStatus(options: { recheck?: boolean } = {}): Promise<OpenCodeUpdateStatus> {
+    await this.deps.prepareInstallation?.({ recheck: options.recheck === true })
+    const binary = this.deps.resolveBinary()
+    let currentVersion: string | null = null
+    let missing = false
+    let invalid = false
+    const probe = await this.deps.probeBinary(binary.path)
+    try { currentVersion = await this.readCurrentVersion(binary.path, probe) }
+    catch { missing = probe.missing === true; invalid = !missing }
+    let latestVersion: string | null = null
+    try { latestVersion = await this.readLatestVersion() } catch { /* Local admission remains available offline. */ }
+    const state = invalid ? "error" : missing ? "missing"
+      : currentVersion && !isBelowOpenCodeMinimum(currentVersion) ? "ready" : "update_required"
+    const updateAvailable = latestVersion && (!currentVersion || comparableVersion(currentVersion))
+      ? !currentVersion || compareOpenCodeVersionStrings(latestVersion, currentVersion) > 0 : null
+    const notice = this.deps.inspectInstallation?.(binary) ?? {}
+    // An unusable foreign command is never repaired, but OpenCode 2 can still be
+    // installed beside it; a broken verified 1.x npm install can still be replaced.
+    const installable = !invalid || replaceableOrForeign(notice, binary)
+    const status: OpenCodeUpdateStatus = {
+      currentVersion, latestVersion, updateAvailable, ...notice,
+      canUpgrade: installable && Boolean(updateAvailable || needsSharedInstallation(binary)) && Boolean(latestVersion && !isBelowOpenCodeMinimum(latestVersion)) && this.deps.canUpgradeBinary(binary),
+      minimumVersion: MINIMUM_OPENCODE_VERSION, recommendedVersion: RECOMMENDED_OPENCODE_VERSION,
+      versionAssessment: "untested", state, binaryPath: binary.path,
+      installationSource: binary.source, needsSharedInstallation: needsSharedInstallation(binary),
+      target: parseWslUncPath(binary.path) ? "wsl" : "host", canRestart: false,
+      ...(!latestVersion ? { checkError: "update_check_failed" as const } : {}),
+    }
+    if (!missing && !invalid && this.deps.lifecycle) {
+      try {
+        const lifecycle = await this.deps.lifecycle(binary)
+        const endpoint = await lifecycle.discover()
+        const identity = endpoint && runtimeIdentity(endpoint)
+        status.daemonVersion = identity?.version
+        const olderDaemon = identity && currentVersion && comparableVersion(identity.version) && comparableVersion(currentVersion)
+          && compareOpenCodeVersionStrings(currentVersion, identity.version) > 0
+        status.serviceState = "stopped"
+        if (endpoint) {
+          try {
+            const capabilities = await this.inspectRuntime(endpoint)
+            status.serviceState = olderDaemon ? "restart_available" : "ready"
+            // The running daemon, not an older discovery CLI, serves requests.
+            status.state = "ready"
+            status.canReload = Boolean(this.deps.reload) && capabilities.reload
+          } catch (error) {
+            if (!(error instanceof UnsupportedOpenCodeError)) throw error
+            status.incompatibilityReason = error.reason
+            status.serviceState = olderDaemon ? "restart_required" : "incompatible"
+          }
+        }
+        status.canRestart = Boolean(lifecycle.restart) && state === "ready"
+          && (status.serviceState === "ready" || status.serviceState === "restart_required" || status.serviceState === "restart_available")
+          && canReplaceDaemon(currentVersion, identity?.version)
+      } catch { status.serviceState = "error"; status.serviceError = "service_check_failed" }
+    }
+    const effectiveVersion = status.daemonVersion ?? currentVersion
+    if (!status.incompatibilityReason && effectiveVersion && isBelowOpenCodeMinimum(effectiveVersion)) status.incompatibilityReason = "native_contract"
+    status.versionAssessment = status.incompatibilityReason ? "incompatible"
+      : effectiveVersion === RECOMMENDED_OPENCODE_VERSION ? "tested" : "untested"
+    return status
+  }
+
+  private async inspectRuntime(endpoint: Endpoint): Promise<{ reload: boolean }> {
+    const identity = runtimeIdentity(endpoint)
+    if (!identity) throw new Error("OpenCode did not report an authenticated runtime version")
+    assertSupportedOpenCode(identity.version)
+    if (this.deps.inspectRuntime) return this.deps.inspectRuntime(endpoint)
+    await createRuntimeTransport(endpoint).profile()
+    return { reload: identity.contract?.reload ?? contractProfile(identity) === "modern" }
+  }
+
+  start(restart = false): Promise<OpenCodeUpdateStatus> {
+    return this.runServiceAction(restart ? "restart" : "start")
+  }
+
+  reload(): Promise<OpenCodeUpdateStatus> {
+    return this.runServiceAction("reload")
+  }
+
+  private runServiceAction(action: ServiceAction): Promise<OpenCodeUpdateStatus> {
+    const binary = this.deps.resolveBinary()
+    // One updater owns one manager/shared-service authority. Executable selection
+    // is mutable and cannot be the lock key for daemon-wide operations.
+    const existing = this.activation
+    if (existing) return existing.action === action && existing.binaryPath === binary.path
+      ? existing.pending : Promise.reject(new Error("Another OpenCode service action is in progress"))
+    const pending = this.activate(binary, action).finally(() => {
+      if (this.activation?.pending === pending) this.activation = undefined
+    })
+    this.activation = { binaryPath: binary.path, action, pending }
+    return pending
+  }
+
+  private async activate(binary: ResolvedBinary, action: ServiceAction): Promise<OpenCodeUpdateStatus> {
+    const restart = action === "restart"
+    const installedVersion = await this.readCurrentVersion(binary.path)
+    const lifecycle = await this.deps.lifecycle?.(binary)
+    if (!lifecycle) throw new Error("OpenCode service lifecycle unavailable")
+    if (restart && !lifecycle.restart) throw new Error("OpenCode service restart unavailable")
+    const previous = await lifecycle.discover()
+    if (!previous || restart) assertSupportedOpenCode(installedVersion)
+    if (restart && previous) {
+      const identity = runtimeIdentity(previous)
+      if (!canReplaceDaemon(installedVersion, identity?.version)) {
+        throw new Error("The selected OpenCode executable cannot safely replace the running daemon")
+      }
+    }
+    const assertCurrent = () => {
+      if (this.deps.resolveBinary().path !== binary.path) throw new Error("OpenCode selection changed during activation")
+      this.deps.admitActivation?.(binary)
+    }
+    assertCurrent()
+    if (action === "reload") {
+      const identity = previous && runtimeIdentity(previous)
+      if (!identity || !this.deps.reload) throw new Error("OpenCode configuration reload unavailable")
+      const capabilities = await this.inspectRuntime(previous!)
+      if (!capabilities.reload) throw new Error("OpenCode does not expose configuration reload")
+      assertCurrent()
+      // Explicit daemon-wide mutation: never use this as an automatic watcher
+      // fallback, because native reload cancels pending Forms and permissions.
+      await this.deps.reload(binary, assertCurrent)
+      assertCurrent()
+      return this.getStatus()
+    }
+    const endpoint = restart && previous ? await lifecycle.restart?.() : previous ?? await lifecycle.ensure()
+    const identity = endpoint && runtimeIdentity(endpoint)
+    if (!identity) throw new Error("OpenCode did not report an authenticated runtime version")
+    await this.inspectRuntime(endpoint!)
+    if (this.deps.resolveBinary().path !== binary.path) throw new Error("OpenCode selection changed during activation")
+    await this.deps.reconnect?.(binary)
+    return this.getStatus()
+  }
+
+  async upgrade(options: UpgradeOptions = {}): Promise<OpenCodeUpdateResponse> {
+    await this.deps.prepareInstallation?.({})
+    const binary = this.deps.resolveBinary()
+    const existing = inFlightUpgrades.get(binary.path)
+    if (existing) return existing
+
+    const pending = this.performUpgrade(binary, options).finally(() => {
+      if (inFlightUpgrades.get(binary.path) === pending) inFlightUpgrades.delete(binary.path)
+    })
+    inFlightUpgrades.set(binary.path, pending)
+    return pending
+  }
+
+  private async performUpgrade(binary: ResolvedBinary, options: UpgradeOptions): Promise<OpenCodeUpdateResponse> {
+    const probe = await this.deps.probeBinary(binary.path)
+    const notice = this.deps.inspectInstallation?.(binary) ?? {}
+    const currentVersion = probe.missing || (!probe.valid && replaceableOrForeign(notice, binary))
+      ? null : await this.readCurrentVersion(binary.path, probe)
+    const latestVersion = await this.readLatestVersion()
+    assertSupportedOpenCode(latestVersion)
+
+    if (currentVersion && !comparableVersion(currentVersion)) {
+      throw new OpenCodeUpdateError("unsupported_binary", "Cannot order this custom OpenCode version for an automatic update")
+    }
+
+    if (currentVersion && compareOpenCodeVersionStrings(latestVersion, currentVersion) <= 0 && !needsSharedInstallation(binary)) {
+      return { success: true, version: currentVersion }
+    }
+
+    if (!this.deps.canUpgradeBinary(binary)) {
+      throw new OpenCodeUpdateError(
+        "unsupported_binary",
+        "Automatic updates require the default command and a writable npm installation",
+      )
+    }
+
+    const legacy = notice.legacyReplacement
+    if (legacy && (options.replaceLegacy?.path !== legacy.path || options.replaceLegacy.version !== legacy.version)) {
+      throw new OpenCodeUpdateError("legacy_replacement_required", "Replacing OpenCode 1.x requires confirmation of the current installation")
+    }
+
+    try {
+      const targetVersion = currentVersion && compareOpenCodeVersionStrings(currentVersion, latestVersion) > 0 ? currentVersion : latestVersion
+      const result = await this.deps.upgradeBinary(binary, targetVersion, legacy ? { replaceLegacy: options.replaceLegacy } : {})
+      if (!result.success) {
+        throw new OpenCodeUpdateError("upgrade_failed", result.error)
+      }
+      const installedBinary = this.deps.resolveBinary()
+      const installedVersion = await this.readCurrentVersion(installedBinary.path)
+      if (isBelowOpenCodeMinimum(installedVersion) || !/^\d+\.\d+\.\d+$/.test(installedVersion) || compareOpenCodeVersionStrings(installedVersion, targetVersion) < 0) {
+        throw new OpenCodeUpdateError(
+          "upgrade_verification_failed",
+          `OpenCode reported ${result.version}, but the configured binary is ${installedVersion} instead of ${latestVersion}`,
+        )
+      }
+      await this.deps.refreshLoginStart?.().catch(() => {})
+      return { success: true, version: installedVersion }
+    } catch (error) {
+      if (error instanceof OpenCodeUpdateError || error instanceof InstallationBusyError) throw error
+      if (error instanceof LegacyReplacementError) throw new OpenCodeUpdateError(error.code, error.message)
+      throw new OpenCodeUpdateError(
+        "upgrade_failed",
+        error instanceof Error ? error.message : "OpenCode upgrade failed",
+      )
+    }
+  }
+
+  private async readCurrentVersion(binaryPath: string, probe?: ReturnType<typeof probeBinaryVersion>): Promise<string> {
+    if (process.platform === "win32" && /["\r\n]/.test(binaryPath)) {
+      throw new OpenCodeUpdateError("binary_unavailable", "The configured OpenCode binary path is invalid")
+    }
+    const result = probe ?? await this.deps.probeBinary(binaryPath)
+    if (!result.valid) {
+      throw new OpenCodeUpdateError("binary_unavailable", result.error ?? "Unable to read OpenCode version")
+    }
+    // Successful unknown/empty labels are diagnostic information. Admission is
+    // established against the authenticated daemon, not inferred from this label.
+    return result.version?.trim() || "unknown"
+  }
+
+  private async readLatestVersion(): Promise<string> {
+    try {
+      const version = stripTagPrefix(await this.deps.resolveLatestVersion())
+      if (!version) throw new Error(`The ${TARGET_OPENCODE_CHANNEL} channel did not resolve to a version`)
+      return version
+    } catch (error) {
+      throw new OpenCodeUpdateError(
+        "update_check_failed",
+        error instanceof Error ? error.message : "Unable to resolve the latest stable OpenCode release",
+      )
+    }
+  }
+}
+
+export function compareOpenCodeVersionStrings(left: string, right: string): number {
+  const leftBeta = stripTagPrefix(left)?.match(/^0\.0\.0-beta-(\d+)$/)
+  const rightBeta = stripTagPrefix(right)?.match(/^0\.0\.0-beta-(\d+)$/)
+  if (leftBeta && rightBeta) return Number(leftBeta[1]) - Number(rightBeta[1])
+  return compareVersionStrings(left, right)
+}
+
+type RegistryFetch = (
+  url: string,
+  init: Parameters<typeof fetch>[1],
+) => Promise<Pick<Awaited<ReturnType<typeof fetch>>, "ok" | "status" | "json">>
+
+export async function resolveLatestOpenCodeVersion(fetchRegistry: RegistryFetch = fetch): Promise<string> {
+  const response = await fetchRegistry(OPENCODE_REGISTRY_URL, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) throw new Error(`OpenCode registry responded with ${response.status}`)
+
+  const metadata = (await response.json()) as Record<string, unknown>
+  const version = metadata[TARGET_OPENCODE_CHANNEL]
+  if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error(`The ${TARGET_OPENCODE_CHANNEL} channel did not resolve to a valid version`)
+  }
+  return version
+}
+
+export function createOpenCodeUpdateService(
+  settings: SettingsService,
+  workspaceManager: WorkspaceManager,
+  loginStart?: { refresh(): Promise<void> },
+): OpenCodeUpdateService {
+  const binaryResolver = new BinaryResolver(settings)
+  // Explicit custom executables and WSL selections are never installed over.
+  const defaultSelection = (binary: ResolvedBinary) => {
+    const configured = settings.getOwner("config", "server").opencodeBinary
+    return !parseWslUncPath(binary.path) && (!configured || configured === "opencode" || configured === "opencode2" || (typeof configured === "string" && isRetiredInstallation(configured)))
+  }
+  return new OpenCodeUpdateService({
+    prepareInstallation: options => prepareForeignProbe({}, { force: options.recheck }),
+    resolveBinary: () => {
+      const binary = binaryResolver.resolveDefault()
+      return { ...binary, path: workspaceManager.resolveBinaryPath(binary.path) }
+    },
+    probeBinary: probeBinaryVersionAsync,
+    resolveLatestVersion: resolveLatestOpenCodeVersion,
+    canUpgradeBinary: binary => defaultSelection(binary) && Boolean(bundledNpm()) && Boolean(sharedInstallPrefix()),
+    inspectInstallation: binary => {
+      if (!defaultSelection(binary)) return {}
+      const plan = sharedInstallationPlan()
+      return {
+        ...(plan.prefix && plan.legacy ? { legacyReplacement: { path: plan.legacy.command, version: plan.legacy.version } } : {}),
+        ...(plan.foreign ? { foreignInstallation: { path: plan.foreign.command, source: plan.foreign.source,
+          ...(plan.foreign.version ? { version: plan.foreign.version } : {}), ...(plan.foreign.packageId ? { packageId: plan.foreign.packageId } : {}),
+          ...(plan.foreign.blocked ? { blocked: plan.foreign.blocked } : {}) } } : {}),
+      }
+    },
+    upgradeBinary: async (_binary, version, options) => {
+      await installSharedOpenCode(version, { replaceLegacy: options.replaceLegacy })
+      return { success: true, version }
+    },
+    lifecycle: binary => workspaceManager.setupServiceOptions(binary.path).then(options => options.lifecycle),
+    reconnect: binary => workspaceManager.reconnectAfterSetup(binary.path),
+    admitActivation: binary => workspaceManager.assertSetupExecutionHost(binary.path),
+    reload: (binary, assertCurrent) => workspaceManager.reloadConfigurationAfterSetup(binary.path, assertCurrent),
+    refreshLoginStart: loginStart ? () => loginStart.refresh() : undefined,
+  })
+}
+
+// Explicit troubleshooting can replace the same release, but must retain the
+// update path's authenticated-version fence against downgrades/unknown builds.
+function canReplaceDaemon(installed: string | null, running?: string): boolean {
+  return Boolean(installed && running && comparableVersion(installed) && comparableVersion(running)
+    && compareOpenCodeVersionStrings(installed, running) >= 0)
+}
+
+function comparableVersion(version: string): boolean {
+  return /^\d+\.\d+\.\d+$/.test(version) || /^0\.0\.0-beta-\d+$/.test(version)
+}
+
+function needsSharedInstallation(binary: ResolvedBinary): boolean {
+  return binary.source === "user"
+}
+
+/** The failing binary is a foreign command (installed beside) or a verified
+ * OpenCode 1.x npm shim (replaced with consent), never repaired in place. */
+function replaceableOrForeign(notice: InstallationNotice, binary: ResolvedBinary): boolean {
+  return notice.foreignInstallation?.path === binary.path || notice.legacyReplacement?.path === binary.path
+}
