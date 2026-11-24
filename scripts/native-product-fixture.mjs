@@ -8,7 +8,7 @@ import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
-import { createAttestedFetch, redactSecrets, resolveWorktreePackage, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
+import { createAttestedFetch, createStreamRedactor, redactSecrets, resolveWorktreePackage, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { fixtureChildPid, spawnFixtureChild, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const execFileAsync = promisify(execFile)
@@ -165,21 +165,31 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
   } } })
   env.OPENCODE_CONFIG_CONTENT = configContent
   daemonEnv.OPENCODE_CONFIG_CONTENT = configContent
-  let output = "", spawnError
+  const outRedactor = createStreamRedactor([password])
+  const errRedactor = createStreamRedactor([password])
+  let output = "", stdout = "", spawnError
+  const appendOut = chunk => { if (chunk) { stdout = (stdout + chunk).slice(-65536); output = (output + chunk).slice(-65536) } }
+  const appendErr = chunk => { if (chunk) output = (output + chunk).slice(-65536) }
+  const currentStdout = () => stdout + outRedactor.peek()
+  const currentOutput = () => output + outRedactor.peek() + errRedactor.peek()
   let child, stopped, attestedFetch
   try {
     child = spawnFixtureChild(cli, ["serve", ...(service ? ["--service"] : []), "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env: daemonEnv, windowsHide: true })
-    stopped = new Promise(resolve => child.once("close", resolve))
+    stopped = new Promise(resolve => child.once("close", code => {
+      appendOut(outRedactor.flush())
+      appendErr(errRedactor.flush())
+      resolve(code)
+    }))
     child.on("error", error => { spawnError = error })
-    child.stdout.on("data", data => { output += data })
-    child.stderr.on("data", data => { output += data })
+    child.stdout.on("data", data => appendOut(outRedactor.push(data)))
+    child.stderr.on("data", data => appendErr(errRedactor.push(data)))
     const deadline = Date.now() + 30_000
-    while (!/http:\/\/127\.0\.0\.1:\d+/.test(output)) {
+    while (!/http:\/\/127\.0\.0\.1:\d+/.test(currentStdout())) {
       if (spawnError) throw spawnError
-      if (child.exitCode !== null || Date.now() > deadline) throw new Error(redactSecrets(output.slice(-3000), [password]))
+      if (child.exitCode !== null || Date.now() > deadline) throw new Error(redactSecrets(currentOutput().slice(-3000), [password]))
       await delay(25)
     }
-    const announcedUrl = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0]
+    const announcedUrl = currentStdout().match(/http:\/\/127\.0\.0\.1:\d+/)[0]
     let endpoint
     const pid = await fixtureChildPid(child)
     assert(Number.isSafeInteger(pid) && pid > 0, "Private OpenCode did not report its PID")

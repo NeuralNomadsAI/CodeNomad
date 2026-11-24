@@ -30,28 +30,30 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
       ? {CNRS_FIXTURE_URL: daemon.relayUrl ?? daemon.url, CNRS_FIXTURE_PASSWORD: daemon.relayPassword ?? daemon.password, CNRS_SERVER_PASSWORD: password, CNRS_FIXTURE_STDIN_STOP: "1"}
       : {OPENCODE_SERVER_PASSWORD: daemon.password}),
     CODENOMAD_REMOTE_CONTROL: "disabled" }), cwd: root, detached: group, windowsHide: true, stdio: [resolvedRust ? "pipe" : "ignore", "pipe", "pipe"] })
-  if (resolvedRust) daemon.allowRelayClient?.(fixtureChildPid(child))
   const startedBy = new Date()
   const outRedactor = createStreamRedactor([password, daemon.password])
   const errRedactor = createStreamRedactor([password, daemon.password])
-  let output = "", spawnError, completed = false, backendFetch
-  const appendOutput = chunk => { if (chunk) output = (output + chunk).slice(-500_000) }
+  let output = "", stdout = "", spawnError, completed = false, backendFetch
+  const appendOut = chunk => { if (chunk) { stdout = (stdout + chunk).slice(-500_000); output = (output + chunk).slice(-500_000) } }
+  const appendErr = chunk => { if (chunk) output = (output + chunk).slice(-500_000) }
+  const currentStdout = () => stdout + outRedactor.peek()
   const currentOutput = () => output + outRedactor.peek() + errRedactor.peek()
   const stopped = new Promise(resolve => child.once("close", code => {
-    appendOutput(outRedactor.flush())
-    appendOutput(errRedactor.flush())
+    appendOut(outRedactor.flush())
+    appendErr(errRedactor.flush())
     resolve(code)
   }))
+  if (resolvedRust) daemon.allowRelayClient?.(fixtureChildPid(child), stopped)
   const untrack = registerFixtureChild(() => stopFixtureChild(child, stopped, 1_000, 2_000, { group, startedBy }))
   void stopped.finally(untrack)
   const sanitize = text => redactSecrets(text, [password, daemon.password])
   child.on("error", error => { spawnError = error })
-  child.stdout.on("data", bytes => appendOutput(outRedactor.push(bytes)))
-  child.stderr.on("data", bytes => appendOutput(errRedactor.push(bytes)))
+  child.stdout.on("data", bytes => appendOut(outRedactor.push(bytes)))
+  child.stderr.on("data", bytes => appendErr(errRedactor.push(bytes)))
   try {
     const deadline = Date.now() + 60_000
     let origin
-    while (!(origin = currentOutput().match(resolvedRust ? /^(http:\/\/127\.0\.0\.1:\d+)\r?\n/m : /Local Connection URL\s*:\s*(http:\/\/127\.0\.0\.1:\d+)\r?\n/)?.[1])) {
+    while (!(origin = currentStdout().match(resolvedRust ? /^(http:\/\/127\.0\.0\.1:\d+)\r?\n/m : /Local Connection URL\s*:\s*(http:\/\/127\.0\.0\.1:\d+)\r?\n/)?.[1])) {
       if (spawnError) throw spawnError
       if (child.exitCode !== null || child.signalCode !== null || Date.now() >= deadline) {
         throw Error(`CodeNomad failed to start (${child.exitCode ?? child.signalCode ?? "timeout"}): ${sanitize(currentOutput().slice(-3000))}`)

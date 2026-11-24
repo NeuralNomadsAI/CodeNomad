@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {spawnFixtureChild,stopFixtureChild} from '../native-fixture-guards.mjs'
-import {createAttestedRelay,redactSecrets,resolveLocalExecutable,withoutFixtureProxy} from '../native-fixture-http.mjs'
+import {createAttestedRelay,createStreamRedactor,redactSecrets,resolveLocalExecutable,withoutFixtureProxy} from '../native-fixture-http.mjs'
 import {registerFixtureChild} from '../../packages/rune-app/fixtures/fixture-host.mjs'
 import {MARKER, now, sleep} from './lib.mjs'
 import {withBackend} from './stacks.mjs'
@@ -53,12 +53,14 @@ export async function withRune(binary, rustBinary, daemon, session, root, run) {
       env: withoutFixtureProxy({...daemon.env, RUNE_BACKEND: `${rustRelay.origin}/`, RUNE_WORKSPACE: workspace.id, RUNE_SESSION: session, RUNE_PASSWORD: password, RUNE_LOCALE: 'en'})})
     const startedBy = new Date()
     const pending = new Map()
+    const errRedactor = createStreamRedactor([password, daemon.password])
     let serial = 0, buffer = '', stderr = '', failure
+    const appendStderr = chunk => { if (chunk) stderr = (stderr + chunk).slice(-64 * 1024) }
     const rejectAll = error => {failure ??= error; for (const task of pending.values()) task.reject(error); pending.clear()}
-    const stopped = new Promise(resolve => {child.once('error', error => {rejectAll(error); resolve()}); child.once('close', code => {rejectAll(Error(`Rune latency probe exited (${code})`)); resolve(code)})})
+    const stopped = new Promise(resolve => {child.once('error', error => {rejectAll(error); resolve()}); child.once('close', code => {appendStderr(errRedactor.flush()); rejectAll(Error(`Rune latency probe exited (${code})`)); resolve(code)})})
     const untrack = registerFixtureChild(() => stopFixtureChild(child, stopped, 1_000, 2_000, {group, startedBy}))
     void stopped.finally(untrack)
-    child.stderr.on('data', chunk => {stderr = (stderr + chunk).slice(-64 * 1024)})
+    child.stderr.on('data', chunk => {appendStderr(errRedactor.push(chunk))})
     child.stdout.on('data', chunk => {
       buffer += chunk
       if (buffer.length > 256 * 1024) return rejectAll(Error('Rune latency response exceeds its bound'))
@@ -123,7 +125,7 @@ export async function withRune(binary, rustBinary, daemon, session, root, run) {
         if(child.exitCode===null&&!failure){await call('stop');await Promise.race([stopped,sleep(2000,undefined,{ref:false})]);graceful=child.exitCode===0}
       } catch {}
       try {await stopFixtureChild(child, stopped, 1_000, 2_000, {group, startedBy})} finally {
-        await writeFile(path.join(root, 'rune-probe.log'), redactSecrets(stderr, [password, daemon.password]))
+        await writeFile(path.join(root, 'rune-probe.log'), redactSecrets(stderr + errRedactor.peek(), [password, daemon.password]))
       }
       if(completed)assert(graceful,'Rune latency probe must acknowledge stop and exit 0')
     }

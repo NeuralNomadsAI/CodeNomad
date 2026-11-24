@@ -5,7 +5,7 @@ import {createServer,request} from 'node:http'
 import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
 import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
-import {createAttestedFetch,createAttestedHttpAgent,relayTarget} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedHttpAgent,createClientPidGate,relayTarget} from '../../../scripts/native-fixture-http.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
@@ -22,8 +22,8 @@ const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSW
 const server=launchFixture(serverBinary,
   [path.dirname(manifest.project),path.join(manifest.profile,'real-backend.json'),'0','existing-opencode'],
   {cwd:manifest.profile,env,shutdown:'shutdown\n',redact:[native.password,'real-history-private-backend']})
-native.allowRelayClient(server.pid())
-let child,proxy,observer,stream,watchTask,proxyError=null,rustFetch,rustAgent
+native.allowRelayClient(server.pid(),server.closed)
+let child,proxy,clientGate,observer,stream,watchTask,proxyError=null,rustFetch,rustAgent
 let result=1
 try{
   const origin=await server.ready(rustOrigin)
@@ -61,11 +61,19 @@ try{
     }
   }
   watchTask=watch().catch(error=>{if(!observer.signal.aborted&&error.name!=='AbortError')proxyError??=error})
+  clientGate=createClientPidGate(()=>proxy.address()?.port)
   proxy=createServer(async(req,res)=>{
     try{
       const target=relayTarget(req,res,origin)
       if(!target)return
+      req.pause()
+      if(!(await clientGate.verify(req.socket))){
+        if(!res.destroyed&&!req.destroyed){res.writeHead(403);res.end('Attested client PID required')}
+        return
+      }
       if(target.pathname.startsWith('/__real__/')){
+        req.resume()
+        if(req.method!=='GET'){res.writeHead(405);res.end('GET required');return}
         const action=target.pathname.slice('/__real__/'.length)
         let value=stats
         if(action==='expected'){
@@ -115,6 +123,7 @@ try{
     {cwd:manifest.profile,env:{...native.runtimeEnv,RUNE_BACKEND:base,
       RUNE_WORKSPACE:workspace.id,RUNE_SESSION:manifest.sessionID,RUNE_PASSWORD:'real-history-private-backend',RUNE_TEST_CONTROL:`${base}__real__/`},
       redact:[native.password,'real-history-private-backend']})
+  clientGate.allow(child.pid(),child.closed)
   result=await Promise.race([child.closed,delay(120000,124,{ref:false})])
   if(result===124)await child.stop()
   process.stdout.write(child.output())
@@ -125,6 +134,7 @@ try{
   observer?.abort();void stream?.body?.cancel?.().catch(()=>{})
   if(watchTask)await Promise.race([watchTask,delay(2000,undefined,{ref:false})])
   try{await child?.stop()}finally{
+    clientGate?.close()
     proxy?.closeAllConnections();proxy?.close()
     rustAgent?.destroy()
     try{await rustFetch?.close()}finally{await server.stop()}

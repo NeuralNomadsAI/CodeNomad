@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url'
 import {createHash} from 'node:crypto'
 import {spawnFixtureChild, stopFixtureChild} from '../native-fixture-guards.mjs'
 import {assertWorktreeModuleResolution,fixtureFetch,fixtureTarget,resolveWorktreePackage,withoutFixtureProxy,worktreeDependencyRoots} from '../native-fixture-http.mjs'
+import {registerFixtureChild} from '../../packages/rune-app/fixtures/fixture-host.mjs'
 import {fixtureSystemEnvironment} from '../../packages/rune-app/fixtures/private-profile.mjs'
 import {privatePath} from './isolation.mjs'
 
@@ -16,6 +17,8 @@ export async function preparePruning(root, config, buildEnv) {
     ? `@esbuild/win32-${process.arch}/esbuild.exe`
     : `@esbuild/${process.platform}-${process.arch}/bin/esbuild`
   const esbuildBinaryPath = fileURLToPath(resolveWorktreePackage(esbuildBinSpec))
+  // Pin ESBUILD_BINARY_PATH in the caller process before loading tsx so tsImport never honors an inherited external binary.
+  process.env.ESBUILD_BINARY_PATH = esbuildBinaryPath
   const openCodeUrl = resolveWorktreePackage('@opencode/client')
   const tsxUrl = resolveWorktreePackage('tsx/esm/api')
   const navigationContractPath = fileURLToPath(new URL('../../packages/server/src/opencode/session-pruning/navigation-contract.ts', import.meta.url))
@@ -60,10 +63,12 @@ export async function preparePruning(root, config, buildEnv) {
       banner: { js: '// CodeNomad plugin IDs: ["codenomad-session-pruning"]\\nimport { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
     })
   `
+  const group = process.platform !== 'win32'
   const isolatedBuildEnv = withoutFixtureProxy({ ...(buildEnv ?? fixtureSystemEnvironment()), ESBUILD_BINARY_PATH: esbuildBinaryPath })
   const builder = spawnFixtureChild(process.execPath, ['--input-type=module', '-e', buildScript, esbuildUrl, pluginBuildUrl, entryPoint, outfile, repoRootReal, nodeModulesReal], {
-    cwd: root, env: isolatedBuildEnv, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root, env: isolatedBuildEnv, detached: group, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   })
+  const startedBy = new Date()
   let buildStderr = ''
   builder.stderr.on('data', chunk => { buildStderr = (buildStderr + chunk).slice(-32768) })
   builder.stdout.resume()
@@ -71,11 +76,13 @@ export async function preparePruning(root, config, buildEnv) {
     builder.once('close', code => resolve(code))
     builder.once('error', () => resolve(1))
   })
+  const untrackBuilder = registerFixtureChild(() => stopFixtureChild(builder, buildClosed, 1000, 2000, { group, startedBy }))
+  void buildClosed.finally(untrackBuilder)
   const buildCode = await Promise.race([
     buildClosed,
     new Promise(resolve => setTimeout(() => resolve(124), 60_000).unref()),
   ])
-  if (buildCode === 124) await stopFixtureChild(builder, buildClosed, 1000, 2000, { group: process.platform !== 'win32' })
+  if (buildCode === 124) await stopFixtureChild(builder, buildClosed, 1000, 2000, { group, startedBy })
   assert.equal(buildCode, 0, `Isolated pruning plugin build failed (${buildCode}): ${buildStderr}`)
   const [{installPruningPresence},{awaitNativePlugin},{navigationWindowResultSchema}]=await Promise.all([
     tsImport('../../packages/server/src/opencode/pruning-installation.ts',import.meta.url),

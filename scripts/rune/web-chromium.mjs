@@ -37,7 +37,7 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
       return null
     },'DevToolsActivePort matching announced port',15000)
     pid=await host.pid()
-    cdpRelay=await createAttestedTcpRelay(Number(port),pid)
+    cdpRelay=await createAttestedTcpRelay(Number(port),pid,{requireClientAttestation:true,allowedClientPids:[process.pid]})
     browser=await chromium.connectOverCDP(`ws://127.0.0.1:${cdpRelay.port}${id}`,{timeout:15000})
   }catch(error){
     try{await browser?.close()}catch{}

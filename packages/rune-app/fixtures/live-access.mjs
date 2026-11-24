@@ -394,7 +394,7 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
   }
   const lease=path.join(profile,'running.lock')
   const lock=await acquireProfileLock(lease)
-  let daemon,model,plugin,password,executable,config,runtime,attested,nativeRelay,trackedSupervisorPid=null,trackedDaemonPid=null,aborted=false,executionFinished=false
+  let daemon,model,plugin,password,executable,config,runtime,attested,nativeRelay,trackedSupervisorPid=null,trackedDaemonPid=null,aborted=false,executionFinished=false,pruningActive=false
   const checkActive=()=>{if(aborted)throw Error('Private fixture interrupted during startup')}
   const owned=name=>{
     const expected=path.join(profile,name)
@@ -402,7 +402,8 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
     return expected
   }
   const isDaemonStopped=()=>
-    (!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null)
+    !pruningActive
+    &&(!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null)
     &&(trackedSupervisorPid==null||!pidAlive(trackedSupervisorPid))
     &&(trackedDaemonPid==null||!pidAlive(trackedDaemonPid))
   let cleaned,leaseRemoved=false
@@ -492,7 +493,11 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
       await mkdir(programData,{recursive:true})
       await ensurePrivateGitRepo(project,profile,runtimeEnv)
       checkActive()
-      if(pruning){const {preparePruning}=await import('../../../scripts/perf/pruning.mjs');plugin=await preparePruning(profile,config,runtimeEnv)}
+      if(pruning){
+        pruningActive=true
+        try{const {preparePruning}=await import('../../../scripts/perf/pruning.mjs');plugin=await preparePruning(profile,config,runtimeEnv)}
+        finally{pruningActive=false}
+      }
       checkActive()
       daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env,redact:[password]})
       if(daemon.child.pid){trackedSupervisorPid=daemon.child.pid;await lock.setSupervisorPid(daemon.child.pid)}

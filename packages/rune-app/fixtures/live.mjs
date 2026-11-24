@@ -21,7 +21,7 @@ const env={...live.runtimeEnv,CNRS_FIXTURE_URL:live.relay,CNRS_FIXTURE_PASSWORD:
   CNRS_SERVER_PASSWORD:'rune-live-private-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
 const server=launchFixture(serverBinary,
   [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[live.password,'rune-live-private-backend']})
-live.allowRelayClient(server.pid())
+live.allowRelayClient(server.pid(),server.closed)
 let child
 let observed,stream,observeTask,rustFetch,rustRelay
 try {

@@ -1,20 +1,42 @@
 // POSIX fallback supervisor when the Rust fixture job binary is not built in JS-only CI jobs.
 import { execFileSync, spawn } from "node:child_process"
+import { closeSync, existsSync, renameSync, writeFileSync, writeSync } from "node:fs"
 
 const parentPid = Number(process.env.CODENOMAD_FIXTURE_PARENT_PID || 0)
 delete process.env.CODENOMAD_FIXTURE_PARENT_PID
+const rawPidFd = Number(process.env.CODENOMAD_FIXTURE_PID_FD || 0)
+const pidFd = Number.isSafeInteger(rawPidFd) && rawPidFd > 2 ? rawPidFd : null
+delete process.env.CODENOMAD_FIXTURE_PID_FD
 const rawGrace = Number(process.env.CODENOMAD_FIXTURE_GRACE_MS || 0)
 const graceBudgetMs = Number.isFinite(rawGrace) && rawGrace >= 50 && rawGrace <= 2000 ? rawGrace : 400
 const childEnv = { ...process.env, CODENOMAD_FIXTURE_GRACE_MS: String(Math.max(50, Math.floor(graceBudgetMs / 4))) }
 const rawArgs = process.argv.slice(2)
-const sameGroup = rawArgs[0] === "--same-group"
-const [command, ...args] = sameGroup ? rawArgs.slice(1) : rawArgs
+let sameGroup = false
+let pidFile = null
+let argIndex = 0
+while (argIndex < rawArgs.length) {
+  if (rawArgs[argIndex] === "--same-group") {
+    sameGroup = true
+    argIndex++
+  } else if (rawArgs[argIndex] === "--pid-file") {
+    pidFile = rawArgs[argIndex + 1]
+    if (!pidFile) {
+      console.error("Fixture supervisor: expected path after --pid-file")
+      process.exit(1)
+    }
+    argIndex += 2
+  } else {
+    break
+  }
+}
+const [command, ...args] = rawArgs.slice(argIndex)
 if (!command) {
   console.error("Fixture supervisor: expected an executable and its arguments")
   process.exit(1)
 }
+const psBin = ["/bin/ps", "/usr/bin/ps"].find(candidate => existsSync(candidate))
 
-const child = spawn(command, args, { detached: !sameGroup, stdio: "inherit", env: childEnv })
+const child = spawn(command, args, { detached: !sameGroup, stdio: ["inherit", "inherit", "inherit"], env: childEnv })
 let terminating = false
 let childExited = false
 
@@ -24,8 +46,9 @@ function sameGroupPeers() {
   if (!childExited && child.pid) {
     try { process.kill(child.pid, 0); peers.add(child.pid) } catch (error) { if (error.code === "EPERM") peers.add(child.pid) }
   }
+  if (!psBin) return { peers: [...peers], psOk: false }
   try {
-    const out = execFileSync("ps", ["-ax", "-o", "pid=,pgid=,ppid=,comm="], { encoding: "utf8", timeout: 1000 })
+    const out = execFileSync(psBin, ["-ax", "-o", "pid=,pgid=,ppid=,comm="], { encoding: "utf8", timeout: 1000 })
     psOk = true
     for (const line of out.split(/\r?\n/)) {
       const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
@@ -91,7 +114,18 @@ function shutdown(code, graceMs = graceBudgetMs) {
 }
 
 child.once("spawn", () => {
-  process.stderr.write(`CODENOMAD_FIXTURE_PID=${child.pid}\n`)
+  const line = `CODENOMAD_FIXTURE_PID=${child.pid}\n`
+  if (pidFile) {
+    const tmp = `${pidFile}.tmp`
+    writeFileSync(tmp, line, { mode: 0o600, flag: "wx" })
+    renameSync(tmp, pidFile)
+    return
+  }
+  if (pidFd !== null) {
+    try { writeSync(pidFd, line) } finally { try { closeSync(pidFd) } catch {} }
+    return
+  }
+  process.stderr.write(line)
 })
 child.once("error", error => {
   console.error(`Fixture supervisor: ${error.message}`)

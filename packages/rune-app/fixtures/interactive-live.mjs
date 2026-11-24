@@ -27,7 +27,7 @@ const verified=(await native.read(`/api/session/${fork.id}`)).data;assert.deepEq
 const copied=await native.read(`/api/session/${fork.id}/message?limit=200`);assert.equal(copied.data.length,200);assert(copied.cursor?.next)
 const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,CNRS_SERVER_PASSWORD:'interactive-rune-owned-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
 const server=launchFixture(serverBinary,[directory,path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,'interactive-rune-owned-backend']})
-native.allowRelayClient(server.pid())
+native.allowRelayClient(server.pid(),server.closed)
 let child,observer,stream,watchTask,guardTask,rustFetch,rustRelay,stopped=false,newID,guardError=null
 const guarded=new Set([source.id,fork.id])
 const stats={sourceID:source.id,longID:fork.id,longTitle,newTitle,sourceRowsInPage:first.data.length,sourceHasOlder:true,longCopiedRowsInPage:copied.data.length,newID:null,turns:[],tools:0}

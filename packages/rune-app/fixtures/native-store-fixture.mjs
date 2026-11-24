@@ -39,7 +39,7 @@ const baseEnv={...await privateEnvironment(root),OPENCODE_TEST_HOME:path.join(ro
   npm_config_globalconfig:path.join(root,'global-npmrc'),npm_config_cache:path.join(root,'npm-cache')}
 const opencodeEnv={...baseEnv,OPENCODE_SERVER_PASSWORD:opencodePassword}
 await mkdir(baseEnv.ProgramData)
-const logs={},children=[],proxies=[],ownedIDs=[],stages=[],requests=[]
+const logs={},stdouts={},children=[],proxies=[],ownedIDs=[],stages=[],requests=[]
 const proof={root,project,opencode:values.opencode,ownedIDs,stages,requests,cleanup:[],result:'failed',
   binaries:{rune:createHash('sha256').update(await readFile(rune)).digest('hex'),rust:createHash('sha256').update(await readFile(rust)).digest('hex')}}
 let pruning,native,server,client,failure,rustPassword,attested,rustFetch
@@ -49,23 +49,24 @@ function launch(name,binary,args,childEnv,cwd=root,redact=[]){
   const child=spawnFixtureChild(binary,args,{cwd,env:withoutFixtureProxy(childEnv),detached:group,windowsHide:true,stdio:['pipe','pipe','pipe']})
   const outRedactor=createStreamRedactor(redact)
   const errRedactor=createStreamRedactor(redact)
-  const append=chunk=>{if(chunk)logs[name]=(logs[name]+chunk).slice(-1048576)}
-  const entry={name,child,error:null,stopped:null,startedBy:new Date(),currentOutput:()=>logs[name]+outRedactor.peek()+errRedactor.peek()};logs[name]=''
+  const appendOut=chunk=>{if(chunk){stdouts[name]=(stdouts[name]+chunk).slice(-1048576);logs[name]=(logs[name]+chunk).slice(-1048576)}}
+  const appendErr=chunk=>{if(chunk)logs[name]=(logs[name]+chunk).slice(-1048576)}
+  const entry={name,child,error:null,stopped:null,startedBy:new Date(),currentStdout:()=>stdouts[name]+outRedactor.peek(),currentOutput:()=>logs[name]+outRedactor.peek()+errRedactor.peek()};logs[name]='';stdouts[name]=''
   entry.stopped=new Promise(resolve=>{
-    child.once('close',code=>{append(outRedactor.flush());append(errRedactor.flush());resolve(code)})
+    child.once('close',code=>{appendOut(outRedactor.flush());appendErr(errRedactor.flush());resolve(code)})
     child.once('error',error=>{entry.error=error;resolve()})
   })
   const untrack=registerFixtureChild(()=>stopFixtureChild(child,entry.stopped,1_000,2_000,{group,startedBy:entry.startedBy}))
   void entry.stopped.finally(untrack)
-  child.stdout.on('data',data=>{append(outRedactor.push(data))})
-  child.stderr.on('data',data=>{append(errRedactor.push(data))})
+  child.stdout.on('data',data=>{appendOut(outRedactor.push(data))})
+  child.stderr.on('data',data=>{appendErr(errRedactor.push(data))})
   children.push(entry);return entry
 }
 async function origin(entry){
   for(const end=Date.now()+60000;;){
     if(entry.error)throw entry.error
     assert(entry.child.exitCode===null&&entry.child.signalCode===null&&Date.now()<end,`${entry.name} startup failed`)
-    const output=entry.currentOutput()
+    const output=entry.currentStdout()
     const url=entry.name==='opencode'?output.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)?.[1]:rustOrigin(output)
     if(url)return url
     await sleep(25)
@@ -148,7 +149,7 @@ try{
     CNRS_SERVER_PASSWORD:rustPassword,CNRS_FIXTURE_STDIN_STOP:'1',CLI_CONFIG:path.join(root,'rust-config')}
   await mkdir(rustEnv.CLI_CONFIG)
   server=launch('rust',rust,[project,path.join(root,'identity.json'),'0',values.opencode],rustEnv,root,[opencodePassword,rustPassword])
-  nativeProxy.allowClientPid(fixtureChildPid(server.child))
+  nativeProxy.allowClientPid(fixtureChildPid(server.child),server.stopped)
   const backend=await origin(server)
   const rustPid=await fixtureChildPid(server.child)
   const appProxy=await auditedProxy(backend,'rune-rust',rustPid)

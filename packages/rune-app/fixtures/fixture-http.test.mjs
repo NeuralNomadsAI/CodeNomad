@@ -285,7 +285,7 @@ test('createStreamRedactor redacts split secrets and never leaks partial secret 
   assert.equal(tOut.includes('<truncated>'),true)
 })
 
-test('createAttestedRelay client PID attestation and createAttestedTcpRelay enforce OS peer identity',{timeout:15000},async t=>{
+test('createAttestedRelay client PID attestation, revocation, and createAttestedTcpRelay enforce OS peer identity',{timeout:20000},async t=>{
   let seenAuth=null
   const target=await listen(t,(req,res)=>{seenAuth=req.headers.authorization??null;res.end('ok')})
   const relay=await createAttestedRelay(target.origin,process.pid,{
@@ -293,16 +293,39 @@ test('createAttestedRelay client PID attestation and createAttestedTcpRelay enfo
     injectAuthorization:'Basic real-secret',
   })
   t.after(()=>relay.close())
-  // Without allowing process.pid, the relay rejects the client with 403 before touching upstream.
-  const denied=await fixtureFetch(new URL('/denied',relay.origin),{signal:AbortSignal.timeout(5000)})
-  assert.equal(denied.status,403)
+  // Without allowing process.pid (empty allowlist), the relay rejects with 403 before touching upstream.
+  const deniedEmpty=await fixtureFetch(new URL('/denied-empty',relay.origin),{signal:AbortSignal.timeout(5000)})
+  assert.equal(deniedEmpty.status,403)
   assert.equal(seenAuth,null)
-  relay.allowClientPid(process.pid)
+  // With a non-empty foreign allowlist, process.pid is still rejected with 403.
+  relay.allowClientPid(999999999)
+  const deniedForeign=await fixtureFetch(new URL('/denied-foreign',relay.origin),{signal:AbortSignal.timeout(5000)})
+  assert.equal(deniedForeign.status,403)
+  assert.equal(seenAuth,null)
+  // Allow process.pid tied to a lifecycle exit promise; verify allowed then revoked on exit.
+  const clientExit=Promise.withResolvers()
+  relay.allowClientPid(process.pid,clientExit.promise)
   const allowed=await fixtureFetch(new URL('/allowed',relay.origin),{signal:AbortSignal.timeout(5000)})
   assert.equal(allowed.status,200)
   assert.equal(await allowed.text(),'ok')
   assert.equal(seenAuth,'Basic real-secret')
-  const tcpRelay=await createAttestedTcpRelay(target.server.address().port,process.pid)
+  seenAuth=null
+  clientExit.resolve()
+  await new Promise(resolve=>setTimeout(resolve,50))
+  const revoked=await fixtureFetch(new URL('/after-exit',relay.origin),{signal:AbortSignal.timeout(5000)})
+  assert.equal(revoked.status,403)
+  assert.equal(seenAuth,null)
+  // TCP relay with client PID attestation rejects foreign clients and admits process.pid.
+  const tcpDenied=await createAttestedTcpRelay(target.server.address().port,process.pid,{
+    requireClientAttestation:true,
+    allowedClientPids:[999999999],
+  })
+  t.after(()=>tcpDenied.close())
+  await assert.rejects(fixtureFetch(`http://127.0.0.1:${tcpDenied.port}/tcp-denied`,{signal:AbortSignal.timeout(5000)}))
+  const tcpRelay=await createAttestedTcpRelay(target.server.address().port,process.pid,{
+    requireClientAttestation:true,
+    allowedClientPids:[process.pid],
+  })
   t.after(()=>tcpRelay.close())
   const viaTcp=await fixtureFetch(`http://127.0.0.1:${tcpRelay.port}/tcp`,{signal:AbortSignal.timeout(5000)})
   assert.equal(viaTcp.status,200)

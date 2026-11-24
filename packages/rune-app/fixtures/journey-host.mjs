@@ -121,7 +121,7 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
         ...env,...ownedRust,CNRS_FIXTURE_URL:nativeRelay.origin,CNRS_FIXTURE_STDIN_STOP:'1',
         ...(mode==='web'?{CNRS_FIXTURE_UI_DIR:web}:{}),
       },ownedRust)})
-      nativeRelay.allowClientPid(server.pid())
+      nativeRelay.allowClientPid(server.pid(),server.closed)
       const origin=await server.ready(rustOrigin)
       const rustPid=await server.pid()
       await run({profile,project,origin,rustPid,password,env})

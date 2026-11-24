@@ -1,6 +1,6 @@
 // Guards for isolated fixture-owned children and native acceptance pagination.
 import { execFile, spawn } from "node:child_process"
-import { accessSync, constants } from "node:fs"
+import { accessSync, constants, existsSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
@@ -39,28 +39,54 @@ export function spawnFixtureChild(command, args, options) {
   if (graceCandidates.length && !env.CODENOMAD_FIXTURE_GRACE_MS) {
     env.CODENOMAD_FIXTURE_GRACE_MS = String(Math.min(...graceCandidates))
   }
-  const { detached: _detached, graceMs: _graceMs, ...restOptions } = options ?? {}
+  const { detached: _detached, graceMs: _graceMs, stdio: rawStdio, ...restOptions } = options ?? {}
+  const usePrivatePidFd = process.platform !== "win32"
+  let stdio = rawStdio
+  if (usePrivatePidFd) {
+    const baseStdio = Array.isArray(rawStdio)
+      ? [rawStdio[0] ?? "pipe", rawStdio[1] ?? "pipe", rawStdio[2] ?? "pipe"]
+      : typeof rawStdio === "string"
+        ? [rawStdio, rawStdio, rawStdio]
+        : ["pipe", "pipe", "pipe"]
+    stdio = [...baseStdio, "pipe"]
+    env.CODENOMAD_FIXTURE_PID_FD = "3"
+  }
   const supervisor = exe
     ? [exe, [command, ...args]]
     : [process.execPath, [fileURLToPath(new URL("./native-fixture-posix-supervisor.mjs", import.meta.url)), command, ...args]]
-  const child = spawn(supervisor[0], supervisor[1], { ...restOptions, detached: false, env, windowsHide: true })
-  if (!child.stderr) {
+  const child = spawn(supervisor[0], supervisor[1], { ...restOptions, stdio, detached: false, env, windowsHide: true })
+  const pidStream = usePrivatePidFd ? child.stdio[3] : child.stderr
+  if (!pidStream) {
     jobs.set(child, Promise.resolve(undefined))
     return child
   }
   jobs.set(child, new Promise(resolve => {
     let line = ""
+    let settled = false
     const finish = pid => {
-      child.stderr.off("data", accept)
+      if (settled) return
+      settled = true
+      pidStream.off("data", accept)
+      if (usePrivatePidFd) pidStream.resume()
       resolve(pid)
     }
     const accept = chunk => {
-      const candidate = line + chunk
-      const match = /^CODENOMAD_FIXTURE_PID=(\d+)\r?\n/m.exec(candidate)
-      if (match) { finish(Number(match[1])); return }
-      line = candidate.slice(-16384)
+      line += chunk
+      const newline = line.indexOf("\n")
+      if (newline >= 0) {
+        // On Windows the job launcher writes line 1 before ResumeThread; on POSIX fd 3 is private to the supervisor.
+        const firstLine = line.slice(0, newline + 1)
+        const match = /^CODENOMAD_FIXTURE_PID=(\d+)\r?\n$/.exec(firstLine)
+        finish(match ? Number(match[1]) : undefined)
+        return
+      }
+      if (line.length > 256) finish(undefined)
     }
-    child.stderr.on("data", accept)
+    pidStream.on("data", accept)
+    if (usePrivatePidFd) {
+      pidStream.once("end", () => finish(undefined))
+      pidStream.once("error", () => finish(undefined))
+    }
     child.once("close", () => finish(undefined))
     child.once("error", () => finish(undefined))
   }))
@@ -106,8 +132,10 @@ async function stopOwnedTree(child, stopped, graceMs, { close, group, startedBy 
     try { process.kill(-child.pid, "SIGKILL") } catch (error) { if (error.code !== "ESRCH") throw error }
     return
   }
-  const list = async () => (await promisify(execFile)("ps", ["-axo", "pid=,ppid=,lstart="], {
-    env: { PATH: process.env.PATH, LC_ALL: "C" }, timeout: 10_000, maxBuffer: 4 * 1024 * 1024,
+  const psBin = ["/bin/ps", "/usr/bin/ps"].find(candidate => existsSync(candidate))
+  if (!psBin) throw new Error("Expected system ps executable at /bin/ps or /usr/bin/ps")
+  const list = async () => (await promisify(execFile)(psBin, ["-axo", "pid=,ppid=,lstart="], {
+    env: { LC_ALL: "C" }, timeout: 10_000, maxBuffer: 4 * 1024 * 1024,
   })).stdout.split("\n").flatMap(line => {
     const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)
     const started = match && Date.parse(match[3])

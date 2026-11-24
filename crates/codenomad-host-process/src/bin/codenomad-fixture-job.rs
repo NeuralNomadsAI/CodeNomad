@@ -1,7 +1,9 @@
 //! Run a fixture with inherited stdio and contain its entire process family.
 use codenomad_host_process::OwnedProcess;
 use std::{
-    io,
+    ffi::OsString,
+    io::{self, Write},
+    path::PathBuf,
     process::{Command, Stdio},
     thread::sleep,
     time::{Duration, Instant},
@@ -130,6 +132,74 @@ fn grace_budget_ms() -> u64 {
         .unwrap_or(400)
 }
 
+#[cfg(unix)]
+fn prepare_pid_fd() -> io::Result<Option<libc::c_int>> {
+    let Some(raw) = std::env::var_os("CODENOMAD_FIXTURE_PID_FD") else {
+        return Ok(None);
+    };
+    let fd: libc::c_int = raw
+        .to_string_lossy()
+        .parse()
+        .map_err(|_| io::Error::other("Invalid CODENOMAD_FIXTURE_PID_FD"))?;
+    if fd <= 2 {
+        return Err(io::Error::other("Invalid CODENOMAD_FIXTURE_PID_FD"));
+    }
+    // SAFETY: mark the private PID descriptor CLOEXEC before spawning so the child never inherits it.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFD);
+        if flags < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) < 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(Some(fd))
+}
+
+fn write_pid_file(path: &PathBuf, pid: u32) -> io::Result<()> {
+    let mut tmp = OsString::from(path.as_os_str());
+    tmp.push(".tmp");
+    let tmp_path = PathBuf::from(tmp);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)?;
+    writeln!(file, "CODENOMAD_FIXTURE_PID={pid}")?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&tmp_path, path)
+}
+
+fn report_pid(pid: u32, pid_file: Option<&PathBuf>, #[cfg(unix)] pid_fd: Option<libc::c_int>) {
+    if let Some(path) = pid_file {
+        let _ = write_pid_file(path, pid);
+        return;
+    }
+    #[cfg(unix)]
+    if let Some(fd) = pid_fd {
+        let line = format!("CODENOMAD_FIXTURE_PID={pid}\n");
+        let bytes = line.as_bytes();
+        let mut written = 0;
+        while written < bytes.len() {
+            // SAFETY: fd is an open private pipe inherited from the launcher and marked CLOEXEC.
+            let n =
+                unsafe { libc::write(fd, bytes[written..].as_ptr().cast(), bytes.len() - written) };
+            if n <= 0 {
+                break;
+            }
+            written += n as usize;
+        }
+        unsafe {
+            libc::close(fd);
+        }
+        return;
+    }
+    let mut stderr = io::stderr().lock();
+    let _ = writeln!(stderr, "CODENOMAD_FIXTURE_PID={pid}");
+    let _ = stderr.flush();
+}
+
 fn run() -> io::Result<i32> {
     #[cfg(target_os = "linux")]
     unsafe {
@@ -139,13 +209,30 @@ fn run() -> io::Result<i32> {
     #[cfg(unix)]
     install_signal_handlers();
     let parent = ParentWatch::open()?;
+    #[cfg(unix)]
+    let pid_fd = prepare_pid_fd()?;
     // SAFETY: single-threaded process before spawning the child; clears the internal
-    // supervisor variable so inherited Windows/Unix child environments never receive it.
-    unsafe { std::env::remove_var("CODENOMAD_FIXTURE_PARENT_PID") };
+    // supervisor variables so inherited Windows/Unix child environments never receive them.
+    unsafe {
+        std::env::remove_var("CODENOMAD_FIXTURE_PARENT_PID");
+        std::env::remove_var("CODENOMAD_FIXTURE_PID_FD");
+    }
     let mut args = std::env::args_os().skip(1).peekable();
-    let inherit_console = args.peek().is_some_and(|arg| arg == "--inherit-console");
-    if inherit_console {
-        args.next();
+    let mut inherit_console = false;
+    let mut pid_file: Option<PathBuf> = None;
+    while let Some(arg) = args.peek() {
+        if arg == "--inherit-console" {
+            inherit_console = true;
+            args.next();
+        } else if arg == "--pid-file" {
+            args.next();
+            let path = args
+                .next()
+                .ok_or_else(|| io::Error::other("Expected path after --pid-file"))?;
+            pid_file = Some(PathBuf::from(path));
+        } else {
+            break;
+        }
     }
     let program = args
         .next()
@@ -156,6 +243,7 @@ fn run() -> io::Result<i32> {
     command
         .args(args)
         .env_remove("CODENOMAD_FIXTURE_PARENT_PID")
+        .env_remove("CODENOMAD_FIXTURE_PID_FD")
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
@@ -166,10 +254,18 @@ fn run() -> io::Result<i32> {
     );
     let mut child = if inherit_console {
         OwnedProcess::spawn_inherited_console(&mut command, |pid| {
-            eprintln!("CODENOMAD_FIXTURE_PID={pid}")
+            #[cfg(unix)]
+            report_pid(pid, pid_file.as_ref(), pid_fd);
+            #[cfg(not(unix))]
+            report_pid(pid, pid_file.as_ref());
         })?
     } else {
-        OwnedProcess::spawn_inherited(&mut command, |pid| eprintln!("CODENOMAD_FIXTURE_PID={pid}"))?
+        OwnedProcess::spawn_inherited(&mut command, |pid| {
+            #[cfg(unix)]
+            report_pid(pid, pid_file.as_ref(), pid_fd);
+            #[cfg(not(unix))]
+            report_pid(pid, pid_file.as_ref());
+        })?
     };
     let pause = Duration::from_millis(10);
     let status = loop {

@@ -10,6 +10,7 @@ import { build } from "esbuild"
 import { OpenCode } from "@opencode/client"
 import { nativePluginBuild } from "../packages/server/scripts/native-plugin-build.mjs"
 import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { definition } from "./missions-terminal-native/definition.mjs"
 
 const cli = process.argv[2], evidenceRoot = process.argv[3]
@@ -30,7 +31,7 @@ env.XDG_RUNTIME_DIR = path.join(root, "runtime")
 for (const value of Object.values(env).filter(value => typeof value === "string" && value.startsWith(root))) {
   if (!path.extname(value)) await mkdir(value, { recursive: true })
 }
-let hold = true, fail = false, holdFamilyChild = true, familyRoot, child, stopped, output = "", client, providerError, providerRequests = 0
+let hold = true, fail = false, holdFamilyChild = true, familyRoot, child, stopped, output = "", client, attestedFetch, providerError, providerRequests = 0
 const releases = new Set()
 const evidence = { root, outcome: "running", incarnations: [], stoppedPIDs: [], isolation: {}, observations: [], limits: [
   "Standalone intentionally gates Session.resume; managed startup sweep and autonomous auxiliary schedule remain core integration prerequisites.",
@@ -80,14 +81,21 @@ async function until(predicate, label) {
 }
 async function start() {
   output = ""
+  await attestedFetch?.close().catch(() => {})
+  attestedFetch = undefined
   child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env, windowsHide: true })
   stopped = new Promise(resolve => child.once("close", resolve))
   child.stdout.on("data", data => { output += data }); child.stderr.on("data", data => { output += data })
   await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output), "private listen")
-  client = OpenCode.make({ baseUrl: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], headers: {
-    Authorization: `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`,
-  } })
+  const baseUrl = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0]
   const pid = await fixtureChildPid(child)
+  assert.ok(Number.isSafeInteger(pid) && pid > 0, "Expected owned child PID")
+  const port = Number(new URL(baseUrl).port)
+  await verifyLoopbackListenerOwner(port, pid)
+  attestedFetch = createAttestedFetch(baseUrl, port, pid)
+  client = OpenCode.make({ baseUrl, headers: {
+    Authorization: `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`,
+  }, fetch: attestedFetch })
   await until(async () => { try { return (await client.server.info()).pid === pid } catch { return false } }, "private ready")
   const info = await client.server.info()
   evidence.incarnations.push({ pid: info.pid, version: info.version })
@@ -110,7 +118,8 @@ try {
   assert.equal(live.active, true); assert.equal(live.suspended, true); assert.equal(live.terminal, undefined)
   evidence.observations.push({ stage: "before-crash", ...live })
   const stoppedPid = await fixtureChildPid(child)
-  child.kill("SIGKILL"); await stopped; evidence.stoppedPIDs.push(stoppedPid)
+  assert.ok(Number.isSafeInteger(stoppedPid) && stoppedPid > 0, "Expected owned child PID before crash")
+  process.kill(stoppedPid, "SIGKILL"); await stopped; evidence.stoppedPIDs.push(stoppedPid)
   await start() // No sweep in standalone: recovery is held before the native resume call.
   for (let wake = 0; wake < 3; wake++) {
     const old = await read(session.id, original.id)
@@ -168,6 +177,7 @@ try {
   console.log(JSON.stringify({ outcome: evidence.outcome, root, checks: ["old-claim-held", "single-original-native-resume", "durable-sequence-terminal", "unrelated-failure-excluded", "missing-anchor-uncertain", "native-family-child-terminal", "durable-background-delivery"] }))
 } catch (error) { evidence.outcome = "failed"; evidence.error = String(error); throw error }
 finally {
+  await attestedFetch?.close().catch(() => {})
   if (child?.exitCode === null) { const pid = await fixtureChildPid(child); await stopFixtureChild(child, stopped); evidence.stoppedPIDs.push(pid) }
   provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))
   await writeFile(path.join(root, "native.log"), output)

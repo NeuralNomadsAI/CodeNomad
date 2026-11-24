@@ -18,6 +18,7 @@ import Fastify from "fastify"
 import pino from "pino"
 import { OpenCode } from "@opencode/client"
 import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 
 const source = process.argv[2], journeys = process.argv[3] ?? "ABCD"
 assert.ok(source && path.isAbsolute(source), "Explicit existing CLI required")
@@ -126,25 +127,36 @@ async function waitForMissions() {
     return missions?.state.status === "active"
   })
 }
+let attestedFetch
 async function start() {
   output = ""
+  await attestedFetch?.close().catch(() => {})
+  attestedFetch = undefined
   child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { env, cwd: root, windowsHide: true })
   closed = new Promise(resolve => child.once("close", resolve))
   child.stdout.on("data", data => { output += data }); child.stderr.on("data", data => { output += data })
   await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output))
   endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password: env.OPENCODE_SERVER_PASSWORD } }
-  const info = await (await fetch(`${endpoint.url}/api/info`, { headers: { authorization: `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}` } })).json()
-  assert.equal(info.pid, await fixtureChildPid(child))
+  const pid = await fixtureChildPid(child)
+  assert.ok(Number.isSafeInteger(pid) && pid > 0, "Expected owned service PID")
+  const port = Number(new URL(endpoint.url).port)
+  await verifyLoopbackListenerOwner(port, pid)
+  attestedFetch = createAttestedFetch(endpoint.url, port, pid)
+  const authHeader = `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`
+  const info = await (await attestedFetch(`${endpoint.url}/api/info`, { headers: { authorization: authHeader }, signal: AbortSignal.timeout(15_000) })).json()
+  assert.equal(info.pid, pid)
   rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   // Fixture-owned read-only observer bound to this exact service; independent of the backend.
-  client = OpenCode.make({ baseUrl: endpoint.url, headers: { Authorization: `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}` } })
+  client = OpenCode.make({ baseUrl: endpoint.url, headers: { Authorization: authHeader }, fetch: attestedFetch })
   evidence.serviceStarts ??= []; evidence.serviceStarts.push({ pid: info.pid, version: info.version })
   if (evidence.serviceStarts.length > 1) await waitForMissions()
 }
 async function stop() {
   const pid = await fixtureChildPid(child)
   assert.equal((await client.server.info()).pid, pid, "Exact owned PID before stop")
-  child.kill(); await Promise.race([closed, delay(10_000).then(() => { throw new Error("Owned service stop timeout") })])
+  await attestedFetch?.close().catch(() => {})
+  attestedFetch = undefined
+  await stopFixtureChild(child, closed, 1_000, 10_000)
   evidence.stoppedPIDs ??= []; evidence.stoppedPIDs.push(pid)
 }
 const yaml = path.join(root, "profile.yaml")
@@ -414,6 +426,7 @@ try {
   }
   hold = false; for (const release of releases) release()
   await closeBackend().catch(error => { evidence.backendCleanupError = error.message })
+  await attestedFetch?.close().catch(() => {})
   if (child && child.exitCode === null && child.signalCode === null) {
     const pid = await fixtureChildPid(child)
     await stopFixtureChild(child, closed).then(() => { evidence.stoppedPIDs.push(pid) })

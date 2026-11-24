@@ -157,10 +157,13 @@ export function createStreamRedactor(secrets=[]){
 }
 
 const netstatBin=()=>{
-  const systemRoot=process.env.SystemRoot||process.env.WINDIR
-  assert(systemRoot&&isLocalAbsolutePath(systemRoot),'SystemRoot is required to locate System32\\netstat.exe')
-  const candidate=path.join(systemRoot,'System32','netstat.exe')
-  assert(existsSync(candidate),`Expected system netstat executable at ${candidate}`)
+  const systemRoot=process.env.SystemRoot||process.env.WINDIR||'C:\\Windows'
+  assert(/^[A-Za-z]:\\Windows$/i.test(systemRoot),`Unexpected SystemRoot for netstat.exe: ${systemRoot}`)
+  assert(!lstatSync(systemRoot).isSymbolicLink(),`SystemRoot must not be a symbolic link: ${systemRoot}`)
+  const system32=path.win32.join(systemRoot,'System32')
+  assert(!lstatSync(system32).isSymbolicLink(),`System32 must not be a symbolic link: ${system32}`)
+  const candidate=path.win32.join(system32,'netstat.exe')
+  assert(existsSync(candidate)&&!lstatSync(candidate).isSymbolicLink(),`Expected system netstat executable at ${candidate}`)
   return candidate
 }
 const lsofBin=()=>{
@@ -441,42 +444,148 @@ export function createAttestedHttpAgent(port,pid,verifyOwner=verifyLoopbackListe
   return agent
 }
 
-export async function createAttestedTcpRelay(port,pid,verifyOwner=verifyLoopbackListenerOwner,verifyPeer=verifyLoopbackConnectionPeer){
+export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionPeer){
+  const allowedTokens=new Map()
+  const pendingPids=new Set()
+  const attestedSockets=new WeakMap()
+  const socketsByPid=new Map()
+  const isAllowed=pid=>allowedTokens.has(pid)&&allowedTokens.get(pid).size>0
+  const trackSocket=(pid,socket)=>{
+    let set=socketsByPid.get(pid)
+    if(!set){set=new Set();socketsByPid.set(pid,set)}
+    set.add(socket)
+    socket.once('close',()=>{
+      const current=socketsByPid.get(pid)
+      if(current){current.delete(socket);if(current.size===0)socketsByPid.delete(pid)}
+    })
+  }
+  const destroyPidSockets=pid=>{
+    const set=socketsByPid.get(pid)
+    if(!set)return
+    socketsByPid.delete(pid)
+    for(const socket of [...set]){try{socket.destroy()}catch{}}
+  }
+  const allow=(pidOrPromise,exitPromise)=>{
+    const token=Symbol('relay-client')
+    let revoked=false,resolvedPid=null
+    const revoke=()=>{
+      if(revoked)return
+      revoked=true
+      if(resolvedPid!==null){
+        const tokens=allowedTokens.get(resolvedPid)
+        if(tokens){
+          tokens.delete(token)
+          if(tokens.size===0){
+            allowedTokens.delete(resolvedPid)
+            destroyPidSockets(resolvedPid)
+          }
+        }
+      }
+    }
+    const task=Promise.resolve(pidOrPromise).then(resolved=>{
+      if(revoked||!Number.isSafeInteger(resolved)||resolved<=0)return
+      resolvedPid=resolved
+      let tokens=allowedTokens.get(resolved)
+      if(!tokens){tokens=new Set();allowedTokens.set(resolved,tokens)}
+      tokens.add(token)
+    },()=>{})
+    pendingPids.add(task)
+    void task.finally(()=>pendingPids.delete(task))
+    if(exitPromise)void Promise.resolve(exitPromise).finally(revoke)
+    return Object.assign(task,{revoke})
+  }
+  const verify=async socket=>{
+    if(socket.destroyed)return false
+    const knownPid=attestedSockets.get(socket)
+    if(knownPid!==undefined){
+      if(isAllowed(knownPid))return true
+      socket.destroy()
+      return false
+    }
+    if(pendingPids.size>0)await Promise.allSettled([...pendingPids])
+    const localPort=getPort()
+    const remotePort=socket.remotePort
+    if(!localPort||!remotePort||!allowedTokens.size||socket.destroyed)return false
+    for(let attempt=0;attempt<6;attempt++){
+      if(socket.destroyed)return false
+      const candidates=[...allowedTokens.keys()].filter(isAllowed)
+      if(!candidates.length)return false
+      try{
+        const matchedPid=await Promise.any(candidates.map(clientPid=>
+          verifyPeer(localPort,remotePort,clientPid).then(()=>clientPid)))
+        if(socket.destroyed||!isAllowed(matchedPid))return false
+        attestedSockets.set(socket,matchedPid)
+        trackSocket(matchedPid,socket)
+        return true
+      }catch{}
+      if(attempt<5&&!socket.destroyed)await new Promise(resolve=>setTimeout(resolve,20))
+    }
+    return false
+  }
+  const close=()=>{
+    for(const pid of [...allowedTokens.keys()]){
+      allowedTokens.delete(pid)
+      destroyPidSockets(pid)
+    }
+  }
+  return {allow,verify,close}
+}
+
+export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verifyPeerArg){
+  const opts=typeof optionsOrVerifyOwner==='function'
+    ?{verifyOwner:optionsOrVerifyOwner,verifyPeer:verifyPeerArg}
+    :(optionsOrVerifyOwner??{})
+  const {
+    verifyOwner=verifyLoopbackListenerOwner,
+    verifyPeer=verifyLoopbackConnectionPeer,
+    requireClientAttestation=false,
+    allowedClientPids=[],
+  }=opts
   assert(Number.isSafeInteger(port)&&port>0&&port<=65535,'Invalid loopback port for TCP relay')
   assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID for TCP relay')
-  let closed=false
+  let closed=false,relayPort=0
   const sockets=new Set()
+  const clientGate=createClientPidGate(()=>relayPort,verifyPeer)
+  for(const clientPid of allowedClientPids)clientGate.allow(clientPid)
   const server=net.createServer(client=>{
+    let upstream
+    const teardown=()=>{client.destroy();upstream?.destroy()}
+    client.once('error',teardown)
+    client.once('close',()=>{sockets.delete(client);upstream?.destroy()})
     if(closed){client.destroy();return}
     client.pause()
     sockets.add(client)
-    client.once('close',()=>sockets.delete(client))
-    let upstream
-    verifyOwner(port,pid).then(()=>{
-      if(closed||client.destroyed){client.destroy();return}
-      upstream=net.createConnection({host:'127.0.0.1',port})
-      sockets.add(upstream)
-      upstream.once('close',()=>sockets.delete(upstream))
-      upstream.once('error',()=>{client.destroy();upstream.destroy()})
-      client.once('error',()=>{upstream?.destroy();client.destroy()})
-      upstream.once('connect',()=>{
-        if(closed||client.destroyed||upstream.destroyed||!upstream.localPort){
-          client.destroy();upstream.destroy();return
-        }
-        attestPeerWithRetry(upstream.localPort,port,pid,verifyPeer,()=>closed||client.destroyed||upstream.destroyed).then(()=>{
-          if(closed||client.destroyed||upstream.destroyed){client.destroy();upstream.destroy();return}
-          client.pipe(upstream)
-          upstream.pipe(client)
-          client.resume()
-        },()=>{client.destroy();upstream.destroy()})
+    const gate=requireClientAttestation?clientGate.verify(client):Promise.resolve(true)
+    gate.then(allowed=>{
+      if(!allowed||closed||client.destroyed){client.destroy();return}
+      return verifyOwner(port,pid).then(()=>{
+        if(closed||client.destroyed){client.destroy();return}
+        upstream=net.createConnection({host:'127.0.0.1',port})
+        sockets.add(upstream)
+        upstream.once('close',()=>{sockets.delete(upstream);client.destroy()})
+        upstream.once('error',teardown)
+        upstream.once('connect',()=>{
+          if(closed||client.destroyed||upstream.destroyed||!upstream.localPort){
+            teardown();return
+          }
+          attestPeerWithRetry(upstream.localPort,port,pid,verifyPeer,()=>closed||client.destroyed||upstream.destroyed).then(()=>{
+            if(closed||client.destroyed||upstream.destroyed){teardown();return}
+            client.pipe(upstream)
+            upstream.pipe(client)
+            client.resume()
+          },teardown)
+        })
       })
-    },()=>{client.destroy()})
+    },teardown).catch(teardown)
   })
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
+  relayPort=server.address().port
   return {
-    port:server.address().port,
+    port:relayPort,
+    allowClientPid:clientGate.allow,
     close:()=>{
       closed=true
+      clientGate.close()
       for(const s of [...sockets]){try{s.destroy()}catch{}}
       sockets.clear()
       return new Promise(resolve=>server.close(resolve))
@@ -490,38 +599,14 @@ export async function createAttestedRelay(targetOrigin,pid,options){
   const base=new URL(targetOrigin)
   assert(base.protocol==='http:'&&base.hostname==='127.0.0.1'&&base.port,'Expected a loopback HTTP target for attested relay')
   const agent=createAttestedHttpAgent(Number(base.port),pid)
-  const allowedClientPids=new Set()
-  const pendingClientPids=new Set()
-  const attestedClientSockets=new WeakSet()
-  const allowClientPid=pidOrPromise=>{
-    const task=Promise.resolve(pidOrPromise).then(resolved=>{
-      if(Number.isSafeInteger(resolved)&&resolved>0)allowedClientPids.add(resolved)
-    },()=>{})
-    pendingClientPids.add(task)
-    void task.finally(()=>pendingClientPids.delete(task))
-    return task
-  }
   let relayPort=0
-  const verifyClientSocket=async socket=>{
-    if(attestedClientSockets.has(socket))return true
-    if(pendingClientPids.size>0)await Promise.allSettled([...pendingClientPids])
-    const remotePort=socket.remotePort
-    if(!remotePort||!allowedClientPids.size)return false
-    for(const clientPid of [...allowedClientPids]){
-      try{
-        await attestPeerWithRetry(relayPort,remotePort,clientPid,verifyLoopbackConnectionPeer,()=>socket.destroyed)
-        attestedClientSockets.add(socket)
-        return true
-      }catch{}
-    }
-    return false
-  }
+  const clientGate=createClientPidGate(()=>relayPort)
   const server=createServer(async(req,res)=>{
     const url=relayTarget(req,res,base.origin)
     if(!url)return
     if(requireClientAttestation){
       req.pause()
-      const ok=await verifyClientSocket(req.socket)
+      const ok=await clientGate.verify(req.socket)
       if(res.destroyed||req.destroyed)return
       if(!ok){
         res.writeHead(403)
@@ -558,8 +643,8 @@ export async function createAttestedRelay(targetOrigin,pid,options){
   relayPort=server.address().port
   return {
     origin:`http://127.0.0.1:${relayPort}`,
-    allowClientPid,
-    close:()=>{agent.destroy();server.closeAllConnections();return new Promise(resolve=>server.close(resolve))},
+    allowClientPid:clientGate.allow,
+    close:()=>{clientGate.close();agent.destroy();server.closeAllConnections();return new Promise(resolve=>server.close(resolve))},
   }
 }
 

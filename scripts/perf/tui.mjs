@@ -1,4 +1,6 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { createRequire } from "node:module"
+import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { fixtureJobExecutable } from "../native-fixture-guards.mjs"
@@ -17,24 +19,45 @@ export async function withTui(cli, daemon, session, run) {
   const isWin = process.platform === "win32"
   const command = isWin ? fixtureJobExecutable() : process.execPath
   const serverUrl = daemon.relayUrl ?? daemon.url
+  const pidDir = await mkdtemp(path.join(os.tmpdir(), "cn-tui-pid-"))
+  const pidFile = path.join(pidDir, "pid")
   const args = isWin
-    ? ["--inherit-console", cli, "--server", serverUrl, "--session", session, daemon.project]
-    : [posixSupervisor, "--same-group", cli, "--server", serverUrl, "--session", session, daemon.project]
+    ? ["--inherit-console", "--pid-file", pidFile, cli, "--server", serverUrl, "--session", session, daemon.project]
+    : [posixSupervisor, "--same-group", "--pid-file", pidFile, cli, "--server", serverUrl, "--session", session, daemon.project]
   const tuiPid = Promise.withResolvers()
   let tuiPidSettled = false
   const settleTuiPid = value => { if (!tuiPidSettled) { tuiPidSettled = true; tuiPid.resolve(value) } }
-  daemon.allowRelayClient?.(tuiPid.promise)
-  const p = pty.spawn(command, args, {
-    name: "xterm-256color", cols, rows, cwd: daemon.project,
-    env: withoutFixtureProxy({
-      ...daemon.env,
-      CODENOMAD_FIXTURE_PARENT_PID: String(process.pid),
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-    }),
-  })
+  let p
+  try {
+    p = pty.spawn(command, args, {
+      name: "xterm-256color", cols, rows, cwd: daemon.project,
+      env: withoutFixtureProxy({
+        ...daemon.env,
+        CODENOMAD_FIXTURE_PARENT_PID: String(process.pid),
+        TERM: "xterm-256color",
+        COLORTERM: "truecolor",
+      }),
+    })
+  } catch (error) {
+    settleTuiPid(null)
+    await rm(pidDir, { recursive: true, force: true }).catch(() => {})
+    throw error
+  }
   let didExit = false
   const exited = new Promise(resolve => p.onExit(info => { didExit = true; settleTuiPid(null); resolve(info) }))
+  daemon.allowRelayClient?.(tuiPid.promise, exited)
+  const pollPid = (async () => {
+    const deadline = Date.now() + 15_000
+    while (!tuiPidSettled && !didExit && Date.now() < deadline) {
+      try {
+        const raw = await readFile(pidFile, "utf8")
+        const match = /^CODENOMAD_FIXTURE_PID=(\d+)\r?\n$/.exec(raw)
+        if (match) { settleTuiPid(Number(match[1])); return }
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    settleTuiPid(null)
+  })()
   const stopTui = async () => {
     if (didExit) return
     if (process.platform === "win32") {
@@ -52,13 +75,8 @@ export async function withTui(cli, daemon, session, run) {
   const untrack = registerFixtureChild(() => stopTui())
   void exited.finally(untrack)
   const term = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 0 })
-  let screen = "", seen, waiter, pidProbe = ""
+  let screen = "", seen, waiter
   const data = p.onData(raw => {
-    if (!tuiPidSettled) {
-      pidProbe = (pidProbe + String(raw).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")).slice(-4096)
-      const match = /CODENOMAD_FIXTURE_PID=(\d+)/.exec(pidProbe)
-      if (match) settleTuiPid(Number(match[1]))
-    }
     term.write(raw, () => {
       const b = term.buffer.active
       screen = ""
@@ -112,6 +130,9 @@ export async function withTui(cli, daemon, session, run) {
     term.dispose()
     // The PTY owns just this child. Refuse to leave it running after the sample.
     await stopTui()
+    settleTuiPid(null)
+    await pollPid
+    await rm(pidDir, { recursive: true, force: true }).catch(() => {})
     if (!didExit) {
       let timer
       try {

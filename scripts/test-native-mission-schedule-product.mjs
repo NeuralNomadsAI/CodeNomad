@@ -12,6 +12,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
 import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
 import { collectColdFailure } from "./native-fixture-cold-diagnostics.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
@@ -250,23 +251,42 @@ async function journey(kind) {
     client = undefined; endpoint = undefined
     if (!cold) await connect()
   }
+  let attestedFetch
   const connect = async signal => {
-    // Registration can precede HTTP readiness. Retry only discovery of our own
-    // process; native mutations and the cold no-client window keep their gates.
+    // Registration can precede HTTP readiness. Read registration locally and attest OS socket ownership
+    // before sending Basic auth or calling /api/info.
+    const pid = await fixtureChildPid(child)
+    assert(Number.isSafeInteger(pid) && pid > 0, "Expected owned service PID")
     endpoint = await until(async () => {
       signal?.throwIfAborted()
-      assert.equal(readNativeScheduleIncarnation(registrationFile).pid, await fixtureChildPid(child))
-      return Service.discover({ file: registrationFile })
+      const raw = JSON.parse(await readFile(registrationFile, "utf8"))
+      if (raw.pid !== pid || typeof raw.url !== "string") return false
+      const auth = raw.auth ?? (raw.password ? { type: "basic", username: raw.username ?? "opencode", password: raw.password } : undefined)
+      return { url: raw.url, auth }
     }, 40000)
     signal?.throwIfAborted()
     assert(endpoint && endpoint.url === readNativeScheduleIncarnation(registrationFile).url)
-    client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
+    const origin = new URL(endpoint.url).origin
+    const port = Number(new URL(endpoint.url).port)
+    await until(async () => {
+      signal?.throwIfAborted()
+      try { await verifyLoopbackListenerOwner(port, pid); return true } catch { return false }
+    }, 40000)
+    await attestedFetch?.close().catch(() => {})
+    attestedFetch = createAttestedFetch(origin, port, pid)
+    client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint), fetch: attestedFetch })
     if (endpoint.auth?.password) { secrets.add(endpoint.auth.password); secrets.add(Buffer.from(`${endpoint.auth.username}:${endpoint.auth.password}`).toString("base64")) }
-    const info = await client.server.info({ signal }); assert.equal(info.version, cliVersion); assert.equal(info.pid, await fixtureChildPid(child))
+    const info = await until(async () => {
+      signal?.throwIfAborted()
+      try { return await client.server.info({ signal }) } catch { return false }
+    }, 40000)
+    assert.equal(info.version, cliVersion); assert.equal(info.pid, pid)
     if (endpoint.auth?.password) credentialsChild = child
     rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   }
   const stop = async () => {
+    await attestedFetch?.close().catch(() => {})
+    attestedFetch = undefined
     const owned = children.find(entry => entry.child === child)
     if (owned && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, owned.closed)
     client = undefined; endpoint = undefined
@@ -279,6 +299,7 @@ async function journey(kind) {
     getSessionFromHeaders: headers => headers.cookie === cookie ? human : null, getSessionFromRequest: request => request.headers.cookie === cookie ? human : null }
   secrets.add(cookie); secrets.add(human.sessionId)
   const closeBackend = async () => {
+    await attestedFetch?.close().catch(() => {}); attestedFetch = undefined
     await plugin?.stop(); plugin = undefined
     await removeBridge?.(); removeBridge = undefined
     await app?.close(); app = undefined
@@ -634,7 +655,9 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       assert(!reportedInputs.has(pending.messageID)); assert(holdBusiness)
       await save("before-pending-crash", beforeCrash)
       const killedPID = await fixtureChildPid(child), owned = children.find(entry => entry.child === child)
-      child.kill("SIGKILL"); await owned.closed; client = undefined; endpoint = undefined
+      assert(Number.isSafeInteger(killedPID) && killedPID > 0, "Expected owned child PID before hard kill")
+      await attestedFetch?.close().catch(() => {}); attestedFetch = undefined
+      process.kill(killedPID, "SIGKILL"); await owned.closed; client = undefined; endpoint = undefined
       for (const deadline = Date.now() + 5000; providerOpen.size > 0;) { assert(Date.now() < deadline, "Killed provider connection did not close"); await delay(10) }
       assert(!reportedInputs.has(pending.messageID), "The disconnected original HTTP handler must not emit a report")
       const afterKill = snapshot(id)
