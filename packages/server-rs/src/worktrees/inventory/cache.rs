@@ -94,10 +94,13 @@ impl InventoryCache {
             .filter(|e| Arc::ptr_eq(&e.endpoint, endpoint))
             .and_then(|e| e.value.as_ref())
             .is_some_and(|old| !old.same_snapshot(latest));
-        let sse_entry = self.entries.get(&(id, false)).filter(|e| Arc::ptr_eq(&e.endpoint, endpoint));
-        let sse_differs = sse_entry.and_then(|e| e.value.as_ref()).is_some_and(|old| !old.same_snapshot(latest));
-        let sse_cold_flight = sse_entry.is_some_and(|e| e.loading.is_some() && e.value.is_none());
-        if http_changed || sse_differs || sse_cold_flight {
+        let sse_differs = self
+            .entries
+            .get(&(id, false))
+            .filter(|e| Arc::ptr_eq(&e.endpoint, endpoint))
+            .and_then(|e| e.value.as_ref())
+            .is_some_and(|old| !old.same_snapshot(latest));
+        if http_changed || sse_differs {
             let generation = self.sse_generation.entry(id).or_insert(0);
             *generation = generation.wrapping_add(1);
             let sse_key = (id, false);
@@ -241,7 +244,6 @@ async fn cached_catalogue(
     refresh_on_load: bool,
 ) -> Option<Arc<Catalogue>> {
     let key = (w.id, refresh_on_load);
-    let mut sse_retries = 0usize;
     loop {
         enum Step {
             Hit(Option<Arc<Catalogue>>),
@@ -393,17 +395,16 @@ async fn cached_catalogue(
             }
             Step::Join(epoch, sse_gen, loading) => {
                 let result = loading.await;
-                let cache = app.linked_events.lock().unwrap();
-                if !app.native.current(endpoint) {
+                if app.workspace(&w.id.to_string()).is_err() || !app.native.current(endpoint) {
                     return None;
                 }
-                if !refresh_on_load && cache.sse_gen(w.id) != sse_gen && sse_retries < 4 {
+                let cache = app.linked_events.lock().unwrap();
+                if !refresh_on_load && cache.sse_gen(w.id) != sse_gen {
                     drop(cache);
-                    sse_retries += 1;
                     continue;
                 }
                 let result = result?;
-                if cache.valid(epoch, Some(&result.project)) && (refresh_on_load || cache.sse_gen(w.id) == sse_gen) {
+                if cache.valid(epoch, Some(&result.project)) {
                     return Some(result);
                 }
                 return None;
