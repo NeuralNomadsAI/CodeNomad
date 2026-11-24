@@ -35,21 +35,26 @@ pub(super) async fn slash(
             Ok(()) => PromptOutcome::Confirmed(attempt.clone()),
             Err(PromptError::Rejected) => PromptOutcome::Rejected,
             Err(PromptError::Unconfirmed) => PromptOutcome::Unconfirmed,
-            Err(PromptError::AuthenticationRequired) => {
+            Err(PromptError::AuthenticationRequired { before_dispatch }) => {
                 if let Some(confirmed) =
-                    rejected_by_authentication(backend, &attempt, out, wake, wire).await
+                    rejected_by_authentication(backend, &attempt, before_dispatch, out, wake, wire)
+                        .await
                 {
                     return SlashReceipt::AuthenticationRequired { confirmed };
                 }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    // In a browser, another tab may have re-paired the shared cookie jar after revocation.
-                    PromptOutcome::Unconfirmed
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    // Native backends own an isolated cookie jar: a live status proves synchronous rejection.
+                if before_dispatch {
                     PromptOutcome::Rejected
+                } else {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        // In a browser, another tab may have re-paired the shared cookie jar after revocation.
+                        PromptOutcome::Unconfirmed
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        // Native backends own an isolated cookie jar: a live status proves synchronous rejection.
+                        PromptOutcome::Rejected
+                    }
                 }
             }
         }
@@ -98,22 +103,35 @@ pub(super) async fn prompt_encoded(
     let outcome = match backend.send_encoded_prompt(Some(id), body).await {
         Ok(ack) => PromptOutcome::Confirmed(ack.id),
         Err(error)
-            if error.downcast_ref()
-                == Some(&crate::prompt::PromptError::AuthenticationRequired) =>
+            if matches!(
+                error.downcast_ref::<crate::prompt::PromptError>(),
+                Some(crate::prompt::PromptError::AuthenticationRequired { .. })
+            ) =>
         {
-            if let Some(confirmed) = rejected_by_authentication(backend, id, out, wake, wire).await
+            let before_dispatch = matches!(
+                error.downcast_ref::<crate::prompt::PromptError>(),
+                Some(crate::prompt::PromptError::AuthenticationRequired {
+                    before_dispatch: true
+                })
+            );
+            if let Some(confirmed) =
+                rejected_by_authentication(backend, id, before_dispatch, out, wake, wire).await
             {
                 return PromptReceipt::AuthenticationRequired { confirmed };
             }
-            #[cfg(target_arch = "wasm32")]
-            {
-                // In a browser, another tab may have re-paired the shared cookie jar after revocation.
-                PromptOutcome::Unconfirmed
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                // Native backends own an isolated cookie jar: a live status proves synchronous rejection.
+            if before_dispatch {
                 PromptOutcome::Rejected
+            } else {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // In a browser, another tab may have re-paired the shared cookie jar after revocation.
+                    PromptOutcome::Unconfirmed
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    // Native backends own an isolated cookie jar: a live status proves synchronous rejection.
+                    PromptOutcome::Rejected
+                }
             }
         }
         Err(error)

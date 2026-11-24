@@ -573,7 +573,7 @@ fn queued_prompt_facing_sse_401_is_rejected_without_http_post() {
                     .unwrap();
             backend.workspace = "workspace".into();
             backend.session = "session".into();
-            let (out, events) = bounded(8);
+            let (out, events) = bounded(1);
             let (commands, input) = bounded(4);
             let task = tokio::spawn(crate::transport::run_backend(
                 backend,
@@ -590,6 +590,35 @@ fn queued_prompt_facing_sse_401_is_rejected_without_http_post() {
                     break;
                 }
             }
+            // Establish the SSE stream first so ever_opened == true (not rejected by pre-open guard).
+            stream
+                .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
+            // Park transport on a full display channel, then trigger SSE /pong 401 while Prompt is queued.
+            stream
+                .get_mut()
+                .write_all(
+                    b"data: {\"type\":\"workspace.worktreesChanged\",\"workspaceId\":\"workspace\"}\n\n\
+                      data: {\"type\":\"workspace.worktreesChanged\",\"workspaceId\":\"workspace\"}\n\n\
+                      event: codenomad.client.ping\ndata: {}\n\n",
+                )
+                .await
+                .unwrap();
+            let (pong_socket, _) = listener.accept().await.unwrap();
+            let mut pong = BufReader::new(pong_socket);
+            let mut first_line = String::new();
+            assert!(pong.read_line(&mut first_line).await.unwrap() > 0);
+            assert!(first_line.starts_with("POST /api/client-connections/pong "));
+            loop {
+                let mut line = String::new();
+                assert!(pong.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
             let id = "msg_00000000000000000000000000000004";
             commands
                 .send(Command::Prompt(crate::prompt::Prompt {
@@ -599,13 +628,22 @@ fn queued_prompt_facing_sse_401_is_rejected_without_http_post() {
                 }))
                 .await
                 .unwrap();
-            stream
-                .get_mut()
+            pong.get_mut()
                 .write_all(
                     b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                 )
                 .await
                 .unwrap();
+            drop(pong);
+            // Wait deterministically for the SSE task to observe the 401, set auth_expired,
+            // enqueue Input::AuthenticationRequired and close its SSE socket before unblocking transport.
+            let mut eof = [0u8; 1];
+            assert_eq!(
+                tokio::io::AsyncReadExt::read(&mut stream, &mut eof)
+                    .await
+                    .unwrap(),
+                0
+            );
             let mut saw_rejected = false;
             let mut saw_auth = false;
             while let Ok(event) = events.recv().await {
@@ -629,6 +667,7 @@ fn queued_prompt_facing_sse_401_is_rejected_without_http_post() {
                 "queued prompt must receive a Rejected receipt"
             );
             assert!(saw_auth, "SSE 401 must publish AuthenticationRequired");
+            drop(stream);
             task.await.unwrap().unwrap();
             assert!(
                 tokio::time::timeout(Duration::from_millis(30), listener.accept())
@@ -1645,5 +1684,106 @@ fn workspace_stopped_rejects_queued_prompt_without_http_post() {
         })
         .await
         .expect("workspace.stopped must reject queued prompts without HTTP POST");
+    });
+}
+
+#[test]
+fn pre_dispatch_401_rejects_prompt_while_detached_401_stays_unconfirmed() {
+    use crate::transport::{Event, PromptOutcome};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                for (index, headers) in [
+                    "x-codenomad-before-dispatch: 1\r\n",
+                    "",
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let (socket, _) = listener.accept().await.unwrap();
+                    let mut req = BufReader::new(socket);
+                    let mut line = String::new();
+                    assert!(req.read_line(&mut line).await.unwrap() > 0);
+                    assert!(line.starts_with("POST /workspaces/workspace/instance/api/session/session/prompt "));
+                    let body = r#"{"error":"Unauthorized"}"#;
+                    req.get_mut()
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 401 Unauthorized\r\n{headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .await
+                        .unwrap();
+
+                    let (status_socket, _) = listener.accept().await.unwrap();
+                    let mut status_req = BufReader::new(status_socket);
+                    let mut status_line = String::new();
+                    assert!(status_req.read_line(&mut status_line).await.unwrap() > 0);
+                    assert!(
+                        status_line.starts_with("GET /api/auth/status "),
+                        "attempt {index}: {status_line}"
+                    );
+                    let status_body = r#"{"authenticated":false}"#;
+                    status_req
+                        .get_mut()
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{status_body}",
+                                status_body.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .await
+                        .unwrap();
+                }
+            });
+
+            let mut backend = Backend::unauthenticated(&format!("http://{address}/")).unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let wake: crate::Wake = Arc::new(|| {});
+
+            for (id, expected) in [
+                ("msg_00000000000000000000000000000021", PromptOutcome::Rejected),
+                ("msg_00000000000000000000000000000022", PromptOutcome::Unconfirmed),
+            ] {
+                let (out, events) = bounded(4);
+                let wire = crate::stream::State::default();
+                let settled = crate::recovery::receipts::prompt(
+                    &backend,
+                    &out,
+                    &wake,
+                    &wire,
+                    true,
+                    id,
+                    &crate::prompt::Prompt {
+                        id: Some(id.into()),
+                        text: "401 receipt test".into(),
+                        ..Default::default()
+                    },
+                )
+                .await;
+                assert!(matches!(
+                    settled,
+                    crate::recovery::receipts::PromptReceipt::AuthenticationRequired {
+                        confirmed: true
+                    }
+                ));
+                assert!(matches!(
+                    events.recv().await.unwrap(),
+                    Event::PromptAcknowledged { attempted, outcome }
+                        if attempted == id && std::mem::discriminant(&outcome) == std::mem::discriminant(&expected)
+                ));
+            }
+            server.await.unwrap();
+        })
+        .await
+        .expect("pre-dispatch vs detached 401 settlement must complete");
     });
 }

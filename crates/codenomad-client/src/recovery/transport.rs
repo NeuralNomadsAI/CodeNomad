@@ -289,7 +289,22 @@ pub(crate) async fn run_with_reading(
                 };
                 let (edge, cancellation) = match command {
                     Command::Anchor(jump) => {
-                        reader.anchor(&lane, opened, jump).await;
+                        if matches!(
+                            reader.anchor(&lane, opened, jump).await,
+                            Turn::AuthenticationExpired
+                        ) {
+                            finish_authentication_required(
+                                &pending_commands,
+                                &rx,
+                                &forward_done,
+                                &out,
+                                &wake,
+                                &backend,
+                                true,
+                            )
+                            .await;
+                            return Ok(());
+                        }
                         continue;
                     }
                     Command::Page(edge, signal) => (edge, Some(signal)),

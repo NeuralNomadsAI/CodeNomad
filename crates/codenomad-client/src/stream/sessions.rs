@@ -167,18 +167,16 @@ pub(super) async fn relay(
                     | "session.revert.committed"
                     | "session.revert.staged"
                     | "session.revert.cleared"
+                    | "session.inbox.cancelled"
+                    | "session.compaction.started"
+                    | "session.compaction.ended"
+                    | "session.compaction.failed"
             )
         ) {
             state.history_revision.fetch_add(1, SeqCst);
         }
         out.send(Input::Native(epoch, version, native.clone()))
             .await?;
-    } else if own
-        && value["type"] == "instance.event"
-        && native["data"]["sessionID"] != b.session
-        && crate::content::FamilyChange::tracks(native)
-    {
-        out.send(Input::Native(epoch, 0, native.clone())).await?;
     }
     Ok(())
 }
@@ -322,7 +320,14 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
                 "normal streaming delta must not invalidate history_revision"
             );
 
-            for kind in ["session.revert.staged", "session.revert.cleared"] {
+            for kind in [
+                "session.revert.staged",
+                "session.revert.cleared",
+                "session.inbox.cancelled",
+                "session.compaction.started",
+                "session.compaction.ended",
+            ] {
+                while inbox.try_recv().is_ok() {}
                 let before = state.history_revision.load(SeqCst);
                 relay(
                     &backend,

@@ -125,11 +125,10 @@ pub fn authentication_expired(error: &crate::history::Error) -> bool {
     if error.downcast_ref::<AuthenticationExpiredError>().is_some() {
         return true;
     }
-    cfg!(not(target_arch = "wasm32"))
-        && error
-            .downcast_ref::<reqwest::Error>()
-            .and_then(reqwest::Error::status)
-            == Some(reqwest::StatusCode::UNAUTHORIZED)
+    error
+        .downcast_ref::<reqwest::Error>()
+        .and_then(reqwest::Error::status)
+        == Some(reqwest::StatusCode::UNAUTHORIZED)
 }
 
 pub fn endpoint(address: &str) -> Result<String> {

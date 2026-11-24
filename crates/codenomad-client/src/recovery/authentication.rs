@@ -27,6 +27,7 @@ pub(super) async fn expire_reading(
 pub(super) async fn rejected_by_authentication(
     backend: &Backend,
     attempted: &str,
+    before_dispatch: bool,
     out: &Sender<Event>,
     wake: &crate::Wake,
     wire: &stream::State,
@@ -36,15 +37,21 @@ pub(super) async fn rejected_by_authentication(
         return None;
     }
     close_for_authentication(wire, out).await;
-    // A native proxy mutation is detached before revocation, so a 401 response cannot prove it was not transmitted.
+    let confirmed = matches!(authenticated, Ok(false));
+    // A pre-dispatch middleware 401 proved no native POST left the server; a detached 401 cannot.
+    let outcome = if before_dispatch && confirmed {
+        PromptOutcome::Rejected
+    } else {
+        PromptOutcome::Unconfirmed
+    };
     publish(
         out,
         wake,
         Event::PromptAcknowledged {
             attempted: attempted.into(),
-            outcome: PromptOutcome::Unconfirmed,
+            outcome,
         },
     )
     .await;
-    Some(matches!(authenticated, Ok(false)))
+    Some(confirmed)
 }

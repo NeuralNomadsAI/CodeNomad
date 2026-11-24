@@ -20,7 +20,7 @@ mod rail;
 mod saved;
 pub use anchor::AnchorWindow;
 pub use jump::{Admission, Jump};
-pub(crate) use jump::{page_offer, until_cancelled};
+pub(crate) use jump::{JumpOffer, page_offer, until_cancelled};
 pub use previews::{Excerpt, PREVIEW_BATCH};
 pub use rail::{Marker, MarkerKind, Resident, UnplacedWindow, WindowPosition, project};
 use saved::Identity;

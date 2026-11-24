@@ -107,6 +107,7 @@ impl Owner {
         {
             draft_edit.clear();
             self.draft = Draft::default();
+            self.attachments_missing = false;
             return true;
         }
         false
@@ -135,19 +136,29 @@ pub(crate) struct PendingSend {
     recallable: bool,
 }
 impl PendingSend {
-    pub(crate) fn locked(id: String) -> Self {
+    pub(crate) fn locked_with_text(id: String, restored_text: Option<String>) -> Self {
+        let (edit, edited) = match restored_text {
+            Some(text) => (TextEdit::new(text), false),
+            None => (TextEdit::default(), true),
+        };
         Self {
             id,
-            edit: TextEdit::default(),
+            edit,
             draft: Draft::default(),
             was_running: false,
             slash: None,
-            edited: true,
+            edited,
             recallable: false,
         }
     }
+    pub(crate) fn locked(id: String) -> Self {
+        Self::locked_with_text(id, None)
+    }
     pub(crate) fn id(&self) -> &str {
         &self.id
+    }
+    pub(crate) fn restored_text(&self) -> Option<&str> {
+        (!self.edited).then_some(self.edit.text.as_str())
     }
     pub(crate) fn draft(&self) -> &Draft {
         &self.draft
@@ -752,8 +763,16 @@ mod tests {
             },
         );
         assert!(rt.state.composer.unconfirmed_id().is_none());
+        assert!(
+            rt.state.draft.text.is_empty(),
+            "confirming a reopened unconfirmed attempt must clear its untouched restored draft"
+        );
         workspace::bound(&mut rt.state, &second);
-        workspace::bound(&mut rt.state, &first);
+        let after_confirm = workspace::bound(&mut rt.state, &first);
+        assert!(
+            after_confirm.is_empty(),
+            "confirmed draft must not resurrect after switching sessions"
+        );
         assert!(rt.state.composer.unconfirmed_id().is_none());
     }
 
@@ -882,6 +901,47 @@ mod tests {
         assert!(
             !workspace::attachment_draft_admissible(&s),
             "direct mode must enforce the 64 MiB window device attachment budget including prompt_history"
+        );
+    }
+
+    #[test]
+    fn recall_zero_byte_files_count_toward_window_device_file_limit() {
+        let mut s = crate::init();
+        assert!(s.workspace.is_none());
+        let files_per_entry = 8usize;
+        let entries = workspace::MAX_WINDOW_DEVICE_FILES / files_per_entry;
+        assert_eq!(
+            entries * files_per_entry,
+            workspace::MAX_WINDOW_DEVICE_FILES
+        );
+        for index in 0..entries {
+            s.draft = TextEdit::new(format!("zero-{index}"));
+            s.composer.draft.attachments.clear();
+            for file in 0..files_per_entry {
+                s.composer.draft.attachments.push(Attachment::Device {
+                    name: format!("empty-{index}-{file}.txt"),
+                    mime: "text/plain".into(),
+                    bytes: std::sync::Arc::from(Vec::<u8>::new()),
+                    token: None,
+                });
+            }
+            assert!(crate::composer::recall::record(
+                &mut s,
+                format!("zero-{index}"),
+                false
+            ));
+        }
+        s.draft.clear();
+        s.composer.draft.attachments.clear();
+        s.composer.draft.attachments.push(Attachment::Device {
+            name: "over-file-limit.txt".into(),
+            mime: "text/plain".into(),
+            bytes: std::sync::Arc::from(Vec::<u8>::new()),
+            token: None,
+        });
+        assert!(
+            !workspace::attachment_draft_admissible(&s),
+            "distinct zero-byte files in Recall must count toward MAX_WINDOW_DEVICE_FILES"
         );
     }
 

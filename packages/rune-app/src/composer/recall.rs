@@ -121,22 +121,32 @@ impl History {
         self.entries.len() >= MAX_WINDOW_ENTRIES || self.bytes + additional > MAX_BYTES
     }
 
-    pub(crate) fn unique_inline_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
-        self.entries.iter().fold(0usize, |total, entry| {
-            total.saturating_add(entry.draft.add_unique_inline_usage(seen).1)
-        })
+    pub(crate) fn unique_inline_usage(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> (usize, usize) {
+        self.entries
+            .iter()
+            .fold((0usize, 0usize), |(files, bytes), entry| {
+                let (f, b) = entry.draft.add_unique_inline_usage(seen);
+                (files.saturating_add(f), bytes.saturating_add(b))
+            })
     }
 
-    fn inline_bytes_with(
+    fn inline_usage_with(
         &self,
         base_seen: &std::collections::HashSet<usize>,
+        base_files: usize,
         base_bytes: usize,
         draft: &Draft,
-    ) -> usize {
+    ) -> (usize, usize) {
         let mut seen = base_seen.clone();
-        base_bytes
-            .saturating_add(draft.add_unique_inline_usage(&mut seen).1)
-            .saturating_add(self.unique_inline_bytes(&mut seen))
+        let (df, db) = draft.add_unique_inline_usage(&mut seen);
+        let (hf, hb) = self.unique_inline_usage(&mut seen);
+        (
+            base_files.saturating_add(df).saturating_add(hf),
+            base_bytes.saturating_add(db).saturating_add(hb),
+        )
     }
 }
 
@@ -203,11 +213,16 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
             })
             .sum::<usize>();
     let mut base_seen = std::collections::HashSet::new();
-    let (_, base_inline_bytes) = workspace::window_inline_usage_without_history(s, &mut base_seen);
+    let (base_inline_files, base_inline_bytes) =
+        workspace::window_inline_usage_without_history(s, &mut base_seen);
     let mut with_new = base_seen.clone();
-    let new_inline_total =
-        base_inline_bytes.saturating_add(draft.add_unique_inline_usage(&mut with_new).1);
-    if bytes > MAX_BYTES || new_inline_total > MAX_INLINE_BYTES {
+    let (new_files, new_bytes) = draft.add_unique_inline_usage(&mut with_new);
+    let new_inline_files = base_inline_files.saturating_add(new_files);
+    let new_inline_total = base_inline_bytes.saturating_add(new_bytes);
+    if bytes > MAX_BYTES
+        || new_inline_total > MAX_INLINE_BYTES
+        || new_inline_files > workspace::MAX_WINDOW_DEVICE_FILES
+    {
         persistence::append(s, &resolved);
         return false;
     }
@@ -221,10 +236,13 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
     {
         history.discard(index);
     }
-    while !history.entries.is_empty()
-        && (history.full(bytes)
-            || history.inline_bytes_with(&base_seen, base_inline_bytes, &draft) > MAX_INLINE_BYTES)
-    {
+    while !history.entries.is_empty() && {
+        let (total_files, total_bytes) =
+            history.inline_usage_with(&base_seen, base_inline_files, base_inline_bytes, &draft);
+        history.full(bytes)
+            || total_bytes > MAX_INLINE_BYTES
+            || total_files > workspace::MAX_WINDOW_DEVICE_FILES
+    } {
         history.discard(history.entries.len() - 1);
     }
     history.next += 1;

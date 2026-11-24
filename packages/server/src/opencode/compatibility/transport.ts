@@ -5,8 +5,12 @@ import { negotiateRuntime } from "./negotiate"
 import { applyLocationContext, LOCATION_CONTEXT_HEADER } from "./location"
 
 type SessionMediaResponseProcessor = (response: Response, signal: AbortSignal) => Promise<Response>
+export type RuntimeFetchDispatchHooks = {
+  beforeFetch?: () => Promise<void>
+  onDispatch?: () => void
+}
 type RuntimeFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1],
-  mediaResponseProcessor?: SessionMediaResponseProcessor) => Promise<Response>
+  mediaResponseProcessor?: SessionMediaResponseProcessor, dispatchHooks?: RuntimeFetchDispatchHooks) => Promise<Response>
 
 function object(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
@@ -33,7 +37,7 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     }).catch(error => { negotiation = undefined; throw error })
     return awaitLocal(negotiation, signal)
   }
-  const adaptedFetch: RuntimeFetch = async (input, init, mediaResponseProcessor) => {
+  const adaptedFetch: RuntimeFetch = async (input, init, mediaResponseProcessor, dispatchHooks) => {
     const request = new Request(input, init)
     const url = new URL(request.url)
     if (url.origin !== new URL(endpoint.url).origin) throw new Error("OpenCode transport origin mismatch")
@@ -54,6 +58,9 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     } else if (request.body) {
       options.body = await request.arrayBuffer()
     }
+    if (dispatchHooks?.beforeFetch) await dispatchHooks.beforeFetch()
+    signal.throwIfAborted()
+    dispatchHooks?.onDispatch?.()
     let response = await fetcher(url, options)
     if (mediaResponseProcessor) response = await mediaResponseProcessor(response, signal)
     if (!response.ok && !response.headers.get("content-type")?.includes("application/json")) {

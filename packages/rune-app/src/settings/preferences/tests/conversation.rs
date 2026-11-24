@@ -699,11 +699,34 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
         identity
             .reply(200, json!({"apiContract":1,"serverId":"fixture-profile"}))
             .await;
+        let placement = request(&listener).await;
+        assert_eq!(
+            placement.first,
+            "GET /workspaces/project/instance/api/session/session HTTP/1.1"
+        );
+        assert!(
+            placement
+                .headers
+                .to_ascii_lowercase()
+                .contains("\r\ncookie: fixture=renewed\r\n")
+        );
+        placement
+            .reply(
+                200,
+                json!({"data":{"id":"session","location":{"directory":"/project"}}}),
+            )
+            .await;
         wait_until(|| {
             update(&mut runtime);
             runtime.state.phase == crate::Phase::Reconnecting
         })
         .await;
+        assert_eq!(
+            crate::settings::bound_backend(&runtime.state)
+                .and_then(|backend| backend.session_directory)
+                .as_deref(),
+            Some("/project")
+        );
         assert!(runtime.find("direct-recovery-dialog").is_none());
         assert_eq!(runtime.state.draft.text, "refused prompt");
         let mut resumed = request(&listener).await;

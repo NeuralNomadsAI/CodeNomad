@@ -134,6 +134,7 @@ impl State {
             && self.alive.load(SeqCst)
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)
+            && !self.placement_closed()
     }
 }
 

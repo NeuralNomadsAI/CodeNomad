@@ -51,6 +51,12 @@ impl Cache {
         self.composer.unconfirmed_id()
     }
 
+    pub(super) fn unconfirmed_restored_text(&self) -> Option<&str> {
+        self.composer
+            .unconfirmed_state()
+            .and_then(|send| send.restored_text())
+    }
+
     pub(super) fn restore_unconfirmed(&mut self, pending: crate::composer::PendingSend) {
         if self.composer.unconfirmed_state().is_none() {
             self.composer.restore_unconfirmed(pending);

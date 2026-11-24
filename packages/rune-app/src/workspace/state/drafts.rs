@@ -1,11 +1,11 @@
-use super::{Backend, Cache, State, Tab, Tx, Ui, same_backend, same_project};
+use super::{Backend, State, Tab, Tx, Ui, same_backend, same_project};
 use crate::composer::{
     draft::{Draft, MAX_FILES},
     draft_storage::SavedParts,
 };
 
 const MAX_WINDOW_DEVICE_BYTES: usize = 64 * 1024 * 1024;
-const MAX_WINDOW_DEVICE_FILES: usize = super::super::MAX_DRAFTS * MAX_FILES;
+pub const MAX_WINDOW_DEVICE_FILES: usize = super::super::MAX_DRAFTS * MAX_FILES;
 
 #[derive(Default)]
 pub(super) struct LiveDraft {
@@ -17,6 +17,12 @@ pub(super) struct LiveDraft {
 impl LiveDraft {
     pub(super) fn unconfirmed_id(&self) -> Option<&str> {
         self.unconfirmed.as_ref().map(|send| send.id())
+    }
+
+    pub(super) fn unconfirmed_restored_text(&self) -> Option<&str> {
+        self.unconfirmed
+            .as_ref()
+            .and_then(|send| send.restored_text())
     }
 
     pub(super) fn clear_unconfirmed_matching(
@@ -96,8 +102,10 @@ pub fn window_inline_usage_without_history(
 
 pub fn attachment_draft_admissible(s: &State) -> bool {
     let mut seen = std::collections::HashSet::new();
-    let (files, mut bytes) = window_inline_usage_without_history(s, &mut seen);
-    bytes = bytes.saturating_add(s.prompt_history.unique_inline_bytes(&mut seen));
+    let (mut files, mut bytes) = window_inline_usage_without_history(s, &mut seen);
+    let (history_files, history_bytes) = s.prompt_history.unique_inline_usage(&mut seen);
+    files = files.saturating_add(history_files);
+    bytes = bytes.saturating_add(history_bytes);
     if files > MAX_WINDOW_DEVICE_FILES || bytes > MAX_WINDOW_DEVICE_BYTES {
         return false;
     }
@@ -166,7 +174,14 @@ pub(super) fn note_unconfirmed_for(
         confirm_unconfirmed_for(s, ui, saved, key, attempt_id);
         return;
     }
-    ui.remember_closed_unconfirmed(saved, key.to_owned(), attempt_id.to_owned());
+    let restored_text = s
+        .composer
+        .unconfirmed_state()
+        .filter(|send| send.id() == attempt_id)
+        .and_then(|send| send.restored_text())
+        .filter(|text| !oversized(text))
+        .map(str::to_owned);
+    ui.remember_closed_unconfirmed(saved, key.to_owned(), attempt_id.to_owned(), restored_text);
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if matches!(&entry.saved, Tab::Workspace(current) if same_backend(current, saved)) {
             let same_active_session = matches!(
@@ -217,16 +232,6 @@ pub fn has_unconfirmed(s: &State) -> bool {
     let Some(ui) = &s.workspace else {
         return false;
     };
-    let in_flight_sends = usize::from(s.composer.pending())
-        + ui.entries
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| *index != ui.active)
-            .filter(|(_, entry)| entry.cache.as_ref().is_some_and(Cache::is_sending))
-            .count();
-    if ui.unconfirmed_locks_len().saturating_add(in_flight_sends) >= super::MAX_UNCONFIRMED_LOCKS {
-        return true;
-    }
     let Some(item) = ui.entries.get(ui.active) else {
         return false;
     };
@@ -263,7 +268,36 @@ pub(super) fn confirm_unconfirmed_for(
     key: &str,
     attempt_id: &str,
 ) {
-    ui.forget_closed_unconfirmed(saved, key, attempt_id);
+    let mut restored_text = ui.forget_closed_unconfirmed(saved, key, attempt_id);
+    if restored_text.is_none() {
+        restored_text = ui.entries.iter().enumerate().find_map(|(index, entry)| {
+            if !matches!(&entry.saved, Tab::Workspace(current) if same_backend(current, saved)) {
+                return None;
+            }
+            if index == ui.active {
+                s.composer
+                    .unconfirmed_state()
+                    .filter(|send| send.id() == attempt_id)
+                    .and_then(|send| send.restored_text())
+                    .map(str::to_owned)
+            } else {
+                entry
+                    .cache
+                    .as_ref()
+                    .filter(|cache| cache.unconfirmed_id() == Some(attempt_id))
+                    .and_then(|cache| cache.unconfirmed_restored_text())
+                    .map(str::to_owned)
+            }
+            .or_else(|| {
+                entry
+                    .live_drafts
+                    .get(key)
+                    .filter(|live| live.unconfirmed_id() == Some(attempt_id))
+                    .and_then(|live| live.unconfirmed_restored_text())
+                    .map(str::to_owned)
+            })
+        });
+    }
     let mut persisted_changed = false;
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if matches!(&entry.saved, Tab::Workspace(current) if same_backend(current, saved)) {
@@ -300,6 +334,17 @@ pub(super) fn confirm_unconfirmed_for(
                 }) {
                     entry.live_drafts.remove(key);
                 }
+            }
+        }
+    }
+    if let Some(expected_text) = restored_text.as_deref() {
+        for closed in &mut ui.closed {
+            if same_project(closed, saved)
+                && closed.drafts.get(key).map(String::as_str) == Some(expected_text)
+            {
+                closed.drafts.remove(key);
+                closed.attachment_drafts.remove(key);
+                closed.attachment_parts.remove(key);
             }
         }
     }
@@ -421,8 +466,8 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
     deliver_draft(ui, &backend.session);
     let closed_unconfirmed = match &ui.entries[ui.active].saved {
         Tab::Workspace(saved) => ui
-            .closed_unconfirmed_id(saved, &backend.session)
-            .map(str::to_owned),
+            .closed_unconfirmed_entry(saved, &backend.session)
+            .map(|(id, text)| (id.to_owned(), text.map(str::to_owned))),
         Tab::Blank => None,
     };
     let item = &mut ui.entries[ui.active];
@@ -435,9 +480,12 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
     if !same_session {
         if let Some(unconfirmed) = live.and_then(|draft| draft.unconfirmed.as_ref()) {
             s.composer.restore_unconfirmed(unconfirmed.clone());
-        } else if let Some(attempt_id) = closed_unconfirmed {
+        } else if let Some((attempt_id, restored_text)) = closed_unconfirmed {
             s.composer
-                .restore_unconfirmed(crate::composer::PendingSend::locked(attempt_id));
+                .restore_unconfirmed(crate::composer::PendingSend::locked_with_text(
+                    attempt_id,
+                    restored_text,
+                ));
         }
     }
     if !same_session && let Some((draft, missing)) = live.and_then(|draft| draft.parts.as_ref()) {

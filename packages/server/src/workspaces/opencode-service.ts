@@ -247,9 +247,9 @@ export class OpenCodeSharedService {
       connection.assertCurrent()
       return globalThis.fetch(input, init)
     }, negotiation.signal)
-    const fetch: ServiceConnection["fetch"] = (input, init, mediaResponseProcessor) => {
+    const fetch: ServiceConnection["fetch"] = (input, init, mediaResponseProcessor, dispatchHooks) => {
       connection.assertCurrent()
-      return transport.fetch(input, init, mediaResponseProcessor)
+      return transport.fetch(input, init, mediaResponseProcessor, dispatchHooks)
     }
     const connection: ServiceConnection = {
       endpoint,

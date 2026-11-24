@@ -123,9 +123,9 @@ impl Reader {
         lane: &Lane<'_>,
         opened: bool,
         jump: crate::timeline::Jump,
-    ) {
+    ) -> Turn {
         if jump.cancelled.is_closed() {
-            return;
+            return Turn::Next;
         }
         let Lane {
             backend,
@@ -144,27 +144,35 @@ impl Reader {
                 Event::AnchorFailed(jump.ticket),
             )
             .await;
-            return;
+            return Turn::Next;
         }
-        if let Some((page, stamp)) = jump
+        match jump
             .offer(backend, &self.resident, wire, async |event| {
                 reader_event(reading, self.generation, out, wake, event).await
             })
             .await
         {
-            self.historical = page.newer.is_some();
-            self.fence = stamp;
-            self.first = page.rows.first().map(|row| row.id.clone());
-            self.older = page.older.clone();
-            self.newer = page.newer.clone();
-            self.known = page.rows.iter().map(|row| row.id.clone()).collect();
-            self.resident = page.rows;
-            self.owed.retain(|(id, _)| self.known.contains(id));
-            self.anchored = None;
-            self.parked = false;
-            self.dirty = !self.historical && !wire.valid(stamp);
-            if self.dirty {
-                self.quiet = Instant::now();
+            crate::timeline::JumpOffer::Loaded(page, stamp) => {
+                self.historical = page.newer.is_some();
+                self.fence = stamp;
+                self.first = page.rows.first().map(|row| row.id.clone());
+                self.older = page.older.clone();
+                self.newer = page.newer.clone();
+                self.known = page.rows.iter().map(|row| row.id.clone()).collect();
+                self.resident = page.rows;
+                self.owed.retain(|(id, _)| self.known.contains(id));
+                self.anchored = None;
+                self.parked = false;
+                self.dirty = !self.historical && !wire.valid(stamp);
+                if self.dirty {
+                    self.quiet = Instant::now();
+                }
+                Turn::Next
+            }
+            crate::timeline::JumpOffer::Failed => Turn::Next,
+            crate::timeline::JumpOffer::AuthenticationExpired => {
+                expire_reading(reading, wire, out).await;
+                Turn::AuthenticationExpired
             }
         }
     }

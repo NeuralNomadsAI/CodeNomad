@@ -78,6 +78,12 @@ pub struct Jump {
     pub cancelled: Receiver<()>,
 }
 
+pub(crate) enum JumpOffer {
+    Loaded(crate::history::Page, u64),
+    Failed,
+    AuthenticationExpired,
+}
+
 impl Jump {
     /// Offer a bounded destination to the reader before replacing the stream's rows.
     pub(crate) async fn offer(
@@ -86,20 +92,33 @@ impl Jump {
         resident: &[Row],
         wire: &Arc<stream::State>,
         send: impl AsyncFnOnce(Event) -> bool,
-    ) -> Option<(crate::history::Page, u64)> {
+    ) -> JumpOffer {
+        enum Fetch {
+            Loaded(crate::history::Page),
+            Failed,
+            AuthenticationExpired,
+        }
         let ticket = self.ticket;
         let revision = wire.history_revision.load(SeqCst);
         let stamp = wire.version.load(SeqCst);
         let request = async {
             match backend.resolve_anchor(&self.message, resident).await {
-                Ok(AnchorWindow::Loaded(page)) if wire.history_current(revision) => Some(page),
-                _ => None,
+                Ok(AnchorWindow::Loaded(page)) if wire.history_current(revision) => {
+                    Fetch::Loaded(page)
+                }
+                Err(error)
+                    if crate::http::authentication_expired(&error)
+                        && matches!(backend.authentication_status().await, Ok(false)) =>
+                {
+                    Fetch::AuthenticationExpired
+                }
+                _ => Fetch::Failed,
             }
         };
-        let Some(page) = futures_lite::future::or(
+        let fetched = futures_lite::future::or(
             async {
                 self.cancelled.recv().await.ok();
-                None
+                Fetch::Failed
             },
             futures_lite::future::or(request, async {
                 futures_lite::future::race(wire.placement_changed(), async {
@@ -108,15 +127,19 @@ impl Jump {
                     }
                 })
                 .await;
-                None
+                Fetch::Failed
             }),
         )
-        .await
-        else {
-            if !self.cancelled.is_closed() {
-                send(Event::AnchorFailed(ticket)).await;
+        .await;
+        let page = match fetched {
+            Fetch::Loaded(page) => page,
+            Fetch::AuthenticationExpired => return JumpOffer::AuthenticationExpired,
+            Fetch::Failed => {
+                if !self.cancelled.is_closed() {
+                    send(Event::AnchorFailed(ticket)).await;
+                }
+                return JumpOffer::Failed;
             }
-            return None;
         };
         let (admit, verdict) = bounded(1);
         if !send(Event::Anchor {
@@ -130,7 +153,7 @@ impl Jump {
         })
         .await
         {
-            return None;
+            return JumpOffer::Failed;
         }
         // Only the receiver owning the current ticket can send admission.
         let accepted = futures_lite::future::or(async { verdict.recv().await.ok() }, async {
@@ -138,7 +161,10 @@ impl Jump {
             verdict.try_recv().ok()
         })
         .await;
-        accepted.map(|()| (page, stamp))
+        match accepted {
+            Some(()) => JumpOffer::Loaded(page, stamp),
+            None => JumpOffer::Failed,
+        }
     }
 }
 

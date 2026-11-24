@@ -123,7 +123,7 @@ export { redactSecrets, registerRequestLogging } from "./request-logging"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
 import { PREVIEW_SANDBOX_FLAGS } from "../previews/sandbox"
 import { parsePreviewUpgradePath } from "../previews/upgrade-path"
-import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
+import { forwardRuntimeRequest, PreDispatchHttpError } from "../opencode/compatibility/proxy"
 import { SessionModeConflict, SessionPermissionModes } from "../permissions/session-mode"
 import { appendSessionProjection, sessionPermissionRules, blockPositions } from "../permissions/session-mode-rules"
 import { recordPermissionFork, registerSessionPermissionModeRoutes, sessionPermissionTarget } from "./routes/session-permission-mode"
@@ -1695,36 +1695,6 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           return reply.code(503).send({ error: "Conversation permissions unavailable" })
         }
       }
-      if (isPromptOrCommandPost && sessionId && authorizedSession) {
-        let fresh: Awaited<ReturnType<OpenCodeClient["session"]["get"]>>
-        try {
-          const client = await clientForRequest()
-          fresh = await wait(client.session.get({ sessionID: sessionId }, { signal }))
-        } catch (error) {
-          if (signal.aborted) throw error
-          releaseMutation?.()
-          if (isInvalidRequestError(error)) {
-            return reply.code(400).send({ error: "Invalid session ID" })
-          }
-          if (isSessionNotFoundError(error)) {
-            return reply.code(404).send({ _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
-          }
-          return reply.code(502).send({ error: "opencode_unavailable_before_send" })
-        }
-        signal.throwIfAborted()
-        connection?.assertCurrent()
-        const client = await clientForRequest()
-        const stillOwned = workspaceManager.get(workspaceId) === workspace
-          && fresh.id === authorizedSession.id
-          && sameLocation(readLocationRef(fresh.location), readLocationRef(authorizedSession.location))
-          && await wait(workspaceManager.ownsLocation(workspaceId, fresh.location, client, { signal }))
-          && (boundSessionDirectory === undefined
-            || await matchesBoundSessionDirectory(fresh.location.directory, boundSessionDirectory))
-        if (!stillOwned) {
-          releaseMutation?.()
-          return reply.code(403).send({ error: "Location does not belong to workspace" })
-        }
-      }
     }
     // The native session PATCH can replace the entire permission array.
     const patchSession = args.permissionModes && request.method === "PATCH" && /^\/api\/session\/[^/]+\/?$/.test(pathname)
@@ -1740,6 +1710,46 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       const runtimeFetch = connection?.fetch ?? await wait(workspaceManager.getSharedServiceFetch!())
       if (confirmRoot) headers["content-type"] = "application/json"
       signal.throwIfAborted()
+      const verifyPromptPlacementBeforeDispatch = isPromptOrCommandPost && sessionId && authorizedSession
+        ? async () => {
+          let fresh: Awaited<ReturnType<OpenCodeClient["session"]["get"]>>
+          let client: OpenCodeClient
+          try {
+            connection?.assertCurrent()
+            client = await clientForRequest()
+            fresh = await wait(client.session.get({ sessionID: sessionId }, { signal }))
+          } catch (error) {
+            if (signal.aborted) throw error
+            if (isInvalidRequestError(error)) {
+              throw new PreDispatchHttpError(400, { error: "Invalid session ID" })
+            }
+            if (isSessionNotFoundError(error)) {
+              throw new PreDispatchHttpError(404, { _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
+            }
+            throw new PreDispatchHttpError(502, { error: "opencode_unavailable_before_send" })
+          }
+          let stillOwned: boolean
+          try {
+            signal.throwIfAborted()
+            connection?.assertCurrent()
+            stillOwned = workspaceManager.get(workspaceId) === workspace
+              && fresh.id === authorizedSession.id
+              && sameLocation(readLocationRef(fresh.location), readLocationRef(authorizedSession.location))
+              && await wait(workspaceManager.ownsLocation(workspaceId, fresh.location, client, { signal }))
+              && (boundSessionDirectory === undefined
+                || await matchesBoundSessionDirectory(fresh.location.directory, boundSessionDirectory))
+            signal.throwIfAborted()
+            connection?.assertCurrent()
+            stillOwned = stillOwned && workspaceManager.get(workspaceId) === workspace
+          } catch (error) {
+            if (signal.aborted) throw error
+            throw new PreDispatchHttpError(502, { error: "opencode_unavailable_before_send" })
+          }
+          if (!stillOwned) {
+            throw new PreDispatchHttpError(403, { error: "Location does not belong to workspace" })
+          }
+        }
+        : undefined
       // A transcript page read by the UI: large tool images load on demand.
       const deferMedia = request.method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(pathname)
         && wantsDeferredMedia(request.headers)
@@ -1747,6 +1757,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         transform: deferMedia && sessionId
           ? body => deferToolMedia((body as { data?: unknown } | null)?.data, { workspaceId, sessionId })
           : undefined,
+        beforeDispatch: verifyPromptPlacementBeforeDispatch,
         request, reply, url: targetUrl.toString(), body, headers,
         fetch: confirmPermission || confirmDeletion || confirmRoot || forkSource ? async (input, init) => {
           const response = await runtimeFetch(input, init)

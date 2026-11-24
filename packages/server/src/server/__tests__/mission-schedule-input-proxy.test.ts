@@ -238,11 +238,11 @@ test("native Location ownership and a replaced connection stay fenced around the
   assert.deepEqual(f.reads, [])
   f.state.directory = "/repo/worktree"
   f.state.afterRead = async () => { f.state.current = false }
-  assert.equal((await f.app.inject({ method: "POST", url: `${prefix}/api/session/ses_carrier/prompt`, payload: { text: "blocked" } })).statusCode, 500)
+  const response = await f.app.inject({ method: "POST", url: `${prefix}/api/session/ses_carrier/prompt`, payload: { text: "blocked" } })
+  assert.equal(response.statusCode, 502, response.body)
+  assert.deepEqual(response.json(), { error: "opencode_unavailable_before_send" })
   assert.deepEqual(f.events, [])
-  const release = f.fence.enter(["/repo"])
-  assert.ok(release, "a failed guard releases its physical mutation admission")
-  release()
+  assert.equal(await f.fence.run("/repo", ["/repo"], async () => "drained"), "drained", "a failed guard releases its physical mutation admission")
 })
 
 test("a session moved out of its admitted Location during the authoritative read cannot be written", async () => {

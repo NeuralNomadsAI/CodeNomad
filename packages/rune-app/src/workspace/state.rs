@@ -9,9 +9,9 @@ mod panel_state;
 mod polling;
 mod strip;
 
-pub use drafts::{
-    attachment_draft_admissible, bound, capture, confirm_unconfirmed, draft_changed,
-    has_unconfirmed, note_unconfirmed, window_inline_usage_without_history,
+pub(crate) use drafts::{
+    MAX_WINDOW_DEVICE_FILES, attachment_draft_admissible, bound, capture, confirm_unconfirmed,
+    draft_changed, has_unconfirmed, note_unconfirmed, window_inline_usage_without_history,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
@@ -120,6 +120,7 @@ struct ClosedUnconfirmed {
     server_id: Option<String>,
     session_id: String,
     attempt_id: String,
+    restored_text: Option<String>,
 }
 impl ClosedUnconfirmed {
     fn matches(&self, workspace: &Workspace, session_id: &str) -> bool {
@@ -129,43 +130,69 @@ impl ClosedUnconfirmed {
     }
 }
 impl Ui {
-    pub(super) fn unconfirmed_locks_len(&self) -> usize {
-        self.closed_unconfirmed.len()
-    }
     pub(super) fn remember_closed_unconfirmed(
         &mut self,
         workspace: &Workspace,
         session_id: String,
         attempt_id: String,
+        restored_text: Option<String>,
     ) {
+        let existing_text = self
+            .closed_unconfirmed
+            .iter()
+            .rev()
+            .find(|item| item.matches(workspace, &session_id) && item.attempt_id == attempt_id)
+            .and_then(|item| item.restored_text.clone());
         self.closed_unconfirmed
             .retain(|item| !item.matches(workspace, &session_id));
+        if self.closed_unconfirmed.len() >= MAX_UNCONFIRMED_LOCKS {
+            self.closed_unconfirmed.remove(0);
+        }
         self.closed_unconfirmed.push(ClosedUnconfirmed {
             backend_id: workspace.backend_id.clone(),
             server_id: workspace.server_id.clone(),
             session_id,
             attempt_id,
+            restored_text: restored_text.or(existing_text),
         });
+    }
+    pub(super) fn closed_unconfirmed_entry(
+        &self,
+        workspace: &Workspace,
+        session_id: &str,
+    ) -> Option<(&str, Option<&str>)> {
+        self.closed_unconfirmed
+            .iter()
+            .rev()
+            .find(|item| item.matches(workspace, session_id))
+            .map(|item| (item.attempt_id.as_str(), item.restored_text.as_deref()))
     }
     pub(super) fn closed_unconfirmed_id(
         &self,
         workspace: &Workspace,
         session_id: &str,
     ) -> Option<&str> {
-        self.closed_unconfirmed
-            .iter()
-            .rev()
-            .find(|item| item.matches(workspace, session_id))
-            .map(|item| item.attempt_id.as_str())
+        self.closed_unconfirmed_entry(workspace, session_id)
+            .map(|(id, _)| id)
     }
     pub(super) fn forget_closed_unconfirmed(
         &mut self,
         workspace: &Workspace,
         session_id: &str,
         attempt_id: &str,
-    ) {
-        self.closed_unconfirmed
-            .retain(|item| !(item.matches(workspace, session_id) && item.attempt_id == attempt_id));
+    ) -> Option<String> {
+        let mut restored = None;
+        self.closed_unconfirmed.retain(|item| {
+            if item.matches(workspace, session_id) && item.attempt_id == attempt_id {
+                if restored.is_none() {
+                    restored = item.restored_text.clone();
+                }
+                false
+            } else {
+                true
+            }
+        });
+        restored
     }
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key

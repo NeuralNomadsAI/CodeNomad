@@ -226,7 +226,16 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
             if !removed.pending_drafts.contains(session_id)
                 && let Some(attempt_id) = live.unconfirmed_id()
             {
-                ui.remember_closed_unconfirmed(&saved, session_id.clone(), attempt_id.to_owned());
+                let restored_text = live
+                    .unconfirmed_restored_text()
+                    .filter(|text| text.encode_utf16().nth(super::super::MAX_DRAFT).is_none())
+                    .map(str::to_owned);
+                ui.remember_closed_unconfirmed(
+                    &saved,
+                    session_id.clone(),
+                    attempt_id.to_owned(),
+                    restored_text,
+                );
                 propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.to_owned()));
                 if active_matches(ui, &saved, session_id) {
                     propagate_to_active = Some(attempt_id.to_owned());
@@ -237,7 +246,18 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
             && !removed.pending_drafts.contains(session_id)
             && let Some(attempt_id) = removed.cache.as_ref().and_then(Cache::unconfirmed_id)
         {
-            ui.remember_closed_unconfirmed(&saved, session_id.clone(), attempt_id.to_owned());
+            let restored_text = removed
+                .cache
+                .as_ref()
+                .and_then(Cache::unconfirmed_restored_text)
+                .filter(|text| text.encode_utf16().nth(super::super::MAX_DRAFT).is_none())
+                .map(str::to_owned);
+            ui.remember_closed_unconfirmed(
+                &saved,
+                session_id.clone(),
+                attempt_id.to_owned(),
+                restored_text,
+            );
             propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.to_owned()));
             if active_matches(ui, &saved, session_id) {
                 propagate_to_active = Some(attempt_id.to_owned());

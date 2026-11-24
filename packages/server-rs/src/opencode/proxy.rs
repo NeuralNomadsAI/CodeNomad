@@ -254,7 +254,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         None
     };
     let native_directory = actual.as_ref().and_then(|r| r["location"]["directory"].as_str());
-    if send_input && let Some(raw_bound) = head.headers.get("x-codenomad-session-directory") {
+    let bound_directory = if send_input && let Some(raw_bound) = head.headers.get("x-codenomad-session-directory") {
         let bound = raw_bound
             .to_str()
             .ok()
@@ -270,7 +270,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         if !matches_native {
             return Err(foreign());
         }
-    }
+        Some(bound)
+    } else {
+        None
+    };
     let directory =
         if send_input { native_directory.or(requested.as_deref()) } else { requested.as_deref().or(native_directory) }
             .unwrap_or(opened);
@@ -773,13 +776,64 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let (route, opened, directory, id) = (route.to_owned(), opened.to_owned(), directory.to_owned(), id.to_owned());
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
+    let dispatch_session = session.map(str::to_owned);
     let dispatch = move |detached: tokio_util::sync::CancellationToken| async move {
-        principal.live()?;
+        if principal.0.is_cancelled() {
+            return Ok(crate::auth::unauthorized_before_dispatch());
+        }
         if detached.is_cancelled()
             || !app.native.current(&endpoint)
             || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
         {
             return Err(if send_input { super::pre_dispatch_unavailable() } else { upstream_error() });
+        }
+        if send_input {
+            let (physical, _) = initial_identity.as_ref().ok_or_else(foreign)?;
+            let admitted = input_checkout.as_ref().ok_or_else(foreign)?;
+            if !crate::worktrees::ownership::capture_directory(&app, &workspace, physical)
+                .await
+                .is_some_and(|current| admitted.same_checkout(&current))
+            {
+                return Err(foreign());
+            }
+            let fresh = super::session_record_at(
+                &app,
+                &endpoint,
+                dispatch_session.as_deref().ok_or_else(super::pre_dispatch_unavailable)?,
+            )
+            .await
+            .map_err(|e| if e.0 == Status::BAD_GATEWAY { super::pre_dispatch_unavailable() } else { e })?;
+            let fresh_dir = fresh["location"]["directory"].as_str();
+            let bound_ok = bound_directory.as_deref().is_none_or(|bound| {
+                fresh_dir.is_some_and(|native| {
+                    native == bound
+                        || crate::files::paths::canonical(&app.scope, native)
+                            .zip(crate::files::paths::canonical(&app.scope, bound))
+                            .is_some_and(|(a, b)| a == b)
+                })
+            });
+            let identity_live = fresh_dir.is_some_and(|native| {
+                crate::files::paths::canonical(&app.scope, native)
+                    .and_then(|path| Some((path.clone(), crate::files::host_identity(&path).ok()?)))
+                    .is_some_and(|now| initial_identity.as_ref() == Some(&now) && admitted.live(&now.0))
+            });
+            if !actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
+                || fresh_dir != Some(directory.as_str())
+                || !bound_ok
+                || !identity_live
+                || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
+            {
+                return Err(foreign());
+            }
+            if marker(&fresh) {
+                return Err(carrier_denied());
+            }
+            if principal.0.is_cancelled() {
+                return Ok(crate::auth::unauthorized_before_dispatch());
+            }
+            if detached.is_cancelled() || !app.native.current(&endpoint) {
+                return Err(super::pre_dispatch_unavailable());
+            }
         }
         // Undici's default headers deadline for the TypeScript runtime transport.
         // Do not cap the total lifetime of a streaming native response.

@@ -267,7 +267,9 @@ pub async fn admit(
     {
         let response = bundle.serve(req, asset).await;
         let response = if response.headers().get(header::CACHE_CONTROL).is_some_and(|value| value == "no-store") {
-            reply(Status::UNAUTHORIZED, "This device is not paired")
+            let mut r = reply(Status::UNAUTHORIZED, "This device is not paired");
+            r.headers_mut().insert("x-codenomad-before-dispatch", HeaderValue::from_static("1"));
+            r
         } else {
             response
         };
@@ -299,7 +301,9 @@ pub async fn admit(
         );
     }
     let Some((id, principal)) = owner else {
-        return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
+        let mut r = reply(Status::UNAUTHORIZED, "This device is not paired");
+        r.headers_mut().insert("x-codenomad-before-dispatch", HeaderValue::from_static("1"));
+        return cors(r, supplied);
     };
     {
         let mut socket = channel.principal.lock().unwrap();
