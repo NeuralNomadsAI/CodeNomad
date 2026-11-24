@@ -610,8 +610,8 @@ pub async fn open_workspace_target(
 /// manager, a file with its default application under `default_open_mode`'s
 /// protections. `false`, opening nothing, for a missing path or when it
 /// leaves the path to the caller (`keep`): text files (`text`), every file
-/// (`files`), and paths off the local disks. Off the local disks with `none`,
-/// or when opening fails, it is an error.
+/// (`files`), and paths off the local disks or naming special files. Under
+/// `none` those are errors, as are inaccessible paths and failed openings.
 #[tauri::command]
 pub async fn open_local_path(
     webview: tauri::Webview,
@@ -640,6 +640,7 @@ fn is_local_disk_path(path: &Path) -> bool {
         path.is_absolute() && !path.to_string_lossy().starts_with("//")
     }
 }
+
 /// Whether a file's first bytes read as text, as the file preview decides: no
 /// NUL byte and valid UTF-8 (a character cut at a full sample's end still counts).
 fn looks_like_text(path: &Path) -> bool {
@@ -678,10 +679,20 @@ fn open_local_path_impl(path: &str, keep: &str) -> Result<bool, String> {
         }
         return Err("Only absolute paths on a local disk can be opened".into());
     }
-    let Ok(selected) = path.canonicalize() else {
-        return Ok(false);
+    let selected = match path.canonicalize() {
+        Ok(selected) => selected,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.to_string()),
     };
-    let folder = selected.is_dir();
+    let metadata = std::fs::metadata(&selected).map_err(|error| error.to_string())?;
+    let folder = metadata.is_dir();
+    // A FIFO or device is neither shown nor read: reading one can block forever.
+    if !folder && !metadata.is_file() {
+        if keep != "none" {
+            return Ok(false);
+        }
+        return Err("Only files and folders can be opened".into());
+    }
     if !folder && (keep == "files" || (keep == "text" && looks_like_text(&selected))) {
         return Ok(false);
     }
@@ -697,6 +708,7 @@ fn open_local_path_impl(path: &str, keep: &str) -> Result<bool, String> {
     )?;
     Ok(true)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,6 +749,21 @@ mod tests {
         );
         assert_eq!(open_local_path_impl(r"\\host\share\x", "text"), Ok(false));
         assert!(open_local_path_impl("relative", "none").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn special_files_are_never_read_or_opened() {
+        let workspace = tempfile::tempdir().unwrap();
+        let fifo = workspace.path().join("pipe");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        let fifo = fifo.to_str().unwrap();
+        assert_eq!(open_local_path_impl(fifo, "text"), Ok(false));
+        assert!(open_local_path_impl(fifo, "none").is_err());
     }
 
     #[test]

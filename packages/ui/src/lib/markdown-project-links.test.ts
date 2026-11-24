@@ -33,6 +33,8 @@ describe("project-file link paths", () => {
     assert.equal(localFileUrlPath("file:/home/me/repo/docs"), "/home/me/repo/docs")
     assert.equal(localFileUrlPath("file:///"), "/")
     assert.equal(localFileUrlPath("file:///C:/"), "C:/")
+    assert.equal(localFileUrlPath("file:C:/Users/me/notes.txt"), "C:/Users/me/notes.txt")
+    assert.equal(localFileUrlPath("file://C:/Users/me/notes.txt"), "C:/Users/me/notes.txt")
     for (const source of ["C:/Users/me/bato.jpg", "file://server/share/x.md", "file:///home/me/docs%2Fchild",
       "file:///%5C%5Cserver%5Cshare", "file:////server/share/x.md", "https://example.com/x"]) {
       assert.equal(localFileUrlPath(source), undefined, source)

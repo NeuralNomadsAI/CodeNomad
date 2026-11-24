@@ -207,8 +207,8 @@ export function isLocalDiskPath(path: string, platform: NodeJS.Platform = proces
  * manager, a file with its default application under `defaultOpenMode`'s
  * protections. Resolves false and opens nothing for a missing path, or when
  * it leaves the path to the caller (`keep`): text files (`text`), every file
- * (`files`), and paths off the local disks. Off the local disks with `none`,
- * or when opening fails, it rejects. */
+ * (`files`), and paths off the local disks or naming special files. Under
+ * `none` those reject, as do inaccessible paths and failed openings. */
 export async function openLocalPath(path: string, keep: LocalPathKeep, dependencies?: WorkspaceOpenDependencies): Promise<boolean> {
   if (!dependencies) throw new Error("Native workspace openers are unavailable")
   if (!isLocalDiskPath(path)) {
@@ -219,10 +219,18 @@ export async function openLocalPath(path: string, keep: LocalPathKeep, dependenc
   let selectedPath: string
   try {
     selectedPath = await realpath(path)
-  } catch {
-    return false
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT" || code === "ENOTDIR") return false
+    throw error
   }
-  const folder = (await stat(selectedPath)).isDirectory()
+  const stats = await stat(selectedPath)
+  const folder = stats.isDirectory()
+  // A FIFO or device is neither shown nor read: reading one can block forever.
+  if (!folder && !stats.isFile()) {
+    if (keep !== "none") return false
+    throw new Error("Only files and folders can be opened")
+  }
   if (!folder && (keep === "files" || (keep === "text" && await looksLikeText(selectedPath)))) return false
   await openDefault(selectedPath, folder ? selectedPath : resolve(selectedPath, ".."), dependencies)
   return true

@@ -21,6 +21,7 @@ import { backendEvents } from "../../../src/lib/backend-events"
 import { getSessionPreview } from "../../../src/stores/session-previews"
 import { alertDialogState } from "../../../src/stores/alerts"
 import { getToastHistory } from "../../../src/lib/notifications"
+import { localLinkPath, type SessionLinkBase } from "../../../src/components/markdown-session-links"
 
 const id = "markdown-session-links", scope = "/fixture-root"
 const client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => true)
@@ -133,5 +134,6 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
   pending: () => Boolean(rejectPending),
   rejectPending: () => rejectPending?.(),
   alert: () => alertDialogState(),
+  localLinkPath: (href: string, base: SessionLinkBase) => localLinkPath(href, base),
   errorToasts: () => getToastHistory().filter(item => item.variant === "error").map(item => item.message),
 }

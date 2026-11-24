@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import test from "node:test"
-import type { ChildProcess } from "node:child_process"
+import { execFileSync, type ChildProcess } from "node:child_process"
 import { defaultOpenMode, editorCandidates, isLocalDiskPath, looksLikeText, openLocalPath, openWorkspaceTarget } from "./workspace-open"
 
 test("selects only the requested editor", () => {
@@ -56,6 +56,19 @@ test("opens local paths, leaving text files to the caller when asked", async () 
     assert.equal(await openLocalPath("docs", "text", dependencies), false)
     await assert.rejects(openLocalPath("docs", "none", dependencies), /local disk/)
     assert.deepEqual(opened.map(path => basename(path)), ["docs", "clip.mp4", "docs", "notes.txt"])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("special files are never read or opened", { skip: process.platform === "win32" }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-fifo-"))
+  const fifo = join(root, "pipe")
+  execFileSync("mkfifo", [fifo])
+  const dependencies = { openPath: async () => { throw new Error("opened") }, revealPath: () => undefined }
+  try {
+    assert.equal(await openLocalPath(fifo, "text", dependencies), false)
+    await assert.rejects(openLocalPath(fifo, "none", dependencies), /files and folders/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

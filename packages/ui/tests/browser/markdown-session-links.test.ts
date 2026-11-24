@@ -159,6 +159,10 @@ test("on the local desktop, local links open in the preview when it shows them, 
     await page.waitForTimeout(200)
     assert.equal((await page.evaluate(() => (window as any).fixture.surface())).kind, "web")
 
+    // A worktree served from another namespace (WSL) maps its service paths onto the host directory.
+    const wsl = { slug: "root", directory: "C:/repo", serviceDirectory: "/mnt/c/repo", base: "/mnt/c/repo" }
+    assert.deepEqual(await page.evaluate(base => ["/mnt/c/repo/clip.mp4", "./clip.mp4", "file:C:/x/y.txt"]
+      .map(href => (window as any).fixture.localLinkPath(href, base)), wsl), ["C:/repo/clip.mp4", "C:/repo/clip.mp4", "C:/x/y.txt"])
     // Failures and missing targets explain themselves.
     await page.click('#main-root a[href="./locked"]')
     await page.click('#main-root a[href="./gone.md"]', { modifiers: ["Control"] })

@@ -83,14 +83,19 @@ export interface SessionLinkTitles {
   local: boolean
 }
 
-/** The absolute local path a link names, or undefined: a `file:` URL, an
- * absolute path, or a path relative to the session's directory. */
+/** The absolute local path a link names, or undefined: a `file:` URL, a path
+ * inside the worktree (written in the host's or the service's namespace,
+ * mapped onto the host directory), another absolute path, or a path relative
+ * to the session's directory. */
 export function localLinkPath(href: string, base: SessionLinkBase | undefined): string | undefined {
   const url = localFileUrlPath(href)
   if (url !== undefined) return url
+  const directory = base?.directory.replace(/[\\/]+$/, "")
+  const project = base && resolveProjectLinkPath(href, base.base)
+  if (project !== undefined) return `${directory}/${project}`
   const path = projectLinkPath(href)
   if (path === undefined || /^(?:\/|[A-Za-z]:\/)/.test(path)) return path
-  return base && `${base.directory.replace(/[\\/]+$/, "")}/${path}`
+  return directory && `${directory}/${path}`
 }
 
 /** A local path as its platform writes it: backslashes after a drive letter. */
