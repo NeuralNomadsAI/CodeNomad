@@ -376,6 +376,33 @@ fn quote_yaml11_binary_scalars(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// ECMAScript `Number::toString` for YAML numeric mapping keys (`1e-7` stays `"1e-7"`, `1e21` -> `"1e+21"`, `-0.0` -> `"0"`).
+fn js_f64_key(v: f64) -> String {
+    if v.is_nan() {
+        return "NaN".to_owned();
+    }
+    if v.is_infinite() {
+        return if v.is_sign_negative() { "-Infinity" } else { "Infinity" }.to_owned();
+    }
+    if v == 0.0 {
+        return "0".to_owned();
+    }
+    let abs = v.abs();
+    let sci = format!("{abs:e}");
+    if let Some((mantissa, exp_str)) = sci.split_once('e')
+        && let Ok(exp) = exp_str.parse::<i32>()
+    {
+        let sign = if v.is_sign_negative() { "-" } else { "" };
+        if exp <= -7 {
+            return format!("{sign}{mantissa}e{exp}");
+        }
+        if exp >= 21 {
+            return format!("{sign}{mantissa}e+{exp}");
+        }
+    }
+    v.to_string()
+}
+
 /// Reads the YAML document once and also extracts `ui.remoteProjectHistory` mapping key order
 /// from that exact same snapshot so concurrent writes cannot tear data and key order.
 pub fn read_with_history_order(file: &Path) -> Result<(Doc, Vec<String>), Unreadable> {
@@ -413,26 +440,19 @@ pub fn read_with_history_order(file: &Path) -> Result<(Doc, Vec<String>), Unread
             Ok((KeyKind::Bool, v.to_string()))
         }
         fn visit_i64<E: de::Error>(self, v: i64) -> Result<(KeyKind, String), E> {
-            Ok((KeyKind::Num, v.to_string()))
+            Ok((KeyKind::Num, js_f64_key(v as f64)))
         }
         fn visit_u64<E: de::Error>(self, v: u64) -> Result<(KeyKind, String), E> {
-            Ok((KeyKind::Num, v.to_string()))
+            Ok((KeyKind::Num, js_f64_key(v as f64)))
         }
         fn visit_i128<E: de::Error>(self, v: i128) -> Result<(KeyKind, String), E> {
-            Ok((KeyKind::Num, (v as f64).to_string()))
+            Ok((KeyKind::Num, js_f64_key(v as f64)))
         }
         fn visit_u128<E: de::Error>(self, v: u128) -> Result<(KeyKind, String), E> {
-            Ok((KeyKind::Num, (v as f64).to_string()))
+            Ok((KeyKind::Num, js_f64_key(v as f64)))
         }
         fn visit_f64<E: de::Error>(self, v: f64) -> Result<(KeyKind, String), E> {
-            let text = if v.is_nan() {
-                "NaN".to_owned()
-            } else if v.is_infinite() {
-                if v.is_sign_negative() { "-Infinity" } else { "Infinity" }.to_owned()
-            } else {
-                v.to_string()
-            };
-            Ok((KeyKind::Num, text))
+            Ok((KeyKind::Num, js_f64_key(v)))
         }
         fn visit_unit<E: de::Error>(self) -> Result<(KeyKind, String), E> {
             Ok((KeyKind::Null, "null".to_owned()))

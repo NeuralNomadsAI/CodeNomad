@@ -285,6 +285,19 @@ impl Settings {
         if kind == Kind::Config && name == "server" { normalize_server(value) } else { value }
     }
 
+    /// Reads the normalized `server` config owner under the settings write lock so derived state
+    /// (such as the release feed monitor) updates strictly in commit order without inverting locks.
+    pub fn with_server_owner_locked<T>(&self, f: impl FnOnce(&Doc) -> T) -> T {
+        let _write = self.write.lock().unwrap();
+        let current = document::read(&self.location.config).unwrap_or_default();
+        let normalized = normalize_config(current.clone());
+        if normalized != current {
+            let _ = document::write(&self.location.config, &normalized);
+        }
+        let server = normalize_server(owner(normalized.get("server")));
+        f(&server)
+    }
+
     fn state_owner_with_order(&self, name: &str) -> (Doc, Vec<String>) {
         let file = self.file(Kind::State);
         let (mut current, mut order) = document::read_with_history_order(file).unwrap_or_default();
@@ -439,8 +452,11 @@ fn publish(app: &App, kind: Kind, name: &str, value: Value) {
 }
 
 fn publish_with_order(app: &App, kind: Kind, name: &str, value: Value, history_order: &[String]) {
-    if kind == Kind::Config && matches!(name, "server" | "*") {
-        app.releases.update_feed(&app.settings);
+    if kind == Kind::Config
+        && name == "server"
+        && let Some(map) = value.as_object()
+    {
+        app.releases.set_feed(crate::meta::update_feed(map));
     }
     let (event_type, value) = match kind {
         Kind::Config => ("storage.configChanged", sanitized(name, value)),
@@ -1988,6 +2004,22 @@ mod tests {
         assert_eq!(bom_level["logLevel"], "INFO");
         let nel_level = yaml_edge.patch(Kind::Config, "server", &json!({"logLevel": "\u{0085}INFO"})).ok().unwrap();
         assert_eq!(nel_level["logLevel"], "DEBUG");
+
+        // Scientific float keys (1e-7) and integers above 2^53 match ECMAScript Number::toString.
+        let sci_path = dir.join("sci-keys.yaml");
+        std::fs::write(
+            &sci_path,
+            "ui:\n  1e-7: keep1\n  \"0.0000001\": keep2\n  1e21: keep3\n  -0.0: keep4\n  9007199254740993: keep5\n",
+        )
+        .unwrap();
+        let sci_settings = Settings::new(Location::resolve(sci_path.to_str().unwrap()));
+        let after_sci =
+            sci_settings.patch(Kind::Config, "ui", &json!({"settings": {"showThinkingBlocks": true}})).ok().unwrap();
+        assert_eq!(after_sci["1e-7"], "keep1");
+        assert_eq!(after_sci["0.0000001"], "keep2");
+        assert_eq!(after_sci["1e+21"], "keep3");
+        assert_eq!(after_sci["0"], "keep4");
+        assert_eq!(after_sci["9007199254740992"], "keep5");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

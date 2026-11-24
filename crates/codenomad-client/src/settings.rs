@@ -251,6 +251,7 @@ pub struct PreferencesWatch {
     _cancel: crate::Sender<()>,
     closed: crate::Receiver<()>,
     dirty: Arc<AtomicU8>,
+    connected: Arc<std::sync::atomic::AtomicBool>,
     missions: Arc<Mutex<Vec<crate::transport::WorkspaceEvent>>>,
     client_id: String,
     project: Option<String>,
@@ -265,6 +266,8 @@ impl PreferencesWatch {
         let (close, closed) = crate::bounded(1);
         let dirty = Arc::new(AtomicU8::new(0));
         let notices = dirty.clone();
+        let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let connected_state = connected.clone();
         let missions = Arc::new(Mutex::new(Vec::new()));
         let mission_notices = missions.clone();
         let project = project.map(str::to_owned);
@@ -307,6 +310,7 @@ impl PreferencesWatch {
                                     let flag = match event {
                                         Input::Opened(e) => {
                                             opened = true;
+                                            connected_state.store(true, SeqCst);
                                             if e > 1 { 11 | 16 | 32 } else { 11 | 32 }
                                         }
                                         Input::Preferences(Owner::Config) => 1,
@@ -335,6 +339,7 @@ impl PreferencesWatch {
                             },
                         )
                         .await;
+                        connected_state.store(false, SeqCst);
                         if opened {
                             disconnected = false;
                         }
@@ -360,6 +365,7 @@ impl PreferencesWatch {
             )
             .await;
             // The EventSource/HTTP response has been dropped before releasing the next reader.
+            connected_state.store(false, SeqCst);
             drop(close);
             wake();
         };
@@ -368,6 +374,7 @@ impl PreferencesWatch {
                 _cancel: hold,
                 closed,
                 dirty,
+                connected,
                 missions,
                 client_id,
                 project,
@@ -378,6 +385,10 @@ impl PreferencesWatch {
 
     pub fn client_id(&self) -> &str {
         &self.client_id
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(SeqCst)
     }
 
     pub fn take(&self) -> (bool, bool) {

@@ -802,7 +802,7 @@ try {
     await model('other-window').waitFor({state:'attached'})
     assert.equal(await model('updated').count(),0)
     assert.deepEqual(aggregates[2],{days:7,restore:true})
-    const period = page.getByRole('button',{name:'Period · Last 90 days',exact:true})
+    const period = page.getByRole('combobox',{name:'Period · Last 90 days',exact:true})
     await period.press('Enter')
     await page.getByRole('option',{name:'Last 365 days',exact:true}).press('Enter')
     await model('other-window').waitFor({state:'detached'})

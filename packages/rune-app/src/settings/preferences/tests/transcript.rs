@@ -1398,15 +1398,16 @@ fn tab_switch_revalidates_hidden_drop_and_state_and_bounds_queue_and_notificatio
         .await;
     });
 
-    // 3. Coalesced FIFO ordering: a later unsent preset supersedes earlier unsent row/preset
-    // edits and deduplicates repeated clicks so transcript_queue stays bounded (<= 2 batches).
+    // 3. Coalesced FIFO ordering: earlier unsent row edits still send ahead of a later preset so a
+    // 503 on the preset never drops them, while repeated/alternating preset clicks deduplicate.
     let (listener3, mut prefs3) = platform::block_on(fixture());
     prefs3.set_transcript(None, "minimal");
     prefs3.poll();
     platform::block_on(async {
         let first = request(&listener3).await;
         // Stage row edits followed by repeated Everything clicks while minimal is in flight:
-        // Everything supersedes the unsent row edits and deduplicates to one preset batch.
+        // the queued row batch sends first (surviving an Everything 503), and repeated Everything
+        // clicks deduplicate to one preset batch.
         prefs3.set_transcript(Some(Row::Groups), "hidden");
         prefs3.set_transcript(Some(Row::Diagnostics), "hidden");
         for _ in 0..5 {
@@ -1415,6 +1416,17 @@ fn tab_switch_revalidates_hidden_drop_and_state_and_bounds_queue_and_notificatio
         let mut saved = transcript_preset::patch("minimal");
         saved["locale"] = json!("en");
         first.reply(200, json!({"settings":saved.clone()})).await;
+
+        let queued_rows = poll_next_request(&mut prefs3, &listener3).await;
+        assert_eq!(
+            queued_rows.body,
+            json!({"settings":{"diagnosticsExpansion":"hidden","toolGroupVisibility":"hidden"}})
+        );
+        saved["diagnosticsExpansion"] = json!("hidden");
+        saved["toolGroupVisibility"] = json!("hidden");
+        queued_rows
+            .reply(200, json!({"settings":saved.clone()}))
+            .await;
 
         let everything_fail = poll_next_request(&mut prefs3, &listener3).await;
         assert_eq!(
@@ -1427,18 +1439,22 @@ fn tab_switch_revalidates_hidden_drop_and_state_and_bounds_queue_and_notificatio
             readback.first,
             "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
         );
-        readback.reply(200, json!({"settings":saved})).await;
+        readback.reply(200, json!({"settings":saved.clone()})).await;
         wait_until(|| {
             prefs3.poll();
             prefs3.transcript_error().is_some()
         })
         .await;
+        assert_eq!(
+            prefs3.transcript_mode(Row::Groups, false),
+            "hidden",
+            "queued row edit before a 503 preset must be persisted, not dropped"
+        );
+        assert_eq!(prefs3.transcript_mode(Row::Diagnostics, false), "hidden");
 
         prefs3.retry_transcript();
         let retry_get = poll_next_request(&mut prefs3, &listener3).await;
-        retry_get
-            .reply(200, json!({"settings":transcript_preset::patch("minimal")}))
-            .await;
+        retry_get.reply(200, json!({"settings":saved})).await;
         let retry_patch = poll_next_request(&mut prefs3, &listener3).await;
         assert_eq!(
             retry_patch.body["settings"]["toolCallExpansionDefaults"]["preset"],
@@ -3809,5 +3825,134 @@ fn hidden_tab_reconnect_attestation_and_repeated_outage_and_voluntary_close_and_
         })
         .await;
         assert_eq!(prefs13.transcript_mode(Row::Tool("bash"), false), "hidden");
+
+        // 15. On a legacy (!atomic) server, if a row PATCH is skipped as stale (`Skip::Stale`)
+        // while a TranscriptPreset is already queued behind it, requeuing keeps the row edit
+        // ahead of the preset so it still sends first and survives a subsequent preset 503.
+        let (listener14, mut prefs14) = fixture().await;
+        prefs14.set_transcript(Some(Row::Tool("read")), "hidden");
+        assert!(prefs14.poll());
+        let pre14a = request(&listener14).await;
+        assert_eq!(
+            pre14a.first,
+            "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+        );
+        let (gate_tx14, gate_rx14) = bounded(1);
+        prefs14.config.set_pre_patch_gate(gate_rx14);
+        pre14a.reply(200, json!({"settings":{"locale":"en"}})).await;
+        wait_until(|| {
+            prefs14.poll();
+            prefs14.config.refreshing()
+        })
+        .await;
+        // Stage preset "everything" while `read` is paused at pre_patch_gate, then fire an
+        // external invalidation so `read` skips as `Skip::Stale`.
+        prefs14.set_transcript(None, "everything");
+        prefs14.invalidate(Owner::Config);
+        let _ = gate_tx14.try_send(());
+
+        let pre14b = poll_next_request(&mut prefs14, &listener14).await;
+        assert_eq!(
+            pre14b.first,
+            "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+        );
+        pre14b.reply(200, json!({"settings":{"locale":"en"}})).await;
+
+        let read_patch14 = poll_next_request(&mut prefs14, &listener14).await;
+        assert_eq!(read_patch14.first, "PATCH /api/storage/config/ui HTTP/1.1");
+        assert_eq!(
+            read_patch14.body["settings"]["toolCallExpansionDefaults"]["tools"]["read"],
+            json!("hidden"),
+            "stale row edit must be requeued ahead of queued preset, not dropped"
+        );
+        assert_eq!(
+            read_patch14.body["settings"]["toolCallExpansionDefaults"]["preset"],
+            json!("custom")
+        );
+        let mut saved14 = read_patch14.body["settings"].clone();
+        saved14["locale"] = json!("en");
+        read_patch14
+            .reply(200, json!({"settings":saved14.clone()}))
+            .await;
+
+        let preset_patch14 = poll_next_request(&mut prefs14, &listener14).await;
+        assert_eq!(
+            preset_patch14.first,
+            "PATCH /api/storage/config/ui HTTP/1.1"
+        );
+        assert_eq!(
+            preset_patch14.body["settings"]["toolCallExpansionDefaults"]["preset"],
+            json!("everything")
+        );
+        preset_patch14.reply(503, json!({})).await;
+        let readback14 = poll_next_request(&mut prefs14, &listener14).await;
+        assert_eq!(
+            readback14.first,
+            "GET /api/storage/config/ui?authoritative=1 HTTP/1.1"
+        );
+        readback14
+            .reply(200, json!({"settings":saved14.clone()}))
+            .await;
+        wait_until(|| {
+            prefs14.poll();
+            prefs14.transcript_error().is_some()
+        })
+        .await;
+        assert_eq!(
+            prefs14.transcript_mode(Row::Tool("read"), false),
+            "hidden",
+            "requeued row edit must survive a 503 on the queued preset"
+        );
+
+        // 16. A healthy Missions PreferencesWatch stream counts as another healthy stream when
+        // the sole background conversation stream drops, immediately triggering revalidation.
+        let (listener15, mut prefs15) = fixture().await;
+        let sse_wake15: rune::Waker = Arc::new(|| {});
+        prefs15.watch_project(Some("proj-b"), &sse_wake15);
+        let mut sse_req15 = request(&listener15).await;
+        assert!(sse_req15.first.starts_with("GET /api/events?"));
+        sse_req15
+            .socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+            .await
+            .unwrap();
+        wait_until(|| {
+            prefs15.poll();
+            prefs15.has_healthy_watch_stream()
+        })
+        .await;
+        // Simulate ConnectionLost on the sole background conversation stream while Missions watch
+        // remains connected: Preferences must revalidate immediately and keep transcript_ready.
+        let conv_id = "conv-bg-a".to_owned();
+        prefs15.observe_conversation_clients(&[(conv_id.clone(), true)]);
+        prefs15.note_client_outage(&conv_id);
+        prefs15.mark_transport_lost();
+        assert!(!prefs15.transcript_ready());
+        assert!(prefs15.has_healthy_watch_stream());
+        prefs15.revalidate_transport();
+        prefs15.observe_conversation_clients(&[(conv_id.clone(), false)]);
+        let mut saw_cfg15 = false;
+        let mut saw_state15 = false;
+        while !(saw_cfg15 && saw_state15) {
+            let req15 = poll_next_request(&mut prefs15, &listener15).await;
+            if req15.first == "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" {
+                saw_cfg15 = true;
+                req15.reply(200, json!({"settings":{"locale":"en"}})).await;
+            } else if req15.first == "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" {
+                saw_state15 = true;
+                req15.reply(200, json!({})).await;
+            } else {
+                panic!(
+                    "unexpected request during watch revalidation: {}",
+                    req15.first
+                );
+            }
+        }
+        wait_until(|| {
+            prefs15.poll();
+            prefs15.transcript_ready()
+        })
+        .await;
+        drop(sse_req15);
     });
 }

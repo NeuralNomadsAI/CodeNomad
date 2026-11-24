@@ -206,6 +206,15 @@ impl Preferences {
         }
     }
 
+    pub(super) fn has_healthy_watch_stream(&self) -> bool {
+        let Some(backend) = &self.backend else {
+            return false;
+        };
+        self.stream.as_ref().is_some_and(|stream| {
+            stream.is_connected() && !backend.client.is_in_outage(stream.client_id())
+        })
+    }
+
     pub(super) fn observe_conversation_clients(&mut self, clients: &[(String, bool)]) {
         if self.observed_clients != clients {
             let previous = self.observed_clients.clone();
@@ -213,8 +222,11 @@ impl Preferences {
             let revalidated = self.config.transport_revalidated()
                 || self.state.transport_revalidated()
                 || self.server.transport_revalidated();
-            let newly_unhealthy =
-                revalidated && !clients.is_empty() && clients.iter().all(|(_, healthy)| !*healthy);
+            let watch_healthy = self.has_healthy_watch_stream();
+            let newly_unhealthy = revalidated
+                && !watch_healthy
+                && !clients.is_empty()
+                && clients.iter().all(|(_, healthy)| !*healthy);
             self.observed_clients = clients.to_vec();
             self.sync_drop_watch();
             // A stream that dropped while hidden and has since reconnected (re-attesting /api/meta
@@ -223,9 +235,10 @@ impl Preferences {
             if !self.transport_lost
                 && let Some(backend) = self.backend.clone()
             {
-                let still_healthy = clients.iter().any(|(id, healthy)| {
-                    *healthy && backend.client.transport_drops(id) == self.seen_drop(id)
-                });
+                let still_healthy = watch_healthy
+                    || clients.iter().any(|(id, healthy)| {
+                        *healthy && backend.client.transport_drops(id) == self.seen_drop(id)
+                    });
                 if still_healthy {
                     for (id, healthy) in clients {
                         if *healthy
@@ -243,7 +256,9 @@ impl Preferences {
             if !old_dropped && !new_dropped && newly_unhealthy {
                 self.mark_transport_lost();
             }
-            if (old_dropped || new_dropped) && clients.iter().any(|(_, healthy)| *healthy) {
+            if (old_dropped || new_dropped)
+                && (self.has_healthy_watch_stream() || clients.iter().any(|(_, healthy)| *healthy))
+            {
                 self.revalidate_transport();
             }
         }
@@ -311,16 +326,22 @@ impl Preferences {
         let mut dropped = false;
         let stream_id = self.stream.as_ref().map(|s| s.client_id().to_owned());
         let closing_id = self.closing_stream_client_id.clone();
+        let mut watch_dropped = false;
         for id in stream_id.iter().chain(closing_id.iter()) {
             let drops = backend.client.transport_drops(id);
             if self.record_seen_drop(id, drops) {
                 dropped = true;
+                if stream_id.as_deref() == Some(id.as_str()) {
+                    watch_dropped = true;
+                }
             }
         }
-        let any_continuously_healthy = !self.observed_clients.is_empty()
-            && self.observed_clients.iter().any(|(id, healthy)| {
-                *healthy && backend.client.transport_drops(id) == self.seen_drop(id)
-            });
+        let watch_continuously_healthy = !watch_dropped && self.has_healthy_watch_stream();
+        let any_continuously_healthy = watch_continuously_healthy
+            || (!self.observed_clients.is_empty()
+                && self.observed_clients.iter().any(|(id, healthy)| {
+                    *healthy && backend.client.transport_drops(id) == self.seen_drop(id)
+                }));
         if self.observed_clients.is_empty() && stream_id.is_none() && closing_id.is_none() {
             let drops = backend.client.transport_drops(&backend.client_id);
             if self.record_seen_drop(&backend.client_id, drops) {
@@ -368,7 +389,7 @@ impl Preferences {
                 wake();
             }
         }
-        if self.observed_clients.iter().any(|(_, healthy)| *healthy) {
+        if watch_continuously_healthy || self.observed_clients.iter().any(|(_, healthy)| *healthy) {
             self.revalidate_transport();
         }
         true

@@ -149,6 +149,7 @@ pub(crate) fn connection_event(
                             *healthy && s.conversation_client_id.as_deref() != Some(id.as_str())
                         });
                 let mut prefs = s.settings.shared.borrow_mut();
+                let other_healthy = other_healthy || prefs.has_healthy_watch_stream();
                 let repeated_outage = s
                     .conversation_client_id
                     .as_deref()

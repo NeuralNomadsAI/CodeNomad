@@ -501,7 +501,18 @@ impl Document {
             return false;
         }
         if batch.contains_key(&Choice::TranscriptPreset) {
-            self.write.transcript_queue.clear();
+            // Preserve earlier unsent row edits ahead of the new preset (matching Solid's FIFO
+            // order so a 503 on the preset never silently drops them), while coalescing any
+            // unsent preset and collapsing earlier row batches into one leading batch.
+            let mut leading_rows = Choices::new();
+            for queued in self.write.transcript_queue.drain(..) {
+                if !queued.contains_key(&Choice::TranscriptPreset) {
+                    leading_rows.extend(queued);
+                }
+            }
+            if !leading_rows.is_empty() {
+                self.write.transcript_queue.push_back(leading_rows);
+            }
             self.write.post_preset_rows.clear();
             self.write.failed.retain(|c| !is_transcript(*c));
             self.write.retry.retain(|c| !is_transcript(*c));
@@ -545,10 +556,9 @@ impl Document {
                 return;
             }
             self.write.transcript_queue.push_front(batch);
-        } else if let Some(front) = self.write.transcript_queue.front_mut() {
-            if front.contains_key(&Choice::TranscriptPreset) {
-                return;
-            }
+        } else if let Some(front) = self.write.transcript_queue.front_mut()
+            && !front.contains_key(&Choice::TranscriptPreset)
+        {
             for (choice, value) in batch {
                 front.entry(choice).or_insert(value);
             }
