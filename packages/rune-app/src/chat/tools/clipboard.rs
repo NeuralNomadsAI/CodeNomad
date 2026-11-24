@@ -1,4 +1,4 @@
-use super::{Tool, error, output, task, todo, tool_key};
+use super::{Tool, children::split_chain, error, output, task, todo};
 use crate::{State, content::Part, screen, strings::t};
 use rune::El;
 use rune_theme_codenomad::markdown;
@@ -10,11 +10,10 @@ pub(super) enum Section {
     Error,
 }
 
-pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El {
-    let base = tool_key(message, call);
+pub(super) fn copy(s: &State, message: &str, card_key: &str, call: &str, section: Section) -> El {
     let (message, call) = (message.to_owned(), call.to_owned());
     let key = format!(
-        "copy-{base}-{}",
+        "copy-{card_key}-{}",
         match section {
             Section::Input => "input",
             Section::Output => "output",
@@ -60,14 +59,15 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
 }
 
 fn lookup<'a>(s: &'a State, message: &str, call: &str) -> Option<&'a Tool> {
-    if let Some((child, id)) = message
+    if let Some((chain, id)) = message
         .strip_prefix("child:")
         .and_then(|v| v.split_once(':'))
     {
+        let (parent, child) = split_chain(chain);
         return s
             .transcript_display
             .children
-            .steps(child)
+            .steps(parent, child)
             .iter()
             .find(|(row, tool)| row == id && tool.id == call)
             .map(|(_, tool)| tool.as_ref());

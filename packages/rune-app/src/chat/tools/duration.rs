@@ -60,6 +60,7 @@ pub(super) fn tool_timing(tool: &Tool) -> Option<(u64, Option<u64>)> {
 }
 
 pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, header: El) -> El {
+    let header = header.key(format!("{key}-header"));
     let Some((start, end)) = timing else {
         return header;
     };
@@ -81,25 +82,23 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, hea
         .and_then(Weak::upgrade)
         .unwrap_or_default();
     let scope = s.input_scope.clone();
-    header
-        .key(key.clone())
-        .on_visible(move |s: &mut State, visible, tx| {
-            if s.current_scope(&scope) {
-                let clock = &mut s.transcript_display.tool_clock;
-                if visible {
-                    if clock
-                        .visible
-                        .insert(key.clone(), Rc::downgrade(&lease))
-                        .is_none()
-                    {
-                        tx.wake_after(Duration::ZERO);
-                    }
-                } else {
-                    clock.visible.remove(&key);
+    header.on_visible(move |s: &mut State, visible, tx| {
+        if s.current_scope(&scope) {
+            let clock = &mut s.transcript_display.tool_clock;
+            if visible {
+                if clock
+                    .visible
+                    .insert(key.clone(), Rc::downgrade(&lease))
+                    .is_none()
+                {
+                    tx.wake_after(Duration::ZERO);
                 }
+            } else {
+                clock.visible.remove(&key);
             }
-            tx.live_only();
-        })
+        }
+        tx.live_only();
+    })
 }
 
 fn caption(ms: u64, live: bool) -> Option<String> {

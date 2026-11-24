@@ -214,7 +214,9 @@ fn render_body(
                 screen::action(&s.input_scope, move |s| {
                     Display::set_expanded(s, &toggle, !expanded);
                     if is_task && expanded {
-                        s.transcript_display.children.release(&toggle);
+                        s.transcript_display
+                            .children
+                            .release(&toggle, &s.reads, &s.wake);
                         s.transcript_display
                             .clear_task_anchor(&format!("{toggle}-task-steps"));
                     }
@@ -243,7 +245,7 @@ fn render_body(
                 .as_array()
                 .is_some_and(|todos| !todos.is_empty())
     {
-        header = header.child(copy(s, message, &tool.id, Section::Output));
+        header = header.child(copy(s, message, key, &tool.id, Section::Output));
     }
     let mut block = col()
         .full_width()
@@ -326,7 +328,7 @@ fn render_body(
             .expanded(show),
         );
         if show {
-            block = block.child(copy(s, message, &tool.id, Section::Input));
+            block = block.child(copy(s, message, key, &tool.id, Section::Input));
             if let Some(input) = input {
                 block = block.child(markdown::tool_pane(
                     window(
@@ -477,7 +479,7 @@ fn render_error(
             .child(
                 layout::action_row()
                     .child(text(t("toolCall.error.label")))
-                    .child(copy(s, message, &tool.id, Section::Error)),
+                    .child(copy(s, message, key, &tool.id, Section::Error)),
             )
             .child(markdown::tool_pane(
                 window(

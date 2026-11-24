@@ -908,10 +908,55 @@ fn reveal_uses_effective_start_and_survives_anchor_eviction() {
     assert!(
         rt.elements()
             .into_iter()
-            .any(|e| !e.exiting && e.key.as_deref() == Some(step0_key.as_str())),
-        "focused step_0 must stay mounted even after returning to bottom"
+            .any(|e| !e.exiting && e.focused && e.key.as_deref() == Some(step0_toggle.as_str())),
+        "focused step_0 control must stay mounted and focused after returning to bottom"
     );
     assert!(rt.find(&format!("reveal-{step_key}")).is_none());
+
+    // Descendant copy and show-input keys match their row, and active selection protects the row at bottom.
+    assert!(super::key_matches_row(
+        &format!("copy-{step0_key}-output"),
+        &step0_key
+    ));
+    assert!(super::key_matches_row(
+        &format!("toggle-{step0_key}-tool_input"),
+        &step0_key
+    ));
+    rt.update(|s, tx| {
+        tx.focus(format!("toggle-{task_key}"), true);
+        s.transcript_display
+            .set_task_selected(&step_key, vec![step0_key.clone()]);
+        s.revision += 1;
+    });
+    rt.frame(1.0 / 60.0);
+    rt.update(|s, tx| {
+        Display::poll(s, false, 0.2, tx);
+        tx.scroll_to_bottom_instant(scroll_key.clone());
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|s, _| {
+        lease = Some(
+            s.transcript_display
+                .children
+                .install("child", child_steps_page(40, false, "ok")),
+        );
+        assert!(crate::chat::events::poll_chat(s, 7));
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.elements()
+            .into_iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some(step0_key.as_str())),
+        "selected step_0 must stay mounted even at bottom"
+    );
 
     // Collapsing the task card clears its stored step anchor.
     let (tx, ty) = rt.find(&format!("toggle-{task_key}")).expect("task toggle");
@@ -942,4 +987,173 @@ fn reveal_uses_effective_start_and_survives_anchor_eviction() {
     );
     assert!(ids_after[0].starts_with("idx:1"));
     let _ = lease;
+}
+
+#[test]
+fn mutual_child_references_non_transitive_times_untimed_reports_and_late_session_id() {
+    // 1. Mutual references between two direct root children must never recurse or reuse cross-parent snapshots.
+    let mut state = init();
+    state.phase = Phase::Ready;
+    crate::settings::fixture_transcript(
+        &mut state,
+        json!({"toolCallExpansionDefaults": {"tools": {"task": "expanded"}}}),
+    );
+    let make_root = |id: &str, child: &str| {
+        history::decode_message(&json!({
+            "id": id, "type": "assistant", "time": {"completed": 1},
+            "content": [{"type": "tool", "id": id, "name": "subagent", "state": {
+                "status": "completed", "metadata": {"sessionId": child, "status": "running"}
+            }}]
+        }))
+        .unwrap()
+    };
+    state.messages = vec![
+        make_root("m_a", "child_a").into(),
+        make_root("m_b", "child_b").into(),
+    ];
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| with_locale("en", || crate::view(s, cx)),
+        (1160.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    let mut leases = Vec::new();
+    rt.update(|s, _| {
+        for (own, other) in [("child_a", "child_b"), ("child_b", "child_a")] {
+            let page = history::decode(json!({
+                "status": "window", "latest": true, "messages": [{
+                    "id": format!("msg_{own}"), "type": "assistant", "time": {"completed": 1},
+                    "content": [{"type": "tool", "id": format!("call_{own}"), "name": "subagent", "state": {
+                        "status": "completed", "metadata": {"sessionId": other, "status": "running"}
+                    }}]
+                }]
+            }))
+            .unwrap();
+            leases.push(s.transcript_display.children.install(own, page));
+        }
+        assert!(crate::chat::events::poll_chat(s, 1));
+    });
+    for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+
+    // 2. Non-transitive timestamps [30, None, 10] never panic, and missing/zero-timestamp terminal reports settle status without fabricating duration.
+    let mut s2 = init();
+    let untimed_launch = history::decode_message(&json!({
+        "id": "m_mid", "type": "assistant", "time": {},
+        "content": [{"type": "tool", "id": "call", "name": "subagent", "state": {
+            "status": "completed", "metadata": {"sessionId": "child", "status": "running"}
+        }}]
+    }))
+    .unwrap();
+    let missing_ts_report = history::decode_message(&json!({
+        "id": "r_none", "type": "synthetic", "time": {},
+        "text": "<subagent sessionID=\"child\" state=\"completed\">\nNo timestamp\n</subagent>"
+    }))
+    .unwrap();
+    let zero_ts_report = history::decode_message(&json!({
+        "id": "r_zero", "type": "synthetic", "time": {"created": 0},
+        "text": "<subagent sessionID=\"child\" state=\"completed\">\nZero timestamp\n</subagent>"
+    }))
+    .unwrap();
+    s2.messages = vec![
+        launch("m_30", 30_000, 30_100).into(),
+        untimed_launch.into(),
+        launch("m_10", 10_000, 10_100).into(),
+        missing_ts_report.into(),
+        zero_ts_report.into(),
+    ];
+    for (idx, msg_id) in [(0, "m_30"), (1, "m_mid"), (2, "m_10")] {
+        let crate::content::Part::Tool(tool) = &s2.messages[idx].parts[0] else {
+            continue;
+        };
+        let d = super::delivery(&s2, msg_id, tool).expect("delivery");
+        assert!(!d.status.running && d.status.ended.is_none());
+    }
+
+    // 3. Late sessionID on an already-visible card triggers demand with no scroll and keeps focus on the card toggle, including across completion.
+    let start = 5_000_000_u64;
+    let mut s3 = init();
+    s3.phase = Phase::Ready;
+    s3.transcript_display
+        .tool_clock
+        .set_test_now(Some(start + 5_000));
+    crate::settings::fixture_transcript(
+        &mut s3,
+        json!({"toolCallExpansionDefaults": {"tools": {"task": "expanded"}}}),
+    );
+    s3.messages = vec![
+        history::decode_message(&json!({
+            "id": "late", "type": "assistant", "time": {"created": start},
+            "content": [{"type": "tool", "id": "c1", "name": "subagent", "time": {"ran": start},
+                "state": {"status": "running", "input": {"description": "Late child"}, "metadata": {}}}]
+        }))
+        .unwrap()
+        .into(),
+    ];
+    let mut rt3 = Runtime::new(
+        s3,
+        |s, cx| with_locale("en", || crate::view(s, cx)),
+        (1160.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    let late_toggle = format!("toggle-{}", super::super::tool_key("late", "c1"));
+    rt3.frame(0.0);
+    rt3.frame(0.0);
+    rt3.update(|_, tx| tx.focus(late_toggle.clone(), true));
+    rt3.frame(0.02);
+    assert!(
+        !rt3.state
+            .transcript_display
+            .children
+            .has_demand(None, "child_late")
+    );
+    rt3.update(|s, _| {
+        s.messages[0] = history::decode_message(&json!({
+            "id": "late", "type": "assistant", "time": {"created": start},
+            "content": [{"type": "tool", "id": "c1", "name": "subagent", "time": {"ran": start, "completed": start + 100},
+                "state": {"status": "completed", "input": {"description": "Late child"}, "metadata": {"sessionId": "child_late", "status": "running"}}}]
+        }))
+        .unwrap()
+        .into();
+        s.revision += 1;
+    });
+    rt3.frame(0.04);
+    rt3.frame(0.06);
+    assert!(
+        rt3.state
+            .transcript_display
+            .children
+            .has_demand(None, "child_late"),
+        "late sessionId must trigger demand without scrolling"
+    );
+    assert!(
+        rt3.elements()
+            .into_iter()
+            .any(|e| !e.exiting && e.focused && e.key.as_deref() == Some(late_toggle.as_str())),
+        "focus must remain on task toggle after sessionId arrives"
+    );
+    rt3.update(|s, _| {
+        s.messages.push(
+            history::decode_message(&json!({
+                "id": "late_done", "type": "synthetic", "time": {"created": start + 8_000},
+                "text": "<subagent sessionID=\"child_late\" state=\"completed\">\nDone\n</subagent>"
+            }))
+            .unwrap()
+            .into(),
+        );
+        s.revision += 1;
+    });
+    rt3.frame(0.08);
+    assert!(
+        rt3.elements()
+            .into_iter()
+            .any(|e| !e.exiting && e.focused && e.key.as_deref() == Some(late_toggle.as_str())),
+        "focus must remain on task toggle when terminal report stops the timer"
+    );
+
+    // 4. Structured JSON resident-byte accounting crosses 2 MiB on large null arrays.
+    let null_heavy = json!(vec![serde_json::Value::Null; 100_000]);
+    assert!(super::json_bytes(&null_heavy) > super::STEP_BYTES);
+    let _ = leases;
 }

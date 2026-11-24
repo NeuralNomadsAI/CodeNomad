@@ -25,6 +25,6 @@ pub(super) fn decode(native: &Value) -> Option<SubagentReport> {
         child: child.into(),
         state: state.into(),
         body: body.strip_suffix("\n</subagent>")?.into(),
-        created: native["time"]["created"].as_u64()?,
+        created: native["time"]["created"].as_u64().unwrap_or(0),
     })
 }

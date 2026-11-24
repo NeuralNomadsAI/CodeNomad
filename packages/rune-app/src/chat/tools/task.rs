@@ -1,6 +1,6 @@
 use super::{
     Display, Tool,
-    children::{Children, STEP_BYTES, STEP_LIMIT},
+    children::{Children, STEP_BYTES, STEP_LIMIT, split_chain},
     input_json, string, window,
 };
 use crate::{
@@ -56,15 +56,14 @@ pub(super) struct Delivery<'a> {
 
 #[derive(Clone, Copy)]
 struct Launch<'a> {
-    pos: usize,
+    order: (u64, usize),
     row_id: &'a str,
     call_id: &'a str,
-    at: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
 struct ReportEntry<'a> {
-    pos: usize,
+    order: (u64, usize),
     row_id: &'a str,
     state: &'a str,
     created: u64,
@@ -75,11 +74,11 @@ fn launch_time(tool: &Tool) -> Option<u64> {
     tool.started.or(tool.message_created).filter(|&at| at > 0)
 }
 
-fn child_owner(message: &str) -> Option<&str> {
+fn child_chain(message: &str) -> Option<&str> {
     message
         .strip_prefix("child:")
         .and_then(|rest| rest.split_once(':'))
-        .map(|(owner, _)| owner)
+        .map(|(chain, _)| chain)
 }
 
 fn message_row_id(message: &str) -> &str {
@@ -97,22 +96,59 @@ fn launches_and_reports<'a>(
     use crate::content::Part;
     let mut launches = Vec::new();
     let mut reports = Vec::new();
-    if let Some(owner) = child_owner(message) {
-        if let Some(snap) = s.transcript_display.children.snapshot(owner) {
+    let mut floor = 0u64;
+    if let Some(chain) = child_chain(message) {
+        let (parent, owner) = split_chain(chain);
+        if let Some(snap) = s.transcript_display.children.snapshot(parent, owner) {
+            let mut next_report = 0usize;
             for (index, (row_id, other)) in snap.steps.iter().enumerate() {
+                while next_report < snap.reports.len()
+                    && snap.reports[next_report].after_steps <= index
+                {
+                    let report = &snap.reports[next_report];
+                    if report.created > 0 {
+                        floor = floor.max(report.created);
+                    }
+                    if report.child == child_id {
+                        let effective = if report.created > 0 {
+                            report.created
+                        } else {
+                            floor
+                        };
+                        reports.push(ReportEntry {
+                            order: (effective, report.after_steps * 2),
+                            row_id: report.row_id.as_str(),
+                            state: report.state.as_str(),
+                            created: report.created,
+                            body: report.body.as_deref(),
+                        });
+                    }
+                    next_report += 1;
+                }
+                let at = launch_time(other);
+                if let Some(t) = at {
+                    floor = floor.max(t);
+                }
                 if is_task(other) && child(other) == child_id {
                     launches.push(Launch {
-                        pos: index * 2 + 1,
+                        order: (at.unwrap_or(floor), index * 2 + 1),
                         row_id: row_id.as_str(),
                         call_id: other.id.as_str(),
-                        at: launch_time(other),
                     });
                 }
             }
-            for report in &snap.reports {
+            for report in &snap.reports[next_report..] {
+                if report.created > 0 {
+                    floor = floor.max(report.created);
+                }
                 if report.child == child_id {
+                    let effective = if report.created > 0 {
+                        report.created
+                    } else {
+                        floor
+                    };
                     reports.push(ReportEntry {
-                        pos: report.after_steps * 2,
+                        order: (effective, report.after_steps * 2),
                         row_id: report.row_id.as_str(),
                         state: report.state.as_str(),
                         created: report.created,
@@ -127,22 +163,37 @@ fn launches_and_reports<'a>(
     for row in &s.messages[s.messages.len().saturating_sub(500)..] {
         for part in &row.parts {
             match part {
-                Part::Tool(other) if is_task(other) && child(other) == child_id => {
-                    launches.push(Launch {
-                        pos,
-                        row_id: row.id.as_str(),
-                        call_id: other.id.as_str(),
-                        at: launch_time(other),
-                    });
+                Part::Tool(other) => {
+                    let at = launch_time(other);
+                    if let Some(t) = at {
+                        floor = floor.max(t);
+                    }
+                    if is_task(other) && child(other) == child_id {
+                        launches.push(Launch {
+                            order: (at.unwrap_or(floor), pos),
+                            row_id: row.id.as_str(),
+                            call_id: other.id.as_str(),
+                        });
+                    }
                 }
-                Part::SubagentReport(report) if report.child == child_id => {
-                    reports.push(ReportEntry {
-                        pos,
-                        row_id: row.id.as_str(),
-                        state: report.state.as_str(),
-                        created: report.created,
-                        body: Some(report.body.as_str()),
-                    });
+                Part::SubagentReport(report) => {
+                    if report.created > 0 {
+                        floor = floor.max(report.created);
+                    }
+                    if report.child == child_id {
+                        let effective = if report.created > 0 {
+                            report.created
+                        } else {
+                            floor
+                        };
+                        reports.push(ReportEntry {
+                            order: (effective, pos),
+                            row_id: row.id.as_str(),
+                            state: report.state.as_str(),
+                            created: report.created,
+                            body: Some(report.body.as_str()),
+                        });
+                    }
                 }
                 _ => {}
             }
@@ -150,32 +201,6 @@ fn launches_and_reports<'a>(
         }
     }
     (launches, reports)
-}
-
-fn report_at_or_after(launch: &Launch<'_>, report: &ReportEntry<'_>) -> bool {
-    match launch.at {
-        Some(from) if report.created > 0 => {
-            report.created > from || (report.created == from && report.pos > launch.pos)
-        }
-        Some(from) => report.created >= from && report.pos > launch.pos,
-        None => report.pos > launch.pos,
-    }
-}
-
-fn is_later_launch(current: &Launch<'_>, other: &Launch<'_>) -> bool {
-    match (current.at, other.at) {
-        (Some(a), Some(b)) => b > a || (b == a && other.pos > current.pos),
-        _ => other.pos > current.pos,
-    }
-}
-
-fn launch_is_after_report(launch: &Launch<'_>, report: &ReportEntry<'_>) -> bool {
-    match launch.at {
-        Some(at) if report.created > 0 => {
-            at > report.created || (at == report.created && launch.pos > report.pos)
-        }
-        _ => launch.pos > report.pos,
-    }
 }
 
 pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<Delivery<'a>> {
@@ -201,57 +226,47 @@ pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<D
         .find(|launch| launch.row_id == row_id && launch.call_id == tool.id)
         .or_else(|| {
             launch_time(tool).map(|at| Launch {
-                pos: 0,
+                order: (at, 0),
                 row_id: "",
                 call_id: "",
-                at: Some(at),
             })
         });
     let body = current.and_then(|current| {
         let mut later: Vec<_> = launches
             .iter()
             .copied()
-            .filter(|other| is_later_launch(&current, other))
+            .filter(|other| other.order > current.order)
             .collect();
-        later.sort_unstable_by(|a, b| {
-            if is_later_launch(a, b) {
-                std::cmp::Ordering::Less
-            } else if is_later_launch(b, a) {
-                std::cmp::Ordering::Greater
-            } else {
-                a.pos.cmp(&b.pos)
-            }
-        });
+        later.sort_unstable_by_key(|launch| launch.order);
         let first = reports
             .iter()
             .copied()
-            .filter(|report| report_at_or_after(&current, report))
-            .min_by_key(|report| (report.created, report.pos, report.row_id))?;
+            .filter(|report| report.order >= current.order)
+            .min_by_key(|report| (report.order, report.row_id))?;
         let boundary = later
             .into_iter()
-            .find(|other| launch_is_after_report(other, &first));
+            .find(|other| other.order > first.order)
+            .map(|other| other.order);
         reports
             .iter()
             .copied()
             .filter(|report| {
-                report_at_or_after(&current, report)
-                    && boundary.is_none_or(|end| launch_is_after_report(&end, report))
+                report.order >= current.order && boundary.is_none_or(|end| report.order < end)
             })
-            .max_by_key(|report| (report.created, report.pos, report.row_id))
+            .max_by_key(|report| (report.order, report.row_id))
             .and_then(|report| report.body)
     });
     let latest = current.and_then(|current| {
-        let mut newest = current;
-        for other in &launches {
-            if is_later_launch(&newest, other) {
-                newest = *other;
-            }
-        }
+        let newest = launches
+            .iter()
+            .map(|launch| launch.order)
+            .max()
+            .map_or(current.order, |max| max.max(current.order));
         reports
             .iter()
             .copied()
-            .filter(|report| report_at_or_after(&newest, report))
-            .max_by_key(|report| (report.created, report.pos, report.row_id))
+            .filter(|report| report.order >= newest)
+            .max_by_key(|report| (report.order, report.row_id))
             .map(|report| (report.created, report.state))
     });
     let status = match latest {
@@ -296,22 +311,15 @@ fn fnv64(text: &str) -> u64 {
 }
 
 fn json_bytes(value: &serde_json::Value) -> usize {
+    let base = std::mem::size_of::<serde_json::Value>();
     match value {
-        serde_json::Value::Null => 4,
-        serde_json::Value::Bool(b) => {
-            if *b {
-                4
-            } else {
-                5
-            }
-        }
-        serde_json::Value::Number(_) => 12,
-        serde_json::Value::String(s) => s.len() + 2,
-        serde_json::Value::Array(items) => 2 + items.iter().map(json_bytes).sum::<usize>(),
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => base,
+        serde_json::Value::String(s) => base + s.len(),
+        serde_json::Value::Array(items) => base + items.iter().map(json_bytes).sum::<usize>(),
         serde_json::Value::Object(map) => {
-            2 + map
+            base + map
                 .iter()
-                .map(|(k, v)| k.len() + 3 + json_bytes(v))
+                .map(|(k, v)| k.len() + base + json_bytes(v))
                 .sum::<usize>()
         }
     }
@@ -338,22 +346,23 @@ fn legacy_identities(legacy_all: &[serde_json::Value], legacy_base: usize) -> Ve
 }
 
 fn key_matches_row(focused: &str, row_key: &str) -> bool {
-    focused == row_key
-        || focused.strip_prefix("toggle-") == Some(row_key)
-        || focused
-            .strip_prefix("copy-")
-            .is_some_and(|rest| rest.starts_with(row_key))
-        || focused
+    let rest = focused
+        .strip_prefix("toggle-")
+        .or_else(|| focused.strip_prefix("copy-"))
+        .unwrap_or(focused);
+    rest == row_key
+        || rest
             .strip_prefix(row_key)
-            .is_some_and(|rest| rest.starts_with('-'))
+            .is_some_and(|tail| tail.starts_with('-'))
 }
 
 pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &str) -> Option<El> {
     let prompt = string(&tool.input, &["prompt"]);
-    let parent = child_owner(message);
+    let chain = child_chain(message);
+    let parent = chain.map(|c| split_chain(c).1);
     let child_id =
-        watched_child(tool).filter(|id| s.transcript_display.children.can_watch(parent, id));
-    let child_snapshot = child_id.and_then(|id| s.transcript_display.children.snapshot(id));
+        watched_child(tool).filter(|id| s.transcript_display.children.can_watch(chain, id));
+    let child_snapshot = child_id.and_then(|id| s.transcript_display.children.snapshot(parent, id));
     let use_child = child_snapshot.is_some_and(|snap| !snap.steps.is_empty());
     let child_all_dropped =
         child_snapshot.is_some_and(|snap| snap.steps.is_empty() && snap.byte_truncated);
@@ -405,11 +414,9 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
         legacy_byte_truncated || child_all_dropped
     };
     let truncated = count_truncated || byte_truncated;
-    let show_notice =
-        truncated && (step_count > 0 || child_all_dropped || (!use_child && legacy_byte_truncated));
     if prompt.trim().is_empty()
         && step_count == 0
-        && !show_notice
+        && !truncated
         && output.trim().is_empty()
         && child_id.is_none()
     {
@@ -435,21 +442,26 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
                 ));
         }
     }
-    if step_count > 0 || show_notice {
+    if step_count > 0 || truncated {
         let step_key = format!("{key}-task-steps");
         let mut section_header = layout::action_row()
             .child(text(t("toolCall.task.sections.steps")).text_role(TextRole::Label));
-        if step_count > 0 {
+        let displayed_count = if use_child && truncated && step_count == 0 {
+            child_snapshot.map_or(0, |snap| snap.steps.len())
+        } else {
+            step_count
+        };
+        if displayed_count > 0 || count_truncated {
             let count_text = if count_truncated {
                 format!("{STEP_LIMIT}+")
             } else if byte_truncated {
-                format!("{step_count}+")
+                format!("{displayed_count}+")
             } else {
-                step_count.to_string()
+                displayed_count.to_string()
             };
             let count_label = catalogue::format(
                 locale(),
-                if !truncated && step_count == 1 {
+                if !truncated && displayed_count == 1 {
                     "toolCall.task.steps.count.one"
                 } else {
                     "toolCall.task.steps.count.other"
@@ -459,7 +471,7 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
             section_header = section_header.child(text(count_label).text_role(TextRole::Label));
         }
         result = result.child(section_header);
-        if show_notice {
+        if truncated {
             let notice = if child_all_dropped {
                 t("toolCall.output.tooLarge").to_owned()
             } else if use_child
@@ -495,19 +507,27 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
             } else {
                 legacy_identities(legacy_all, legacy_base)
             };
-            let row_keys: Vec<String> = if let Some(child_id) = child_id.filter(|_| use_child) {
-                visible_steps
-                    .iter()
-                    .map(|(message, step)| {
-                        super::tool_key(&format!("{step_key}-child:{child_id}:{message}"), &step.id)
-                    })
-                    .collect()
-            } else {
-                legacy_ids
-                    .iter()
-                    .map(|identity| format!("{step_key}-{identity}"))
-                    .collect()
-            };
+            let next_chain = child_id.map(|id| match chain {
+                Some(prefix) => format!("{prefix}>{id}"),
+                None => id.to_owned(),
+            });
+            let row_keys: Vec<String> =
+                if let Some(next_chain) = next_chain.as_deref().filter(|_| use_child) {
+                    visible_steps
+                        .iter()
+                        .map(|(message, step)| {
+                            super::tool_key(
+                                &format!("{step_key}-child:{next_chain}:{message}"),
+                                &step.id,
+                            )
+                        })
+                        .collect()
+                } else {
+                    legacy_ids
+                        .iter()
+                        .map(|identity| format!("{step_key}-{identity}"))
+                        .collect()
+                };
             let count = (INITIAL_STEPS + s.transcript_display.steps(&step_key)).min(STEP_LIMIT);
             let desired = step_count.saturating_sub(count);
             let visible_anchor = s
@@ -571,12 +591,12 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
                         ),
                 );
             }
-            if let Some(child_id) = child_id.filter(|_| use_child) {
+            if let Some(next_chain) = next_chain.as_deref().filter(|_| use_child) {
                 for ((message, step), child_key) in
                     visible_steps.into_iter().zip(row_keys.iter()).skip(start)
                 {
                     mounted_ids.push(format!("{message}:{}", step.id));
-                    let owner = format!("child:{child_id}:{message}");
+                    let owner = format!("child:{next_chain}:{message}");
                     step_rows.push(
                         col()
                             .key(child_key.clone())
@@ -719,38 +739,24 @@ fn watched_child(tool: &Tool) -> Option<&str> {
 }
 
 pub(super) fn observe(s: &State, message: &str, key: &str, tool: &Tool, card: El) -> El {
-    let parent = child_owner(message).map(str::to_owned);
+    let chain = child_chain(message).map(str::to_owned);
+    let parent = chain.as_deref().map(|c| split_chain(c).1);
     let child_id = watched_child(tool).filter(|id| {
         s.transcript_display
             .children
-            .can_watch(parent.as_deref(), id)
+            .can_watch(chain.as_deref(), id)
     });
-    let lease = child_id.map(|id| s.transcript_display.children.lease(id, key));
-    let (id, key, scope) = (
-        child_id.map(str::to_owned),
-        key.to_owned(),
-        s.input_scope.clone(),
-    );
-    let watch_key = match &id {
-        Some(id) => format!("{key}-watch-{id}"),
-        None => format!("{key}-watch-steps"),
+    let Some(id) = child_id else {
+        return card;
     };
-    col()
-        .full_width()
-        .key(watch_key)
-        .child(card)
-        .on_visible(move |s: &mut State, visible, tx| {
-            if s.current_scope(&scope) {
-                if let (Some(id), Some(lease)) = (id.as_deref(), lease.as_ref()) {
-                    Children::demand(s, parent.as_deref(), id, &key, lease, visible);
-                }
-                if !visible {
-                    s.transcript_display
-                        .clear_task_anchor(&format!("{key}-task-steps"));
-                }
-            }
-            tx.live_only();
-        })
+    let lease = s.transcript_display.children.lease(parent, id, key);
+    let (id, key, scope) = (id.to_owned(), key.to_owned(), s.input_scope.clone());
+    card.on_visible(move |s: &mut State, visible, tx| {
+        if s.current_scope(&scope) {
+            Children::demand(s, chain.as_deref(), &id, &key, &lease, visible);
+        }
+        tx.live_only();
+    })
 }
 
 #[cfg(test)]

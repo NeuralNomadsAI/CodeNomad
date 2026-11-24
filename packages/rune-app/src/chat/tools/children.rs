@@ -14,8 +14,10 @@ use std::{
 pub(super) const STEP_LIMIT: usize = 200;
 pub(super) const STEP_BYTES: usize = 2 << 20;
 const CHILD_LIMIT: usize = 4;
-const CHILD_DEPTH_LIMIT: u8 = 3;
+const CHILD_CACHE_LIMIT: usize = 16;
+const CHILD_DEPTH_LIMIT: usize = 3;
 type Steps = Vec<(String, Arc<Tool>)>;
+type ChildKey = (Option<String>, String);
 
 #[derive(Clone, PartialEq)]
 pub(super) struct ChildReport {
@@ -38,16 +40,23 @@ pub(super) struct Snapshot {
 #[derive(Default)]
 pub(crate) struct Children {
     backend: Option<Backend>,
-    entries: HashMap<String, Entry>,
+    entries: HashMap<ChildKey, Entry>,
 }
 
 struct Entry {
-    parent: Option<String>,
-    depth: u8,
-    cards: HashMap<String, Weak<()>>,
+    cards: HashMap<String, CardDemand>,
+    active: Option<ActiveWatch>,
+    snapshot: Option<Snapshot>,
+}
+
+struct CardDemand {
+    lease: Weak<()>,
+    visible: bool,
+}
+
+struct ActiveWatch {
     _cancel: codenomad_client::Sender<()>,
     result: Receiver<Option<Snapshot>>,
-    snapshot: Option<Snapshot>,
 }
 
 impl Children {
@@ -60,137 +69,205 @@ impl Children {
         self.entries.clear();
     }
 
-    pub(super) fn release(&mut self, key: &str) {
+    pub(super) fn release(
+        &mut self,
+        key: &str,
+        reads: &crate::platform::reads::Reads,
+        wake: &rune::Waker,
+    ) {
         self.entries.retain(|_, entry| {
             entry.cards.remove(key);
             !entry.cards.is_empty()
         });
         self.prune_orphans();
+        self.promote(reads, wake);
     }
 
-    pub(super) fn lease(&self, id: &str, key: &str) -> Rc<()> {
+    pub(super) fn lease(&self, parent: Option<&str>, id: &str, key: &str) -> Rc<()> {
+        let lookup = (parent.map(str::to_owned), id.to_owned());
         self.entries
-            .get(id)
+            .get(&lookup)
             .and_then(|entry| entry.cards.get(key))
-            .and_then(Weak::upgrade)
+            .and_then(|demand| demand.lease.upgrade())
             .unwrap_or_default()
     }
 
-    pub(super) fn can_watch(&self, parent: Option<&str>, child: &str) -> bool {
-        let Some(owner) = parent else {
+    pub(super) fn can_watch(&self, chain: Option<&str>, child: &str) -> bool {
+        let Some(chain) = chain else {
             return true;
         };
-        if owner == child {
-            return false;
-        }
-        let Some(entry) = self.entries.get(owner) else {
-            return false;
-        };
-        if entry.depth >= CHILD_DEPTH_LIMIT {
-            return false;
-        }
-        let mut cursor = entry.parent.as_deref();
-        for _ in 0..CHILD_DEPTH_LIMIT {
-            let Some(ancestor) = cursor else {
-                return true;
-            };
-            if ancestor == child {
+        let mut depth = 0usize;
+        for ancestor in chain.split('>') {
+            depth += 1;
+            if ancestor == child || depth >= CHILD_DEPTH_LIMIT {
                 return false;
             }
-            cursor = self.entries.get(ancestor).and_then(|e| e.parent.as_deref());
         }
-        false
+        let (grandparent, owner) = split_chain(chain);
+        let parent_key = (grandparent.map(str::to_owned), owner.to_owned());
+        self.entries.contains_key(&parent_key)
     }
 
     pub(super) fn demand(
         s: &mut State,
-        parent: Option<&str>,
+        chain: Option<&str>,
         id: &str,
         key: &str,
         lease: &Rc<()>,
         visible: bool,
     ) {
+        let parent = chain.map(|c| split_chain(c).1);
+        let child_key = (parent.map(str::to_owned), id.to_owned());
+        let wake = s.wake.clone();
+        let reads = s.reads.clone();
         let children = &mut s.transcript_display.children;
         children.prune();
-        if let Some(entry) = children.entries.get_mut(id) {
+        if let Some(entry) = children.entries.get_mut(&child_key) {
             if visible {
-                entry.cards.insert(key.into(), Rc::downgrade(lease));
-            } else {
-                entry.cards.remove(key);
-                if entry.cards.is_empty() {
-                    children.entries.remove(id);
-                    children.prune_orphans();
+                entry.cards.insert(
+                    key.into(),
+                    CardDemand {
+                        lease: Rc::downgrade(lease),
+                        visible: true,
+                    },
+                );
+            } else if let Some(demand) = entry.cards.get_mut(key) {
+                demand.visible = false;
+                if !entry
+                    .cards
+                    .values()
+                    .any(|c| c.visible && c.lease.strong_count() > 0)
+                {
+                    entry.active = None;
                 }
             }
+            children.promote(&reads, &wake);
             return;
         }
-        if !visible || children.entries.len() >= CHILD_LIMIT || !children.can_watch(parent, id) {
+        if !visible || !children.can_watch(chain, id) {
             return;
         }
-        let depth = parent
-            .and_then(|owner| children.entries.get(owner))
-            .map_or(1, |entry| entry.depth + 1);
-        let Some(backend) = children.backend.clone() else {
-            return;
-        };
-        let Some(dirty) = backend.watch_child(id) else {
-            return;
-        };
-        let (out, result) = bounded(1);
-        let (cancel, cancelled) = bounded(1);
+        if children.entries.len() >= CHILD_CACHE_LIMIT {
+            let evict = children
+                .entries
+                .iter()
+                .find(|(_, entry)| {
+                    entry.active.is_none() && !entry.cards.values().any(|c| c.visible)
+                })
+                .map(|(k, _)| k.clone());
+            if let Some(evict) = evict {
+                children.entries.remove(&evict);
+                children.prune_orphans();
+            } else {
+                return;
+            }
+        }
         children.entries.insert(
-            id.into(),
+            child_key,
             Entry {
-                parent: parent.map(str::to_owned),
-                depth,
-                cards: HashMap::from([(key.into(), Rc::downgrade(lease))]),
-                _cancel: cancel,
-                result,
+                cards: HashMap::from([(
+                    key.into(),
+                    CardDemand {
+                        lease: Rc::downgrade(lease),
+                        visible: true,
+                    },
+                )]),
+                active: None,
                 snapshot: None,
             },
         );
-        let parent_id = parent.map(str::to_owned);
-        let child = id.to_owned();
-        let wake = s.wake.clone();
-        let reads = s.reads.clone();
-        crate::platform::spawn(async move {
-            crate::platform::reads::cancellable(&cancelled, async {
-                loop {
-                    let snapshot = {
-                        let Some(_slot) = reads.background(&cancelled).await else {
-                            break;
-                        };
-                        let fetched = match parent_id.as_deref() {
-                            Some(owner) => backend.child_page_for(owner, &child).await,
-                            None => backend.child_page(&child).await,
-                        };
-                        fetched
-                            .ok()
-                            .map(|page| page.map_or_else(Snapshot::default, snapshot))
-                    };
-                    if out.send(snapshot).await.is_err() {
-                        break;
-                    }
-                    wake();
-                    if dirty.recv().await.is_err() {
-                        break;
-                    }
-                    runtime::sleep(Duration::from_millis(100)).await;
-                    let _ = dirty.try_recv();
-                }
-            })
-            .await;
-        });
+        children.promote(&reads, &wake);
     }
 
-    pub(crate) fn poll(&mut self) -> bool {
+    fn promote(&mut self, reads: &crate::platform::reads::Reads, wake: &rune::Waker) {
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let mut active_count = self.entries.values().filter(|e| e.active.is_some()).count();
+        if active_count >= CHILD_LIMIT {
+            return;
+        }
+        let mut waiting: Vec<ChildKey> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| {
+                entry.active.is_none()
+                    && entry
+                        .cards
+                        .values()
+                        .any(|c| c.visible && c.lease.strong_count() > 0)
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        waiting.sort();
+        for key in waiting {
+            if active_count >= CHILD_LIMIT {
+                break;
+            }
+            let (parent_id, child) = key.clone();
+            let Some(dirty) = backend.watch_child(&child) else {
+                continue;
+            };
+            let (out, result) = bounded(1);
+            let (cancel, cancelled) = bounded(1);
+            if let Some(entry) = self.entries.get_mut(&key) {
+                entry.active = Some(ActiveWatch {
+                    _cancel: cancel,
+                    result,
+                });
+                active_count += 1;
+            } else {
+                continue;
+            }
+            let backend = backend.clone();
+            let wake = wake.clone();
+            let reads = reads.clone();
+            crate::platform::spawn(async move {
+                crate::platform::reads::cancellable(&cancelled, async {
+                    loop {
+                        let snapshot = {
+                            let Some(_slot) = reads.background(&cancelled).await else {
+                                break;
+                            };
+                            let fetched = match parent_id.as_deref() {
+                                Some(owner) => backend.child_page_for(owner, &child).await,
+                                None => backend.child_page(&child).await,
+                            };
+                            fetched
+                                .ok()
+                                .map(|page| page.map_or_else(Snapshot::default, snapshot))
+                        };
+                        if out.send(snapshot).await.is_err() {
+                            break;
+                        }
+                        wake();
+                        if dirty.recv().await.is_err() {
+                            break;
+                        }
+                        runtime::sleep(Duration::from_millis(100)).await;
+                        let _ = dirty.try_recv();
+                    }
+                })
+                .await;
+            });
+        }
+    }
+
+    pub(crate) fn poll(
+        &mut self,
+        reads: &crate::platform::reads::Reads,
+        wake: &rune::Waker,
+    ) -> bool {
         let mut changed = self.prune();
         for entry in self.entries.values_mut() {
-            if let Ok(Some(next)) = entry.result.try_recv() {
+            if let Some(active) = &mut entry.active
+                && let Ok(Some(next)) = active.result.try_recv()
+            {
                 changed |= entry.snapshot.as_ref() != Some(&next);
                 entry.snapshot = Some(next);
             }
         }
+        self.promote(reads, wake);
         changed
     }
 
@@ -198,7 +275,12 @@ impl Children {
         // Rune drops the visibility handler on unmount without a final `false` callback.
         let before = self.entries.len();
         self.entries.retain(|_, entry| {
-            entry.cards.retain(|_, lease| lease.strong_count() > 0);
+            entry
+                .cards
+                .retain(|_, demand| demand.lease.strong_count() > 0);
+            if !entry.cards.values().any(|c| c.visible) {
+                entry.active = None;
+            }
             !entry.cards.is_empty()
         });
         self.prune_orphans();
@@ -207,23 +289,35 @@ impl Children {
 
     fn prune_orphans(&mut self) {
         for _ in 0..CHILD_DEPTH_LIMIT {
-            let live: std::collections::HashSet<String> = self.entries.keys().cloned().collect();
+            let live: std::collections::HashSet<String> = self
+                .entries
+                .keys()
+                .map(|(_, child)| child.clone())
+                .collect();
             let before = self.entries.len();
             self.entries
-                .retain(|_, entry| entry.parent.as_deref().is_none_or(|p| live.contains(p)));
+                .retain(|(parent, _), _| parent.as_deref().is_none_or(|p| live.contains(p)));
             if self.entries.len() == before {
                 break;
             }
         }
     }
 
-    pub(super) fn snapshot(&self, id: &str) -> Option<&Snapshot> {
-        self.entries.get(id)?.snapshot.as_ref()
+    pub(super) fn snapshot(&self, parent: Option<&str>, id: &str) -> Option<&Snapshot> {
+        let lookup = (parent.map(str::to_owned), id.to_owned());
+        self.entries.get(&lookup)?.snapshot.as_ref()
     }
 
-    pub(super) fn steps(&self, id: &str) -> &[(String, Arc<Tool>)] {
-        self.snapshot(id)
+    pub(super) fn steps(&self, parent: Option<&str>, id: &str) -> &[(String, Arc<Tool>)] {
+        self.snapshot(parent, id)
             .map_or(&[], |snapshot| snapshot.steps.as_slice())
+    }
+}
+
+pub(super) fn split_chain(chain: &str) -> (Option<&str>, &str) {
+    match chain.rsplit_once('>') {
+        Some((prefix, owner)) => (Some(prefix.rsplit('>').next().unwrap_or(prefix)), owner),
+        None => (None, chain),
     }
 }
 
@@ -304,24 +398,32 @@ impl Children {
         child: &str,
         page: crate::history::Page,
     ) -> Rc<()> {
-        let depth = parent
-            .and_then(|owner| self.entries.get(owner))
-            .map_or(1, |entry| entry.depth + 1);
         let lease = Rc::default();
         let (out, result) = bounded(1);
         out.try_send(Some(snapshot(page))).unwrap();
         let (cancel, _) = bounded(1);
         self.entries.insert(
-            child.into(),
+            (parent.map(str::to_owned), child.into()),
             Entry {
-                parent: parent.map(str::to_owned),
-                depth,
-                cards: HashMap::from([("test".into(), Rc::downgrade(&lease))]),
-                _cancel: cancel,
-                result,
+                cards: HashMap::from([(
+                    "test".into(),
+                    CardDemand {
+                        lease: Rc::downgrade(&lease),
+                        visible: true,
+                    },
+                )]),
+                active: Some(ActiveWatch {
+                    _cancel: cancel,
+                    result,
+                }),
                 snapshot: None,
             },
         );
         lease
+    }
+
+    pub(super) fn has_demand(&self, parent: Option<&str>, child: &str) -> bool {
+        self.entries
+            .contains_key(&(parent.map(str::to_owned), child.into()))
     }
 }
