@@ -1,4 +1,7 @@
-use super::directory::{Kind, Panel, title};
+use super::{
+    directory::{Kind, Panel, title},
+    task_rows::TaskRecoveryView,
+};
 use crate::strings::{locale, t};
 use codenomad_client::missions::{RunState, Status};
 use rune::{El, col, edit::TextEdit, text};
@@ -7,6 +10,7 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     shell,
 };
+use std::rc::Rc;
 
 type Owner<S> = fn(&mut S) -> (Option<&mut Panel>, &mut TextEdit);
 
@@ -37,10 +41,16 @@ impl<S> Scoped<S> {
 /// Panel content only. The Shell owns its occurrence, visibility and mounting.
 #[cfg(test)]
 pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
-    panel_body(ui, owner, rune::el(), default_cleanups::<S>(ui))
+    panel_body(ui, owner, rune::el(), default_cleanups::<S>(ui), None)
 }
 
-pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El, cleanups: El) -> El {
+pub(crate) fn panel_body<S: 'static>(
+    ui: &Panel,
+    owner: Owner<S>,
+    actions: El,
+    cleanups: El,
+    task_recovery: Option<Rc<TaskRecoveryView<S>>>,
+) -> El {
     let heading = t("missions.control.mapLabel");
     let search = t("missionsPanel.picker.search");
     let partial = ui.has_more(Kind::Summaries);
@@ -99,7 +109,9 @@ pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El, c
                 }
             }));
         }
-        body = body.child(actions).child(detail(ui, scoped.clone()));
+        body = body
+            .child(actions)
+            .child(detail(ui, scoped.clone(), task_recovery));
     }
     body = body.child(cleanups);
     body = body.child(page_footer(ui, scoped.clone(), Kind::Cleanups));
@@ -156,12 +168,16 @@ fn page_footer<S: 'static>(ui: &Panel, owner: Scoped<S>, kind: Kind) -> El {
     } else if ui.failed(kind) {
         footer = footer
             .child(theme::note(t("missionsPanel.pages.failed"), "alert"))
-            .child(layout::button(
+            .child(layout::button_tx(
                 t("missionsPanel.reader.retry"),
                 false,
-                move |s| {
+                move |s, tx| {
                     if let Some(panel) = owner.get(s).0 {
                         panel.more(kind);
+                        if kind == Kind::Summaries {
+                            tx.focus("missions-search", tx.focus_visible());
+                        }
+                        tx.instant();
                     }
                 },
             ));
@@ -179,7 +195,11 @@ fn page_footer<S: 'static>(ui: &Panel, owner: Scoped<S>, kind: Kind) -> El {
     footer
 }
 
-fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>) -> El {
+fn detail<S: 'static>(
+    ui: &Panel,
+    owner: Scoped<S>,
+    task_recovery: Option<Rc<TaskRecoveryView<S>>>,
+) -> El {
     let detail = &ui.detail;
     let mut result = col()
         .full_width()
@@ -245,7 +265,7 @@ fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>) -> El {
                 );
             }
         }
-        result = result.child(snapshot.tasks.view::<S>());
+        result = result.child(snapshot.tasks.view::<S>(task_recovery));
     }
     if detail.busy() || detail.snapshot.is_none() && !detail.failed {
         result = result.child(theme::note(t("missions.control.loading"), "status"));

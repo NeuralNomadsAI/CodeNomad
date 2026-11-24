@@ -63,6 +63,108 @@ impl Task {
     pub fn actor_session_id(&self) -> Option<&str> {
         self.extra.get("actorSessionId").and_then(Value::as_str)
     }
+
+    /// Mirrors Solid `canRecoverMissionReport` + `missionTaskExecutionEvidence`.
+    pub fn can_recover_report(&self, activity: Option<super::ActorState>) -> bool {
+        let non_blank = |v: Option<&Value>| {
+            v.and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty())
+        };
+        let valid_binding = |v: &Value| {
+            let Some(obj) = v.as_object() else {
+                return false;
+            };
+            let generation = obj.get("generation").and_then(Value::as_u64);
+            generation.is_some_and(|g| g > 0 && g <= SAFE)
+                && non_blank(obj.get("parentSessionID"))
+                && non_blank(obj.get("parentMessageID"))
+                && non_blank(obj.get("toolCallID"))
+        };
+        if !non_blank(self.extra.get("actorSessionId"))
+            || self.report.is_some()
+            || !self.late_reports.is_empty()
+            || self.late_report_count.unwrap_or(0) > 0
+        {
+            return false;
+        }
+        let original = self.extra.get("nativeBinding").filter(|v| !v.is_null());
+        let current = self.extra.get("nativeExecution").filter(|v| !v.is_null());
+        let contract_gen = self.extra.get("contractGeneration").and_then(Value::as_u64);
+        #[derive(PartialEq, Eq)]
+        enum NativeCall {
+            None,
+            Active,
+            Ended,
+            Unknown,
+        }
+        let mut native_call = NativeCall::None;
+        if original.is_some() || current.is_some() {
+            native_call = NativeCall::Unknown;
+            if let (Some(orig), Some(curr)) = (original, current)
+                && valid_binding(orig)
+                && curr.get("binding").is_some_and(valid_binding)
+                && contract_gen.is_none_or(|g| Some(g) == orig["generation"].as_u64())
+                && curr["binding"]["generation"] == orig["generation"]
+                && curr["binding"]["parentSessionID"] == orig["parentSessionID"]
+                && (curr["binding"]["toolCallID"] == orig["toolCallID"])
+                    == (curr["binding"]["parentMessageID"] == orig["parentMessageID"])
+            {
+                let conflict = curr.get("observationConflict") == Some(&Value::Bool(true));
+                let non_fg = curr
+                    .get("launch")
+                    .and_then(Value::as_object)
+                    .is_some_and(|l| l.get("mode").and_then(Value::as_str) != Some("foreground"));
+                native_call = if conflict || non_fg {
+                    NativeCall::Unknown
+                } else {
+                    match curr.get("ended") {
+                        None | Some(Value::Null) => NativeCall::Active,
+                        Some(Value::String(s)) if s == "returned" || s == "error" => {
+                            NativeCall::Ended
+                        }
+                        _ => NativeCall::Unknown,
+                    }
+                };
+            }
+        }
+        let has_execution = self.outstanding_execution
+            || non_blank(self.extra.get("admissionId"))
+            || original.is_some_and(valid_binding);
+        let missing_report = has_execution
+            && (matches!(self.status, TaskStatus::Queued | TaskStatus::Dispatching)
+                || self.outstanding_execution);
+        if !missing_report {
+            return false;
+        }
+        let is_native = original.is_some()
+            || current.is_some()
+            || self
+                .extra
+                .get("executionMode")
+                .and_then(|v| v.get("kind"))
+                .and_then(Value::as_str)
+                == Some("native");
+        if is_native {
+            let current_gen = current
+                .and_then(|c| c.get("binding"))
+                .and_then(|b| b.get("generation"))
+                .and_then(Value::as_u64);
+            activity == Some(super::ActorState::IdleWithoutReport)
+                && native_call == NativeCall::Ended
+                && !self.outstanding_execution
+                && current_gen.is_some()
+                && current_gen == contract_gen
+        } else {
+            non_blank(self.extra.get("admissionId"))
+                && (self.status != TaskStatus::Withdrawn || self.outstanding_execution)
+                && activity.is_none_or(|state| {
+                    matches!(
+                        state,
+                        super::ActorState::Unknown | super::ActorState::IdleWithoutReport
+                    )
+                })
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, PartialEq)]

@@ -10,7 +10,7 @@ use codenomad_client::{
     bounded,
     missions::{
         ActorState, LifecycleTarget, MapHeader, RecoveryError, RecoveryOutcome, RecoveryRequest,
-        RecoveryTarget, RunState, Status,
+        RecoveryTarget, RunState, Status, Task,
     },
 };
 use std::collections::HashMap;
@@ -37,6 +37,18 @@ impl RecoveryKey {
             target: RecoveryTarget::Coordinator,
         }
     }
+
+    pub fn report(source: &Source, revision: u64, task_key: &str) -> Self {
+        Self {
+            server: source.mission.server.clone(),
+            workspace: source.workspace.clone(),
+            mission: source.mission.id.clone(),
+            revision,
+            target: RecoveryTarget::Report {
+                task_key: task_key.to_owned(),
+            },
+        }
+    }
 }
 
 enum Attempt {
@@ -51,39 +63,34 @@ enum Attempt {
     Admitted(u64),
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct RecoveryErrorScope {
-    server: String,
-    workspace: String,
-    mission: String,
-    target: RecoveryTarget,
-}
-
-impl RecoveryErrorScope {
-    fn from_key(key: &RecoveryKey) -> Self {
-        Self {
-            server: key.server.clone(),
-            workspace: key.workspace.clone(),
-            mission: key.mission.clone(),
-            target: key.target.clone(),
-        }
-    }
-
-    fn from_source(source: &Source, target: RecoveryTarget) -> Self {
-        Self {
-            server: source.mission.server.clone(),
-            workspace: source.workspace.clone(),
-            mission: source.mission.id.clone(),
-            target,
-        }
-    }
-}
-
 #[derive(Default)]
 pub(super) struct Recovery {
     attempts: HashMap<RecoveryKey, Attempt>,
     seq: u64,
-    errors: HashMap<RecoveryErrorScope, (u64, RecoveryError)>,
+    errors: HashMap<RecoveryKey, (u64, RecoveryError)>,
+}
+
+pub(super) fn report_eligible(header: &MapHeader, task: &Task, observation: &Observation) -> bool {
+    if header.root.status != Status::Active
+        || header.root.run_state.unwrap_or(RunState::Running) != RunState::Running
+        || header.control.as_ref().is_some_and(|c| c.pending > 0)
+    {
+        return false;
+    }
+    let Some(session_id) = task.actor_session_id() else {
+        return false;
+    };
+    let actor_known = (session_id == header.root.coordinator_session_id
+        && header.has_coordinator_actor())
+        || observation.has_actor(session_id);
+    if !actor_known {
+        return false;
+    }
+    let activity = observation.actor_state(session_id);
+    task.can_recover_report(activity)
+        && activity.is_none_or(|state| {
+            matches!(state, ActorState::Unknown | ActorState::IdleWithoutReport)
+        })
 }
 
 pub(super) fn coordinator_eligible(
@@ -169,15 +176,8 @@ impl Recovery {
             .count()
     }
 
-    #[cfg(test)]
     pub fn error(&self, key: &RecoveryKey) -> Option<RecoveryError> {
-        let scope = RecoveryErrorScope::from_key(key);
-        self.errors.get(&scope).map(|(_, error)| *error)
-    }
-
-    pub fn error_for(&self, source: &Source, target: RecoveryTarget) -> Option<RecoveryError> {
-        let scope = RecoveryErrorScope::from_source(source, target);
-        self.errors.get(&scope).map(|(_, error)| *error)
+        self.errors.get(key).map(|(_, error)| *error)
     }
 
     pub fn clear_error_for(&mut self, scope: &WorkspaceScope, mission_id: &str) {
@@ -209,8 +209,7 @@ impl Recovery {
         let Ok(request) = RecoveryRequest::new(revision, target) else {
             return;
         };
-        let err_scope = RecoveryErrorScope::from_key(&key);
-        self.errors.remove(&err_scope);
+        self.errors.remove(&key);
         let (out, inbox) = bounded(1);
         let lifecycle_target = source.target.clone();
         self.attempts.insert(
@@ -277,8 +276,7 @@ impl Recovery {
                     if !polled.refreshed_scopes.contains(&scope) {
                         polled.refreshed_scopes.push(scope);
                     }
-                    let err_scope = RecoveryErrorScope::from_key(&key);
-                    self.errors.remove(&err_scope);
+                    self.errors.remove(&key);
                     self.seq = self.seq.wrapping_add(1);
                     let admitted_rev_key = (revision != key.revision).then(|| RecoveryKey {
                         revision,
@@ -296,10 +294,9 @@ impl Recovery {
                     if !polled.refreshed_scopes.contains(&scope) {
                         polled.refreshed_scopes.push(scope);
                     }
-                    let err_scope = RecoveryErrorScope::from_key(&key);
                     self.attempts.remove(&key);
                     self.seq = self.seq.wrapping_add(1);
-                    self.errors.insert(err_scope, (self.seq, error));
+                    self.errors.insert(key, (self.seq, error));
                 }
             }
         }

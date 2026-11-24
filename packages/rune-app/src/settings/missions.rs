@@ -568,4 +568,54 @@ mod tests {
             http.quiet().await;
         });
     }
+
+    #[test]
+    fn mission_delete_sessions_401_triggers_auth_recovery_without_readback() {
+        platform::block_on(async {
+            let http = Http::new().await;
+            let mut prefs = Preferences::default();
+            prefs.bind(Some(http.backend.clone()));
+
+            let (mut got_config, mut got_state) = (false, false);
+            while !(got_config && got_state) {
+                prefs.poll();
+                let req = http.accept().await;
+                if req.header.contains("/api/storage/config/ui") {
+                    req.reply(200, json!({"settings": {"missionDeleteSessions": false}}))
+                        .await;
+                    got_config = true;
+                } else {
+                    req.reply(200, json!({})).await;
+                    got_state = true;
+                }
+            }
+            wait_until(|| {
+                prefs.poll();
+                prefs.mission_delete_sessions() == Some(false)
+            })
+            .await;
+
+            prefs.set_mission_delete_sessions(true);
+            prefs.poll();
+            let patch = http.accept().await;
+            assert!(patch.header.starts_with("PATCH /api/storage/config/ui "));
+            patch.reply(401, json!({"error": "unauthorized"})).await;
+            let probe = http.accept().await;
+            assert!(
+                probe.header.starts_with("GET /api/auth/status"),
+                "expected auth status probe after 401, got: {}",
+                probe.header
+            );
+            probe.reply(200, json!({"authenticated": false})).await;
+
+            wait_until(|| {
+                prefs.poll();
+                prefs.take_document_auth_expired().is_some()
+            })
+            .await;
+            assert!(!prefs.can_retry());
+            // Must NOT issue a readback GET after confirmed 401.
+            http.quiet().await;
+        });
+    }
 }

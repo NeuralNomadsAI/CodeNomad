@@ -11,6 +11,7 @@ use serde::de::DeserializeOwned;
 
 const MAX_NESTING: usize = 128;
 const MAX_KEY_BYTES: usize = 128;
+const MAX_TOTAL_BYTES: usize = 128 * 1024 * 1024 + 256;
 
 pub(crate) async fn read_filtered_json<T: DeserializeOwned>(
     response: Response,
@@ -260,6 +261,8 @@ struct FilterParser<'a> {
     mission_keys: &'a [&'a str],
     kept_limit: usize,
     kept_bytes: usize,
+    total_limit: usize,
+    total_bytes: usize,
     state: State,
     in_mission: bool,
     key_raw: Vec<u8>,
@@ -280,6 +283,8 @@ impl<'a> FilterParser<'a> {
             mission_keys,
             kept_limit,
             kept_bytes: 0,
+            total_limit: MAX_TOTAL_BYTES,
+            total_bytes: 0,
             state: State::ExpectRootOpen,
             in_mission: false,
             key_raw: Vec::new(),
@@ -294,7 +299,17 @@ impl<'a> FilterParser<'a> {
         }
     }
 
+    #[cfg(test)]
+    fn with_total_limit(mut self, total_limit: usize) -> Self {
+        self.total_limit = total_limit;
+        self
+    }
+
     fn feed(&mut self, bytes: &[u8]) -> Result<()> {
+        self.total_bytes = self.total_bytes.saturating_add(bytes.len());
+        if self.total_bytes > self.total_limit {
+            return Err("oversized Mission HTTP transfer".into());
+        }
         let mut i = 0;
         while i < bytes.len() {
             let b = bytes[i];
@@ -972,5 +987,16 @@ mod tests {
         .unwrap();
         let val: Value = serde_json::from_slice(&good.finish().unwrap()).unwrap();
         assert_eq!(val, json!({"admitted": true}));
+    }
+
+    #[test]
+    fn enforces_total_transfer_limit_across_skipped_fields_and_whitespace() {
+        let mut skipped = FilterParser::new(&["admitted"], &[], 4096).with_total_limit(64);
+        skipped.feed(br#"{"admitted":true,"ignored":""#).unwrap();
+        assert!(skipped.feed(&vec![b'a'; 64]).is_err());
+
+        let mut ws = FilterParser::new(&["admitted"], &[], 4096).with_total_limit(32);
+        ws.feed(br#"{"admitted":true}"#).unwrap();
+        assert!(ws.feed(&vec![b' '; 32]).is_err());
     }
 }

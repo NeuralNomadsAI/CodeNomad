@@ -196,9 +196,15 @@ enum Operation {
     Write(Choices),
 }
 
+enum DocumentReply {
+    Snapshot(Value),
+    Failed,
+    AuthExpired,
+}
+
 struct Flight {
     operation: Operation,
-    reply: Receiver<Option<Value>>,
+    reply: Receiver<DocumentReply>,
 }
 
 #[derive(Default)]
@@ -209,9 +215,14 @@ pub(super) struct Document {
     flight: Option<Flight>,
     barrier: Option<Flight>,
     notification_failure: bool,
+    auth_expired: bool,
 }
 
 impl Document {
+    pub(super) fn take_auth_expired(&mut self) -> bool {
+        std::mem::take(&mut self.auth_expired)
+    }
+
     pub(super) fn take_notification_failure(&mut self) -> bool {
         std::mem::take(&mut self.notification_failure)
     }
@@ -472,22 +483,41 @@ impl Document {
     ) -> bool {
         let mut changed = false;
         if let Some(flight) = &self.barrier {
-            let Some(snapshot) = flight.result() else {
+            let Some(reply) = flight.result() else {
                 return false;
             };
             if let Some(flight) = self.barrier.take() {
+                let snapshot = match reply {
+                    DocumentReply::Snapshot(v) => Some(v),
+                    DocumentReply::Failed => None,
+                    DocumentReply::AuthExpired => {
+                        self.auth_expired = true;
+                        None
+                    }
+                };
                 self.settle(flight.operation, snapshot, false);
                 changed = true;
             }
         }
         if let Some(flight) = &self.flight {
-            let Some(snapshot) = flight.result() else {
+            let Some(reply) = flight.result() else {
                 return changed;
             };
             if let Some(flight) = self.flight.take() {
+                let snapshot = match reply {
+                    DocumentReply::Snapshot(v) => Some(v),
+                    DocumentReply::Failed => None,
+                    DocumentReply::AuthExpired => {
+                        self.auth_expired = true;
+                        None
+                    }
+                };
                 self.settle(flight.operation, snapshot, true);
                 changed = true;
             }
+        }
+        if self.auth_expired {
+            return changed;
         }
         let operation = if !self.write.retry.is_empty() {
             self.read.reattach = false;
@@ -541,15 +571,27 @@ impl Document {
         self.flight = Some(Flight { operation, reply });
         let (backend, main, window) = (backend.clone(), main.clone(), window.clone());
         platform::spawn(async move {
-            let mut snapshot = None;
+            let mut reply = DocumentReply::Failed;
             if let Some(patch) = patch {
-                snapshot = owner.patch(&backend, &patch).await.ok();
+                match owner.patch(&backend, &patch).await {
+                    Ok(snapshot) => reply = DocumentReply::Snapshot(snapshot),
+                    Err(error) if error.is::<codenomad_client::settings::SettingsAuthExpired>() => {
+                        reply = DocumentReply::AuthExpired;
+                    }
+                    Err(_) => {}
+                }
             }
-            // A lost receipt gets one readback, never an automatic replay.
-            if snapshot.is_none() {
-                snapshot = owner.read(&backend).await.ok();
+            // A lost receipt gets one readback, never an automatic replay or post-401 readback.
+            if matches!(reply, DocumentReply::Failed) {
+                match owner.read(&backend).await {
+                    Ok(snapshot) => reply = DocumentReply::Snapshot(snapshot),
+                    Err(error) if error.is::<codenomad_client::settings::SettingsAuthExpired>() => {
+                        reply = DocumentReply::AuthExpired;
+                    }
+                    Err(_) => {}
+                }
             }
-            let _ = sender.send(snapshot).await;
+            let _ = sender.send(reply).await;
             for wake in [main, window].into_iter().flatten() {
                 wake();
             }
@@ -601,10 +643,12 @@ fn dedicated_error_choices_do_not_emit_generic_save_notification() {
 }
 
 impl Flight {
-    fn result(&self) -> Option<Option<Value>> {
+    fn result(&self) -> Option<DocumentReply> {
         match self.reply.try_recv() {
-            Ok(snapshot) => Some(snapshot),
-            Err(_) if self.reply.is_closed() && self.reply.is_empty() => Some(None),
+            Ok(reply) => Some(reply),
+            Err(_) if self.reply.is_closed() && self.reply.is_empty() => {
+                Some(DocumentReply::Failed)
+            }
             Err(_) => None,
         }
     }

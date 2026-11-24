@@ -207,7 +207,12 @@ pub(crate) async fn read_bytes(mut response: reqwest::Response, max: usize) -> R
 }
 
 pub async fn read_json(response: reqwest::Response, max: usize) -> Result<Value, ()> {
-    serde_json::from_slice(&read_bytes(response, max).await?).map_err(|_| ())
+    let bytes = read_bytes(response, max).await?;
+    if bytes.len() > 256 * 1024 {
+        tokio::task::spawn_blocking(move || serde_json::from_slice(&bytes).map_err(|_| ())).await.map_err(|_| ())?
+    } else {
+        serde_json::from_slice(&bytes).map_err(|_| ())
+    }
 }
 
 pub fn native_rpc_absent(body: &Value, status: Status) -> bool {

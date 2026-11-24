@@ -425,7 +425,11 @@ async fn mutate(
     let lifetime = p.0.child_token();
     let _disconnect = lifetime.clone().drop_guard();
     tokio::spawn(async move {
-        let slot = app.mission_control_slot.clone().acquire_owned().await.map_err(|_| plugin_unavailable())?;
+        let slot = tokio::select! {
+            biased;
+            _ = lifetime.cancelled() => return Err(plugin_unavailable()),
+            permit = app.mission_control_slot.clone().acquire_owned() => permit.map_err(|_| plugin_unavailable())?,
+        };
         p.live()?;
         let workspace = app.workspace(&wid).map_err(|_| error(Status::NOT_FOUND, "Workspace unavailable"))?;
         let scope = Scope::open(&app, workspace, None)
@@ -463,9 +467,11 @@ async fn mutate(
         {
             return Err(plugin_unavailable());
         }
-        let bytes = serde_json::to_vec(&result).map_err(|_| plugin_unavailable())?;
-        drop(result);
-        Ok(super::reads::stream_bytes_with_permit(bytes, slot))
+        let bytes = super::reads::encode_json_bytes(result, method == "recover")
+            .await
+            .map_err(|_| plugin_unavailable())?;
+        drop(slot);
+        super::reads::deliver_json_bytes(&app, bytes).map_err(|_| plugin_unavailable())
     })
     .await
     .map_err(|_| plugin_unavailable())?
@@ -578,13 +584,13 @@ async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> R
         return Err(bad());
     }
     let s = snapshot(app, &scope).await?;
-    let m = bridge::mission(&s, &life.mid, &co)?;
+    let m = bridge::take_mission(s, &life.mid, &co)?;
     let op = &m["control"];
     let action = op["action"].as_str().ok_or_else(held)?;
     let is_coordinator = co["id"] == life.sid;
     let location = &find(op, "targets", "sessionID", &life.sid).ok_or_else(foreign)?["location"];
     if location.get("workspaceID").is_some()
-        || !find(m, "actors", "sessionId", &life.sid).is_some_and(|a| a["location"] == *location)
+        || !find(&m, "actors", "sessionId", &life.sid).is_some_and(|a| a["location"] == *location)
     {
         return Err(foreign());
     }
@@ -644,7 +650,7 @@ async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> R
     };
     let verify_target = |row: &Value| {
         row["parentID"].is_null()
-            && recorded(m, row)
+            && recorded(&m, row)
             && row["location"] == *location
             && (!can_start
                 || !m["tasks"].as_array().is_some_and(|tasks| {

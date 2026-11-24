@@ -215,6 +215,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
     }
     let still_offline = shared.stream_offline() && stream_state.is_none();
     let preferences_changed = bound | shared.poll();
+    let doc_auth_expired = shared.take_document_auth_expired();
     if preferences_changed && let Some(wake) = &shared.window_wake {
         wake();
     }
@@ -282,7 +283,17 @@ pub(crate) fn poll(s: &mut State) -> bool {
             );
         }
     });
-    if expired {
+    if let Some(backend) = doc_auth_expired {
+        #[cfg(target_arch = "wasm32")]
+        crate::platform::pairing::observe(s);
+        connection::conversation_authentication(
+            s,
+            codenomad_client::transport::Authentication {
+                backend,
+                confirmed: true,
+            },
+        );
+    } else if expired {
         s.show_launcher();
         crate::workspace::suspend_missions(s);
     } else {

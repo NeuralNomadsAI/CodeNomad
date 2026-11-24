@@ -10,8 +10,8 @@ use codenomad_client::{
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU8, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicU8, Ordering},
     },
 };
 
@@ -20,6 +20,94 @@ const DOCUMENT_CLEANUP_CAP: usize = 2_000;
 const PHASE_PREFLIGHT: u8 = 0;
 const PHASE_CANCELLED: u8 = 1;
 const PHASE_DISPATCHED: u8 = 2;
+
+#[derive(Clone)]
+pub(crate) struct LiveFlag(Arc<Mutex<LiveFlagInner>>);
+
+struct LiveFlagInner {
+    live: bool,
+    waiters: Vec<(Arc<AtomicU8>, Receiver<()>)>,
+}
+
+impl LiveFlag {
+    pub(crate) fn new(live: bool) -> Self {
+        Self(Arc::new(Mutex::new(LiveFlagInner {
+            live,
+            waiters: Vec::new(),
+        })))
+    }
+
+    pub(crate) fn is_live(&self) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).live
+    }
+
+    pub(crate) fn revoke(&self) {
+        let waiters = {
+            let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            inner.live = false;
+            let waiters = std::mem::take(&mut inner.waiters);
+            for (phase, _) in &waiters {
+                let _ = phase.compare_exchange(
+                    PHASE_PREFLIGHT,
+                    PHASE_CANCELLED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+            }
+            waiters
+        };
+        for (_, cancel) in waiters {
+            cancel.close();
+        }
+    }
+
+    pub(crate) fn register(&self, phase: Arc<AtomicU8>, cancel: Receiver<()>) -> bool {
+        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !inner.live {
+            let _ = phase.compare_exchange(
+                PHASE_PREFLIGHT,
+                PHASE_CANCELLED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            drop(inner);
+            cancel.close();
+            return false;
+        }
+        inner
+            .waiters
+            .retain(|(p, c)| p.load(Ordering::Acquire) == PHASE_PREFLIGHT && !c.is_closed());
+        inner.waiters.push((phase, cancel));
+        true
+    }
+
+    pub(crate) fn commit_dispatch(flags: &[&Self], phase: &AtomicU8) -> bool {
+        let mut ordered: Vec<&Self> = flags.to_vec();
+        ordered.sort_by_key(|flag| Arc::as_ptr(&flag.0) as usize);
+        ordered.dedup_by_key(|flag| Arc::as_ptr(&flag.0) as usize);
+        let guards: Vec<_> = ordered
+            .iter()
+            .map(|flag| flag.0.lock().unwrap_or_else(|e| e.into_inner()))
+            .collect();
+        if !guards.iter().all(|g| g.live) {
+            let _ = phase.compare_exchange(
+                PHASE_PREFLIGHT,
+                PHASE_CANCELLED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            return false;
+        }
+        phase
+            .compare_exchange(
+                PHASE_PREFLIGHT,
+                PHASE_DISPATCHED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct WorkspaceScope {
@@ -104,7 +192,7 @@ pub(super) struct DeleteIntent {
     target: LifecycleTarget,
     request: DeletionRequest,
     pub(super) flight: Option<Receiver<DeleteResult>>,
-    flight_live: Option<Arc<AtomicBool>>,
+    flight_live: Option<LiveFlag>,
     flight_cancel: Option<Receiver<()>>,
     flight_phase: Option<Arc<AtomicU8>>,
     pub(super) error: Option<&'static str>,
@@ -143,8 +231,8 @@ enum CleanupRetryResult {
 
 struct CleanupRetry {
     key: CleanupKey,
-    view_live: Arc<AtomicBool>,
-    row_live: Arc<AtomicBool>,
+    view_live: LiveFlag,
+    row_live: LiveFlag,
     cancel: Option<Receiver<()>>,
     phase: Arc<AtomicU8>,
     flight: Receiver<CleanupRetryResult>,
@@ -155,8 +243,9 @@ impl CleanupRetry {
     fn is_live_or_dispatched(&self) -> bool {
         !self.retired
             && (self.phase.load(Ordering::Acquire) == PHASE_DISPATCHED
-                || (self.view_live.load(Ordering::Acquire)
-                    && self.row_live.load(Ordering::Acquire)))
+                || (self.phase.load(Ordering::Acquire) == PHASE_PREFLIGHT
+                    && self.view_live.is_live()
+                    && self.row_live.is_live()))
     }
 }
 
@@ -233,11 +322,10 @@ impl CleanupOwner {
             .filter(|intent| intent.target == source.target && !intent.retired)?;
         let busy = intent.flight.is_some()
             && intent.flight_phase.as_ref().is_none_or(|phase| {
-                phase.load(Ordering::Acquire) == PHASE_DISPATCHED
-                    || intent
-                        .flight_live
-                        .as_ref()
-                        .is_none_or(|flag| flag.load(Ordering::Acquire))
+                let state = phase.load(Ordering::Acquire);
+                state == PHASE_DISPATCHED
+                    || (state == PHASE_PREFLIGHT
+                        && intent.flight_live.as_ref().is_none_or(LiveFlag::is_live))
             });
         if busy {
             Some(DeleteState::Busy)
@@ -274,11 +362,10 @@ impl CleanupOwner {
                 && intent.target.mission == mission_id
                 && intent.flight.is_some()
                 && intent.flight_phase.as_ref().is_none_or(|phase| {
-                    phase.load(Ordering::Acquire) == PHASE_DISPATCHED
-                        || intent
-                            .flight_live
-                            .as_ref()
-                            .is_none_or(|flag| flag.load(Ordering::Acquire))
+                    let state = phase.load(Ordering::Acquire);
+                    state == PHASE_DISPATCHED
+                        || (state == PHASE_PREFLIGHT
+                            && intent.flight_live.as_ref().is_none_or(LiveFlag::is_live))
                 })
         })
     }
@@ -287,20 +374,22 @@ impl CleanupOwner {
         let mut released = false;
         self.retries.retain(|_, retry| {
             let revoked = retry.retired
-                || !retry.view_live.load(Ordering::Acquire)
-                || !retry.row_live.load(Ordering::Acquire);
+                || retry.phase.load(Ordering::Acquire) == PHASE_CANCELLED
+                || !retry.view_live.is_live()
+                || !retry.row_live.is_live();
             if !revoked {
                 return true;
             }
-            if retry
-                .phase
-                .compare_exchange(
-                    PHASE_PREFLIGHT,
-                    PHASE_CANCELLED,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
+            if retry.phase.load(Ordering::Acquire) == PHASE_CANCELLED
+                || retry
+                    .phase
+                    .compare_exchange(
+                        PHASE_PREFLIGHT,
+                        PHASE_CANCELLED,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
             {
                 if let Some(cancel) = retry.cancel.take() {
                     cancel.close();
@@ -318,21 +407,26 @@ impl CleanupOwner {
         for intent in self.deletes.values_mut() {
             let revoked = intent.retired
                 || intent
+                    .flight_phase
+                    .as_ref()
+                    .is_some_and(|p| p.load(Ordering::Acquire) == PHASE_CANCELLED)
+                || intent
                     .flight_live
                     .as_ref()
-                    .is_some_and(|flag| !flag.load(Ordering::Acquire));
+                    .is_some_and(|flag| !flag.is_live());
             if !revoked {
                 continue;
             }
             if let Some(phase) = intent.flight_phase.as_ref()
-                && phase
-                    .compare_exchange(
-                        PHASE_PREFLIGHT,
-                        PHASE_CANCELLED,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
-                    .is_ok()
+                && (phase.load(Ordering::Acquire) == PHASE_CANCELLED
+                    || phase
+                        .compare_exchange(
+                            PHASE_PREFLIGHT,
+                            PHASE_CANCELLED,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok())
             {
                 if let Some(cancel) = intent.flight_cancel.take() {
                     cancel.close();
@@ -415,7 +509,7 @@ impl CleanupOwner {
         &mut self,
         source: &Source,
         expected_request_id: &str,
-        live: Arc<AtomicBool>,
+        live: LiveFlag,
         backend: Backend,
         wake: Wake,
     ) {
@@ -442,7 +536,7 @@ impl CleanupOwner {
         scope: &WorkspaceScope,
         mission: &MissionKey,
         expected_request_id: &str,
-        live: Arc<AtomicBool>,
+        live: LiveFlag,
         backend: Backend,
         wake: Wake,
     ) {
@@ -465,13 +559,16 @@ impl CleanupOwner {
 
     fn dispatch_retry_delete(
         intent: &mut DeleteIntent,
-        live: Arc<AtomicBool>,
+        live: LiveFlag,
         backend: Backend,
         wake: Wake,
     ) {
         let (out, inbox) = bounded(1);
         let (cancel_tx, cancel_rx) = bounded(1);
         let phase = Arc::new(AtomicU8::new(PHASE_PREFLIGHT));
+        if !live.register(phase.clone(), cancel_rx.clone()) {
+            return;
+        }
         let target = intent.target.clone();
         let request = intent.request.clone();
         let document_cleanup = intent.document_cleanup;
@@ -637,6 +734,7 @@ impl CleanupOwner {
             .is_some_and(CleanupRetry::is_live_or_dispatched)
     }
 
+    #[cfg(test)]
     pub fn cleanup_retrying(&self, key: &CleanupKey) -> bool {
         self.retries
             .get(&key.scope)
@@ -658,11 +756,10 @@ impl CleanupOwner {
                     && &intent.scope == scope
                     && intent.flight.is_some()
                     && intent.flight_phase.as_ref().is_none_or(|phase| {
-                        phase.load(Ordering::Acquire) == PHASE_DISPATCHED
-                            || intent
-                                .flight_live
-                                .as_ref()
-                                .is_none_or(|flag| flag.load(Ordering::Acquire))
+                        let state = phase.load(Ordering::Acquire);
+                        state == PHASE_DISPATCHED
+                            || (state == PHASE_PREFLIGHT
+                                && intent.flight_live.as_ref().is_none_or(LiveFlag::is_live))
                     })
             })
             .map(|intent| intent.target.mission.clone())
@@ -688,8 +785,8 @@ impl CleanupOwner {
         &mut self,
         scope: WorkspaceScope,
         cleanup: Cleanup,
-        view_live: Arc<AtomicBool>,
-        row_live: Arc<AtomicBool>,
+        view_live: LiveFlag,
+        row_live: LiveFlag,
         backend: Backend,
         wake: Wake,
     ) {
@@ -701,6 +798,13 @@ impl CleanupOwner {
         {
             return;
         }
+        let (cancel_tx, cancel_rx) = bounded(1);
+        let phase = Arc::new(AtomicU8::new(PHASE_PREFLIGHT));
+        if !view_live.register(phase.clone(), cancel_rx.clone())
+            || !row_live.register(phase.clone(), cancel_rx.clone())
+        {
+            return;
+        }
         self.retry_errors.remove(&scope);
         let key = CleanupKey::new(scope.clone(), &cleanup);
         let require_document_settled = cleanup.document_pending == Some(true)
@@ -708,8 +812,6 @@ impl CleanupOwner {
             || self.has_document_cleanup_intent(&scope, &cleanup);
         let project = scope.project.clone();
         let (out, inbox) = bounded(1);
-        let (cancel_tx, cancel_rx) = bounded(1);
-        let phase = Arc::new(AtomicU8::new(PHASE_PREFLIGHT));
         self.retries.insert(
             scope,
             CleanupRetry {
@@ -778,9 +880,7 @@ impl CleanupOwner {
             if intent.retired {
                 return false;
             }
-            let view_revoked = flight_live
-                .as_ref()
-                .is_some_and(|flag| !flag.load(Ordering::Acquire));
+            let view_revoked = flight_live.as_ref().is_some_and(|flag| !flag.is_live());
             match result {
                 DeleteResult::Deleted {
                     receipt,
@@ -980,8 +1080,7 @@ impl CleanupOwner {
             if retired {
                 continue;
             }
-            let view_current =
-                view_live.load(Ordering::Acquire) && row_live.load(Ordering::Acquire);
+            let view_current = view_live.is_live() && row_live.is_live();
             let record_doc = |owner: &mut Self, polled: &mut CleanupPolled, key: &CleanupKey| {
                 owner.record_document_cleanup(key.clone());
                 polled
@@ -1192,14 +1291,11 @@ async fn run_delete(
     mut require_document_settled: bool,
     mut expected_deletion_id: Option<String>,
     mut expected_created_at: Option<u64>,
-    live: Option<Arc<AtomicBool>>,
+    live: Option<LiveFlag>,
     cancel: Option<Sender<()>>,
     phase: Option<Arc<AtomicU8>>,
 ) -> DeleteResult {
-    let still_live = || {
-        live.as_ref()
-            .is_none_or(|flag| flag.load(Ordering::Acquire))
-    };
+    let still_live = || live.as_ref().is_none_or(LiveFlag::is_live);
     let mut tombstoned = false;
     if reconcile_first {
         let preflight = if let Some(cancel) = cancel.as_ref() {
@@ -1392,17 +1488,20 @@ async fn run_delete(
                 }
             };
         }
-        if !still_live()
-            || phase.as_ref().is_some_and(|p| {
-                p.compare_exchange(
+        let committed = match (live.as_ref(), phase.as_ref()) {
+            (Some(flag), Some(p)) => LiveFlag::commit_dispatch(&[flag], p),
+            (Some(flag), None) => flag.is_live(),
+            (None, Some(p)) => p
+                .compare_exchange(
                     PHASE_PREFLIGHT,
                     PHASE_DISPATCHED,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
-                .is_err()
-            })
-        {
+                .is_ok(),
+            (None, None) => true,
+        };
+        if !committed {
             return DeleteResult::Cancelled {
                 dispatched: false,
                 document_cleanup: require_document_settled,
@@ -1529,12 +1628,12 @@ async fn run_cleanup_retry(
     project: String,
     saved: Cleanup,
     mut require_document_settled: bool,
-    view_live: Arc<AtomicBool>,
-    row_live: Arc<AtomicBool>,
+    view_live: LiveFlag,
+    row_live: LiveFlag,
     cancel: Sender<()>,
     phase: Arc<AtomicU8>,
 ) -> CleanupRetryResult {
-    let still_live = || view_live.load(Ordering::Acquire) && row_live.load(Ordering::Acquire);
+    let still_live = || view_live.is_live() && row_live.is_live();
     let Some(preflight) = until_closed(
         &cancel,
         backend.read_mission_reconciliation(&project, &saved.mission_id),
@@ -1649,16 +1748,7 @@ async fn run_cleanup_retry(
             }
         };
     }
-    if !still_live()
-        || phase
-            .compare_exchange(
-                PHASE_PREFLIGHT,
-                PHASE_DISPATCHED,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_err()
-    {
+    if !LiveFlag::commit_dispatch(&[&view_live, &row_live], &phase) {
         return CleanupRetryResult::Cancelled {
             mutated: false,
             document_cleanup: require_document_settled,

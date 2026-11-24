@@ -23,6 +23,7 @@ pub(super) struct Fields {
     flight: Option<Receiver<Result<ControlPage>>>,
     failed: Option<u64>,
     receipt: Option<ReceiptView>,
+    auth_expired: bool,
 }
 
 const RECEIPT_BYTES: usize = 12 * 1024;
@@ -93,6 +94,10 @@ impl Fields {
         }
     }
 
+    pub fn take_auth_expired(&mut self) -> bool {
+        std::mem::take(&mut self.auth_expired)
+    }
+
     fn poll(&mut self, revision: Option<u64>) -> bool {
         if self.part.is_none() {
             return false;
@@ -109,7 +114,11 @@ impl Fields {
                     self.shown = Some(page);
                     self.receipt = None;
                 }
-                Err(_) => {}
+                Err(error) => {
+                    if error.is::<codenomad_client::missions::DirectoryAuthExpired>() {
+                        self.auth_expired = true;
+                    }
+                }
             }
             return true;
         }

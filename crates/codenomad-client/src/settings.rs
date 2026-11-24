@@ -46,6 +46,17 @@ async fn session_directory(backend: &Backend, workspace: &str, session: &str) ->
         .ok_or_else(|| "Invalid session directory".into())
 }
 
+#[derive(Debug)]
+pub struct SettingsAuthExpired;
+
+impl std::fmt::Display for SettingsAuthExpired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Settings authentication expired")
+    }
+}
+
+impl std::error::Error for SettingsAuthExpired {}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {
     Config,
@@ -68,9 +79,13 @@ impl Owner {
             .get(self.url(backend))
             .query(&[("authoritative", "1")])
             .send()
-            .await?
-            .error_for_status()?;
-        owner(read_json(response).await?)
+            .await?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            && backend.authentication_status().await.ok() == Some(false)
+        {
+            return Err(SettingsAuthExpired.into());
+        }
+        owner(read_json(response.error_for_status()?).await?)
     }
 
     pub async fn patch(self, backend: &Backend, patch: &Value) -> Result<Value> {
@@ -79,9 +94,13 @@ impl Owner {
             .patch(self.url(backend))
             .json(patch)
             .send()
-            .await?
-            .error_for_status()?;
-        owner(read_json(response).await?)
+            .await?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            && backend.authentication_status().await.ok() == Some(false)
+        {
+            return Err(SettingsAuthExpired.into());
+        }
+        owner(read_json(response.error_for_status()?).await?)
     }
 }
 

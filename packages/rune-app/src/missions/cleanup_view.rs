@@ -1,6 +1,6 @@
 use super::{
     Panel,
-    cleanup::{CleanupKey, CleanupOwner, DeleteIntent, WorkspaceScope},
+    cleanup::{CleanupKey, CleanupOwner, DeleteIntent, LiveFlag, WorkspaceScope},
     lifecycle::MissionKey,
 };
 use crate::{
@@ -13,15 +13,7 @@ use rune_theme_codenomad::{
     Space, TextRole, catalogue, git_panel as theme,
     layout::{self, Layout},
 };
-use std::{
-    borrow::Cow,
-    collections::HashSet,
-    rc::Rc,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{borrow::Cow, collections::HashSet, rc::Rc};
 
 pub(crate) type CleanupAct = fn(&mut State, String, WorkspaceScope, Cleanup);
 pub(crate) type DeleteAct = fn(&mut State, String, WorkspaceScope, MissionKey, String, bool);
@@ -81,7 +73,7 @@ pub(crate) fn cleanup_view<S: 'static>(
                 let scope_cancel = scope.clone();
                 let key_cancel = mission_key.clone();
                 let req_cancel = intent.request_id().to_owned();
-                let live_cancel = panel.view_live.clone();
+                let live_cancel = panel.mounted_view_live.clone();
                 row = row.child(theme::note(t(err), "alert")).child(
                     layout::action_row()
                         .role("group")
@@ -91,7 +83,7 @@ pub(crate) fn cleanup_view<S: 'static>(
                                 t("missions.control.retry"),
                                 false,
                                 move |s: &mut S, tx| {
-                                    if !retry_disabled && live_retry.load(Ordering::Acquire) {
+                                    if !retry_disabled && live_retry.is_live() {
                                         orphaned_delete(
                                             s,
                                             occ_retry.clone(),
@@ -114,7 +106,7 @@ pub(crate) fn cleanup_view<S: 'static>(
                                 t("missions.control.cancel"),
                                 false,
                                 move |s: &mut S, tx| {
-                                    if live_cancel.load(Ordering::Acquire) {
+                                    if live_cancel.is_live() {
                                         orphaned_delete(
                                             s,
                                             occ_cancel.clone(),
@@ -214,7 +206,7 @@ struct CleanupRowCtx {
     busy: bool,
     active_retry: Option<CleanupKey>,
     active_deletes: HashSet<String>,
-    view_live: Arc<AtomicBool>,
+    view_live: LiveFlag,
 }
 
 fn cleanup_row_el<S: 'static>(
@@ -272,7 +264,7 @@ fn cleanup_row_el<S: 'static>(
         row = row.child(
             layout::button_tx(label, false, move |state: &mut S, tx| {
                 if !disabled
-                    && live.load(Ordering::Acquire)
+                    && live.is_live()
                     && let Some(scope) = captured_scope.clone()
                 {
                     retry(state, occ.clone(), scope, saved.clone());

@@ -1,4 +1,5 @@
 use super::{
+    cleanup::LiveFlag,
     detail::{Detail, read_window},
     observation::Observation,
 };
@@ -14,13 +15,7 @@ use codenomad_client::{
     },
 };
 use rune::edit::TextEdit;
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -78,10 +73,12 @@ pub(crate) struct Panel {
     last_passive: Option<f64>,
     now: f64,
     pub(super) scope: std::rc::Rc<()>,
-    pub(super) view_live: Arc<AtomicBool>,
-    pub(super) selection_live: Arc<AtomicBool>,
-    pub(super) cleanup_view_live: Arc<AtomicBool>,
-    cleanup_tokens: HashMap<(String, String), Arc<AtomicBool>>,
+    pub(super) view_live: LiveFlag,
+    pub(super) mounted_view_live: LiveFlag,
+    pub(super) selection_live: LiveFlag,
+    pub(super) mounted_selection_live: LiveFlag,
+    pub(super) cleanup_view_live: LiveFlag,
+    cleanup_tokens: HashMap<(String, String), LiveFlag>,
     remembered_document_pending: HashSet<CleanupIdentity>,
     remembered_document_order: VecDeque<CleanupIdentity>,
     settled_cleanups: HashMap<CleanupIdentity, Cleanup>,
@@ -130,9 +127,11 @@ impl Panel {
             last_passive: None,
             now: 0.0,
             scope: std::rc::Rc::new(()),
-            view_live: Arc::new(AtomicBool::new(false)),
-            selection_live: Arc::new(AtomicBool::new(false)),
-            cleanup_view_live: Arc::new(AtomicBool::new(false)),
+            view_live: LiveFlag::new(false),
+            mounted_view_live: LiveFlag::new(false),
+            selection_live: LiveFlag::new(false),
+            mounted_selection_live: LiveFlag::new(false),
+            cleanup_view_live: LiveFlag::new(false),
             cleanup_tokens: HashMap::new(),
             remembered_document_pending: HashSet::new(),
             remembered_document_order: VecDeque::new(),
@@ -167,15 +166,18 @@ impl Panel {
             return;
         }
         self.visible = show;
-        self.view_live.store(false, Ordering::Release);
-        self.selection_live.store(false, Ordering::Release);
-        self.cleanup_view_live.store(false, Ordering::Release);
+        self.view_live.revoke();
+        self.mounted_view_live.revoke();
+        self.selection_live.revoke();
+        self.mounted_selection_live.revoke();
+        self.cleanup_view_live.revoke();
         self.revoke_all_cleanup_tokens();
         if show {
-            self.view_live = Arc::new(AtomicBool::new(self.online));
-            self.selection_live = Arc::new(AtomicBool::new(self.online));
-            self.cleanup_view_live =
-                Arc::new(AtomicBool::new(self.online && !self.cleanups_unavailable()));
+            self.view_live = LiveFlag::new(self.online);
+            self.mounted_view_live = LiveFlag::new(true);
+            self.selection_live = LiveFlag::new(self.online);
+            self.mounted_selection_live = LiveFlag::new(true);
+            self.cleanup_view_live = LiveFlag::new(self.online && !self.cleanups_unavailable());
             self.refresh();
         } else {
             self.refresh_due = None;
@@ -366,28 +368,21 @@ impl Panel {
         self.online = online;
         self.observation.set_online(online);
         if !online {
-            self.view_live.store(false, Ordering::Release);
-            self.selection_live.store(false, Ordering::Release);
-            self.cleanup_view_live.store(false, Ordering::Release);
+            self.view_live.revoke();
+            self.selection_live.revoke();
+            self.cleanup_view_live.revoke();
             self.revoke_all_cleanup_tokens();
         } else if self.visible {
-            if !self.view_live.load(Ordering::Acquire) {
-                self.view_live = Arc::new(AtomicBool::new(true));
+            if !self.view_live.is_live() {
+                self.view_live = LiveFlag::new(true);
             }
-            if !self.selection_live.load(Ordering::Acquire) {
-                self.selection_live = Arc::new(AtomicBool::new(true));
+            if !self.selection_live.is_live() {
+                self.selection_live = LiveFlag::new(true);
             }
-            if !self.cleanup_view_live.load(Ordering::Acquire) && !self.cleanups_unavailable() {
-                self.cleanup_view_live = Arc::new(AtomicBool::new(true));
+            if !self.cleanup_view_live.is_live() && !self.cleanups_unavailable() {
+                self.cleanup_view_live = LiveFlag::new(true);
             }
             (self.wake)();
-        }
-    }
-
-    fn renew_cleanup_view(&mut self) {
-        self.cleanup_view_live.store(false, Ordering::Release);
-        if self.visible && self.online && !self.cleanups_unavailable() {
-            self.cleanup_view_live = Arc::new(AtomicBool::new(true));
         }
     }
 
@@ -415,11 +410,14 @@ impl Panel {
         });
         lane.prefix_len = lane.prefix_len.saturating_sub(removed_in_prefix);
         if self.selected.as_deref() == Some(mission_id) {
-            self.selection_live.store(false, Ordering::Release);
-            if self.visible && self.online {
-                self.selection_live = Arc::new(AtomicBool::new(true));
+            self.selection_live.revoke();
+            self.mounted_selection_live.revoke();
+            if self.visible {
+                self.mounted_selection_live = LiveFlag::new(true);
+                if self.online {
+                    self.selection_live = LiveFlag::new(true);
+                }
             }
-            self.renew_cleanup_view();
             self.control_fields.cancel();
             self.detail.clear();
             self.observation = Observation::new(self.online);
@@ -448,7 +446,6 @@ impl Panel {
                 }
             }
         }
-        let mut pending_changed = false;
         let row_id = (receipt.mission_id.clone(), receipt.deletion_id.clone());
         let new_meta = (
             receipt.request_id.clone(),
@@ -461,15 +458,12 @@ impl Panel {
         }) {
             if existing.is_pending() {
                 let old_tuple = pending_cleanup_tuple(existing);
-                if self.pending_cleanup_set.remove(&old_tuple) {
-                    pending_changed = true;
-                }
+                self.pending_cleanup_set.remove(&old_tuple);
             }
             *existing = receipt.clone();
             if existing.is_pending() {
                 let new_tuple = pending_cleanup_tuple(existing);
                 self.pending_cleanup_set.insert(new_tuple);
-                pending_changed = true;
             }
             self.cleanup_meta.insert(row_id, new_meta);
         } else {
@@ -479,11 +473,10 @@ impl Panel {
             if receipt.is_pending() {
                 self.pending_cleanup_set
                     .insert(pending_cleanup_tuple(&receipt));
-                pending_changed = true;
             }
             let lane_seen = &mut self.lanes[Kind::Cleanups as usize].seen;
-            // Cap only off-page adopted rows without evicting the newly inserted receipt (index 0)
-            // or any directory-loaded / pending rows.
+            // Cap only off-page adopted rows without evicting index 0 or legitimately
+            // paged current-order rows; order changes cap unvisited tails in merge_filtered.
             let max_rows = CLEANUP_DISPLAY_CAP.max(lane_seen.len().saturating_add(1));
             while self.cleanups.len() > max_rows {
                 let row_key =
@@ -502,12 +495,9 @@ impl Panel {
                 let evicted = self.cleanups.remove(rel + 1);
                 self.cleanup_meta
                     .remove(&(evicted.mission_id.clone(), evicted.deletion_id.clone()));
-                if evicted.is_pending()
-                    && self
-                        .pending_cleanup_set
-                        .remove(&pending_cleanup_tuple(&evicted))
-                {
-                    pending_changed = true;
+                if evicted.is_pending() {
+                    self.pending_cleanup_set
+                        .remove(&pending_cleanup_tuple(&evicted));
                 }
             }
         }
@@ -519,16 +509,19 @@ impl Panel {
                 .cleanup_tokens
                 .remove(&(receipt.mission_id, receipt.deletion_id))
             {
-                token.store(false, Ordering::Release);
+                token.revoke();
             }
-        }
-        if pending_changed {
-            self.renew_cleanup_view();
         }
     }
 
     pub(super) fn mark_cleanup_document_pending(&mut self, key: &CleanupIdentity) {
+        let newly_pending = !self.remembered_document_pending.contains(key);
         self.remember_document_pending(key.clone());
+        if newly_pending
+            && let Some(token) = self.cleanup_tokens.remove(&(key.0.clone(), key.1.clone()))
+        {
+            token.revoke();
+        }
         let mut updated = false;
         for row in &mut self.cleanups {
             if cleanup_identity(row) == *key && row.document_pending.is_none() {
@@ -553,11 +546,7 @@ impl Panel {
         self.cleanup_tokens.len()
     }
 
-    pub(super) fn cleanup_row_live(
-        &mut self,
-        mission_id: &str,
-        deletion_id: &str,
-    ) -> Arc<AtomicBool> {
+    pub(super) fn cleanup_row_live(&mut self, mission_id: &str, deletion_id: &str) -> LiveFlag {
         let key = (mission_id.to_owned(), deletion_id.to_owned());
         if let Some(token) = self.cleanup_tokens.get(&key) {
             return token.clone();
@@ -569,7 +558,7 @@ impl Panel {
                     .iter()
                     .any(|row| row.is_pending() && row.mission_id == *m && row.deletion_id == *d);
                 if !alive {
-                    token.store(false, Ordering::Release);
+                    token.revoke();
                 }
                 alive
             });
@@ -578,18 +567,18 @@ impl Panel {
                     break;
                 };
                 if let Some(token) = self.cleanup_tokens.remove(&evict) {
-                    token.store(false, Ordering::Release);
+                    token.revoke();
                 }
             }
         }
-        let token = Arc::new(AtomicBool::new(true));
+        let token = LiveFlag::new(true);
         self.cleanup_tokens.insert(key, token.clone());
         token
     }
 
     fn revoke_all_cleanup_tokens(&mut self) {
         for (_, token) in self.cleanup_tokens.drain() {
-            token.store(false, Ordering::Release);
+            token.revoke();
         }
     }
 
@@ -603,7 +592,7 @@ impl Panel {
                 !covered
             };
             if !keep {
-                token.store(false, Ordering::Release);
+                token.revoke();
             }
             keep
         });
@@ -641,15 +630,15 @@ impl Panel {
             }
         } else {
             // A reconnect retires publication authority while keeping the display.
-            self.view_live.store(false, Ordering::Release);
-            self.selection_live.store(false, Ordering::Release);
-            self.cleanup_view_live.store(false, Ordering::Release);
+            self.view_live.revoke();
+            self.selection_live.revoke();
+            self.cleanup_view_live.revoke();
             self.revoke_all_cleanup_tokens();
             if self.visible {
-                self.view_live = Arc::new(AtomicBool::new(true));
-                self.selection_live = Arc::new(AtomicBool::new(true));
+                self.view_live = LiveFlag::new(true);
+                self.selection_live = LiveFlag::new(true);
                 if !self.cleanups_unavailable() {
-                    self.cleanup_view_live = Arc::new(AtomicBool::new(true));
+                    self.cleanup_view_live = LiveFlag::new(true);
                 }
             }
             self.online = true;
@@ -893,9 +882,9 @@ impl Panel {
                         && lane.failed.is_none()
                         && self.visible
                         && self.online
-                        && !self.cleanup_view_live.load(Ordering::Acquire)
+                        && !self.cleanup_view_live.is_live()
                     {
-                        self.cleanup_view_live = Arc::new(AtomicBool::new(true));
+                        self.cleanup_view_live = LiveFlag::new(true);
                     }
                     if owed {
                         self.start(done.kind, Read::Refresh);
@@ -904,7 +893,7 @@ impl Panel {
                 Err(error) if error.is::<DirectoryAuthExpired>() => {
                     self.lanes[done.kind as usize].failed = Some(done.read);
                     if done.kind == Kind::Cleanups {
-                        self.cleanup_view_live.store(false, Ordering::Release);
+                        self.cleanup_view_live.revoke();
                         self.revoke_all_cleanup_tokens();
                     }
                     self.auth_expired = Some(self.backend.clone());
@@ -912,7 +901,7 @@ impl Panel {
                 Err(error) if error.is::<DirectoryChanged>() => {
                     self.lanes[done.kind as usize].failed = Some(Read::Refresh);
                     if done.kind == Kind::Cleanups {
-                        self.cleanup_view_live.store(false, Ordering::Release);
+                        self.cleanup_view_live.revoke();
                         self.revoke_all_cleanup_tokens();
                     }
                     if owed {
@@ -922,7 +911,7 @@ impl Panel {
                 _ => {
                     self.lanes[done.kind as usize].failed = Some(done.read);
                     if done.kind == Kind::Cleanups {
-                        self.cleanup_view_live.store(false, Ordering::Release);
+                        self.cleanup_view_live.revoke();
                         self.revoke_all_cleanup_tokens();
                     }
                     if owed {
@@ -963,7 +952,15 @@ impl Panel {
             self.detail.clear();
             self.observation = Observation::new(self.online);
         }
-        changed | self.poll_control_fields()
+        changed |= self.poll_control_fields();
+        if self.detail.take_auth_expired()
+            || self.observation.take_auth_expired()
+            || self.control_fields.take_auth_expired()
+        {
+            self.auth_expired = Some(self.backend.clone());
+            changed = true;
+        }
+        changed
     }
 
     fn accept(&mut self, kind: Kind, read: Read, page: DirectoryPage) -> bool {
@@ -995,7 +992,6 @@ impl Panel {
         {
             return true;
         }
-        let mut selection_cleared = false;
         match (kind, page.rows) {
             (Kind::Summaries, DirectoryRows::Summaries(rows)) => {
                 let lane = &mut self.lanes[kind as usize];
@@ -1005,6 +1001,7 @@ impl Panel {
                     read,
                     &page.window,
                     rows,
+                    None,
                     |row| (row.id.clone(), None),
                     |row| !self.deleted_missions.contains(&row.id),
                 ) {
@@ -1024,11 +1021,14 @@ impl Panel {
                         .as_ref()
                         .is_some_and(|id| !self.summaries.iter().any(|row| &row.id == id))
                 {
-                    self.selection_live.store(false, Ordering::Release);
-                    if self.visible && self.online {
-                        self.selection_live = Arc::new(AtomicBool::new(true));
+                    self.selection_live.revoke();
+                    self.mounted_selection_live.revoke();
+                    if self.visible {
+                        self.mounted_selection_live = LiveFlag::new(true);
+                        if self.online {
+                            self.selection_live = LiveFlag::new(true);
+                        }
                     }
-                    selection_cleared = true;
                     self.selected = None;
                 }
             }
@@ -1081,62 +1081,72 @@ impl Panel {
                     .map(pending_cleanup_tuple)
                     .collect();
                 if contradictory {
-                    self.cleanup_view_live.store(false, Ordering::Release);
+                    self.cleanup_view_live.revoke();
                     self.revoke_all_cleanup_tokens();
                     return false;
                 }
                 let lane = &mut self.lanes[kind as usize];
                 let had_tail = self.cleanups.len() > lane.prefix_len;
-                if !merge(&mut self.cleanups, lane, read, &page.window, rows, |row| {
-                    (row.mission_id.clone(), Some(row.deletion_id.clone()))
-                }) {
+                let before_len = self.cleanups.len();
+                if !merge_filtered(
+                    &mut self.cleanups,
+                    lane,
+                    read,
+                    &page.window,
+                    rows,
+                    Some(CLEANUP_DISPLAY_CAP),
+                    |row| (row.mission_id.clone(), Some(row.deletion_id.clone())),
+                    |_| true,
+                ) {
                     return false;
                 }
                 let covered = page.window.end == page.window.total;
+                let trimmed = self.cleanups.len() < before_len
+                    || (had_tail && self.cleanups.len() == CLEANUP_DISPLAY_CAP);
                 self.project = Some(page.project_id);
                 lane.window = Some(page.window);
-                let pending_changed = if read == Read::Refresh || (covered && had_tail) {
-                    let before = std::mem::take(&mut self.pending_cleanup_set);
+                if read == Read::Refresh || (covered && had_tail) || trimmed {
                     self.rebuild_cleanup_indices();
-                    before != self.pending_cleanup_set
                 } else {
                     for (k, meta) in incoming_meta {
                         self.cleanup_meta.insert(k, meta);
                     }
-                    let mut changed_pending = false;
                     for tuple in incoming_pending {
-                        if self.pending_cleanup_set.insert(tuple) {
-                            changed_pending = true;
-                        }
+                        self.pending_cleanup_set.insert(tuple);
                     }
                     self.cleanups_dirty = true;
                     self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
-                    changed_pending
-                };
+                }
+                for (id, doc_pending) in &doc_updates {
+                    if *doc_pending == Some(true)
+                        && !self.remembered_document_pending.contains(id)
+                        && let Some(token) =
+                            self.cleanup_tokens.remove(&(id.0.clone(), id.1.clone()))
+                    {
+                        token.revoke();
+                    }
+                }
                 self.remember_document_pending_batch(&doc_updates);
                 self.sync_cleanup_tokens(covered);
-                if pending_changed {
-                    self.renew_cleanup_view();
-                }
                 return true;
             }
             _ => return false,
         }
         self.project = Some(page.project_id);
         self.lanes[kind as usize].window = Some(page.window);
-        if selection_cleared {
-            self.renew_cleanup_view();
-        }
         true
     }
 
     pub(super) fn select(&mut self, id: &str) {
         if self.selected.as_deref() != Some(id) && self.summaries.iter().any(|row| row.id == id) {
-            self.selection_live.store(false, Ordering::Release);
-            if self.visible && self.online {
-                self.selection_live = Arc::new(AtomicBool::new(true));
+            self.selection_live.revoke();
+            self.mounted_selection_live.revoke();
+            if self.visible {
+                self.mounted_selection_live = LiveFlag::new(true);
+                if self.online {
+                    self.selection_live = LiveFlag::new(true);
+                }
             }
-            self.renew_cleanup_view();
             self.control_fields.cancel();
             self.detail.clear();
             self.observation = Observation::new(self.online);
@@ -1284,23 +1294,13 @@ impl Drop for Panel {
     }
 }
 
-fn merge<T>(
-    display: &mut Vec<T>,
-    lane: &mut Lane,
-    read: Read,
-    window: &Window,
-    rows: Vec<T>,
-    key: impl Fn(&T) -> (String, Option<String>),
-) -> bool {
-    merge_filtered(display, lane, read, window, rows, key, |_| true)
-}
-
 fn merge_filtered<T>(
     display: &mut Vec<T>,
     lane: &mut Lane,
     read: Read,
     window: &Window,
     rows: Vec<T>,
+    cap: Option<usize>,
     key: impl Fn(&T) -> (String, Option<String>),
     keep: impl Fn(&T) -> bool,
 ) -> bool {
@@ -1319,9 +1319,11 @@ fn merge_filtered<T>(
         display.extend(kept);
         lane.prefix_len = display.len();
         if window.end != window.total && !tail.is_empty() {
+            let remaining = cap.map_or(usize::MAX, |max_len| max_len.saturating_sub(display.len()));
             display.extend(
                 tail.into_iter()
-                    .filter(|row| keep(row) && !lane.seen.contains(&key(row))),
+                    .filter(|row| keep(row) && !lane.seen.contains(&key(row)))
+                    .take(remaining),
             );
         }
         return true;
@@ -1346,10 +1348,12 @@ fn merge_filtered<T>(
     display.extend(kept);
     lane.prefix_len = display.len();
     if window.end != window.total {
+        let remaining = cap.map_or(usize::MAX, |max_len| max_len.saturating_sub(display.len()));
         display.extend(
             tail_rows
                 .into_iter()
-                .filter(|row| !lane.seen.contains(&key(row))),
+                .filter(|row| !lane.seen.contains(&key(row)))
+                .take(remaining),
         );
     }
     true

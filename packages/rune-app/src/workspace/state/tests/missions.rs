@@ -863,12 +863,12 @@ fn parked_tab_preserves_active_retry_error_and_reauth_carries_document_pending_a
             &after_del,
         );
         assert!(
-            !ui.entries[0]
+            ui.entries[0]
                 .missions
                 .as_ref()
                 .unwrap()
                 .has_settled_cleanup_for_test("del-b"),
-            "B's read-only GET settlement must not publish after A's delete cleared selection in the same poll"
+            "unrelated cleanup row B must still settle even after mission A's deletion clears selection in the same poll"
         );
 
         // 3. Same-workspace reauthentication carries passively learned documentPending: true.

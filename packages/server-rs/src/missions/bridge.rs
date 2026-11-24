@@ -61,8 +61,13 @@ pub(super) async fn session(app: &App, scope: &Scope, sid: &str) -> Result<Value
 }
 
 pub(super) async fn snapshot(app: &App, scope: &Scope) -> Result<Value, Error> {
-    let (status, body) = scope.call(app, "snapshot", &json!({}), 10, super::run::LARGE_MISSION_RPC_LIMIT).await?;
-    let s = &body["output"];
+    let _slot = app.mission_read_slot.acquire().await.map_err(|_| held())?;
+    let (status, mut body) =
+        scope.call(app, "snapshot", &json!({}), 10, super::run::LARGE_MISSION_RPC_LIMIT).await?;
+    let Some(s) = body.as_object_mut().and_then(|o| o.remove("output")) else {
+        return Err(held());
+    };
+    drop(body);
     if !status.is_success()
         || s["projectID"] != scope.project
         || !s["missions"].is_array()
@@ -71,7 +76,23 @@ pub(super) async fn snapshot(app: &App, scope: &Scope) -> Result<Value, Error> {
     {
         return Err(held());
     }
-    Ok(s.clone())
+    Ok(s)
+}
+
+pub(super) fn take_mission(mut s: Value, mid: &str, co: &Value) -> Result<Value, Error> {
+    let missions = s.get_mut("missions").and_then(Value::as_array_mut).ok_or_else(foreign)?;
+    let pos = missions.iter().position(|row| row["id"] == mid).ok_or_else(foreign)?;
+    let m = missions.swap_remove(pos);
+    drop(s);
+    if !ordinary(&m)
+        || m["coordinatorSessionId"] != co["id"]
+        || m["projectID"] != co["projectID"]
+        || !co["parentID"].is_null()
+        || !recorded(&m, co)
+    {
+        return Err(foreign());
+    }
+    Ok(m)
 }
 
 pub(super) fn running(m: &Value) -> bool {

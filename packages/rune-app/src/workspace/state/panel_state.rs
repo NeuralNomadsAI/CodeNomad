@@ -137,6 +137,8 @@ pub(crate) fn mission_panel(s: &State) -> El {
                 retry_cleanup,
                 orphaned_delete,
             ),
+            missions::TaskRecoveryView::build(panel, &ui.mission_lifecycle, &entry.key, control)
+                .map(std::rc::Rc::new),
         )
     })
 }

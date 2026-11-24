@@ -45,10 +45,7 @@ pub(crate) fn controls<S: 'static>(
     let recovery_busy = owner.recovery.any_pending_for(&source);
     let recover_pending = owner.recovery.pending(&recover_key);
     let recover_admitted = owner.recovery.admitted(&recover_key);
-    let recover_error = owner.recovery.error_for(
-        &source,
-        codenomad_client::missions::RecoveryTarget::Coordinator,
-    );
+    let recover_error = owner.recovery.error(&recover_key);
     let pausing = Lifecycle::allow(
         header,
         LifecycleAction::Pause,
@@ -225,10 +222,12 @@ pub(crate) fn controls<S: 'static>(
             "status",
         ));
     }
-    if recover_pending {
-        view = view.child(theme::note(t("missions.recovery.pending"), "status"));
-    } else if let Some(error) = recover_error {
-        view = view.child(theme::note(t(error.key()), "alert"));
+    if recover_eligible {
+        if recover_pending {
+            view = view.child(theme::note(t("missions.recovery.pending"), "status"));
+        } else if let Some(error) = recover_error {
+            view = view.child(theme::note(t(error.key()), "alert"));
+        }
     }
     match delete_state {
         Some(DeleteState::Busy) => {
@@ -252,16 +251,14 @@ pub(crate) fn controls<S: 'static>(
             let retry_req = request_id.clone();
             let cancel_req = request_id;
             let retry_live = panel.selection_live.clone();
-            let cancel_live = panel.selection_live.clone();
+            let cancel_live = panel.mounted_selection_live.clone();
             view = view.child(theme::note(t(key), "alert")).child(
                 layout::action_row()
                     .role("group")
                     .label(t("missions.control.delete"))
                     .child(
                         layout::button_tx(t("missions.control.retry"), false, move |s, tx| {
-                            if !retry_disabled
-                                && retry_live.load(std::sync::atomic::Ordering::Acquire)
-                            {
+                            if !retry_disabled && retry_live.is_live() {
                                 act(s, &retry_origin, Gesture::RetryDelete(retry_req.clone()));
                                 tx.instant();
                             }
@@ -272,7 +269,7 @@ pub(crate) fn controls<S: 'static>(
                     )
                     .child(
                         layout::button_tx(t("missions.control.cancel"), false, move |s, tx| {
-                            if cancel_live.load(std::sync::atomic::Ordering::Acquire) {
+                            if cancel_live.is_live() {
                                 act(s, &cancel_origin, Gesture::CancelDelete(cancel_req.clone()));
                                 tx.instant();
                             }

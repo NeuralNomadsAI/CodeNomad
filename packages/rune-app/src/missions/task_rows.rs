@@ -1,11 +1,77 @@
+use super::{
+    Gesture, Lifecycle, Panel, Source,
+    recovery::{self, RecoveryKey},
+};
 use crate::strings::{locale, t};
-use codenomad_client::missions::{Task, TaskStatus};
+use codenomad_client::missions::{RecoveryError, Task, TaskStatus};
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue,
+    Space, TextRole, catalogue, git_panel as theme,
     layout::{self, Layout},
 };
 use std::{borrow::Cow, collections::HashMap, rc::Rc};
+
+#[derive(Clone)]
+pub(crate) struct TaskRecoveryView<S: 'static> {
+    source: Source,
+    revision: u64,
+    act: fn(&mut S, &Source, Gesture),
+    states: HashMap<String, TaskRecoveryState>,
+}
+
+#[derive(Clone, Copy)]
+struct TaskRecoveryState {
+    disabled: bool,
+    pending: bool,
+    error: Option<RecoveryError>,
+}
+
+impl<S: 'static> TaskRecoveryView<S> {
+    pub(crate) fn build(
+        panel: &Panel,
+        owner: &Lifecycle,
+        occurrence: &str,
+        act: fn(&mut S, &Source, Gesture),
+    ) -> Option<Self> {
+        let (source, header) = panel.control_source(occurrence)?;
+        let snapshot = panel.detail.snapshot.as_ref()?;
+        let revision = header.root.revision;
+        let ready = panel.detail.authoritative();
+        let delete_active = owner.cleanup.delete_state(&source).is_some();
+        let recovery_busy = owner.recovery.any_pending_for(&source);
+        let blocked = !ready
+            || !panel.online()
+            || delete_active
+            || recovery_busy
+            || owner.busy(&source)
+            || owner.unresolved(&source, header)
+            || !owner.idle(&source, header);
+        let mut states = HashMap::new();
+        for task in &snapshot.tasks.rows {
+            if recovery::report_eligible(header, task, &panel.observation) {
+                let key = RecoveryKey::report(&source, revision, &task.key);
+                let pending = owner.recovery.pending(&key);
+                let admitted = owner.recovery.admitted(&key);
+                let disabled = blocked || pending || admitted || !owner.recovery.can_start(&key);
+                let error = owner.recovery.error(&key);
+                states.insert(
+                    task.key.clone(),
+                    TaskRecoveryState {
+                        disabled,
+                        pending,
+                        error,
+                    },
+                );
+            }
+        }
+        Some(Self {
+            source,
+            revision,
+            act,
+            states,
+        })
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct TaskRows {
@@ -21,6 +87,16 @@ impl TaskRows {
 
     pub fn contains(&self, key: &str) -> bool {
         self.keys.contains_key(key)
+    }
+
+    pub fn get(&self, key: &str) -> Option<&Task> {
+        self.keys.get(key).map(|&i| self.rows[i].as_ref())
+    }
+
+    pub fn has_live_actor(&self, session_id: &str) -> bool {
+        self.rows
+            .iter()
+            .any(|task| task.is_live() && task.actor_session_id() == Some(session_id))
     }
 
     pub fn carries_question(
@@ -88,20 +164,24 @@ impl TaskRows {
         self.keys.get(key).map_or("", |&i| title(&self.rows[i]))
     }
 
-    pub fn view<S: 'static>(self: &Rc<Self>) -> El {
+    pub fn view<S: 'static>(self: &Rc<Self>, recovery: Option<Rc<TaskRecoveryView<S>>>) -> El {
         let keys = self.clone();
         let rows = self.clone();
         let language = locale();
         layout::transcript_rows(
             rows.rows.len(),
             move |_: &S, i| Cow::Owned(format!("mission-task-{}", keys.rows[i].id)),
-            move |_: &S, i| crate::strings::with_locale(language, || rows.row(&rows.rows[i])),
+            move |_: &S, i| {
+                crate::strings::with_locale(language, || {
+                    rows.row(&rows.rows[i], recovery.as_deref())
+                })
+            },
         )
         .role("list")
         .label(t("missions.control.profiles.role.specialist"))
     }
 
-    fn row(&self, task: &Task) -> El {
+    fn row<S: 'static>(&self, task: &Task, recovery: Option<&TaskRecoveryView<S>>) -> El {
         let title = title(task);
         let state = t(match task.status {
             TaskStatus::Blocked => "missions.control.task.status.blocked",
@@ -140,6 +220,37 @@ impl TaskRows {
                 .wrap_anywhere(),
             );
         }
+        if let Some(ctx) = recovery
+            && let Some(rec) = ctx.states.get(&task.key).copied()
+        {
+            let source = ctx.source.clone();
+            let revision = ctx.revision;
+            let task_key = task.key.clone();
+            let act = ctx.act;
+            let disabled = rec.disabled;
+            let label = t("missions.recovery.report");
+            row = row.child(
+                layout::button_tx(label, false, move |s: &mut S, tx| {
+                    if !disabled {
+                        act(
+                            s,
+                            &source,
+                            Gesture::RecoverReport(revision, task_key.clone()),
+                        );
+                        tx.instant();
+                    }
+                })
+                .disabled(disabled)
+                .focusable(true)
+                .description(title)
+                .key(format!("mission-task-recover-{}", task.key)),
+            );
+            if rec.pending {
+                row = row.child(theme::note(t("missions.recovery.pending"), "status"));
+            } else if let Some(error) = rec.error {
+                row = row.child(theme::note(t(error.key()), "alert"));
+            }
+        }
         row
     }
 }
@@ -175,7 +286,7 @@ mod tests {
                         .scroll(ScrollSpec {
                             stick_bottom: false,
                         })
-                        .child(rows.view::<Rc<TaskRows>>())
+                        .child(rows.view::<Rc<TaskRows>>(None))
                 })
             },
             (340.0, 720.0),

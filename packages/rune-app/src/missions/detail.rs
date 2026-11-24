@@ -8,7 +8,10 @@ use codenomad_client::{
     backend::Backend,
     bounded,
     history::Result,
-    missions::{DetailRead, DirectoryChanged, MapHeader, RevisionChanged, Task, TaskWindow},
+    missions::{
+        DetailRead, DirectoryAuthExpired, DirectoryChanged, MapHeader, RevisionChanged, Task,
+        TaskWindow,
+    },
     runtime::{Instant, timeout},
 };
 use std::{rc::Rc, time::Duration};
@@ -26,6 +29,7 @@ pub(super) struct Detail {
     retry: Option<Demand>,
     pub failed: bool,
     pub map_reads: u64,
+    auth_expired: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -67,6 +71,10 @@ impl Detail {
                 .snapshot
                 .as_ref()
                 .is_some_and(|snapshot| Some(snapshot.header.root.revision) >= self.observed)
+    }
+
+    pub fn take_auth_expired(&mut self) -> bool {
+        std::mem::take(&mut self.auth_expired)
     }
 
     pub fn clear(&mut self) {
@@ -205,6 +213,9 @@ impl Detail {
                     }
                 }
                 Err(error) => {
+                    if error.is::<DirectoryAuthExpired>() {
+                        self.auth_expired = true;
+                    }
                     if let Some(changed) = error.downcast_ref::<RevisionChanged>() {
                         self.observed = self.observed.max(Some(changed.0));
                     }

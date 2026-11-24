@@ -319,7 +319,7 @@ fn separate_activity_windows_never_manufacture_idle_proof_and_sse_loss_persists_
 }
 
 #[test]
-fn revision_conflict_error_survives_refresh_to_next_revision() {
+fn revision_conflict_error_clears_when_mission_refreshes_to_next_revision() {
     crate::platform::block_on(async {
         let http = Http::new().await;
         let (wake, done) = witness();
@@ -336,15 +336,16 @@ fn revision_conflict_error_survives_refresh_to_next_revision() {
         req.reply(409, json!({"code": "revision-conflict"})).await;
         wait(done.recv()).await.unwrap();
         guard.poll();
-        // Even when the panel advances to revision 8, the refusal reason stays visible.
+        let key_rev_7 = RecoveryKey::coordinator(&src, 7);
         let key_rev_8 = RecoveryKey::coordinator(&src, 8);
-        assert_eq!(guard.error(&key_rev_8), Some(RecoveryError::Conflict));
+        assert_eq!(guard.error(&key_rev_7), Some(RecoveryError::Conflict));
         assert_eq!(
-            guard.error_for(&src, RecoveryTarget::Coordinator),
-            Some(RecoveryError::Conflict)
+            guard.error(&key_rev_8),
+            None,
+            "recovery error must stay scoped to the revision that produced it"
         );
         guard.clear_error_for(&src.workspace_scope(), "msn-rev");
-        assert_eq!(guard.error_for(&src, RecoveryTarget::Coordinator), None);
+        assert_eq!(guard.error(&key_rev_7), None);
     });
 }
 
@@ -515,7 +516,7 @@ fn concurrent_recovery_failures_preserve_each_missions_error() {
         wait(done.recv()).await.unwrap();
         guard.poll();
         assert_eq!(
-            guard.error_for(&src_b, RecoveryTarget::Coordinator),
+            guard.error(&RecoveryKey::coordinator(&src_b, 7)),
             Some(RecoveryError::Member)
         );
 
@@ -524,11 +525,11 @@ fn concurrent_recovery_failures_preserve_each_missions_error() {
         wait(done.recv()).await.unwrap();
         guard.poll();
         assert_eq!(
-            guard.error_for(&src_b, RecoveryTarget::Coordinator),
+            guard.error(&RecoveryKey::coordinator(&src_b, 7)),
             Some(RecoveryError::Member)
         );
         assert_eq!(
-            guard.error_for(&src_a, RecoveryTarget::Coordinator),
+            guard.error(&RecoveryKey::coordinator(&src_a, 7)),
             Some(RecoveryError::Busy)
         );
     });
@@ -556,7 +557,7 @@ fn retire_scope_drops_late_recovery_refusal_error() {
         let polled = guard.poll();
         assert!(polled.admitted.is_empty());
         assert!(polled.refreshed_scopes.is_empty());
-        assert_eq!(guard.error_for(&src, RecoveryTarget::Coordinator), None);
+        assert_eq!(guard.error(&RecoveryKey::coordinator(&src, 7)), None);
     });
 }
 
@@ -700,4 +701,195 @@ fn independent_task_form_does_not_suppress_coordinator_recovery() {
         &coord_form_obs,
         Some(&live_tasks)
     ));
+}
+
+#[test]
+fn unknown_specialist_activity_suppresses_coordinator_recovery() {
+    let header = header_value("msn-unk", "active", Some("running"), 7, true, None);
+    let obs = obs_page(
+        7,
+        Coverage::Observed,
+        Coverage::Observed,
+        2,
+        vec![
+            ("ses_coord", ActorState::IdleWithoutReport, None),
+            ("ses_indep", ActorState::Unknown, None),
+        ],
+    );
+    let live_task: codenomad_client::missions::Task = serde_json::from_value(json!({
+        "id": "tsk-1", "key": "task-1", "title": "Independent work", "status": "queued",
+        "blockedBy": [], "role": "specialist", "order": 0, "createdAt": 1, "updatedAt": 1,
+        "dependents": 0, "reportCount": 0, "outstandingExecution": false,
+        "actorSessionId": "ses_indep", "admissionId": "adm-1"
+    }))
+    .unwrap();
+    let live_tasks = super::super::task_rows::TaskRows::new(vec![live_task]);
+    assert!(
+        !obs.interrupted(&header, Some(&live_tasks)),
+        "unknown activity on an actor with a live task must not be treated as idle proof"
+    );
+    assert!(!coordinator_eligible(&header, &obs, Some(&live_tasks)));
+}
+
+#[test]
+fn task_report_recovery_eligibility_rendering_and_dispatch() {
+    use super::super::{
+        Lifecycle, Panel, detail,
+        task_rows::{TaskRecoveryView, TaskRows},
+    };
+    use rune::{Env, Runtime};
+
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let (wake, done) = witness();
+
+        let header = header_value("msn-rep", "active", Some("running"), 7, true, None);
+        let src = Source::new("occ", &http.backend, &header).unwrap();
+
+        // 1. Native task with ended foreground call & matching contractGeneration + idle-without-report actor is eligible.
+        let native_task: codenomad_client::missions::Task = serde_json::from_value(json!({
+            "id": "tsk-native", "key": "task-native", "title": "Native task", "status": "queued",
+            "blockedBy": [], "role": "specialist", "order": 0, "createdAt": 1, "updatedAt": 1,
+            "dependents": 0, "reportCount": 0, "outstandingExecution": false,
+            "actorSessionId": "ses_native",
+            "executionMode": {"kind": "native"},
+            "contractGeneration": 2,
+            "nativeBinding": {"generation": 2, "parentSessionID": "ses_coord", "parentMessageID": "msg_1", "toolCallID": "call_1"},
+            "nativeExecution": {"binding": {"generation": 2, "parentSessionID": "ses_coord", "parentMessageID": "msg_1", "toolCallID": "call_1"}, "ended": "returned"}
+        }))
+        .unwrap();
+        // 2. Native task whose call is still active is NOT eligible.
+        let active_native: codenomad_client::missions::Task = serde_json::from_value(json!({
+            "id": "tsk-active", "key": "task-active", "title": "Active native", "status": "queued",
+            "blockedBy": [], "role": "specialist", "order": 1, "createdAt": 1, "updatedAt": 1,
+            "dependents": 0, "reportCount": 0, "outstandingExecution": false,
+            "actorSessionId": "ses_native",
+            "executionMode": {"kind": "native"},
+            "contractGeneration": 2,
+            "nativeBinding": {"generation": 2, "parentSessionID": "ses_coord", "parentMessageID": "msg_1", "toolCallID": "call_1"},
+            "nativeExecution": {"binding": {"generation": 2, "parentSessionID": "ses_coord", "parentMessageID": "msg_1", "toolCallID": "call_1"}}
+        }))
+        .unwrap();
+        // 3. Independent task with admissionId and unknown actor activity IS eligible.
+        let indep_task: codenomad_client::missions::Task = serde_json::from_value(json!({
+            "id": "tsk-indep", "key": "task-indep", "title": "Indep task", "status": "queued",
+            "blockedBy": [], "role": "specialist", "order": 2, "createdAt": 1, "updatedAt": 1,
+            "dependents": 0, "reportCount": 0, "outstandingExecution": false,
+            "actorSessionId": "ses_indep",
+            "admissionId": "adm-1"
+        }))
+        .unwrap();
+
+        let obs = obs_page(
+            7,
+            Coverage::Observed,
+            Coverage::Observed,
+            3,
+            vec![
+                ("ses_coord", ActorState::Running, None),
+                ("ses_native", ActorState::IdleWithoutReport, None),
+                ("ses_indep", ActorState::Unknown, None),
+            ],
+        );
+        assert!(report_eligible(&header, &native_task, &obs));
+        assert!(!report_eligible(&header, &active_native, &obs));
+        assert!(report_eligible(&header, &indep_task, &obs));
+
+        let mut panel = Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        panel.observation = obs;
+        panel.detail.snapshot = Some(detail::Snapshot {
+            header,
+            tasks: std::rc::Rc::new(TaskRows::new(vec![native_task, active_native, indep_task])),
+            end: 3,
+            attention_end: 0,
+        });
+        let owner = Lifecycle::default();
+
+        // Render task list and click "Verify and recover missing report" on task-native.
+        struct Harness {
+            panel: Panel,
+            owner: Lifecycle,
+        }
+        let mut rt = Runtime::new(
+            Harness { panel, owner },
+            |h, _| {
+                crate::strings::with_locale("en", || {
+                    let rec = TaskRecoveryView::build(
+                        &h.panel,
+                        &h.owner,
+                        "occ",
+                        |s: &mut Harness, source, gesture| {
+                            s.panel.control("occ", &mut s.owner, source, gesture);
+                        },
+                    )
+                    .map(std::rc::Rc::new);
+                    let rows = h.panel.detail.snapshot.as_ref().unwrap().tasks.clone();
+                    rune_theme_codenomad::git_panel::scroll().child(rows.view::<Harness>(rec))
+                })
+            },
+            (480.0, 600.0),
+            Env::new(false, 1.0),
+        );
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
+        let (bx, by) = rt
+            .find("mission-task-recover-task-native")
+            .expect("native task recovery button must render");
+        assert!(
+            rt.find("mission-task-recover-task-active").is_none(),
+            "active native task must not show recovery button"
+        );
+        assert!(
+            rt.find("mission-task-recover-task-indep").is_some(),
+            "independent task with admissionId must show recovery button"
+        );
+        rt.pointer_down(bx, by);
+        rt.pointer_up(bx, by);
+        rt.frame(1.0 / 60.0);
+
+        let req = http.accept().await;
+        assert!(req.header.contains("/missions/msn-rep/recover "));
+        assert_eq!(
+            req.body,
+            json!({"expectedRevision": 7, "target": "report", "taskKey": "task-native"})
+        );
+        req.reply(
+            200,
+            json!({
+                "admitted": true,
+                "mission": {
+                    "id": "msn-rep", "projectID": "project", "projectCanonical": "/fixture",
+                    "coordinatorSessionId": "ses_coord", "revision": 7,
+                    "actors": [{"kind": "coordinator", "sessionId": "ses_coord", "location": {"directory": "/fixture"}}]
+                }
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        let polled = rt.state.owner.recovery.poll();
+        assert_eq!(polled.admitted.len(), 1);
+        assert!(
+            rt.state
+                .owner
+                .recovery
+                .admitted(&RecoveryKey::report(&src, 7, "task-native"))
+        );
+    });
 }

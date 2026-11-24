@@ -120,25 +120,76 @@ async fn native_read(
     opencode::read_json(response, max).await
 }
 
-pub(super) fn stream_bytes_with_permit(bytes: Vec<u8>, slot: tokio::sync::OwnedSemaphorePermit) -> Response {
+const LARGE_RESPONSE_THRESHOLD: usize = 4 * 1024 * 1024;
+const LARGE_RESPONSE_CHUNK: usize = 64 * 1024;
+const LARGE_RESPONSE_BUDGET_UNITS: usize = 2048;
+const LARGE_RESPONSE_CHUNK_TIMEOUT: Duration = Duration::from_secs(30);
+
+pub(super) async fn encode_json_bytes(value: Value, offload: bool) -> Result<Vec<u8>, ()> {
+    if offload {
+        tokio::task::spawn_blocking(move || serde_json::to_vec(&value).map_err(|_| ()))
+            .await
+            .map_err(|_| ())?
+    } else {
+        serde_json::to_vec(&value).map_err(|_| ())
+    }
+}
+
+fn json_bytes_response(bytes: Vec<u8>) -> Response {
+    use axum::http::{HeaderValue, header};
+    let len = bytes.len();
+    let mut response = axum::body::Body::from(bytes).into_response();
+    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    if let Ok(value) = HeaderValue::from_str(&len.to_string()) {
+        response.headers_mut().insert(header::CONTENT_LENGTH, value);
+    }
+    response
+}
+
+pub(super) fn stream_large_bytes(
+    bytes: Vec<u8>,
+    budget: tokio::sync::OwnedSemaphorePermit,
+    chunk_timeout: Duration,
+) -> Response {
     use axum::http::{HeaderValue, header};
     let len = bytes.len();
     let data = axum::body::Bytes::from(bytes);
-    let stream = futures_util::stream::unfold((data, 0usize, slot), |(data, offset, slot)| async move {
-        if offset >= data.len() {
-            drop(slot);
-            return None;
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(2);
+    tokio::spawn(async move {
+        let _budget = budget;
+        let mut offset = 0usize;
+        while offset < data.len() {
+            let end = (offset + LARGE_RESPONSE_CHUNK).min(data.len());
+            let chunk = data.slice(offset..end);
+            match tokio::time::timeout(chunk_timeout, tx.send(Ok(chunk))).await {
+                Ok(Ok(())) => offset = end,
+                Ok(Err(_)) => return,
+                Err(_) => {
+                    let _ = tx.try_send(Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Mission response delivery timed out",
+                    )));
+                    return;
+                }
+            }
         }
-        let end = (offset + 64 * 1024).min(data.len());
-        let chunk = data.slice(offset..end);
-        Some((Ok::<_, std::convert::Infallible>(chunk), (data, end, slot)))
     });
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|item| (item, rx)) });
     let mut response = axum::body::Body::from_stream(stream).into_response();
     response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
     if let Ok(value) = HeaderValue::from_str(&len.to_string()) {
         response.headers_mut().insert(header::CONTENT_LENGTH, value);
     }
     response
+}
+
+pub(super) fn deliver_json_bytes(app: &crate::App, bytes: Vec<u8>) -> Result<Response, ()> {
+    if bytes.len() <= LARGE_RESPONSE_THRESHOLD {
+        return Ok(json_bytes_response(bytes));
+    }
+    let units = bytes.len().div_ceil(LARGE_RESPONSE_CHUNK).min(LARGE_RESPONSE_BUDGET_UNITS) as u32;
+    let budget = app.mission_large_response_budget.clone().try_acquire_many_owned(units).map_err(|_| ())?;
+    Ok(stream_large_bytes(bytes, budget, LARGE_RESPONSE_CHUNK_TIMEOUT))
 }
 
 async fn read(app: Shared, id: String, method: &'static str, input: Value, max: usize) -> Response {
@@ -217,14 +268,17 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
         result["available"] = json!(true);
         max + 32
     };
-    let Ok(bytes) = serde_json::to_vec(&result) else {
+    let Ok(bytes) = encode_json_bytes(result, max >= LARGE_RESPONSE_THRESHOLD).await else {
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     };
-    drop(result);
+    drop(slot);
     if bytes.len() > raw_limit {
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     }
-    stream_bytes_with_permit(bytes, slot)
+    match deliver_json_bytes(&app, bytes) {
+        Ok(response) => response,
+        Err(()) => unavailable(Status::SERVICE_UNAVAILABLE, "plugin-unavailable"),
+    }
 }
 
 fn admission_projection_owned(mut snapshot: Value, mission: &Value) -> Value {
@@ -437,22 +491,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_bytes_with_permit_holds_semaphore_until_body_drains() {
+    async fn stream_large_bytes_holds_budget_until_drain_and_releases_on_stall_timeout() {
         use futures_util::StreamExt;
-        let sem = Arc::new(tokio::sync::Semaphore::new(1));
-        let permit = sem.clone().acquire_owned().await.unwrap();
-        let payload = vec![b'x'; 128 * 1024 + 17];
-        let response = stream_bytes_with_permit(payload.clone(), permit);
-        assert!(sem.clone().try_acquire_owned().is_err(), "permit must remain held before body drains");
+        let budget = Arc::new(tokio::sync::Semaphore::new(4));
+        let permit = budget.clone().try_acquire_many_owned(3).unwrap();
+        let payload = vec![b'x'; 256 * 1024 + 17];
+        let response = stream_large_bytes(payload.clone(), permit, Duration::from_secs(5));
+        assert_eq!(budget.available_permits(), 1);
         let mut stream = response.into_body().into_data_stream();
         let first = stream.next().await.unwrap().unwrap();
-        assert_eq!(first.len(), 64 * 1024);
-        assert!(sem.clone().try_acquire_owned().is_err(), "permit must remain held while chunks remain");
+        assert_eq!(first.len(), LARGE_RESPONSE_CHUNK);
         let mut collected = first.to_vec();
         while let Some(chunk) = stream.next().await {
             collected.extend_from_slice(&chunk.unwrap());
         }
         assert_eq!(collected, payload);
-        assert!(sem.clone().try_acquire_owned().is_ok(), "permit must release once body finishes");
+        tokio::task::yield_now().await;
+        assert_eq!(budget.available_permits(), 4, "budget must release once body finishes");
+
+        // Stalled client: channel holds 2 chunks (128 KiB); chunk 3 blocks and times out cleanly.
+        let stall_permit = budget.clone().try_acquire_many_owned(3).unwrap();
+        let stalled = stream_large_bytes(vec![b'y'; 256 * 1024], stall_permit, Duration::from_millis(40));
+        assert_eq!(budget.available_permits(), 1);
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert_eq!(budget.available_permits(), 4, "budget must release after stall timeout");
+        drop(stalled);
     }
 }

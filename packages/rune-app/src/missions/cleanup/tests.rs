@@ -51,8 +51,8 @@ fn cleanup_row(pending: u64, document_pending: bool) -> Cleanup {
     serde_json::from_value(cleanup_json(pending, document_pending)).unwrap()
 }
 
-fn live_flag() -> Arc<AtomicBool> {
-    Arc::new(AtomicBool::new(true))
+fn live_flag() -> LiveFlag {
+    LiveFlag::new(true)
 }
 
 fn witness() -> (Wake, Receiver<()>) {
@@ -211,7 +211,7 @@ fn hiding_view_during_reconciliation_cancels_both_retry_paths_before_sending_del
         let held_get = http.accept().await;
         assert!(held_get.header.starts_with("GET /api/workspaces/"));
         // Hide the view while GET reconciliation is still in flight.
-        live.store(false, Ordering::Release);
+        live.revoke();
         held_get
             .reply(
                 200,
@@ -250,7 +250,7 @@ fn hiding_view_during_reconciliation_cancels_both_retry_paths_before_sending_del
         );
         let held_cleanup_get = http.accept().await;
         assert!(held_cleanup_get.header.starts_with("GET /api/workspaces/"));
-        live2.store(false, Ordering::Release);
+        live2.revoke();
         held_cleanup_get
             .reply(
                 200,
@@ -987,7 +987,7 @@ fn sse_loss_and_view_revocation_abort_retry_before_and_after_delete() {
             .await;
         let held_del = http.accept().await;
         assert!(held_del.header.starts_with("DELETE /api/workspaces/"));
-        view_live.store(false, Ordering::Release);
+        view_live.revoke();
         held_del
             .reply(409, json!({"code": "request-conflict"}))
             .await;
@@ -1236,7 +1236,7 @@ fn revoking_view_during_post_409_get_releases_busy_without_settling_or_refreshin
         let post_get = http.accept().await;
         assert!(post_get.header.starts_with("GET /api/workspaces/"));
         // Revoke the view while post-409 GET is held, then return a settled row.
-        view_live.store(false, Ordering::Release);
+        view_live.revoke();
         post_get
             .reply(
                 200,
@@ -1338,7 +1338,7 @@ fn cleanup_retry_fences_selection_change_and_pending_row_set_change() {
         let sc = panel.cleanup_scope().unwrap();
         let mut lifecycle = super::super::Lifecycle::default();
 
-        // 1. Changing mission selection while GET is in flight must block DELETE.
+        // 1. Selecting an unrelated mission while GET is in flight must NOT cancel cleanup retry.
         panel.retry_cleanup(&mut lifecycle, &sc, row_a.clone());
         let get1 = http.accept().await;
         assert!(get1.header.starts_with("GET /api/workspaces/"));
@@ -1351,28 +1351,58 @@ fn cleanup_retry_fences_selection_change_and_pending_row_set_change() {
             }),
         )
         .await;
-        wait(done.recv()).await.unwrap();
-        let polled = lifecycle.cleanup.poll();
-        assert!(polled.settled_cleanups.is_empty());
-        http.quiet().await;
-
-        // 2. Removing a different pending cleanup row while GET is in flight must block DELETE.
-        panel.retry_cleanup(&mut lifecycle, &sc, row_a.clone());
-        let get2 = http.accept().await;
-        assert!(get2.header.starts_with("GET /api/workspaces/"));
-        assert!(panel.accept_cleanups_for_test(vec![row_a.clone()]));
-        get2.reply(
+        let del1 = http.accept().await;
+        assert!(
+            del1.header.starts_with("DELETE /api/workspaces/"),
+            "selecting another mission must not cancel an explicit cleanup retry"
+        );
+        del1.reply(
             200,
             json!({
-                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
-                "cleanups": [cleanup_json(1, false)]
+                "deleted": true,
+                "cleanup": cleanup_json(0, false)
             }),
         )
         .await;
         wait(done.recv()).await.unwrap();
         let polled = lifecycle.cleanup.poll();
-        assert!(polled.settled_cleanups.is_empty());
-        http.quiet().await;
+        assert_eq!(polled.settled_cleanups.len(), 1);
+        assert_eq!(polled.settled_cleanups[0].1.deletion_id, "del-1");
+
+        // 2. Loading/changing an unrelated pending cleanup row while GET is in flight must NOT cancel row_b's retry.
+        let mut row_c = cleanup_row(1, false);
+        row_c.mission_id = "third".into();
+        row_c.deletion_id = "del-3".into();
+        assert!(panel.accept_cleanups_for_test(vec![row_b.clone()]));
+        panel.retry_cleanup(&mut lifecycle, &sc, row_b.clone());
+        let get2 = http.accept().await;
+        assert!(get2.header.starts_with("GET /api/workspaces/"));
+        assert!(panel.accept_cleanups_for_test(vec![row_b.clone(), row_c]));
+        let mut row_b_json = cleanup_json(1, false);
+        row_b_json["missionID"] = json!("other");
+        row_b_json["deletionID"] = json!("del-2");
+        get2.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": [row_b_json]
+            }),
+        )
+        .await;
+        let del2 = http.accept().await;
+        assert!(
+            del2.header.starts_with("DELETE /api/workspaces/"),
+            "unrelated cleanup row changes must preserve an explicit retry for an unchanged row"
+        );
+        let mut settled_b = cleanup_json(0, false);
+        settled_b["missionID"] = json!("other");
+        settled_b["deletionID"] = json!("del-2");
+        del2.reply(200, json!({"deleted": true, "cleanup": settled_b}))
+            .await;
+        wait(done.recv()).await.unwrap();
+        let polled = lifecycle.cleanup.poll();
+        assert_eq!(polled.settled_cleanups.len(), 1);
+        assert_eq!(polled.settled_cleanups[0].1.deletion_id, "del-2");
     });
 }
 
@@ -1410,7 +1440,7 @@ fn cleanup_retry_fences_publication_at_poll_time_even_when_queued_before_hide() 
         .await;
         // Wait for the worker to queue its Settled result BEFORE revoking the view.
         wait(done.recv()).await.unwrap();
-        view_live.store(false, Ordering::Release);
+        view_live.revoke();
         let polled = owner.poll();
         assert!(
             polled.settled_cleanups.is_empty(),
@@ -1680,7 +1710,7 @@ fn cleanup_retry_revokes_on_created_at_change() {
         assert!(panel.accept_cleanups_for_test(vec![row1.clone()]));
         panel.cleanup_view_live = live_flag();
         let view_token = panel.cleanup_view_live.clone();
-        assert!(view_token.load(Ordering::Acquire));
+        assert!(view_token.is_live());
 
         let mut row2 = cleanup_row(1, false);
         row2.created_at = 2.0;
@@ -1692,7 +1722,7 @@ fn cleanup_retry_revokes_on_created_at_change() {
         assert_eq!(panel.cleanups[0].created_at, 1.0);
         assert_eq!(panel.cleanups[0].document_pending, Some(true));
         assert!(
-            !view_token.load(Ordering::Acquire),
+            !view_token.is_live(),
             "createdAt change must revoke cleanup_view_live"
         );
     });
@@ -1730,7 +1760,7 @@ fn revoked_get_only_settlement_preserves_delete_intent_and_cleanup_tokens_cap_at
         );
         let view_live = live_flag();
         let row_live = live_flag();
-        view_live.store(false, Ordering::Release);
+        view_live.revoke();
         let (out, inbox) = bounded(1);
         out.try_send(CleanupRetryResult::Settled {
             receipt: Box::new(cleanup_row(0, false)),
@@ -1781,7 +1811,7 @@ fn revoked_get_only_settlement_preserves_delete_intent_and_cleanup_tokens_cap_at
         }
         assert!(panel.cleanup_token_count() <= 64);
         assert!(
-            tokens.iter().filter(|t| !t.load(Ordering::Acquire)).count() >= 6,
+            tokens.iter().filter(|t| !t.is_live()).count() >= 6,
             "evicted cleanup tokens must be revoked"
         );
     });
@@ -2076,7 +2106,7 @@ fn revoked_delete_retry_view_never_publishes_readonly_settlement() {
             .await;
         wait(done.recv()).await.unwrap();
         // Revoke the view after the read-only settlement was already queued.
-        live.store(false, Ordering::Release);
+        live.revoke();
         let polled = owner.poll();
         assert!(polled.deleted_missions.is_empty());
         assert!(polled.settled_cleanups.is_empty());
@@ -2110,7 +2140,7 @@ fn remembered_document_pending_survives_empty_directory_refresh_and_obsolete_ret
             wake.clone(),
         );
         let held_get = http.accept().await;
-        view_live.store(false, Ordering::Release);
+        view_live.revoke();
         held_get
             .reply(
                 200,
@@ -2277,7 +2307,7 @@ fn cleanup_directory_failure_revokes_retry_fence_and_disables_retry() {
             crate::platform::sleep(std::time::Duration::from_millis(10)).await;
         }
         assert!(panel.cleanups_unavailable());
-        assert!(!panel.cleanup_view_live.load(Ordering::Acquire));
+        assert!(!panel.cleanup_view_live.is_live());
 
         // Releasing the point GET with a matching pending row must NOT send DELETE.
         held_get
@@ -2375,7 +2405,7 @@ fn revoked_delete_retry_never_publishes_readonly_failure() {
             )
             .await;
         wait(done.recv()).await.unwrap();
-        live.store(false, Ordering::Release);
+        live.revoke();
         let polled = owner.poll();
         assert!(polled.refreshed_missions.is_empty());
         assert!(polled.refreshed_scopes.is_empty());
@@ -2739,13 +2769,18 @@ fn cleanup_retry_rejects_settlement_when_document_pending_learned_during_preflig
         assert!(held_get.header.starts_with("GET /api/workspaces/"));
 
         // While preflight GET is held, the directory learns documentPending: true for the same row.
+        let retry_row_token = panel.cleanup_row_live("old", "del-1");
         let retry_view_token = panel.cleanup_view_live.clone();
         initial.document_pending = Some(true);
         assert!(panel.accept_cleanups_for_test(vec![initial]));
         panel.observe_cleanups(&mut lifecycle);
         assert!(
-            !retry_view_token.load(Ordering::Acquire),
-            "pending set change with documentPending: true must revoke the stale retry view"
+            !retry_row_token.is_live(),
+            "learning documentPending: true must revoke that row's stale retry token"
+        );
+        assert!(
+            retry_view_token.is_live(),
+            "learning documentPending: true on one row must not cancel unrelated cleanup retries"
         );
         assert!(
             !lifecycle.cleanup.cleanup_busy(&sc),
@@ -3153,7 +3188,7 @@ fn revoked_post_409_get_settlement_neither_publishes_nor_retires_delete_intent()
         .await;
         // Wait for the settled post-409 result to queue, then revoke the view BEFORE polling.
         wait(done.recv()).await.unwrap();
-        view.store(false, Ordering::Release);
+        view.revoke();
         let polled = owner.poll_retries();
         assert!(!owner.cleanup_busy(&sc));
         assert!(polled.settled_cleanups.is_empty());
@@ -3193,20 +3228,29 @@ fn cleanup_pagination_continues_after_order_change_refresh_at_2000_cap() {
         }
         assert_eq!(panel.cleanups.len(), 2_000);
 
-        // Refresh into a new order that still has 2000 rows and 1 brand-new row on page 1.
-        let mut page1: Vec<Cleanup> = vec![make_row("new", 0)];
-        page1.extend((0..49).map(|i| make_row("old", i)));
-        assert!(panel.accept_more_cleanups_for_test("order-new", 0, 2_000, page1));
-        assert_eq!(panel.cleanups.len(), 2_001);
-        assert_eq!(panel.cleanup_seen_count(), 50);
-        assert!(
-            panel.has_more(super::super::directory::Kind::Cleanups),
-            "Load more must stay available for the new order"
-        );
-        // Page 2 (offset 50) of the new order must be accepted without dropping loaded rows.
-        let page2: Vec<Cleanup> = (49..99).map(|i| make_row("old", i)).collect();
-        assert!(panel.accept_more_cleanups_for_test("order-new", 50, 2_000, page2));
-        assert_eq!(panel.cleanups.len(), 2_001);
+        // Repeated order changes with brand-new first-page rows must keep display capped at 2,000.
+        for round in 0..5u64 {
+            let mut page1: Vec<Cleanup> = (0..10)
+                .map(|j| make_row(&format!("new-{round}"), j))
+                .collect();
+            page1.extend((0..40).map(|i| make_row("old", i)));
+            assert!(panel.accept_more_cleanups_for_test(
+                &format!("order-new-{round}"),
+                0,
+                2_000,
+                page1
+            ));
+            assert_eq!(panel.cleanups.len(), 2_000);
+            assert_eq!(panel.cleanup_seen_count(), 50);
+            assert!(
+                panel.has_more(super::super::directory::Kind::Cleanups),
+                "Load more must stay available for the new order"
+            );
+        }
+        // Page 2 (offset 50) of the latest order must be accepted while staying <= 2,000.
+        let page2: Vec<Cleanup> = (40..90).map(|i| make_row("old", i)).collect();
+        assert!(panel.accept_more_cleanups_for_test("order-new-4", 50, 2_000, page2));
+        assert_eq!(panel.cleanups.len(), 2_000);
         assert_eq!(panel.cleanup_seen_count(), 100);
     });
 }
@@ -3445,7 +3489,7 @@ fn hiding_view_during_hung_cleanup_preflight_frees_workspace_retry_slot_immediat
         assert!(owner.cleanup_busy(&sc));
 
         // Hide the pane -> revoking view1 must immediately free the workspace retry slot.
-        view1.store(false, Ordering::Release);
+        view1.revoke();
         assert!(
             !owner.cleanup_busy(&sc),
             "revoked preflight must immediately stop reporting the workspace retry slot as busy"
@@ -3522,6 +3566,196 @@ fn confirmed_deleted_mission_stays_filtered_across_stale_summaries_refresh() {
         // Once the server catches up with a full-coverage page omitting msn-gone, tombstone clears.
         assert!(panel.accept_summaries_for_test(vec![make_sum("msn-keep")]));
         assert!(!panel.has_summary_for_test("msn-gone"));
+    });
+}
+
+#[test]
+fn live_flag_revoke_synchronously_blocks_commit_dispatch_before_poll() {
+    let flag = LiveFlag::new(true);
+    let phase = Arc::new(AtomicU8::new(PHASE_PREFLIGHT));
+    let (_tx, rx) = bounded(1);
+    assert!(flag.register(phase.clone(), rx.clone()));
+    assert!(flag.is_live());
+
+    // Revoking the flag synchronously flips phase to PHASE_CANCELLED and closes cancel before any poll().
+    flag.revoke();
+    assert!(!flag.is_live());
+    assert_eq!(phase.load(Ordering::Acquire), PHASE_CANCELLED);
+    assert!(rx.is_closed());
+    assert!(
+        !LiveFlag::commit_dispatch(&[&flag], &phase),
+        "commit_dispatch must refuse to enter PHASE_DISPATCHED after revoke"
+    );
+}
+
+#[test]
+fn offline_cancel_discards_selected_and_orphaned_delete_intents_while_retry_stays_disabled() {
+    use rune::{Env, Runtime};
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let (wake, done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        let mut lifecycle = super::super::Lifecycle::default();
+        let mut src = source("msn-offline");
+        src.mission.server = "server".into();
+        src.workspace = http.backend.workspace.clone();
+        lifecycle.cleanup.start_delete(
+            &src,
+            "Offline mission".into(),
+            3,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let del = http.accept().await;
+        del.reply(500, json!({"error": "failed"})).await;
+        let rec = http.accept().await;
+        rec.reply(500, json!({"error": "failed"})).await;
+        wait(done.recv()).await.unwrap();
+        lifecycle.cleanup.poll();
+        assert!(matches!(
+            lifecycle.cleanup.delete_state(&src),
+            Some(DeleteState::Failed(_))
+        ));
+
+        // Mount panel while offline: mounted_view_live / mounted_selection_live must remain live for local Cancel.
+        panel.set_online(false);
+        panel.show(true);
+        assert!(!panel.view_live.is_live());
+        assert!(!panel.selection_live.is_live());
+        assert!(panel.mounted_view_live.is_live());
+        assert!(panel.mounted_selection_live.is_live());
+
+        // Orphaned Cancel works offline while Retry stays disabled and does not fire.
+        struct Harness {
+            panel: super::super::Panel,
+            lifecycle: super::super::Lifecycle,
+            cancelled: bool,
+            retried: bool,
+        }
+        let mut rt = Runtime::new(
+            Harness {
+                panel,
+                lifecycle,
+                cancelled: false,
+                retried: false,
+            },
+            |h, _| {
+                crate::strings::with_locale("en", || {
+                    rune_theme_codenomad::git_panel::scroll().child(
+                        super::super::cleanup_view::cleanup_view::<Harness>(
+                            &h.panel,
+                            &h.lifecycle.cleanup,
+                            "occ",
+                            |_, _, _, _| {},
+                            |s, _, _, _, _, retry| {
+                                if retry {
+                                    s.retried = true;
+                                } else {
+                                    s.cancelled = true;
+                                }
+                            },
+                        ),
+                    )
+                })
+            },
+            (420.0, 320.0),
+            Env::new(false, 1.0),
+        );
+        rt.frame(1.0 / 60.0);
+        let (rx, ry) = rt
+            .find("mission-delete-retry-msn-offline")
+            .expect("retry button");
+        rt.pointer_down(rx, ry);
+        rt.pointer_up(rx, ry);
+        rt.frame(1.0 / 60.0);
+        assert!(!rt.state.retried, "offline Retry must not fire");
+
+        let (cx, cy) = rt
+            .find("mission-delete-cancel-msn-offline")
+            .expect("cancel button");
+        rt.pointer_down(cx, cy);
+        rt.pointer_up(cx, cy);
+        rt.frame(1.0 / 60.0);
+        assert!(rt.state.cancelled, "offline Cancel must fire immediately");
+    });
+}
+
+#[test]
+fn selected_mission_detail_observation_and_control_field_401_trigger_auth_expired() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        panel.seed_summary_for_test("msn-401");
+        panel.show(true);
+        panel.select("msn-401");
+
+        // Reply 200 to summaries & cleanups, 401 to selected mission detail read, then authenticated: false on /api/auth/status.
+        let mut got_detail = false;
+        let mut got_auth_probe = false;
+        for _ in 0..8 {
+            panel.poll();
+            if panel.take_auth_expired().is_some() {
+                break;
+            }
+            let req = http.accept().await;
+            if req.header.contains("/api/auth/status") {
+                req.reply(200, json!({"authenticated": false})).await;
+                got_auth_probe = true;
+                break;
+            } else if req.body["source"] == "mission" {
+                req.reply(401, json!({"error": "unauthorized"})).await;
+                got_detail = true;
+            } else {
+                let source = req.body["source"].as_str().unwrap_or("summaries");
+                let mut body = json!({
+                    "available": true, "version": 1, "projectID": "project", "source": source,
+                    "window": {"order": "a".repeat(43), "offset": 0, "end": 0, "total": 0},
+                    "page": {"digest": "b".repeat(43), "total": 0, "pieces": []}
+                });
+                if source == "summaries" {
+                    body["finishHighWater"] = json!(0);
+                }
+                req.reply(200, body).await;
+            }
+        }
+        assert!(got_detail, "expected mission detail request");
+        assert!(got_auth_probe, "expected /api/auth/status probe after 401");
+        let mut expired = false;
+        for _ in 0..40 {
+            panel.poll();
+            if panel.take_auth_expired().is_some() {
+                expired = true;
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            expired,
+            "confirmed 401 on selected-mission detail read must surface auth_expired"
+        );
     });
 }
 

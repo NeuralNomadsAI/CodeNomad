@@ -31,6 +31,7 @@ pub(super) struct Preferences {
     stream: Option<PreferencesWatch>,
     closing_stream: Option<codenomad_client::Receiver<()>>,
     authentication_required: bool,
+    document_auth_expired: Option<Backend>,
     stream_offline: bool,
 }
 
@@ -195,6 +196,7 @@ impl Preferences {
         self.opencode_install.cancel_check();
         self.backend = owner;
         self.authentication_required = false;
+        self.document_auth_expired = None;
         self.stream_offline = false;
         self.unwatch();
         self.refresh();
@@ -331,6 +333,10 @@ impl Preferences {
         }
     }
 
+    pub fn take_document_auth_expired(&mut self) -> Option<Backend> {
+        self.document_auth_expired.take()
+    }
+
     pub fn observe_authentication(&mut self) -> bool {
         if self
             .stream
@@ -463,6 +469,14 @@ impl Preferences {
                 .memory
                 .poll_review(backend, self.provider_target.as_ref(), &main, &window)
             | install;
+        if self.config.take_auth_expired()
+            || self.state.take_auth_expired()
+            || self.server.take_auth_expired()
+        {
+            self.document_auth_expired = Some(backend.clone());
+            self.require_authentication();
+            return true;
+        }
         if changed {
             self.revision += 1;
         }

@@ -60,6 +60,7 @@ pub(crate) enum Gesture {
     StopDialog(u64),
     ConfirmStop(bool),
     RecoverCoordinator(u64),
+    RecoverReport(u64, String),
     DeleteMission(u64, bool),
     RetryDelete(String),
     CancelDelete(String),
@@ -290,6 +291,33 @@ impl Panel {
                     source,
                     revision,
                     RecoveryTarget::Coordinator,
+                    self.backend.clone(),
+                    self.wake.clone(),
+                );
+                None
+            }
+            Gesture::RecoverReport(witnessed, task_key)
+                if ready
+                    && self.online()
+                    && !delete_active
+                    && !recovery_busy
+                    && witnessed == revision
+                    && !owner.unresolved(source, header)
+                    && !owner.busy(source)
+                    && owner.idle(source, header)
+                    && self
+                        .detail
+                        .snapshot
+                        .as_ref()
+                        .and_then(|s| s.tasks.get(&task_key))
+                        .is_some_and(|task| {
+                            recovery::report_eligible(header, task, &self.observation)
+                        }) =>
+            {
+                owner.recovery.start(
+                    source,
+                    revision,
+                    RecoveryTarget::Report { task_key },
                     self.backend.clone(),
                     self.wake.clone(),
                 );
@@ -551,7 +579,7 @@ impl Lifecycle {
             scope,
             &key,
             &request_id,
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            super::cleanup::LiveFlag::new(true),
             backend,
             wake,
         );

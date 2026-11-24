@@ -8,7 +8,10 @@ use codenomad_client::{
     backend::Backend,
     bounded,
     history::Result,
-    missions::{Activity, ActorState, Coverage, DirectoryChanged, MapHeader, RunState, Status},
+    missions::{
+        Activity, ActorState, Coverage, DirectoryAuthExpired, DirectoryChanged, MapHeader,
+        RunState, Status,
+    },
     runtime::timeout,
 };
 use rune::{El, col, text};
@@ -30,9 +33,14 @@ pub(super) struct Observation {
     due: Option<f64>,
     settled_at: Option<f64>,
     disconnected: bool,
+    auth_expired: bool,
 }
 
 impl Observation {
+    pub fn take_auth_expired(&mut self) -> bool {
+        std::mem::take(&mut self.auth_expired)
+    }
+
     pub fn new(online: bool) -> Self {
         Self {
             disconnected: !online,
@@ -153,6 +161,26 @@ impl Observation {
         false
     }
 
+    fn any_live_actor_unknown(
+        &self,
+        header: &MapHeader,
+        tasks: Option<&super::task_rows::TaskRows>,
+    ) -> bool {
+        let total_tasks = header.tasks.page.total;
+        let tasks_complete =
+            total_tasks == 0 || tasks.is_some_and(|rows| rows.len() >= total_tasks);
+        self.pages
+            .iter()
+            .filter(|page| self.current(page))
+            .flat_map(|page| &page.actors)
+            .any(|actor| {
+                actor.state == ActorState::Unknown
+                    && (actor.session_id == header.root.coordinator_session_id
+                        || !tasks_complete
+                        || tasks.is_some_and(|rows| rows.has_live_actor(&actor.session_id)))
+            })
+    }
+
     pub fn interrupted(
         &self,
         header: &MapHeader,
@@ -163,6 +191,7 @@ impl Observation {
             && self.complete_and_fresh(header.root.revision)
             && !self.has_mission_level_question(header, tasks)
             && !self.any_actor_running()
+            && !self.any_live_actor_unknown(header, tasks)
             && self.actor_state(&header.root.coordinator_session_id)
                 == Some(ActorState::IdleWithoutReport)
     }
@@ -240,6 +269,10 @@ impl Observation {
                     } else {
                         Some(offset)
                     }
+                }
+                Err(error) if error.is::<DirectoryAuthExpired>() => {
+                    self.auth_expired = true;
+                    Some(offset)
                 }
                 Err(error) if error.is::<DirectoryChanged>() => Some(0),
                 Ok(_) => Some(0),
