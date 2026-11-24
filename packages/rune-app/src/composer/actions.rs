@@ -44,6 +44,8 @@ impl Owner {
         }
         if let Some(send) = &mut self.unconfirmed {
             send.edited = true;
+            send.edit = TextEdit::default();
+            send.draft = Draft::default();
         }
     }
     #[cfg(test)]
@@ -60,6 +62,25 @@ pub(crate) struct PendingSend {
     slash: Option<CommandAttempt>,
     edited: bool,
     recallable: bool,
+}
+impl PendingSend {
+    pub(crate) fn locked(id: String) -> Self {
+        Self {
+            id,
+            edit: TextEdit::default(),
+            draft: Draft::default(),
+            was_running: false,
+            slash: None,
+            edited: true,
+            recallable: false,
+        }
+    }
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+    pub(crate) fn inline_usage(&self) -> (usize, usize) {
+        self.draft.inline_usage()
+    }
 }
 
 pub(crate) fn command_held(s: &State) -> bool {
@@ -551,8 +572,25 @@ mod tests {
         rt.state.draft = TextEdit::new(restored_draft);
         assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
         assert!(!can_send(&rt.state));
-        rt.state.messages.push(row);
-        reconcile(&mut rt.state);
+        // Closing the tab and reopening the project preserves the unconfirmed lock without retaining bytes.
+        let tab_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+        rt.update(|s, tx| workspace::close(s, &tab_key, tx));
+        workspace::opened(&mut rt.state, &project);
+        let reopened_draft = workspace::bound(&mut rt.state, &first);
+        rt.state.draft = TextEdit::new(reopened_draft);
+        assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
+        assert!(!can_send(&rt.state));
+        // Anchor installation reconciles the unconfirmed send just like Sync and pagination.
+        crate::chat::reader::install_anchor(
+            &mut rt.state,
+            crate::history::Page {
+                rows: vec![row],
+                older: None,
+                newer: None,
+                running: false,
+                user_file_references: false,
+            },
+        );
         assert!(rt.state.composer.unconfirmed_id().is_none());
         workspace::bound(&mut rt.state, &second);
         workspace::bound(&mut rt.state, &first);

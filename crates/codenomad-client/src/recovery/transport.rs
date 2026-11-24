@@ -186,18 +186,13 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Closed(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
-                let first_gap = opened
-                    && (attempts == 0
-                        || attempts == 1 && stream_gap && !wire.upstream.load(SeqCst));
-                stream_gap = first_gap;
+                stream_gap = opened && attempts == 0;
                 opened = false;
                 connection_closed = true;
                 connection_lost = true;
                 reader.dirty = true;
                 publish(&out, &wake, Event::ConnectionLost).await;
-                if !first_gap || attempts == 0 {
-                    attempts = attempts.saturating_add(1);
-                }
+                attempts = attempts.saturating_add(1);
                 retry =
                     Some(Instant::now() + Duration::from_millis(250 * (1u64 << attempts.min(4))));
                 if !stream_gap {
@@ -223,20 +218,21 @@ pub(crate) async fn run_with_reading(
                 return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
-                let first_gap = opened && attempts == 0;
-                stream_gap = first_gap;
-                attempts = attempts.saturating_add(1);
+                // Upstream SSE unavailability is a stream gap, never a revocation of HTTP send authority.
+                stream_gap = opened && attempts == 0;
                 ReadingLane::invalidate_connection(reading);
                 reader.dirty = true;
                 if reading.is_some() || !reader.historical {
-                    publish(&out, &wake, Event::ConnectionLost).await;
-                    if !stream_gap {
-                        if attempts <= 6 {
-                            publish(&out, &wake, Event::Reconnecting).await;
-                        } else if attempts == 7 && reading.is_none() {
-                            publish(&out, &wake, Event::Failed).await;
-                        }
-                    }
+                    publish(
+                        &out,
+                        &wake,
+                        if stream_gap || reading.is_some() {
+                            Event::ConnectionLost
+                        } else {
+                            Event::Reconnecting
+                        },
+                    )
+                    .await;
                 }
             }
             Some(Input::Available(e, v)) if e == epoch => {

@@ -145,6 +145,7 @@ pub(crate) fn install_anchor(s: &mut State, page: crate::history::Page) {
         reader.install(s.history_detached);
     }
     s.messages = page.rows;
+    crate::composer::reconcile(s);
 }
 
 pub(crate) fn set_timeline_position(s: &mut State, message: String) {

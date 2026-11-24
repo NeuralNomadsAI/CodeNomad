@@ -190,6 +190,20 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     let removed = ui.entries.remove(index);
     s.notifications.forget_tab(id);
     if let Tab::Workspace(mut saved) = removed.saved {
+        // Preserve unconfirmed attempt locks across tab closure without retaining inline attachment bytes.
+        for (session_id, live) in &removed.live_drafts {
+            if !removed.pending_drafts.contains(session_id)
+                && let Some(attempt_id) = live.unconfirmed_id()
+            {
+                ui.remember_closed_unconfirmed(&saved, session_id.clone(), attempt_id.to_owned());
+            }
+        }
+        if let Some(session_id) = &saved.active_session_id
+            && !removed.pending_drafts.contains(session_id)
+            && let Some(attempt_id) = removed.cache.as_ref().and_then(Cache::unconfirmed_id)
+        {
+            ui.remember_closed_unconfirmed(&saved, session_id.clone(), attempt_id.to_owned());
+        }
         // Undelivered copies still belong to their closed source.
         saved
             .drafts

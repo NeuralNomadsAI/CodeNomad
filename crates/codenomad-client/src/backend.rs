@@ -30,14 +30,19 @@ pub(crate) fn send_transport_error(error: &reqwest::Error) -> crate::prompt::Pro
     crate::prompt::PromptError::Unconfirmed
 }
 
-pub(crate) async fn classify_http_error(response: reqwest::Response) -> crate::prompt::PromptError {
+pub(crate) async fn classify_http_error(
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))] backend: &Backend,
+    response: reqwest::Response,
+) -> crate::prompt::PromptError {
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
-        return if cfg!(not(target_arch = "wasm32")) {
-            crate::prompt::PromptError::AuthenticationRequired
-        } else {
-            // Browser pairing revocation can return 401 while a detached mutation is still running.
-            crate::prompt::PromptError::Unconfirmed
+        #[cfg(not(target_arch = "wasm32"))]
+        return crate::prompt::PromptError::AuthenticationRequired;
+        #[cfg(target_arch = "wasm32")]
+        return match backend.authentication_status().await {
+            // Valid browser pairing means upstream rejected synchronously; revoked/uncertain pairing may have detached.
+            Ok(true) => crate::prompt::PromptError::Rejected,
+            _ => crate::prompt::PromptError::Unconfirmed,
         };
     }
     if status.is_client_error() {
@@ -174,7 +179,7 @@ impl Backend {
             .await
             .map_err(|error| send_transport_error(&error))?;
         if !response.status().is_success() {
-            return Err(classify_http_error(response).await.into());
+            return Err(classify_http_error(self, response).await.into());
         }
         let response = crate::prompt_receipt::read(response)
             .await

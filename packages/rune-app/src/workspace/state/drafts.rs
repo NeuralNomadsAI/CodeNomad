@@ -14,6 +14,12 @@ pub(super) struct LiveDraft {
     unconfirmed: Option<crate::composer::PendingSend>,
 }
 
+impl LiveDraft {
+    pub(super) fn unconfirmed_id(&self) -> Option<&str> {
+        self.unconfirmed.as_ref().map(|send| send.id())
+    }
+}
+
 impl Ui {
     pub(crate) fn has_unsaved_large_drafts(&self) -> bool {
         self.entries
@@ -37,6 +43,17 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
     let Some(id) = super::active_session(s) else {
         return false;
     };
+    let (current_files, current_bytes) = {
+        let (draft_files, draft_bytes) = s.composer.draft.inline_usage();
+        let (held_files, held_bytes) = s
+            .composer
+            .unconfirmed_state()
+            .map_or((0, 0), |send| send.inline_usage());
+        (
+            draft_files.saturating_add(held_files),
+            draft_bytes.saturating_add(held_bytes),
+        )
+    };
     let (files, bytes) = ui
         .entries
         .iter()
@@ -47,12 +64,21 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
                 .iter()
                 .filter(move |(key, _)| index != ui.active || key.as_str() != id)
         })
-        .filter_map(|(_, draft)| draft.parts.as_ref())
         .fold(
-            s.composer.draft.inline_usage(),
-            |(files, bytes), (draft, _)| {
-                let (count, len) = draft.inline_usage();
-                (files.saturating_add(count), bytes.saturating_add(len))
+            (current_files, current_bytes),
+            |(files, bytes), (_, draft)| {
+                let (part_files, part_bytes) = draft
+                    .parts
+                    .as_ref()
+                    .map_or((0, 0), |(draft, _)| draft.inline_usage());
+                let (held_files, held_bytes) = draft
+                    .unconfirmed
+                    .as_ref()
+                    .map_or((0, 0), |send| send.inline_usage());
+                (
+                    files.saturating_add(part_files).saturating_add(held_files),
+                    bytes.saturating_add(part_bytes).saturating_add(held_bytes),
+                )
             },
         );
     if files > MAX_WINDOW_DEVICE_FILES || bytes > MAX_WINDOW_DEVICE_BYTES {
@@ -96,6 +122,17 @@ pub fn capture(s: &mut State) {
     let Some(mut ui) = s.workspace.take() else {
         return;
     };
+    let clear_closed = ui.entries.get(ui.active).and_then(|item| {
+        let Tab::Workspace(saved) = &item.saved else {
+            return None;
+        };
+        let key = saved.active_session_id.as_deref()?;
+        let owns = item.binding.as_ref().is_some_and(|b| b.session == key);
+        (owns && s.composer.unconfirmed_state().is_none()).then(|| (saved.clone(), key.to_owned()))
+    });
+    if let Some((saved, key)) = clear_closed {
+        ui.forget_closed_unconfirmed(&saved, &key);
+    }
     if ui
         .entries
         .get_mut(ui.active)
@@ -185,6 +222,12 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
         return String::new();
     };
     deliver_draft(ui, &backend.session);
+    let closed_unconfirmed = match &ui.entries[ui.active].saved {
+        Tab::Workspace(saved) => ui
+            .closed_unconfirmed_id(saved, &backend.session)
+            .map(str::to_owned),
+        Tab::Blank => None,
+    };
     let item = &mut ui.entries[ui.active];
     item.binding = Some(backend.clone());
     let Tab::Workspace(saved) = &mut item.saved else {
@@ -192,8 +235,13 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
     };
     saved.active_session_id = Some(backend.session.clone());
     let live = item.live_drafts.get(&backend.session);
-    if !same_session && let Some(unconfirmed) = live.and_then(|draft| draft.unconfirmed.as_ref()) {
-        s.composer.restore_unconfirmed(unconfirmed.clone());
+    if !same_session {
+        if let Some(unconfirmed) = live.and_then(|draft| draft.unconfirmed.as_ref()) {
+            s.composer.restore_unconfirmed(unconfirmed.clone());
+        } else if let Some(attempt_id) = closed_unconfirmed {
+            s.composer
+                .restore_unconfirmed(crate::composer::PendingSend::locked(attempt_id));
+        }
     }
     if !same_session && let Some((draft, missing)) = live.and_then(|draft| draft.parts.as_ref()) {
         s.composer.draft = draft.clone();

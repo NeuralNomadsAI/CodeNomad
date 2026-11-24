@@ -25,7 +25,7 @@ impl Backend {
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(crate::backend::classify_http_error(response).await)
+            Err(crate::backend::classify_http_error(self, response).await)
         }
     }
 }

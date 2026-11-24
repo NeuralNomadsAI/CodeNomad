@@ -8,6 +8,7 @@ use wasm_bindgen::{JsCast, closure::Closure};
 #[derive(Default)]
 pub struct Recovery {
     required: bool,
+    retry_pending: bool,
     result: Option<Receiver<Option<bool>>>,
     focus: Option<FocusCheck>,
 }
@@ -69,6 +70,11 @@ pub fn observe(s: &mut State) {
 }
 
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
+    if s.pairing.retry_pending && !s.pairing.required && !s.composer.pending() {
+        s.pairing.retry_pending = false;
+        crate::retry_connection(s, tx);
+        return true;
+    }
     if s.pairing.result.is_none()
         && s.pairing
             .focus
@@ -88,6 +94,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     s.pairing.required = required;
     if required {
+        s.pairing.retry_pending = false;
         if let Some(l) = s.screen.launcher_mut() {
             l.password = rune::edit::TextEdit::new("");
         }
@@ -103,11 +110,16 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         s.phase = crate::Phase::Failed;
         s.stream_offline = true;
+        crate::workspace::revoke_cached_sessions(s);
         s.pairing.focus = FocusCheck::new(s.wake.clone());
     } else {
         s.pairing.focus = None;
         s.history_error = false;
+        s.pairing.retry_pending = true;
         crate::retry_connection(s, tx);
+        if !s.composer.pending() {
+            s.pairing.retry_pending = false;
+        }
     }
     true
 }

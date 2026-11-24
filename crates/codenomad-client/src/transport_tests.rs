@@ -382,14 +382,18 @@ fn prompt_during_stream_gap(with_reading: bool) {
                 ).await.unwrap();
                 let replayed = Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let replayed_flag = replayed.clone();
-                let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
+                let (stop_tx, stop_rx) = bounded::<()>(1);
                 let sync_server = tokio::spawn(async move {
                     loop {
-                        let accept = tokio::select! {
-                            _ = &mut stop_rx => break,
-                            accepted = listener.accept() => accepted,
-                        };
-                        let Ok((socket, _)) = accept else {
+                        let accept = futures_lite::future::race(
+                            async { Some(listener.accept().await) },
+                            async {
+                                let _ = stop_rx.recv().await;
+                                None
+                            },
+                        )
+                        .await;
+                        let Some(Ok((socket, _))) = accept else {
                             break;
                         };
                         let mut req = BufReader::new(socket);
@@ -441,7 +445,7 @@ fn prompt_during_stream_gap(with_reading: bool) {
                 drop(reconnected);
                 commands.send(Command::Close).await.unwrap();
                 task.await.unwrap().unwrap();
-                let _ = stop_tx.send(());
+                stop_tx.close();
                 sync_server.await.unwrap();
                 assert!(!replayed.load(SeqCst), "reconnecting SSE must not replay the prompt");
                 return;
@@ -1183,7 +1187,7 @@ fn unsynced_reconnect_headers_do_not_reset_attempts_and_escalate_to_reconnecting
 }
 
 #[test]
-fn repeated_upstream_disconnect_escalates_to_reconnecting() {
+fn repeated_upstream_disconnect_keeps_http_send_authority_without_reconnecting() {
     run(async {
         tokio::time::timeout(Duration::from_secs(5), async {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1223,13 +1227,58 @@ fn repeated_upstream_disconnect_escalates_to_reconnecting() {
                 )
                 .await
                 .unwrap();
-            while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
+            loop {
+                match events.recv().await.unwrap() {
+                    Event::ConnectionLost => break,
+                    Event::Reconnecting | Event::Failed => {
+                        panic!("repeated upstream SSE disconnect must not revoke HTTP send authority");
+                    }
+                    _ => {}
+                }
+            }
+            let id = "msg_00000000000000000000000000000011";
+            commands
+                .send(Command::Prompt(crate::prompt::Prompt {
+                    id: Some(id.into()),
+                    text: "still sendable".into(),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
+            let (post_socket, _) = listener.accept().await.unwrap();
+            let mut post = BufReader::new(post_socket);
+            let mut line = String::new();
+            assert!(post.read_line(&mut line).await.unwrap() > 0);
+            assert!(line.starts_with("POST /workspaces/workspace/instance/api/session/session/prompt "));
+            let body = format!(r#"{{"data":{{"id":"{id}","sessionID":"session"}}}}"#);
+            post.get_mut()
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            loop {
+                match events.recv().await.unwrap() {
+                    Event::PromptAcknowledged {
+                        attempted,
+                        outcome: PromptOutcome::Confirmed(confirmed),
+                    } if attempted == id && confirmed == id => break,
+                    Event::Reconnecting | Event::Failed => {
+                        panic!("repeated upstream SSE disconnect must not emit Reconnecting or Failed");
+                    }
+                    _ => {}
+                }
+            }
             drop(stream);
             drop(commands);
             task.await.unwrap().unwrap();
         })
         .await
-        .expect("repeated upstream disconnects must escalate to Reconnecting");
+        .expect("repeated upstream disconnects must preserve HTTP send authority");
     });
 }
 

@@ -80,6 +80,18 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
         })
     })
 }
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn revoke_cached_sessions(s: &mut State) {
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    for entry in &mut ui.entries {
+        if let Some(cache) = &mut entry.cache {
+            cache.revoke_pairing();
+        }
+    }
+}
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
     mission_lifecycle: crate::missions::Lifecycle,
@@ -96,8 +108,58 @@ pub struct Ui {
     touched: bool,
     staged_revision: Option<u64>,
     closed: Vec<Workspace>,
+    closed_unconfirmed: Vec<ClosedUnconfirmed>,
+}
+struct ClosedUnconfirmed {
+    backend_id: Option<String>,
+    server_id: Option<String>,
+    folder: String,
+    session_id: String,
+    attempt_id: String,
+}
+impl ClosedUnconfirmed {
+    fn matches(&self, workspace: &Workspace, session_id: &str) -> bool {
+        self.session_id == session_id
+            && same_folder(&self.folder, &workspace.folder)
+            && self.backend_id == workspace.backend_id
+            && (self.backend_id.is_none() || self.server_id == workspace.server_id)
+    }
 }
 impl Ui {
+    pub(super) fn remember_closed_unconfirmed(
+        &mut self,
+        workspace: &Workspace,
+        session_id: String,
+        attempt_id: String,
+    ) {
+        self.closed_unconfirmed
+            .retain(|item| !item.matches(workspace, &session_id));
+        self.closed_unconfirmed.push(ClosedUnconfirmed {
+            backend_id: workspace.backend_id.clone(),
+            server_id: workspace.server_id.clone(),
+            folder: workspace.folder.clone(),
+            session_id,
+            attempt_id,
+        });
+        if self.closed_unconfirmed.len() > 64 {
+            self.closed_unconfirmed.remove(0);
+        }
+    }
+    pub(super) fn closed_unconfirmed_id(
+        &self,
+        workspace: &Workspace,
+        session_id: &str,
+    ) -> Option<&str> {
+        self.closed_unconfirmed
+            .iter()
+            .rev()
+            .find(|item| item.matches(workspace, session_id))
+            .map(|item| item.attempt_id.as_str())
+    }
+    pub(super) fn forget_closed_unconfirmed(&mut self, workspace: &Workspace, session_id: &str) {
+        self.closed_unconfirmed
+            .retain(|item| !item.matches(workspace, session_id));
+    }
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key
     }
@@ -118,6 +180,7 @@ impl Ui {
             touched: false,
             staged_revision: None,
             closed: Vec::new(),
+            closed_unconfirmed: Vec::new(),
         }
     }
     fn changed(&mut self) {

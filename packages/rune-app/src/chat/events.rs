@@ -62,6 +62,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    if s.history_detached {
+                        s.stream_offline = false;
+                    }
                     s.transcript_display.messages.refresh();
                     s.status_permissions.online(true);
                     workspace::mission_event(s, None);

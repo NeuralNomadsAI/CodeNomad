@@ -43,6 +43,23 @@ impl Cache {
             .is_some_and(|incoming| !incoming.is_closed())
     }
 
+    pub(super) fn unconfirmed_id(&self) -> Option<&str> {
+        self.composer.unconfirmed_id()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn revoke_pairing(&mut self) {
+        self.composer.picker.set_attachments_supported(false);
+        if let Some(reader) = &self.reader {
+            reader.revoke();
+        }
+        if let Some(commands) = self.commands.take() {
+            commands.close();
+        }
+        self.phase = Phase::Failed;
+        self.stream_offline = true;
+    }
+
     pub(super) fn history_weight(&self) -> (usize, usize) {
         (
             self.messages.len(),

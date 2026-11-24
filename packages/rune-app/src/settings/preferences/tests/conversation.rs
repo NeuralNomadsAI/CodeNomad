@@ -87,6 +87,7 @@ fn pagination_401_checks_authentication_without_replaying_the_page() {
                 demand,
                 events: page_out,
                 connection: connection.clone(),
+                revoked: Default::default(),
             };
             let backend = backend.clone();
             platform::spawn(async move {
