@@ -9,6 +9,11 @@ use std::path::PathBuf;
 
 type Loaded = (Store, Result<Option<Snapshot>>, Result<Option<Vec<u8>>>);
 
+#[cfg(not(target_arch = "wasm32"))]
+const FILE_DRAFT_DEBOUNCE_SECS: f64 = 0.25;
+#[cfg(not(target_arch = "wasm32"))]
+const FILE_DRAFT_MAX_WAIT_SECS: f64 = 2.0;
+
 pub(super) struct Persistence {
     pub loading: bool,
     pub read_error: bool,
@@ -28,7 +33,11 @@ pub(super) struct Persistence {
     #[cfg(not(target_arch = "wasm32"))]
     file_drafts_dirty_revision: u64,
     #[cfg(not(target_arch = "wasm32"))]
+    file_drafts_first_dirty: Option<f64>,
+    #[cfg(not(target_arch = "wasm32"))]
     file_drafts_due: f64,
+    #[cfg(not(target_arch = "wasm32"))]
+    file_draft_retry_requested: bool,
     due: f64,
 }
 impl Persistence {
@@ -52,7 +61,11 @@ impl Persistence {
             #[cfg(not(target_arch = "wasm32"))]
             file_drafts_dirty_revision: 0,
             #[cfg(not(target_arch = "wasm32"))]
+            file_drafts_first_dirty: None,
+            #[cfg(not(target_arch = "wasm32"))]
             file_drafts_due: 0.0,
+            #[cfg(not(target_arch = "wasm32"))]
+            file_draft_retry_requested: false,
             due: 0.0,
         }
     }
@@ -165,12 +178,12 @@ impl Persistence {
             self.read_error = false;
         }
         self.write_error = false;
-        self.file_draft_error = false;
         self.due = 0.0;
         self.attempted_file_drafts = self.saved_file_drafts;
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.file_drafts_due = 0.0;
+            self.file_draft_retry_requested = true;
         }
     }
     pub fn retry_file_drafts(&mut self, wake: rune::Waker) {
@@ -204,8 +217,10 @@ impl Persistence {
         self.attempted_file_drafts = self.saved_file_drafts;
         #[cfg(not(target_arch = "wasm32"))]
         if !self.file_draft_read_error {
-            self.file_draft_error = false;
+            self.file_drafts_dirty_revision = documents.file_draft_revision();
+            self.file_drafts_first_dirty = None;
             self.file_drafts_due = 0.0;
+            self.file_draft_retry_requested = true;
         }
         true
     }
@@ -239,6 +254,7 @@ impl Persistence {
                 self.file_draft_error = !ok;
                 if ok {
                     self.saved_file_drafts = self.saved_file_drafts.max(revision);
+                    self.file_draft_retry_requested = false;
                 }
             }
             Err(TryRecvError::Closed) => {
@@ -257,6 +273,8 @@ impl Persistence {
         {
             self.drain_file_draft_save();
             self.saving_file_drafts = None;
+            self.file_draft_retry_requested = false;
+            self.file_drafts_first_dirty = None;
             let Some((revision, bytes)) = documents.file_draft_snapshot(self.saved_file_drafts)
             else {
                 return !self.file_draft_error;
@@ -292,15 +310,24 @@ impl Persistence {
         {
             self.drain_file_draft_save();
             let current = documents.file_draft_revision();
-            if current != self.file_drafts_dirty_revision {
+            if current <= self.saved_file_drafts {
+                self.file_drafts_first_dirty = None;
+                self.file_draft_retry_requested = false;
+            } else if current != self.file_drafts_dirty_revision {
+                let first = *self.file_drafts_first_dirty.get_or_insert(now);
                 self.file_drafts_dirty_revision = current;
-                self.file_drafts_due = now + 0.25;
+                if !self.file_draft_retry_requested {
+                    self.file_drafts_due =
+                        (now + FILE_DRAFT_DEBOUNCE_SECS).min(first + FILE_DRAFT_MAX_WAIT_SECS);
+                }
+            } else if self.file_drafts_first_dirty.is_none() {
+                self.file_drafts_first_dirty = Some(now);
             }
             let Some(store) = self.store.clone() else {
                 return;
             };
             if self.file_draft_read_error
-                || self.file_draft_error
+                || (self.file_draft_error && !self.file_draft_retry_requested)
                 || self.saving_file_drafts.is_some()
                 || self.attempted_file_drafts >= current
                 || self.saved_file_drafts >= current
@@ -315,11 +342,14 @@ impl Persistence {
             else {
                 return;
             };
+            self.file_draft_retry_requested = false;
+            self.file_drafts_first_dirty = None;
             self.attempted_file_drafts = revision;
             let (out, input) = bounded(1);
             self.saving_file_drafts = Some(input);
+            let write = store.start_file_drafts_save(bytes);
             crate::platform::spawn(async move {
-                let ok = store.save_file_drafts_async(bytes).await.is_ok();
+                let ok = write.await.is_ok();
                 let _ = out.send((revision, ok)).await;
                 wake();
             });
@@ -502,14 +532,27 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new() -> Self {
+            let parent =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/rune-state-tests");
+            fs::create_dir_all(&parent).unwrap();
+            let root = parent.join(codenomad_client::http::client_id().unwrap());
+            fs::create_dir(&root).unwrap();
+            Self(root)
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn native_file_drafts_persist_asynchronously_without_exit_flush() {
-        let parent =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/rune-state-tests");
-        fs::create_dir_all(&parent).unwrap();
-        let root = parent.join(codenomad_client::http::client_id().unwrap());
-        fs::create_dir(&root).unwrap();
-        let store = crate::platform::block_on(Store::open(root.join("rune"))).unwrap();
+        let root = TempDir::new();
+        let store = crate::platform::block_on(Store::open(root.0.join("rune"))).unwrap();
         let documents = Documents::default();
         documents.insert_test_file_draft("src/lib.rs", "crash-safe draft");
         let expected = documents.file_draft_snapshot(0).unwrap().1;
@@ -530,38 +573,53 @@ mod tests {
         rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 1.0, tx, initial_wake));
         assert!(rt.state.0.saving_file_drafts.is_none());
         assert_eq!(rt.state.0.saved_file_drafts, 0);
-        assert!(!root.join("rune/workspace-file-drafts.json").exists());
-        for _ in 0..100 {
+        assert!(!root.0.join("rune/workspace-file-drafts.json").exists());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !(rt.state.0.saved_file_drafts == 1 && wakes.load(Ordering::SeqCst) == 1) {
             let wake = wake.clone();
             rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 1.25, tx, wake));
-            if rt.state.0.saved_file_drafts == 1 && wakes.load(Ordering::SeqCst) == 1 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(5));
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
         }
         assert_eq!(rt.state.0.saved_file_drafts, 1);
         assert!(!rt.state.0.file_draft_error);
+        // Continuous edits every 0.1s still checkpoint at the 2.0s max-wait bound.
+        let mut revision = 1u64;
+        for step in 0..20 {
+            let now = 5.0 + (step as f64) * 0.1;
+            revision += 1;
+            rt.state
+                .1
+                .insert_test_file_draft("src/lib.rs", &format!("typing-{revision}"));
+            let wake = wake.clone();
+            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, now, tx, wake));
+            assert!(rt.state.0.saving_file_drafts.is_none());
+        }
+        let max_wait_expected = rt.state.1.file_draft_snapshot(1).unwrap().1;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !(rt.state.0.saved_file_drafts == revision && wakes.load(Ordering::SeqCst) == 2) {
+            let wake = wake.clone();
+            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 7.0, tx, wake));
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
         // Drop without flush_file_drafts to verify drafts survive an abrupt exit.
         drop(rt);
         let loaded = crate::platform::block_on(async {
-            let reopened = Store::open(root.join("rune")).await.unwrap();
+            let reopened = Store::open(root.0.join("rune")).await.unwrap();
             reopened.load_file_drafts().await.unwrap().unwrap()
         });
-        assert_eq!(loaded, expected);
+        assert_ne!(loaded, expected);
+        assert_eq!(loaded, max_wait_expected);
         let hydrated = Documents::default();
         assert!(hydrated.hydrate_file_drafts(&loaded));
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn native_file_draft_write_failure_stays_dirty_without_automatic_retries() {
-        let parent =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/rune-state-tests");
-        fs::create_dir_all(&parent).unwrap();
-        let root = parent.join(codenomad_client::http::client_id().unwrap());
-        fs::create_dir(&root).unwrap();
-        let store = crate::platform::block_on(Store::open(root.join("rune"))).unwrap();
-        fs::create_dir(root.join("rune/workspace-file-drafts.json")).unwrap();
+        let root = TempDir::new();
+        let store = crate::platform::block_on(Store::open(root.0.join("rune"))).unwrap();
+        fs::create_dir(root.0.join("rune/workspace-file-drafts.json")).unwrap();
         let documents = Documents::default();
         documents.insert_test_file_draft("src/main.rs", "blocked draft");
         let expected = documents.file_draft_snapshot(0).unwrap().1;
@@ -580,13 +638,12 @@ mod tests {
         );
         let first_wake = wake.clone();
         rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 1.0, tx, first_wake));
-        for _ in 0..100 {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !(rt.state.0.file_draft_error && wakes.load(Ordering::SeqCst) == 1) {
             let wake = wake.clone();
             rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 1.25, tx, wake));
-            if rt.state.0.file_draft_error && wakes.load(Ordering::SeqCst) == 1 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(5));
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
         }
         assert!(rt.state.0.file_draft_error);
         assert_eq!(rt.state.0.saved_file_drafts, 0);
@@ -597,34 +654,50 @@ mod tests {
         }
         assert!(rt.state.0.saving_file_drafts.is_none());
         assert_eq!(wakes.load(Ordering::SeqCst), 1);
-        fs::remove_dir(root.join("rune/workspace-file-drafts.json")).unwrap();
+        // Retry keeps file_draft_error visible until the write confirms.
+        fs::remove_dir(root.0.join("rune/workspace-file-drafts.json")).unwrap();
         rt.state.0.retry();
-        for _ in 0..100 {
+        assert!(rt.state.0.file_draft_error);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !(rt.state.0.saved_file_drafts == 1 && wakes.load(Ordering::SeqCst) == 2) {
             let wake = wake.clone();
             rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 3.0, tx, wake));
-            if rt.state.0.saved_file_drafts == 1 && wakes.load(Ordering::SeqCst) == 2 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(5));
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
         }
         assert!(!rt.state.0.file_draft_error);
         assert_eq!(rt.state.0.saved_file_drafts, 1);
         assert_eq!(wakes.load(Ordering::SeqCst), 2);
-        // Second edit flushed synchronously on exit.
+        // A Retry clicked while a failing write is still queued triggers a fresh write on the next poll.
+        let (stale_tx, stale_rx) = bounded(1);
+        stale_tx.try_send((2, false)).unwrap();
+        rt.state.0.saving_file_drafts = Some(stale_rx);
+        rt.state
+            .1
+            .insert_test_file_draft("src/main.rs", "retried after in-flight failure");
+        rt.state.0.retry();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !(rt.state.0.saved_file_drafts == 2 && wakes.load(Ordering::SeqCst) == 3) {
+            let wake = wake.clone();
+            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 4.0, tx, wake));
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!rt.state.0.file_draft_error);
+        // Third edit flushed synchronously on exit.
         rt.state
             .1
             .insert_test_file_draft("src/main.rs", "flushed on exit");
-        let exit_expected = rt.state.1.file_draft_snapshot(1).unwrap().1;
+        let exit_expected = rt.state.1.file_draft_snapshot(2).unwrap().1;
         assert!(rt.state.0.flush_file_drafts(&rt.state.1));
-        assert_eq!(rt.state.0.saved_file_drafts, 2);
+        assert_eq!(rt.state.0.saved_file_drafts, 3);
         assert!(!rt.state.0.file_draft_error);
         drop(rt);
         let loaded = crate::platform::block_on(async {
-            let reopened = Store::open(root.join("rune")).await.unwrap();
+            let reopened = Store::open(root.0.join("rune")).await.unwrap();
             reopened.load_file_drafts().await.unwrap().unwrap()
         });
         assert_ne!(loaded, expected);
         assert_eq!(loaded, exit_expected);
-        fs::remove_dir_all(root).unwrap();
     }
 }

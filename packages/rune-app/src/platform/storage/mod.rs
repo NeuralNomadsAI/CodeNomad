@@ -162,14 +162,19 @@ mod native {
     }
     #[derive(Clone)]
     pub struct Store {
-        files: std::sync::Arc<std::sync::Mutex<Files>>,
+        files: std::sync::Arc<Files>,
+        state_lock: std::sync::Arc<std::sync::Mutex<()>>,
+        file_drafts_lock: std::sync::Arc<std::sync::Mutex<()>>,
         staged: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
         file_drafts_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     }
     impl Store {
         pub(crate) fn memory_seen(&self) -> Result<std::collections::BTreeMap<String, i64>> {
-            let files = self.files.lock().map_err(|_| "state store unavailable")?;
-            memory_seen(&files)
+            let _guard = self
+                .state_lock
+                .lock()
+                .map_err(|_| "state store unavailable")?;
+            memory_seen(&self.files)
         }
 
         pub(crate) async fn mark_memory_seen(&self, key: String, at: i64) -> Result<()> {
@@ -177,8 +182,9 @@ mod native {
                 return Err("Invalid memory consultation key".into());
             }
             let files = self.files.clone();
+            let state_lock = self.state_lock.clone();
             tokio::task::spawn_blocking(move || {
-                let files = files.lock().map_err(|_| "state store unavailable")?;
+                let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
                 let mut marks = memory_seen(&files)?;
                 if marks.len() >= 256 && !marks.contains_key(&key) {
                     if let Some(oldest) = marks
@@ -197,44 +203,46 @@ mod native {
         }
         #[cfg(target_os = "windows")]
         pub(crate) fn preferences_frame(&self) -> Option<Vec<u8>> {
-            self.files
-                .lock()
-                .ok()?
-                .load_file("preferences.json", 512)
-                .ok()
-                .flatten()
+            let _guard = self.state_lock.lock().ok()?;
+            self.files.load_file("preferences.json", 512).ok().flatten()
         }
 
         #[cfg(target_os = "windows")]
         pub(crate) fn save_preferences_frame(&self, bytes: &[u8]) -> Result<()> {
-            self.files
+            let _guard = self
+                .state_lock
                 .lock()
-                .map_err(|_| "state store unavailable")?
-                .save_file("preferences.json", 512, bytes)
+                .map_err(|_| "state store unavailable")?;
+            self.files.save_file("preferences.json", 512, bytes)
         }
 
         pub async fn open(directory: PathBuf) -> Result<Self> {
             let files = tokio::task::spawn_blocking(move || Files::open(directory)).await??;
             Ok(Self {
-                files: std::sync::Arc::new(std::sync::Mutex::new(files)),
+                files: std::sync::Arc::new(files),
+                state_lock: Default::default(),
+                file_drafts_lock: Default::default(),
                 staged: Default::default(),
                 file_drafts_generation: Default::default(),
             })
         }
         pub async fn load(&self) -> Result<Option<Vec<u8>>> {
             let files = self.files.clone();
+            let state_lock = self.state_lock.clone();
             tokio::task::spawn_blocking(move || {
-                files.lock().map_err(|_| "state store unavailable")?.load()
+                let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
+                files.load()
             })
             .await?
         }
         pub async fn load_file_drafts(&self) -> Result<Option<Vec<u8>>> {
             let files = self.files.clone();
+            let file_drafts_lock = self.file_drafts_lock.clone();
             tokio::task::spawn_blocking(move || {
-                files
+                let _guard = file_drafts_lock
                     .lock()
-                    .map_err(|_| "state store unavailable")?
-                    .load_file("workspace-file-drafts.json", FILE_DRAFT_BYTES)
+                    .map_err(|_| "state store unavailable")?;
+                files.load_file("workspace-file-drafts.json", FILE_DRAFT_BYTES)
             })
             .await?
         }
@@ -242,70 +250,73 @@ mod native {
         pub fn save_file_drafts(&self, bytes: &[u8]) -> Result<()> {
             self.file_drafts_generation
                 .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-            self.files
+            let _guard = self
+                .file_drafts_lock
                 .lock()
-                .map_err(|_| "state store unavailable")?
+                .map_err(|_| "state store unavailable")?;
+            self.files
                 .save_file("workspace-file-drafts.json", FILE_DRAFT_BYTES, bytes)
         }
-        pub async fn save_file_drafts_async(&self, bytes: Vec<u8>) -> Result<()> {
+        pub fn start_file_drafts_save(
+            &self,
+            bytes: Vec<u8>,
+        ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
+            // Claim generation synchronously at admission so an unpolled background task
+            // can never outrank a later save or exit flush.
             let generation = self
                 .file_drafts_generation
                 .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
                 + 1;
             let files = self.files.clone();
+            let file_drafts_lock = self.file_drafts_lock.clone();
             let latest = self.file_drafts_generation.clone();
-            tokio::task::spawn_blocking(move || {
-                let files = files.lock().map_err(|_| "state store unavailable")?;
-                if latest.load(std::sync::atomic::Ordering::Acquire) != generation {
-                    return Ok(());
-                }
-                files.save_file("workspace-file-drafts.json", FILE_DRAFT_BYTES, &bytes)
-            })
-            .await?
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let _guard = file_drafts_lock
+                        .lock()
+                        .map_err(|_| "state store unavailable")?;
+                    if latest.load(std::sync::atomic::Ordering::Acquire) != generation {
+                        return Ok(());
+                    }
+                    files.save_file("workspace-file-drafts.json", FILE_DRAFT_BYTES, &bytes)
+                })
+                .await?
+            }
         }
         pub fn save_file_drafts_exit(&self, bytes: Vec<u8>) -> Result<()> {
+            let write = self.start_file_drafts_save(bytes);
             crate::platform::block_on(async {
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    self.save_file_drafts_async(bytes),
-                )
-                .await?
+                tokio::time::timeout(std::time::Duration::from_secs(5), write).await?
             })
         }
         #[cfg(test)]
-        pub(super) fn lock_files(&self) -> std::sync::MutexGuard<'_, Files> {
-            self.files.lock().unwrap()
-        }
-        #[cfg(test)]
-        pub(super) fn file_drafts_generation(&self) -> u64 {
-            self.file_drafts_generation
-                .load(std::sync::atomic::Ordering::Acquire)
+        pub(super) fn lock_file_drafts(&self) -> std::sync::MutexGuard<'_, ()> {
+            self.file_drafts_lock.lock().unwrap()
         }
         pub async fn load_outlines(&self) -> Result<Option<Vec<u8>>> {
             let files = self.files.clone();
+            let state_lock = self.state_lock.clone();
             tokio::task::spawn_blocking(move || {
-                files
-                    .lock()
-                    .map_err(|_| "state store unavailable")?
-                    .load_file("outlines-v1.json", OUTLINE_BYTES)
+                let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
+                files.load_file("outlines-v1.json", OUTLINE_BYTES)
             })
             .await?
         }
         pub async fn save_outlines(&self, bytes: Vec<u8>) -> Result<()> {
             let files = self.files.clone();
+            let state_lock = self.state_lock.clone();
             tokio::task::spawn_blocking(move || {
-                files
-                    .lock()
-                    .map_err(|_| "state store unavailable")?
-                    .save_file("outlines-v1.json", OUTLINE_BYTES, &bytes)
+                let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
+                files.save_file("outlines-v1.json", OUTLINE_BYTES, &bytes)
             })
             .await?
         }
         pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
             let files = self.files.clone();
+            let state_lock = self.state_lock.clone();
             let staged = self.staged.clone();
             tokio::task::spawn_blocking(move || {
-                let files = files.lock().map_err(|_| "state store unavailable")?;
+                let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
                 if staged
                     .lock()
                     .map_err(|_| "state store unavailable")?

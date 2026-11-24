@@ -105,31 +105,36 @@ fn relative_directory_and_file_in_place_of_directory_are_rejected() {
 fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
     let root = Root::new();
     let path = root.0.join("rune");
-    let store = crate::platform::block_on(async {
-        let store = super::Store::open(path.clone()).await.unwrap();
-        let guard = store.lock_files();
-        let stale = store.clone();
-        let stale_task =
-            tokio::spawn(async move { stale.save_file_drafts_async(b"stale".to_vec()).await });
-        while store.file_drafts_generation() == 0 {
-            tokio::task::yield_now().await;
-        }
-        let fresh = store.clone();
-        let fresh_task =
-            tokio::spawn(async move { fresh.save_file_drafts_async(b"fresh".to_vec()).await });
-        while store.file_drafts_generation() < 2 {
-            tokio::task::yield_now().await;
-        }
+    // Unpolled background write admitted before an exit flush cannot outrank or overwrite it.
+    let store = crate::platform::block_on(super::Store::open(path.clone())).unwrap();
+    let unpolled_stale = store.start_file_drafts_save(b"stale-before-exit".to_vec());
+    store.save_file_drafts_exit(b"exit-fresh".to_vec()).unwrap();
+    crate::platform::block_on(async {
+        unpolled_stale.await.unwrap();
+        assert_eq!(
+            store.load_file_drafts().await.unwrap().unwrap(),
+            b"exit-fresh"
+        );
+        // Contended file-draft lock: older write waiting on the mutex skips once superseded,
+        // while independent state/preferences operations do not block on file-draft I/O.
+        let guard = store.lock_file_drafts();
+        #[cfg(target_os = "windows")]
+        store.save_preferences_frame(b"{}").unwrap();
+        let older = store.start_file_drafts_save(b"older".to_vec());
+        let newer = store.start_file_drafts_save(b"newer".to_vec());
+        let older_task = tokio::spawn(older);
+        let newer_task = tokio::spawn(newer);
         drop(guard);
-        stale_task.await.unwrap().unwrap();
-        fresh_task.await.unwrap().unwrap();
-        assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"fresh");
-        store
+        older_task.await.unwrap().unwrap();
+        newer_task.await.unwrap().unwrap();
+        assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"newer");
     });
-    store.save_file_drafts_exit(b"exit".to_vec()).unwrap();
     drop(store);
     crate::platform::block_on(async {
         let reopened = super::Store::open(path).await.unwrap();
-        assert_eq!(reopened.load_file_drafts().await.unwrap().unwrap(), b"exit");
+        assert_eq!(
+            reopened.load_file_drafts().await.unwrap().unwrap(),
+            b"newer"
+        );
     });
 }
