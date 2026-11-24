@@ -53,6 +53,13 @@ pub(super) enum Operation {
     InsertText {
         text: String,
     },
+    /// Served by the host's diagnostic event buffer, not by the page.
+    Diagnostics {
+        after: u64,
+    },
+    ResponseBody {
+        request: String,
+    },
 }
 fn keys(value: &Value, allowed: &[&str], required: &[&str]) -> Result<(), String> {
     let object = value.as_object().ok_or(INVALID)?;
@@ -114,6 +121,12 @@ pub(super) fn parse(value: Value) -> Result<Operation, String> {
         | Operation::ScrollIntoView { node }
             if *node == 0 || *node > 9_007_199_254_740_991 =>
         {
+            return Err(INVALID.into())
+        }
+        Operation::Diagnostics { after } if *after > 9_007_199_254_740_991 => {
+            return Err(INVALID.into())
+        }
+        Operation::ResponseBody { request } if !handle(&json!(request)) || request.len() > 256 => {
             return Err(INVALID.into())
         }
         Operation::HitTest { x, y }
@@ -326,7 +339,8 @@ impl Operation {
             Self::Keyboard { event } => ("Input.dispatchKeyEvent", event.clone()),
             Self::InsertText { text } => ("Input.insertText", json!({"text":text})),
             Self::ReleaseHandles => ("Runtime.releaseObjectGroup", json!({"objectGroup":GROUP})),
-            Self::Checkpoint => return None,
+            Self::ResponseBody { request } => ("Network.getResponseBody", json!({"requestId":request})),
+            Self::Checkpoint | Self::Diagnostics { .. } => return None,
         })
     }
     pub(super) fn result(&self, raw: Value) -> Value {

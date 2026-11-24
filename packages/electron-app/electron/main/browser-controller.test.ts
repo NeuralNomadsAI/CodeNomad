@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { describe, it, mock } from "node:test"
 import type { BrowserWindow, WebContents } from "electron"
+import { DIAGNOSTICS, type DiagnosticRead } from "../../../server/src/automation/page/diagnostic-events"
 import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
 
 interface GuestOptions {
@@ -216,6 +217,33 @@ describe("BrowserController private page channel", () => {
     assert.equal(probed.available, true)
     await assert.rejects(handleNativeBrowserRequest(h.controller, "browser.probe", { sessionID: "session", workspaceIDs: [""] }), /Invalid browser request/)
   })
+
+  it("keeps a watched preview's console and network events per document and serves them to page leases", async () => {
+    const h = createHarness()
+    const sent: Array<[string, unknown]> = []
+    const { guest } = createGuest({ id: 5, owner: h.owner, sendCommand: async (method, params) => {
+      sent.push([method, params])
+      return method === "Network.getResponseBody" ? { body: "ok", base64Encoded: false } : {}
+    } })
+    h.add(guest, "one")
+    const lease = await begin(h.controller)
+    assert.deepEqual(sent.filter(([method]) => DIAGNOSTICS.enable.some(([enable]) => enable === method)), DIAGNOSTICS.enable)
+    guest.debugger.emit("message", {}, "Runtime.consoleAPICalled", { type: "log" })
+    guest.debugger.emit("message", {}, "Network.requestWillBeSent", { requestId: "r1" }, "child-session")
+    guest.debugger.emit("message", {}, "Page.frameNavigated", {})
+    const first = await page(h.controller, "send", { ...lease, operation: { op: "diagnostics", after: 0 } }) as DiagnosticRead
+    assert.deepEqual(first.events, [{ method: "Runtime.consoleAPICalled", params: { type: "log" } }], "only the preview's own listed events")
+    assert.deepEqual(await page(h.controller, "send", { ...lease, operation: { op: "response-body", request: "r1" } }), { body: "ok", base64Encoded: false })
+    assert.deepEqual(sent.at(-1), ["Network.getResponseBody", { requestId: "r1" }])
+    await page(h.controller, "end", lease)
+    guest.emit("did-start-navigation", {}, "https://example.com/", true, true)
+    guest.emit("did-start-navigation", {}, "https://example.com/next", false, true)
+    const next = await begin(h.controller)
+    const second = await page(h.controller, "send", { ...next, operation: { op: "diagnostics", after: 0 } }) as DiagnosticRead
+    assert.deepEqual(second.events, [], "a new document's events start with it")
+    assert.notEqual(second.epoch, first.epoch)
+  })
+
   it("accepts only the fixed protocol commands and bounded object params/responses", async () => {
     const h = createHarness()
     const calls: string[] = []
@@ -232,7 +260,7 @@ describe("BrowserController private page channel", () => {
       await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.insertText", params }), /parameters/)
     }
     // A page lease intercepts native file pickers for its length.
-    assert.deepEqual(calls, ["Page.enable", "Page.setInterceptFileChooserDialog"])
+    assert.deepEqual(calls, ["Page.enable", ...DIAGNOSTICS.enable.map(([method]) => method), "Page.setInterceptFileChooserDialog"])
     const valid = [
       [{op:"tree"},{nodes:[]}], [{op:"resolve",node:42},{}], [{op:"scroll-into-view",node:42},{ok:true}],
       [{op:"geometry",node:42},{ok:true}], [{op:"hit-test",x:0,y:0},{}], [{op:"viewport"},{}],
@@ -509,7 +537,7 @@ describe("BrowserController preview lifecycle", () => {
     }, /Browser target is stale/)
     await assert.rejects(h.controller.execute(sessionID, { action: "screenshot" }, Infinity, target), /Browser target is stale/)
     // The first lease's file-picker interception, then its release; the stale lease reached nothing.
-    assert.deepEqual(calls, ["Page.enable", "Page.setInterceptFileChooserDialog", "Page.setInterceptFileChooserDialog"])
+    assert.deepEqual(calls, ["Page.enable", ...DIAGNOSTICS.enable.map(([method]) => method), "Page.setInterceptFileChooserDialog", "Page.setInterceptFileChooserDialog"])
     assert.deepEqual(inputs, [])
     const { target: refreshed } = await h.controller.probe(sessionID)
     assert.notEqual(refreshed, target)
@@ -556,7 +584,9 @@ describe("BrowserController preview lifecycle", () => {
         await assert.rejects(execute(screenshot), error)
         await assert.rejects(execute(navigation), error)
         assert.equal(navigate.mock.callCount(), 0, change)
-        assert.ok(send.mock.calls.every(call => call.arguments[0] === "Page.enable"), change)
+        // Only the document watch and its diagnostics domains were set up.
+        const watch = ["Page.enable", ...DIAGNOSTICS.enable.map(([method]) => method)]
+        assert.ok(send.mock.calls.every(call => watch.includes(call.arguments[0] as string)), change)
       }
     }
   })

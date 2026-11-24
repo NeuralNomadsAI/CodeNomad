@@ -5,6 +5,7 @@ import { isBrowserUrlAllowed } from "./browser-webview-security"
 import { setBrowserEmulation } from "./browser-emulation"
 import { executeCdpOperation } from "../../../server/src/automation/page/cdp-driver"
 import { parsePageOperation, pageEnvelope } from "../../../server/src/automation/page/operations"
+import { DIAGNOSTICS, DiagnosticEventBuffer } from "../../../server/src/automation/page/diagnostic-events"
 import { PAGE_DRIVER_VERSION } from "../../../server/src/automation/page/protocol"
 import { setBrowserLogicalAddress } from "./browser-presentation"
 import { BrowserPreviewOwners, type PreviewOwner } from "./browser-preview-owners"
@@ -77,6 +78,8 @@ export class BrowserController {
   private readonly pageLeases = new Map<string, PageLease>()
   private readonly controlledDetach = new WeakSet<WebContents>()
   private readonly documentWatches = new WeakMap<WebContents, boolean>()
+  /** Console and network events of a watched preview's current document. */
+  private readonly diagnostics = new WeakMap<WebContents, DiagnosticEventBuffer>()
   private readonly commandQueues = new WeakMap<WebContents, Promise<void>>()
   private readonly navigationVersions = new WeakMap<WebContents, number>()
   private readonly documentRoots = new WeakMap<WebContents, number>()
@@ -206,12 +209,16 @@ export class BrowserController {
     })
     guest.debugger.on("message", (_event, method, params, sessionId) => {
       if (!sessionId && method === "Page.documentOpened" && params?.frame?.id && !params.frame.parentId) invalidate()
+      if (!sessionId) this.diagnostics.get(guest)?.record(method, params)
     })
     guest.debugger.on("detach", () => {
       this.documentWatches.delete(guest)
+      this.diagnostics.delete(guest)
       if (!this.controlledDetach.has(guest)) invalidate()
     })
-    guest.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
+    guest.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      // A new document's diagnostics start with its own request, as in OpenCode's browser.
+      if (isMainFrame && !isInPlace) this.diagnostics.get(guest)?.clear()
       if (isMainFrame) invalidateNavigation()
     })
     guest.once("destroyed", () => {
@@ -412,6 +419,15 @@ export class BrowserController {
           check()
           if (!guest.debugger.isAttached()) throw new Error(staleTarget)
           this.documentWatches.set(guest, ownsDebugger)
+          // Diagnostics are an extra: a preview whose domains cannot be enabled still serves the page channel.
+          const buffer = new DiagnosticEventBuffer()
+          this.diagnostics.set(guest, buffer)
+          try {
+            for (const [method, params] of DIAGNOSTICS.enable) await withDeadline(() => guest.debugger.sendCommand(method, params), deadline)
+          } catch {
+            if (this.diagnostics.get(guest) === buffer) this.diagnostics.delete(guest)
+          }
+          check()
         } catch (error) {
           if (ownsDebugger) this.detachDebugger(guest)
           throw error
@@ -659,6 +675,11 @@ export class BrowserController {
           check()
           if (Buffer.byteLength(JSON.stringify(response ?? null)) > 4 * 1024 * 1024) throw new Error("Browser page response is too large")
           return response as Record<string, unknown>
+        }, diagnostics: async after => {
+          check()
+          const buffer = this.diagnostics.get(guest)
+          if (!buffer) throw new Error("Browser diagnostics are unavailable for this preview")
+          return buffer.read(after) as unknown as Record<string, unknown>
         } }, operation)
         await this.refreshDocument(guest, stopAt, check)
         check()

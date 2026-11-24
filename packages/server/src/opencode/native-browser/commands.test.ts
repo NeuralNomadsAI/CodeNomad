@@ -5,7 +5,8 @@ import { checkState, keyRefusal, matchesURL, PreviewTab, type PreviewHost } from
 function fixture() {
   const calls: Record<string, unknown>[] = []
   const state = { target: undefined as string | undefined, document: 0, checked: false, locked: false, loading: 0, locationFailures: 0, locationReads: 0,
-    shot: "iVBORw0KGgo=", url: "http://127.0.0.1/page", onPage: undefined as undefined | ((action: string) => void) }
+    shot: "iVBORw0KGgo=", url: "http://127.0.0.1/page", onPage: undefined as undefined | ((action: string) => void),
+    events: [] as { method: string; params: Record<string, unknown> }[], epoch: "buffer:0", diagnosticsUnavailable: false }
   const host: PreviewHost = {
     probe: async () => {
       if (!state.target) return undefined
@@ -21,6 +22,12 @@ function fixture() {
       // Address reads follow every command; the tests look at what acted on the page.
       if (action.action !== "location") calls.push({ ...action, at })
       state.onPage?.(action.action)
+      if (action.action === "diagnostics") {
+        if (state.diagnosticsUnavailable) throw new Error("Browser diagnostics are unavailable in WebKit previews")
+        const events = state.events.slice(action.after)
+        return { epoch: state.epoch, events, next: state.events.length, dropped: 0, more: false }
+      }
+      if (action.action === "response-body") return { body: `body of ${action.request}`, base64Encoded: false }
       if (action.action === "location") {
         state.locationReads++
         if (state.locationFailures-- > 0) throw new Error("Native request timed out: browser.page.begin")
@@ -73,7 +80,7 @@ test("snapshots, failures and the operations the CodeNomad preview does not offe
   assert.equal(snap.result.value.content, '- button "Go" [e1]')
   assert.equal((await tab.run({ type: "click", tabID: tab.id, ref: "e9" }, undefined, signal) as any).code, "stale_ref")
   assert.equal((await tab.run({ type: "wait", tabID: tab.id, condition: "text", text: "Saved", timeoutMs: 1 }, undefined, signal) as any).code, "condition_unmet")
-  for (const type of ["evaluate", "console", "network.list", "lighthouse"])
+  for (const type of ["evaluate", "trace.start", "lighthouse"])
     assert.equal((await tab.run({ type, tabID: tab.id, script: "1" }, undefined, signal) as any).code, "unsupported", type)
   const shot = await tab.run({ type: "screenshot", tabID: tab.id }, undefined, signal) as any
   assert.equal(shot.result.files[0].mime, "image/png")
@@ -392,4 +399,30 @@ test("a preview that comes back as another registration is another tab, commands
   assert.equal(waited.type, "success")
   assert.equal(matchesURL("https://app.test/dashboard?tab=1", "/dashboard"), true)
   assert.equal(matchesURL("https://app.test/dashboard/settings", "**/dashboard"), false)
+})
+
+test("console and network read the host's events for the current document; WebKit answers unsupported", async () => {
+  const { tab, state } = fixture()
+  await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
+  state.events.push(
+    { method: "Runtime.consoleAPICalled", params: { type: "error", timestamp: 1, args: [{ type: "string", value: "boom" }] } },
+    { method: "Network.requestWillBeSent", params: { requestId: "r1", timestamp: 1, wallTime: 1, type: "XHR", request: { url: "http://127.0.0.1/api", method: "GET", headers: {} } } },
+    { method: "Network.responseReceived", params: { requestId: "r1", hasExtraInfo: false, response: { status: 500, mimeType: "text/plain", headers: {} } } },
+    { method: "Network.loadingFinished", params: { requestId: "r1", timestamp: 2 } },
+  )
+  const logged = await tab.run({ type: "console", tabID: tab.id, level: "error" }, undefined, signal) as any
+  assert.deepEqual(logged.result.value.messages.map((entry: any) => entry.text), ["boom"])
+  assert.equal(logged.result.value.tab.id, tab.id)
+  const listed = await tab.run({ type: "network.list", tabID: tab.id, urlContains: "/api" }, undefined, signal) as any
+  assert.deepEqual(listed.result.value.requests.map((item: any) => [item.statusCode, item.state]), [[500, "completed"]])
+  const got = await tab.run({ type: "network.get", tabID: tab.id, id: listed.result.value.requests[0].id, includeResponseBody: true }, undefined, signal) as any
+  assert.deepEqual(got.result.value.responseBody, { state: "text", text: "body of r1", truncated: false })
+  assert.equal((await tab.run({ type: "network.get", tabID: tab.id, id: "missing" }, undefined, signal) as any).code, "operation_failed")
+  // A new document: the host clears its buffer and the readout restarts.
+  state.events.length = 0
+  state.epoch = "buffer:1"
+  assert.deepEqual((await tab.run({ type: "console", tabID: tab.id }, undefined, signal) as any).result.value.messages, [])
+  state.diagnosticsUnavailable = true
+  assert.equal((await tab.run({ type: "console", tabID: tab.id }, undefined, signal) as any).code, "unsupported")
+  assert.equal((await tab.run({ type: "console", tabID: tab.id, frameID: "f" }, undefined, signal) as any).code, "unsupported")
 })

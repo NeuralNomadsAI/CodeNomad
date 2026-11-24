@@ -9,6 +9,9 @@ import { nativeDriver } from "./page/native-driver"
 export type BrowserPageAction = RefAction | { action: "snapshot"; ref?: string; query?: string; budget?: number }
   /** Reads the exact target's address only. */
   | { action: "location" }
+  /** The preview host's console and network events after a sequence number, and a retained response body. */
+  | { action: "diagnostics"; after: number }
+  | { action: "response-body"; request: string }
 const OPERATION_MS = 25_000
 const MAX_PENDING = 32
 const MAX_SESSIONS = 128
@@ -96,7 +99,10 @@ export class BrowserPage {
           : {}
         result = { ...history, url }
       }
-      else if (action.action === "snapshot") {
+      else if (action.action === "diagnostics" || action.action === "response-body") {
+        result = await request<Record<string, unknown>>("browser.page.send", { generation, operation: action.action === "diagnostics"
+          ? { op: "diagnostics", after: action.after } : { op: "response-body", request: action.request } })
+      } else if (action.action === "snapshot") {
         const rootBackendNodeId = action.ref ? refs.resolve(action.ref, generation) : undefined
         const snapshot = await snapshotPage(page, () => refs.issuer(generation), { rootBackendNodeId, query: action.query, refLength: refs.refLength, ...(action.budget ? { budget: action.budget } : {}) })
         result = { url, snapshot: snapshot.text, collapsed: snapshot.collapsed }

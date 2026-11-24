@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto"
 import { setTimeout as sleep } from "node:timers/promises"
 import type { BrowserPageAction } from "../../automation/browser-page"
+import type { DiagnosticRead } from "../../automation/page/diagnostic-events"
 import { keyChord } from "../../automation/page/keys"
+import { PreviewDiagnostics } from "./diagnostics"
 
 /** What CodeNomad's native session preview offers this adapter, already bound to its session. */
 export interface PreviewHost {
@@ -40,6 +42,8 @@ const HONORED: Record<string, readonly string[]> = {
   click: ["ref"], hover: ["ref"], drag: ["from", "to"], fill: ["ref", "text"], fill_form: ["fields"],
   select: ["ref", "values"], check: ["ref", "checked"], press: ["key"], scroll: ["deltaX", "deltaY"],
   wait: ["condition", "text", "url", "timeoutMs"], screenshot: [],
+  console: ["level", "limit"], "network.list": ["urlContains", "resourceType", "limit"],
+  "network.get": ["id", "includeBody", "includeResponseBody", "maxBodyChars"],
 }
 /** Option values that ask for what the operation does anyway. */
 const DEFAULTS: Record<string, unknown> = { focus: true, ignoreCache: false, button: "left", count: 1, interactive: false, boxes: false, fullPage: false, format: "png" }
@@ -55,7 +59,7 @@ function unhonored(action: Action): string | undefined {
 }
 const failure = (code: string, message: string): BrowserOutcome => ({ type: "failure", code, message: message.slice(0, 2_000) })
 const unsupported = (action: string) => failure("unsupported",
-  `browser.${action} is not available in the CodeNomad browser. Use tabs, navigate, back, forward, reload, snapshot, find, click, hover, drag, fill, fill_form, select, check, press, scroll, wait or screenshot.`)
+  `browser.${action} is not available in the CodeNomad browser. Use tabs, navigate, back, forward, reload, snapshot, find, click, hover, drag, fill, fill_form, select, check, press, scroll, wait, screenshot, console or network.`)
 
 /**
  * One session's preview as OpenCode's browser contract sees it: at most one tab, the visible preview.
@@ -80,6 +84,7 @@ export class PreviewTab {
   private queue: Promise<void> = Promise.resolve()
   private loading = false
   private generation = 0
+  private readonly diagnostics = new PreviewDiagnostics()
 
   constructor(private readonly host: PreviewHost) {}
 
@@ -223,6 +228,17 @@ export class PreviewTab {
         return this.success(this.tab())
       }
       case "wait": return this.wait(action, deadline, signal)
+      case "console":
+        await this.pull(page)
+        return this.success({ tab: this.tab(), ...this.diagnostics.console(action as Parameters<PreviewDiagnostics["console"]>[0]) })
+      case "network.list":
+        await this.pull(page)
+        return this.success({ tab: this.tab(), ...this.diagnostics.list(action as Parameters<PreviewDiagnostics["list"]>[0]) })
+      case "network.get": {
+        await this.pull(page)
+        const request = await this.diagnostics.get(action as Action & { id: string }, async nativeID => page({ action: "response-body", request: nativeID }))
+        return this.success({ tab: this.tab(), ...request })
+      }
       case "screenshot": {
         const { image } = await this.host.screenshot(target, deadline, signal)
         const bytes = Math.floor(image.data.length * 3 / 4) - (image.data.endsWith("==") ? 2 : image.data.endsWith("=") ? 1 : 0)
@@ -344,6 +360,15 @@ export class PreviewTab {
     return this.success(this.tab())
   }
 
+  /** Takes the host's new console and network events for the current document. */
+  private async pull(page: (step: BrowserPageAction) => Promise<Record<string, unknown>>): Promise<void> {
+    for (let read = 0; read < 16; read++) {
+      const events = await page({ action: "diagnostics", after: this.diagnostics.cursor }) as unknown as DiagnosticRead
+      if (!this.diagnostics.ingest(events)) continue
+      if (!events.more) return
+    }
+  }
+
   private tab(): BrowserTab {
     return { id: this.id, url: this.url.slice(0, 16_384), title: this.title, loading: this.loading,
       canGoBack: this.canGoBack, canGoForward: this.canGoForward, generation: this.generation }
@@ -389,7 +414,7 @@ export function keyRefusal(chord: string): string | undefined {
 function failed(error: unknown): BrowserOutcome {
   const message = error instanceof Error ? error.message : String(error)
   if (/Unknown or stale ref/.test(message)) return failure("stale_ref", message)
-  if (/unavailable in WebKit previews/.test(message)) return failure("unsupported", message)
+  if (/unavailable in WebKit previews|diagnostics are unavailable|does not support diagnostics/.test(message)) return failure("unsupported", message)
   if (/changed|navigation|replaced|stale/i.test(message)) return failure("document_changed", message)
   return failure("operation_failed", message)
 }

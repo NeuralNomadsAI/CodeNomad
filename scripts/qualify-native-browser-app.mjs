@@ -33,6 +33,10 @@ const fixture = createServer((req, res) => {
   if (req.url === "/download") {
     res.setHeader("Content-Disposition", `attachment; filename="p7-${run}.txt"`)
     res.end(`native-download-${run}`)
+  } else if (req.url === "/api/count") {
+    res.setHeader("Content-Type", "application/json")
+    res.setHeader("Set-Cookie", `p7=${run}`)
+    res.end(JSON.stringify({ saved: true }))
   } else if (req.url === "/oauth") {
     res.setHeader("Content-Type", "text/html")
     res.end("<title>OAuth fixture</title><script>opener.postMessage('oauth-complete',location.origin);setTimeout(()=>close(),300)</script>")
@@ -212,6 +216,19 @@ return { waits, found, refused, copyRefused, pickerRefused, loaded, oauth }`)
     const accepted = await step("dialog accepted", `return { met: (await tools.browser.wait({ tabID: ${tabID}, text: "Dialog accepted", timeout: 10000 })).met }`)
     assert.equal(accepted.met, true)
   }
+  // Increment logged a warning and posted its count: OpenCode's console and network tools read them back.
+  const diagnostics = await step("console and network", `const tabID = ${tabID};
+const logged = await tools.browser.console({ tabID, level: "warning" });
+const listed = await tools.browser.network.list({ tabID, urlContains: "/api/count" });
+const got = listed.requests[0] && await tools.browser.network.get({ tabID, id: listed.requests[0].id, includeBody: true });
+return { warnings: logged.messages.map(entry => entry.text), requests: listed.requests.map(item => [item.method, item.statusCode, item.state]),
+  requestBody: got?.requestBody, responseBody: got?.responseBody,
+  cookie: got?.responseHeaders.find(header => header.name === "set-cookie")?.value }`)
+  assert.ok(diagnostics.warnings.includes("Count is 1"), JSON.stringify(diagnostics))
+  assert.deepEqual(diagnostics.requests, [["POST", 200, "completed"]])
+  assert.deepEqual(diagnostics.requestBody, { state: "text", text: "{\"count\":1}", truncated: false })
+  assert.deepEqual(diagnostics.responseBody, { state: "text", text: "{\"saved\":true}", truncated: false })
+  assert.equal(diagnostics.cookie, "<redacted>")
   const shot = await step("screenshot", `const shot = await tools.browser.screenshot({ tabID: ${tabID} }); return { files: shot.files }`)
   assert.equal(shot.files?.[0]?.mime, "image/png")
   await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, run, sessionID: session.id, project, app: appPath,
