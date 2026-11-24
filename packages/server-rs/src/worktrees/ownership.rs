@@ -84,8 +84,12 @@ impl DirectoryProof {
                 None => {
                     self.root.as_ref().is_none_or(|(root, id)| {
                         dunce::canonicalize(root).ok().as_deref() == Some(root.as_path())
-                            && crate::files::host_identity(root).ok().as_deref() == Some(id.as_str())
+                            && crate::files::directory_identity(root).ok().as_deref() == Some(id.as_str())
                             && physical.starts_with(root)
+                            && (!self.media
+                                || physical == root.as_path()
+                                || std::fs::symlink_metadata(physical).is_err()
+                                || no_nested_git(physical, root))
                     }) && history_root.is_none_or(|root| no_nested_git(physical, root))
                 }
             }
@@ -253,7 +257,23 @@ pub(crate) fn directory_anchor(path: &Path) -> Result<Option<&Path>, ()> {
 }
 
 pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, PathBuf)> {
-    if !crate::files::paths::local_absolute(raw) {
+    if raw.is_empty() || raw.len() > 32_768 || raw.contains('\0') {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        let b = raw.as_bytes();
+        if b.len() < 3
+            || !b[0].is_ascii_alphabetic()
+            || b[1] != b':'
+            || !matches!(b[2], b'\\' | b'/')
+            || raw[2..].contains(':')
+        {
+            return None;
+        }
+    }
+    #[cfg(not(windows))]
+    if !raw.starts_with('/') {
         return None;
     }
     let normalized = crate::files::node_path::Style::host().normalize(raw);
@@ -261,7 +281,7 @@ pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, Pa
         return None;
     }
     // Canonical paths use exact `starts_with` to match cold `inventory.rs` on case-sensitive NTFS volumes.
-    let resolved = resolve_exact_directory(raw).filter(|p| p.starts_with(scope))?;
+    let resolved = resolve_exact_directory(&normalized).filter(|p| p.starts_with(scope))?;
     let anchor = directory_anchor(&resolved).ok()??.to_path_buf();
     Some((resolved, anchor))
 }
@@ -308,7 +328,7 @@ pub(crate) async fn media_directory(
     if path == workspace.path {
         let root_path = workspace.path.clone();
         let Some(root_id) =
-            tokio::task::spawn_blocking(move || crate::files::host_identity(&root_path).ok()).await.ok().flatten()
+            tokio::task::spawn_blocking(move || crate::files::directory_identity(&root_path).ok()).await.ok().flatten()
         else {
             return Ok(None);
         };
@@ -322,12 +342,15 @@ pub(crate) async fn media_directory(
         return Ok(proof_live_async(proof, path.to_path_buf()).await);
     }
     if !external && let Some(subfolders) = super::root_only(workspace).await? {
-        if !current() || !subfolders {
+        if !current() {
             return Err(native_error());
+        }
+        if !subfolders {
+            return Ok(None);
         }
         let root_path = workspace.path.clone();
         let Some(root_id) =
-            tokio::task::spawn_blocking(move || crate::files::host_identity(&root_path).ok()).await.ok().flatten()
+            tokio::task::spawn_blocking(move || crate::files::directory_identity(&root_path).ok()).await.ok().flatten()
         else {
             return Ok(None);
         };
@@ -340,14 +363,19 @@ pub(crate) async fn media_directory(
         };
         return Ok(proof_live_async(proof, path.to_path_buf()).await);
     }
-    if external
-        && path == anchor
-        && !shares_common_directory(&workspace.path, anchor).await.map_err(|_| native_error())?
-    {
-        if !current() {
-            return Err(native_error());
+    if external && path == anchor {
+        let shared = if strict_media {
+            shares_common_directory_strict(&workspace.path, anchor).await
+        } else {
+            shares_common_directory(&workspace.path, anchor).await
         }
-        return Ok(None);
+        .map_err(|_| native_error())?;
+        if !shared {
+            if !current() {
+                return Err(native_error());
+            }
+            return Ok(None);
+        }
     }
     if !current() {
         return Err(native_error());
@@ -579,6 +607,134 @@ async fn shares_common_directory(left: &Path, right: &Path) -> Result<bool, ()> 
     let (a, b) = (a?, b?);
     Ok(a.is_some() && a == b)
 }
+
+/// Filesystem-only strict Git discovery mirroring TS `discoverCheckoutCommonDirectory`.
+/// Returns `Ok(None)` when absence of a checkout is verified, and `Err(())` on any
+/// ambiguous layout (incomplete `.git`, bare/separate markers, or Git env overrides).
+fn strict_discover_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
+    use std::io::{ErrorKind, Read};
+    const DISCOVERY_ENV: &[&str] = &[
+        "GIT_DIR",
+        "GIT_COMMON_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_OBJECT_DIRECTORY",
+    ];
+    if DISCOVERY_ENV.iter().any(|key| std::env::var_os(key).is_some()) {
+        return Err(());
+    }
+    let read_small = |path: &Path| -> Result<String, ()> {
+        let meta = std::fs::metadata(path).map_err(|_| ())?;
+        if !meta.is_file() || meta.len() > 64 * 1024 {
+            return Err(());
+        }
+        let mut buf = Vec::new();
+        std::fs::File::open(path).map_err(|_| ())?.take(64 * 1024 + 1).read_to_end(&mut buf).map_err(|_| ())?;
+        if buf.len() > 64 * 1024 {
+            return Err(());
+        }
+        String::from_utf8(buf).map_err(|_| ())
+    };
+    fn strip_eol(s: &str) -> &str {
+        s.strip_suffix('\n').map_or(s, |r| r.strip_suffix('\r').unwrap_or(r))
+    }
+    let mut current = dunce::canonicalize(dir).map_err(|_| ())?;
+    let info = std::fs::metadata(&current).map_err(|_| ())?;
+    if !info.is_dir() {
+        return Err(());
+    }
+    #[cfg(unix)]
+    let device = {
+        use std::os::unix::fs::MetadataExt;
+        info.dev()
+    };
+    let root = loop {
+        if current.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(".git")) {
+            return Err(());
+        }
+        match std::fs::symlink_metadata(current.join(".git")) {
+            Ok(_) => break current,
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(_) => return Err(()),
+        }
+        for entry in ["HEAD", "commondir"] {
+            match std::fs::symlink_metadata(current.join(entry)) {
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                _ => return Err(()),
+            }
+        }
+        let Some(parent) = current.parent() else { return Ok(None) };
+        if parent == current {
+            return Ok(None);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if std::fs::metadata(parent).map_err(|_| ())?.dev() != device {
+                return Ok(None);
+            }
+        }
+        current = parent.to_path_buf();
+    };
+    let entry = root.join(".git");
+    let git_dir = if std::fs::metadata(&entry).map_err(|_| ())?.is_dir() {
+        entry
+    } else {
+        let text = read_small(&entry)?;
+        let target = strip_eol(&text).strip_prefix("gitdir: ").ok_or(())?;
+        let p = Path::new(target);
+        if p.is_absolute() { p.to_path_buf() } else { root.join(p) }
+    };
+    let common_rel = match std::fs::symlink_metadata(git_dir.join("commondir")) {
+        Err(error) if error.kind() == ErrorKind::NotFound => ".".to_owned(),
+        Ok(_) => strip_eol(&read_small(&git_dir.join("commondir"))?).to_owned(),
+        Err(_) => return Err(()),
+    };
+    let resolved_git = dunce::canonicalize(&git_dir).map_err(|_| ())?;
+    let common_raw =
+        if Path::new(&common_rel).is_absolute() { PathBuf::from(&common_rel) } else { git_dir.join(&common_rel) };
+    let resolved_common = dunce::canonicalize(&common_raw).map_err(|_| ())?;
+    if resolved_git != resolved_common {
+        let backlink = read_small(&resolved_git.join("gitdir"))?;
+        let backlink = strip_eol(&backlink);
+        let back_path =
+            if Path::new(backlink).is_absolute() { PathBuf::from(backlink) } else { resolved_git.join(backlink) };
+        let back_parent = back_path.parent().ok_or(())?;
+        dunce::canonicalize(back_parent).map_err(|_| ())?;
+    }
+    std::fs::metadata(resolved_common.join("objects")).map_err(|_| ())?;
+    std::fs::metadata(resolved_common.join("refs")).map_err(|_| ())?;
+    let head_path = resolved_git.join("HEAD");
+    let head_meta = std::fs::symlink_metadata(&head_path).map_err(|_| ())?;
+    let valid_head = if head_meta.file_type().is_symlink() {
+        let target = std::fs::read_link(&head_path).map_err(|_| ())?;
+        target.to_str().is_some_and(|s| !s.contains('\\') && s.starts_with("refs/"))
+    } else if head_meta.is_file() && head_meta.len() <= 4096 {
+        let content = read_small(&head_path)?;
+        let content = strip_eol(&content);
+        content.strip_prefix("ref:").is_some_and(|rest| rest.trim_start().starts_with("refs/"))
+            || (matches!(content.len(), 40 | 64) && content.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    } else {
+        false
+    };
+    if !valid_head {
+        return Err(());
+    }
+    Ok(Some(resolved_common))
+}
+
+async fn shares_common_directory_strict(left: &Path, right: &Path) -> Result<bool, ()> {
+    let (left, right) = (left.to_path_buf(), right.to_path_buf());
+    tokio::task::spawn_blocking(move || {
+        let a = strict_discover_common_directory(&left)?;
+        let b = strict_discover_common_directory(&right)?;
+        Ok(a.is_some() && a == b)
+    })
+    .await
+    .map_err(|_| ())?
+}
 async fn repository_root(root: &Path) -> PathBuf {
     match crate::git::run(root, &["rev-parse", "--show-toplevel"], 16 * 1024).await.ok().and_then(|o| o.ok().ok()) {
         Some(o) => {
@@ -681,6 +837,39 @@ mod tests {
         std::fs::write(foreign.join(".git"), "gitdir: missing").unwrap();
         assert_eq!(shares_common_directory(&repo, &real).await, Err(()));
         std::fs::remove_dir(&link).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn resolve_media_path_normalizes_parent_segments_within_scope() {
+        let base = crate::shared::test_dir("media-norm");
+        let scope = dunce::canonicalize(&base).unwrap();
+        let sub_a = scope.join("a");
+        let sub_b = scope.join("b");
+        std::fs::create_dir_all(&sub_a).unwrap();
+        std::fs::create_dir_all(&sub_b).unwrap();
+        let with_dotdot =
+            format!("{}{}..{}b", sub_a.to_string_lossy(), std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR);
+        let (resolved, anchor) = resolve_media_path(&scope, &with_dotdot).expect("normalized subfolder resolves");
+        assert_eq!(resolved, sub_b);
+        assert_eq!(anchor, sub_b);
+        let escaping =
+            format!("{}{}..{}outside", scope.to_string_lossy(), std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR);
+        assert!(resolve_media_path(&scope, &escaping).is_none());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn strict_common_directory_rejects_incomplete_nested_git_dir() {
+        let base = crate::shared::test_dir("strict-incomplete-git");
+        let repo = base.join("repo");
+        let sub = repo.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let init = crate::git::run(&repo, &["init", "--quiet"], 4096).await.unwrap();
+        assert_eq!(init.code, 0);
+        assert_eq!(shares_common_directory_strict(&repo, &sub).await, Ok(true));
+        std::fs::create_dir_all(sub.join(".git")).unwrap();
+        assert_eq!(shares_common_directory_strict(&repo, &sub).await, Err(()));
         let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -424,7 +424,6 @@ fn parse_and_validate_history(
     status: Status,
     body: axum::body::Bytes,
     action: &str,
-    reference: bool,
 ) -> Result<ValidatedHistory, Response> {
     let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return Err(blocked("unavailable")) };
     let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
@@ -432,10 +431,10 @@ fn parse_and_validate_history(
     let offset = raw_bytes.as_ptr() as usize - body.as_ptr() as usize;
     let raw_range = offset..offset + raw_bytes.len();
     let Ok(mut output) = serde_json::from_str::<Value>(raw.get()) else { return Err(blocked("unavailable")) };
-    // Temporarily strip valid `userFiles` so base contract validation runs before session revalidation,
-    // while still rejecting a present-but-invalid `userFiles` value before revalidation
-    // (TS `navigation-contract.ts:77-83`, `session-navigation.ts:85-91`).
-    let user_files_marker = if reference && output["status"] == "window" {
+    // Temporarily strip valid `userFiles` on any window output (it is optional in TS
+    // `navigation-contract.ts:77-83`) while still rejecting a present-but-invalid value
+    // before session revalidation (`session-navigation.ts:85-91`).
+    let user_files_marker = if output["status"] == "window" {
         let marker = output.as_object_mut().and_then(|root| root.remove("userFiles"));
         if marker.as_ref().is_some_and(|v| v.as_str() != Some(user_files::REFERENCE)) {
             return Err(blocked("unavailable"));
@@ -598,7 +597,7 @@ pub async fn handle(
             let (validated, slot) = if defer && body_len > 32 * 1024 {
                 let action_owned = action.clone();
                 match tokio::task::spawn_blocking(move || {
-                    (parse_and_validate_history(status, body, &action_owned, reference), slot)
+                    (parse_and_validate_history(status, body, &action_owned), slot)
                 })
                 .await
                 {
@@ -607,7 +606,7 @@ pub async fn handle(
                     Err(_) => return blocked("unavailable"),
                 }
             } else {
-                match parse_and_validate_history(status, body, &action, reference) {
+                match parse_and_validate_history(status, body, &action) {
                     Ok(validated) => (validated, slot),
                     Err(invalid_response) => return invalid_response,
                 }

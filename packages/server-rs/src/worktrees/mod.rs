@@ -134,13 +134,22 @@ pub async fn placement(app: &App, w: &Workspace, location: &serde_json::Value) -
     if !crate::files::paths::local_absolute(directory) {
         return Err(false);
     }
-    let Ok(path) = dunce::canonicalize(directory) else { return Err(false) };
+    let dir_owned = directory.to_owned();
+    let Ok(path) = tokio::task::spawn_blocking(move || dunce::canonicalize(&dir_owned)).await.map_err(|_| false)?
+    else {
+        return Err(false);
+    };
     if w.location["directory"] == directory && path == w.path {
         return Ok("root".into());
     }
     let owned = if path.starts_with(&app.scope) {
         match crate::worktrees::linked::catalogue(app, w, false).await {
-            Ok(c) => c.by_directory(directory).map(|t| t.slug.clone()),
+            Ok(c) => {
+                let dir_owned = directory.to_owned();
+                tokio::task::spawn_blocking(move || c.by_directory(&dir_owned).map(|t| t.slug.clone()))
+                    .await
+                    .unwrap_or(None)
+            }
             // Without a Git catalogue only the opened folder is authority, and
             // the reference's strict read reaches no verdict elsewhere.
             Err(_) => return Err(false),

@@ -49,6 +49,9 @@ struct State {
     features: Vec<&'static str>,
     /// The connection already prepared (`pluginPreparations`): one attempt each, again after a failure.
     prepared: Option<Arc<crate::opencode::Endpoint>>,
+    /// Deduplicated in-flight `prepare()` task for a given endpoint so concurrent or timed-out
+    /// callers share one flight instead of piling tasks behind `SERIAL`.
+    preparing: Option<(Arc<crate::opencode::Endpoint>, Arc<Notify>)>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -65,19 +68,57 @@ pub fn connected() {
 
 /// `OpenCodeSharedService.connect`: a new connection is provisioned before its first use (a
 /// workspace opening, the event stream) returns; a failed attempt leaves it usable and the next
-/// acquisition tries again. Runs in a detached task so a caller timing out never orphans
-/// in-flight plugin leases or releases `SERIAL` before registration finishes.
+/// acquisition tries again. Shares one detached flight per endpoint so concurrent or timed-out
+/// callers never pile tasks behind `SERIAL` or orphan in-flight leases.
 pub async fn prepare(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) {
-    let app = app.clone();
-    let endpoint = endpoint.clone();
-    let _ = tokio::spawn(async move {
-        prepare_inner(&app, &endpoint).await;
-    })
-    .await;
+    if !app.native.current(endpoint) {
+        return;
+    }
+    let (notify, owner) = {
+        let mut state = STATE.lock().unwrap();
+        if !state.active || state.prepared.as_ref().is_some_and(|p| Arc::ptr_eq(p, endpoint)) {
+            return;
+        }
+        if let Some((current, notify)) = &state.preparing
+            && Arc::ptr_eq(current, endpoint)
+        {
+            (notify.clone(), false)
+        } else {
+            let notify = Arc::new(Notify::new());
+            state.preparing = Some((endpoint.clone(), notify.clone()));
+            (notify, true)
+        }
+    };
+    if owner {
+        let app = app.clone();
+        let endpoint = endpoint.clone();
+        let done = notify.clone();
+        tokio::spawn(async move {
+            prepare_inner(&app, &endpoint).await;
+            let mut state = STATE.lock().unwrap();
+            if state.preparing.as_ref().is_some_and(|(ep, _)| Arc::ptr_eq(ep, &endpoint)) {
+                state.preparing = None;
+            }
+            done.notify_waiters();
+        });
+    }
+    loop {
+        let notified = notify.notified();
+        {
+            let state = STATE.lock().unwrap();
+            if !state.active || !state.preparing.as_ref().is_some_and(|(ep, _)| Arc::ptr_eq(ep, endpoint)) {
+                return;
+            }
+        }
+        notified.await;
+    }
 }
 
 async fn prepare_inner(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) {
     let _serial = SERIAL.lock().await;
+    if !app.native.current(endpoint) {
+        return;
+    }
     let features = {
         let state = STATE.lock().unwrap();
         if !state.active || state.prepared.as_ref().is_some_and(|p| Arc::ptr_eq(p, endpoint)) {
@@ -85,9 +126,9 @@ async fn prepare_inner(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) 
         }
         state.features.clone()
     };
-    connection(app, &features).await;
+    connection_at(app, Some(endpoint), &features).await;
     let mut state = STATE.lock().unwrap();
-    if state.current.is_some() {
+    if state.active && app.native.current(endpoint) && state.current.is_some() {
         state.prepared = Some(endpoint.clone());
     }
 }
@@ -149,8 +190,16 @@ fn status(app: &App, state: &State) {
 }
 
 async fn connection(app: &Shared, features: &[&'static str]) {
+    connection_at(app, None, features).await;
+}
+
+async fn connection_at(app: &Shared, endpoint: Option<&Arc<crate::opencode::Endpoint>>, features: &[&'static str]) {
     STATE.lock().unwrap().connections += 1;
-    let outcome = match provision::discovery(app).await {
+    let discovered = match endpoint {
+        Some(endpoint) => provision::discovery_at(app, endpoint).await,
+        None => provision::discovery(app).await,
+    };
+    let outcome = match discovered {
         Err(e) => Err(e),
         Ok(paths) => {
             let known = STATE.lock().unwrap().installations.iter().position(|i| i.paths.config == paths.config);

@@ -342,11 +342,22 @@ pub fn payloads(feature: &str) -> io::Result<(Vec<u8>, Option<Vec<u8>>)> {
 
 /// `resolveDesktopPluginPaths` on the current connection: `config.get` only.
 pub async fn discovery(app: &Shared) -> Result<Paths, String> {
+    let endpoint = app.native.endpoint().ok_or_else(|| {
+        "Cannot provision bundled plugins without the connected daemon's discovery directory (unreachable)".to_owned()
+    })?;
+    discovery_at(app, &endpoint).await
+}
+
+/// `resolveDesktopPluginPaths` against a specific captured endpoint.
+pub async fn discovery_at(app: &Shared, endpoint: &crate::opencode::Endpoint) -> Result<Paths, String> {
     let failed =
         |e: &str| format!("Cannot provision bundled plugins without the connected daemon's discovery directory ({e})");
+    let url = endpoint.url.join("/api/config").map_err(|_| failed("unreachable"))?;
     let response = app
         .native
-        .get("/api/config")
+        .client
+        .get(url)
+        .basic_auth("opencode", Some(&endpoint.password))
         .timeout(Duration::from_secs(15))
         .send()
         .await

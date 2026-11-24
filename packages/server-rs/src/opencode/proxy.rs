@@ -419,14 +419,20 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let initial_identity = if message_list {
         if let Some(raw) = native_directory {
             let (scope, raw) = (app.scope.clone(), raw.to_owned());
-            tokio::task::spawn_blocking(move || {
-                let (resolved, anchor) = crate::worktrees::ownership::resolve_media_path(&scope, &raw)?;
-                let identity = crate::files::host_identity(&anchor).ok()?;
-                Some((resolved, anchor, identity))
-            })
-            .await
-            .ok()
-            .flatten()
+            tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                _ = workspace_closed() => return Err(not_found()),
+                res = tokio::time::timeout_at(
+                    list_deadline,
+                    tokio::task::spawn_blocking(move || {
+                        let (resolved, anchor) = crate::worktrees::ownership::resolve_media_path(&scope, &raw)?;
+                        let identity = crate::files::directory_identity(&anchor).ok()?;
+                        Some((resolved, anchor, identity))
+                    }),
+                ) => res.map_err(|_| upstream_error())?.ok().flatten(),
+            }
         } else {
             None
         }
@@ -1001,7 +1007,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                                 |(cur_res, cur_anc)| {
                                     cur_res == resolved
                                         && cur_anc == anchor
-                                        && crate::files::host_identity(&cur_anc).ok() == Some(expected_id)
+                                        && crate::files::directory_identity(&cur_anc).ok() == Some(expected_id)
                                         && checkout.live(&cur_res)
                                 },
                             )
@@ -1169,6 +1175,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         // Do not cap the total lifetime of a streaming native response.
         let response = tokio::select! {
             _ = principal.0.cancelled(), if !dispatched_mutation => return Err(crate::auth::unauthorized()),
+            _ = app.native.wait_retired(&endpoint), if !dispatched_mutation => return Err(upstream_error()),
             response = tokio::time::timeout(super::PROXY_IDLE, upstream.send()) =>
                 response.map_err(|_| upstream_error())?.map_err(|_| upstream_error())?,
         };
@@ -1257,14 +1264,99 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             }
             return Ok(Json(native).into_response());
         }
+        let status = response.status();
         let builder = relayed(&response);
+        let builder = if dispatched_mutation {
+            builder
+        } else {
+            builder.extension(crate::shared::CancelWrite(principal.0.clone()))
+        };
         use futures_util::StreamExt;
-        let bytes = response.bytes_stream().take_until(async move {
+        let unauthorized = status == Status::UNAUTHORIZED;
+        let cancelled = Box::pin(principal.0.clone().cancelled_owned());
+        let app_retire = app.clone();
+        let endpoint_retire = endpoint.clone();
+        let ws_key = id.clone();
+        let ws_snapshot = workspace.clone();
+        let ws_app = app.clone();
+        let ws_closed = Box::pin(async move {
             if dispatched_mutation {
                 std::future::pending::<()>().await;
             }
-            principal.0.cancelled().await;
+            loop {
+                let notified = ws_app.workspace_closed.notified();
+                if !ws_app
+                    .workspace(&ws_key)
+                    .is_ok_and(|current| current.id == ws_snapshot.id && current.path == ws_snapshot.path)
+                {
+                    return;
+                }
+                notified.await;
+            }
         });
+        let bytes = futures_util::stream::unfold(
+            (
+                response.bytes_stream(),
+                cancelled,
+                ws_closed,
+                app_retire,
+                endpoint_retire,
+                dispatched_mutation,
+                unauthorized,
+                false,
+            ),
+            |(
+                mut inner,
+                mut cancelled,
+                mut ws_closed,
+                app_retire,
+                endpoint_retire,
+                dispatched_mutation,
+                unauthorized,
+                done,
+            )| async move {
+                if done {
+                    return None;
+                }
+                let next = tokio::select! {
+                    biased;
+                    _ = &mut cancelled, if !dispatched_mutation => {
+                        return Some((
+                            Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "upstream stream aborted")),
+                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, dispatched_mutation, unauthorized, true),
+                        ));
+                    }
+                    _ = &mut ws_closed, if !dispatched_mutation => {
+                        return Some((
+                            Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "workspace closed")),
+                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, dispatched_mutation, unauthorized, true),
+                        ));
+                    }
+                    _ = app_retire.native.wait_retired(&endpoint_retire), if !dispatched_mutation && !unauthorized => {
+                        return Some((
+                            Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "upstream stream aborted")),
+                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, dispatched_mutation, unauthorized, true),
+                        ));
+                    }
+                    item = inner.next() => item,
+                };
+                next.map(|chunk| {
+                    (
+                        chunk.map_err(std::io::Error::other),
+                        (
+                            inner,
+                            cancelled,
+                            ws_closed,
+                            app_retire,
+                            endpoint_retire,
+                            dispatched_mutation,
+                            unauthorized,
+                            false,
+                        ),
+                    )
+                })
+            },
+        );
         builder.extension(NativeBody).body(Body::from_stream(bytes)).map_err(|_| upstream_error())
     };
     if let Some(permit) = mutation {
