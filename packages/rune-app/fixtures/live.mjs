@@ -1,6 +1,6 @@
 // Own backend, real existing OpenCode service, exact disposable session with every tool denied.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {fixtureChildPid,spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {writeFile,readFile} from 'node:fs/promises'
 import path from 'node:path'
 import {prepareLive} from './live-session.mjs'
@@ -72,10 +72,11 @@ try {
   }
   observe().catch(error=>{if(error.name!=='AbortError')console.error(`Live observer: ${error.message}`)})
   console.log(JSON.stringify({type:'RUNE_LIVE_READY',profile,project,sessionID,workspace:workspace.id,tools:'deny-all'}))
-  child=spawn(clientBinary,[],{cwd:profile,windowsHide:true,stdio:'inherit',
+  child=spawn(clientBinary,[],{cwd:profile,windowsHide:true,stdio:['inherit','inherit','pipe'],
     env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:sessionID,
       RUNE_PASSWORD:'rune-live-private-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:'1',RUNE_LIVE_TITLE:'1'}})
-  console.log(JSON.stringify({type:'RUNE_LIVE_WINDOW',pid:child.pid}))
+  child.stderr.pipe(process.stderr)
+  console.log(JSON.stringify({type:'RUNE_LIVE_WINDOW',pid:await fixtureChildPid(child)}))
   await new Promise((resolve,reject)=>{child.on('exit',resolve);child.on('error',reject)})
 } finally {
   observed?.abort()

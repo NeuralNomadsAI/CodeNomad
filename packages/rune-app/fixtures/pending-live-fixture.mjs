@@ -1,6 +1,6 @@
 // Private real OpenCode + shared Rust + real Rune widgets. No model, tool or user profile.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {copyFile,mkdir,writeFile} from 'node:fs/promises'
 import {randomUUID} from 'node:crypto'
 import path from 'node:path'

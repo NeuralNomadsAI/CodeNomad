@@ -1,7 +1,7 @@
 // Real, unmodified CodeNomad Rust server; only its upstream OpenCode service is synthetic.
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {mkdir, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {createHash,randomUUID} from 'node:crypto'

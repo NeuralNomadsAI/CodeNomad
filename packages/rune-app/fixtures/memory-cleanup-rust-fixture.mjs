@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import {execFileSync, spawn} from 'node:child_process'
+import {execFileSync} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {once} from 'node:events'
 import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'
 import {createServer, request} from 'node:http'

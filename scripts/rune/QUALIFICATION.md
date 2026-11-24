@@ -6,6 +6,7 @@ Pour inspecter et agir sur le vrai runtime sans fenêtre, après compilation :
 
 ```powershell
 $env:CARGO_TARGET_DIR = 'D:/CodeNomad/.codenomad/worktrees/rune-native-chat/packages/rune-chat/target'
+cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
 cargo build --locked -p codenomad-rune-app --bin codenomad-rune --features test-support
 node scripts/rune/headless.mjs --binary "$env:CARGO_TARGET_DIR/debug/codenomad-rune.exe"
 ```

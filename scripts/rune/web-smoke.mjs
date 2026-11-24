@@ -4,9 +4,9 @@ import {mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
-import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
+import {activateControl,launchChromium} from './web-chromium.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
 import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste} from './web-paste.mjs'
@@ -43,8 +43,7 @@ if(values.connected){
 }
 await mkdir(out, {recursive: true})
 if(privateScope)assert(privateScope.inside(privateScope.profile,await realpath(out)),'Output link escapes fixture')
-const browser = await chromium.launch({headless: true, ...(values.executable ? {executablePath: values.executable} : {}),
-  args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader']})
+const browser = await launchChromium(values.executable)
 const records = []
 const imagePage = await browser.newPage()
 const palette = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/theme.json'), 'utf8'))
@@ -188,7 +187,7 @@ try {
             const box=await button.boundingBox()
             assert(box&&box.width>0&&box.height>0&&box.x>=-1&&box.y>=-1&&box.x+box.width<=width+1&&box.y+box.height<=height+1,`Connected control outside viewport: ${label}`)
             if(values.mobile)await tap(box.x+box.width/2,box.y+box.height/2,{label,role})
-            else await button.click({force:true})
+            else await activateControl(page,button,{touch:false,rect:box})
           }
           const left=messages['window.menu.leftPanel']
           const sessions=page.getByRole('region',{name:left,exact:true})

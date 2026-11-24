@@ -1,6 +1,6 @@
 // Native terminal-order/claim qualification; private standalone runtime, never discovery.
 import assert from "node:assert/strict"
-import { execFileSync, spawn } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { createServer } from "node:http"
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -9,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { build } from "esbuild"
 import { OpenCode } from "@opencode/client"
 import { nativePluginBuild } from "../packages/server/scripts/native-plugin-build.mjs"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 import { definition } from "./missions-terminal-native/definition.mjs"
 
 const cli = process.argv[2], evidenceRoot = process.argv[3]
@@ -87,7 +87,8 @@ async function start() {
   client = OpenCode.make({ baseUrl: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], headers: {
     Authorization: `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`,
   } })
-  await until(async () => { try { return (await client.server.info()).pid === child.pid } catch { return false } }, "private ready")
+  const pid = await fixtureChildPid(child)
+  await until(async () => { try { return (await client.server.info()).pid === pid } catch { return false } }, "private ready")
   const info = await client.server.info()
   evidence.incarnations.push({ pid: info.pid, version: info.version })
   assert.equal(info.version, "2.2.3", "This fixture records the requested exact runtime")
@@ -108,7 +109,8 @@ try {
   const live = await read(session.id, original.id)
   assert.equal(live.active, true); assert.equal(live.suspended, true); assert.equal(live.terminal, undefined)
   evidence.observations.push({ stage: "before-crash", ...live })
-  child.kill("SIGKILL"); await stopped; evidence.stoppedPIDs.push(child.pid)
+  const stoppedPid = await fixtureChildPid(child)
+  child.kill("SIGKILL"); await stopped; evidence.stoppedPIDs.push(stoppedPid)
   await start() // No sweep in standalone: recovery is held before the native resume call.
   for (let wake = 0; wake < 3; wake++) {
     const old = await read(session.id, original.id)
@@ -166,7 +168,7 @@ try {
   console.log(JSON.stringify({ outcome: evidence.outcome, root, checks: ["old-claim-held", "single-original-native-resume", "durable-sequence-terminal", "unrelated-failure-excluded", "missing-anchor-uncertain", "native-family-child-terminal", "durable-background-delivery"] }))
 } catch (error) { evidence.outcome = "failed"; evidence.error = String(error); throw error }
 finally {
-  if (child?.exitCode === null) { await stopFixtureChild(child, stopped); evidence.stoppedPIDs.push(child.pid) }
+  if (child?.exitCode === null) { const pid = await fixtureChildPid(child); await stopFixtureChild(child, stopped); evidence.stoppedPIDs.push(pid) }
   provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))
   await writeFile(path.join(root, "native.log"), output)
   await writeFile(path.join(root, "evidence.json"), JSON.stringify(evidence, null, 2))

@@ -11,12 +11,15 @@ npm ci
 npm run build --workspace @neuralnomads/codenomad                       # TS server dist and bundled plugins
 node --max-old-space-size=8192 packages/server-rs/bench/build-ui.mjs    # Solid UI of this checkout → bench/out/ui
 cargo build --release --locked --manifest-path packages/server-rs/Cargo.toml
+cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
 npx playwright install chromium                                         # or CODENOMAD_BROWSER_PATH
 ```
 
 Only the `solid` mode uses that UI. It hides the features of route families a backend leaves out of `capabilities` in `/api/meta`.
 
 Rust binary: `CODENOMAD_RS_BINARY` or `CNRS_RUST_BINARY`, else `$CARGO_TARGET_DIR/release/codenomad-rs.exe`, else `packages/server-rs/target/release/`. OpenCode: absolute path of a native OpenCode 2 executable (not an npm shim), passed as an argument.
+
+On Windows, `compare.mjs` creates both backends and their OpenCode fixtures directly in kill-on-close jobs. `service.mjs` uses one enclosing job so the daemon can outlive an individual backend restart. The runner resolves `codenomad-fixture-job.exe` under `$CARGO_TARGET_DIR/debug/` or `target/debug/`; `CODENOMAD_FIXTURE_JOB_EXE` overrides it with an absolute path.
 
 For `static-assets`, build the TypeScript checkout with precompression support instead of building the local TypeScript checkout in step 2. In the Rust checkout, where `packages/server/dist` is absent, run `New-Item -ItemType Junction -Path packages/server/dist -Target <absolute-reference-dist>` and then `node compare.mjs static-assets $OpenCode` from `bench/`.
 

@@ -1,10 +1,10 @@
 // node --import tsx packages/rune-app/fixtures/markdown-image-tls.mjs
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:https'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { spawnFixtureChild as spawn } from '../../../scripts/native-fixture-guards.mjs'
 import { resolveHttpsOptions } from '../../server/src/server/tls.ts'
 
 const target = process.env.CARGO_TARGET_DIR

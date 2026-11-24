@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
+import {spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 import {promisify} from 'node:util'
 import {mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
@@ -18,9 +19,19 @@ import {webLiveFixture} from './web-live-fixture.mjs'
 import {seedGitImages} from '../../../scripts/rune/web-git-images.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
 import {launchWeb} from './launcher-web.mjs'
+import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
 const mobileSessionSearch=process.argv.includes('--mobile-session-search')
 assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation requires the Chromium mobile smoke')
+if(process.platform==='win32'&&webMobile&&!process.argv.includes('--owned-mobile-worker')){
+  const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:'inherit'})
+  const closed=new Promise(resolve=>worker.once('close',resolve))
+  const stop=()=>void stopFixtureChild(worker,closed).catch(error=>console.error(error.message))
+  process.once('SIGINT',stop)
+  process.once('SIGTERM',stop)
+  const code=await closed
+  process.exit(code??1)
+}
 const webMissions=process.argv.includes('--web-missions')
 const webGitImages=process.argv.includes('--web-git-images')
 const solid=webAndroid&&process.env.RUNE_ANDROID_SOLID_DIR
@@ -411,33 +422,21 @@ Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
-let server,exited,log='',client,androidCleanup,result=1,http,runLog='',expired=false
+let host,server,log='',client,androidCleanup,result=1,http,expired=false
 const webState={diagnostic:''}
 async function startServer(){
-  runLog=''
-  server=spawn(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-  server.stdout.on('data',d=>{if(log.length<1048576)log+=d;if(runLog.length<1048576)runLog+=d})
-  server.stderr.on('data',d=>{if(log.length<1048576)log+=d})
-  server.stdin.on('error',()=>{})
-  exited=new Promise(resolve=>{server.once('close',resolve);server.once('error',resolve)})
-  for(const until=Date.now()+20000;;){
-    assert(Date.now()<until&&server.exitCode===null,`${ts?'TypeScript':'Rust'} startup: ${log.slice(-1000)}`)
-    const origin=ts?ts.ready(runLog):runLog.match(/^http:\/\/127\.0\.0\.1:\d+(?=\r?$)/m)?.[0]
-    if(origin)return origin
-    await new Promise(r=>setTimeout(r,50))
-  }
+  host=launchFixture(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],
+    {cwd:profile,env,shutdown:ts?'codenomad:shutdown\n':'shutdown\n',graceMs:ts?15000:3000})
+  server=host.child
+  return host.ready(ts?stdout=>ts.ready(stdout):rustOrigin)
 }
 async function stopServer(){
-  if(!server || server.exitCode!==null)return
-  server.stdin.end(ts?'codenomad:shutdown\n':'shutdown\n')
-  await Promise.race([exited,new Promise(r=>setTimeout(r,ts?15000:3000).unref())])
-  if(server.exitCode===null){server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,5000))])}
+  if(!host)return
+  try{await host.stop()}finally{log=(log+host.output()).slice(-1048576);host=undefined}
 }
 async function signIn(origin){
   await http?.dispose()
-  http=await request.newContext({baseURL:origin,timeout:15000})
-  assert.equal((await http.get('/api/workspaces')).status(),401,'Workspace inventory requires authentication')
-  assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200)
+  http=await signInFixture(origin,'fixture-backend')
 }
 async function restartWeb(previous,uiOrigin){
   const {serverId}=await (await previous.get('/api/meta')).json()
@@ -448,7 +447,7 @@ async function restartWeb(previous,uiOrigin){
   assert.equal(server.exitCode,0,'The original listener must actually exit')
   if(!ts)env.CNRS_HTTPS_BIND=new URL(uiOrigin).host
   await signIn(await startServer())
-  if(!ts)assert(runLog.includes(`HTTPS ${uiOrigin}`))
+  if(!ts)assert(host.stdout().includes(`HTTPS ${uiOrigin}`))
   assert.equal((await (await http.get('/api/meta')).json()).serverId,serverId)
   const opened=await http.post('/api/workspaces',{data:{path:project}})
   assert(opened.ok())
@@ -458,7 +457,7 @@ try{
   const origin=await startServer()
   if(web){
     await signIn(origin)
-    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog,http,mobile,restart:restartWeb,
+    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog:host.stdout(),http,mobile,restart:restartWeb,
       webMobile,webAndroid,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
     client=webState.client
   }else if(pendingOpen){
@@ -468,7 +467,7 @@ try{
     for(const stage of ['prepare','resume','verify']){
       if(restoreFileDrafts&&stage==='verify')await writeFile(path.join(project,'draft.txt'),'external')
       clientLines=''
-      client=spawn(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
+      client=spawnFixtureChild(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
       client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
       const timer=setTimeout(()=>client.kill(),120000)
       try{result=await new Promise((resolve,reject)=>{client.on('close',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
@@ -485,7 +484,7 @@ try{
   }else {
     if(gitPanel)await signIn(origin)
     const args=gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'
-    client=spawn(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
+    client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }

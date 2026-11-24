@@ -3,14 +3,13 @@
 // isolated daemon; the journey covers start-up, the folder picker, recents, a conversation, Files, Git, a
 // worktree and every Settings section. Output: out/host-survey.json (method, route, statuses, step).
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { chromium } from "playwright"
-import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
 import { assertPrivateHost, out, privateGit, productRuntime, repo, useBenchTemp, writeJson } from "./fixtures.mjs"
 import { populate } from "./files.mjs"
 

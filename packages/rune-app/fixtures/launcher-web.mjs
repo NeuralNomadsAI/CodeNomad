@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto'
 import {readFile} from 'node:fs/promises'
 import {chromium} from 'playwright'
 import path from 'node:path'
+import {spawnFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 import {serverBinary} from './fixture-binaries.mjs'
@@ -55,7 +56,8 @@ export async function launchWeb({
     state.deviceLease=androidLease(androidDevice(androidEnv),uiOrigin)
     await state.deviceLease.open()
   }
-  const client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
+  const launch=webMobile?spawn:spawnFixtureChild
+  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
   state.client=client
   if(webAndroid)state.clientClosed=new Promise(resolve=>client.once('close',resolve))
   if(mobile)client.on('message',action=>{

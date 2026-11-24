@@ -1,7 +1,7 @@
 // Pass an absolute 2.0.20+ CLI path. Only synthetic credentials in a fresh
 // fixture database are written; no service discovery or shared daemon is used.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
 import os from "node:os"
