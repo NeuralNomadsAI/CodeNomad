@@ -210,7 +210,7 @@ try {
             await press(right)
             await drawer.waitFor({state:'hidden'})
             tabBar = await mobileTabBar(page, [
-              messages['instanceTabs.new.ariaLabel'], messages['settings.title'], messages['settings.nav.chat'],
+              messages['instanceTabs.new.ariaLabel'], messages['settings.title'],
               messages['toastHistory.title'],
             ])
             const permission = page.getByRole('button', {

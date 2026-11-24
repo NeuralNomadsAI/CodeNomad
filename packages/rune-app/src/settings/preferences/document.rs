@@ -620,13 +620,19 @@ fn dedicated_error_choices_do_not_emit_generic_save_notification() {
         (Choice::UpdateFeed, ChoiceValue::Text("stable")),
     ] {
         let mut document = Document::default();
+        document.write.requested.insert(choice, value.clone());
         let sent = BTreeMap::from([(choice, value)]);
         document.settle(Operation::Write(sent), Some(unchanged.clone()), true);
         assert!(document.choice_failed(choice));
         assert!(!document.take_notification_failure());
     }
     let mut document = Document::default();
-    let sent = BTreeMap::from([(Choice::Locale, ChoiceValue::Text("fr"))]);
+    let value = ChoiceValue::Text("fr");
+    document
+        .write
+        .requested
+        .insert(Choice::Locale, value.clone());
+    let sent = BTreeMap::from([(Choice::Locale, value)]);
     document.settle(Operation::Write(sent), Some(unchanged), true);
     assert!(document.choice_failed(Choice::Locale));
     assert!(document.take_notification_failure());
