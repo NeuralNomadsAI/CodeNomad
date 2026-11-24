@@ -36,7 +36,11 @@ struct Lane {
     failed: Option<Read>,
     owed: bool,
     seen: HashSet<(String, Option<String>)>,
+    seen_order: VecDeque<(String, Option<String>)>,
+    tail_keys: HashSet<(String, Option<String>)>,
     prefix_len: usize,
+    #[cfg(test)]
+    tail_visits: usize,
 }
 
 struct Completion {
@@ -541,6 +545,7 @@ impl Panel {
         } else {
             self.cleanups.insert(0, receipt.clone());
             self.lanes[Kind::Cleanups as usize].prefix_len = 0;
+            self.lanes[Kind::Cleanups as usize].tail_keys.clear();
             self.cleanup_meta.insert(row_id.clone(), new_meta);
             if receipt.is_pending() {
                 pending_changed |= self
@@ -548,23 +553,23 @@ impl Panel {
                     .insert(pending_cleanup_tuple(&receipt));
                 self.pending_cleanup_ids.insert(row_id);
             }
-            let lane_seen = &mut self.lanes[Kind::Cleanups as usize].seen;
-            // Cap only settled off-page adopted rows without evicting index 0, pending rows,
-            // or legitimately paged current-order rows.
-            let max_rows = CLEANUP_DISPLAY_CAP.max(lane_seen.len().saturating_add(1));
-            while self.cleanups.len() > max_rows {
-                let row_key =
-                    |row: &Cleanup| (row.mission_id.clone(), Some(row.deletion_id.clone()));
+            // Enforce the strict resident cap without ever evicting the newly adopted row at index 0.
+            while self.cleanups.len() > CLEANUP_DISPLAY_CAP {
                 let tail = &self.cleanups[1..];
-                let Some(rel) = tail
+                let evict_idx = tail
                     .iter()
-                    .rposition(|row| !row.is_pending() && !lane_seen.contains(&row_key(row)))
-                else {
-                    break;
-                };
-                let evicted = self.cleanups.remove(rel + 1);
-                self.cleanup_meta
-                    .remove(&(evicted.mission_id.clone(), evicted.deletion_id.clone()));
+                    .rposition(|row| !row.is_pending())
+                    .map(|rel| rel + 1)
+                    .unwrap_or(1);
+                let evicted = self.cleanups.remove(evict_idx);
+                let evict_id = (evicted.mission_id.clone(), evicted.deletion_id.clone());
+                self.cleanup_meta.remove(&evict_id);
+                if evicted.is_pending() {
+                    pending_changed |= self
+                        .pending_cleanup_set
+                        .remove(&pending_cleanup_tuple(&evicted));
+                    self.pending_cleanup_ids.remove(&evict_id);
+                }
             }
         }
         self.note_dirty_cleanup(receipt.clone());
@@ -1069,6 +1074,7 @@ impl Panel {
                 w.order == page.window.order
                     && w.total == page.window.total
                     && w.end > page.window.end
+                    && (kind != Kind::Cleanups || w.end <= CLEANUP_DISPLAY_CAP as u64)
             })
         {
             return true;
@@ -1076,7 +1082,7 @@ impl Panel {
         match (kind, page.rows) {
             (Kind::Summaries, DirectoryRows::Summaries(rows)) => {
                 let lane = &mut self.lanes[kind as usize];
-                if !merge_filtered(
+                if merge_filtered(
                     &mut self.summaries,
                     lane,
                     read,
@@ -1086,7 +1092,9 @@ impl Panel {
                     |row| (row.id.clone(), None),
                     |row| !self.deleted_missions.contains(&row.id),
                     |_| false,
-                ) {
+                )
+                .is_none()
+                {
                     return false;
                 }
                 if page.window.end == page.window.total && !self.deleted_missions.is_empty() {
@@ -1174,14 +1182,13 @@ impl Panel {
                 }
                 let lane = &mut self.lanes[kind as usize];
                 let had_tail = self.cleanups.len() > lane.prefix_len;
-                let before_len = self.cleanups.len();
                 let incoming_for_observe: Vec<Cleanup> =
                     if read == Read::More && !self.dirty_cleanups_full {
                         rows.clone()
                     } else {
                         Vec::new()
                     };
-                if !merge_filtered(
+                let Some(evicted) = merge_filtered(
                     &mut self.cleanups,
                     lane,
                     read,
@@ -1191,18 +1198,26 @@ impl Panel {
                     |row| (row.mission_id.clone(), Some(row.deletion_id.clone())),
                     |_| true,
                     Cleanup::is_pending,
-                ) {
+                ) else {
                     return false;
-                }
+                };
                 let covered = page.window.end == page.window.total;
-                let trimmed = self.cleanups.len() < before_len
-                    || (had_tail && self.cleanups.len() >= CLEANUP_DISPLAY_CAP);
                 self.project = Some(page.project_id);
                 lane.window = Some(page.window);
-                let pending_changed = if read == Read::Refresh || (covered && had_tail) || trimmed {
+                let pending_changed = if read == Read::Refresh || (covered && had_tail) {
                     self.rebuild_cleanup_indices()
                 } else {
                     let mut changed = false;
+                    for row in evicted {
+                        let evict_id = (row.mission_id.clone(), row.deletion_id.clone());
+                        self.cleanup_meta.remove(&evict_id);
+                        if row.is_pending() {
+                            changed |= self
+                                .pending_cleanup_set
+                                .remove(&pending_cleanup_tuple(&row));
+                            self.pending_cleanup_ids.remove(&evict_id);
+                        }
+                    }
                     for (k, meta) in incoming_meta {
                         self.cleanup_meta.insert(k, meta);
                     }
@@ -1395,6 +1410,42 @@ impl Drop for Panel {
     }
 }
 
+#[cfg(test)]
+impl Panel {
+    pub(super) fn cleanup_index_counts(&self) -> (usize, usize, usize, usize) {
+        (
+            self.cleanups.len(),
+            self.lanes[Kind::Cleanups as usize].seen.len(),
+            self.cleanup_meta.len(),
+            self.pending_cleanup_set.len(),
+        )
+    }
+
+    pub(super) fn cleanup_tail_visits(&self) -> usize {
+        self.lanes[Kind::Cleanups as usize].tail_visits
+    }
+
+    pub(super) fn reset_cleanup_tail_visits(&mut self) {
+        self.lanes[Kind::Cleanups as usize].tail_visits = 0;
+    }
+}
+
+fn push_seen_bounded(lane: &mut Lane, keys: Vec<(String, Option<String>)>, cap: Option<usize>) {
+    for k in keys {
+        if lane.seen.insert(k.clone()) {
+            lane.seen_order.push_back(k);
+        }
+    }
+    if let Some(max_len) = cap {
+        while lane.seen.len() > max_len {
+            let Some(oldest) = lane.seen_order.pop_front() else {
+                break;
+            };
+            lane.seen.remove(&oldest);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn merge_filtered<T>(
     display: &mut Vec<T>,
@@ -1406,47 +1457,87 @@ fn merge_filtered<T>(
     key: impl Fn(&T) -> (String, Option<String>),
     keep: impl Fn(&T) -> bool,
     pin: impl Fn(&T) -> bool,
-) -> bool {
+) -> Option<Vec<T>> {
     if read == Read::Refresh {
         lane.seen.clear();
+        lane.seen_order.clear();
+        lane.tail_keys.clear();
         lane.prefix_len = 0;
     } else if rows.iter().any(|row| lane.seen.contains(&key(row))) {
-        return false;
+        return None;
     }
     let incoming_keys: Vec<(String, Option<String>)> = rows.iter().map(&key).collect();
     let kept: Vec<T> = rows.into_iter().filter(&keep).collect();
-    let extend_tail =
-        |display: &mut Vec<T>, tail: Vec<T>, seen: &HashSet<(String, Option<String>)>| {
-            let filtered: Vec<T> = tail
+    let mut evicted = Vec::new();
+
+    if read == Read::More && lane.prefix_len > 0 && lane.prefix_len <= display.len() {
+        push_seen_bounded(lane, incoming_keys.clone(), cap);
+        if window.end == window.total {
+            // Final page covers the entire order: drop any remaining old tail in O(1).
+            if lane.prefix_len < display.len() {
+                evicted.extend(display.drain(lane.prefix_len..));
+                lane.tail_keys.clear();
+            }
+        } else if lane.prefix_len < display.len() {
+            // Only touch the tail if incoming keys collide with it; otherwise O(page_size).
+            let mut collisions: HashSet<(String, Option<String>)> = incoming_keys
                 .into_iter()
-                .filter(|row| keep(row) && !seen.contains(&key(row)))
+                .filter(|k| lane.tail_keys.remove(k))
                 .collect();
-            let pinned = filtered.iter().filter(|row| pin(row)).count();
-            let mut unpinned_budget = cap.map_or(usize::MAX, |max_len| {
-                max_len.saturating_sub(display.len().saturating_add(pinned))
-            });
-            for row in filtered {
-                if pin(&row) {
-                    display.push(row);
-                } else if unpinned_budget > 0 {
-                    unpinned_budget -= 1;
-                    display.push(row);
+            if !collisions.is_empty() {
+                let mut i = lane.prefix_len;
+                while i < display.len() && !collisions.is_empty() {
+                    #[cfg(test)]
+                    {
+                        lane.tail_visits += 1;
+                    }
+                    let k = key(&display[i]);
+                    if collisions.remove(&k) {
+                        evicted.push(display.remove(i));
+                    } else {
+                        i += 1;
+                    }
                 }
             }
-        };
-    if read == Read::More && lane.prefix_len > 0 && lane.prefix_len <= display.len() {
-        // Fast path: display[..lane.prefix_len] is already the contiguous current-order prefix.
-        let tail = display.split_off(lane.prefix_len);
-        lane.seen.extend(incoming_keys);
-        display.extend(kept);
-        lane.prefix_len = display.len();
-        if window.end != window.total && !tail.is_empty() {
-            extend_tail(display, tail, &lane.seen);
+            // Trim excess tail rows from the back (unpinned sit after pinned) in O(page_size).
+            if let Some(max_len) = cap {
+                let target_len = max_len.saturating_sub(kept.len());
+                while display.len() > lane.prefix_len && display.len() > target_len {
+                    if let Some(removed) = display.pop() {
+                        lane.tail_keys.remove(&key(&removed));
+                        evicted.push(removed);
+                    }
+                }
+            }
         }
-        return true;
+        let kept_len = kept.len();
+        if lane.prefix_len == display.len() {
+            display.extend(kept);
+        } else {
+            display.splice(lane.prefix_len..lane.prefix_len, kept);
+        }
+        lane.prefix_len += kept_len;
+        // Slide the resident prefix window forward when total rows exceed `cap`.
+        if let Some(max_len) = cap
+            && display.len() > max_len
+        {
+            let overflow = display.len() - max_len;
+            let drop_prefix = overflow.min(lane.prefix_len);
+            evicted.extend(display.drain(..drop_prefix));
+            lane.prefix_len -= drop_prefix;
+            while display.len() > max_len {
+                if let Some(removed) = display.pop() {
+                    lane.tail_keys.remove(&key(&removed));
+                    evicted.push(removed);
+                }
+            }
+        }
+        return Some(evicted);
     }
-    // Current-order rows stay a contiguous prefix; keep unvisited rows (including adopted
-    // off-page receipts and previous-order tail rows) after it and deduplicate on arrival.
+
+    // Slow path (Refresh or after adopt_settled_cleanup reset prefix_len to 0):
+    // Keep current-order prefix first, then pinned tail rows, then unpinned tail rows,
+    // strictly bounded by `cap` so back-popping on Read::More evicts unpinned rows first.
     let previous = std::mem::take(display);
     let mut prefix_rows = Vec::with_capacity(lane.seen.len().min(previous.len()));
     let mut tail_rows = Vec::new();
@@ -1460,14 +1551,48 @@ fn merge_filtered<T>(
             tail_rows.push(row);
         }
     }
-    lane.seen.extend(incoming_keys);
+    push_seen_bounded(lane, incoming_keys, cap);
     display.extend(prefix_rows);
     display.extend(kept);
-    lane.prefix_len = display.len();
-    if window.end != window.total {
-        extend_tail(display, tail_rows, &lane.seen);
+    if let Some(max_len) = cap
+        && display.len() > max_len
+    {
+        let overflow = display.len() - max_len;
+        evicted.extend(display.drain(..overflow));
     }
-    true
+    lane.prefix_len = display.len();
+    lane.tail_keys.clear();
+    if window.end != window.total && !tail_rows.is_empty() {
+        let mut pinned_tail = Vec::new();
+        let mut unpinned_tail = Vec::new();
+        for row in tail_rows {
+            #[cfg(test)]
+            {
+                lane.tail_visits += 1;
+            }
+            let k = key(&row);
+            if lane.seen.contains(&k) {
+                continue;
+            }
+            if pin(&row) {
+                pinned_tail.push((k, row));
+            } else {
+                unpinned_tail.push((k, row));
+            }
+        }
+        let budget = cap.map_or(usize::MAX, |max_len| max_len.saturating_sub(display.len()));
+        let mut remaining = budget;
+        for (k, row) in pinned_tail.into_iter().chain(unpinned_tail) {
+            if remaining == 0 {
+                evicted.push(row);
+                continue;
+            }
+            remaining -= 1;
+            lane.tail_keys.insert(k);
+            display.push(row);
+        }
+    }
+    Some(evicted)
 }
 
 #[cfg(test)]

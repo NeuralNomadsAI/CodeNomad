@@ -1,6 +1,6 @@
-use super::directory::panel_id;
+use super::{directory::panel_id, stream_json::read_filtered_json_for_coordinator};
 use crate::{
-    backend::{Backend, read_json_limited},
+    backend::Backend,
     history::{Result, valid_id},
 };
 use serde::{Deserialize, Serialize};
@@ -120,6 +120,7 @@ pub enum LifecycleOutcome {
     Acknowledged(u64),
     Rejected,
     Unconfirmed,
+    AuthenticationRequired,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -196,7 +197,27 @@ impl Backend {
             ]);
         let response = control_post(self, url, request).send().await?;
         let status = response.status();
-        let body = read_json_limited(response, 4 * 1024 * 1024).await?;
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            if self.authentication_status().await.ok() == Some(false) {
+                return Ok(LifecycleOutcome::AuthenticationRequired);
+            }
+            return Ok(LifecycleOutcome::Unconfirmed);
+        }
+        let body: serde_json::Value = read_filtered_json_for_coordinator(
+            response,
+            &["code", "mission"],
+            &[
+                "id",
+                "projectID",
+                "projectCanonical",
+                "coordinatorSessionId",
+                "revision",
+                "control",
+            ],
+            Some(&target.coordinator),
+            4 * 1024 * 1024,
+        )
+        .await?;
         Ok(settle(status, &body, target, request))
     }
 }
@@ -207,7 +228,12 @@ fn settle(
     target: &LifecycleTarget,
     request: &LifecycleRequest,
 ) -> LifecycleOutcome {
-    if status.as_u16() == 409 && body["code"] == "revision-conflict" {
+    if status.as_u16() == 409
+        && matches!(
+            body["code"].as_str(),
+            Some("revision-conflict" | "mission-finished" | "mission-not-found")
+        )
+    {
         return LifecycleOutcome::Rejected;
     }
     let mission = &body["mission"];
@@ -340,6 +366,8 @@ mod tests {
         }
         for (code, expected) in [
             ("revision-conflict", LifecycleOutcome::Rejected),
+            ("mission-finished", LifecycleOutcome::Rejected),
+            ("mission-not-found", LifecycleOutcome::Rejected),
             ("control-pending", LifecycleOutcome::Unconfirmed),
             ("request-conflict", LifecycleOutcome::Unconfirmed),
         ] {
@@ -353,5 +381,73 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn lifecycle_post_streams_large_ack_and_detects_confirmed_401() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let mut backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+            backend.workspace = "ws-one".into();
+            let request = LifecycleRequest::new(LifecycleAction::Pause, 7, true).unwrap();
+            let req_id = request.request_id.clone();
+            let target = LifecycleTarget {
+                mission: "msn-one".into(),
+                project: "project".into(),
+                canonical: "/fixture".into(),
+                coordinator: "coordinator".into(),
+                coordinator_location: Some(("/fixture".into(), None)),
+            };
+            // Server handles: (1) >6 MiB lifecycle 200 ack, (2) 401 + auth/status false.
+            let server = tokio::spawn(async move {
+                // 1. Large 200 response (>6 MiB task brief).
+                let (mut s, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 4096];
+                let _ = s.read(&mut buf).await;
+                let huge = "a".repeat(6 * 1024 * 1024);
+                let body = format!(
+                    r#"{{"mission":{{"id":"msn-one","projectID":"project","projectCanonical":"/fixture","coordinatorSessionId":"coordinator","revision":8,"actors":[{{"kind":"coordinator","sessionId":"coordinator","location":{{"directory":"/fixture"}}}}],"tasks":[{{"brief":"{huge}"}}],"control":{{"missionID":"msn-one","requestID":"{req_id}","action":"pause","expectedRevision":7,"graceful":true,"pending":[],"completedRevision":8}}}}}}"#
+                );
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                s.write_all(resp.as_bytes()).await.unwrap();
+                s.write_all(body.as_bytes()).await.unwrap();
+
+                // 2. 401 on control POST, then GET /api/auth/status -> authenticated: false.
+                let (mut s2, _) = listener.accept().await.unwrap();
+                let _ = s2.read(&mut buf).await;
+                let ebody = r#"{"error":"unauthorized"}"#;
+                let resp2 = format!(
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{ebody}",
+                    ebody.len()
+                );
+                s2.write_all(resp2.as_bytes()).await.unwrap();
+
+                let (mut s3, _) = listener.accept().await.unwrap();
+                let _ = s3.read(&mut buf).await;
+                let abody = r#"{"authenticated":false}"#;
+                let resp3 = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{abody}",
+                    abody.len()
+                );
+                s3.write_all(resp3.as_bytes()).await.unwrap();
+            });
+
+            let large = backend.control_mission(&target, &request).await.unwrap();
+            assert_eq!(large, LifecycleOutcome::Acknowledged(8));
+
+            let expired = backend.control_mission(&target, &request).await.unwrap();
+            assert_eq!(expired, LifecycleOutcome::AuthenticationRequired);
+            server.await.unwrap();
+        });
     }
 }

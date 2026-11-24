@@ -254,7 +254,7 @@ pub(super) struct CleanupPolled {
     pub deleted_missions: Vec<(WorkspaceScope, String)>,
     pub settled_cleanups: Vec<(WorkspaceScope, Cleanup)>,
     pub document_pending_rows: Vec<(WorkspaceScope, super::directory::CleanupIdentity)>,
-    pub auth_expired: Option<Backend>,
+    pub auth_expired: Vec<Backend>,
     pub changed: bool,
 }
 
@@ -266,7 +266,7 @@ impl CleanupPolled {
             && self.deleted_missions.is_empty()
             && self.settled_cleanups.is_empty()
             && self.document_pending_rows.is_empty()
-            && self.auth_expired.is_none()
+            && self.auth_expired.is_empty()
     }
 }
 
@@ -1081,9 +1081,7 @@ impl CleanupOwner {
                             created_at_bits: ts_bits,
                         });
                     }
-                    if polled.auth_expired.is_none() {
-                        polled.auth_expired = Some(backend);
-                    }
+                    polled.auth_expired.push(backend);
                     true
                 }
             }
@@ -1262,9 +1260,7 @@ impl CleanupOwner {
                     if document_cleanup {
                         record_doc(self, &mut polled, &retry_key);
                     }
-                    if polled.auth_expired.is_none() {
-                        polled.auth_expired = Some(backend);
-                    }
+                    polled.auth_expired.push(backend);
                 }
             }
         }
@@ -1290,9 +1286,7 @@ impl CleanupOwner {
         polled
             .document_pending_rows
             .extend(retries.document_pending_rows);
-        if polled.auth_expired.is_none() {
-            polled.auth_expired = retries.auth_expired;
-        }
+        polled.auth_expired.extend(retries.auth_expired);
         polled
     }
 }
@@ -1912,30 +1906,37 @@ async fn run_cleanup_retry(
         };
     }
     let conflict_409 = matches!(outcome, DeletionOutcome::Failed(err) if err.status == 409);
-    let mutated = !conflict_409;
+    let definitive_client_refusal = matches!(
+        outcome,
+        DeletionOutcome::Failed(err) if (400..500).contains(&err.status) && err.status != 409
+    );
+    let mutated = !conflict_409 && !definitive_client_refusal;
     if !still_live() {
         return CleanupRetryResult::Cancelled {
             mutated,
             document_cleanup: require_document_settled,
         };
     }
-    if conflict_409 {
-        let Some(post_409) = until_closed(
+    // Reconcile any outcome that does not prove the mutation failed (409 conflicts,
+    // dropped/truncated responses, 5xx, or bare Deleted(None) receipts) so an already-committed
+    // cleanup row settles immediately instead of lingering as pending.
+    if !definitive_client_refusal {
+        let Some(post_reconcile) = until_closed(
             &cancel,
             backend.read_mission_reconciliation(&project, &saved.mission_id),
         )
         .await
         else {
             return CleanupRetryResult::Cancelled {
-                mutated: false,
+                mutated,
                 document_cleanup: require_document_settled,
             };
         };
-        match post_409 {
+        match post_reconcile {
             Ok(ReconciliationOutcome::Snapshot(after)) => {
                 if !still_live() {
                     return CleanupRetryResult::Cancelled {
-                        mutated: false,
+                        mutated,
                         document_cleanup: require_document_settled,
                     };
                 }
@@ -1958,7 +1959,7 @@ async fn run_cleanup_retry(
                     if cleanup_settled_for(require_document_settled, intent) {
                         return CleanupRetryResult::Settled {
                             receipt: Box::new(intent.clone()),
-                            mutated: false,
+                            mutated,
                             document_cleanup: require_document_settled,
                         };
                     }

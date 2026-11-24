@@ -58,7 +58,7 @@ pub(crate) enum Gesture {
     Check,
     Replay,
     StopDialog(u64),
-    ConfirmStop(bool),
+    ConfirmStop(u64, bool),
     RecoverCoordinator(u64),
     RecoverReport(u64, String),
     DeleteMission(u64, bool),
@@ -70,20 +70,29 @@ pub(crate) enum Gesture {
 
 pub(crate) struct Settled {
     lifecycle: Vec<(MissionKey, LifecycleTarget, LifecycleOutcome)>,
+    lifecycle_auth_expired: Vec<Backend>,
     recovery: RecoveryPolled,
     pub(super) cleanup: CleanupPolled,
 }
 
 impl Settled {
     pub fn changed(&self) -> bool {
-        !self.lifecycle.is_empty() || self.recovery.changed || !self.cleanup.is_empty()
+        !self.lifecycle.is_empty()
+            || !self.lifecycle_auth_expired.is_empty()
+            || self.recovery.changed
+            || !self.cleanup.is_empty()
     }
 
-    pub fn auth_expired(&self) -> Option<Backend> {
-        self.cleanup
-            .auth_expired
-            .clone()
-            .or_else(|| self.recovery.auth_expired.clone())
+    pub fn auth_expired(&self) -> Vec<Backend> {
+        let mut out = Vec::with_capacity(
+            self.cleanup.auth_expired.len()
+                + self.recovery.auth_expired.len()
+                + self.lifecycle_auth_expired.len(),
+        );
+        out.extend(self.cleanup.auth_expired.iter().cloned());
+        out.extend(self.recovery.auth_expired.iter().cloned());
+        out.extend(self.lifecycle_auth_expired.iter().cloned());
+        out
     }
 }
 
@@ -229,17 +238,30 @@ impl Panel {
             Gesture::StopDialog(witnessed)
                 if witnessed == revision && allowed(LifecycleAction::Stop, false) =>
             {
-                owner.confirmation = Some((target, revision));
+                owner.confirmation_seq = owner.confirmation_seq.wrapping_add(1);
+                owner.confirmation = Some(StopConfirmation {
+                    id: owner.confirmation_seq,
+                    source: target,
+                    revision,
+                    live: self.selection_live.clone(),
+                });
                 None
             }
-            Gesture::ConfirmStop(accepted) => {
+            Gesture::ConfirmStop(id, accepted) => {
+                let matches = owner
+                    .confirmation
+                    .as_ref()
+                    .is_some_and(|c| c.id == id && &c.source == source);
+                if !matches {
+                    return;
+                }
                 let confirmation = owner.confirmation.take();
-                if !accepted || confirmation.as_ref().is_none_or(|(key, _)| key != source) {
+                if !accepted {
                     return;
                 }
                 if confirmation
                     .as_ref()
-                    .is_some_and(|(_, expected)| *expected == revision)
+                    .is_some_and(|c| c.revision == revision && c.live.is_live())
                     && ready
                     && self.online()
                     && !delete_active
@@ -339,10 +361,12 @@ impl Panel {
                     && self.online()
                     && !recovery_busy
                     && witnessed == revision
-                    && !owner.unresolved(source, header)
-                    && !owner.busy(source)
+                    && !owner.blocks_delete(source, header)
                     && owner.cleanup.can_delete(source) =>
             {
+                if header.root.status != Status::Active {
+                    owner.clear_stale_intent_for_finished(&source.mission);
+                }
                 let title = header
                     .root
                     .title
@@ -462,7 +486,7 @@ impl Panel {
             if let LifecycleOutcome::Acknowledged(revision) = outcome {
                 self.detail.observe(&source.target.mission, *revision);
             }
-            if !refreshed {
+            if *outcome != LifecycleOutcome::AuthenticationRequired && !refreshed {
                 self.refresh();
                 (self.wake)();
                 refreshed = true;
@@ -511,11 +535,20 @@ impl Panel {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct StopConfirmation {
+    pub id: u64,
+    pub source: Source,
+    pub revision: u64,
+    pub live: super::cleanup::LiveFlag,
+}
+
 #[derive(Default)]
 pub(crate) struct Lifecycle {
     intents: HashMap<MissionKey, Intent>,
     current: Option<Source>,
-    pub confirmation: Option<(Source, u64)>,
+    confirmation_seq: u64,
+    pub confirmation: Option<StopConfirmation>,
     feedback: Option<(MissionKey, LifecycleTarget, &'static str)>,
     pub(super) recovery: Recovery,
     pub(super) cleanup: CleanupOwner,
@@ -525,7 +558,7 @@ struct Intent {
     target: LifecycleTarget,
     request: LifecycleRequest,
     predecessor: Option<LifecycleRequest>,
-    flight: Option<Receiver<LifecycleOutcome>>,
+    flight: Option<(Backend, Receiver<LifecycleOutcome>)>,
     checking: Option<(bool, u64)>,
     checked: Option<u64>,
     acknowledged: Option<u64>,
@@ -735,6 +768,18 @@ impl Lifecycle {
         false
     }
 
+    pub fn blocks_delete(&self, source: &Source, header: &MapHeader) -> bool {
+        self.busy(source)
+            || header.control.as_ref().is_some_and(|c| c.pending > 0)
+            || (header.root.status == Status::Active && self.unresolved(source, header))
+    }
+
+    fn clear_stale_intent_for_finished(&mut self, key: &MissionKey) {
+        if self.intents.get(key).is_some_and(|i| i.flight.is_none()) {
+            self.intents.remove(key);
+        }
+    }
+
     pub fn readback(
         &mut self,
         source: &Source,
@@ -766,6 +811,22 @@ impl Lifecycle {
         }) {
             self.intents.remove(&source.mission);
             self.set_feedback(source, "missions.control.run.superseded");
+        } else if header.root.status != Status::Active
+            && header
+                .control
+                .as_ref()
+                .is_none_or(|receipt| !receipt.matches(&intent.request) || receipt.pending == 0)
+        {
+            let action = intent.request.action;
+            self.intents.remove(&source.mission);
+            self.set_feedback(
+                source,
+                match action {
+                    LifecycleAction::Start => "missions.control.run.rejected.start",
+                    LifecycleAction::Pause => "missions.control.run.rejected.pause",
+                    LifecycleAction::Stop => "missions.control.run.rejected.stop",
+                },
+            );
         } else if intent.request.action == LifecycleAction::Stop
             && header.root.revision > intent.request.expected_revision
             && header
@@ -850,7 +911,7 @@ impl Lifecycle {
         }
         let target = source.target.clone();
         let (out, inbox) = bounded(1);
-        intent.flight = Some(inbox);
+        intent.flight = Some((backend.clone(), inbox));
         intent.checked = None;
         self.feedback = None;
         platform::spawn(async move {
@@ -867,14 +928,17 @@ impl Lifecycle {
     pub fn poll_deletes(&mut self) -> Settled {
         Settled {
             lifecycle: Vec::new(),
+            lifecycle_auth_expired: Vec::new(),
             recovery: RecoveryPolled::default(),
             cleanup: self.cleanup.poll_deletes(),
         }
     }
 
     pub fn poll_after_deletes(&mut self) -> Settled {
+        let (lifecycle, lifecycle_auth_expired) = self.poll_with_auth();
         Settled {
-            lifecycle: self.poll(),
+            lifecycle,
+            lifecycle_auth_expired,
             recovery: self.recovery.poll(),
             cleanup: self.cleanup.poll_retries(),
         }
@@ -882,25 +946,42 @@ impl Lifecycle {
 
     #[cfg(test)]
     pub fn poll_all(&mut self) -> Settled {
+        let (lifecycle, lifecycle_auth_expired) = self.poll_with_auth();
         Settled {
-            lifecycle: self.poll(),
+            lifecycle,
+            lifecycle_auth_expired,
             recovery: self.recovery.poll(),
             cleanup: self.cleanup.poll(),
         }
     }
 
     pub fn poll(&mut self) -> Vec<(MissionKey, LifecycleTarget, LifecycleOutcome)> {
+        self.poll_with_auth().0
+    }
+
+    fn poll_with_auth(
+        &mut self,
+    ) -> (
+        Vec<(MissionKey, LifecycleTarget, LifecycleOutcome)>,
+        Vec<Backend>,
+    ) {
         let mut finished = Vec::new();
+        let mut auth_expired = Vec::new();
         self.intents.retain(|source, intent| {
             let Some(outcome) = intent
                 .flight
                 .as_ref()
-                .and_then(|inbox| inbox.try_recv().ok())
+                .and_then(|(_, inbox)| inbox.try_recv().ok())
             else {
                 return true;
             };
+            let flight_backend = intent.flight.take().map(|(backend, _)| backend);
             finished.push((source.clone(), intent.target.clone(), outcome));
-            intent.flight = None;
+            if outcome == LifecycleOutcome::AuthenticationRequired
+                && let Some(backend) = flight_backend
+            {
+                auth_expired.push(backend);
+            }
             if let LifecycleOutcome::Acknowledged(revision) = outcome {
                 intent.acknowledged = Some(revision);
             }
@@ -914,7 +995,7 @@ impl Lifecycle {
             }
             outcome != LifecycleOutcome::Rejected
         });
-        finished
+        (finished, auth_expired)
     }
 }
 

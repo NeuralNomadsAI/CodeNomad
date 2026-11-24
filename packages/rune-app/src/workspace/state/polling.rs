@@ -51,9 +51,15 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.persistence.file_draft_error,
         ui.persistence.partial,
     );
-    let mission_auth_expired = ui.mission_auth_expired.take();
+    let mission_auth_expired = std::mem::take(&mut ui.mission_auth_expired);
     s.workspace = Some(ui);
-    if let Some(backend) = mission_auth_expired {
+    let current_backend = crate::settings::bound_backend(s);
+    let matching_expired = mission_auth_expired.into_iter().find(|backend| {
+        current_backend
+            .as_ref()
+            .is_none_or(|current| current.client.same_connection(&backend.client))
+    });
+    if let Some(backend) = matching_expired {
         #[cfg(target_arch = "wasm32")]
         platform::pairing::observe(s);
         crate::settings::conversation_authentication(

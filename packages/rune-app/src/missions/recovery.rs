@@ -127,7 +127,7 @@ pub(super) fn coordinator_eligible(
 pub(super) struct RecoveryPolled {
     pub admitted: Vec<(MissionKey, LifecycleTarget, u64)>,
     pub refreshed_scopes: Vec<WorkspaceScope>,
-    pub auth_expired: Option<Backend>,
+    pub auth_expired: Vec<Backend>,
     pub changed: bool,
 }
 
@@ -270,9 +270,7 @@ impl Recovery {
             match outcome {
                 RecoveryOutcome::AuthenticationRequired => {
                     self.attempts.remove(&key);
-                    if polled.auth_expired.is_none() {
-                        polled.auth_expired = Some(backend);
-                    }
+                    polled.auth_expired.push(backend);
                 }
                 RecoveryOutcome::Admitted(revision) => {
                     if !polled.refreshed_scopes.contains(&scope) {

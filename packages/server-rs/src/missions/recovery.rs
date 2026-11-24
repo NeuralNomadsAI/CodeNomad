@@ -166,19 +166,31 @@ pub(super) async fn ready(app: &App, scope: &Scope, row: &Value) -> Result<(), E
     if active.iter().any(|(id, v)| family.has(id) && truthy(v)) {
         return Err(busy());
     }
+    let mut inbox_paths = Vec::with_capacity(family.order.len());
     for id in &family.order {
         let id = super::activity::native::component(id).ok_or_else(unknown)?;
-        let body =
-            obs.get(&format!("/api/session/{id}/inbox"), &[], 512 * 1024, deadline).await.map_err(|_| unknown())?;
+        inbox_paths.push(format!("/api/session/{id}/inbox"));
+    }
+    let inbox_futs = inbox_paths.iter().map(|path| async {
+        obs.get(path, &[], 512 * 1024, deadline).await.map_err(|_| unknown())
+    });
+    let dir_query = [("location[directory]", loc.directory.as_str())];
+    let (inboxes, forms, permissions, shells) = tokio::try_join!(
+        futures_util::future::try_join_all(inbox_futs),
+        async { obs.get("/api/form", &dir_query, 2 * 1024 * 1024, deadline).await.map_err(|_| unknown()) },
+        async {
+            obs.get("/api/permission/request", &dir_query, 2 * 1024 * 1024, deadline)
+                .await
+                .map_err(|_| unknown())
+        },
+        async { obs.get("/api/shell", &dir_query, 2 * 1024 * 1024, deadline).await.map_err(|_| unknown()) },
+    )?;
+    for body in inboxes {
         if !body.get("data").and_then(J::arr).ok_or_else(unknown)?.is_empty() {
             return Err(busy());
         }
     }
-    for (path, shell) in [("/api/form", false), ("/api/permission/request", false), ("/api/shell", true)] {
-        let body = obs
-            .get(path, &[("location[directory]", &loc.directory)], 2 * 1024 * 1024, deadline)
-            .await
-            .map_err(|_| unknown())?;
+    for (body, shell) in [(forms, false), (permissions, false), (shells, true)] {
         if body.get("location").and_then(|l| l.get("directory")).and_then(J::str) != Some(loc.directory.as_str()) {
             return Err(unknown());
         }

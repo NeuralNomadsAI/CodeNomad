@@ -147,6 +147,7 @@ pub(super) async fn admit(app: &Shared, mut scope: Scope, co: Value, kind: &str,
     }
     check().await?;
     bridge::sync_environment(app, &scope, sid).await?;
+    bridge::sync_git_context(app, &scope, &initial).await;
     bridge::sync_memory(app, &scope, &initial).await;
     let fresh = check().await?;
     if recover {

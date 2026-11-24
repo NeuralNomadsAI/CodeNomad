@@ -175,6 +175,48 @@ pub(super) async fn sync_environment(app: &App, scope: &Scope, sid: &str) -> Res
     Ok(())
 }
 
+/// Advisory Git availability context, scoped to the already-authorized native root session.
+/// Mirrors `packages/server/src/workspaces/session-git-context.ts` within one 2 s budget.
+pub(super) async fn sync_git_context(app: &Shared, scope: &Scope, row: &Value) {
+    const KEY: &str = "codenomad.git-availability";
+    const CONTEXT: &str = "CodeNomad cannot run Git from its backend process PATH. Git is a prerequisite for full functionality, but directory-only conversation access is tolerated so the user can consult you and ask for installation help. CodeNomad Git operations and worktree discovery, creation, removal and moves are unavailable. Session access is limited to the explicitly opened physical folder; other checkouts can be opened separately. The agent's execution host may differ from the CodeNomad backend (for example WSL or a remote connection): Git working in your shell does not prove it works in the backend. Help install Git for the backend account when requested. Windows supports per-user installation without administrator rights; on Linux/macOS choose an installation method appropriate to the user's permissions and existing tools. After changing the backend PATH, fully restart CodeNomad or its server process. Do not restart the shared OpenCode daemon just to refresh CodeNomad's PATH. This context reports a dependency limitation, not a request to interrupt the user's current task.";
+    let Some(sid) = row["id"].as_str() else { return };
+    let work = async {
+        let mut cmd = tokio::process::Command::new("git");
+        cmd.arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000);
+        let available = cmd.status().await.is_ok_and(|s| s.success());
+        if current_root(app, scope, row).await.is_err() {
+            return;
+        }
+        let path = format!("/api/experimental/session/{sid}/instructions/entries/{KEY}");
+        if available {
+            let _ = scope.request(app, Method::DELETE, &path, &[], None, 2, 4096).await;
+        } else {
+            let platform = if cfg!(windows) {
+                "win32"
+            } else if cfg!(target_os = "macos") {
+                "darwin"
+            } else {
+                std::env::consts::OS
+            };
+            let value = json!({
+                "value": {
+                    "backendPlatform": platform,
+                    "gitAvailable": false,
+                    "context": CONTEXT,
+                }
+            });
+            let _ = scope.request(app, Method::PUT, &path, &[], Some(&value), 2, 4096).await;
+        }
+    };
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), work).await;
+}
+
 /// Optional named instruction, pinned to the same root and connection as
 /// admission. An uncertain optional put clears only its own entry.
 pub(super) async fn sync_memory(app: &Shared, scope: &Scope, row: &Value) {

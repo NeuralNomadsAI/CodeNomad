@@ -818,7 +818,7 @@ fn task_report_recovery_eligibility_rendering_and_dispatch() {
                 ("ses_indep", ActorState::Unknown, None),
             ],
         );
-        assert!(report_eligible(&header, &native_task, &obs));
+        assert!(!report_eligible(&header, &native_task, &obs));
         assert!(!report_eligible(&header, &active_native, &obs));
         assert!(report_eligible(&header, &indep_task, &obs));
 
@@ -866,17 +866,19 @@ fn task_report_recovery_eligibility_rendering_and_dispatch() {
         for _ in 0..4 {
             rt.frame(1.0 / 60.0);
         }
-        let (bx, by) = rt
-            .find("mission-task-recover-task-native")
-            .expect("native task recovery button must render");
+        // Independent-root tasks expose recovery; native child tasks (rejected by root-only
+        // plugin/bridge admission) and active tasks do not render a recovery button.
+        assert!(
+            rt.find("mission-task-recover-task-native").is_none(),
+            "native child task must not expose unsupported recovery button"
+        );
         assert!(
             rt.find("mission-task-recover-task-active").is_none(),
             "active native task must not show recovery button"
         );
-        assert!(
-            rt.find("mission-task-recover-task-indep").is_some(),
-            "independent task with admissionId must show recovery button"
-        );
+        let (bx, by) = rt
+            .find("mission-task-recover-task-indep")
+            .expect("independent task with admissionId must render recovery button");
         rt.pointer_down(bx, by);
         rt.pointer_up(bx, by);
         rt.frame(1.0 / 60.0);
@@ -885,7 +887,7 @@ fn task_report_recovery_eligibility_rendering_and_dispatch() {
         assert!(req.header.contains("/missions/msn-rep/recover "));
         assert_eq!(
             req.body,
-            json!({"expectedRevision": 7, "target": "report", "taskKey": "task-native"})
+            json!({"expectedRevision": 7, "target": "report", "taskKey": "task-indep"})
         );
         req.reply(
             200,
@@ -906,7 +908,7 @@ fn task_report_recovery_eligibility_rendering_and_dispatch() {
             rt.state
                 .owner
                 .recovery
-                .admitted(&RecoveryKey::report(&src, 7, "task-native"))
+                .admitted(&RecoveryKey::report(&src, 7, "task-indep"))
         );
     });
 }
@@ -933,7 +935,7 @@ fn native_report_recovery_withholds_idle_proof_when_partial_or_refreshing_after_
     }))
     .unwrap();
 
-    // 1. Partial observation downgrades IdleWithoutReport -> Unknown: native blocked, independent allowed.
+    // 1. Partial observation downgrades IdleWithoutReport -> Unknown: native withheld, independent allowed.
     let partial = obs_page(
         7,
         Coverage::Partial,
@@ -950,15 +952,15 @@ fn native_report_recovery_withholds_idle_proof_when_partial_or_refreshing_after_
     );
     assert!(
         !report_eligible(&header, &native_task, &partial),
-        "partial activity must not offer native report recovery"
+        "native child task must not offer report recovery"
     );
     assert!(
         report_eligible(&header, &indep_task, &partial),
         "independent report recovery remains allowed on unknown/partial activity"
     );
 
-    // 2. While refreshing (e.g. after recovery-busy refusal), stale IdleWithoutReport is downgraded.
-    let mut refreshing = obs_page(
+    // 2. Even on complete fresh observation, native child task stays withheld until backend child recovery exists.
+    let mut fresh = obs_page(
         7,
         Coverage::Observed,
         Coverage::Observed,
@@ -966,13 +968,15 @@ fn native_report_recovery_withholds_idle_proof_when_partial_or_refreshing_after_
         vec![
             ("ses_coord", ActorState::Running, None),
             ("ses_native", ActorState::IdleWithoutReport, None),
+            ("ses_indep", ActorState::IdleWithoutReport, None),
         ],
     );
-    assert!(report_eligible(&header, &native_task, &refreshing));
-    refreshing.refresh();
-    assert!(
-        !report_eligible(&header, &native_task, &refreshing),
-        "refreshing observation must withhold native report recovery until fresh data arrives"
+    assert!(!report_eligible(&header, &native_task, &fresh));
+    assert!(report_eligible(&header, &indep_task, &fresh));
+    fresh.refresh();
+    assert_eq!(
+        fresh.verified_actor_state(&header, "ses_native"),
+        Some(ActorState::Unknown)
     );
 }
 

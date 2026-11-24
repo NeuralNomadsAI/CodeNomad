@@ -154,7 +154,7 @@ pub(crate) fn mission_confirmation(s: &State) -> Option<El> {
         .mission_lifecycle
         .confirmation
         .as_ref()
-        .is_none_or(|(key, _)| key != &source)
+        .is_none_or(|c| &c.source != &source || !c.live.is_live())
     {
         return None;
     }
@@ -331,7 +331,7 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
             }
             changed |= panel.poll();
             if let Some(expired) = panel.take_auth_expired() {
-                ui.mission_auth_expired = Some(expired);
+                ui.mission_auth_expired.push(expired);
             }
             panel.show(panel.supported() && visible);
             active_visible = panel.supported() && visible;
@@ -352,9 +352,7 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
     // `selection_live` before phase 2 evaluates its publication fences, while preserving unrelated
     // cleanup-row settlements.
     let deletes = ui.mission_lifecycle.poll_deletes();
-    if let Some(expired) = deletes.auth_expired() {
-        ui.mission_auth_expired = Some(expired);
-    }
+    ui.mission_auth_expired.extend(deletes.auth_expired());
     changed |= deletes.changed();
     if deletes.changed() {
         for (index, entry) in ui.entries.iter_mut().enumerate() {
@@ -369,9 +367,7 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
     }
     // Phase 2: poll cleanup-row retries, recovery and lifecycle controls against the updated fences.
     let finished = ui.mission_lifecycle.poll_after_deletes();
-    if let Some(expired) = finished.auth_expired() {
-        ui.mission_auth_expired = Some(expired);
-    }
+    ui.mission_auth_expired.extend(finished.auth_expired());
     changed |= finished.changed();
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if let Some(panel) = &mut entry.missions {
@@ -406,7 +402,7 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
         .mission_lifecycle
         .confirmation
         .as_ref()
-        .is_some_and(|(source, _)| current_source.as_ref() != Some(source))
+        .is_some_and(|c| current_source.as_ref() != Some(&c.source) || !c.live.is_live())
     {
         ui.mission_lifecycle.confirmation = None;
         changed = true;

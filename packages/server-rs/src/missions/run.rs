@@ -289,7 +289,10 @@ pub async fn control(
     let invalid = "Invalid mission control request";
     let q: Control = mutation_body(raw, invalid)?;
     let (mid, request) = mutation_ids(&mid, &q.request_id, q.expected_revision, invalid)?;
-    if !matches!(q.action.as_str(), "start" | "pause" | "stop") || q.graceful.is_some_and(|v| !v || q.action != "pause")
+    let wid = js_trim(&wid);
+    if !valid_text(wid, 1, 200)
+        || !matches!(q.action.as_str(), "start" | "pause" | "stop")
+        || q.graceful.is_some_and(|v| !v || q.action != "pause")
     {
         return Err(error(Status::BAD_REQUEST, invalid));
     }
@@ -298,7 +301,7 @@ pub async fn control(
     if q.graceful == Some(true) {
         input["graceful"] = json!(true);
     }
-    mutate(app, wid, p, "lifecycle", input).await
+    mutate(app, wid.into(), p, "lifecycle", input).await
 }
 
 #[derive(Deserialize)]
@@ -357,8 +360,12 @@ pub async fn update(
     let invalid = "Invalid mission update request";
     let q: Update = mutation_body(raw, invalid)?;
     let (mid, request) = mutation_ids(&mid, &q.request_id, q.expected_revision, invalid)?;
+    let wid = js_trim(&wid);
     let objective = js_trim(&q.objective);
-    if !valid_text(objective, 1, 20_000) || q.notes.as_deref().is_some_and(|n| !valid_text(n, 0, 20_000)) {
+    if !valid_text(wid, 1, 200)
+        || !valid_text(objective, 1, 20_000)
+        || q.notes.as_deref().is_some_and(|n| !valid_text(n, 0, 20_000))
+    {
         return Err(error(Status::BAD_REQUEST, invalid));
     }
     let mut input =
@@ -366,7 +373,7 @@ pub async fn update(
     if let Some(notes) = q.notes {
         input["notes"] = json!(notes);
     }
-    mutate(app, wid, p, "update", input).await
+    mutate(app, wid.into(), p, "update", input).await
 }
 
 #[derive(Deserialize)]
@@ -386,11 +393,15 @@ pub async fn delete(
     let invalid = "Invalid mission deletion request";
     let q: Delete = mutation_body(raw, invalid)?;
     let (mid, request) = mutation_ids(&mid, &q.request_id, q.expected_revision, invalid)?;
+    let wid = js_trim(&wid);
+    if !valid_text(wid, 1, 200) {
+        return Err(error(Status::BAD_REQUEST, invalid));
+    }
     let mut input = json!({"missionID":mid,"requestID":request,"expectedRevision":q.expected_revision});
     if let Some(delete) = q.delete_managed_sessions {
         input["deleteManagedSessions"] = json!(delete);
     }
-    mutate(app, wid, p, "delete", input).await
+    mutate(app, wid.into(), p, "delete", input).await
 }
 
 fn mutation_body<T: serde::de::DeserializeOwned>(raw: Value, invalid: &str) -> Result<T, Error> {
@@ -419,12 +430,29 @@ async fn mutate(
     method: &'static str,
     input: Value,
 ) -> Result<axum::response::Response, Error> {
+    let workspace_initial = app.workspace(&wid).map_err(|_| error(Status::NOT_FOUND, "Workspace unavailable"))?;
+    drop(workspace_initial);
     if app.mission_bridge.is_none() {
         return Err(plugin_unavailable());
     }
     let lifetime = p.0.child_token();
     let _disconnect = lifetime.clone().drop_guard();
+    let large_mutation = rpc_response_limit(method) > 4 * 1024 * 1024;
     tokio::spawn(async move {
+        let delivery_budget = if large_mutation {
+            Some(tokio::select! {
+                biased;
+                _ = lifetime.cancelled() => return Err(plugin_unavailable()),
+                permit = app
+                    .mission_mutation_response_budget
+                    .clone()
+                    .acquire_many_owned(super::reads::LARGE_RESPONSE_BUDGET_UNITS as u32) => {
+                    permit.map_err(|_| plugin_unavailable())?
+                }
+            })
+        } else {
+            None
+        };
         let slot = tokio::select! {
             biased;
             _ = lifetime.cancelled() => return Err(plugin_unavailable()),
@@ -467,17 +495,19 @@ async fn mutate(
         {
             return Err(plugin_unavailable());
         }
-        let (bytes, slot) = super::reads::encode_json_bytes_holding(result, slot, method == "recover", false)
+        let (bytes, slot) = super::reads::encode_json_bytes_holding(result, slot, large_mutation, false)
             .await
             .map_err(|_| plugin_unavailable())?;
-        if !scope.current(&app) {
-            drop(slot);
+        let current = scope.current(&app);
+        // Release mission_control_slot immediately once the mutation settles so streaming a large
+        // acknowledgement never blocks unrelated control, recovery, update, or delete requests.
+        drop(slot);
+        if !current {
             return Err(plugin_unavailable());
         }
-        if method == "recover" {
-            Ok(super::reads::deliver_admitted_json_bytes(bytes, slot))
+        if let Some(budget) = delivery_budget {
+            Ok(super::reads::deliver_admitted_json_bytes(bytes, budget))
         } else {
-            drop(slot);
             super::reads::deliver_json_bytes(&app, bytes).map_err(|_| plugin_unavailable())
         }
     })
@@ -754,6 +784,7 @@ async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> R
         };
         checkpoint().await?;
         bridge::sync_environment(app, &scope, &life.sid).await?;
+        bridge::sync_git_context(app, &scope, &row).await;
         bridge::sync_memory(app, &scope, &row).await;
         checkpoint().await?;
         crate::sessions::permission_mode::refresh_coordinator(app, &scope.workspace, &scope.endpoint, &row).await?;
@@ -778,7 +809,7 @@ async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> R
 pub(super) const LARGE_MISSION_RPC_LIMIT: usize = 128 * 1024 * 1024;
 
 fn rpc_response_limit(method: &str) -> usize {
-    if method == "recover" { LARGE_MISSION_RPC_LIMIT } else { 4 * 1024 * 1024 }
+    if matches!(method, "recover" | "lifecycle" | "update") { LARGE_MISSION_RPC_LIMIT } else { 4 * 1024 * 1024 }
 }
 
 /// Mission mutations use the same private bridge registration as the desktop tools.

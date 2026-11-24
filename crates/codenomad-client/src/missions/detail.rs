@@ -145,15 +145,11 @@ impl Task {
                 .and_then(Value::as_str)
                 == Some("native");
         if is_native {
-            let current_gen = current
-                .and_then(|c| c.get("binding"))
-                .and_then(|b| b.get("generation"))
-                .and_then(Value::as_u64);
-            activity == Some(super::ActorState::IdleWithoutReport)
-                && native_call == NativeCall::Ended
-                && !self.outstanding_execution
-                && current_gen.is_some()
-                && current_gen == contract_gen
+            // Plugin recovery (`control.ts`) and the Rust bridge (`inputs.rs`) admit root
+            // sessions only (`ownedRootSession` / `current_root`), so native child task
+            // actors cannot be recovered through `POST .../recover { target: "report" }`.
+            let _ = (native_call, contract_gen);
+            false
         } else {
             non_blank(self.extra.get("admissionId"))
                 && (self.status != TaskStatus::Withdrawn || self.outstanding_execution)

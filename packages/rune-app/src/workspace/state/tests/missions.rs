@@ -1378,6 +1378,96 @@ fn cleanup_directory_load_more_401_triggers_reauth_without_replaying_delete() {
     });
 }
 
+#[test]
+fn stale_connection_delete_401_does_not_mask_current_connection_auth_failure() {
+    crate::platform::block_on(async {
+        let http = test_http::Http::new().await;
+        let old_backend = http.backend.clone();
+        let attest1 = {
+            let b = old_backend.clone();
+            tokio::spawn(async move { b.attest_server().await })
+        };
+        let meta1 = http.accept().await;
+        meta1
+            .reply(200, json!({"apiContract": 1, "serverId": "server"}))
+            .await;
+        test_http::wait(attest1).await.unwrap().unwrap();
+
+        let mut new_backend = crate::backend::Backend::unauthenticated(&http.backend.base).unwrap();
+        new_backend.workspace = old_backend.workspace.clone();
+        let attest2 = {
+            let b = new_backend.clone();
+            tokio::spawn(async move { b.attest_server().await })
+        };
+        let meta2 = http.accept().await;
+        meta2
+            .reply(200, json!({"apiContract": 1, "serverId": "server"}))
+            .await;
+        test_http::wait(attest2).await.unwrap().unwrap();
+        assert!(!old_backend.client.same_connection(&new_backend.client));
+
+        let wake: codenomad_client::Wake = std::sync::Arc::new(|| {});
+        let mut s = crate::init();
+        let mut tx = rune::Tx::default();
+        s.screen = crate::Screen::Chat { launcher: None };
+        crate::settings::connected(&mut s, &new_backend);
+
+        let mut saved = workspace("alpha", "");
+        saved.view.right_panel = RightPanelTab::Missions;
+        let mut active_entry = entry("tab-active".into(), Tab::Workspace(saved));
+        active_entry.binding = Some(new_backend.clone());
+        active_entry.project = Some(codenomad_client::catalog::Project {
+            id: new_backend.workspace.clone(),
+            path: "/fixture".into(),
+        });
+        let panel = crate::missions::Panel::new(
+            new_backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        active_entry.missions = Some(panel);
+        let mut ui = Ui::new();
+        ui.entries = vec![active_entry];
+        ui.active = 0;
+
+        // Current connection expires on a delete AND a delayed stale connection ALSO expires in the same poll.
+        ui.mission_lifecycle.start_delete_for_test(
+            "tab-active",
+            &new_backend,
+            "project",
+            "msn-current",
+            7,
+            wake.clone(),
+        );
+        let del_cur = http.accept().await;
+        ui.mission_lifecycle.start_delete_for_test(
+            "tab-active",
+            &old_backend,
+            "project",
+            "msn-stale",
+            7,
+            wake,
+        );
+        let del_old = http.accept().await;
+
+        del_cur.reply(401, json!({"error": "unauthorized"})).await;
+        del_old.reply(401, json!({"error": "unauthorized"})).await;
+        let p1 = http.accept().await;
+        let p2 = http.accept().await;
+        p1.reply(200, json!({"authenticated": false})).await;
+        p2.reply(200, json!({"authenticated": false})).await;
+        crate::platform::sleep(std::time::Duration::from_millis(60)).await;
+
+        s.workspace = Some(ui);
+        assert!(
+            super::super::poll(&mut s, 1.0, &mut tx)
+                && crate::chat::authentication::dialog(&s).is_some(),
+            "stale connection 401 in the same poll must not mask the current connection's auth expiry"
+        );
+    });
+}
+
 fn utf16_array_digest(rows: &[String]) -> String {
     use base64::Engine as _;
     const K: [u32; 64] = [

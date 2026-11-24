@@ -399,8 +399,13 @@ fn symmetric_mutation_guards_block_competing_lifecycle_recovery_and_delete_gestu
         assert!(owner.cleanup.delete_active(&src));
 
         panel.control("occ", &mut owner, &src, Gesture::RecoverCoordinator(7));
-        owner.confirmation = Some((src.clone(), 7));
-        panel.control("occ", &mut owner, &src, Gesture::ConfirmStop(true));
+        owner.confirmation = Some(super::StopConfirmation {
+            id: 1,
+            source: src.clone(),
+            revision: 7,
+            live: super::super::cleanup::LiveFlag::new(true),
+        });
+        panel.control("occ", &mut owner, &src, Gesture::ConfirmStop(1, true));
         panel.control("occ", &mut owner, &src, Gesture::Check);
         panel.control("occ", &mut owner, &src, Gesture::Replay);
         http.quiet().await;
@@ -420,5 +425,141 @@ fn symmetric_mutation_guards_block_competing_lifecycle_recovery_and_delete_gestu
         panel.control("occ", &mut owner, &src, Gesture::RetryDelete(req_id));
         http.quiet().await;
         stop_post.reply(503, json!({})).await;
+    });
+}
+
+#[test]
+fn stale_stop_confirmation_callback_cannot_confirm_replacement_dialog() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+
+        let (wake, _) = witness();
+        let mut panel = Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        panel.selection_live = super::super::cleanup::LiveFlag::new(true);
+        let mut owner = Lifecycle::default();
+        let h7 = header(7, None);
+        panel.detail.snapshot = Some(super::super::detail::Snapshot {
+            header: h7,
+            tasks: std::rc::Rc::new(super::super::task_rows::TaskRows::new(vec![])),
+            end: 0,
+            attention_end: 0,
+        });
+        let (src7, _) = panel.control_source("occ").unwrap();
+
+        // Open Stop dialog at revision 7, capture its id, dismiss it.
+        panel.control("occ", &mut owner, &src7, Gesture::StopDialog(7));
+        let old_id = owner.confirmation.as_ref().expect("dialog 1").id;
+        panel.control(
+            "occ",
+            &mut owner,
+            &src7,
+            Gesture::ConfirmStop(old_id, false),
+        );
+        assert!(owner.confirmation.is_none());
+
+        // Advance to revision 8 and open a replacement Stop dialog.
+        let h8 = header(8, None);
+        panel.detail.snapshot = Some(super::super::detail::Snapshot {
+            header: h8,
+            tasks: std::rc::Rc::new(super::super::task_rows::TaskRows::new(vec![])),
+            end: 0,
+            attention_end: 0,
+        });
+        let (src8, _) = panel.control_source("occ").unwrap();
+        panel.control("occ", &mut owner, &src8, Gesture::StopDialog(8));
+        let new_id = owner.confirmation.as_ref().expect("dialog 2").id;
+        assert_ne!(old_id, new_id);
+
+        // Delivering the stale callback from dialog 1 must neither send Stop nor consume dialog 2.
+        panel.control("occ", &mut owner, &src8, Gesture::ConfirmStop(old_id, true));
+        http.quiet().await;
+        assert_eq!(
+            owner.confirmation.as_ref().map(|c| c.id),
+            Some(new_id),
+            "stale Stop callback must not consume the replacement dialog"
+        );
+    });
+}
+
+#[test]
+fn unresolved_pause_on_finished_mission_does_not_block_delete_and_lifecycle_401_surfaces_auth() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+
+        let (wake, done) = witness();
+        let mut panel = Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        panel.selection_live = super::super::cleanup::LiveFlag::new(true);
+        let mut owner = Lifecycle::default();
+        let h7 = header(7, None);
+        panel.detail.snapshot = Some(super::super::detail::Snapshot {
+            header: h7,
+            tasks: std::rc::Rc::new(super::super::task_rows::TaskRows::new(vec![])),
+            end: 0,
+            attention_end: 0,
+        });
+        let (src, _) = panel.control_source("occ").unwrap();
+
+        // 1. Pause POST hits confirmed 401 -> surfaces auth_expired and keeps original intent without auto-replay.
+        let pause_req = action(LifecycleAction::Pause, 7);
+        owner.start(
+            &src,
+            pause_req,
+            None,
+            http.backend.clone(),
+            panel.wake.clone(),
+        );
+        let post = http.accept().await;
+        assert!(post.header.contains("/missions/mission/control "));
+        post.reply(401, json!({"error": "unauthorized"})).await;
+        let probe = http.accept().await;
+        assert!(probe.header.starts_with("GET /api/auth/status"));
+        probe.reply(200, json!({"authenticated": false})).await;
+        wait(done.recv()).await.unwrap();
+        let settled = owner.poll_all();
+        assert_eq!(settled.auth_expired().len(), 1);
+        assert!(owner.unresolved(&src, &panel.detail.snapshot.as_ref().unwrap().header));
+        http.quiet().await;
+
+        // 2. Mission finishes without recording that Pause: Delete is no longer blocked, and readback retires intent.
+        let mut finished_header = header(8, None);
+        finished_header.root.status = Status::Completed;
+        assert!(
+            !owner.blocks_delete(&src, &finished_header),
+            "unrecorded local Pause intent on a finished mission must not disable Delete"
+        );
+        assert!(owner.readback(&src, Some(&finished_header), 1).is_none());
+        assert!(!owner.unresolved(&src, &finished_header));
     });
 }

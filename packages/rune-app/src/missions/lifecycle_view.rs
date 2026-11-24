@@ -199,8 +199,7 @@ pub(crate) fn controls<S: 'static>(
     if delete_state.is_none() {
         let disabled = !ready
             || !panel.online()
-            || owner.busy(&source)
-            || owner.unresolved(&source, header)
+            || owner.blocks_delete(&source, header)
             || recovery_busy
             || delete_managed_sessions.is_none()
             || !owner.cleanup.can_delete(&source);
@@ -315,15 +314,20 @@ pub(crate) fn controls<S: 'static>(
 }
 
 pub(crate) fn confirmation(owner: &Lifecycle, act: Act) -> Option<El> {
-    let (source, _) = owner.confirmation.clone()?;
+    let confirmation = owner.confirmation.clone()?;
+    let id = confirmation.id;
+    let source = confirmation.source;
+    let live = confirmation.live;
     Some(editor::confirmation(
         layout::dark(),
         t("missions.control.run.stopConfirm"),
         t("missions.control.cancel"),
         t("missions.control.run.stop"),
         move |s: &mut State, accept, tx: &mut Tx| {
-            act(s, &source, Gesture::ConfirmStop(accept));
-            tx.instant();
+            if !accept || live.is_live() {
+                act(s, &source, Gesture::ConfirmStop(id, accept));
+                tx.instant();
+            }
         },
     ))
 }

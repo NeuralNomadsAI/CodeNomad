@@ -1062,6 +1062,15 @@ fn document_cleanup_rejects_omitted_document_pending_in_get_and_delete() {
         let del = http.accept().await;
         del.reply(200, json!({"deleted": true, "cleanup": omitted}))
             .await;
+        let rec = http.accept().await;
+        rec.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 3,
+                "cleanups": [omitted]
+            }),
+        )
+        .await;
         wait(done.recv()).await.unwrap();
         owner.poll();
         assert_eq!(
@@ -1535,6 +1544,20 @@ fn cleanup_retry_and_directory_preserve_document_pending_without_explicit_false(
             }),
         )
         .await;
+        let rec = http.accept().await;
+        rec.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": [{
+                    "missionID": "old", "deletionID": "del-1", "requestID": "req-1",
+                    "expectedRevision": 3, "deleteManagedSessions": false,
+                    "objective": "Old mission", "createdAt": 1,
+                    "removed": 1, "retained": 0, "pending": 0, "reasons": []
+                }]
+            }),
+        )
+        .await;
         wait(done.recv()).await.unwrap();
         let polled = owner.poll();
         assert!(polled.settled_cleanups.is_empty());
@@ -1672,6 +1695,15 @@ fn cleanup_retry_preserves_preflight_document_pending_across_failed_attempt_and_
         .await;
         let del1 = http.accept().await;
         del1.reply(503, json!({"code": "cleanup-pending"})).await;
+        let rec1 = http.accept().await;
+        rec1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": [cleanup_json(1, true)]
+            }),
+        )
+        .await;
         wait(done.recv()).await.unwrap();
         let polled1 = owner.poll();
         assert_eq!(
@@ -2259,6 +2291,15 @@ fn cleanup_delete_receipt_rejects_mismatched_created_at_and_adopt_caps_at_2000()
         mismatched["createdAt"] = json!(2);
         del.reply(200, json!({"deleted": true, "cleanup": mismatched}))
             .await;
+        let rec = http.accept().await;
+        rec.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": [mismatched]
+            }),
+        )
+        .await;
         wait(done.recv()).await.unwrap();
         let polled = owner.poll();
         assert!(
@@ -2671,25 +2712,27 @@ fn cleanup_pagination_stays_within_2000_row_display_and_seen_cap() {
             total,
             vec![last_doc.clone()]
         ));
-        assert_eq!(panel.cleanups.len(), 2_001);
-        assert_eq!(panel.cleanup_seen_count(), 2_001);
+        let (disp_len, seen_len, meta_len, pending_len) = panel.cleanup_index_counts();
+        assert_eq!(disp_len, 2_000);
+        assert_eq!(seen_len, 2_000);
+        assert!(meta_len <= 2_000);
+        assert!(pending_len <= 2_000);
         assert!(!panel.has_more(super::super::directory::Kind::Cleanups));
         assert!(
-            panel.cleanups.iter().any(|r| r.deletion_id == "del-0")
-                && panel.cleanups.iter().any(|r| r.deletion_id == "del-2000"),
-            "both the first and 2,001st pending cleanups must remain loaded and reachable"
+            panel.cleanups.iter().any(|r| r.deletion_id == "del-2000"),
+            "the 2,001st pending cleanup must be reachable in the sliding resident window"
         );
-        // Adopting a separate settled receipt while 2,001 pending rows are loaded must
-        // display the new receipt immediately without evicting it or any pending row.
+        // Adopting a separate settled receipt while at the 2,000 cap must display the new receipt
+        // at index 0 without growing past 2,000 or evicting the newly loaded row.
         let mut separate_settled = cleanup_row(0, false);
         separate_settled.mission_id = "msn-separate".into();
         separate_settled.deletion_id = "del-separate".into();
         panel.adopt_settled_cleanup(separate_settled);
         assert_eq!(
             panel.cleanups[0].deletion_id, "del-separate",
-            "newly adopted settled receipt must not evict itself at the 2,000+ display count"
+            "newly adopted settled receipt must not evict itself at the 2,000 cap"
         );
-        assert!(panel.cleanups.iter().any(|r| r.deletion_id == "del-0"));
+        assert_eq!(panel.cleanups.len(), 2_000);
         assert!(panel.cleanups.iter().any(|r| r.deletion_id == "del-2000"));
 
         let mut lifecycle = super::super::Lifecycle::default();
@@ -2718,7 +2761,14 @@ fn cleanup_pagination_stays_within_2000_row_display_and_seen_cap() {
             settled.cleanup.settled_cleanups[0].1.deletion_id,
             "del-2000"
         );
-        // First row (del-0) is also still retryable.
+        // First row (del-0) was evicted when the 2,000-row sliding window advanced to del-2000;
+        // navigating back to page 0 (Refresh) brings del-0 back and keeps it retryable.
+        assert!(!panel.cleanups.iter().any(|r| r.deletion_id == "del-0"));
+        let mut row0 = cleanup_row(1, false);
+        row0.mission_id = "msn-0".into();
+        row0.deletion_id = "del-0".into();
+        assert!(panel.accept_more_cleanups_for_test("stable-order", 0, total, vec![row0]));
+        assert_eq!(panel.cleanups.len(), 2_000);
         let first_row = panel
             .cleanups
             .iter()
@@ -4035,18 +4085,151 @@ fn offline_panel_blocks_confirm_stop_and_readback_resend() {
         let mut src = source("msn-offline-stop");
         src.occurrence = "occ".into();
         src.workspace = http.backend.workspace.clone();
-        lifecycle.confirmation = Some((src.clone(), 7));
+        lifecycle.confirmation = Some(super::super::lifecycle::StopConfirmation {
+            id: 1,
+            source: src.clone(),
+            revision: 7,
+            live: LiveFlag::new(true),
+        });
         panel.control(
             "occ",
             &mut lifecycle,
             &src,
-            super::super::Gesture::ConfirmStop(true),
+            super::super::Gesture::ConfirmStop(1, true),
         );
         let unexpected =
             tokio::time::timeout(std::time::Duration::from_millis(60), http.accept()).await;
         assert!(
             unexpected.is_err(),
             "offline ConfirmStop must never send Stop"
+        );
+    });
+}
+
+#[test]
+fn cleanup_row_retry_reconciles_lost_ack_503_and_settles_off_page_row() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-offpage-503");
+        let sc = src.workspace_scope();
+        let mut saved = cleanup_row(1, false);
+        saved.mission_id = "msn-offpage-503".into();
+        saved.deletion_id = "del-offpage-503".into();
+
+        let mut owner = CleanupOwner::default();
+        owner.start_cleanup_retry(
+            sc.clone(),
+            saved.clone(),
+            LiveFlag::new(true),
+            LiveFlag::new(true),
+            http.backend.clone(),
+            wake,
+        );
+        // 1. Preflight GET shows row still pending.
+        let pre = http.accept().await;
+        assert!(pre.header.starts_with("GET /api/workspaces/"));
+        pre.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [{
+                    "missionID": "msn-offpage-503", "deletionID": "del-offpage-503",
+                    "requestID": saved.request_id, "expectedRevision": saved.expected_revision,
+                    "deleteManagedSessions": saved.delete_managed_sessions,
+                    "objective": "Off-page", "createdAt": saved.created_at,
+                    "pending": 1, "removed": 0, "retained": 0, "reasons": [], "documentPending": false
+                }]
+            }),
+        )
+        .await;
+        // 2. DELETE commits on server, but response is 503 (lost acknowledgement).
+        let del = http.accept().await;
+        assert!(del.header.starts_with("DELETE /api/workspaces/"));
+        del.reply(503, json!({"error": "upstream dropped"})).await;
+        // 3. Post-dispatch reconciliation GET runs automatically and confirms settlement.
+        let rec = http.accept().await;
+        assert!(rec.header.starts_with("GET /api/workspaces/"));
+        rec.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": [{
+                    "missionID": "msn-offpage-503", "deletionID": "del-offpage-503",
+                    "requestID": saved.request_id, "expectedRevision": saved.expected_revision,
+                    "deleteManagedSessions": saved.delete_managed_sessions,
+                    "objective": "Off-page", "createdAt": saved.created_at,
+                    "pending": 0, "removed": 1, "retained": 0, "reasons": [], "documentPending": false
+                }]
+            }),
+        )
+        .await;
+
+        wait(done.recv()).await.unwrap();
+        let polled = owner.poll_retries();
+        assert_eq!(
+            polled.settled_cleanups.len(),
+            1,
+            "lost-ack 503 after committed cleanup-row DELETE must settle via exact reconciliation"
+        );
+        assert_eq!(polled.settled_cleanups[0].1.deletion_id, "del-offpage-503");
+        assert!(owner.cleanup_error(&sc).is_none());
+    });
+}
+
+#[test]
+fn cleanup_order_change_pagination_avoids_repeated_tail_rescans() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        let make_row = |prefix: &str, idx: u64| {
+            let mut r = cleanup_row(1, false);
+            r.mission_id = format!("{prefix}-m-{idx}");
+            r.deletion_id = format!("{prefix}-d-{idx}");
+            r
+        };
+        // Load 1,500 pending rows in order A.
+        for page in 0..30u64 {
+            let offset = page * 50;
+            assert!(panel.accept_more_cleanups_for_test(
+                "order-a",
+                offset,
+                1_500,
+                (0..50).map(|i| make_row("old", offset + i)).collect()
+            ));
+        }
+        // Order change to order B with disjoint first page keeps 1,500 old rows as tail.
+        assert!(panel.accept_more_cleanups_for_test(
+            "order-b",
+            0,
+            2_000,
+            (0..50).map(|i| make_row("new", i)).collect()
+        ));
+        panel.reset_cleanup_tail_visits();
+        // Paginate 20 disjoint replacement pages: zero tail rescans should occur!
+        for page in 1..21u64 {
+            let offset = page * 50;
+            assert!(panel.accept_more_cleanups_for_test(
+                "order-b",
+                offset,
+                2_000,
+                (0..50).map(|i| make_row("new", offset + i)).collect()
+            ));
+        }
+        assert_eq!(
+            panel.cleanup_tail_visits(),
+            0,
+            "disjoint replacement pages must not rescan the retained tail"
+        );
+        let (disp_len, seen_len, meta_len, pending_len) = panel.cleanup_index_counts();
+        assert!(
+            disp_len <= 2_000 && seen_len <= 2_000 && meta_len <= 2_000 && pending_len <= 2_000
         );
     });
 }

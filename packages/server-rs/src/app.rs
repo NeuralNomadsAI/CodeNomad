@@ -50,6 +50,7 @@ pub struct App {
     pub mission_reads: bool,
     pub mission_read_slot: Arc<Semaphore>,
     pub mission_large_response_budget: Arc<Semaphore>,
+    pub mission_mutation_response_budget: Arc<Semaphore>,
     pub linked_events: crate::worktrees::linked::EventCache,
     pub mission_bridge: Option<String>,
     /// The published automation bridge token: the Missions fixture's when it runs, else fresh.
@@ -145,6 +146,7 @@ impl App {
             mission_reads: crate::config::serve() || crate::bench::missions_read(),
             mission_read_slot: Arc::new(Semaphore::new(1)),
             mission_large_response_budget: Arc::new(Semaphore::new(2048)),
+            mission_mutation_response_budget: Arc::new(Semaphore::new(2048)),
             linked_events: Default::default(),
             mission_bridge,
             mission_control_slot: Arc::new(Semaphore::new(1)),
