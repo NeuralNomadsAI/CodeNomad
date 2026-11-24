@@ -16,6 +16,11 @@ const CHILD_LIMIT: usize = 4;
 const WAITING_LIMIT: usize = 32;
 const STEP_BYTES: usize = 2 << 20;
 type Steps = Vec<(String, Arc<Tool>)>;
+type ChildKey = (Option<String>, String);
+
+fn child_key(parent: Option<&str>, id: &str) -> ChildKey {
+    (parent.map(str::to_owned), id.to_owned())
+}
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct ReportCopyKey {
@@ -24,6 +29,16 @@ pub(super) struct ReportCopyKey {
     pub row_id: String,
     pub part_index: usize,
     pub child: String,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum CopyKey {
+    Report(ReportCopyKey),
+    Steps {
+        key: String,
+        parent: Option<String>,
+        child: String,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -40,23 +55,29 @@ type Reports = Vec<ChildReport>;
 struct Snapshot {
     steps: Steps,
     steps_truncated: bool,
+    steps_incomplete: bool,
     reports: Reports,
+}
+
+enum ChildUpdate {
+    Loaded(Snapshot),
+    Failed,
 }
 
 enum ReportCopy {
     Idle,
     Loading {
-        key: ReportCopyKey,
+        key: CopyKey,
         _cancel: codenomad_client::Sender<()>,
         rx: Receiver<Option<String>>,
     },
     #[allow(dead_code)]
     Ready {
-        key: ReportCopyKey,
+        key: CopyKey,
         text: String,
     },
     Failed {
-        key: ReportCopyKey,
+        key: CopyKey,
     },
 }
 
@@ -91,8 +112,8 @@ impl Default for ReportExpand {
 #[derive(Default)]
 pub(crate) struct Children {
     backend: Option<Backend>,
-    entries: HashMap<String, Entry>,
-    waiting: VecDeque<(String, Option<String>, String, Weak<()>)>,
+    entries: HashMap<ChildKey, Entry>,
+    waiting: VecDeque<(ChildKey, String, Weak<()>)>,
     report_copy: ReportCopy,
     expanded_report: ReportExpand,
 }
@@ -100,8 +121,10 @@ pub(crate) struct Children {
 struct Entry {
     cards: HashMap<String, Weak<()>>,
     _cancel: codenomad_client::Sender<()>,
-    result: Receiver<Option<Snapshot>>,
+    retry: codenomad_client::Sender<()>,
+    result: Receiver<ChildUpdate>,
     snapshot: Snapshot,
+    load_error: bool,
 }
 
 impl Children {
@@ -121,7 +144,7 @@ impl Children {
         self.report_copy = ReportCopy::Idle;
     }
 
-    pub(super) fn take_ready_report(&mut self, key: &ReportCopyKey) -> Option<String> {
+    pub(super) fn take_ready_copy(&mut self, key: &CopyKey) -> Option<String> {
         match &self.report_copy {
             ReportCopy::Ready { key: current, .. } if current == key => {
                 match std::mem::take(&mut self.report_copy) {
@@ -133,11 +156,11 @@ impl Children {
         }
     }
 
-    pub(super) fn copy_failed(&self, key: &ReportCopyKey) -> bool {
+    pub(super) fn copy_failed(&self, key: &CopyKey) -> bool {
         matches!(&self.report_copy, ReportCopy::Failed { key: current } if current == key)
     }
 
-    pub(super) fn copy_ready(&self, key: &ReportCopyKey) -> bool {
+    pub(super) fn copy_ready(&self, key: &CopyKey) -> bool {
         matches!(&self.report_copy, ReportCopy::Ready { key: current, .. } if current == key)
     }
 
@@ -163,7 +186,7 @@ impl Children {
         });
         children
             .waiting
-            .retain(|(_, _, card, _)| card != key && !card.starts_with(&prefix));
+            .retain(|(_, card, _)| card != key && !card.starts_with(&prefix));
         let matches_card = |report_key: &ReportCopyKey| {
             report_key
                 .key
@@ -243,15 +266,58 @@ impl Children {
     }
 
     pub(super) fn copy_report(s: &mut State, key: ReportCopyKey) {
+        let copy_key = CopyKey::Report(key.clone());
         let Some((cancel, rx)) = Self::fetch_report(s, &key) else {
-            s.transcript_display.children.report_copy = ReportCopy::Failed { key };
+            s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
             return;
         };
         s.transcript_display.children.report_copy = ReportCopy::Loading {
-            key,
+            key: copy_key,
             _cancel: cancel,
             rx,
         };
+    }
+
+    pub(super) fn copy_steps(s: &mut State, key: String, parent: Option<String>, child: String) {
+        let copy_key = CopyKey::Steps {
+            key,
+            parent: parent.clone(),
+            child: child.clone(),
+        };
+        if matches!(&s.transcript_display.children.report_copy, ReportCopy::Loading { key: current, .. } if current == &copy_key)
+        {
+            return;
+        }
+        let Some(backend) = s.transcript_display.children.backend.clone() else {
+            s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
+            return;
+        };
+        let (out, rx) = bounded(1);
+        let (cancel, cancelled) = bounded(1);
+        s.transcript_display.children.report_copy = ReportCopy::Loading {
+            key: copy_key,
+            _cancel: cancel,
+            rx,
+        };
+        let wake = s.wake.clone();
+        let reads = s.reads.clone();
+        crate::platform::spawn(async move {
+            crate::platform::reads::cancellable(&cancelled, async {
+                let Some(_slot) = reads.background(&cancelled).await else {
+                    return;
+                };
+                let expected_parent = parent.as_deref().unwrap_or(&backend.session);
+                let body = backend
+                    .child_steps_json_under(&child, expected_parent)
+                    .await
+                    .ok()
+                    .flatten();
+                if out.send(body).await.is_ok() {
+                    wake();
+                }
+            })
+            .await;
+        });
     }
 
     pub(super) fn expand_report(s: &mut State, key: ReportCopyKey) {
@@ -303,48 +369,50 @@ impl Children {
         }
     }
 
-    pub(super) fn lease(&self, id: &str, key: &str) -> Rc<()> {
+    pub(super) fn lease(&self, parent: Option<&str>, id: &str, key: &str) -> Rc<()> {
+        let ck = child_key(parent, id);
         self.entries
-            .get(id)
+            .get(&ck)
             .and_then(|entry| entry.cards.get(key))
             .and_then(Weak::upgrade)
             .or_else(|| {
                 self.waiting
                     .iter()
-                    .find(|(wid, _, wkey, _)| wid == id && wkey == key)
-                    .and_then(|(_, _, _, lease)| lease.upgrade())
+                    .find(|(wck, wkey, _)| *wck == ck && wkey == key)
+                    .and_then(|(_, _, lease)| lease.upgrade())
             })
             .unwrap_or_default()
     }
 
     pub(super) fn demand(
         s: &mut State,
-        id: &str,
         parent: Option<&str>,
+        id: &str,
         key: &str,
         lease: &Rc<()>,
         visible: bool,
     ) {
+        let ck = child_key(parent, id);
         let children = &mut s.transcript_display.children;
         let freed = children.prune();
         if !visible {
             let mut removed = false;
-            if let Some(entry) = children.entries.get_mut(id) {
+            if let Some(entry) = children.entries.get_mut(&ck) {
                 entry.cards.remove(key);
                 if entry.cards.is_empty() {
-                    children.entries.remove(id);
+                    children.entries.remove(&ck);
                     removed = true;
                 }
             }
             children
                 .waiting
-                .retain(|(wid, _, wkey, _)| !(wid == id && wkey == key));
+                .retain(|(wck, wkey, _)| !(*wck == ck && wkey == key));
             if freed || removed {
                 Self::promote_waiting(s);
             }
             return;
         }
-        if let Some(entry) = children.entries.get_mut(id) {
+        if let Some(entry) = children.entries.get_mut(&ck) {
             entry.cards.insert(key.into(), Rc::downgrade(lease));
             if freed {
                 Self::promote_waiting(s);
@@ -352,75 +420,74 @@ impl Children {
             return;
         }
         if children.entries.len() >= CHILD_LIMIT {
-            children.waiting.retain(|(_, _, _, w)| w.strong_count() > 0);
+            children.waiting.retain(|(_, _, w)| w.strong_count() > 0);
             if let Some(existing) = children
                 .waiting
                 .iter_mut()
-                .find(|(wid, _, wkey, _)| wid == id && wkey == key)
+                .find(|(wck, wkey, _)| *wck == ck && wkey == key)
             {
-                existing.1 = parent.map(str::to_owned);
-                existing.3 = Rc::downgrade(lease);
+                existing.2 = Rc::downgrade(lease);
             } else if children.waiting.len() < WAITING_LIMIT {
-                children.waiting.push_back((
-                    id.into(),
-                    parent.map(str::to_owned),
-                    key.into(),
-                    Rc::downgrade(lease),
-                ));
+                children
+                    .waiting
+                    .push_back((ck, key.into(), Rc::downgrade(lease)));
             }
             return;
         }
-        Self::start_entry(s, id, parent, key, lease);
+        Self::start_entry(s, ck, key, lease);
+    }
+
+    pub(super) fn retry(s: &mut State, parent: Option<&str>, id: &str) {
+        let ck = child_key(parent, id);
+        if let Some(entry) = s.transcript_display.children.entries.get_mut(&ck) {
+            entry.load_error = false;
+            let _ = entry.retry.try_send(());
+        }
     }
 
     fn promote_waiting(s: &mut State) {
         while s.transcript_display.children.entries.len() < CHILD_LIMIT {
             let next = loop {
-                let Some((id, parent, key, weak)) =
-                    s.transcript_display.children.waiting.pop_front()
+                let Some((ck, key, weak)) = s.transcript_display.children.waiting.pop_front()
                 else {
                     return;
                 };
                 if let Some(lease) = weak.upgrade() {
-                    break (id, parent, key, lease);
+                    break (ck, key, lease);
                 }
             };
-            let (id, parent, key, lease) = next;
-            if let Some(entry) = s.transcript_display.children.entries.get_mut(&id) {
+            let (ck, key, lease) = next;
+            if let Some(entry) = s.transcript_display.children.entries.get_mut(&ck) {
                 entry.cards.insert(key, Rc::downgrade(&lease));
-            } else if !Self::start_entry(s, &id, parent.as_deref(), &key, &lease) {
+            } else if !Self::start_entry(s, ck, &key, &lease) {
                 break;
             }
         }
     }
 
-    fn start_entry(
-        s: &mut State,
-        id: &str,
-        parent: Option<&str>,
-        key: &str,
-        lease: &Rc<()>,
-    ) -> bool {
+    fn start_entry(s: &mut State, ck: ChildKey, key: &str, lease: &Rc<()>) -> bool {
         let children = &mut s.transcript_display.children;
         let Some(backend) = children.backend.clone() else {
             return false;
         };
-        let Some((dirty, settlement)) = backend.watch_child(id) else {
+        let Some((dirty, settlement)) = backend.watch_child(&ck.1) else {
             return false;
         };
-        let (out, result) = bounded(1);
+        let (out, result) = bounded(2);
         let (cancel, cancelled) = bounded(1);
+        let (retry, retry_rx) = bounded(1);
+        let (expected_parent, child) = ck.clone();
         children.entries.insert(
-            id.into(),
+            ck,
             Entry {
                 cards: HashMap::from([(key.into(), Rc::downgrade(lease))]),
                 _cancel: cancel,
+                retry,
                 result,
                 snapshot: Snapshot::default(),
+                load_error: false,
             },
         );
-        let child = id.to_owned();
-        let expected_parent = parent.map(str::to_owned);
         let wake = s.wake.clone();
         let reads = s.reads.clone();
         crate::platform::spawn(async move {
@@ -430,8 +497,9 @@ impl Children {
                 let mut frozen_ends: HashMap<(Option<String>, String), u64> = HashMap::new();
                 let mut execution_owed = 0u8;
                 let mut last_exec_end: Option<u64> = None;
+                let mut live_page: Option<crate::history::Page> = None;
                 loop {
-                    let (ended_calls, exec_ended, exec_ended_at) = settlement.take();
+                    let (ended_calls, tool_events, exec_ended, exec_ended_at) = settlement.take();
                     for end in ended_calls {
                         let key = (end.message, end.call);
                         if let Some(ts) = end.ended
@@ -451,6 +519,26 @@ impl Children {
                         last_exec_end =
                             exec_ended_at.or(Some(crate::platform::storage::unix_millis()));
                     }
+                    if !tool_events.is_empty()
+                        && let Some(page) = live_page.as_mut()
+                    {
+                        let mut changed = false;
+                        for ev in &tool_events {
+                            changed |= codenomad_client::content::apply_tool_event(
+                                &mut page.rows,
+                                ev.message.as_deref(),
+                                &ev.kind,
+                                &ev.data,
+                                ev.at,
+                            );
+                        }
+                        if changed {
+                            let snap = snapshot_with_frozen(page.clone(), &frozen_ends);
+                            if out.try_send(ChildUpdate::Loaded(snap)).is_ok() {
+                                wake();
+                            }
+                        }
+                    }
                     let fetched = {
                         let Some(_slot) = reads.background(&cancelled).await else {
                             break;
@@ -458,8 +546,8 @@ impl Children {
                         let parent_id = expected_parent.as_deref().unwrap_or(&backend.session);
                         backend.child_page_under(&child, parent_id).await
                     };
-                    let snap = match fetched {
-                        Ok(Some(page)) => {
+                    let update = match fetched {
+                        Ok(Some(mut page)) => {
                             owed_calls.retain(|(msg, call), _| {
                                 !child_tool_settled(&page.rows, msg.as_deref(), call)
                             });
@@ -483,12 +571,10 @@ impl Children {
                                             {
                                                 let k = (Some(row.id.clone()), tool.id.clone());
                                                 if let Some(ts) = last_exec_end
+                                                    && tool.started.is_none_or(|start| start <= ts)
                                                     && (frozen_ends.contains_key(&k)
                                                         || frozen_ends.len() < 128)
                                                 {
-                                                    let ts = tool
-                                                        .started
-                                                        .map_or(ts, |start| ts.max(start));
                                                     frozen_ends.entry(k.clone()).or_insert(ts);
                                                 }
                                                 if owed_calls.len() < 64 {
@@ -510,14 +596,12 @@ impl Children {
                                                         tool.status.as_str(),
                                                         "streaming" | "running"
                                                     )
+                                                    && tool.started.is_some_and(|start| start <= ts)
                                                 {
                                                     let k = (Some(row.id.clone()), tool.id.clone());
                                                     if frozen_ends.contains_key(&k)
                                                         || frozen_ends.len() < 128
                                                     {
-                                                        let ts = tool
-                                                            .started
-                                                            .map_or(ts, |start| ts.max(start));
                                                         frozen_ends.entry(k).or_insert(ts);
                                                     }
                                                 }
@@ -530,33 +614,24 @@ impl Children {
                                     }
                                 }
                             }
-                            let mut snap = snapshot(page);
-                            for ((msg, call), &ts) in &frozen_ends {
-                                let target = if let Some(msg) = msg.as_deref() {
-                                    snap.steps
-                                        .iter_mut()
-                                        .find(|(row_id, tool)| row_id == msg && tool.id == *call)
-                                } else {
-                                    snap.steps
-                                        .iter_mut()
-                                        .rev()
-                                        .find(|(_, tool)| tool.id == *call)
-                                };
-                                if let Some((_, tool)) = target
-                                    && matches!(tool.status.as_str(), "streaming" | "running")
-                                    && tool.ended.is_none()
+                            if let Some(prior) = live_page.as_ref() {
+                                let mut merged = page.rows.clone();
+                                if codenomad_client::content::merge_page(&prior.rows, &mut merged)
+                                    .is_ok()
                                 {
-                                    Arc::make_mut(tool).ended = Some(ts);
+                                    page.rows = merged;
                                 }
                             }
-                            Some(snap)
+                            live_page = Some(page.clone());
+                            ChildUpdate::Loaded(snapshot_with_frozen(page, &frozen_ends))
                         }
                         Ok(None) => {
                             owed_calls.clear();
                             frozen_ends.clear();
                             execution_owed = 0;
                             last_exec_end = None;
-                            Some(Snapshot::default())
+                            live_page = None;
+                            ChildUpdate::Loaded(Snapshot::default())
                         }
                         Err(_) => {
                             if execution_owed > 0 {
@@ -565,10 +640,10 @@ impl Children {
                                     last_exec_end = None;
                                 }
                             }
-                            None
+                            ChildUpdate::Failed
                         }
                     };
-                    if out.send(snap).await.is_err() {
+                    if out.send(update).await.is_err() {
                         break;
                     }
                     wake();
@@ -587,13 +662,15 @@ impl Children {
                         let delay = Duration::from_millis(100 * u64::from(step));
                         runtime::sleep(delay).await;
                         let _ = dirty.try_recv();
+                        let _ = retry_rx.try_recv();
                         continue;
                     }
-                    if dirty.recv().await.is_err() {
+                    if !wait_wake(&dirty, &retry_rx).await {
                         break;
                     }
                     runtime::sleep(Duration::from_millis(100)).await;
                     let _ = dirty.try_recv();
+                    let _ = retry_rx.try_recv();
                 }
             })
             .await;
@@ -610,9 +687,18 @@ impl Children {
     pub(crate) fn poll(&mut self) -> bool {
         let mut changed = self.prune();
         for entry in self.entries.values_mut() {
-            if let Ok(Some(next)) = entry.result.try_recv() {
-                changed |= entry.snapshot != next;
-                entry.snapshot = next;
+            while let Ok(update) = entry.result.try_recv() {
+                match update {
+                    ChildUpdate::Loaded(next) => {
+                        changed |= entry.load_error || entry.snapshot != next;
+                        entry.load_error = false;
+                        entry.snapshot = next;
+                    }
+                    ChildUpdate::Failed => {
+                        changed |= !entry.load_error;
+                        entry.load_error = true;
+                    }
+                }
             }
         }
         let expand_outcome = match &self.expanded_report {
@@ -645,23 +731,78 @@ impl Children {
         before != self.entries.len()
     }
 
-    pub(super) fn steps(&self, id: &str) -> &[(String, Arc<Tool>)] {
+    pub(super) fn steps(&self, parent: Option<&str>, id: &str) -> &[(String, Arc<Tool>)] {
         self.entries
-            .get(id)
+            .get(&child_key(parent, id))
             .map_or(&[], |entry| entry.snapshot.steps.as_slice())
     }
 
-    pub(super) fn steps_truncated(&self, id: &str) -> bool {
+    pub(super) fn steps_truncated(&self, parent: Option<&str>, id: &str) -> bool {
         self.entries
-            .get(id)
+            .get(&child_key(parent, id))
             .is_some_and(|entry| entry.snapshot.steps_truncated)
     }
 
-    pub(super) fn reports(&self, id: &str) -> &[ChildReport] {
+    pub(super) fn steps_incomplete(&self, parent: Option<&str>, id: &str) -> bool {
         self.entries
-            .get(id)
+            .get(&child_key(parent, id))
+            .is_some_and(|entry| entry.snapshot.steps_incomplete)
+    }
+
+    pub(super) fn load_error(&self, parent: Option<&str>, id: &str) -> bool {
+        self.entries
+            .get(&child_key(parent, id))
+            .is_some_and(|entry| entry.load_error)
+    }
+
+    pub(super) fn reports(&self, parent: Option<&str>, id: &str) -> &[ChildReport] {
+        self.entries
+            .get(&child_key(parent, id))
             .map_or(&[], |entry| entry.snapshot.reports.as_slice())
     }
+}
+
+async fn wait_wake(dirty: &Receiver<()>, retry: &Receiver<()>) -> bool {
+    use std::{future::Future, task::Poll};
+    let mut d = std::pin::pin!(dirty.recv());
+    let mut r = std::pin::pin!(retry.recv());
+    std::future::poll_fn(|cx| {
+        if let Poll::Ready(res) = d.as_mut().poll(cx) {
+            return Poll::Ready(res.is_ok());
+        }
+        if let Poll::Ready(res) = r.as_mut().poll(cx) {
+            return Poll::Ready(res.is_ok());
+        }
+        Poll::Pending
+    })
+    .await
+}
+
+fn snapshot_with_frozen(
+    page: crate::history::Page,
+    frozen_ends: &HashMap<(Option<String>, String), u64>,
+) -> Snapshot {
+    let mut snap = snapshot(page);
+    for ((msg, call), &ts) in frozen_ends {
+        let target = if let Some(msg) = msg.as_deref() {
+            snap.steps
+                .iter_mut()
+                .find(|(row_id, tool)| row_id == msg && tool.id == *call)
+        } else {
+            snap.steps
+                .iter_mut()
+                .rev()
+                .find(|(_, tool)| tool.id == *call)
+        };
+        if let Some((_, tool)) = target
+            && matches!(tool.status.as_str(), "streaming" | "running")
+            && tool.ended.is_none()
+            && tool.started.is_none_or(|start| start <= ts)
+        {
+            Arc::make_mut(tool).ended = Some(ts);
+        }
+    }
+    snap
 }
 
 fn child_tool_settled(rows: &[crate::history::Row], message: Option<&str>, call: &str) -> bool {
@@ -760,6 +901,7 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
     Snapshot {
         steps: tools,
         steps_truncated,
+        steps_incomplete: steps_truncated || page.older.is_some(),
         reports,
     }
 }
@@ -769,15 +911,18 @@ impl Children {
     pub(super) fn install(&mut self, child: &str, page: crate::history::Page) -> Rc<()> {
         let lease = Rc::default();
         let (out, result) = bounded(1);
-        out.try_send(Some(snapshot(page))).unwrap();
+        out.try_send(ChildUpdate::Loaded(snapshot(page))).unwrap();
         let (cancel, _) = bounded(1);
+        let (retry, _) = bounded(1);
         self.entries.insert(
-            child.into(),
+            child_key(None, child),
             Entry {
                 cards: HashMap::from([("test".into(), Rc::downgrade(&lease))]),
                 _cancel: cancel,
+                retry,
                 result,
                 snapshot: Snapshot::default(),
+                load_error: false,
             },
         );
         lease

@@ -34,7 +34,9 @@ pub(super) struct Reader {
     pub(super) owed: HashSet<(String, usize)>,
     pub(super) owed_tools: HashMap<(String, String), u8>,
     pub(super) failed_tools: HashSet<(String, String)>,
+    pub(super) frozen_tools: HashMap<(String, String), u64>,
     pub(super) execution_settlement: u8,
+    pub(super) execution_ended_at: Option<u64>,
     pub(super) seen: Seen,
     first: Option<String>,
     older: Option<Value>,
@@ -62,7 +64,9 @@ impl Reader {
             owed: HashSet::new(),
             owed_tools: HashMap::new(),
             failed_tools: HashSet::new(),
+            frozen_tools: HashMap::new(),
             execution_settlement: 0,
+            execution_ended_at: None,
             seen: Seen {
                 entries: VecDeque::new(),
                 bytes: 0,
@@ -96,7 +100,9 @@ impl Reader {
                 self.owed = HashSet::new();
                 self.owed_tools = HashMap::new();
                 self.failed_tools = HashSet::new();
+                self.frozen_tools = HashMap::new();
                 self.execution_settlement = 0;
+                self.execution_ended_at = None;
                 self.seen.entries.clear();
                 self.seen.bytes = 0;
                 self.first = None;
@@ -122,7 +128,9 @@ impl Reader {
         self.owed.clear();
         self.owed_tools.clear();
         self.failed_tools.clear();
+        self.frozen_tools.clear();
         self.execution_settlement = 0;
+        self.execution_ended_at = None;
     }
 
     pub(super) fn clear_window_on_revert(&mut self) {
@@ -136,7 +144,9 @@ impl Reader {
         self.owed.clear();
         self.owed_tools.clear();
         self.failed_tools.clear();
+        self.frozen_tools.clear();
         self.execution_settlement = 0;
+        self.execution_ended_at = None;
     }
 
     pub(super) async fn sync(
@@ -186,11 +196,15 @@ impl Reader {
                     self.failed_tools.retain(|(id, call)| {
                         raw_known.contains(id.as_str()) && !tool_settled(&page.rows, id, call)
                     });
+                    self.frozen_tools.retain(|(id, call), _| {
+                        raw_known.contains(id.as_str()) && !tool_settled(&page.rows, id, call)
+                    });
                     if self.execution_settlement > 0
                         && !page.running
                         && !(self.anchored.is_some() && page.newer.is_some())
                     {
                         self.execution_settlement = 0;
+                        let ended_at = self.execution_ended_at.take();
                         let turn_start = page
                             .rows
                             .iter()
@@ -203,11 +217,19 @@ impl Reader {
                                         tool.status.as_str(),
                                         "pending" | "streaming" | "running"
                                     )
-                                    && self.owed_tools.len() < 64
                                 {
-                                    self.owed_tools
-                                        .entry((row.id.clone(), tool.id.clone()))
-                                        .or_insert(0);
+                                    let key = (row.id.clone(), tool.id.clone());
+                                    if self.owed_tools.len() < 64 {
+                                        self.owed_tools.entry(key.clone()).or_insert(0);
+                                    }
+                                    if let Some(ts) = ended_at
+                                        .filter(|&ts| tool.started.is_none_or(|start| start <= ts))
+                                        .or_else(|| tool.started)
+                                        && (self.frozen_tools.contains_key(&key)
+                                            || self.frozen_tools.len() < 64)
+                                    {
+                                        self.frozen_tools.entry(key).or_insert(ts);
+                                    }
                                 }
                             }
                         }
@@ -215,6 +237,30 @@ impl Reader {
                     let mut merged = page.rows.clone();
                     if content::merge_page(&self.resident, &mut merged).is_ok() {
                         page.rows = merged;
+                    }
+                    if !self.frozen_tools.is_empty() {
+                        for row in &mut page.rows {
+                            if !row.parts.iter().any(|p| {
+                                matches!(p, Part::Tool(t)
+                                    if matches!(t.status.as_str(), "streaming" | "running")
+                                        && t.ended.is_none()
+                                        && self.frozen_tools.contains_key(&(row.id.clone(), t.id.clone())))
+                            }) {
+                                continue;
+                            }
+                            let row = Arc::make_mut(row);
+                            for part in &mut row.parts {
+                                if let Part::Tool(tool) = part
+                                    && matches!(tool.status.as_str(), "streaming" | "running")
+                                    && tool.ended.is_none()
+                                    && let Some(&ts) =
+                                        self.frozen_tools.get(&(row.id.clone(), tool.id.clone()))
+                                    && tool.started.is_none_or(|start| start <= ts)
+                                {
+                                    Arc::make_mut(tool).ended = Some(ts);
+                                }
+                            }
+                        }
                     }
                     self.owed.retain(|(id, ordinal)| {
                         !page

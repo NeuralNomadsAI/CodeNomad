@@ -99,16 +99,30 @@ fn tool_query<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<Query<'a>>
     )
 }
 
+fn has_tool_input(tool: &Tool) -> bool {
+    match &tool.input {
+        serde_json::Value::Null => false,
+        serde_json::Value::String(s) => !s.is_empty(),
+        serde_json::Value::Object(map) => !map.is_empty(),
+        serde_json::Value::Array(arr) => !arr.is_empty(),
+        _ => true,
+    }
+}
+
 pub(in crate::chat) fn match_hidden_by_inputs(
     s: &State,
     message: &str,
     tool: &Arc<Tool>,
     query: Query<'_>,
 ) -> bool {
-    if settings::transcript_mode(s, TranscriptRow::Inputs) != "hidden" || tool.input.is_null() {
+    let key = tool_key(message, &tool.id);
+    if settings::transcript_mode(s, TranscriptRow::Inputs) != "hidden"
+        || !has_tool_input(tool)
+        || s.transcript_display
+            .expanded(&format!("{key}-tool_input"), false)
+    {
         return false;
     }
-    let key = tool_key(message, &tool.id);
     if !tool
         .input
         .as_str()
@@ -127,12 +141,14 @@ pub(in crate::chat) fn match_hidden_by_inputs(
     }
     // Use the actual output renderer: shell commands, patches and errors can expose the same hit.
     let claimed = std::cell::Cell::new(false);
+    let mut budget = super::children::STEP_LIMIT;
     let _ = render_body(
         s,
         message,
         tool,
         &key,
         &[],
+        &mut budget,
         Some(Query {
             claimed: Some(&claimed),
             ..query
@@ -143,7 +159,8 @@ pub(in crate::chat) fn match_hidden_by_inputs(
 }
 
 pub(super) fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
-    render_nested(s, message, tool, key, &[])
+    let mut budget = super::children::STEP_LIMIT;
+    render_nested(s, message, tool, key, &[], &mut budget)
 }
 
 pub(super) fn render_nested(
@@ -152,21 +169,24 @@ pub(super) fn render_nested(
     tool: &Arc<Tool>,
     key: &str,
     ancestors: &[&str],
+    budget: &mut usize,
 ) -> El {
     let claimed = std::cell::Cell::new(false);
     let query = tool_query(s, message, tool).map(|query| Query {
         claimed: Some(&claimed),
         ..query
     });
-    render_body(s, message, tool, key, ancestors, query, false)
+    render_body(s, message, tool, key, ancestors, budget, query, false)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_body(
     s: &State,
     message: &str,
     tool: &Arc<Tool>,
     key: &str,
     ancestors: &[&str],
+    budget: &mut usize,
     query: Option<Query<'_>>,
     probe: bool,
 ) -> El {
@@ -182,7 +202,9 @@ fn render_body(
     let can_watch_child = is_task
         && ancestors.len() < task::MAX_DEPTH
         && task::watched_child(tool).is_some_and(|cid| !ancestors.contains(&cid));
-    let task_delivery = is_task.then(|| task::delivery(s, message, tool)).flatten();
+    let task_delivery = is_task
+        .then(|| task::delivery(s, message, tool, ancestors))
+        .flatten();
     let status = task_delivery
         .as_ref()
         .map(|d| d.status)
@@ -280,7 +302,7 @@ fn render_body(
                 .as_array()
                 .is_some_and(|todos| !todos.is_empty())
     {
-        header = header.child(copy(s, message, &tool.id, Section::Output));
+        header = header.child(copy(s, message, key, &tool.id, Section::Output, ancestors));
     }
     let mut block = col()
         .full_width()
@@ -292,7 +314,7 @@ fn render_body(
     if !expanded {
         return block.children(diagnostics());
     }
-    let failure = render_error(s, message, key, tool, query);
+    let failure = render_error(s, message, key, tool, ancestors, query);
     if tool.name == "question"
         && let Some(questions) = question::view(s, key, tool)
     {
@@ -324,6 +346,7 @@ fn render_body(
                 task_delivery.as_ref().and_then(|d| d.report_location),
                 report_truncated,
                 ancestors,
+                budget,
                 query,
             )
         })
@@ -363,17 +386,14 @@ fn render_body(
     let execute_details = (tool.name == "execute")
         .then(|| execute::view(s, key, tool, query))
         .flatten();
-    if let Some(details) = task_body.or(execute_details) {
-        block = block.child(details);
-    } else if !tool.input.is_null()
-        && settings::transcript_mode(s, TranscriptRow::Inputs) != "hidden"
-    {
+    if has_tool_input(tool) {
+        let input_mode = settings::transcript_mode(s, TranscriptRow::Inputs);
         let input_key = format!("{key}-tool_input");
-        let show = s.transcript_display.expanded(
-            &input_key,
-            settings::transcript_mode(s, TranscriptRow::Inputs) == "expanded",
-        );
-        let input = (show || active)
+        let show = s
+            .transcript_display
+            .expanded(&input_key, input_mode == "expanded");
+        let allow_search_reveal = input_mode != "hidden";
+        let input = (show || (active && allow_search_reveal))
             .then(|| {
                 tool.input
                     .as_str()
@@ -382,17 +402,18 @@ fn render_body(
                         input_json(
                             &tool.input,
                             document::search_limit_for(s, key, query),
-                            active,
+                            active && allow_search_reveal,
                         )
                         .map(std::borrow::Cow::Owned)
                     })
             })
             .flatten();
         let show = show
-            || active
+            || (active
+                && allow_search_reveal
                 && input
                     .as_deref()
-                    .is_some_and(|text| query.is_some_and(|q| q.matches(text)));
+                    .is_some_and(|text| query.is_some_and(|q| q.matches(text))));
         let toggle = input_key.clone();
         block = block.child(
             layout::button(
@@ -410,7 +431,7 @@ fn render_body(
             .expanded(show),
         );
         if show {
-            block = block.child(copy(s, message, &tool.id, Section::Input));
+            block = block.child(copy(s, message, key, &tool.id, Section::Input, ancestors));
             if let Some(input) = input {
                 block = block.child(markdown::tool_pane(
                     window(
@@ -434,6 +455,9 @@ fn render_body(
                 block = block.child(text(t("toolCall.output.tooLarge")).key(input_key));
             }
         }
+    }
+    if let Some(details) = task_body.or(execute_details) {
+        block = block.child(details);
     }
     let lang = if tool.name == "read" {
         markdown::language_for_path(path(tool))
@@ -587,6 +611,7 @@ fn render_error(
     message: &str,
     key: &str,
     tool: &Tool,
+    ancestors: &[&str],
     query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
 ) -> Option<El> {
     let error = error(tool);
@@ -597,7 +622,7 @@ fn render_error(
             .child(
                 layout::action_row()
                     .child(text(t("toolCall.error.label")))
-                    .child(copy(s, message, &tool.id, Section::Error)),
+                    .child(copy(s, message, key, &tool.id, Section::Error, ancestors)),
             )
             .child(markdown::tool_pane(
                 window(

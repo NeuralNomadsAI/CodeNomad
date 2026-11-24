@@ -1,7 +1,7 @@
 use super::{
     Tool, apply_patch,
-    children::{Children, ReportCopyKey},
-    error, output, task, todo, tool_key,
+    children::{Children, CopyKey, ReportCopyKey},
+    error, output, task, todo,
 };
 use crate::{State, content::Part, screen, strings::t};
 use rune::El;
@@ -14,11 +14,18 @@ pub(super) enum Section {
     Error,
 }
 
-pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El {
-    let base = tool_key(message, call);
+pub(super) fn copy(
+    s: &State,
+    message: &str,
+    card_key: &str,
+    call: &str,
+    section: Section,
+    ancestors: &[&str],
+) -> El {
     let (message, call) = (message.to_owned(), call.to_owned());
+    let ancestors_owned: Vec<String> = ancestors.iter().map(|&a| a.to_owned()).collect();
     let key = format!(
-        "copy-{base}-{}",
+        "copy-{card_key}-{}",
         match section {
             Section::Input => "input",
             Section::Output => "output",
@@ -33,8 +40,10 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
             "toolCall.io.copyOutputAriaLabel"
         }),
         screen::action_tx(&s.input_scope, move |s, tx| {
+            let anc_refs: Vec<&str> = ancestors_owned.iter().map(String::as_str).collect();
+            let owner_parent = anc_refs.len().checked_sub(2).map(|i| anc_refs[i]);
             let async_report = {
-                let Some(tool) = lookup(s, &message, &call) else {
+                let Some(tool) = lookup(s, &message, owner_parent, &call) else {
                     return;
                 };
                 match section {
@@ -46,7 +55,7 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
                     }
                     Section::Output => {
                         if task::is_task(tool) {
-                            let delivery = task::delivery(s, &message, tool);
+                            let delivery = task::delivery(s, &message, tool, &anc_refs);
                             if let Some(d) = delivery.as_ref().filter(|d| d.report_truncated)
                                 && let Some(parent) = task::parent_child(&message)
                                 && let Some((row_id, part_idx)) = d.report_location
@@ -96,7 +105,8 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
                 }
             };
             if let Some(report_key) = async_report {
-                if let Some(ready) = s.transcript_display.children.take_ready_report(&report_key) {
+                let target = CopyKey::Report(report_key.clone());
+                if let Some(ready) = s.transcript_display.children.take_ready_copy(&target) {
                     tx.copy(ready);
                 } else {
                     Children::copy_report(s, report_key);
@@ -109,7 +119,12 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
     .key(key)
 }
 
-fn lookup<'a>(s: &'a State, message: &str, call: &str) -> Option<&'a Tool> {
+fn lookup<'a>(
+    s: &'a State,
+    message: &str,
+    owner_parent: Option<&str>,
+    call: &str,
+) -> Option<&'a Tool> {
     if let Some((child, id)) = message
         .strip_prefix("child:")
         .and_then(|v| v.split_once(':'))
@@ -117,7 +132,7 @@ fn lookup<'a>(s: &'a State, message: &str, call: &str) -> Option<&'a Tool> {
         return s
             .transcript_display
             .children
-            .steps(child)
+            .steps(owner_parent, child)
             .iter()
             .find(|(row, tool)| row == id && tool.id == call)
             .map(|(_, tool)| tool.as_ref());

@@ -212,6 +212,13 @@ pub(super) fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
         let (content, language) = write::output(tool);
         parts[0] = content;
         language
+    } else if tool.name == "webfetch" {
+        parts[0] = if tool.status == "completed" {
+            &tool.output
+        } else {
+            tool.metadata["output"].as_str().unwrap_or_default()
+        };
+        "text"
     } else {
         parts[0] = if tool.output.is_empty() && tool.status != "completed" {
             live

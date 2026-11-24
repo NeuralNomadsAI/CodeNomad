@@ -13,6 +13,36 @@ pub use reasoning::{Reasoning, ReasoningEvent, apply_window as apply_reasoning};
 pub use subagent::SubagentReport;
 pub use tool_live::install as install_tool;
 pub(crate) use tool_live::{Fit as ToolFit, apply_at as apply_tool};
+
+pub fn apply_tool_event(
+    rows: &mut [crate::history::Row],
+    message_id: Option<&str>,
+    kind: &str,
+    data: &Value,
+    at: Option<u64>,
+) -> bool {
+    let call_id = data["id"].as_str().unwrap_or_default();
+    let idx = if let Some(msg) = message_id {
+        rows.iter().position(|r| r.id == msg)
+    } else if !call_id.is_empty() {
+        rows.iter().rposition(|r| {
+            r.role == "assistant"
+                && r.parts
+                    .iter()
+                    .any(|p| matches!(p, Part::Tool(t) if t.id == call_id))
+        })
+    } else {
+        None
+    };
+    let Some(idx) = idx else {
+        return false;
+    };
+    let row = Arc::make_mut(&mut rows[idx]);
+    matches!(
+        tool_live::apply_at(row, kind, data, at),
+        ToolFit::Applied(_) | ToolFit::Settled(_)
+    )
+}
 pub use usage::{FAMILY_LIMIT, Family, FamilyChange, FamilyMember, FamilySnapshot, Usage};
 pub(crate) use user::digest as attachment_digest;
 pub use user::{File, Reference, Skill};

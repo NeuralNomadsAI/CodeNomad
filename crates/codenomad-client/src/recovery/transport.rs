@@ -579,6 +579,7 @@ pub(crate) async fn run_with_reading(
                     | "session.execution.interrupted" => {
                         reader.terminal = reader.busy;
                         reader.execution_settlement = 3;
+                        reader.execution_ended_at = native["created"].as_u64().filter(|&at| at > 0);
                         if reading.is_some() {
                             publish(
                                 &out,

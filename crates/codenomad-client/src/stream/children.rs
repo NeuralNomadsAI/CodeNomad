@@ -9,6 +9,9 @@ use std::{
 
 const MAX_ANCESTOR_HOPS: usize = 5;
 const MAX_OWED_CALLS: usize = 64;
+const MAX_LIVE_EVENTS: usize = 64;
+const MAX_COPY_PAGES: usize = 64;
+const MAX_COPY_BYTES: usize = 8 * 1024 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const OWNERSHIP_BUDGET: Duration = Duration::from_secs(10);
 
@@ -19,12 +22,21 @@ pub struct ChildToolEnd {
     pub ended: Option<u64>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ChildToolEvent {
+    pub message: Option<String>,
+    pub kind: String,
+    pub data: Value,
+    pub at: Option<u64>,
+}
+
 #[derive(Default)]
 pub struct ChildSettlement(Mutex<SettlementState>);
 
 #[derive(Default)]
 struct SettlementState {
     calls: HashMap<(Option<String>, String), Option<u64>>,
+    events: Vec<ChildToolEvent>,
     execution_ended: bool,
     execution_ended_at: Option<u64>,
 }
@@ -36,14 +48,19 @@ impl ChildSettlement {
         };
         match signal {
             ChildSignal::Dirty => {}
-            ChildSignal::ToolEnded(Some(end)) => {
-                let key = (end.message.clone(), end.call.clone());
-                if state.calls.contains_key(&key) || state.calls.len() < MAX_OWED_CALLS {
-                    state.calls.insert(key, end.ended);
+            ChildSignal::ToolEvent(ev) => Self::push_event(&mut state.events, ev),
+            ChildSignal::ToolEnded(end, ev) => {
+                if let Some(ev) = ev {
+                    Self::push_event(&mut state.events, ev);
                 }
-            }
-            ChildSignal::ToolEnded(None) => {
-                state.execution_ended = true;
+                if let Some(end) = end {
+                    let key = (end.message.clone(), end.call.clone());
+                    if state.calls.contains_key(&key) || state.calls.len() < MAX_OWED_CALLS {
+                        state.calls.insert(key, end.ended);
+                    }
+                } else {
+                    state.execution_ended = true;
+                }
             }
             ChildSignal::ExecutionEnded(at) => {
                 state.execution_ended = true;
@@ -54,9 +71,26 @@ impl ChildSettlement {
         }
     }
 
-    pub fn take(&self) -> (Vec<ChildToolEnd>, bool, Option<u64>) {
+    fn push_event(events: &mut Vec<ChildToolEvent>, ev: &ChildToolEvent) {
+        if ev.kind == "session.tool.progress"
+            && let Some(call) = ev.data["id"].as_str()
+            && let Some(existing) = events.iter_mut().rev().find(|prev| {
+                prev.kind == "session.tool.progress"
+                    && prev.message == ev.message
+                    && prev.data["id"].as_str() == Some(call)
+            })
+        {
+            *existing = ev.clone();
+            return;
+        }
+        if events.len() < MAX_LIVE_EVENTS {
+            events.push(ev.clone());
+        }
+    }
+
+    pub fn take(&self) -> (Vec<ChildToolEnd>, Vec<ChildToolEvent>, bool, Option<u64>) {
         let Ok(mut state) = self.0.lock() else {
-            return (Vec::new(), false, None);
+            return (Vec::new(), Vec::new(), false, None);
         };
         let calls = state
             .calls
@@ -67,15 +101,17 @@ impl ChildSettlement {
                 ended,
             })
             .collect();
+        let events = std::mem::take(&mut state.events);
         let execution_ended = std::mem::take(&mut state.execution_ended);
         let execution_ended_at = state.execution_ended_at.take();
-        (calls, execution_ended, execution_ended_at)
+        (calls, events, execution_ended, execution_ended_at)
     }
 }
 
 pub(crate) enum ChildSignal {
     Dirty,
-    ToolEnded(Option<ChildToolEnd>),
+    ToolEvent(ChildToolEvent),
+    ToolEnded(Option<ChildToolEnd>, Option<ChildToolEvent>),
     ExecutionEnded(Option<u64>),
 }
 
@@ -147,14 +183,11 @@ impl Backend {
         self.child_page_checked(child, Some(expected_parent)).await
     }
 
-    async fn child_page_checked(
+    async fn verify_child_ownership(
         &self,
         child: &str,
         expected_parent: Option<&str>,
-    ) -> history::Result<Option<history::Page>> {
-        if child == self.session || !history::valid_id(child) {
-            return Err("invalid task child".into());
-        }
+    ) -> history::Result<Option<Value>> {
         let record = |client: &Http, id: &str, timeout: Duration| {
             client
                 .get(format!(
@@ -163,55 +196,138 @@ impl Backend {
                 ))
                 .timeout(timeout)
         };
-        let owned = || async {
-            let deadline = Instant::now() + OWNERSHIP_BUDGET;
-            let mut current = child.to_owned();
-            let mut visited = HashSet::new();
-            let mut leaf_location = None;
-            for hop in 0..MAX_ANCESTOR_HOPS {
-                let now = Instant::now();
-                if now >= deadline {
-                    return Err("child ownership check timed out".into());
-                }
-                if !visited.insert(current.clone()) {
-                    return Ok::<_, history::Error>(None);
-                }
-                let remaining = (deadline - now).min(PROBE_TIMEOUT);
-                let response = record(&self.client, &current, remaining).send().await?;
-                if matches!(response.status().as_u16(), 403 | 404 | 410) {
-                    return Ok(None);
-                }
-                let response = crate::backend::read_json(response.error_for_status()?).await?;
-                let native = response.get("data").unwrap_or(&response);
-                if native["id"] != current {
-                    return Ok(None);
-                }
-                let Some(parent) = native["parentID"].as_str().filter(|id| !id.is_empty()) else {
-                    return Ok(None);
-                };
-                if hop == 0 {
-                    if expected_parent.is_some_and(|expected| parent != expected) {
-                        return Ok(None);
-                    }
-                    leaf_location = Some(native["location"].clone());
-                }
-                if parent == self.session {
-                    return Ok(leaf_location);
-                }
-                if !history::valid_id(parent) {
-                    return Ok(None);
-                }
-                current = parent.to_owned();
+        let deadline = Instant::now() + OWNERSHIP_BUDGET;
+        let mut current = child.to_owned();
+        let mut visited = HashSet::new();
+        let mut leaf_location = None;
+        for hop in 0..MAX_ANCESTOR_HOPS {
+            let now = Instant::now();
+            if now >= deadline {
+                return Err("child ownership check timed out".into());
             }
-            Ok(None)
-        };
-        let Some(location) = owned().await? else {
+            if !visited.insert(current.clone()) {
+                return Ok(None);
+            }
+            let remaining = (deadline - now).min(PROBE_TIMEOUT);
+            let response = record(&self.client, &current, remaining).send().await?;
+            if matches!(response.status().as_u16(), 403 | 404 | 410) {
+                return Ok(None);
+            }
+            let response = crate::backend::read_json(response.error_for_status()?).await?;
+            let native = response.get("data").unwrap_or(&response);
+            if native["id"] != current {
+                return Ok(None);
+            }
+            let Some(parent) = native["parentID"].as_str().filter(|id| !id.is_empty()) else {
+                return Ok(None);
+            };
+            if hop == 0 {
+                if expected_parent.is_some_and(|expected| parent != expected) {
+                    return Ok(None);
+                }
+                leaf_location = Some(native["location"].clone());
+            }
+            if parent == self.session {
+                return Ok(leaf_location);
+            }
+            if !history::valid_id(parent) {
+                return Ok(None);
+            }
+            current = parent.to_owned();
+        }
+        Ok(None)
+    }
+
+    async fn child_page_checked(
+        &self,
+        child: &str,
+        expected_parent: Option<&str>,
+    ) -> history::Result<Option<history::Page>> {
+        if child == self.session || !history::valid_id(child) {
+            return Err("invalid task child".into());
+        }
+        let Some(location) = self.verify_child_ownership(child, expected_parent).await? else {
             return Ok(None);
         };
         let mut target = self.clone();
         target.session = child.into();
         let page = target.page(serde_json::json!({"kind":"latest"})).await?;
-        Ok((owned().await? == Some(location)).then_some(page))
+        Ok(
+            (self.verify_child_ownership(child, expected_parent).await? == Some(location))
+                .then_some(page),
+        )
+    }
+
+    pub async fn child_steps_json_under(
+        &self,
+        child: &str,
+        expected_parent: &str,
+    ) -> history::Result<Option<String>> {
+        if child == self.session || !history::valid_id(child) || !history::valid_id(expected_parent)
+        {
+            return Err("invalid task child".into());
+        }
+        let Some(location) = self
+            .verify_child_ownership(child, Some(expected_parent))
+            .await?
+        else {
+            return Ok(None);
+        };
+        let mut target = self.clone();
+        target.session = child.into();
+        let mut out = String::from("[\n");
+        let mut count = 0usize;
+        let mut seen_rows = HashSet::new();
+        let mut cursor = Some(serde_json::json!({"kind": "oldest"}));
+        let mut seen_cursors = HashSet::new();
+        for _ in 0..MAX_COPY_PAGES {
+            let Some(request) = cursor.take() else {
+                break;
+            };
+            let key = request.to_string();
+            if !seen_cursors.insert(key) {
+                break;
+            }
+            let page = target.page(request).await?;
+            for row in &page.rows {
+                if !seen_rows.insert(row.id.clone()) {
+                    continue;
+                }
+                for part in &row.parts {
+                    let crate::content::Part::Tool(tool) = part else {
+                        continue;
+                    };
+                    let entry = serde_json::json!({
+                        "type": "tool",
+                        "id": tool.id,
+                        "name": tool.name,
+                        "state": {
+                            "status": tool.status,
+                            "input": tool.input,
+                            "output": tool.output,
+                            "error": tool.error,
+                            "metadata": tool.metadata,
+                        }
+                    });
+                    let serialized = serde_json::to_string_pretty(&entry)?;
+                    if out.len().saturating_add(serialized.len() + 4) > MAX_COPY_BYTES {
+                        return Err("child steps copy budget reached".into());
+                    }
+                    if count > 0 {
+                        out.push_str(",\n");
+                    }
+                    out.push_str(&serialized);
+                    count += 1;
+                }
+            }
+            cursor = page.newer;
+        }
+        out.push_str(if count > 0 { "\n]" } else { "]" });
+        Ok((self
+            .verify_child_ownership(child, Some(expected_parent))
+            .await?
+            == Some(location))
+        .then_some(out))
     }
 }
 
@@ -219,7 +335,9 @@ pub(super) fn observe(b: &Backend, event: &Value) {
     let kind = event["type"].as_str();
     match kind {
         Some(
-            "session.tool.called"
+            "session.tool.input.started"
+            | "session.tool.input.delta"
+            | "session.tool.called"
             | "session.tool.progress"
             | "session.tool.success"
             | "session.tool.failed"
@@ -235,8 +353,29 @@ pub(super) fn observe(b: &Backend, event: &Value) {
             if let Some(id) = event["data"]["sessionID"].as_str()
                 && id != b.session
             {
+                let tool_event = |kind: &str| -> Option<ChildToolEvent> {
+                    let data = &event["data"];
+                    data["id"]
+                        .as_str()
+                        .filter(|c| !c.is_empty() && c.len() <= 256)?;
+                    Some(ChildToolEvent {
+                        message: data["assistantMessageID"]
+                            .as_str()
+                            .filter(|m| history::valid_id(m))
+                            .map(str::to_owned),
+                        kind: kind.to_owned(),
+                        data: data.clone(),
+                        at: event["created"].as_u64(),
+                    })
+                };
                 let signal = match kind {
-                    Some("session.tool.success" | "session.tool.failed") => {
+                    Some(
+                        k @ ("session.tool.input.started"
+                        | "session.tool.input.delta"
+                        | "session.tool.called"
+                        | "session.tool.progress"),
+                    ) => tool_event(k).map_or(ChildSignal::Dirty, ChildSignal::ToolEvent),
+                    Some(k @ ("session.tool.success" | "session.tool.failed")) => {
                         let end = event["data"]["id"]
                             .as_str()
                             .filter(|c| !c.is_empty() && c.len() <= 256)
@@ -248,7 +387,7 @@ pub(super) fn observe(b: &Backend, event: &Value) {
                                 call: call.to_owned(),
                                 ended: event["created"].as_u64(),
                             });
-                        ChildSignal::ToolEnded(end)
+                        ChildSignal::ToolEnded(end, tool_event(k))
                     }
                     Some(
                         "session.execution.succeeded"

@@ -893,3 +893,54 @@ fn webfetch_structured_output_execute_search_and_localized_patch_title() {
     rt.frame(0.02);
     assert!(clipboard.text().unwrap().contains("\"status\": 200"));
 }
+
+#[test]
+fn running_webfetch_plain_text_and_hidden_inputs_per_card_toggle() {
+    let row = crate::history::decode_message(&json!({
+        "type":"assistant","id":"wf_live","time":{},"content":[
+            {"type":"tool","id":"wf_str","name":"webfetch",
+             "state":{"status":"running","input":{"url":"https://plain.test"},
+                      "metadata":{"output":"plain live body"}}}
+        ]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    crate::settings::fixture_transcript(&mut state, json!({"toolInputsVisibility":"hidden"}));
+    let wf_key = super::tool_key("wf_live", "wf_str");
+    Display::set_expanded(&mut state, &wf_key, true);
+    state.messages = vec![row.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            with_locale("en", || {
+                let crate::content::Part::Tool(tool) = &s.messages[0].parts[0] else {
+                    panic!("expected tool")
+                };
+                super::view(s, "wf_live", tool)
+            })
+        },
+        (960.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    rt.frame(0.0);
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("plain live body"), "{tree}");
+    assert!(!tree.contains("\"url\""), "{tree}");
+    let (cx, cy) = rt.find(&format!("copy-{wf_key}-output")).unwrap();
+    rt.pointer_down(cx, cy);
+    rt.pointer_up(cx, cy);
+    rt.frame(0.02);
+    assert_eq!(clipboard.text().unwrap().as_str(), "plain live body");
+    let (ix, iy) = rt.find(&format!("toggle-{wf_key}-tool_input")).unwrap();
+    rt.pointer_down(ix, iy);
+    rt.pointer_up(ix, iy);
+    rt.frame(0.02);
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("https://plain.test")
+    );
+}

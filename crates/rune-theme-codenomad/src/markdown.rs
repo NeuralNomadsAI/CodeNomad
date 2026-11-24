@@ -330,14 +330,19 @@ pub(crate) fn literal_breaks(source: &str) -> Cow<'_, str> {
     let mut last = 0;
     let mut result = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
-        if let Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) = &event
-            && let Some((word, replacement)) = diagram_fence(info, &source[range.clone()])
-        {
-            let start = range.start + word.start;
-            result.push_str(&source[last..start]);
-            result.push_str(replacement);
-            last = range.start + word.end;
-            continue;
+        if let Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) = &event {
+            let line_start = source[..range.start].rfind('\n').map_or(0, |i| i + 1);
+            if let Some((word, replacement)) = diagram_fence(
+                info,
+                &source[line_start..range.start],
+                &source[range.clone()],
+            ) {
+                let start = range.start + word.start;
+                result.push_str(&source[last..start]);
+                result.push_str(replacement);
+                last = range.start + word.end;
+                continue;
+            }
         }
         match event {
             Event::SoftBreak => {
@@ -369,7 +374,11 @@ pub(crate) fn literal_breaks(source: &str) -> Cow<'_, str> {
     Cow::Owned(result)
 }
 
-fn diagram_fence(info: &str, block: &str) -> Option<(std::ops::Range<usize>, &'static str)> {
+fn diagram_fence(
+    info: &str,
+    line_prefix: &str,
+    block: &str,
+) -> Option<(std::ops::Range<usize>, &'static str)> {
     let kit_word = info.split(|c: char| c.is_whitespace() || c == ',').next()?;
     if !(kit_word.eq_ignore_ascii_case("mermaid") || kit_word.eq_ignore_ascii_case("mmd")) {
         return None;
@@ -384,7 +393,7 @@ fn diagram_fence(info: &str, block: &str) -> Option<(std::ops::Range<usize>, &'s
     // Kit recognizes comma modifiers; Solid only admits a whitespace-delimited language.
     // Route both forms through the ordinary code frame, retaining Copy even for plain source.
     let replacement = if word.eq_ignore_ascii_case("mermaid") || word.eq_ignore_ascii_case("mmd") {
-        if commonmark_closed(block, marker, fence_len) {
+        if commonmark_closed(line_prefix, block, marker, fence_len) {
             "mmd"
         } else {
             "mmd-open"
@@ -395,26 +404,39 @@ fn diagram_fence(info: &str, block: &str) -> Option<(std::ops::Range<usize>, &'s
     Some((start..start + word.len(), replacement))
 }
 
-fn commonmark_closed(block: &str, marker: char, fence_len: usize) -> bool {
+fn strip_blockquotes(mut s: &str) -> &str {
+    loop {
+        let trimmed = s.trim_start_matches(' ');
+        if s.len() - trimmed.len() <= 3
+            && let Some(rest) = trimmed.strip_prefix('>')
+        {
+            s = rest.strip_prefix(' ').unwrap_or(rest);
+            continue;
+        }
+        return s;
+    }
+}
+
+fn commonmark_closed(line_prefix: &str, block: &str, marker: char, fence_len: usize) -> bool {
     let mut lines = block.lines();
     if lines.next().is_none() {
         return false;
     }
-    let Some(mut tail) = lines.last() else {
+    let Some(last) = lines.last() else {
         return false;
     };
-    loop {
-        let trimmed = tail.trim_start_matches(' ');
-        if tail.len() - trimmed.len() <= 3
-            && let Some(rest) = trimmed.strip_prefix('>')
-        {
-            tail = rest.strip_prefix(' ').unwrap_or(rest);
-            continue;
-        }
-        break;
-    }
+    let prefix_after_quotes = strip_blockquotes(line_prefix);
+    let container_indent = if prefix_after_quotes
+        .bytes()
+        .any(|b| !matches!(b, b' ' | b'\t'))
+    {
+        prefix_after_quotes.chars().count()
+    } else {
+        0
+    };
+    let tail = strip_blockquotes(last);
     let indent = tail.bytes().take_while(|&b| b == b' ').count();
-    if indent > 3 {
+    if indent > container_indent + 3 {
         return false;
     }
     let rest = &tail[indent..];

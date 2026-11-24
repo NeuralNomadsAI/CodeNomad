@@ -1,6 +1,6 @@
 use super::{
     Display, Tool,
-    children::{Children, ReportCopyKey, STEP_LIMIT},
+    children::{Children, CopyKey, ReportCopyKey, STEP_LIMIT},
     input_json, string, window,
 };
 use crate::{
@@ -208,7 +208,12 @@ fn resolve_delivery<'a>(
     }
 }
 
-pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<Delivery<'a>> {
+pub(super) fn delivery<'a>(
+    s: &'a State,
+    message: &str,
+    tool: &Tool,
+    ancestors: &[&str],
+) -> Option<Delivery<'a>> {
     if tool.status != "completed" || tool.metadata["status"] != "running" {
         return None;
     }
@@ -224,10 +229,11 @@ pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<D
         });
     }
     if let Some(parent) = parent_child(message) {
+        let owner_parent = ancestors.len().checked_sub(2).map(|i| ancestors[i]);
         let launches: Vec<u64> = s
             .transcript_display
             .children
-            .steps(parent)
+            .steps(owner_parent, parent)
             .iter()
             .filter_map(|(_, other)| {
                 (is_task(other) && child(other) == child_id)
@@ -238,7 +244,7 @@ pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<D
         let reports: Vec<_> = s
             .transcript_display
             .children
-            .reports(parent)
+            .reports(owner_parent, parent)
             .iter()
             .filter(|entry| entry.report.child == child_id)
             .map(|entry| {
@@ -301,16 +307,24 @@ pub(super) fn body(
     report_location: Option<(&str, usize)>,
     output_truncated: bool,
     ancestors: &[&str],
+    budget: &mut usize,
     query: Option<Query<'_>>,
 ) -> Option<El> {
     let prompt = string(&tool.input, &["prompt"]);
+    let parent = parent_child(message);
     let child_id = (ancestors.len() < MAX_DEPTH)
         .then(|| watched_child(tool))
         .flatten()
         .filter(|id| !ancestors.contains(id));
-    let child_steps = child_id.map_or(&[][..], |id| s.transcript_display.children.steps(id));
+    let child_steps = child_id.map_or(&[][..], |id| {
+        s.transcript_display.children.steps(parent, id)
+    });
     let live_truncated =
-        child_id.is_some_and(|id| s.transcript_display.children.steps_truncated(id));
+        child_id.is_some_and(|id| s.transcript_display.children.steps_truncated(parent, id));
+    let live_incomplete =
+        child_id.is_some_and(|id| s.transcript_display.children.steps_incomplete(parent, id));
+    let child_load_error =
+        child_id.is_some_and(|id| s.transcript_display.children.load_error(parent, id));
     let visible_steps = child_steps
         .iter()
         .filter(|(message, step)| super::visible(s, message, step));
@@ -325,6 +339,8 @@ pub(super) fn body(
     if prompt.trim().is_empty()
         && step_count == 0
         && !live_truncated
+        && !live_incomplete
+        && !child_load_error
         && output.trim().is_empty()
         && !output_truncated
         && child_id.is_none()
@@ -420,12 +436,13 @@ pub(super) fn body(
                         .key(format!("expand-{key}-output")),
                     );
                     result = result.child(status_row);
-                    if s.transcript_display.children.copy_failed(&copy_key)
+                    let copy_target = CopyKey::Report(copy_key.clone());
+                    if s.transcript_display.children.copy_failed(&copy_target)
                         || s.transcript_display.children.expand_failed(&copy_key)
                     {
                         result =
                             result.child(text(t("sessionList.loadError.retry")).role("status"));
-                    } else if s.transcript_display.children.copy_ready(&copy_key) {
+                    } else if s.transcript_display.children.copy_ready(&copy_target) {
                         result =
                             result.child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
                     }
@@ -435,7 +452,25 @@ pub(super) fn body(
             }
         }
     }
-    if step_count > 0 || live_truncated {
+    if child_load_error && let Some(cid) = child_id {
+        let retry_parent = parent.map(str::to_owned);
+        let retry_child = cid.to_owned();
+        result = result.child(
+            layout::action_row()
+                .child(text(t("messageSection.loadError.title")).role("status"))
+                .child(
+                    layout::button(
+                        t("messageSection.loadError.reload"),
+                        false,
+                        screen::action(&s.input_scope, move |s| {
+                            Children::retry(s, retry_parent.as_deref(), &retry_child);
+                        }),
+                    )
+                    .key(format!("retry-{key}")),
+                ),
+        );
+    }
+    if step_count > 0 || live_truncated || live_incomplete {
         let step_key = format!("{key}-task-steps");
         let revealed_steps = s.transcript_display.steps(&step_key);
         let detached = s.transcript_display.step_scroll_detached(&step_key);
@@ -504,6 +539,8 @@ pub(super) fn body(
             );
         }
         let pane_clip = s.transcript_display.tool_clock.clip_rect(&step_key);
+        let mut budget_truncated = false;
+        let mut rendered_live = 0usize;
         if let Some(child_id) = child_id.filter(|_| !visible_live.is_empty()) {
             let mut next_ancestors = Vec::with_capacity(ancestors.len() + 1);
             next_ancestors.extend_from_slice(ancestors);
@@ -511,10 +548,23 @@ pub(super) fn body(
             list = s.transcript_display.tool_clock.with_clip(&pane_clip, || {
                 let mut list = list;
                 for (message, step) in visible_live.into_iter().skip(start) {
+                    if *budget == 0 {
+                        budget_truncated = true;
+                        break;
+                    }
+                    *budget -= 1;
+                    rendered_live += 1;
                     let owner = format!("child:{child_id}:{message}");
                     let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
                     list = list.child(col().key(child_key.clone()).role("listitem").child(
-                        super::render::render_nested(s, &owner, step, &child_key, &next_ancestors),
+                        super::render::render_nested(
+                            s,
+                            &owner,
+                            step,
+                            &child_key,
+                            &next_ancestors,
+                            budget,
+                        ),
                     ));
                 }
                 list
@@ -576,16 +626,71 @@ pub(super) fn body(
             }
             list = list.child(row);
         }
-        if step_count > STEP_LIMIT
-            || child_id.is_some_and(|id| s.transcript_display.children.steps_truncated(id))
-        {
-            list = list.child(
+        let legacy_truncated = child_steps.is_empty() && legacy.len() > STEP_LIMIT;
+        if step_count > STEP_LIMIT || live_truncated || budget_truncated {
+            let notice = if child_steps.is_empty() && live_truncated {
+                text(t("toolCall.output.tooLarge")).role("status")
+            } else {
+                let shown_limit = if budget_truncated {
+                    rendered_live
+                } else if live_truncated && child_steps.len() < STEP_LIMIT {
+                    child_steps.len()
+                } else {
+                    STEP_LIMIT
+                };
                 text(catalogue::format(
                     locale(),
                     "toolCall.task.steps.truncated",
-                    &[("count", &STEP_LIMIT.to_string())],
+                    &[("count", &shown_limit.to_string())],
                 ))
-                .role("status"),
+                .role("status")
+            };
+            list = list.child(notice);
+        }
+        if live_incomplete && let Some(cid) = child_id {
+            let copy_id = format!("copy-{key}-steps");
+            let copy_target = CopyKey::Steps {
+                key: copy_id.clone(),
+                parent: parent.map(str::to_owned),
+                child: cid.to_owned(),
+            };
+            let action_target = copy_target.clone();
+            let mut row = layout::action_row().child(
+                markdown::copy_button(
+                    t("toolCall.io.copyOutputAriaLabel"),
+                    screen::action_tx(&s.input_scope, move |s, tx| {
+                        if let Some(ready) = s
+                            .transcript_display
+                            .children
+                            .take_ready_copy(&action_target)
+                        {
+                            tx.copy(ready);
+                        } else if let CopyKey::Steps { key, parent, child } = &action_target {
+                            Children::copy_steps(s, key.clone(), parent.clone(), child.clone());
+                        }
+                    }),
+                )
+                .key(copy_id),
+            );
+            if s.transcript_display.children.copy_failed(&copy_target) {
+                row = row.child(text(t("sessionList.loadError.retry")).role("status"));
+            } else if s.transcript_display.children.copy_ready(&copy_target) {
+                row = row.child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
+            }
+            list = list.child(row);
+        } else if legacy_truncated {
+            let legacy_entries = legacy.to_vec();
+            list = list.child(
+                markdown::copy_button(
+                    t("toolCall.io.copyOutputAriaLabel"),
+                    screen::action_tx(&s.input_scope, move |s, tx| {
+                        s.transcript_display.children.cancel_copy();
+                        if let Ok(json) = serde_json::to_string_pretty(&legacy_entries) {
+                            tx.copy(json);
+                        }
+                    }),
+                )
+                .key(format!("copy-{key}-steps")),
             );
         }
         let scroll_detached = detached.clone();
@@ -612,7 +717,7 @@ pub(super) fn observe(s: &State, key: &str, parent: Option<&str>, tool: &Tool, c
     let Some(id) = watched_child(tool) else {
         return card;
     };
-    let lease = s.transcript_display.children.lease(id, key);
+    let lease = s.transcript_display.children.lease(parent, id, key);
     let drawn = Rc::new(DrawnRect::new([0.0; 4]));
     let clip = s.transcript_display.tool_clock.current_clip();
     let (id, parent, key, scope) = (
@@ -646,8 +751,8 @@ pub(super) fn observe(s: &State, key: &str, parent: Option<&str>, tool: &Tool, c
                             .rect_in_view(rect, bounds, &layout_clip);
                     Children::demand(
                         s,
-                        &layout_id,
                         layout_parent.as_deref(),
+                        &layout_id,
                         &layout_key,
                         &layout_lease,
                         in_view,
@@ -667,7 +772,7 @@ pub(super) fn observe(s: &State, key: &str, parent: Option<&str>, tool: &Tool, c
                             s.tool_diff_preferences.history_bounds.get(),
                             &visible_clip,
                         ));
-                Children::demand(s, &id, parent.as_deref(), &key, &lease, effective);
+                Children::demand(s, parent.as_deref(), &id, &key, &lease, effective);
             }
             tx.live_only();
         })
