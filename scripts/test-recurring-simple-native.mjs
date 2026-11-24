@@ -434,6 +434,7 @@ try {
   }
   hold = false; for (const release of releases) release()
   await closeBackend().catch(error => { evidence.backendCleanupError = error.message })
+  await managerRelay?.close().catch(() => {}); managerRelay = undefined; managerEndpoint = undefined
   await attestedFetch?.close().catch(() => {})
   if (child && child.exitCode === null && child.signalCode === null) {
     const pid = await fixtureChildPid(child)

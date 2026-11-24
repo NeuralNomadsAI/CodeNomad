@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 import { createAttestedFetch, resolveWorktreePackage, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -53,9 +53,27 @@ export default Plugin.define({id:"codenomad.provider-registration-qualification"
  });
 });}});
 `)
-const built = await build({ ...nativePluginBuild, entryPoints: [entry], outfile: runtimeFile, nodePaths: [path.resolve("node_modules")], metafile: true })
+const repoRootReal = realpathSync(path.resolve("."))
+const nodeModulesReal = realpathSync(path.resolve("node_modules"))
+const withinDir = (base, target) => {
+  const rel = path.relative(base, target)
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))
+}
+const worktreeOnlyPlugin = {
+  name: "codenomad-worktree-only-resolve",
+  setup(buildApi) {
+    buildApi.onLoad({ filter: /.*/ }, args => {
+      const real = realpathSync(args.path)
+      if (!withinDir(repoRootReal, real) && !withinDir(nodeModulesReal, real)) {
+        throw new Error(`Bundled module escapes worktree root: ${real}`)
+      }
+      return null
+    })
+  },
+}
+const built = await build({ ...nativePluginBuild, entryPoints: [entry], outfile: runtimeFile, nodePaths: [path.resolve("node_modules")], plugins: [...(nativePluginBuild.plugins ?? []), worktreeOnlyPlugin], metafile: true })
 assert(!Object.keys(built.metafile.inputs).some(file => /node_modules[/\\](effect|@opencode[/\\]plugin)[/\\]/.test(file)))
-await build({ ...nativePluginBuild, entryPoints: [path.resolve("packages/server/src/opencode/missions/native-schedule-carrier-provider.ts")], outfile: providerFile })
+await build({ ...nativePluginBuild, entryPoints: [path.resolve("packages/server/src/opencode/missions/native-schedule-carrier-provider.ts")], outfile: providerFile, plugins: [...(nativePluginBuild.plugins ?? []), worktreeOnlyPlugin] })
 writeFileSync(path.join(root, "plugin", "package.json"), JSON.stringify({ name: "codenomad-provider-registration-qualification", type: "module", exports: { ".": "./index.mjs" } }))
 const artifact = file => ({ file, sha256: createHash("sha256").update(readFileSync(file)).digest("hex") })
 const artifacts = { provider: artifact(providerFile), runtime: artifact(runtimeFile) }, requests = []

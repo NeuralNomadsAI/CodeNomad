@@ -5,8 +5,9 @@ import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
-import {activateControl,launchChromium} from './web-chromium.mjs'
+import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation as defaultFulfillWorkspaceCreation} from './web-workspace-policy.mjs'
+import {activateControl,launchChromium,launchOwnedChromium} from './web-chromium.mjs'
+import {createAttestedFetch,verifyLoopbackListenerOwner} from '../native-fixture-http.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
 import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste} from './web-paste.mjs'
@@ -18,7 +19,7 @@ import {checkGitImages, gitImageReadAllowed} from './web-git-images.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},'history-return-only':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, 'target-pid': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},'history-return-only':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -39,13 +40,48 @@ const messages = JSON.parse(await readFile(path.join(root, `crates/rune-theme-co
 const out = path.resolve(root, values.out)
 const relativeOut = path.relative(path.join(root, 'target'), out)
 assert(relativeOut && relativeOut !== '..' && !relativeOut.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeOut), 'Smoke output must stay inside this checkout target directory')
-let privateScope
+let privateScope, ownedBrowser, attestedFetch, browserStorageState, realCookieHeader
 if(values.connected){
   privateScope=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
+  const targetPid=Number(values['target-pid'])
+  assert(Number.isSafeInteger(targetPid)&&targetPid>0,'Connected web smoke requires --target-pid <owned server PID>')
+  await verifyLoopbackListenerOwner(Number(url.port),targetPid)
+  const rawStorage=JSON.parse(await readFile(values['storage-state'],'utf8'))
+  realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
+  if(url.protocol==='http:'){
+    browserStorageState={
+      ...rawStorage,
+      cookies:(rawStorage?.cookies??[]).map(c=>({...c,value:'fixture-relay-placeholder'})),
+    }
+    attestedFetch=createAttestedFetch(url.origin,Number(url.port),targetPid)
+  }else{
+    browserStorageState=rawStorage
+  }
+}
+const fulfillWorkspaceCreation=async(route,policy)=>{
+  if(!attestedFetch)return defaultFulfillWorkspaceCreation(route,policy)
+  const req=route.request()
+  const headers={...(await req.allHeaders())}
+  delete headers['host'];delete headers['content-length']
+  if(realCookieHeader)headers['cookie']=realCookieHeader
+  const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
+  const bytes=Buffer.from(await res.arrayBuffer())
+  assert(bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
+  if(res.ok)policy.admit(req.postDataJSON(),JSON.parse(bytes.toString('utf8')),req.url())
+  const outHeaders=Object.fromEntries(res.headers.entries())
+  await route.fulfill({status:res.status,headers:outHeaders,body:bytes})
+  return {status:res.status,admitted:res.ok}
 }
 await mkdir(out, {recursive: true})
 if(privateScope)assert(privateScope.inside(privateScope.profile,await realpath(out)),'Output link escapes fixture')
-const browser = await launchChromium(values.executable)
+let browser
+if(values.connected&&url.protocol==='http:'){
+  const targetPid=Number(values['target-pid'])
+  ownedBrowser=await launchOwnedChromium({executablePath:values.executable,profile:privateScope.profile,env:process.env,origin:url.origin,targetPid,injectCookie:realCookieHeader})
+  browser=ownedBrowser.browser
+}else{
+  browser=await launchChromium(values.executable)
+}
 const records = []
 const imagePage = await browser.newPage()
 const palette = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/theme.json'), 'utf8'))
@@ -65,7 +101,7 @@ try {
     for (const colorScheme of control||searchOnly?['light']:['light','dark']) {
       const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch, colorScheme,
         ...(values.mobile?{...android,ignoreHTTPSErrors:true,...(control?{deviceScaleFactor:1}:{})}:{}),
-        ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
+        ...(values['storage-state'] ? {storageState: browserStorageState ?? values['storage-state']} : {})})
       const touches = touch ? [] : undefined
       const flushTouches = touch ? await recordTouches(context, touches) : async () => {}
       const page = await context.newPage()
@@ -142,6 +178,16 @@ try {
           await beforeLinked
         }
         if(holdRecall&&req.method()==='GET'&&p.startsWith('/api/storage/instances/')){
+          if(typeof attestedFetch!=='undefined'&&attestedFetch){
+            const headers={...(await req.allHeaders())}
+            delete headers['host'];delete headers['content-length']
+            if(realCookieHeader)headers['cookie']=realCookieHeader
+            const res=await attestedFetch(req.url(),{method:req.method(),headers,signal:AbortSignal.timeout(15000)})
+            const bytes=Buffer.from(await res.arrayBuffer())
+            markRecall(res.status)
+            await recallGate
+            return route.fulfill({status:res.status,headers:Object.fromEntries(res.headers.entries()),body:bytes})
+          }
           const response = await route.fetch({maxRedirects:0})
           markRecall(response.status())
           await recallGate
@@ -740,7 +786,9 @@ try {
     }
   }
 } finally {
-  await browser.close()
+  await attestedFetch?.close().catch(() => {})
+  if (ownedBrowser) await ownedBrowser.close()
+  else await browser.close()
   await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
     scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
 }

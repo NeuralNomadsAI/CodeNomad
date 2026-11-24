@@ -40,6 +40,7 @@ impl Process {
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         self.wait_for(0)
     }
+    #[cfg(test)]
     pub fn wait(&mut self) -> io::Result<Option<ExitStatus>> {
         self.wait_for(INFINITE)
     }

@@ -212,6 +212,9 @@ export async function stopFixtureChild(child, stopped, graceMs = 1_000, forceMs 
       }
     }
   }
+  if (isJob && child.exitCode === 86) {
+    throw new Error(`Fixture supervisor ${child.pid} reported incomplete child tree termination`)
+  }
   if (handleError) throw handleError
   if (treeError) throw treeError
 }

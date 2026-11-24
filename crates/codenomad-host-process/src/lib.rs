@@ -152,13 +152,19 @@ impl OwnedProcess {
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         #[cfg(unix)]
         return match self.child.as_mut() {
-            Some(child) => child.try_wait(),
+            Some(child) => {
+                let status = child.try_wait()?;
+                if status.is_some() {
+                    self.family.mark_leader_reaped();
+                }
+                Ok(status)
+            }
             None => Ok(None),
         };
         #[cfg(windows)]
         return self.child.try_wait();
     }
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     pub fn track_subreaper(&mut self) {
         self.family.track_subreaper();
     }

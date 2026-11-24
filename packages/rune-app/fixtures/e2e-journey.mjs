@@ -10,7 +10,7 @@ import {journeyBrowser} from './journey-browser.mjs'
 import {withJourneyHost,assertPrivateChild,credentialVariable} from './journey-host.mjs'
 import {fixtureSystemEnvironment} from './private-profile.mjs'
 import {launchFixture} from './fixture-host.mjs'
-import {createAttestedRelay,redactSecrets} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedRelay,redactSecrets,RELAY_PLACEHOLDER_PASSWORD} from '../../../scripts/native-fixture-http.mjs'
 
 const {values}=parseArgs({options:{opencode:{type:'string'},mode:{type:'string',default:'both'}}})
 assert(values.opencode&&path.isAbsolute(values.opencode),'Pass --opencode <absolute executable>; the shared service is forbidden')
@@ -41,13 +41,13 @@ async function journeyDesktop({origin,rustPid,password,project,profile,env},repo
   requireTestSupport(clientBinary,{probe,env:assertPrivateChild(env),cwd:profile,output:profile})
   const state=path.join(profile,'rune-state')
   const session=path.join(profile,'session.txt')
-  const rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true})
+  const rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true,substitutePassword:password,isolateSessionCookie:true})
   try{
   for(const phase of ['start','reopen']){
     const child=launchFixture(clientBinary,[probe],{cwd:profile,redact:[password],env:assertPrivateChild({
-      ...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:password,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'en',
+      ...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'en',
       RUNE_STATE_DIR:state,RUNE_JOURNEY_OUTPUT:report.output,RUNE_JOURNEY_PHASE:phase,RUNE_JOURNEY_SESSION_FILE:session,
-    },{RUNE_PASSWORD:password})})
+    },{RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD})})
     rustRelay.allowClientPid(child.pid(),child.closed)
     let windowClosed=false,result
     try{

@@ -25,7 +25,7 @@ const server=launchFixture(serverBinary,
   [path.dirname(manifest.project),path.join(manifest.profile,'real-backend.json'),'0','existing-opencode'],
   {cwd:manifest.profile,env,shutdown:'shutdown\n',redact:[native.password,rustPassword]})
 native.allowRelayClient(server.pid(),server.closed)
-let child,proxy,clientGate,observer,stream,watchTask,proxyError=null,rustFetch,rustAgent
+let child,proxy,clientGate,observer,stream,watchTask,proxyError=null,rustFetch,rustAgent,relaySessionCookie=null
 let result=1
 try{
   const origin=await server.ready(rustOrigin)
@@ -96,7 +96,25 @@ try{
         const headers={...req.headers,host:target.host,'content-length':String(body.length)}
         delete headers['transfer-encoding']
         const up=request(target,{agent:rustAgent,method:req.method,headers},response=>{
-          res.writeHead(response.statusCode,response.headers)
+          const outHeaders={...response.headers}
+          const rawSetCookie=outHeaders['set-cookie']
+          if(rawSetCookie){
+            const list=Array.isArray(rawSetCookie)?rawSetCookie:[rawSetCookie]
+            const pairs=[],masked=[]
+            for(const item of list){
+              const [pair,...attrs]=item.split(';')
+              const eq=pair.indexOf('=')
+              if(eq>0){
+                pairs.push(pair.trim())
+                masked.push([`${pair.slice(0,eq).trim()}=fixture-relay-placeholder`,...attrs].join(';'))
+              }
+            }
+            if(pairs.length){
+              relaySessionCookie=pairs.join('; ')
+              outHeaders['set-cookie']=masked
+            }
+          }
+          res.writeHead(response.statusCode,outHeaders)
           response.on('close',()=>{if(!response.complete)res.destroy()})
           response.on('error',()=>res.destroy())
           response.pipe(res)
@@ -105,7 +123,9 @@ try{
         up.end(body)
         return
       }
-      const up=request(target,{agent:rustAgent,method:req.method,headers:{...req.headers,host:target.host}},async response=>{
+      const forwardHeaders={...req.headers,host:target.host}
+      if(relaySessionCookie)forwardHeaders.cookie=relaySessionCookie
+      const up=request(target,{agent:rustAgent,method:req.method,headers:forwardHeaders},async response=>{
         res.writeHead(response.statusCode,response.headers)
         if(target.pathname!=='/api/events'){
           response.on('close',()=>{if(!response.complete)res.destroy()})

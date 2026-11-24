@@ -594,7 +594,11 @@ export function createAttestedHttpAgent(port,pid,verifyOwner=verifyLoopbackListe
   return agent
 }
 
-export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionPeer,options={}){
+function isLoopbackIpv4Address(addr){
+  return addr==='127.0.0.1'||addr==='::ffff:127.0.0.1'
+}
+
+export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionPeer,options={}) {
   const {allowDescendants=false}=options
   const allowedEntries=new Map()
   const pendingPids=new Set()
@@ -604,7 +608,7 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
   let sweepTimer=null,sweeping=false
   const isAllowed=pid=>{
     const entry=allowedEntries.get(pid)
-    return Boolean(entry&&entry.tokens.size>0&&pidAlive(pid))
+    return Boolean(entry&&entry.tokens.size>0&&entry.startId&&pidAlive(pid))
   }
   const hasTrackedSockets=()=>socketsByPid.size>0||descendantEntries.size>0
   const stopSweepIfIdle=()=>{
@@ -637,18 +641,21 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
         try{
           for(const rootPid of [...socketsByPid.keys()]){
             const allowed=allowedEntries.get(rootPid)
-            if(!allowed||allowed.tokens.size===0||!pidAlive(rootPid)){
+            if(!allowed||allowed.tokens.size===0||!allowed.startId||!pidAlive(rootPid)){
               allowedEntries.delete(rootPid);destroyPidSockets(rootPid);continue
             }
-            if(allowed.startId){
-              const info=await processIdentityOf(rootPid).catch(()=>null)
-              if(!info||info.startId!==allowed.startId){
-                allowedEntries.delete(rootPid);destroyPidSockets(rootPid)
-              }
+            const info=await processIdentityOf(rootPid).catch(()=>null)
+            if(!info||info.startId!==allowed.startId){
+              allowedEntries.delete(rootPid);destroyPidSockets(rootPid)
             }
           }
           for(const [peerPid,entry] of [...descendantEntries.entries()]){
+            const rootAllowed=allowedEntries.get(entry.rootPid)
             if(!isAllowed(entry.rootPid)||!pidAlive(peerPid)){destroyDescendant(peerPid);continue}
+            const rootInfo=await processIdentityOf(entry.rootPid).catch(()=>null)
+            if(!rootInfo||rootInfo.startId!==rootAllowed.startId){
+              allowedEntries.delete(entry.rootPid);destroyPidSockets(entry.rootPid);continue
+            }
             const currentStart=await isPidInOwnedTree(peerPid,entry.rootPid).catch(()=>null)
             if(!currentStart||currentStart!==entry.startId)destroyDescendant(peerPid)
           }
@@ -699,15 +706,14 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
     const task=Promise.resolve(pidOrPromise).then(async resolved=>{
       if(revoked||!Number.isSafeInteger(resolved)||resolved<=0)return
       const info=await processIdentityOf(resolved).catch(()=>null)
-      if(revoked||!pidAlive(resolved))return
+      if(revoked||!info?.startId||!pidAlive(resolved))return
       resolvedPid=resolved
       let entry=allowedEntries.get(resolved)
-      if(entry&&info?.startId&&entry.startId&&entry.startId!==info.startId){
+      if(entry&&entry.startId!==info.startId){
         destroyPidSockets(resolved)
         entry=null
       }
-      if(!entry){entry={tokens:new Set(),startId:info?.startId??null};allowedEntries.set(resolved,entry)}
-      else if(!entry.startId&&info?.startId){entry.startId=info.startId}
+      if(!entry){entry={tokens:new Set(),startId:info.startId};allowedEntries.set(resolved,entry)}
       entry.tokens.add(token)
     },()=>{})
     pendingPids.add(task)
@@ -717,10 +723,11 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
   }
   const verify=async socket=>{
     if(socket.destroyed)return false
+    if(!isLoopbackIpv4Address(socket.localAddress)||!isLoopbackIpv4Address(socket.remoteAddress))return false
     const known=attestedSockets.get(socket)
     if(known!==undefined){
       const rootEntry=allowedEntries.get(known.rootPid)
-      const rootValid=Boolean(rootEntry&&rootEntry.tokens.size>0&&pidAlive(known.rootPid)&&(!known.rootStartId||rootEntry.startId===known.rootStartId))
+      const rootValid=Boolean(rootEntry&&rootEntry.tokens.size>0&&rootEntry.startId&&pidAlive(known.rootPid)&&rootEntry.startId===known.rootStartId)
       const descValid=!allowDescendants||known.peerPid===known.rootPid
         ||descendantEntries.get(known.peerPid)?.startId===known.startId
       if(rootValid&&pidAlive(known.peerPid)&&descValid)return true
@@ -742,10 +749,15 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
         if(peerPid&&pidAlive(peerPid)){
           for(const rootPid of candidates){
             const rootEntry=allowedEntries.get(rootPid)
+            if(!rootEntry?.startId)continue
+            const rootInfo=await processIdentityOf(rootPid).catch(()=>null)
+            if(!rootInfo||rootInfo.startId!==rootEntry.startId){
+              allowedEntries.delete(rootPid);destroyPidSockets(rootPid);continue
+            }
             const startId=await isPidInOwnedTree(peerPid,rootPid)
             if(startId&&isAllowed(rootPid)&&!socket.destroyed){
-              if(peerPid===rootPid&&rootEntry?.startId&&rootEntry.startId!==startId)continue
-              attestedSockets.set(socket,{rootPid,rootStartId:rootEntry?.startId??null,peerPid,startId})
+              if(peerPid===rootPid&&rootEntry.startId!==startId)continue
+              attestedSockets.set(socket,{rootPid,rootStartId:rootEntry.startId,peerPid,startId})
               trackSocket(rootPid,peerPid,startId,socket)
               return true
             }
@@ -757,14 +769,13 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
             verifyPeer(localPort,remotePort,clientPid).then(()=>clientPid)))
           if(socket.destroyed||!isAllowed(matchedPid))return false
           const rootEntry=allowedEntries.get(matchedPid)
-          if(rootEntry?.startId){
-            const info=await processIdentityOf(matchedPid).catch(()=>null)
-            if(!info||info.startId!==rootEntry.startId){
-              allowedEntries.delete(matchedPid);destroyPidSockets(matchedPid);return false
-            }
+          if(!rootEntry?.startId)return false
+          const info=await processIdentityOf(matchedPid).catch(()=>null)
+          if(!info||info.startId!==rootEntry.startId){
+            allowedEntries.delete(matchedPid);destroyPidSockets(matchedPid);return false
           }
-          attestedSockets.set(socket,{rootPid:matchedPid,rootStartId:rootEntry?.startId??null,peerPid:matchedPid,startId:rootEntry?.startId??null})
-          trackSocket(matchedPid,matchedPid,rootEntry?.startId??null,socket)
+          attestedSockets.set(socket,{rootPid:matchedPid,rootStartId:rootEntry.startId,peerPid:matchedPid,startId:rootEntry.startId})
+          trackSocket(matchedPid,matchedPid,rootEntry.startId,socket)
           return true
         }catch{}
       }
@@ -847,11 +858,12 @@ export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verif
 
 export async function createAttestedRelay(targetOrigin,pid,options){
   const opts=typeof options==='function'?{onRequest:options}:(options??{})
-  const {onRequest,expectAuthorization,injectAuthorization,requireClientAttestation=false}=opts
+  const {onRequest,expectAuthorization,injectAuthorization,requireClientAttestation=false,substitutePassword,isolateSessionCookie=false}=opts
   const base=new URL(targetOrigin)
   assert(base.protocol==='http:'&&base.hostname==='127.0.0.1'&&base.port,'Expected a loopback HTTP target for attested relay')
   const agent=createAttestedHttpAgent(Number(base.port),pid)
   let relayPort=0
+  let relaySessionCookie=null
   const clientGate=createClientPidGate(()=>relayPort)
   const server=createServer(async(req,res)=>{
     const url=relayTarget(req,res,base.origin)
@@ -874,18 +886,59 @@ export async function createAttestedRelay(targetOrigin,pid,options){
     if(onRequest&&onRequest(req,res,url)===false)return
     const headers={...req.headers,host:url.host}
     if(injectAuthorization)headers.authorization=injectAuthorization
-    const upstream=httpRequest(url,{agent,method:req.method,headers},response=>{
+    if(isolateSessionCookie&&relaySessionCookie)headers.cookie=relaySessionCookie
+    const handleResponse=response=>{
       if(response.statusCode>=300&&response.statusCode<400){
         response.destroy()
         if(!res.headersSent)res.writeHead(502)
         res.end('Upstream redirect forbidden in attested relay')
         return
       }
-      res.writeHead(response.statusCode,response.headers)
+      const outHeaders={...response.headers}
+      if(isolateSessionCookie&&outHeaders['set-cookie']){
+        const list=Array.isArray(outHeaders['set-cookie'])?outHeaders['set-cookie']:[outHeaders['set-cookie']]
+        const pairs=[],masked=[]
+        for(const item of list){
+          const [pair,...attrs]=item.split(';')
+          const eq=pair.indexOf('=')
+          if(eq>0){
+            pairs.push(pair.trim())
+            masked.push([`${pair.slice(0,eq).trim()}=fixture-relay-placeholder`,...attrs].join(';'))
+          }
+        }
+        if(pairs.length){
+          relaySessionCookie=pairs.join('; ')
+          outHeaders['set-cookie']=masked
+        }
+      }
+      res.writeHead(response.statusCode,outHeaders)
       response.on('close',()=>{if(!response.complete)res.destroy()})
       response.on('error',()=>res.destroy())
       response.pipe(res)
-    })
+    }
+    if(substitutePassword&&req.method==='POST'&&url.pathname==='/api/auth/login'){
+      try{
+        const chunks=[];let total=0
+        req.resume()
+        for await(const chunk of req){total+=chunk.length;if(total>=65536){res.writeHead(413);res.end();return}chunks.push(chunk)}
+        const payload=JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        if(payload?.password===RELAY_PLACEHOLDER_PASSWORD)payload.password=substitutePassword
+        const body=Buffer.from(JSON.stringify(payload))
+        headers['content-length']=String(body.length)
+        delete headers['transfer-encoding']
+        const upstream=httpRequest(url,{agent,method:req.method,headers},handleResponse)
+        upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end()})
+        req.on('aborted',()=>upstream.destroy())
+        res.on('close',()=>upstream.destroy())
+        upstream.end(body)
+        return
+      }catch{
+        if(!res.headersSent)res.writeHead(400)
+        res.end()
+        return
+      }
+    }
+    const upstream=httpRequest(url,{agent,method:req.method,headers},handleResponse)
     upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end()})
     req.on('aborted',()=>upstream.destroy())
     res.on('close',()=>upstream.destroy())

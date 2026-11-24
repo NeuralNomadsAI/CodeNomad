@@ -18,7 +18,7 @@ export async function guardJourney(context,{origin,project,web,refused,attestedF
     const headers={...(await req.allHeaders())}
     delete headers['host']
     delete headers['content-length']
-    if(cookieHeader&&!headers['cookie'])headers['cookie']=cookieHeader
+    if(cookieHeader)headers['cookie']=cookieHeader
     const abort=new AbortController()
     const timer=setTimeout(()=>abort.abort(Error('Owned fixture fetch timed out')),timeout)
     try{

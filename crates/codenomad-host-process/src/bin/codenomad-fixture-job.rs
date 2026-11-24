@@ -204,7 +204,9 @@ fn run() -> io::Result<i32> {
     #[cfg(target_os = "linux")]
     unsafe {
         // Adopt orphaned grandchildren so waitpid reaps them and family_is_empty observes clean exit.
-        let _ = libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0);
+        if libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0 {
+            return Err(io::Error::last_os_error());
+        }
     }
     #[cfg(unix)]
     install_signal_handlers();
@@ -318,7 +320,7 @@ fn run() -> io::Result<i32> {
             report_pid(pid, pid_file.as_ref());
         })?
     };
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     child.track_subreaper();
     let pause = Duration::from_millis(10);
     let status = loop {
@@ -351,10 +353,8 @@ fn run() -> io::Result<i32> {
                 sleep(pause);
             }
         }
-        if !child.family_is_empty()? {
-            child.terminate()?;
-        }
         while !child.family_is_empty()? {
+            let _ = child.terminate();
             let _ = child.try_wait();
             #[cfg(unix)]
             reap_children();
@@ -363,7 +363,8 @@ fn run() -> io::Result<i32> {
             }
             if Instant::now() >= total_deadline {
                 std::mem::forget(child);
-                return Err(io::Error::other("Fixture job did not finish terminating"));
+                eprintln!("Fixture job: did not finish terminating");
+                return Ok(86);
             }
             sleep(pause);
         }

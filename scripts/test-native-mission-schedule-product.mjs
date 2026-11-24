@@ -519,7 +519,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
          reported: id => calls.some(call => call.sessionID === id && call.reportStreamed), secret: value => secrets.add(value), hold: enabled => { holdBusiness = enabled; if (!enabled) { for (const release of releases) release(); releases.clear() } },
         business: doc => missionDocumentPassage(readOnlyStorage, doc, () => true).journal.snapshot(),
         nativeFlag: async enabled => {
-          const response = await fetch(`${baseURL}/fixture/native-schedules`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ enabled }), signal: AbortSignal.timeout(15000) })
+          const response = await appFetch(`${baseURL}/fixture/native-schedules`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ enabled }), signal: AbortSignal.timeout(15000) })
           assert.equal(response.status, 200, "Owned fixture config API failed")
           await until(async () => experimentalEditor.effectiveMissionExperimental(await client.config.get({ location: { directory: project } })).automations === enabled)
         } })
@@ -530,7 +530,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     if (values["convert-preparation"]) {
       const deletedID = await create("delete", { kind: "in", delayMs })
       assert.equal((await control(deletedID, "delete")).deleted, true)
-      const response = await fetch(`${baseURL}/api/workspaces/${workspace.id}/missions`, { headers: { cookie }, signal: AbortSignal.timeout(15000) })
+      const response = await appFetch(`${baseURL}/api/workspaces/${workspace.id}/missions`, { headers: { cookie }, signal: AbortSignal.timeout(15000) })
       assert.equal(response.status, 200)
       const panel = await response.json()
       assert(!panel.missions.some(mission => mission.id === deletedID) && !panel.summaries.some(mission => mission.id === deletedID))

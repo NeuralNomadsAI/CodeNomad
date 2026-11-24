@@ -319,7 +319,7 @@ test("Windows fixture job --inherit-console runs child in Job Object and cleans 
 })
 
 test("gated fixture child never spawns on abortGate and runs after releaseGate", async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "codenomad-gate-"))
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codenomad-gate-"))
   const marker = path.join(dir, "spawned.txt")
   try {
     const aborted = spawnFixtureChild(process.execPath, ["-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "bad")`], {
@@ -329,18 +329,18 @@ test("gated fixture child never spawns on abortGate and runs after releaseGate",
     aborted.abortGate()
     const [abortedCode] = await abortedClosed
     assert.notEqual(abortedCode, 0)
-    assert.equal(existsSync(marker), false, "aborted gate must never spawn the child")
+    assert.equal(fs.existsSync(marker), false, "aborted gate must never spawn the child")
     const released = spawnFixtureChild(process.execPath, ["-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ok")`], {
       gate: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
     })
     const releasedClosed = once(released, "close")
     await new Promise(resolve => setTimeout(resolve, 150))
-    assert.equal(existsSync(marker), false, "child must stay held before releaseGate")
+    assert.equal(fs.existsSync(marker), false, "child must stay held before releaseGate")
     released.releaseGate()
     const [releasedCode] = await releasedClosed
     assert.equal(releasedCode, 0)
-    assert.equal(existsSync(marker), true, "child must run after releaseGate")
+    assert.equal(fs.existsSync(marker), true, "child must run after releaseGate")
   } finally {
-    await rm(dir, { recursive: true, force: true })
+    await fs.promises.rm(dir, { recursive: true, force: true })
   }
 })

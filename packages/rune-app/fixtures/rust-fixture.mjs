@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {execFileSync} from 'node:child_process'
-import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
+import {fixtureChildPid,spawnFixtureChild as spawn,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {createAttestedFetch,createAttestedRelay,RELAY_PLACEHOLDER_PASSWORD,verifyLoopbackListenerOwner} from '../../../scripts/native-fixture-http.mjs'
 import {mkdir, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {createHash,randomUUID} from 'node:crypto'
@@ -162,36 +163,42 @@ Object.assign(env,{CNRS_SERVER_PASSWORD:backendPassword,CNRS_FIXTURE_URL:`http:/
   CODENOMAD_REMOTE_CONTROL:'disabled',RUST_BACKTRACE:'1'})
 const server=spawn(serverBinary,
   [path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-let log='';server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)
-let child
+const serverClosed=new Promise(r=>server.once('close',r))
+let log='',stdoutLog='';server.stdout.on('data',d=>{stdoutLog+=d;log+=d});server.stderr.on('data',d=>log+=d)
+let child,childClosed,rustFetch,rustRelay
 let result=1
 try {
   let origin
   for(const end=Date.now()+20000;!origin;){
     assert(Date.now()<end && server.exitCode===null,`Rust startup: ${log}`)
-    origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,100))
+    origin=stdoutLog.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,100))
   }
-  const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:backendPassword})})
+  const serverPid=await fixtureChildPid(server)
+  assert(Number.isSafeInteger(serverPid)&&serverPid>0,'Owned fixture server PID unavailable')
+  const serverPort=Number(new URL(origin).port)
+  await verifyLoopbackListenerOwner(serverPort,serverPid)
+  rustFetch=createAttestedFetch(origin,serverPort,serverPid)
+  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:backendPassword}),signal:AbortSignal.timeout(15000)})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
-  const opened=await fetch(`${origin}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({path:project})})
+  const opened=await rustFetch(`${origin}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({path:project}),signal:AbortSignal.timeout(15000)})
   const workspace=await opened.json();assert.equal(opened.status,201,JSON.stringify(workspace))
   const rootInstance = `${origin}/api/storage/instances/${workspace.id}`
   const instance = `${origin}/api/storage/instances/${encodeURIComponent(directory)}`
   const agentModelSelections = { build: { providerId: 'fixture', modelId: 'fixture' } }
   const prior = Array.from({length:100}, (_, i) => `older ${i}`)
   if(history) {
-    const seed = await fetch(instance, {method:'PUT', headers:{'content-type':'application/json',cookie}, body:JSON.stringify({messageHistory:prior,agentModelSelections})})
+    const seed = await rustFetch(instance, {method:'PUT', headers:{'content-type':'application/json',cookie}, body:JSON.stringify({messageHistory:prior,agentModelSelections}),signal:AbortSignal.timeout(15000)})
     assert.equal(seed.status,204)
     if(linked) {
-      const inventory = await fetch(`${origin}/api/workspaces`, {headers:{cookie}})
+      const inventory = await rustFetch(`${origin}/api/workspaces`, {headers:{cookie},signal:AbortSignal.timeout(15000)})
       assert.deepEqual((await inventory.json()).map(w=>w.id),[workspace.id])
-      const rootData = await fetch(rootInstance,{headers:{cookie}})
+      const rootData = await rustFetch(rootInstance,{headers:{cookie},signal:AbortSignal.timeout(15000)})
       assert.deepEqual(await rootData.json(),{messageHistory:[],agentModelSelections:{}})
       const foreign = path.join(path.dirname(project), 'unregistered')
       await mkdir(foreign)
-      assert.equal((await fetch(`${origin}/api/storage/instances/${encodeURIComponent(foreign)}`, {headers:{cookie}})).status,404)
-      const client = (route, init={}) => fetch(`${origin}${route}`, {...init,headers:{...init.headers,cookie}})
+      assert.equal((await rustFetch(`${origin}/api/storage/instances/${encodeURIComponent(foreign)}`, {headers:{cookie},signal:AbortSignal.timeout(15000)})).status,404)
+      const client = (route, init={}) => rustFetch(`${origin}${route}`, {...init,headers:{...init.headers,cookie},signal:AbortSignal.timeout(15000)})
       const prefix = `/workspaces/${workspace.id}/instance/api`
       const sessionData = await (await client(`${prefix}/session/${session}`)).json()
       assert.equal(sessionData.data?.location?.directory, linked, JSON.stringify(sessionData))
@@ -203,34 +210,33 @@ try {
     }
   }
   for(const end=Date.now()+10000;upstreamStreams.size===0;){assert(Date.now()<end,'Rust event bridge');await new Promise(r=>setTimeout(r,50))}
+  rustRelay=await createAttestedRelay(origin,serverPid,{requireClientAttestation:true,substitutePassword:backendPassword,isolateSessionCookie:true})
   const args=process.argv.slice(2)
   const runeArgs=history?['--probe-slash']:fresh?['--probe-fresh']:args.includes('--window')?args.filter(arg=>arg!=='--window'):args.length?args:['--probe-contract']
   const run = (stage = {}) => {
     child=spawn(clientBinary,runeArgs,{
-      cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
-        RUNE_SESSION:session,RUNE_PASSWORD:backendPassword,RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0',...(linked?{RUNE_HISTORY_WORKTREE:'1'}:{}),...stage},
+      cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_WORKSPACE:workspace.id,
+        RUNE_SESSION:session,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0',...(linked?{RUNE_HISTORY_WORKTREE:'1'}:{}),...stage},
     })
-    return new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+    childClosed=new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+    rustRelay.allowClientPid(fixtureChildPid(child),childClosed)
+    return childClosed
   }
   result=await run(history?{RUNE_PROMPT_HISTORY_STAGE:'write'}:{})
   if(history) {
     assert.equal(result,0)
-    const stored = await fetch(instance, {headers:{cookie}})
+    const stored = await rustFetch(instance, {headers:{cookie},signal:AbortSignal.timeout(15000)})
     assert.equal(stored.status,200)
     assert.deepEqual(await stored.json(), {messageHistory:[historyText, ...prior.slice(0,99)],agentModelSelections})
     if(linked) {
-      const rootData = await fetch(rootInstance,{headers:{cookie}})
+      const rootData = await rustFetch(rootInstance,{headers:{cookie},signal:AbortSignal.timeout(15000)})
       assert.deepEqual(await rootData.json(),{messageHistory:[],agentModelSelections:{}})
     }
     result=await run({RUNE_PROMPT_HISTORY_STAGE:'read'})
     if(linked) assert.equal(requests.filter(request=>request===`POST /api/session/${session}/prompt`).length,1)
   }
   if(attachments&&result===0) {
-    child=spawn(clientBinary,runeArgs,{
-      cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
-        RUNE_SESSION:session,RUNE_PASSWORD:backendPassword,RUNE_LOCALE:'fr',RUNE_ATTACHMENT_STAGE:'reopen'},
-    })
-    result=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+    result=await run({RUNE_ATTACHMENT_STAGE:'reopen'})
   }
   if(slash) {
     assert(!requests.includes(`POST /api/session/${session}/prompt`),'command must never fall back to a native prompt')
@@ -245,10 +251,11 @@ try {
   assert.equal(result,0,'Rune client exit')
   console.log(JSON.stringify({fixture:'real-rust-server-synthetic-opencode',exitCode:result,requests},null,2))
 } finally {
-  if(child?.exitCode===null)child.kill()
-  server.stdin.write('shutdown\n')
-  await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,5000))])
-  if(server.exitCode===null)server.kill()
+  if(child&&child.exitCode===null&&child.signalCode===null)await stopFixtureChild(child,childClosed).catch(()=>{})
+  await rustRelay?.close().catch(()=>{})
+  await rustFetch?.close().catch(()=>{})
+  try{server.stdin.write('shutdown\n')}catch{}
+  if(server.exitCode===null&&server.signalCode===null)await stopFixtureChild(server,serverClosed,5000).catch(()=>{})
   for(const stream of upstreamStreams)stream.end()
   upstream.closeAllConnections();upstream.close()
   await writeFile(path.join(profile,'server.log'),log)

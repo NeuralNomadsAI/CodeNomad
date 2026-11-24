@@ -462,7 +462,8 @@ try{
   const origin=await startServer()
   if(web){
     await signIn(origin)
-    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog:host.stdout(),http,mobile,restart:restartWeb,
+    const serverPid=await host.pid()
+    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,serverPid,runLog:host.stdout(),http,mobile,restart:restartWeb,
       webMobile,webAndroid,mobileSessionSearch,historyReturnOnly,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
     client=webState.client
   }else if(pendingOpen){

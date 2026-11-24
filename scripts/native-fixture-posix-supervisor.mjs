@@ -49,46 +49,85 @@ const psBin = ["/bin/ps", "/usr/bin/ps"].find(candidate => existsSync(candidate)
 const child = spawn(command, args, { detached: !sameGroup, stdio: [gateStdin ? "ignore" : "inherit", "inherit", "inherit"], env: childEnv })
 let terminating = false
 let childExited = false
+const knownDescendants = new Map()
+let childStartId = null
 
-function familyPeers() {
-  const peers = new Set()
-  let psOk = false
-  if (!childExited && child.pid) {
-    try { process.kill(child.pid, 0); peers.add(child.pid) } catch (error) { if (error.code === "EPERM") peers.add(child.pid) }
-  }
-  if (!psBin) return { peers: [...peers], psOk: false }
+function parsePsRows() {
+  if (!psBin) return null
   try {
-    const out = execFileSync(psBin, ["-ax", "-o", "pid=,pgid=,ppid=,comm="], { encoding: "utf8", timeout: 1000 })
-    psOk = true
-    const byParent = new Map()
-    const seeds = [process.pid]
-    if (child.pid) seeds.push(child.pid)
+    const out = execFileSync(psBin, ["-ax", "-o", "pid=,pgid=,ppid=,lstart=,comm="], { encoding: "utf8", timeout: 1000 })
+    const rows = []
     for (const line of out.split(/\r?\n/)) {
-      const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
+      const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+?)\s*$/.exec(line)
       if (!match) continue
-      const pid = Number(match[1]), pgid = Number(match[2]), ppid = Number(match[3]), comm = match[4]
+      const pid = Number(match[1]), pgid = Number(match[2]), ppid = Number(match[3]), startId = match[4].trim(), comm = match[5]
       if (ppid === process.pid && /(?:^|\/)ps$/.test(comm)) continue
       if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) continue
-      if (!byParent.has(ppid)) byParent.set(ppid, [])
-      byParent.get(ppid).push(pid)
-      if (sameGroup ? pgid === process.pid : pgid === child.pid) seeds.push(pid)
+      rows.push({ pid, pgid, ppid, startId })
     }
-    const visited = new Set()
-    const queue = [...seeds]
-    while (queue.length > 0) {
-      const current = queue.pop()
-      if (visited.has(current)) continue
-      visited.add(current)
-      if (current !== process.pid && (current !== child.pid || !childExited)) peers.add(current)
-      for (const kid of byParent.get(current) ?? []) queue.push(kid)
+    return rows
+  } catch {
+    return null
+  }
+}
+
+function familyPeers() {
+  const peers = new Map()
+  const rows = parsePsRows()
+  const psOk = rows !== null
+  if (!psOk) {
+    if (!childExited && child.pid) {
+      try { process.kill(child.pid, 0); peers.set(child.pid, childStartId ?? "") } catch (error) { if (error.code === "EPERM") peers.set(child.pid, childStartId ?? "") }
     }
-  } catch {}
-  return { peers: [...peers], psOk }
+    return { peers: [...peers.entries()], psOk: false, rootReused: false }
+  }
+  const byPid = new Map()
+  const byParent = new Map()
+  for (const row of rows) {
+    byPid.set(row.pid, row)
+    if (!byParent.has(row.ppid)) byParent.set(row.ppid, [])
+    byParent.get(row.ppid).push(row.pid)
+  }
+  if (!childExited && child.pid && !childStartId && byPid.has(child.pid)) {
+    childStartId = byPid.get(child.pid).startId
+  }
+  const rootRow = child.pid ? byPid.get(child.pid) : null
+  const rootReused = Boolean(rootRow && childStartId && rootRow.startId !== childStartId)
+  const seeds = [process.pid]
+  if (child.pid && !childExited && !rootReused) seeds.push(child.pid)
+  for (const row of rows) {
+    if (sameGroup ? row.pgid === process.pid : (!rootReused && row.pgid === child.pid)) {
+      seeds.push(row.pid)
+    }
+  }
+  for (const [knownPid, knownStart] of [...knownDescendants.entries()]) {
+    const live = byPid.get(knownPid)
+    if (!live || live.startId !== knownStart) {
+      knownDescendants.delete(knownPid)
+    } else {
+      seeds.push(knownPid)
+    }
+  }
+  const visited = new Set()
+  const queue = [...seeds]
+  while (queue.length > 0) {
+    const current = queue.pop()
+    if (visited.has(current)) continue
+    visited.add(current)
+    const row = byPid.get(current)
+    if (row && current !== process.pid && (current !== child.pid || (!childExited && !rootReused))) {
+      peers.set(current, row.startId)
+      knownDescendants.set(current, row.startId)
+    }
+    for (const kid of byParent.get(current) ?? []) queue.push(kid)
+  }
+  return { peers: [...peers.entries()], psOk: true, rootReused }
 }
 
 function signalFamily(signal) {
   if (!child.pid) return
-  for (const pid of familyPeers().peers) {
+  const { peers, rootReused } = familyPeers()
+  for (const [pid] of peers) {
     try { process.kill(pid, signal) } catch {}
   }
   if (sameGroup) {
@@ -97,14 +136,17 @@ function signalFamily(signal) {
     }
     return
   }
-  try { process.kill(-child.pid, signal) } catch {}
+  if (!rootReused) {
+    try { process.kill(-child.pid, signal) } catch {}
+  }
 }
 
 function familyAlive() {
   if (!child.pid) return false
-  const { peers, psOk } = familyPeers()
+  const { peers, psOk, rootReused } = familyPeers()
   if (sameGroup) return !psOk || peers.length > 0
   if (peers.length > 0) return true
+  if (rootReused) return false
   try { process.kill(-child.pid, 0); return true } catch (error) { return error.code === "EPERM" }
 }
 
@@ -125,7 +167,7 @@ function shutdown(code, graceMs = graceBudgetMs) {
     if (Date.now() >= deadline) {
       clearInterval(wait)
       signalFamily("SIGKILL")
-      process.exit(1)
+      process.exit(86)
     }
     if (!escalated && Date.now() >= graceUntil) {
       escalated = true
@@ -176,6 +218,7 @@ for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
 }
 
 const watch = setInterval(() => {
+  if (!terminating) familyPeers()
   if (!parentPid) return
   if (process.ppid !== parentPid) { shutdown(1); return }
   try { process.kill(parentPid, 0) } catch { shutdown(1) }

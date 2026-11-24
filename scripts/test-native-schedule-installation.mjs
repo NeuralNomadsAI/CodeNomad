@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 import { createAttestedFetch, resolveWorktreePackage, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
@@ -62,12 +62,31 @@ export function desktopPlugin(presence,artifacts){return Plugin.define({id:"code
  }).pipe(Effect.scoped)});
 });}})}
 `)
+const repoRootReal = realpathSync(path.resolve("."))
+const nodeModulesReal = realpathSync(path.resolve("node_modules"))
+const withinDir = (base, target) => {
+  const rel = path.relative(base, target)
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))
+}
+const worktreeOnlyPlugin = {
+  name: "codenomad-worktree-only-resolve",
+  setup(buildApi) {
+    buildApi.onLoad({ filter: /.*/ }, args => {
+      const real = realpathSync(args.path)
+      if (!withinDir(repoRootReal, real) && !withinDir(nodeModulesReal, real)) {
+        throw new Error(`Bundled module escapes worktree root: ${real}`)
+      }
+      return null
+    })
+  },
+}
 let child, closed, stopPresence, attestedFetch
 try {
   const built = await build({ ...nativePluginBuild, entryPoints: [entry], outfile: bundleFile,
-    nodePaths: [path.resolve("node_modules")], metafile: true })
+    nodePaths: [path.resolve("node_modules")], plugins: [...(nativePluginBuild.plugins ?? []), worktreeOnlyPlugin], metafile: true })
   assert(!Object.keys(built.metafile.inputs).some(file => /node_modules[/\\](effect|@opencode[/\\]plugin)[/\\]/.test(file)), "host Effect and SDK must remain external")
-  const localProvider = await build({ ...nativePluginBuild, entryPoints: [path.resolve("packages/server/src/opencode/missions/native-schedule-carrier-provider.ts")], outfile: providerFile, metafile: true })
+  const localProvider = await build({ ...nativePluginBuild, entryPoints: [path.resolve("packages/server/src/opencode/missions/native-schedule-carrier-provider.ts")], outfile: providerFile,
+    plugins: [...(nativePluginBuild.plugins ?? []), worktreeOnlyPlugin], metafile: true })
   assert(Object.values(localProvider.metafile.outputs).every(output => output.imports.length === 0), "provider artifact is dependency-free")
   const providerModule = await import(pathToFileURL(providerFile).href)
   assert.throws(() => providerModule.createNativeScheduleCarrierProvider().languageModel(), /schedule-carrier-language-unavailable/)
@@ -136,8 +155,10 @@ try {
   writeFileSync(path.join(root, "evidence.json"), JSON.stringify(evidence, null, 2))
   console.log(JSON.stringify({ completed: true, nativeVersion: info.version, root }))
 } finally {
+  let presenceError
   await attestedFetch?.close().catch(() => {})
-  await stopPresence?.()
+  try { await stopPresence?.() } catch (error) { presenceError = error }
   if (child && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, closed)
   else await closed
+  if (presenceError) throw presenceError
 }

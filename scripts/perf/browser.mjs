@@ -21,12 +21,13 @@ export async function withBrowser(daemon, tree, root, followLongReplies, run) {
         env: { ...daemon.env, ...(socketDir && { TMPDIR: socketDir }) },
         origin: localOrigin,
         targetPid: backendPid,
+        injectCookie: `codenomad_session=${cookie}`,
       })
       context = await owned.browser.newContext({
         viewport: { width: 1440, height: 1440 }, locale: "en-US", serviceWorkers: "block",
       })
       await context.addInitScript({ path: fileURLToPath(new URL("./page-probe.js", import.meta.url)) })
-      await context.addCookies([{ name: "codenomad_session", value: cookie, url }])
+      await context.addCookies([{ name: "codenomad_session", value: "fixture-relay-placeholder", url }])
       const page = context.pages()[0] ?? await context.newPage()
       page.setDefaultTimeout(60_000)
       const failures = []
