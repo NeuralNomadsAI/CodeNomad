@@ -134,6 +134,14 @@ test("parsePluginUsageOutput clears windows on failure and rejects malformed, pr
   assert.equal(unconfigured?.configured, false)
   assert.equal(unconfigured?.ok, false)
   assert.deepEqual(unconfigured?.windows, {})
+  // A window carries at most one display value among consumption, limitUSD and balanceUSD.
+  for (const window of [
+    { consumption: { unlimited: true }, limitUSD: 20 },
+    { limitUSD: 20, balanceUSD: { remaining: 5 } },
+    { consumption: { used: 1 }, balanceUSD: { remaining: 5 } },
+  ]) {
+    assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { pro: window } }, { requestedProviderId: "x", providerId: "x" }), null, JSON.stringify(window))
+  }
   // An unlimited window cannot also declare a percentage.
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { pro: { usedPercent: 100, consumption: { unlimited: true } } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { pro: { remainingPercent: 0, consumption: { unlimited: true } } } }, { requestedProviderId: "x", providerId: "x" }), null)
@@ -225,6 +233,7 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     () => Response.json({ _tag: "RpcInternalError", type: "rpc.invalid_output", message: "secret-token-leak", data: { detail: "secret-token-leak" } }, { status: 500 }),
     () => Response.json({ _tag: "RpcError", type: "rpc.invalid_output", message: "secret-token-leak" }, { status: 400 }),
     () => Response.json({ _tag: "RpcError", type: "quota.failed", message: "" }, { status: 400 }),
+    () => Response.json({ _tag: "RpcError", type: "", message: "Quota is currently unavailable", data: null }, { status: 400 }),
     () => Response.json({ _tag: "RpcError", type: "quota.failed", message: "secret-token-leak" + "x".repeat(17_000) }, { status: 400 }),
   ]) {
     const broken = await readPluginProviderUsage(

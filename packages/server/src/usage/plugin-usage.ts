@@ -70,7 +70,8 @@ const pluginWindowSchema = z.object({
     || Math.abs(toHundredths(item.usedPercent) + toHundredths(item.remainingPercent) - 10_000) <= 5,
 ).refine(item =>
   !(item.consumption && "unlimited" in item.consumption) || (item.usedPercent == null && item.remainingPercent == null),
-)
+// The panel shows one value per window: consumption, limitUSD or balanceUSD.
+).refine(item => [item.consumption, item.limitUSD, item.balanceUSD].filter(value => value !== undefined).length <= 1)
 
 const absentRpcErrorSchema = z.object({
   _tag: z.literal("RpcError"),
@@ -82,7 +83,7 @@ const absentRpcErrorSchema = z.object({
 const PLUGIN_SYSTEM_RPC_ERRORS = new Set(["rpc.invalid_input", "rpc.invalid_output", "rpc.internal"])
 const registeredRpcErrorSchema = z.object({
   _tag: z.literal("RpcError"),
-  type: z.string().min(1).refine(type => !type.startsWith("rpc.") || PLUGIN_SYSTEM_RPC_ERRORS.has(type)),
+  type: z.string().refine(type => !type.startsWith("rpc.") || PLUGIN_SYSTEM_RPC_ERRORS.has(type)),
   message: z.string(),
   data: z.unknown().optional(),
 }).strict()

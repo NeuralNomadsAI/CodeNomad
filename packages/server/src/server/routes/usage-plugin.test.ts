@@ -520,7 +520,7 @@ test("absent plugin RPC falls back to Codex usage when a custom provider alias r
 })
 
 test("a client disconnect during the Codex fallback leaves the shared read to other clients", async t => {
-  const { app, codexBody } = codexAliasApp()
+  const { app, nativeCalls, codexBody } = codexAliasApp()
   let release!: () => void
   const released = new Promise<void>(resolve => { release = resolve })
   let upstream!: () => void
@@ -548,7 +548,12 @@ test("a client disconnect during the Codex fallback leaves the shared read to ot
     first.body.catch(() => {})
     await upstreamStarted
     const second = get()
-    await new Promise(resolve => setTimeout(resolve, 100))
+    // Wait until the second client has selected its credential, i.e. joined the in-flight read.
+    for (let i = 0; i < 400 && nativeCalls.filter(path => path === "/api/credential").length < 2; i++) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    assert.equal(nativeCalls.filter(path => path === "/api/credential").length, 2)
+    await new Promise(resolve => setTimeout(resolve, 20))
     first.request.destroy()
     await new Promise(resolve => setTimeout(resolve, 50))
     release()
