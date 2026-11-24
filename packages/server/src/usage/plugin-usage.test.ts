@@ -94,6 +94,8 @@ test("parsePluginUsageOutput clears windows on failure and rejects malformed, pr
   for (let i = 0; i <= PLUGIN_USAGE_MAX_WINDOWS; i++) tooMany[`w${i}`] = { usedPercent: i }
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: tooMany }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ providerName: "bad\nname", configured: true, ok: true, windows: {} }, { requestedProviderId: "x", providerId: "x" }), null)
+  assert.equal(parsePluginUsageOutput({ providerName: "bad\u0085name", configured: true, ok: true, windows: {} }, { requestedProviderId: "x", providerId: "x" }), null)
+  assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { "weekly:\u0085scope": { usedPercent: 1 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { "5h": { usedPercent: Number.NaN } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { "5h": { unknownProp: 1 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   // Non-canonical window keys (whitespace collisions) and Object.prototype keys (bare or scoped) are rejected.
@@ -103,12 +105,15 @@ test("parsePluginUsageOutput clears windows on failure and rejects malformed, pr
     const raw = JSON.parse(`{"configured":true,"ok":true,"windows":${JSON.stringify({ [key]: { usedPercent: 1 } })}}`)
     assert.equal(parsePluginUsageOutput(raw, { requestedProviderId: "x", providerId: "x" }), null, key)
   }
-  // Out-of-range or contradictory percentages are rejected.
+  // Out-of-range or contradictory percentages are rejected consistently in decimal hundredths.
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 120 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: -1 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 120, remainingPercent: 90 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 40, remainingPercent: 40 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 0.12, remainingPercent: 99.94 } } }, { requestedProviderId: "x", providerId: "x" }), null)
+  assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 1.005, remainingPercent: 99.0549 } } }, { requestedProviderId: "x", providerId: "x" }), null)
+  assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 1.01, remainingPercent: 99.0549 } } }, { requestedProviderId: "x", providerId: "x" }), null)
+  assert.ok(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 1.005, remainingPercent: 99.0449 } } }, { requestedProviderId: "x", providerId: "x" }))
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { credits: { balanceUSD: { remaining: 5, total: -1 } } } }, { requestedProviderId: "x", providerId: "x" }), null)
 })
 
@@ -169,6 +174,7 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
   // Internal/invalid output from a registered plugin reports supported + unavailable without leaking text.
   for (const response of [
     () => Response.json({ _tag: "RpcInternalError", type: "rpc.internal", message: "secret-token-leak" }, { status: 500 }),
+    () => Response.json({ _tag: "RpcInternalError", type: "rpc.invalid_output", message: "secret-token-leak" }, { status: 500 }),
     () => Response.json({ _tag: "RpcError", type: "rpc.invalid_output", message: "secret-token-leak" }, { status: 400 }),
     () => Response.json({ _tag: "RpcError", type: "quota.failed", message: "secret-token-leak" }, { status: 400 }),
   ]) {
@@ -183,18 +189,31 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     assert.equal(JSON.stringify(broken).includes("secret-token-leak"), false)
   }
 
-  // Oversized 200 JSON responses are bounded and fail closed to unavailable.
-  const oversized = await readPluginProviderUsage(
-    makeConnection(async () => new Response(JSON.stringify({ output: { providerName: "x".repeat(PLUGIN_USAGE_MAX_RESPONSE_BYTES + 16), configured: true, ok: true, windows: {} } }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    })),
-    { providerId: "agy-agent", location: { directory: "/repo" } },
-    new AbortController().signal,
-  )
-  assert.ok(oversized)
-  assert.equal(oversized.supported, true)
-  assert.equal(oversized.ok, false)
+  // Oversized 200 JSON responses are bounded and return unavailable immediately even if stream cancel never settles.
+  {
+    let cancelCalled = false
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(PLUGIN_USAGE_MAX_RESPONSE_BYTES + 1))
+      },
+      cancel() {
+        cancelCalled = true
+        return new Promise<void>(() => {})
+      },
+    })
+    const oversized = await readPluginProviderUsage(
+      makeConnection(async () => new Response(stream, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })),
+      { providerId: "agy-agent", location: { directory: "/repo" } },
+      new AbortController().signal,
+    )
+    assert.ok(oversized)
+    assert.equal(oversized.supported, true)
+    assert.equal(oversized.ok, false)
+    assert.equal(cancelCalled, true)
+  }
 
   // Quota deadline abort bounds an RPC whose transport ignores the abort signal and resolves late or never settles.
   {

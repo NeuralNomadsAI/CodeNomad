@@ -9,7 +9,7 @@ export const PLUGIN_USAGE_MAX_WINDOWS = 16
 export const PLUGIN_USAGE_MAX_RESPONSE_BYTES = 256 * 1024
 
 const RPC_PROVIDER_ID = /^[A-Za-z0-9._-]{1,128}$/
-const CONTROL_CHARS = /[\x00-\x1f\x7f]/
+const CONTROL_CHARS = /[\x00-\x1f\x7f-\x9f]/
 const FORBIDDEN_KEYS = new Set([
   "__proto__", "prototype", ...Object.getOwnPropertyNames(Object.prototype),
 ])
@@ -28,7 +28,13 @@ const canonicalWindowKey = z.string().min(1).max(64).refine(value =>
 )
 
 const finite = z.number().refine(Number.isFinite)
-const toHundredths = (value: number) => Math.round(value * 100)
+// Scale in decimal so IEEE-754 multiplication (e.g. 1.005 * 100 = 100.49999999999999)
+// never shifts half-way values across the rounding or complement boundary.
+function toHundredths(value: number): number {
+  const [whole, frac = ""] = value.toFixed(6).split(".")
+  const base = Number(whole) * 100 + Number(frac.slice(0, 2))
+  return Number(frac.slice(2)) >= 5000 ? base + 1 : base
+}
 const roundPercent = (value: number) => toHundredths(value) / 100
 const percent = finite.refine(value => value >= 0 && value <= 100).transform(roundPercent)
 
@@ -146,12 +152,12 @@ function isJsonResponse(response: Response): boolean {
 
 async function readBoundedJson(response: Response, signal: AbortSignal): Promise<{ ok: true; value: unknown } | { ok: false }> {
   if (!isJsonResponse(response)) {
-    await response.body?.cancel().catch(() => {})
+    void response.body?.cancel().catch(() => {})
     return { ok: false }
   }
   const declaredLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(declaredLength) && declaredLength > PLUGIN_USAGE_MAX_RESPONSE_BYTES) {
-    await response.body?.cancel().catch(() => {})
+    void response.body?.cancel().catch(() => {})
     return { ok: false }
   }
   if (!response.body) {
@@ -173,7 +179,7 @@ async function readBoundedJson(response: Response, signal: AbortSignal): Promise
       if (done) break
       total += value.byteLength
       if (total > PLUGIN_USAGE_MAX_RESPONSE_BYTES) {
-        await reader.cancel().catch(() => {})
+        void reader.cancel().catch(() => {})
         return { ok: false }
       }
       chunks.push(value)
@@ -220,7 +226,7 @@ export async function readPluginProviderUsage(
     const response = await awaitBounded(pending, quotaSignal)
     signal.throwIfAborted()
     if (quotaSignal.aborted) {
-      await response.body?.cancel().catch(() => {})
+      void response.body?.cancel().catch(() => {})
       return unavailable(target.providerId, target.modelId)
     }
 
@@ -266,7 +272,7 @@ export async function readPluginProviderUsage(
       throw new Error("Plugin usage daemon error")
     }
 
-    await response.body?.cancel().catch(() => {})
+    void response.body?.cancel().catch(() => {})
     throw new Error("Plugin usage unexpected status")
   } catch (error) {
     signal.throwIfAborted()

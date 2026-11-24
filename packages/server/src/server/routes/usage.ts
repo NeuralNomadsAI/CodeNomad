@@ -82,38 +82,16 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           connection.assertCurrent()
           const free = isOpenCodeFreeModel(params.data.providerId, modelId)
           const provider = free ? null : resolveUsageProvider(params.data.providerId)
+          const plugin = !free && !provider
+            ? await readPluginProviderUsage(connection, {
+              providerId: params.data.providerId, location, modelId,
+            }, signal, quotaSignal)
+            : null
           const native = free ? await freeUsage.read(connection, params.data.providerId, modelId, signal, quotaSignal)
-            : !provider || provider.id === "codex"
+            : !plugin && (!provider || provider.id === "codex")
             ? await nativeCodexUsage(connection, { instanceId, sessionId, directory: location.directory,
               providerId: params.data.providerId, modelId }, signal)
             : null
-          let plugin: ProviderUsageResponse | null = null
-          if (!native && !provider) {
-            signal.throwIfAborted()
-            connection.assertCurrent()
-            if (manager.get(instanceId) !== workspace) {
-              return reply.code(403).send({ error: "Session does not belong to workspace" })
-            }
-            // Re-verify Location ownership and session placement after the alias probe
-            // so a moved session or evicted workspace never dispatches a plugin RPC.
-            const stillOwned = await manager.ownsLocation(instanceId, location, connection.client)
-            signal.throwIfAborted()
-            connection.assertCurrent()
-            if (!stillOwned || manager.get(instanceId) !== workspace) {
-              return reply.code(403).send({ error: "Session does not belong to workspace" })
-            }
-            const beforePlugin = await connection.client.session.get({ sessionID: sessionId }, { signal })
-            const beforeLocation = readLocationRef(beforePlugin.location)
-            signal.throwIfAborted()
-            connection.assertCurrent()
-            if (manager.get(instanceId) !== workspace || beforeLocation.directory !== location.directory
-              || beforeLocation.workspaceID !== undefined) {
-              return reply.code(403).send({ error: "Session does not belong to workspace" })
-            }
-            plugin = await readPluginProviderUsage(connection, {
-              providerId: params.data.providerId, location, modelId,
-            }, signal, quotaSignal)
-          }
           const auth = !native && !plugin && provider ? await readUsageCredentials(connection, signal) : {}
           const settings = !native && !plugin && provider && provider.id !== "google" && provider.id !== "opencode-console"
             ? await readUsageProviderSettings(connection, params.data.providerId, location.directory, signal) : undefined
@@ -134,16 +112,14 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           }
           const publish = async (usage: ProviderUsageResponse, signal: AbortSignal) => {
             // Session movement, workspace eviction and reconnect fence publication too.
-            // Check Location ownership first, then re-read the session last so neither
-            // a move nor an eviction while ownsLocation awaits can publish stale quota.
-            const stillOwned = await manager.ownsLocation(instanceId, location, connection.client)
-            signal.throwIfAborted()
             const current = await connection.client.session.get({ sessionID: sessionId }, { signal })
             const currentLocation = readLocationRef(current.location)
             connection.assertCurrent()
             signal.throwIfAborted()
-            if (!stillOwned || manager.get(instanceId) !== workspace || currentLocation.directory !== location.directory
-              || currentLocation.workspaceID !== undefined) {
+            const stillOwned = manager.get(instanceId) === workspace && currentLocation.directory === location.directory
+              && currentLocation.workspaceID === undefined && await manager.ownsLocation(instanceId, currentLocation, connection.client)
+            signal.throwIfAborted()
+            if (!stillOwned || manager.get(instanceId) !== workspace) {
               return reply.code(403).send({ error: "Session does not belong to workspace" })
             }
             signal.throwIfAborted()

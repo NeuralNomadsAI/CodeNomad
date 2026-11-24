@@ -59,7 +59,7 @@ function harness(
 
 const url = "/api/usage/agy-agent?instanceId=instance&sessionId=session&modelId=gemini-4-neon"
 
-test("plugin provider-usage RPC serves validated quota without reading credentials", async () => {
+test("plugin provider-usage RPC serves validated quota without reading credentials or provider settings", async () => {
   let received: { pathname: string; directory: string | null; body: unknown } | undefined
   const { app, state } = harness(async (target, body) => {
     received = { pathname: target.pathname, directory: target.searchParams.get("location[directory]"), body }
@@ -85,6 +85,7 @@ test("plugin provider-usage RPC serves validated quota without reading credentia
       body: { input: { modelId: "gemini-4-neon" } },
     })
     assert.equal(state.nativeCalls.includes("/api/credential"), false)
+    assert.equal(state.nativeCalls.some(path => path.startsWith("/api/provider/")), false)
     assert.deepEqual(response.json(), {
       requestedProviderId: "agy-agent",
       providerId: "agy-agent",
@@ -162,8 +163,8 @@ test("session movement and reconnect fence publication of plugin provider usage"
   }
 })
 
-test("workspace eviction and session move during alias probe or final ownership check block dispatch and publication", async () => {
-  // Eviction during the Codex-alias probe must prevent any plugin RPC call and return 403.
+test("workspace eviction during initial or final ownership check blocks dispatch and publication", async () => {
+  // Eviction during the initial ownsLocation await must prevent any plugin RPC call and return 403.
   {
     let rpcCalls = 0
     const { app, state } = harness(
@@ -171,24 +172,11 @@ test("workspace eviction and session move during alias probe or final ownership 
         rpcCalls++
         return Response.json({ output: { configured: true, ok: true, windows: { "5h": { usedPercent: 10 } } } })
       },
-      { onProviderGet: () => { state.evicted = true } },
-    )
-    try {
-      const response = await app.inject(url)
-      assert.equal(response.statusCode, 403)
-      assert.equal(rpcCalls, 0)
-    } finally { await app.close() }
-  }
-
-  // Session movement during the Codex-alias probe must also prevent plugin RPC dispatch and return 403.
-  {
-    let rpcCalls = 0
-    const { app, state } = harness(
-      async () => {
-        rpcCalls++
-        return Response.json({ output: { configured: true, ok: true, windows: { "5h": { usedPercent: 10 } } } })
+      {
+        onOwnsLocation: (index) => {
+          if (index === 1) state.evicted = true
+        },
       },
-      { onProviderGet: () => { state.directory = "/foreign" } },
     )
     try {
       const response = await app.inject(url)
@@ -205,25 +193,7 @@ test("workspace eviction and session move during alias probe or final ownership 
       }),
       {
         onOwnsLocation: (index) => {
-          if (index === 3) state.evicted = true
-        },
-      },
-    )
-    try {
-      const response = await app.inject(url)
-      assert.equal(response.statusCode, 403)
-    } finally { await app.close() }
-  }
-
-  // Session movement during the final ownsLocation await (while /repo stays owned) must reject publication with 403.
-  {
-    const { app, state } = harness(
-      async () => Response.json({
-        output: { configured: true, ok: true, windows: { "5h": { usedPercent: 10, remainingPercent: 90 } } },
-      }),
-      {
-        onOwnsLocation: (index) => {
-          if (index === 3) state.directory = "/foreign"
+          if (index === 2) state.evicted = true
         },
       },
     )
