@@ -219,13 +219,16 @@ fn close(s: &mut State, tx: &mut Tx) {
 pub(crate) fn layers(s: &State, output: &mut Vec<El>) {
     let inbox = &s.notifications.in_app;
     if !inbox.bubbles.is_empty() && inbox.opened.is_none() {
-        output.push(theme::bubbles(
-            inbox
-                .bubbles
-                .iter()
-                .map(|(record, _)| card(s, record, None, inbox.viewport.1)),
-            inbox.viewport.0,
-        ));
+        output.push(
+            theme::bubbles(
+                inbox
+                    .bubbles
+                    .iter()
+                    .map(|(record, _)| card(s, record, None, inbox.viewport.1)),
+                inbox.viewport.0,
+            )
+            .key("notification-bubbles"),
+        );
     }
     if inbox.opened.is_some() {
         let toolbar = layout::action_row()
