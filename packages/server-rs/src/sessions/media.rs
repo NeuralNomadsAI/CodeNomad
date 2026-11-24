@@ -371,7 +371,14 @@ pub(super) async fn route(
                 crate::shared::permit_body(bytes.into(), Some(mem), abort),
             )
                 .into_response();
-            response.extensions_mut().insert(crate::shared::CancelWrite(principal.0.clone()));
+            let write_abort = crate::shared::stream_abort(
+                app.clone(),
+                r.workspace.clone(),
+                initial_workspace.clone(),
+                placement.endpoint.clone(),
+                principal.0.clone(),
+            );
+            response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
             Ok(response)
         };
         tokio::select! {

@@ -58,23 +58,44 @@ pub async fn read_capped(mut stream: impl AsyncRead + Unpin, max: usize) -> std:
 #[derive(Clone, Copy)]
 pub struct AbortResponse;
 
-/// Extension registering a cancellation token with the connection's `WriteStallIo` so revoking
-/// a session/password aborts even already-buffered socket writes immediately.
+pub type AbortFuture = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+/// Extension registering an abort future with the connection's `WriteStallIo` so principal
+/// revocation, workspace close, or daemon retirement aborts already-buffered socket writes.
 #[derive(Clone)]
-pub struct CancelWrite(pub tokio_util::sync::CancellationToken);
+pub struct CancelWrite(std::sync::Arc<std::sync::Mutex<Option<AbortFuture>>>);
+
+impl CancelWrite {
+    pub fn new(fut: AbortFuture) -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(Some(fut))))
+    }
+
+    pub fn token(token: tokio_util::sync::CancellationToken) -> Self {
+        Self::new(Box::pin(token.cancelled_owned()))
+    }
+
+    fn take(&self) -> Option<AbortFuture> {
+        self.0.lock().unwrap().take()
+    }
+}
+
+#[derive(Default)]
+struct WriteCancelState {
+    generation: u64,
+    fut: Option<AbortFuture>,
+}
 
 #[derive(Clone, Default)]
-pub struct WriteCancel(std::sync::Arc<std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>>);
+pub struct WriteCancel(std::sync::Arc<std::sync::Mutex<WriteCancelState>>);
 
 impl WriteCancel {
     pub fn new() -> Self {
         Self::default()
     }
-    fn set(&self, token: Option<tokio_util::sync::CancellationToken>) {
-        *self.0.lock().unwrap() = token;
-    }
-    fn current(&self) -> Option<tokio_util::sync::CancellationToken> {
-        self.0.lock().unwrap().clone()
+    fn set(&self, fut: Option<AbortFuture>) {
+        let mut state = self.0.lock().unwrap();
+        state.generation = state.generation.wrapping_add(1);
+        state.fut = fut;
     }
 }
 
@@ -104,8 +125,8 @@ pub fn abortable_service(
             if res.extensions().get::<AbortResponse>().is_some() {
                 return Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "response aborted"));
             }
-            if let Some(CancelWrite(token)) = res.extensions().get::<CancelWrite>() {
-                cancel.set(Some(token.clone()));
+            if let Some(write) = res.extensions().get::<CancelWrite>() {
+                cancel.set(write.take());
             }
             Ok(res)
         }
@@ -200,32 +221,40 @@ pub fn permit_body(
 }
 
 /// Bounds continuous write stalls (a peer whose TCP receive window stays full) and immediately
-/// aborts buffered writes on principal revocation without interfering with idle SSE streams.
+/// aborts buffered writes on principal revocation, workspace close, or daemon retirement without
+/// interfering with idle SSE streams.
 pub struct WriteStallIo<T> {
     inner: T,
     timeout: std::time::Duration,
     stall: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
     cancel: WriteCancel,
-    wait_cancel: Option<std::pin::Pin<Box<tokio_util::sync::WaitForCancellationFutureOwned>>>,
+    seen_generation: u64,
+    wait_cancel: Option<AbortFuture>,
+    aborted: bool,
 }
 
 impl<T> WriteStallIo<T> {
     pub fn new(inner: T, timeout: std::time::Duration, cancel: WriteCancel) -> Self {
-        Self { inner, timeout, stall: None, cancel, wait_cancel: None }
+        Self { inner, timeout, stall: None, cancel, seen_generation: 0, wait_cancel: None, aborted: false }
     }
 
     fn poll_cancelled(&mut self, cx: &mut std::task::Context<'_>) -> bool {
-        let Some(token) = self.cancel.current() else {
-            self.wait_cancel = None;
-            return false;
-        };
-        if token.is_cancelled() {
-            self.wait_cancel = None;
+        {
+            let mut state = self.cancel.0.lock().unwrap();
+            if state.generation != self.seen_generation {
+                self.seen_generation = state.generation;
+                self.wait_cancel = state.fut.take();
+                self.aborted = false;
+            }
+        }
+        if self.aborted {
             return true;
         }
-        let fut = self.wait_cancel.get_or_insert_with(|| Box::pin(token.cancelled_owned()));
-        if std::future::Future::poll(fut.as_mut(), cx).is_ready() {
+        if let Some(fut) = &mut self.wait_cancel
+            && std::future::Future::poll(fut.as_mut(), cx).is_ready()
+        {
             self.wait_cancel = None;
+            self.aborted = true;
             return true;
         }
         false
@@ -249,9 +278,8 @@ impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStallIo<T>
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
         let this = self.get_mut();
-        if this.cancel.current().is_some_and(|t| t.is_cancelled()) {
+        if this.poll_cancelled(cx) {
             this.stall = None;
-            this.wait_cancel = None;
             return std::task::Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 "response write cancelled",
@@ -260,7 +288,6 @@ impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStallIo<T>
         match std::pin::Pin::new(&mut this.inner).poll_write(cx, buf) {
             std::task::Poll::Ready(result) => {
                 this.stall = None;
-                this.wait_cancel = None;
                 std::task::Poll::Ready(result)
             }
             std::task::Poll::Pending => {
@@ -274,7 +301,6 @@ impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStallIo<T>
                 let timer = this.stall.get_or_insert_with(|| Box::pin(tokio::time::sleep(this.timeout)));
                 if std::future::Future::poll(timer.as_mut(), cx).is_ready() {
                     this.stall = None;
-                    this.wait_cancel = None;
                     std::task::Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "response write stalled",
@@ -291,9 +317,8 @@ impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStallIo<T>
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        if this.cancel.current().is_some_and(|t| t.is_cancelled()) {
+        if this.poll_cancelled(cx) {
             this.stall = None;
-            this.wait_cancel = None;
             return std::task::Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 "response flush cancelled",
@@ -302,7 +327,6 @@ impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStallIo<T>
         match std::pin::Pin::new(&mut this.inner).poll_flush(cx) {
             std::task::Poll::Ready(result) => {
                 this.stall = None;
-                this.wait_cancel = None;
                 std::task::Poll::Ready(result)
             }
             std::task::Poll::Pending => {
@@ -316,7 +340,6 @@ impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStallIo<T>
                 let timer = this.stall.get_or_insert_with(|| Box::pin(tokio::time::sleep(this.timeout)));
                 if std::future::Future::poll(timer.as_mut(), cx).is_ready() {
                     this.stall = None;
-                    this.wait_cancel = None;
                     std::task::Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "response flush stalled",

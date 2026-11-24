@@ -86,11 +86,7 @@ impl DirectoryProof {
                         dunce::canonicalize(root).ok().as_deref() == Some(root.as_path())
                             && crate::files::directory_identity(root).ok().as_deref() == Some(id.as_str())
                             && physical.starts_with(root)
-                            && (!self.media
-                                || physical == root.as_path()
-                                || std::fs::symlink_metadata(physical).is_err()
-                                || no_nested_git(physical, root))
-                    }) && history_root.is_none_or(|root| no_nested_git(physical, root))
+                    }) && (self.media || history_root.is_none_or(|root| no_nested_git(physical, root)))
                 }
             }
     }
@@ -185,8 +181,19 @@ fn head_cannot_name_repository(path: &Path) -> bool {
         // Keep links and ambiguous reads closed; Git resolves the external
         // target's actual common directory during the asynchronous admission.
         Ok(meta) if meta.is_file() && meta.len() <= 4096 => {
+            let mut opts = std::fs::OpenOptions::new();
+            opts.read(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.custom_flags(libc::O_NONBLOCK);
+            }
+            let Ok(file) = opts.open(path) else { return false };
+            if !file.metadata().is_ok_and(|m| m.is_file() && m.len() <= 4096) {
+                return false;
+            }
             let mut head = Vec::new();
-            std::fs::File::open(path).and_then(|file| file.take(4097).read_to_end(&mut head)).is_ok()
+            file.take(4097).read_to_end(&mut head).is_ok()
                 && head.len() <= 4096
                 && !head.strip_prefix(b"ref:").is_some_and(|target| target.trim_ascii_start().starts_with(b"refs/"))
                 && !head.get(..40).is_some_and(|oid| oid.iter().all(u8::is_ascii_hexdigit))
@@ -626,12 +633,20 @@ fn strict_discover_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
         return Err(());
     }
     let read_small = |path: &Path| -> Result<String, ()> {
-        let meta = std::fs::metadata(path).map_err(|_| ())?;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.custom_flags(libc::O_NONBLOCK);
+        }
+        let file = opts.open(path).map_err(|_| ())?;
+        let meta = file.metadata().map_err(|_| ())?;
         if !meta.is_file() || meta.len() > 64 * 1024 {
             return Err(());
         }
         let mut buf = Vec::new();
-        std::fs::File::open(path).map_err(|_| ())?.take(64 * 1024 + 1).read_to_end(&mut buf).map_err(|_| ())?;
+        file.take(64 * 1024 + 1).read_to_end(&mut buf).map_err(|_| ())?;
         if buf.len() > 64 * 1024 {
             return Err(());
         }

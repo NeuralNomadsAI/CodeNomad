@@ -129,7 +129,8 @@ impl Placement {
             } else if media {
                 crate::opencode::session_record_media_at(app, &endpoint, session).await?
             } else {
-                crate::opencode::session_record_at(app, &endpoint, session).await?
+                crate::opencode::session_record_with_timeout_at(app, &endpoint, session, Duration::from_secs(15))
+                    .await?
             };
             if media
                 && (!current_fast(&displays)
@@ -513,6 +514,15 @@ pub async fn handle(
     };
     let defer = action == "window" && media::wants_deferred(req.headers());
     let invalid = || error(Status::BAD_REQUEST, "Invalid history navigation request");
+    let json_content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
+        .is_some_and(|essence| essence == "application/json" || essence.ends_with("+json"));
+    if !json_content_type {
+        return Err(invalid());
+    }
     let bytes = to_bytes(req.into_body(), limit)
         .await
         .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request body is too large"))?;
@@ -691,7 +701,14 @@ pub async fn handle(
             )
                 .into_response();
             if defer {
-                response.extensions_mut().insert(crate::shared::CancelWrite(principal.0.clone()));
+                let write_abort = crate::shared::stream_abort(
+                    app.clone(),
+                    id.clone(),
+                    placement.workspace.clone(),
+                    placement.endpoint.clone(),
+                    principal.0.clone(),
+                );
+                response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
             }
             response
         };

@@ -3,14 +3,19 @@
 //! Splits the top-level `"data": [...]` array one message at a time while chunks arrive so a
 //! page with many large tool images (hundreds of MiB raw) is projected in bounded memory
 //! without failing before image URIs are replaced by `/api/workspaces/.../session-media/...`.
+//!
+//! Intentional server-rs safety bounds: unlike the TypeScript proxy's unbounded `response.text()`,
+//! Rust bounds a single raw message item (`ITEM_LIMIT`, 128 MiB) and the projected response buffer
+//! (`OUTPUT_LIMIT`, 256 MiB, aligned with `ResponsePool::List`) to prevent OOM on malformed or
+//! oversized upstream payloads.
 use std::collections::BTreeMap;
 
 use serde_json::value::RawValue;
 
 use super::media;
 
-/// Cap on the projected (or unprojected fallback) output buffer.
-pub(crate) const OUTPUT_LIMIT: usize = 128 * 1024 * 1024;
+/// Cap on the projected (or unprojected fallback) output buffer, aligned with `ResponsePool::List`.
+pub(crate) const OUTPUT_LIMIT: usize = 256 * 1024 * 1024;
 /// Cap on a single raw message item before projection.
 const ITEM_LIMIT: usize = 128 * 1024 * 1024;
 const INLINE_THRESHOLD: usize = 32 * 1024;

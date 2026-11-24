@@ -76,7 +76,9 @@ pub async fn prepare(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) {
     }
     let (notify, owner) = {
         let mut state = STATE.lock().unwrap();
-        if !state.active || state.prepared.as_ref().is_some_and(|p| Arc::ptr_eq(p, endpoint)) {
+        if !state.active
+            || (state.current.is_some() && state.prepared.as_ref().is_some_and(|p| Arc::ptr_eq(p, endpoint)))
+        {
             return;
         }
         if let Some((current, notify)) = &state.preparing
@@ -121,7 +123,9 @@ async fn prepare_inner(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) 
     }
     let features = {
         let state = STATE.lock().unwrap();
-        if !state.active || state.prepared.as_ref().is_some_and(|p| Arc::ptr_eq(p, endpoint)) {
+        if !state.active
+            || (state.current.is_some() && state.prepared.as_ref().is_some_and(|p| Arc::ptr_eq(p, endpoint)))
+        {
             return;
         }
         state.features.clone()
@@ -268,6 +272,7 @@ async fn connection_at(app: &Shared, endpoint: Option<&Arc<crate::opencode::Endp
                 eprintln!("plugin-provision error: {message}");
             }
             state.current = None;
+            state.prepared = None;
             state.last = Some(message);
         }
     }
@@ -335,7 +340,16 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
                 _ = stop.cancelled() => break,
                 _ = CONNECTED.notified() => {
                     let _serial = SERIAL.lock().await;
-                    connection(&app, &features).await
+                    let endpoint = app.native.endpoint();
+                    connection_at(&app, endpoint.as_ref(), &features).await;
+                    if let Some(endpoint) = endpoint
+                        && app.native.current(&endpoint)
+                    {
+                        let mut state = STATE.lock().unwrap();
+                        if state.current.is_some() {
+                            state.prepared = Some(endpoint);
+                        }
+                    }
                 }
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {}
             }

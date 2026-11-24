@@ -896,15 +896,37 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
         // Acquire the projection slot right before upstream dispatch so admission checks
         // and `session.get` never occupy slots while waiting or after principal revocation.
-        let slot = tokio::select! {
-            biased;
-            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-            _ = workspace_closed() => return Err(not_found()),
-            permit = tokio::time::timeout_at(list_deadline, DEFER_SLOTS.acquire()) => {
-                permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+        let (slot, waited_for_slot) = match DEFER_SLOTS.try_acquire() {
+            Ok(permit) => (permit, false),
+            Err(_) => {
+                let permit = tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    _ = workspace_closed() => return Err(not_found()),
+                    permit = tokio::time::timeout_at(list_deadline, DEFER_SLOTS.acquire()) => {
+                        permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+                    }
+                };
+                (permit, true)
             }
         };
+        if waited_for_slot {
+            // Re-verify session placement before dispatching upstream if this request waited
+            // behind other projections, so a moved session's transcript is never fetched.
+            let latest = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                _ = workspace_closed() => return Err(not_found()),
+                record = tokio::time::timeout_at(list_deadline, super::session_record_media_at(&app, &endpoint, session)) => {
+                    record.map_err(|_| interrupted())??
+                }
+            };
+            if actual.as_ref().is_none_or(|orig| latest["id"] != orig["id"] || latest["location"] != orig["location"]) {
+                return Err(foreign());
+            }
+        }
         let mut response = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
@@ -978,12 +1000,24 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 }
             };
             drop(slot);
-            // Matches TS `http-server.ts:1671-1677` & `proxy.ts:80-94`: once the page is received,
-            // deliver the projected JSON without an extra native round-trip, keeping liveness guards.
             if !app.native.current(&endpoint) {
                 return Err(upstream_error());
             }
             app.workspace(id)?;
+            // Re-verify the session still belongs to the same location before releasing any
+            // buffered transcript bytes, closing TOCTOU moves during slot wait or page read.
+            let latest = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                _ = workspace_closed() => return Err(not_found()),
+                record = tokio::time::timeout_at(list_deadline, super::session_record_media_at(&app, &endpoint, session)) => {
+                    record.map_err(|_| interrupted())??
+                }
+            };
+            if actual.as_ref().is_none_or(|orig| latest["id"] != orig["id"] || latest["location"] != orig["location"]) {
+                return Err(foreign());
+            }
             let live_ok = if let (Some((resolved, anchor, expected_id)), Some(checkout), Some(raw)) =
                 (&initial_identity, &input_checkout, native_directory)
             {
@@ -1034,14 +1068,22 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 endpoint.clone(),
                 principal.0.clone(),
             );
+            let write_abort = crate::shared::stream_abort(
+                app.clone(),
+                id.to_owned(),
+                workspace.clone(),
+                endpoint.clone(),
+                principal.0.clone(),
+            );
             let builder = headers
                 .into_iter()
                 .filter(|(name, _)| !(changed && *name == "etag"))
                 .fold(Response::builder().status(status), |builder, (name, value)| builder.header(name, value))
+                .header(header::VARY, "x-codenomad-media")
                 .header(header::CONTENT_LENGTH, length);
             return builder
                 .extension(NativeBody)
-                .extension(crate::shared::CancelWrite(principal.0.clone()))
+                .extension(crate::shared::CancelWrite::new(write_abort))
                 .body(crate::shared::permit_body(payload, Some(mem), abort))
                 .map_err(|_| upstream_error());
         }
@@ -1070,7 +1112,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     "_tag": "OpenCodeContractError",
                     "message": format!("OpenCode {version}: GET {route} returned HTTP {}", status.as_u16()),
                     "status": status.as_u16(),
-                    "profile": "v2",
+                    "profile": "modern",
                     "method": "GET",
                     "path": route,
                 })),
@@ -1154,9 +1196,21 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 })
             },
         );
+        let cancel_write = if unauthorized {
+            crate::shared::CancelWrite::token(principal.0.clone())
+        } else {
+            crate::shared::CancelWrite::new(crate::shared::stream_abort(
+                app.clone(),
+                id.to_owned(),
+                workspace.clone(),
+                endpoint.clone(),
+                principal.0.clone(),
+            ))
+        };
         return builder
+            .header(header::VARY, "x-codenomad-media")
             .extension(NativeBody)
-            .extension(crate::shared::CancelWrite(principal.0.clone()))
+            .extension(cancel_write)
             .body(Body::from_stream(bytes))
             .map_err(|_| upstream_error());
     }
@@ -1265,14 +1319,23 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return Ok(Json(native).into_response());
         }
         let status = response.status();
+        let unauthorized = status == Status::UNAUTHORIZED;
         let builder = relayed(&response);
+        let builder = if message_list { builder.header(header::VARY, "x-codenomad-media") } else { builder };
         let builder = if dispatched_mutation {
             builder
+        } else if unauthorized {
+            builder.extension(crate::shared::CancelWrite::token(principal.0.clone()))
         } else {
-            builder.extension(crate::shared::CancelWrite(principal.0.clone()))
+            builder.extension(crate::shared::CancelWrite::new(crate::shared::stream_abort(
+                app.clone(),
+                id.clone(),
+                workspace.clone(),
+                endpoint.clone(),
+                principal.0.clone(),
+            )))
         };
         use futures_util::StreamExt;
-        let unauthorized = status == Status::UNAUTHORIZED;
         let cancelled = Box::pin(principal.0.clone().cancelled_owned());
         let app_retire = app.clone();
         let endpoint_retire = endpoint.clone();

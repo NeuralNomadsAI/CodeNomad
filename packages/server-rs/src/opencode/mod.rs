@@ -235,6 +235,13 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
             None => lifecycle.ensure(deadline).await?,
         },
     };
+    if current.as_ref().is_some_and(|old| **old != found) {
+        // Retire the replaced daemon immediately upon discovering a different endpoint
+        // (TS `opencode-service.ts:196-200, 333-343`), even if admitting the replacement fails.
+        *inner.endpoint.write().unwrap() = None;
+        *inner.validated.lock().unwrap() = None;
+        inner.retired.notify_waiters();
+    }
     admission::admit(&inner.client, &found).await?;
     let found = Arc::new(found);
     let mut endpoint = inner.endpoint.write().unwrap();
@@ -301,10 +308,19 @@ pub async fn session_record(app: &App, id: &str) -> Result<Value, Error> {
 }
 
 pub async fn session_record_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
+    session_record_with_timeout_at(app, endpoint, id, Duration::from_secs(4)).await
+}
+
+pub async fn session_record_with_timeout_at(
+    app: &App,
+    endpoint: &Endpoint,
+    id: &str,
+    timeout: Duration,
+) -> Result<Value, Error> {
     if !valid_id(id) {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    session_record_segment_at(app, endpoint, id, Duration::from_secs(4), true).await
+    session_record_segment_at(app, endpoint, id, timeout, true).await
 }
 
 /// Variant for opaque media/history-media session IDs (TS `session-media-contract.ts`).
