@@ -16,7 +16,7 @@ const URI_LIMIT: usize = 8 * 1024 * 1024;
 const MESSAGE_LIMIT: usize = 16 * 1024 * 1024;
 const INLINE_LIMIT: usize = 32 * 1024;
 
-fn encode(id: &str) -> String {
+pub(super) fn encode(id: &str) -> String {
     let mut encoded = String::new();
     for byte in id.bytes() {
         if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
@@ -29,7 +29,7 @@ fn encode(id: &str) -> String {
     encoded
 }
 
-fn valid_id(id: &str) -> bool {
+pub(super) fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.encode_utf16().nth(256).is_none() && !id.bytes().any(|byte| byte.is_ascii_control())
 }
 
@@ -87,57 +87,72 @@ pub(crate) fn wants_deferred(headers: &axum::http::HeaderMap) -> bool {
     headers.get_all("x-codenomad-media").iter().eq(["deferred"])
 }
 
-pub(crate) fn defer(workspace: &str, session: &str, messages: &mut Value) -> bool {
-    if !valid_id(workspace) || !valid_id(session) {
+pub(super) fn defer_message(workspace_enc: &str, session_enc: &str, message: &mut Value) -> bool {
+    if message["type"] != "assistant" {
         return false;
     }
-    let (workspace, session) = (encode(workspace), encode(session));
+    let Some(id) = message["id"].as_str().filter(|id| valid_id(id)).map(encode) else { return false };
+    let Some(parts) = message.get_mut("content").and_then(Value::as_array_mut) else { return false };
     let mut changed = false;
-    for message in messages.as_array_mut().into_iter().flatten().filter(|message| message["type"] == "assistant") {
-        let Some(id) = message["id"].as_str().filter(|id| valid_id(id)).map(encode) else { continue };
-        let Some(parts) = message.get_mut("content").and_then(Value::as_array_mut) else { continue };
-        for (part, tool) in parts.iter_mut().take(100_001).enumerate() {
-            if tool["type"] != "tool" {
-                continue;
-            }
-            let Some(content) =
-                tool.get_mut("state").and_then(|state| state.get_mut("content")).and_then(Value::as_array_mut)
+    for (part, tool) in parts.iter_mut().take(100_001).enumerate() {
+        if tool["type"] != "tool" {
+            continue;
+        }
+        let Some(content) =
+            tool.get_mut("state").and_then(|state| state.get_mut("content")).and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+        for (index, file) in content.iter_mut().take(100_001).enumerate() {
+            let Some((_, uri)) = renderable(file).filter(|(_, uri)| uri.encode_utf16().nth(INLINE_LIMIT).is_some())
             else {
                 continue;
             };
-            for (index, file) in content.iter_mut().take(100_001).enumerate() {
-                let Some((_, uri)) = renderable(file).filter(|(_, uri)| uri.encode_utf16().nth(INLINE_LIMIT).is_some())
-                else {
-                    continue;
-                };
-                let digest = user_files::digest(uri.as_bytes());
-                let reference =
-                    format!("/api/workspaces/{workspace}/session-media/{session}/{id}/{part}/{index}/{digest}");
-                if reference.len() <= 4096 {
-                    file["uri"] = reference.into();
-                    changed = true;
-                }
+            let digest = user_files::digest(uri.as_bytes());
+            let reference =
+                format!("/api/workspaces/{workspace_enc}/session-media/{session_enc}/{id}/{part}/{index}/{digest}");
+            if reference.len() <= 4096 {
+                file["uri"] = reference.into();
+                changed = true;
             }
         }
     }
     changed
 }
 
-fn extract_media(
+pub(crate) fn defer(workspace: &str, session: &str, messages: &mut Value) -> bool {
+    if !valid_id(workspace) || !valid_id(session) {
+        return false;
+    }
+    let (workspace, session) = (encode(workspace), encode(session));
+    let mut changed = false;
+    for message in messages.as_array_mut().into_iter().flatten() {
+        changed |= defer_message(&workspace, &session, message);
+    }
+    changed
+}
+
+fn parse_message_envelope(raw: &[u8]) -> Result<Value, Error> {
+    let unavailable = || error(Status::BAD_GATEWAY, "Media unavailable");
+    let envelope: Value = serde_json::from_slice(raw).map_err(|_| unavailable())?;
+    envelope.get("data").filter(|message| message.is_object()).ok_or_else(unavailable)?;
+    Ok(envelope)
+}
+
+fn extract_media_from_envelope(
     message_id: &str,
     part_index: usize,
     item_index: usize,
     digest: &str,
     revert_boundary: Option<&str>,
-    raw: &[u8],
+    envelope: &Value,
 ) -> Result<(&'static str, Vec<u8>), Error> {
     let missing = || error(Status::NOT_FOUND, "Media not found");
     let unavailable = || error(Status::BAD_GATEWAY, "Media unavailable");
-    let envelope: Value = serde_json::from_slice(raw).map_err(|_| unavailable())?;
     let message = envelope.get("data").filter(|message| message.is_object()).ok_or_else(unavailable)?;
     if message["id"] != message_id
         || message["type"] != "assistant"
-        || revert_boundary.is_some_and(|boundary| message_id >= boundary)
+        || revert_boundary.is_some_and(|boundary| message_id.encode_utf16().cmp(boundary.encode_utf16()).is_ge())
     {
         return Err(missing());
     }
@@ -157,6 +172,19 @@ fn extract_media(
     let bytes = STANDARD.decode(payload).map_err(|_| missing())?;
     let mime = raster(&bytes).filter(|&detected| detected == mime).ok_or_else(missing)?;
     Ok((mime, bytes))
+}
+
+#[cfg(test)]
+fn extract_media(
+    message_id: &str,
+    part_index: usize,
+    item_index: usize,
+    digest: &str,
+    revert_boundary: Option<&str>,
+    raw: &[u8],
+) -> Result<(&'static str, Vec<u8>), Error> {
+    let envelope = parse_message_envelope(raw)?;
+    extract_media_from_envelope(message_id, part_index, item_index, digest, revert_boundary, &envelope)
 }
 
 pub(super) async fn route(
@@ -190,10 +218,10 @@ pub(super) async fn route(
             }
             Err(_) => return Err(unavailable()),
         };
-        if !placement.operation_current(&app, &r.workspace) {
+        if !placement.operation_current(&app, &r.workspace).await {
             return Ok(crate::shared::abort_response());
         }
-        if !placement.live(&app, &r.workspace) {
+        if !placement.live(&app, &r.workspace).await {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
         let mut url = placement.endpoint.url.clone();
@@ -214,45 +242,66 @@ pub(super) async fn route(
                 .await
             {
                 Ok(response) => response,
-                Err(_) if !placement.operation_current(&app, &r.workspace) => {
+                Err(_) if !placement.operation_current(&app, &r.workspace).await => {
                     return Ok(crate::shared::abort_response());
                 }
                 Err(_) => return Err(unavailable()),
             };
-            if !placement.operation_current(&app, &r.workspace) {
+            if !placement.operation_current(&app, &r.workspace).await {
                 return Ok(crate::shared::abort_response());
             }
             if !response.status().is_success() {
                 return Err(unavailable());
             }
-            if !placement.live(&app, &r.workspace) {
+            if !placement.live(&app, &r.workspace).await {
                 return Err(error(Status::CONFLICT, "Session location changed"));
             }
             let raw = match crate::opencode::read_bytes(response, MESSAGE_LIMIT).await {
                 Ok(raw) => raw,
-                Err(_) if !placement.operation_current(&app, &r.workspace) => {
+                Err(_) if !placement.operation_current(&app, &r.workspace).await => {
                     return Ok(crate::shared::abort_response());
                 }
                 Err(_) => return Err(unavailable()),
             };
-            if !placement.operation_current(&app, &r.workspace) {
+            if !placement.operation_current(&app, &r.workspace).await {
                 return Ok(crate::shared::abort_response());
             }
-            // Matches TS `session-media.ts:61-76` (3 native GETs: session1, message, session2,
-            // checking only `latest.revert` so a cancelled staged undo still serves the visible image).
+            // Matches TS `session-media.ts:61-76`: parse and validate the message envelope
+            // before issuing the final `session.get` so malformed JSON fails with 502 immediately.
+            let raw_len = raw.len();
+            let (envelope, slot) = if raw_len > INLINE_LIMIT {
+                let (parsed, slot) = tokio::task::spawn_blocking(move || (parse_message_envelope(&raw), slot))
+                    .await
+                    .map_err(|_| unavailable())?;
+                match parsed {
+                    Ok(envelope) => (envelope, slot),
+                    Err(_) if !placement.operation_current(&app, &r.workspace).await => {
+                        return Ok(crate::shared::abort_response());
+                    }
+                    Err(failure) => return Err(failure),
+                }
+            } else {
+                (parse_message_envelope(&raw)?, slot)
+            };
+            if !placement.operation_current(&app, &r.workspace).await {
+                return Ok(crate::shared::abort_response());
+            }
+            // 3 native GETs: session1, message, session2; check only `latest.revert` so a
+            // cancelled staged undo still serves the visible image.
             let newest = match placement.latest(&app, &r.workspace, &r.session).await {
                 Ok(newest) => newest,
-                Err(_) if !placement.operation_current(&app, &r.workspace) => {
+                Err(_) if !placement.operation_current(&app, &r.workspace).await => {
                     return Ok(crate::shared::abort_response());
                 }
                 Err(failure) if failure.0 == Status::CONFLICT => return Err(failure),
                 Err(_) => return Err(unavailable()),
             };
             let revert = newest["revert"]["messageID"].as_str().map(str::to_owned);
-            let (mime, bytes, slot) = if raw.len() > INLINE_LIMIT {
+            let (mime, bytes, slot) = if raw_len > INLINE_LIMIT {
                 let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.to_owned());
                 let (decoded, slot) = tokio::task::spawn_blocking(move || {
-                    let decoded = extract_media(&message_id, part, index, &digest, revert.as_deref(), &raw);
+                    let decoded =
+                        extract_media_from_envelope(&message_id, part, index, &digest, revert.as_deref(), &envelope);
                     (decoded, slot)
                 })
                 .await
@@ -260,14 +309,15 @@ pub(super) async fn route(
                 let (mime, bytes) = decoded?;
                 (mime, bytes, slot)
             } else {
-                let (mime, bytes) = extract_media(&r.message, r.part, r.index, r.digest, revert.as_deref(), &raw)?;
+                let (mime, bytes) =
+                    extract_media_from_envelope(&r.message, r.part, r.index, r.digest, revert.as_deref(), &envelope)?;
                 (mime, bytes, slot)
             };
             principal.live()?;
-            if !placement.operation_current(&app, &r.workspace) {
+            if !placement.operation_current(&app, &r.workspace).await {
                 return Ok(crate::shared::abort_response());
             }
-            if !placement.live(&app, &r.workspace) {
+            if !placement.live(&app, &r.workspace).await {
                 return Err(error(Status::CONFLICT, "Session location changed"));
             }
             let length = HeaderValue::from(bytes.len());
@@ -483,6 +533,32 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(extract_media("msg_1", 0, 0, &upper_digest, None, &upper_raw).unwrap_err().0, Status::NOT_FOUND);
+    }
+
+    #[test]
+    fn revert_boundary_uses_utf16_code_unit_order() {
+        let png = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 0];
+        let uri = format!("data:image/png;base64,{}", STANDARD.encode(png));
+        let digest = user_files::digest(uri.as_bytes());
+        let make = |id: &str| {
+            serde_json::to_vec(&json!({
+                "data": {
+                    "id": id,
+                    "type": "assistant",
+                    "content": [{
+                        "type": "tool",
+                        "state": { "content": [{ "type": "file", "mime": "image/png", "uri": uri }] }
+                    }]
+                }
+            }))
+            .unwrap()
+        };
+        // U+10000 encodes as [0xD800, 0xDC00] in UTF-16, which sorts before U+E000 [0xE000],
+        // even though U+10000 > U+E000 in UTF-8 / Unicode scalar order.
+        let astral = "\u{10000}";
+        let pua = "\u{E000}";
+        assert!(extract_media(astral, 0, 0, &digest, Some(pua), &make(astral)).is_ok());
+        assert_eq!(extract_media(pua, 0, 0, &digest, Some(astral), &make(pua)).unwrap_err().0, Status::NOT_FOUND);
     }
 
     #[tokio::test]

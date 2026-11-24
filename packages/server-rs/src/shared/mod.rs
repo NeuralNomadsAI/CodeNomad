@@ -92,13 +92,14 @@ pub fn permit_body(
     cancel: tokio_util::sync::CancellationToken,
 ) -> axum::body::Body {
     axum::body::Body::from_stream(futures_util::stream::unfold(
-        (bytes, Some(slot), cancel),
+        (bytes, Some(slot), Some(cancel)),
         |(mut bytes, slot, cancel)| async move {
+            let cancel = cancel?;
             if cancel.is_cancelled() {
                 drop(slot);
                 return Some((
                     Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "session revoked")),
-                    (axum::body::Bytes::new(), None, cancel),
+                    (axum::body::Bytes::new(), None, None),
                 ));
             }
             if bytes.is_empty() {
@@ -106,7 +107,7 @@ pub fn permit_body(
                 return None;
             }
             let chunk = bytes.split_to(bytes.len().min(64 * 1024));
-            Some((Ok::<_, std::io::Error>(chunk), (bytes, slot, cancel)))
+            Some((Ok::<_, std::io::Error>(chunk), (bytes, slot, Some(cancel))))
         },
     ))
 }

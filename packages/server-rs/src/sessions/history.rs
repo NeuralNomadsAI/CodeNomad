@@ -29,8 +29,8 @@ pub(super) struct Placement {
     /// Physical checkout of the session's owned location (root or linked worktree).
     path: std::path::PathBuf,
     anchor: std::path::PathBuf,
-    physical: same_file::Handle,
-    workspace_physical: Option<same_file::Handle>,
+    physical: Arc<same_file::Handle>,
+    workspace_physical: Option<Arc<same_file::Handle>>,
     checkout: crate::worktrees::ownership::DirectoryProof,
     displays: Vec<Arc<AtomicBool>>,
     media: bool,
@@ -66,8 +66,16 @@ impl Placement {
     ) -> Result<Self, Error> {
         let workspace = app.workspace(id)?;
         let unavailable = || error(Status::SERVICE_UNAVAILABLE, "History placement unavailable");
-        let workspace_physical =
-            media.then(|| same_file::Handle::from_path(&workspace.path)).transpose().map_err(|_| unavailable())?;
+        let workspace_physical = if media {
+            let path = workspace.path.clone();
+            let handle = tokio::task::spawn_blocking(move || same_file::Handle::from_path(&path))
+                .await
+                .map_err(|_| unavailable())?
+                .map_err(|_| unavailable())?;
+            Some(Arc::new(handle))
+        } else {
+            None
+        };
         let display =
             |path: &std::path::Path| crate::worktrees::fence::capture_display(&crate::worktrees::fence::identity(path));
         let mut displays = Vec::new();
@@ -81,13 +89,14 @@ impl Placement {
             app.native.endpoint().ok_or_else(crate::opencode::upstream_error)?
         };
         let capture = async {
-            let current = |displays: &[Arc<AtomicBool>]| {
-                app.native.current(&endpoint)
-                    && app.workspace(id).is_ok()
-                    && same_identity(&workspace.path, workspace_physical.as_ref())
-                    && displays.iter().all(|d| d.load(Relaxed))
+            let current_fast = |displays: &[Arc<AtomicBool>]| {
+                app.native.current(&endpoint) && app.workspace(id).is_ok() && displays.iter().all(|d| d.load(Relaxed))
             };
-            if media && !current(&displays) {
+            if media
+                && (!current_fast(&displays)
+                    || !same_identity_async(workspace.path.clone(), workspace_physical.clone()).await
+                    || !current_fast(&displays))
+            {
                 return Err(error(Status::GONE, "Media operation stale"));
             }
             let source = if media {
@@ -95,7 +104,11 @@ impl Placement {
             } else {
                 crate::opencode::session_record_at(app, &endpoint, session).await?
             };
-            if media && !current(&displays) {
+            if media
+                && (!current_fast(&displays)
+                    || !same_identity_async(workspace.path.clone(), workspace_physical.clone()).await
+                    || !current_fast(&displays))
+            {
                 return Err(error(Status::GONE, "Media operation stale"));
             }
             // Reference: `ownsLocation(id, session.location)`, linked worktrees included.
@@ -111,12 +124,20 @@ impl Placement {
             if !crate::files::paths::under(&app.scope, std::path::Path::new(directory)) {
                 return Err(forbidden());
             }
-            let path = crate::worktrees::ownership::resolve_exact_directory(directory).ok_or_else(unavailable)?;
-            let anchor = crate::worktrees::ownership::directory_anchor(&path)
-                .map_err(|_| unavailable())?
-                .ok_or_else(forbidden)?
-                .to_owned();
-            let physical = same_file::Handle::from_path(&anchor).map_err(|_| unavailable())?;
+            let dir_owned = directory.to_owned();
+            let (path, anchor, physical) = tokio::task::spawn_blocking(move || -> Result<_, Error> {
+                let unavailable = || error(Status::SERVICE_UNAVAILABLE, "History placement unavailable");
+                let forbidden = || error(Status::FORBIDDEN, "Session does not belong to workspace");
+                let path = crate::worktrees::ownership::resolve_exact_directory(&dir_owned).ok_or_else(unavailable)?;
+                let anchor = crate::worktrees::ownership::directory_anchor(&path)
+                    .map_err(|_| unavailable())?
+                    .ok_or_else(forbidden)?
+                    .to_owned();
+                let physical = same_file::Handle::from_path(&anchor).map_err(|_| unavailable())?;
+                Ok((path, anchor, Arc::new(physical)))
+            })
+            .await
+            .map_err(|_| unavailable())??;
             if fenced && path != workspace.path {
                 displays.push(display(&path));
             }
@@ -124,7 +145,11 @@ impl Placement {
                 crate::worktrees::ownership::media_directory(app, &workspace, &endpoint, &path, &anchor, strict_media)
                     .await
                     .map_err(|_| crate::opencode::upstream_error())?;
-            if media && !current(&displays) {
+            if media
+                && (!current_fast(&displays)
+                    || !same_identity_async(workspace.path.clone(), workspace_physical.clone()).await
+                    || !current_fast(&displays))
+            {
                 return Err(error(Status::GONE, "Media operation stale"));
             }
             let checkout = proof.ok_or_else(forbidden)?;
@@ -162,18 +187,23 @@ impl Placement {
         }
     }
 
-    pub(super) fn operation_current(&self, app: &App, id: &str) -> bool {
+    fn operation_current_fast(&self, app: &App, id: &str) -> bool {
         app.native.current(&self.endpoint)
             && app.workspace(id).is_ok_and(|w| w.id == self.workspace.id && w.path == self.workspace.path)
-            && same_identity(&self.workspace.path, self.workspace_physical.as_ref())
+    }
+
+    pub(super) async fn operation_current(&self, app: &App, id: &str) -> bool {
+        self.operation_current_fast(app, id)
+            && same_identity_async(self.workspace.path.clone(), self.workspace_physical.clone()).await
+            && self.operation_current_fast(app, id)
     }
 
     pub(super) async fn latest(&self, app: &App, id: &str, session: &str) -> Result<Value, Error> {
         let changed = || error(Status::CONFLICT, "Session location changed");
-        if !self.operation_current(app, id) {
+        if !self.operation_current(app, id).await {
             return Err(crate::opencode::upstream_error());
         }
-        if !self.live(app, id) {
+        if !self.live(app, id).await {
             return Err(changed());
         }
         let newest = if self.media {
@@ -181,13 +211,13 @@ impl Placement {
         } else {
             crate::opencode::session_record_at(app, &self.endpoint, session).await?
         };
-        if !self.operation_current(app, id) {
+        if !self.operation_current(app, id).await {
             return Err(crate::opencode::upstream_error());
         }
         if newest["id"] != self.source["id"]
             || newest["location"] != self.source["location"]
             || newest["projectID"] != self.source["projectID"]
-            || !self.live(app, id)
+            || !self.live(app, id).await
         {
             return Err(changed());
         }
@@ -202,28 +232,41 @@ impl Placement {
             )
             .await
             .map_err(|_| crate::opencode::upstream_error())?;
-            if !self.operation_current(app, id) {
+            if !self.operation_current(app, id).await {
                 return Err(crate::opencode::upstream_error());
             }
             let current = current.ok_or_else(changed)?;
-            if !self.checkout.same_checkout(&current) || !self.live(app, id) {
+            if !self.checkout.same_checkout(&current) || !self.live(app, id).await {
                 return Err(changed());
             }
         }
         Ok(newest)
     }
 
-    pub(super) fn live(&self, app: &App, id: &str) -> bool {
-        self.operation_current(app, id)
-            && self.source["location"]["directory"]
-                .as_str()
-                .and_then(crate::worktrees::ownership::resolve_exact_directory)
-                .as_ref()
-                == Some(&self.path)
-            && crate::worktrees::ownership::directory_anchor(&self.path) == Ok(Some(self.anchor.as_path()))
-            && same_file::Handle::from_path(&self.anchor).is_ok_and(|physical| physical == self.physical)
-            && self.checkout.live(&self.path)
-            && self.displays.iter().all(|display| display.load(Relaxed))
+    pub(super) async fn live(&self, app: &App, id: &str) -> bool {
+        if !self.operation_current_fast(app, id) || !self.displays.iter().all(|display| display.load(Relaxed)) {
+            return false;
+        }
+        let Some(raw_dir) = self.source["location"]["directory"].as_str().map(str::to_owned) else {
+            return false;
+        };
+        let workspace_path = self.workspace.path.clone();
+        let workspace_physical = self.workspace_physical.clone();
+        let path = self.path.clone();
+        let anchor = self.anchor.clone();
+        let physical = self.physical.clone();
+        let checkout = self.checkout.clone();
+        let ok = tokio::task::spawn_blocking(move || {
+            workspace_physical.as_ref().is_none_or(|expected| {
+                same_file::Handle::from_path(&workspace_path).is_ok_and(|current| current == **expected)
+            }) && crate::worktrees::ownership::resolve_exact_directory(&raw_dir).as_ref() == Some(&path)
+                && crate::worktrees::ownership::directory_anchor(&path) == Ok(Some(anchor.as_path()))
+                && same_file::Handle::from_path(&anchor).is_ok_and(|current| current == *physical)
+                && checkout.live(&path)
+        })
+        .await
+        .unwrap_or(false);
+        ok && self.operation_current_fast(app, id) && self.displays.iter().all(|display| display.load(Relaxed))
     }
 
     async fn ready(&self, app: &App, id: &str, session: &str) -> Result<&str, Recheck> {
@@ -232,15 +275,15 @@ impl Placement {
         if self.media {
             let url = self.endpoint.url.join("/api/plugin").map_err(|_| Recheck::Unavailable)?;
             super::pending::await_plugin_with(super::pending::SESSION_PRUNING_PLUGIN, directory, deadline, || {
-                self.live(app, id)
+                (self.operation_current_fast(app, id) && self.displays.iter().all(|d| d.load(Relaxed)))
                     .then(|| app.native.client.get(url.clone()).basic_auth("opencode", Some(&self.endpoint.password)))
             })
             .await
             .map_err(|_| Recheck::Unavailable)?;
-            if !self.operation_current(app, id) {
+            if !self.operation_current(app, id).await {
                 return Err(Recheck::Unavailable);
             }
-            if !self.live(app, id) {
+            if !self.live(app, id).await {
                 return Err(Recheck::Conflict);
             }
             crate::extensions::lifecycle::ready(directory, deadline).await.map_err(|_| Recheck::Unavailable)?;
@@ -261,8 +304,13 @@ enum Recheck {
     Unavailable,
 }
 
-fn same_identity(path: &std::path::Path, expected: Option<&same_file::Handle>) -> bool {
-    expected.is_none_or(|expected| same_file::Handle::from_path(path).is_ok_and(|physical| &physical == expected))
+async fn same_identity_async(path: std::path::PathBuf, expected: Option<Arc<same_file::Handle>>) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+    tokio::task::spawn_blocking(move || same_file::Handle::from_path(&path).is_ok_and(|physical| physical == *expected))
+        .await
+        .unwrap_or(false)
 }
 
 pub(super) async fn prepare(app: &App, directory: &str, deadline: tokio::time::Instant) -> Option<()> {
@@ -427,7 +475,7 @@ pub async fn handle(
             let workspace_closed = async {
                 loop {
                     let notified = app.workspace_closed.notified();
-                    if !placement.operation_current(&app, &id) {
+                    if !placement.operation_current_fast(&app, &id) {
                         return;
                     }
                     notified.await;
@@ -453,7 +501,7 @@ pub async fn handle(
             Err(Recheck::Conflict) => return blocked("conflict"),
             Err(_) => return blocked("unavailable"),
         };
-        if !placement.operation_current(&app, &id) {
+        if !placement.operation_current(&app, &id).await {
             return blocked("unavailable");
         }
         let rpc_limit = 24 * 1024 * 1024 + if defer { 64 * 1024 } else { 0 };
@@ -537,10 +585,10 @@ pub async fn attachment(
         let placement = Placement::capture(&app, &id, &session, true)
             .await
             .map_err(|e| if e.0 == Status::FORBIDDEN { e } else { missing() })?;
-        if !placement.operation_current(&app, &id) {
+        if !placement.operation_current(&app, &id).await {
             return Err(missing());
         }
-        if !placement.live(&app, &id) {
+        if !placement.live(&app, &id).await {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
         let directory = match placement.ready(&app, &id, &session).await {
@@ -577,10 +625,10 @@ pub async fn attachment(
             return Err(missing());
         }
         principal.live()?;
-        if !placement.operation_current(&app, &id) {
+        if !placement.operation_current(&app, &id).await {
             return Err(missing());
         }
-        if !placement.live(&app, &id) {
+        if !placement.live(&app, &id).await {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
         Ok((

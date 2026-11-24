@@ -158,14 +158,32 @@ fn is_json_content_type(headers: &axum::http::HeaderMap) -> bool {
     })
 }
 
-fn defer_message_list(id: &str, session: &str, bytes: Vec<u8>) -> (axum::body::Bytes, bool) {
-    if let Ok(mut native) = serde_json::from_slice::<Value>(&bytes)
-        && native.get_mut("data").is_some_and(|data| crate::sessions::media::defer(id, session, data))
-    {
-        drop(bytes);
-        return (axum::body::Bytes::from(native.to_string()), true);
+fn parse_location_context(headers: &axum::http::HeaderMap) -> Result<Option<Value>, Error> {
+    let invalid = || error(Status::BAD_REQUEST, "Invalid location context");
+    let mut values = headers.get_all("x-codenomad-location").iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(invalid());
     }
-    (axum::body::Bytes::from(bytes), false)
+    let text = value.to_str().ok().filter(|v| v.len() <= 16_384).ok_or_else(invalid)?;
+    let decoded = crate::shared::decode_component(text).ok_or_else(invalid)?;
+    let parsed: Value = serde_json::from_str(&decoded).map_err(|_| invalid())?;
+    let object = parsed.as_object().ok_or_else(invalid)?;
+    if object.len() != 1
+        || !object.get("directory").and_then(Value::as_str).is_some_and(|d| !d.trim().is_empty() && !d.contains('\0'))
+    {
+        return Err(invalid());
+    }
+    Ok(Some(parsed))
+}
+
+async fn resolve_media_path_async(
+    scope: std::path::PathBuf,
+    raw: String,
+) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    tokio::task::spawn_blocking(move || crate::worktrees::ownership::resolve_media_path(&scope, &raw)).await.ok()?
 }
 
 fn one_location(location: &Value, directory: &str) -> Result<(), Error> {
@@ -245,53 +263,47 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         });
     let defer_media =
         (message_list && crate::sessions::media::wants_deferred(&head.headers)).then_some(session).flatten();
-    // Validate malformed `x-codenomad-location` and duplicate directory selectors before any
-    // session lookup (TS `http-server.ts:1133-1136, 1248-1252` & `proxy-locations.ts:27-29`).
-    let parsed_location_context = if let Some(value) = head.headers.get("x-codenomad-location") {
-        let parsed: Value = value
-            .to_str()
-            .ok()
-            .and_then(|value| {
-                if send_input {
-                    if value.len() > 16_384 { None } else { crate::shared::decode_component(value) }
-                } else {
-                    decode(value)
-                }
-            })
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .ok_or_else(|| error(Status::BAD_REQUEST, "Invalid location context"))?;
-        Some(parsed)
-    } else {
-        None
-    };
+    // Validate `x-codenomad-location` shape and query selectors before any session lookup
+    // (TS `http-server.ts:1133-1136, 1248-1269` & `proxy-locations.ts:27-34`).
+    let parsed_location_context = parse_location_context(&head.headers)?;
     let (mut dir_count, mut loc_dir_count) = (0usize, 0usize);
-    let mut requested = None;
+    let mut invalid_query = false;
+    let mut requested_dirs: Vec<String> = Vec::new();
     for (k, v) in target.query_pairs() {
         match k.as_ref() {
             "directory" => {
                 dir_count += 1;
-                if requested.is_none() {
-                    requested = Some(v.into_owned());
+                if v.trim().is_empty() || v.contains('\0') {
+                    invalid_query = true;
+                } else {
+                    requested_dirs.push(v.into_owned());
                 }
             }
             "location[directory]" => {
                 loc_dir_count += 1;
-                if requested.is_none() {
-                    requested = Some(v.into_owned());
+                if v.trim().is_empty() || v.contains('\0') {
+                    invalid_query = true;
+                } else {
+                    requested_dirs.push(v.into_owned());
                 }
+            }
+            "workspace" | "workspaceID" | "location[workspace]" | "location[workspaceID]" => {
+                invalid_query = true;
             }
             _ => {}
         }
     }
-    if dir_count > 1 || loc_dir_count > 1 {
+    if dir_count > 1 || loc_dir_count > 1 || invalid_query {
         return Err(error(Status::BAD_REQUEST, "Location does not belong to workspace"));
     }
+    let requested = requested_dirs.first().cloned();
     static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
     let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
     let defer_slot = if defer_media.is_some() {
         let slot = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
             permit = tokio::time::timeout(super::PROXY_IDLE, DEFER_SLOTS.acquire()) => {
                 permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
             }
@@ -302,11 +314,14 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     };
     let resolve_media_path = |raw: &str| crate::worktrees::ownership::resolve_media_path(&app.scope, raw);
     let allow_subfolder = send_input || message_list;
-    // TS checks every client-supplied directory before session lookup or relay (`http-server.ts:1248-1264`).
+    // TS checks every client-supplied directory and ambient context before session lookup or relay
+    // (`http-server.ts:1248-1269`).
     let mut requested_checkout = None;
-    if let Some(req) = requested.as_deref() {
+    let mut verified_media_dirs: Vec<(String, std::path::PathBuf, crate::worktrees::ownership::DirectoryProof)> =
+        Vec::new();
+    for req in &requested_dirs {
         if message_list {
-            let Some((resolved, anchor)) = resolve_media_path(req) else {
+            let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), req.clone()).await else {
                 return Err(foreign());
             };
             let proof =
@@ -315,7 +330,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     .ok()
                     .flatten()
                     .ok_or_else(foreign)?;
-            requested_checkout = Some(proof);
+            verified_media_dirs.push((req.clone(), resolved, proof));
         } else if send_input {
             let Some(physical) = crate::files::paths::canonical(&app.scope, req) else {
                 return Err(foreign());
@@ -323,9 +338,37 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             let proof = crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, &physical, true)
                 .await
                 .ok_or_else(foreign)?;
-            requested_checkout = Some(proof);
+            if requested_checkout.is_none() {
+                requested_checkout = Some(proof);
+            }
         } else if !crate::worktrees::owns(&app, &workspace, req).await {
             return Err(foreign());
+        }
+    }
+    if message_list && let Some(ctx_dir) = parsed_location_context.as_ref().and_then(|v| v["directory"].as_str()) {
+        let ctx_resolved = if let Some((_, resolved, _)) = verified_media_dirs.iter().find(|(raw, _, _)| raw == ctx_dir)
+        {
+            resolved.clone()
+        } else {
+            let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), ctx_dir.to_owned()).await else {
+                return Err(foreign());
+            };
+            let proof =
+                crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor, false)
+                    .await
+                    .ok()
+                    .flatten()
+                    .ok_or_else(foreign)?;
+            verified_media_dirs.push((ctx_dir.to_owned(), resolved.clone(), proof));
+            resolved
+        };
+        if requested_dirs.iter().any(|req| {
+            verified_media_dirs
+                .iter()
+                .find(|(raw, _, _)| raw == req)
+                .is_none_or(|(_, resolved, _)| *resolved != ctx_resolved)
+        }) {
+            return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
         }
     }
     let actual = if let Some(session) = session {
@@ -350,22 +393,42 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let identity = crate::files::host_identity(&anchor).ok()?;
         Some((resolved, anchor, identity))
     };
-    let initial_identity = allow_subfolder.then(&identity_now).flatten();
-    let input_checkout = if allow_subfolder && requested.as_deref().is_some_and(|req| Some(req) == native_directory) {
-        requested_checkout.take()
-    } else {
-        match &initial_identity {
-            Some((resolved, anchor, _)) if message_list => {
-                crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor, false)
-                    .await
-                    .ok()
-                    .flatten()
-            }
-            Some((_, physical, _)) => {
-                crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, physical, true).await
-            }
-            None => None,
+    let initial_identity = if message_list {
+        if let Some(raw) = native_directory {
+            let (scope, raw) = (app.scope.clone(), raw.to_owned());
+            tokio::task::spawn_blocking(move || {
+                let (resolved, anchor) = crate::worktrees::ownership::resolve_media_path(&scope, &raw)?;
+                let identity = crate::files::host_identity(&anchor).ok()?;
+                Some((resolved, anchor, identity))
+            })
+            .await
+            .ok()
+            .flatten()
+        } else {
+            None
         }
+    } else {
+        allow_subfolder.then(&identity_now).flatten()
+    };
+    let input_checkout = if message_list {
+        if let Some((_, _, proof)) =
+            native_directory.and_then(|dir| verified_media_dirs.iter().find(|(raw, _, _)| raw == dir))
+        {
+            Some(proof.clone())
+        } else if let Some((resolved, anchor, _)) = &initial_identity {
+            crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor, false)
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        }
+    } else if allow_subfolder && requested.as_deref().is_some_and(|req| Some(req) == native_directory) {
+        requested_checkout.take()
+    } else if let Some((_, physical, _)) = &initial_identity {
+        crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, physical, true).await
+    } else {
+        None
     };
     // TS checks the session's own location first and names a proven
     // departure, so the UI can drop a conversation moved out of the project.
@@ -412,43 +475,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
             }
         } else if message_list {
-            // TS checks ambient `x-codenomad-location` independently of a subfolder session's directory
-            // (`http-server.ts:1224-1269, 1375-1408, 1662-1676`).
-            let ctx_dir = context
-                .as_object()
-                .filter(|o| o.len() == 1)
-                .and_then(|o| o.get("directory"))
-                .and_then(Value::as_str)
-                .ok_or_else(foreign)?;
-            if Some(ctx_dir) != native_directory && Some(ctx_dir) != requested.as_deref() {
-                let Some((resolved, anchor)) = resolve_media_path(ctx_dir) else {
-                    return Err(foreign());
-                };
-                if crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor, false)
-                    .await
-                    .ok()
-                    .flatten()
-                    .is_none()
-                {
-                    return Err(foreign());
-                }
-            }
-            if target
-                .query_pairs()
-                .any(|(key, value)| matches!(key.as_ref(), "directory" | "location[directory]") && value != ctx_dir)
-            {
-                return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
-            }
+            // Shape, ownership and query conflicts were already verified before session lookup.
         } else {
             one_location(&context, directory)?;
         }
     }
     let session_list = route == "/api/session" && head.method == Method::GET;
-    if target.query_pairs().any(|(key, _)| {
-        matches!(key.as_ref(), "workspace" | "workspaceID" | "location[workspace]" | "location[workspaceID]")
-    }) {
-        return Err(foreign());
-    }
     let cursor = if session_list { crate::opencode::scope::authorize_cursor(&mut target, directory)? } else { None };
     let mut explicit = cursor.is_some();
     let mut project = match cursor {
@@ -460,7 +492,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     for (key, value) in target.query_pairs() {
         match key.as_ref() {
             "directory" | "location[directory]" => {
-                if seen_directory || value != directory {
+                if !message_list && (seen_directory || value != directory) {
                     return Err(foreign());
                 }
                 seen_directory = true;
@@ -787,13 +819,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     if let Some(session) = defer_media {
         let slot = defer_slot.ok_or_else(interrupted)?;
-        let response = tokio::select! {
+        let mut response = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
             sent = tokio::time::timeout(super::PROXY_IDLE, upstream.send()) => {
                 sent.map_err(|_| interrupted())?.map_err(|_| upstream_error())?
             }
         };
+        if response.status() == Status::UNAUTHORIZED {
+            app.native.invalidate(&endpoint);
+        }
         if response.status().is_success() && is_json_content_type(response.headers()) {
             let status = response.status();
             let headers: Vec<(&'static str, axum::http::HeaderValue)> =
@@ -801,38 +837,76 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     .into_iter()
                     .filter_map(|name| response.headers().get(name).cloned().map(|value| (name, value)))
                     .collect();
-            // Deliberate safety cap (128 MiB) so an oversized native page cannot OOM the server
-            // (TS `opencode/compatibility/proxy.ts:81-94` likewise buffers the full JSON in memory).
-            let bytes = tokio::select! {
-                biased;
-                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                read = tokio::time::timeout(super::PROXY_IDLE, super::read_bytes(response, 128 * 1024 * 1024)) => {
-                    read.map_err(|_| interrupted())?.map_err(|_| interrupted())?
-                }
-            };
-            let (payload, changed, slot) = if bytes.len() > 32 * 1024 {
-                let (id, session) = (id.to_owned(), session.to_owned());
-                tokio::select! {
+            let mut stream = crate::sessions::media_stream::MessageListStream::new(id, session);
+            let mut slot = Some(slot);
+            loop {
+                let chunk = tokio::select! {
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                    rewritten = tokio::task::spawn_blocking(move || {
-                        let (payload, changed) = defer_message_list(&id, &session, bytes);
-                        (payload, changed, slot)
-                    }) => {
-                        rewritten.map_err(|_| interrupted())?
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    next = tokio::time::timeout(super::PROXY_IDLE, response.chunk()) => {
+                        next.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                     }
+                };
+                let Some(chunk) = chunk else {
+                    break;
+                };
+                let mut pos = 0;
+                while let Some(pending) = stream.feed(&chunk, &mut pos).map_err(|_| interrupted())? {
+                    let (ws, ses) = stream.ids().ok_or_else(interrupted)?;
+                    let (ws, ses) = (ws.to_owned(), ses.to_owned());
+                    let held = slot.take().ok_or_else(interrupted)?;
+                    let raw = pending.bytes;
+                    let (projected, changed, returned) = tokio::select! {
+                        biased;
+                        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                        _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                        res = tokio::task::spawn_blocking(move || {
+                            let (out, changed) = crate::sessions::media_stream::project_item(&ws, &ses, raw);
+                            (out, changed, held)
+                        }) => res.map_err(|_| interrupted())?,
+                    };
+                    slot = Some(returned);
+                    stream.commit_item(projected, changed, pending.delimiter).map_err(|_| interrupted())?;
                 }
-            } else {
-                (axum::body::Bytes::from(bytes), false, slot)
-            };
+            }
+            let (payload, changed) = stream.finish().map_err(|_| interrupted())?;
+            let slot = slot.ok_or_else(interrupted)?;
             // Matches TS `http-server.ts:1671-1677` & `proxy.ts:80-94`: once the page is received,
-            // deliver the projected JSON without an extra native round-trip, keeping synchronous guards.
+            // deliver the projected JSON without an extra native round-trip, keeping liveness guards.
             if !app.native.current(&endpoint) {
                 return Err(upstream_error());
             }
             app.workspace(id)?;
-            if !input_location_live() {
+            let live_ok = if let (Some((resolved, anchor, expected_id)), Some(checkout), Some(raw)) =
+                (&initial_identity, &input_checkout, native_directory)
+            {
+                let (scope, raw, resolved, anchor, expected_id, checkout) = (
+                    app.scope.clone(),
+                    raw.to_owned(),
+                    resolved.clone(),
+                    anchor.clone(),
+                    expected_id.clone(),
+                    checkout.clone(),
+                );
+                tokio::task::spawn_blocking(move || {
+                    crate::worktrees::ownership::resolve_media_path(&scope, &raw).is_some_and(|(cur_res, cur_anc)| {
+                        cur_res == resolved
+                            && cur_anc == anchor
+                            && crate::files::host_identity(&cur_anc).ok() == Some(expected_id)
+                            && checkout.live(&cur_res)
+                    })
+                })
+                .await
+                .unwrap_or(false)
+            } else {
+                false
+            };
+            if !live_ok || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
                 return Err(foreign());
+            }
+            if !app.native.current(&endpoint) {
+                return Err(upstream_error());
             }
             principal.live()?;
             // Drop the upstream strong ETag only when the JSON body was actually rewritten
@@ -851,7 +925,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         drop(slot);
         let builder = relayed(&response);
         use futures_util::StreamExt;
-        let bytes = response.bytes_stream().take_until(principal.0.clone().cancelled_owned());
+        let cancelled = principal.0.clone().cancelled_owned();
+        let app_retire = app.clone();
+        let endpoint_retire = endpoint.clone();
+        let bytes = response.bytes_stream().take_until(async move {
+            tokio::select! {
+                _ = cancelled => {}
+                _ = app_retire.native.wait_retired(&endpoint_retire) => {}
+            }
+        });
         return builder.extension(NativeBody).body(Body::from_stream(bytes)).map_err(|_| upstream_error());
     }
     let (route, opened, directory, id) = (route.to_owned(), opened.to_owned(), directory.to_owned(), id.to_owned());
@@ -984,7 +1066,7 @@ fn ordinary_input_refuses_reserved_metadata_even_with_null_values() {
 }
 
 #[test]
-fn deferred_message_list_preserves_non_object_and_unchanged_json() {
+fn deferred_message_list_headers_and_location_context_validation() {
     let mut headers = axum::http::HeaderMap::new();
     for (ct, expected) in [
         ("application/json", true),
@@ -998,16 +1080,19 @@ fn deferred_message_list_preserves_non_object_and_unchanged_json() {
         headers.insert(header::CONTENT_TYPE, ct.parse().unwrap());
         assert_eq!(is_json_content_type(&headers), expected, "{ct}");
     }
-    for raw in [b"[]".as_slice(), b"{}", b"null", b"not json", b"{\"data\":[]}"] {
-        let (out, changed) = defer_message_list("ws_1", "ses_1", raw.to_vec());
-        assert!(!changed);
-        assert_eq!(out.as_ref(), raw);
+    assert!(parse_location_context(&axum::http::HeaderMap::new()).unwrap().is_none());
+    for bad in [
+        "%7B%7D",
+        "%7B%22directory%22%3A%22%20%22%7D",
+        "%7B%22directory%22%3A%22%2Fa%22%2C%22workspaceID%22%3A%22w%22%7D",
+        "%7B%22directory%22%3A%22%2Fa%22%2C%22extra%22%3A1%7D",
+        "not-json",
+    ] {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert("x-codenomad-location", bad.parse().unwrap());
+        assert_eq!(parse_location_context(&h).unwrap_err().0, Status::BAD_REQUEST, "{bad}");
     }
-    let large = format!("data:image/png;base64,{}", "A".repeat(32 * 1024));
-    let payload = json!({"data":[{"id":"msg_1","type":"assistant","content":[{"type":"tool","state":{"content":[{"type":"file","mime":"image/png","uri":large}]}}]}]});
-    let (out, changed) = defer_message_list("ws_1", "ses_1", payload.to_string().into_bytes());
-    assert!(changed);
-    let rewritten: Value = serde_json::from_slice(&out).unwrap();
-    let uri = rewritten["data"][0]["content"][0]["state"]["content"][0]["uri"].as_str().unwrap();
-    assert!(uri.starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_1/0/0/"), "{uri}");
+    let mut ok = axum::http::HeaderMap::new();
+    ok.insert("x-codenomad-location", "%7B%22directory%22%3A%22%2Frepo%22%7D".parse().unwrap());
+    assert_eq!(parse_location_context(&ok).unwrap(), Some(json!({"directory": "/repo"})));
 }

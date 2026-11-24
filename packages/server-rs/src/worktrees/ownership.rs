@@ -19,6 +19,7 @@ pub struct Owned {
     pub checkout: PathBuf,
 }
 
+#[derive(Clone)]
 pub(crate) struct DirectoryProof {
     tree: Option<super::inventory::Tree>,
     source: Option<super::inventory::Tree>,

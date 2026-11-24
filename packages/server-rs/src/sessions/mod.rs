@@ -5,6 +5,7 @@ pub mod favorites;
 pub mod history;
 mod history_search;
 pub(crate) mod media;
+pub(crate) mod media_stream;
 pub mod pending;
 pub mod permission_mode;
 pub mod receipts;

@@ -422,6 +422,7 @@ async fn catalogue_in_at(
                 Err(error) => return Err(error),
             },
             Ok(real) if !opened && (real == projected && real.is_file() || !root.starts_with(&app.scope)) => None,
+            Ok(_) if !opened => continue,
             Ok(_) => return Err(conflict("Projected worktree directory is not physically owned")),
             Err(_) => None,
         };
