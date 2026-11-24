@@ -340,6 +340,19 @@ pub async fn session_record_with_timeout_raw_at(
     session_record_segment_at(app, endpoint, id, timeout, false, 2 * 1024 * 1024).await
 }
 
+/// Variant for `GET /api/session/:id/message` admission checks: accepts opaque session IDs with
+/// the 30 s budget while keeping the standard 2 MiB session-record cap (16 MiB is `session-media` only).
+pub async fn session_record_list_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
+    if id.is_empty()
+        || id.encode_utf16().nth(256).is_some()
+        || matches!(id, "." | "..")
+        || id.bytes().any(|b| b.is_ascii_control())
+    {
+        return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
+    }
+    session_record_segment_at(app, endpoint, id, Duration::from_secs(30), true, 2 * 1024 * 1024).await
+}
+
 /// Variant for opaque media/history-media session IDs (TS `session-media-contract.ts`).
 /// Uses the full 30 s route budget and 16 MiB body cap (TS `session-media-fetch.ts:29-46`).
 pub async fn session_record_media_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {

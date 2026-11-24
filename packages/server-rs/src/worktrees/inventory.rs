@@ -148,7 +148,14 @@ fn linked_markers(root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 
 }
 
 fn separate_marker(root: &Path, common: &Path) -> Result<Vec<u8>, Error> {
-    let marker = small(&root.join(".git"))?;
+    let dot_git = root.join(".git");
+    if std::fs::symlink_metadata(&dot_git).is_ok_and(|meta| meta.file_type().is_symlink())
+        && std::fs::metadata(&dot_git).is_ok_and(|meta| meta.is_dir())
+        && dunce::canonicalize(&dot_git).ok().as_deref() == Some(common)
+    {
+        return Ok(Vec::new());
+    }
+    let marker = small(&dot_git)?;
     let gitdir = std::str::from_utf8(&marker)
         .ok()
         .and_then(|text| text.trim_end().strip_prefix("gitdir: "))
@@ -282,14 +289,9 @@ impl Tree {
         }
         let project_missing = self.nested_missing
             || std::fs::symlink_metadata(&self.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
-        let within = if project_missing {
-            // Existing checkout root stays physically exact; a missing nested project folder
-            // (initially or removed mid-read while the checkout remains intact) follows Windows
-            // case-insensitivity like TS `worktree-directory.ts:166-193,203-230`.
-            dir.starts_with(self.registered()) && super::ownership::within(&self.path, dir)
-        } else {
-            dir.starts_with(&self.path)
-        };
+        // Exact prefix match prevents cross-workspace matches on case-sensitive NTFS when
+        // projected `Projet` is absent while a distinct sibling `projet` exists.
+        let within = dir.starts_with(&self.path) && (!project_missing || dir.starts_with(self.registered()));
         within
             && self.layout.live()
             && self.link_live()

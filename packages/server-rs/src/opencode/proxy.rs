@@ -389,7 +389,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         let actual = if let Some(session) = session {
             Some(if message_list {
-                super::session_record_media_at(&app, &endpoint, session).await?
+                static LIST_ADMISSION_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
+                let _admission_slot = LIST_ADMISSION_SLOTS.acquire().await.map_err(|_| upstream_error())?;
+                super::session_record_list_at(&app, &endpoint, session).await?
             } else {
                 super::session_record_at(&app, &endpoint, session).await?
             })
@@ -946,7 +948,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                 _ = workspace_closed() => return Err(not_found()),
-                record = tokio::time::timeout_at(list_deadline, super::session_record_media_at(&app, &endpoint, session)) => {
+                record = tokio::time::timeout_at(list_deadline, super::session_record_list_at(&app, &endpoint, session)) => {
                     record.map_err(|_| interrupted())??
                 }
             };
@@ -1128,7 +1130,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                 _ = workspace_closed() => return Err(not_found()),
-                record = tokio::time::timeout_at(list_deadline, super::session_record_media_at(&app, &endpoint, session)) => {
+                record = tokio::time::timeout_at(list_deadline, super::session_record_list_at(&app, &endpoint, session)) => {
                     record.map_err(|_| interrupted())??
                 }
             };
@@ -1237,7 +1239,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                 _ = workspace_closed() => return Err(not_found()),
-                record = tokio::time::timeout_at(list_deadline, super::session_record_media_at(&app, &endpoint, session)) => {
+                record = tokio::time::timeout_at(list_deadline, super::session_record_list_at(&app, &endpoint, session)) => {
                     record.map_err(|_| interrupted())??
                 }
             };
@@ -1444,7 +1446,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 biased;
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                record = tokio::time::timeout_at(list_deadline, super::session_record_media_at(&app, &endpoint, list_session)) => {
+                record = tokio::time::timeout_at(list_deadline, super::session_record_list_at(&app, &endpoint, list_session)) => {
                     record.map_err(|_| upstream_error())??
                 }
             };

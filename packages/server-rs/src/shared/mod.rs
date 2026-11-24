@@ -225,11 +225,23 @@ pub fn permit_body(
     permit_body_chunks(chunks, mem, abort)
 }
 
+struct HeldChunk {
+    bytes: Vec<u8>,
+    _mem: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
+}
+
+impl AsRef<[u8]> for HeldChunk {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 pub fn permit_body_chunks(
     mut chunks: std::collections::VecDeque<axum::body::Bytes>,
-    mut mem: Option<tokio::sync::OwnedSemaphorePermit>,
+    mem: Option<tokio::sync::OwnedSemaphorePermit>,
     mut abort: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
 ) -> axum::body::Body {
+    let mut mem = mem.map(std::sync::Arc::new);
     let mut done = false;
     axum::body::Body::from_stream(futures_util::stream::poll_fn(move |cx| {
         if done {
@@ -252,10 +264,16 @@ pub fn permit_body_chunks(
             drop(mem.take());
             return std::task::Poll::Ready(None);
         };
-        let chunk = front.split_to(front.len().min(RESPONSE_CHUNK));
+        // Copy out at most `RESPONSE_CHUNK` (64 KiB) and attach the shared permit via
+        // `Bytes::from_owner` so Hyper neither pins a multi-MiB backing segment nor drops the
+        // pool permit before the final chunk leaves its write buffer.
+        let take = front.len().min(RESPONSE_CHUNK);
+        let slice = front[..take].to_vec();
+        bytes::Buf::advance(front, take);
         if front.is_empty() {
             chunks.pop_front();
         }
+        let chunk = axum::body::Bytes::from_owner(HeldChunk { bytes: slice, _mem: mem.clone() });
         std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(chunk)))
     }))
 }

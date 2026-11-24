@@ -226,9 +226,13 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         Some(task) => task.await.map_err(|e| e.to_string()).and_then(|r| r.map_err(|e| e.to_string())),
         None => Ok(()),
     };
-    // Drain local and remote HTTP requests before tearing down plugin leases (TS `index.ts:753-767`).
+    // Drain local, remote, and automation bridge HTTP listeners before tearing down plugin leases
+    // (TS `index.ts:753-767`, `shutdown.ts:130-137`).
+    if let Some(task) = bridge {
+        let _ = task.await;
+    }
     plugins_stop.cancel();
-    for task in [plugins, bridge].into_iter().flatten() {
+    if let Some(task) = plugins {
         let _ = task.await;
     }
     host::native_parent::close();

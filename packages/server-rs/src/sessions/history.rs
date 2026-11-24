@@ -109,7 +109,7 @@ impl Placement {
             displays.push(display(&workspace.path));
         }
         let endpoint = {
-            let timeout = if media { Duration::from_secs(30) } else { Duration::from_secs(10) };
+            let timeout = if media { Duration::from_secs(30) } else { Duration::from_secs(15) };
             let deadline = tokio::time::Instant::now() + timeout;
             let endpoint = app.native.acquire(deadline).await.map_err(|_| crate::opencode::upstream_error())?;
             let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(app, &endpoint)).await;
@@ -240,25 +240,8 @@ impl Placement {
         if !self.live(app, id).await {
             return Err(changed());
         }
-        let newest = if self.strict_media {
-            crate::opencode::session_record_media_raw_at(app, &self.endpoint, session).await?
-        } else if self.media {
-            crate::opencode::session_record_media_raw_at(app, &self.endpoint, session).await?
-        } else {
-            crate::opencode::session_record_with_timeout_raw_at(app, &self.endpoint, session, Duration::from_secs(15))
-                .await?
-        };
-        if !self.operation_current(app, id).await {
-            return Err(crate::opencode::upstream_error());
-        }
-        if newest["id"] != self.source["id"]
-            || newest["location"]["directory"] != self.source["location"]["directory"]
-            || newest["location"].get("workspaceID") != self.source["location"].get("workspaceID")
-            || (!self.strict_media && newest["projectID"] != self.source["projectID"])
-            || !self.live(app, id).await
-        {
-            return Err(changed());
-        }
+        // Re-verify the worktree catalogue BEFORE the final `session.get` so the last native
+        // `revert` boundary read has no subsequent catalogue await window.
         let cur_anchor = {
             let path = self.path.clone();
             tokio::task::spawn_blocking(move || {
@@ -283,7 +266,26 @@ impl Placement {
             return Err(crate::opencode::upstream_error());
         }
         let current = current.ok_or_else(changed)?;
-        if !self.checkout.same_checkout(&current) || !self.live(app, id).await {
+        if !self.checkout.same_checkout(&current) {
+            return Err(changed());
+        }
+        let newest = if self.strict_media {
+            crate::opencode::session_record_media_raw_at(app, &self.endpoint, session).await?
+        } else if self.media {
+            crate::opencode::session_record_media_raw_at(app, &self.endpoint, session).await?
+        } else {
+            crate::opencode::session_record_with_timeout_raw_at(app, &self.endpoint, session, Duration::from_secs(15))
+                .await?
+        };
+        if !self.operation_current(app, id).await {
+            return Err(crate::opencode::upstream_error());
+        }
+        if newest["id"] != self.source["id"]
+            || newest["location"]["directory"] != self.source["location"]["directory"]
+            || newest["location"].get("workspaceID") != self.source["location"].get("workspaceID")
+            || (!self.strict_media && newest["projectID"] != self.source["projectID"])
+            || !self.live(app, id).await
+        {
             return Err(changed());
         }
         Ok(newest)
@@ -543,20 +545,27 @@ pub async fn handle(
     };
     let defer = action == "window" && media::wants_deferred(req.headers());
     let invalid = || error(Status::BAD_REQUEST, "Invalid history navigation request");
-    match req
+    let content_type = req
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .map(|ct| ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("application/json") => {}
-        None | Some("text/plain") => return Err(invalid()),
+        .map(|ct| ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase());
+    let missing_ct = match content_type.as_deref() {
+        Some("application/json") => false,
+        Some("text/plain") => return Err(invalid()),
+        None => true,
         Some(_) => return Err(error(Status::UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type")),
-    }
+    };
     let bytes = to_bytes(req.into_body(), limit)
         .await
         .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request body is too large"))?;
+    if missing_ct {
+        return Err(if bytes.is_empty() {
+            invalid()
+        } else {
+            error(Status::UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type")
+        });
+    }
     let schema = crate::sessions::contracts::get(&action, false);
     let input: Option<Value> = serde_json::from_slice(&bytes).ok();
     let input = input.filter(|i| crate::sessions::contracts::valid(schema, i)).ok_or_else(invalid)?;
@@ -635,7 +644,29 @@ pub async fn handle(
                 }
             }
             let body_len = body.len();
-            let (validated, slot) = if defer && body_len > 32 * 1024 {
+            let slot = if slot.is_none() && body_len > 32 * 1024 {
+                let workspace_closed = async {
+                    loop {
+                        let notified = app.workspace_closed.notified();
+                        if !placement.operation_current_fast(&app, &id) {
+                            return;
+                        }
+                        notified.await;
+                    }
+                };
+                let permit = tokio::select! {
+                    biased;
+                    _ = workspace_closed => return blocked("unavailable"),
+                    permit = DEFER_SLOTS.acquire() => match permit {
+                        Ok(permit) => permit,
+                        Err(_) => return blocked("unavailable"),
+                    }
+                };
+                Some(permit)
+            } else {
+                slot
+            };
+            let (validated, slot) = if body_len > 32 * 1024 {
                 let action_owned = action.clone();
                 match tokio::task::spawn_blocking(move || {
                     (parse_and_validate_history(status, body, &action_owned), slot)
@@ -654,7 +685,7 @@ pub async fn handle(
             };
             // Project and reserve response memory BEFORE final session/revert revalidation so
             // no blocking wait or `spawn_blocking` yield occurs after the last `revert` check.
-            let (projected, slot) = if defer && body_len > 32 * 1024 {
+            let (projected, slot) = if body_len > 32 * 1024 {
                 let (id, session) = (id.clone(), session.to_owned());
                 match tokio::task::spawn_blocking(move || {
                     (finalize_history_payload(validated, &id, &session, reference, defer), slot)
