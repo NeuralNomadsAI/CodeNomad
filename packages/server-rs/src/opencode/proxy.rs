@@ -738,16 +738,36 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         && response.status().is_success()
         && is_json_content_type(response.headers())
     {
+        static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
         let builder = relayed(&response);
         let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let _slot = tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            permit = tokio::time::timeout_at(deadline, SLOTS.acquire()) => {
+                permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+            }
+        };
         let bytes = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            read = tokio::time::timeout(Duration::from_secs(30), super::read_bytes(response, 256 * 1024 * 1024)) => {
+            read = tokio::time::timeout_at(deadline, super::read_bytes(response, 128 * 1024 * 1024)) => {
                 read.map_err(|_| interrupted())?.map_err(|_| interrupted())?
             }
         };
-        let body = defer_message_list(id, session, bytes);
+        let body = if bytes.len() > 32 * 1024 {
+            let (id, session) = (id.to_owned(), session.to_owned());
+            tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                rewritten = tokio::task::spawn_blocking(move || defer_message_list(&id, &session, bytes)) => {
+                    rewritten.map_err(|_| interrupted())?
+                }
+            }
+        } else {
+            defer_message_list(id, session, bytes)
+        };
         if !app.native.current(&endpoint) {
             return Err(upstream_error());
         }

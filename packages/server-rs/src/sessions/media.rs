@@ -30,7 +30,7 @@ fn encode(id: &str) -> String {
 }
 
 fn valid_id(id: &str) -> bool {
-    !id.is_empty() && id.encode_utf16().count() <= 256 && !id.bytes().any(|byte| byte.is_ascii_control())
+    !id.is_empty() && id.encode_utf16().nth(256).is_none() && !id.bytes().any(|byte| byte.is_ascii_control())
 }
 
 struct Reference<'a> {
@@ -75,7 +75,7 @@ fn renderable(file: &Value) -> Option<(&str, &str)> {
         || mime.len() > 128
         || subtype.is_empty()
         || !subtype.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.+-".contains(&b))
-        || uri.len() > URI_LIMIT && uri.encode_utf16().count() > URI_LIMIT
+        || uri.len() > URI_LIMIT && uri.encode_utf16().nth(URI_LIMIT).is_some()
     {
         return None;
     }
@@ -137,7 +137,7 @@ pub(super) async fn route(
         if app.workspace(&r.workspace).is_err() {
             return Err(missing());
         }
-        let placement = Placement::capture_with_media(&app, &r.workspace, &r.session, false, true)
+        let placement = Placement::capture_with_media(&app, &r.workspace, &r.session, false, true, false)
             .await
             .map_err(|failure| if failure.0 == Status::FORBIDDEN { failure } else { unavailable() })?;
         if !placement.operation_current(&app, &r.workspace) {

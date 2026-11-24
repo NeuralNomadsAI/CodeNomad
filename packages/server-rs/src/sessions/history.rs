@@ -38,7 +38,7 @@ pub(super) struct Placement {
 
 impl Placement {
     pub(super) async fn capture(app: &App, id: &str, session: &str, references: bool) -> Result<Self, Error> {
-        Self::capture_with_media(app, id, session, references, false).await
+        Self::capture_with_media(app, id, session, references, false, references).await
     }
 
     pub(super) async fn capture_with_media(
@@ -47,6 +47,7 @@ impl Placement {
         session: &str,
         references: bool,
         media: bool,
+        fenced: bool,
     ) -> Result<Self, Error> {
         let workspace = app.workspace(id)?;
         let unavailable = || error(Status::SERVICE_UNAVAILABLE, "History placement unavailable");
@@ -55,7 +56,7 @@ impl Placement {
         let display =
             |path: &std::path::Path| crate::worktrees::fence::capture_display(&crate::worktrees::fence::identity(path));
         let mut displays = Vec::new();
-        if references || media {
+        if fenced {
             displays.push(display(&workspace.path));
         }
         let endpoint = if media {
@@ -102,7 +103,7 @@ impl Placement {
         };
         let physical = same_file::Handle::from_path(&anchor).map_err(|_| unavailable())?;
         let checkout = if references || media {
-            if path != workspace.path {
+            if fenced && path != workspace.path {
                 displays.push(display(&path));
             }
             let proof = if media {
@@ -192,13 +193,7 @@ impl Placement {
                 == Some(&self.path)
             && (!self.media || directory_anchor(&self.path) == Ok(Some(self.anchor.as_path())))
             && same_file::Handle::from_path(&self.anchor).is_ok_and(|physical| physical == self.physical)
-            && self.checkout.as_ref().is_none_or(|checkout| {
-                if self.media {
-                    checkout.history_live(&self.workspace.path, &self.path)
-                } else {
-                    checkout.live(&self.path)
-                }
-            })
+            && self.checkout.as_ref().is_none_or(|checkout| checkout.live(&self.path))
             && self.displays.iter().all(|display| display.load(Relaxed))
     }
 
@@ -235,6 +230,7 @@ fn directory_anchor(path: &std::path::Path) -> Result<Option<&std::path::Path>, 
         match std::fs::symlink_metadata(ancestor) {
             Ok(metadata) => return Ok(metadata.is_dir().then_some(ancestor)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotADirectory => return Ok(None),
             Err(_) => return Err(()),
         }
     }
@@ -334,11 +330,12 @@ pub async fn handle(
     let input = input.filter(|i| crate::sessions::contracts::valid(schema, i)).ok_or_else(invalid)?;
     let session = input["sessionID"].as_str().ok_or_else(invalid)?;
     let request = async {
-        let placement = match Placement::capture_with_media(&app, &id, session, reference, defer).await {
-            Ok(placement) => placement,
-            Err((Status::FORBIDDEN, body)) => return (Status::FORBIDDEN, body).into_response(),
-            Err(_) => return blocked("unavailable"),
-        };
+        let placement =
+            match Placement::capture_with_media(&app, &id, session, reference, defer, reference || defer).await {
+                Ok(placement) => placement,
+                Err((Status::FORBIDDEN, body)) => return (Status::FORBIDDEN, body).into_response(),
+                Err(_) => return blocked("unavailable"),
+            };
         if !placement.current(&app, &id, session).await {
             return blocked("conflict");
         }
