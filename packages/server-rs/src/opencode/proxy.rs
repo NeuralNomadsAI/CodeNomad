@@ -1651,10 +1651,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         // the connection and propagates the fetch error to Fastify's 500 handler (`transport.ts:45-65`).
         if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
             app.native.invalidate(&endpoint);
-            return Err(crate::shared::fastify::error(
+            return Err((
                 Status::INTERNAL_SERVER_ERROR,
-                "ERR_UNEXPECTED_REDIRECT",
-                "fetch failed",
+                Json(json!({"statusCode": 500, "error": "Internal Server Error", "message": "fetch failed"})),
             ));
         }
         let unauthorized = status == Status::UNAUTHORIZED;
@@ -1792,10 +1791,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         if message_list && matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
             drop(response);
             app.native.invalidate(&endpoint);
-            return Err(crate::shared::fastify::error(
+            return Err((
                 Status::INTERNAL_SERVER_ERROR,
-                "ERR_UNEXPECTED_REDIRECT",
-                "fetch failed",
+                Json(json!({"statusCode": 500, "error": "Internal Server Error", "message": "fetch failed"})),
             ));
         }
         if message_list && !response.status().is_success() && !is_transport_json_content_type(response.headers()) {

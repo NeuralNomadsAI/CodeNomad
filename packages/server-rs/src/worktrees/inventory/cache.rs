@@ -9,11 +9,18 @@ use std::{
 };
 use uuid::Uuid;
 
+struct ActiveFlight {
+    id: Uuid,
+    epoch: u64,
+    endpoint: Arc<crate::opencode::Endpoint>,
+    read: InventoryRead,
+}
+
 pub struct EventEntry {
     at: Instant,
     value: Option<Arc<Catalogue>>,
     endpoint: Arc<crate::opencode::Endpoint>,
-    loading: Option<(Uuid, u64, InventoryRead)>,
+    loading: Option<ActiveFlight>,
 }
 type InventoryRead = Shared<BoxFuture<'static, Option<Arc<Catalogue>>>>;
 pub type EventCache = std::sync::Mutex<InventoryCache>;
@@ -74,6 +81,23 @@ impl InventoryCache {
         }
     }
 
+    fn invalidate_sse_if_changed(&mut self, id: Uuid, latest: &Catalogue) {
+        let sse_key = (id, false);
+        let changed = self
+            .entries
+            .get(&sse_key)
+            .and_then(|e| e.value.as_ref())
+            .is_some_and(|old| old.response() != latest.response());
+        if changed {
+            if let Some(sse) = self.entries.get_mut(&sse_key) {
+                sse.value = None;
+                if sse.loading.is_none() {
+                    self.entries.remove(&sse_key);
+                }
+            }
+        }
+    }
+
     pub(in crate::worktrees) fn store_if_current(
         &mut self,
         id: Uuid,
@@ -85,15 +109,26 @@ impl InventoryCache {
         if self.serial != revision {
             return;
         }
+        if refresh {
+            self.invalidate_sse_if_changed(id, &value);
+        }
         let key = (id, refresh);
         if self.entries.len() >= EVENT_ENTRIES * 2 {
             self.entries.retain(|_, e| e.loading.is_some() || e.at.elapsed() < EVENT_STALE_LIMIT);
         }
         if let Some(entry) = self.entries.get_mut(&key) {
-            // Preserve any active `loading` flight so its waiters still receive its result.
-            entry.at = Instant::now();
-            entry.value = Some(value);
-            entry.endpoint = endpoint.clone();
+            if Arc::ptr_eq(&entry.endpoint, endpoint) {
+                // Preserve an active `loading` flight only when it belongs to this same endpoint.
+                if entry.loading.as_ref().is_some_and(|f| !Arc::ptr_eq(&f.endpoint, endpoint)) {
+                    entry.loading = None;
+                }
+                entry.at = Instant::now();
+                entry.value = Some(value);
+            } else {
+                // Never mix a new endpoint's snapshot with a retired endpoint's flight.
+                *entry =
+                    EventEntry { at: Instant::now(), value: Some(value), endpoint: endpoint.clone(), loading: None };
+            }
         } else if self.entries.len() < EVENT_ENTRIES * 2 {
             self.entries.insert(
                 key,
@@ -183,7 +218,9 @@ async fn cached_catalogue(
                 return None;
             }
             let epoch = cache.stamp();
-            if cache.entries.get(&key).is_some_and(|e| !Arc::ptr_eq(&e.endpoint, endpoint) && e.loading.is_none()) {
+            if cache.entries.get(&key).is_some_and(|e| !Arc::ptr_eq(&e.endpoint, endpoint)) {
+                // `endpoint` is verified current above, so any entry bound to another endpoint is
+                // retired: drop it wholesale so neither its snapshot nor its flight can leak to `endpoint`.
                 cache.entries.remove(&key);
             }
             let mut background = None;
@@ -200,17 +237,17 @@ async fn cached_catalogue(
                     }
                 }
             }
-            if let Some((_, flight_epoch, read)) = cache.entries.get(&key).and_then(|e| e.loading.as_ref())
-                && cache.entries.get(&key).is_some_and(|e| Arc::ptr_eq(&e.endpoint, endpoint))
+            if let Some(flight) = cache.entries.get(&key).and_then(|e| e.loading.as_ref())
+                && Arc::ptr_eq(&flight.endpoint, endpoint)
             {
-                if *flight_epoch == epoch {
-                    if background.is_some() { Step::Hit(background) } else { Step::Join(epoch, read.clone()) }
+                if flight.epoch == epoch {
+                    if background.is_some() { Step::Hit(background) } else { Step::Join(epoch, flight.read.clone()) }
                 } else if background.is_some() {
                     Step::Hit(background)
                 } else {
                     // Serialize behind the already-running invalidated flight on the SAME live
                     // endpoint before starting the next scan (TS `worktree-inventory.ts:61-93`).
-                    Step::WaitPrevious(read.clone())
+                    Step::WaitPrevious(flight.read.clone())
                 }
             } else {
                 if cache.entries.len() >= EVENT_ENTRIES * 2 {
@@ -238,8 +275,8 @@ async fn cached_catalogue(
                     endpoint: endpoint.clone(),
                     loading: None,
                 });
-                entry.endpoint = endpoint.clone();
-                entry.loading = Some((flight, epoch, loading.clone()));
+                entry.loading =
+                    Some(ActiveFlight { id: flight, epoch, endpoint: endpoint.clone(), read: loading.clone() });
                 let (app, w, endpoint) = (app.clone(), w.clone(), endpoint.clone());
                 tokio::spawn(async move {
                     let started = Instant::now();
@@ -258,11 +295,8 @@ async fn cached_catalogue(
                     };
                     crate::bench::trace_elapsed("registered-catalogue", started);
                     let mut cache = app.linked_events.lock().unwrap();
-                    let owns_flight = cache
-                        .entries
-                        .get(&key)
-                        .and_then(|e| e.loading.as_ref())
-                        .is_some_and(|(id, _, _)| *id == flight);
+                    let owns_flight =
+                        cache.entries.get(&key).and_then(|e| e.loading.as_ref()).is_some_and(|f| f.id == flight);
                     if !cache.valid(epoch, result.as_ref().map(|c| c.project.as_str()))
                         || !app.native.current(&endpoint)
                         || !owns_flight
@@ -278,6 +312,9 @@ async fn cached_catalogue(
                         return;
                     }
                     if let Some(res) = result.clone() {
+                        if refresh_on_load {
+                            cache.invalidate_sse_if_changed(w.id, &res);
+                        }
                         if cache.entries.len() > EVENT_ENTRIES * 2 {
                             cache.entries.remove(&key);
                         } else {

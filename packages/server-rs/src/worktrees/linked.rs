@@ -279,6 +279,12 @@ pub async fn create(
                     else {
                         return Ok(());
                     };
+                    // Require the exact `info/exclude` components: if `<common_dir>/info` was an
+                    // in-repo symlink already resolved by `git rev-parse --path-format=absolute`,
+                    // `info_comp` will not be `"info"` and we refuse to follow it.
+                    if info_comp != std::ffi::OsStr::new("info") || file_comp != std::ffi::OsStr::new("exclude") {
+                        return Ok(());
+                    }
                     let Ok(common_dir) =
                         cap_std::fs::Dir::open_ambient_dir(&common_canon, cap_std::ambient_authority())
                     else {
@@ -293,15 +299,33 @@ pub async fn create(
                         return Ok(());
                     }
                     let Ok(info) = common_dir.open_dir(info_comp) else { return Ok(()) };
-                    let expected_info_path = common_canon.join(info_comp);
-                    if dunce::canonicalize(&expected_info_path).ok().as_deref() != Some(expected_info_path.as_path()) {
-                        return Ok(());
-                    }
                     #[cfg(unix)]
                     {
                         use cap_std::fs::MetadataExt;
                         let Ok(opened_meta) = info.dir_metadata() else { return Ok(()) };
                         if opened_meta.dev() != info_meta.dev() || opened_meta.ino() != info_meta.ino() {
+                            return Ok(());
+                        }
+                    }
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+                        use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
+                        let expected_info_path = common_canon.join(info_comp);
+                        let handle = info.as_raw_handle();
+                        let len = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
+                        if len == 0 {
+                            return Ok(());
+                        }
+                        let mut buf = vec![0u16; len as usize];
+                        let written = unsafe { GetFinalPathNameByHandleW(handle, buf.as_mut_ptr(), len, 0) };
+                        if written == 0 || written as usize >= buf.len() {
+                            return Ok(());
+                        }
+                        let actual =
+                            dunce::simplified(Path::new(&std::ffi::OsString::from_wide(&buf[..written as usize])))
+                                .to_path_buf();
+                        if actual != expected_info_path {
                             return Ok(());
                         }
                     }

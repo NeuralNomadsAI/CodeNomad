@@ -1149,7 +1149,7 @@ pub async fn handle(
             Ok(workspace) => workspace,
             Err(_) => return blocked("unavailable"),
         };
-        let slot = {
+        let mut slot = {
             let workspace_closed = async {
                 loop {
                     let notified = app.workspace_closed.notified();
@@ -1195,7 +1195,7 @@ pub async fn handle(
             // then shrinks the permit down to the serialized payload size.
             let reserve_bytes =
                 if action == "window" { rpc_limit + if defer { 8 * 1024 * 1024 } else { 0 } } else { 56 * 1024 * 1024 };
-            let mem = {
+            let mut mem = {
                 let workspace_closed = async {
                     loop {
                         let notified = app.workspace_closed.notified();
@@ -1226,9 +1226,28 @@ pub async fn handle(
                 return blocked("unavailable");
             };
             if action == "outline" && status == Status::BAD_REQUEST {
-                let fallback = parse_envelope(&body).is_some_and(|envelope| {
-                    raw_str_eq(envelope.tag, "RpcError") && raw_str_eq(envelope.kind, "rpc.method_not_found")
-                });
+                let fallback = if body.len() > 32 * 1024 {
+                    let Ok((found, returned_body, returned_slot, returned_mem)) =
+                        tokio::task::spawn_blocking(move || {
+                            let found = parse_envelope(&body).is_some_and(|envelope| {
+                                raw_str_eq(envelope.tag, "RpcError")
+                                    && raw_str_eq(envelope.kind, "rpc.method_not_found")
+                            });
+                            (found, body, slot, mem)
+                        })
+                        .await
+                    else {
+                        return blocked("unavailable");
+                    };
+                    body = returned_body;
+                    slot = returned_slot;
+                    mem = returned_mem;
+                    found
+                } else {
+                    parse_envelope(&body).is_some_and(|envelope| {
+                        raw_str_eq(envelope.tag, "RpcError") && raw_str_eq(envelope.kind, "rpc.method_not_found")
+                    })
+                };
                 if fallback {
                     // Release the first RPC buffer before reading the fallback so two ~24 MiB
                     // bodies never coexist under a single `ResponsePool::History` reservation.
