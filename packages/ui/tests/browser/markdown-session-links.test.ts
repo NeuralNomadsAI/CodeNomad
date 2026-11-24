@@ -104,6 +104,7 @@ test("on the local desktop, local links open in the preview when it shows them, 
     window.releaseReadme = () => release?.()
     window.electronAPI = { openLocalPath: async ({ path, keep }) => {
       if (path.endsWith("/locked")) throw new Error("Access denied")
+      if (path.endsWith("/gone.md")) return { opened: false }
       if (path.endsWith("/README.md") && keep !== "none") await window.held
       const folder = /\\/(docs|album\\.png)$/.test(path)
       if (!folder && (keep === "files" || (keep === "text" && path.endsWith(".md")))) return { opened: false }
@@ -158,11 +159,20 @@ test("on the local desktop, local links open in the preview when it shows them, 
     await page.waitForTimeout(200)
     assert.equal((await page.evaluate(() => (window as any).fixture.surface())).kind, "web")
 
+    // Failures and missing targets explain themselves.
     await page.click('#main-root a[href="./locked"]')
-    await page.waitForFunction(() => (window as any).fixture.errorToasts().length === 1)
-    assert.match(await page.evaluate(() => (window as any).fixture.errorToasts()[0]), /Access denied/)
+    await page.click('#main-root a[href="./gone.md"]', { modifiers: ["Control"] })
+    await page.waitForFunction(() => (window as any).fixture.errorToasts().length === 2)
+    const toasts: string[] = await page.evaluate(() => (window as any).fixture.errorToasts())
+    assert.ok(toasts.some(message => /Access denied/.test(message)), toasts.join(" | "))
+    assert.ok(toasts.includes("Not found: /fixture-root/gone.md"), toasts.join(" | "))
+
+    // Titles name the target and what a plain click does.
+    const label = (key: string) => page.evaluate(key => (window as any).fixture.label(key), key)
     assert.equal(await page.getAttribute('#main-root a[href="file:///C:/Users/me/bato.jpg"]', "title"),
-      await page.evaluate(() => (window as any).fixture.label("markdown.link.pathOpens")))
+      `C:\\Users\\me\\bato.jpg\n${await label("markdown.link.systemOpens")}`)
+    assert.equal(await page.getAttribute('#main-root a[href="./docs"]', "title"),
+      `/fixture-root/docs\n${await label("markdown.link.pathOpens")}`)
   } finally {
     await page.close()
   }

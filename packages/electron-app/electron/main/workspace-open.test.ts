@@ -43,7 +43,7 @@ test("opens local paths, leaving text files to the caller when asked", async () 
   const opened: string[] = []
   const dependencies = { openPath: async (path: string) => { opened.push(path); return "" }, revealPath: () => undefined }
   try {
-    assert.equal(looksLikeText(join(root, "long.txt")), true)
+    assert.equal(await looksLikeText(join(root, "long.txt")), true)
     assert.equal(await openLocalPath(join(root, "docs"), "text", dependencies), true)
     assert.equal(await openLocalPath(join(root, "clip.mp4"), "text", dependencies), true)
     assert.equal(await openLocalPath(join(root, "notes.txt"), "text", dependencies), false)
@@ -51,7 +51,9 @@ test("opens local paths, leaving text files to the caller when asked", async () 
     assert.equal(await openLocalPath(join(root, "clip.mp4"), "files", dependencies), false)
     assert.equal(await openLocalPath(join(root, "docs"), "files", dependencies), true)
     assert.equal(await openLocalPath(join(root, "notes.txt"), "none", dependencies), true)
-    await assert.rejects(openLocalPath(join(root, "missing"), "none", dependencies), /ENOENT/)
+    assert.equal(await openLocalPath(join(root, "missing"), "none", dependencies), false)
+    // Off the local disks, the caller keeps the path unless it asked for the system.
+    assert.equal(await openLocalPath("docs", "text", dependencies), false)
     await assert.rejects(openLocalPath("docs", "none", dependencies), /local disk/)
     assert.deepEqual(opened.map(path => basename(path)), ["docs", "clip.mp4", "docs", "notes.txt"])
   } finally {

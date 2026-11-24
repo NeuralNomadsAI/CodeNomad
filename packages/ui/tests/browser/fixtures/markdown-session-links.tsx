@@ -88,7 +88,7 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
   <div>
     <div id="main-root">
       <Markdown part={{ id: "part", type: "text", version: 0,
-          text: "See [readme](./README.md), the [guide](docs/guide.md#intro), [app](/fixture-root/src/app.ts), [escape](../outside.md), [web](https://example.com/x) and [local](http://localhost:3000/x). Local: [docs](./docs), [clip](./media/clip.mp4), [shot](./shot.png), [album](./album.png), [photo](file:///C:/Users/me/bato.jpg), [notes](file:///fixture-root/notes.md), [locked](./locked)." }}
+          text: "See [readme](./README.md), the [guide](docs/guide.md#intro), [app](/fixture-root/src/app.ts), [escape](../outside.md), [web](https://example.com/x) and [local](http://localhost:3000/x). Local: [docs](./docs), [clip](./media/clip.mp4), [shot](./shot.png), [album](./album.png), [photo](file:///C:/Users/me/bato.jpg), [notes](file:///fixture-root/notes.md), [locked](./locked), [gone](./gone.md)." }}
         instanceId={id} sessionId="ses_link" onRendered={() => { renderCount++ }} />
     </div>
     <div id="sub-root">

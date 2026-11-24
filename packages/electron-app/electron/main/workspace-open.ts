@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process"
-import { closeSync, existsSync, openSync, readSync, realpathSync, statSync } from "node:fs"
+import { existsSync, realpathSync, statSync } from "node:fs"
+import { open, realpath, stat } from "node:fs/promises"
 import { extname, isAbsolute, join, relative, resolve } from "node:path"
 
 export type WorkspaceOpenTarget = "default" | "reveal" | "terminal" | "editor"
@@ -26,8 +27,8 @@ interface WorkspaceOpenDependencies {
 }
 
 const BLOCKED_DEFAULT_OPEN_EXTENSIONS = new Set([
-  ".appimage", ".application", ".chm", ".com", ".cpl", ".desktop", ".exe", ".jar", ".lnk", ".msi",
-  ".msp", ".pif", ".scr", ".url",
+  ".appimage", ".application", ".chm", ".com", ".cpl", ".desktop", ".exe", ".fileloc", ".inetloc", ".jar",
+  ".lnk", ".msi", ".msp", ".pif", ".scr", ".terminal", ".url", ".webloc",
 ])
 
 const SAFE_WINDOWS_OPEN_EXTENSIONS = new Set([
@@ -49,7 +50,7 @@ export function defaultOpenMode(path: string, platform: NodeJS.Platform): "open"
   const stats = statSync(path)
   const extension = extname(path).toLowerCase()
   if (stats.isDirectory()) {
-    if (platform === "darwin" && extension === ".app") throw new Error("Application bundles cannot be opened externally")
+    if (platform === "darwin" && (extension === ".app" || extension === ".workflow")) throw new Error("Application bundles cannot be opened externally")
     return "open"
   }
   if (platform === "win32") {
@@ -177,12 +178,12 @@ async function launchFirst(candidates: LaunchCandidate[], selectedPath: string, 
 }
 
 /** Whether a file's first bytes read as text, as the file preview decides: no
- * NUL byte and valid UTF-8 (a character cut at the sample's end still counts). */
-export function looksLikeText(path: string): boolean {
+ * NUL byte and valid UTF-8 (a character cut at a full sample's end still counts). */
+export async function looksLikeText(path: string): Promise<boolean> {
   const sample = Buffer.alloc(8192)
-  const descriptor = openSync(path, "r")
+  const file = await open(path, "r")
   let length: number
-  try { length = readSync(descriptor, sample, 0, sample.length, 0) } finally { closeSync(descriptor) }
+  try { length = (await file.read(sample, 0, sample.length, 0)).bytesRead } finally { await file.close() }
   const bytes = sample.subarray(0, length)
   if (bytes.includes(0)) return false
   try {
@@ -204,25 +205,29 @@ export function isLocalDiskPath(path: string, platform: NodeJS.Platform = proces
 
 /** Opens an absolute local `path` with the system: a folder in the file
  * manager, a file with its default application under `defaultOpenMode`'s
- * protections. Resolves false and opens nothing when it leaves the path to
- * the caller: unless `keep` is `none`, a missing path, and text files
- * (`text`) or every file (`files`). Rejects for any other missing path, a
- * path off the local disks, or a failed opening. */
+ * protections. Resolves false and opens nothing for a missing path, or when
+ * it leaves the path to the caller (`keep`): text files (`text`), every file
+ * (`files`), and paths off the local disks. Off the local disks with `none`,
+ * or when opening fails, it rejects. */
 export async function openLocalPath(path: string, keep: LocalPathKeep, dependencies?: WorkspaceOpenDependencies): Promise<boolean> {
   if (!dependencies) throw new Error("Native workspace openers are unavailable")
-  if (!isLocalDiskPath(path)) throw new Error("Only absolute paths on a local disk can be opened")
+  if (!isLocalDiskPath(path)) {
+    // Checked before any filesystem access: a UNC path would reach the network.
+    if (keep !== "none") return false
+    throw new Error("Only absolute paths on a local disk can be opened")
+  }
   let selectedPath: string
   try {
-    selectedPath = realpathSync(path)
-  } catch (error) {
-    if (keep !== "none") return false
-    throw error
+    selectedPath = await realpath(path)
+  } catch {
+    return false
   }
-  const folder = statSync(selectedPath).isDirectory()
-  if (!folder && (keep === "files" || (keep === "text" && looksLikeText(selectedPath)))) return false
+  const folder = (await stat(selectedPath)).isDirectory()
+  if (!folder && (keep === "files" || (keep === "text" && await looksLikeText(selectedPath)))) return false
   await openDefault(selectedPath, folder ? selectedPath : resolve(selectedPath, ".."), dependencies)
   return true
 }
+
 async function openDefault(selectedPath: string, cwd: string, dependencies: WorkspaceOpenDependencies): Promise<void> {
   const mode = defaultOpenMode(selectedPath, process.platform)
   if (mode === "edit" || mode === "choose") {
@@ -266,7 +271,8 @@ export async function openWorkspaceTarget(
   const relativePath = relative(root, selectedPath)
   if (relativePath === ".." || relativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(relativePath)) {
     throw new Error("Selected path is outside the workspace")
-  }  const cwd = statSync(selectedPath).isDirectory() ? selectedPath : resolve(selectedPath, "..")
+  }
+  const cwd = statSync(selectedPath).isDirectory() ? selectedPath : resolve(selectedPath, "..")
 
   if (target === "default") {
     await openDefault(selectedPath, cwd, dependencies)

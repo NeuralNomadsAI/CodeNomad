@@ -64,7 +64,7 @@ test("on the local desktop, bare folder paths link too", { timeout: 60_000 }, as
     await page.goto(url)
     await page.waitForFunction(() => (window as any).fixture?.count("src/inner") === 1)
     assert.equal(await page.evaluate(() => (window as any).fixture.title("src/inner")),
-      await page.evaluate(() => (window as any).fixture.label("markdown.link.pathOpens")))
+      `/fixture-root/src/inner\n${await page.evaluate(() => (window as any).fixture.label("markdown.link.pathOpens"))}`)
   } finally {
     await page.close()
   }

@@ -77,6 +77,8 @@ export function resolveSessionProjectLink(instanceId: string, sessionId: string,
 export interface SessionLinkTitles {
   preview: string
   file: string
+  /** For `file:` links, which always open with the system. */
+  system: string
   /** Local paths open with the system on this host (`canOpenLocalPaths`). */
   local: boolean
 }
@@ -91,14 +93,20 @@ export function localLinkPath(href: string, base: SessionLinkBase | undefined): 
   return base && `${base.directory.replace(/[\\/]+$/, "")}/${path}`
 }
 
+/** A local path as its platform writes it: backslashes after a drive letter. */
+const displayPath = (path: string) => /^[A-Za-z]:/.test(path) ? path.replace(/\//g, "\\") : path
+
 // Opens a local path with the system. With `fallback`, the host opens nothing
 // for a missing path or a `keep` kind and the file reader shows the target
-// instead, unless a later surface gesture superseded this click meanwhile.
+// instead, unless a later surface gesture superseded this click meanwhile;
+// without it, a missing path shows a notice.
 const openLocal = (instanceId: string, path: string, keep: LocalPathKeep, fallback?: (gesture: SurfaceGesture) => void) => {
   const operation = captureBackendOperation(instanceId)
   const gesture = fallback && beginGesture({ instanceId, sessionId: null })
   void openLocalPath(path, keep).then(opened => {
-    if (!opened && gesture && operation.current()) fallback!(gesture)
+    if (opened || !operation.current()) return
+    if (gesture) fallback!(gesture)
+    else showToastNotification({ category: "files", variant: "error", message: tGlobal("markdown.link.openMissing", { path: displayPath(path) }) })
   }, error => {
     if (!operation.current()) return
     showToastNotification({ category: "files", variant: "error",
@@ -138,6 +146,7 @@ export function routeSessionLink(instanceId: string, sessionId: string, href: st
   else openLocal(instanceId, local, previewImageType(resolution!.path) ? "files" : "text", preview)
   return true
 }
+
 /** The titles decorated links carry, computed from the reactive availability
  * and locale signals: call this synchronously inside an effect so their
  * changes re-run the decoration pass. */
@@ -148,12 +157,15 @@ export function sessionLinkTitles(instanceId: string | undefined, sessionId: str
   return {
     preview: sessionBound && loopbackLinksOpenPreview ? tGlobal("markdown.link.previewOpens") : "",
     file: sessionBound ? tGlobal(local ? "markdown.link.pathOpens" : "markdown.link.fileOpens") : "",
+    system: local ? tGlobal("markdown.link.systemOpens") : "",
     local,
   }
 }
+
 /** Decorates exactly the links that intercept: loopback links while previews
  * are known available, links resolving inside the session's worktree and,
- * where they open with the system, every local path link;
+ * where they open with the system, every local path link, whose title starts
+ * with its target;
  * never over an author's own title attribute. Pure DOM pass: the caller
  * computes `titles` and `base` inside its reactive effect, so availability,
  * locale and inventory changes re-run it. */
@@ -164,8 +176,11 @@ export function decorateSessionLinks(container: ParentNode, titles: SessionLinkT
   for (const anchor of container.querySelectorAll<HTMLAnchorElement>("a[href]")) {
     const href = anchor.getAttribute("href") ?? ""
     const loopback = Boolean(previewTitle) && isLoopbackHttpUrl(href)
-    const file = Boolean(fileTitle) && (titles.local ? localLinkPath(href, base) : resolveProjectLinkPath(href, base!.base)) !== undefined
-    const title = loopback ? previewTitle : file ? titles.file : ""
+    const local = titles.local ? localLinkPath(href, base) : undefined
+    const file = Boolean(fileTitle) && !titles.local && resolveProjectLinkPath(href, base!.base) !== undefined
+    const title = loopback ? previewTitle
+      : local !== undefined ? `${displayPath(local)}\n${localFileUrlPath(href) !== undefined ? titles.system : titles.file}`
+      : file ? titles.file : ""
     if (title) {
       if (anchor.getAttribute("data-preview-link-title") === "true") {
         // Our own tooltip follows locale changes; an author's title never does.

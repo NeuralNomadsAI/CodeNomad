@@ -354,13 +354,17 @@ fn default_open_mode(path: &Path) -> Result<DefaultOpenMode, String> {
         "cpl",
         "desktop",
         "exe",
+        "fileloc",
+        "inetloc",
         "jar",
         "lnk",
         "msi",
         "msp",
         "pif",
         "scr",
+        "terminal",
         "url",
+        "webloc",
     ];
     #[cfg(windows)]
     const SAFE_WINDOWS_OPEN: &[&str] = &[
@@ -383,7 +387,7 @@ fn default_open_mode(path: &Path) -> Result<DefaultOpenMode, String> {
         .unwrap_or_default()
         .to_ascii_lowercase();
     if metadata.is_dir() {
-        if cfg!(target_os = "macos") && extension == "app" {
+        if cfg!(target_os = "macos") && (extension == "app" || extension == "workflow") {
             return Err("Application bundles cannot be opened externally".into());
         }
         return Ok(DefaultOpenMode::Open);
@@ -604,10 +608,10 @@ pub async fn open_workspace_target(
 
 /// Opens an absolute local `path` with the system: a folder in the file
 /// manager, a file with its default application under `default_open_mode`'s
-/// protections. `false`, opening nothing, when it leaves the path to the
-/// caller: unless `keep` is `none`, a missing path, and text files (`text`)
-/// or every file (`files`). Any other missing path, a path off the local
-/// disks or a failed opening is an error.
+/// protections. `false`, opening nothing, for a missing path or when it
+/// leaves the path to the caller (`keep`): text files (`text`), every file
+/// (`files`), and paths off the local disks. Off the local disks with `none`,
+/// or when opening fails, it is an error.
 #[tauri::command]
 pub async fn open_local_path(
     webview: tauri::Webview,
@@ -661,18 +665,21 @@ fn looks_like_text(path: &Path) -> bool {
         Err(error) => error.error_len().is_none() && length == sample.len(),
     }
 }
+
 fn open_local_path_impl(path: &str, keep: &str) -> Result<bool, String> {
     if !matches!(keep, "none" | "text" | "files") {
         return Err("Invalid local path request".into());
     }
     let path = Path::new(path);
+    // Checked before any filesystem access: a UNC path would reach the network.
     if !is_local_disk_path(path) {
+        if keep != "none" {
+            return Ok(false);
+        }
         return Err("Only absolute paths on a local disk can be opened".into());
     }
-    let selected = match path.canonicalize() {
-        Ok(selected) => selected,
-        Err(_) if keep != "none" => return Ok(false),
-        Err(error) => return Err(error.to_string()),
+    let Ok(selected) = path.canonicalize() else {
+        return Ok(false);
     };
     let folder = selected.is_dir();
     if !folder && (keep == "files" || (keep == "text" && looks_like_text(&selected))) {
@@ -724,12 +731,14 @@ mod tests {
                 "{name}"
             );
         }
-        assert!(
-            open_local_path_impl(workspace.path().join("missing").to_str().unwrap(), "none")
-                .is_err()
+        assert_eq!(
+            open_local_path_impl(workspace.path().join("missing").to_str().unwrap(), "none"),
+            Ok(false)
         );
+        assert_eq!(open_local_path_impl(r"\\host\share\x", "text"), Ok(false));
         assert!(open_local_path_impl("relative", "none").is_err());
     }
+
     #[test]
     fn local_paths_exclude_network_shares_and_devices() {
         assert!(!is_local_disk_path(Path::new("relative")));

@@ -51,6 +51,7 @@ export async function openLocalPath(path: string, keep: LocalPathKeep): Promise<
   if (isTauriHost()) return (await window.__TAURI__!.core!.invoke("open_local_path", { path, keep })) === true
   return (await window.electronAPI!.openLocalPath!({ path, keep })).opened === true
 }
+
 export async function setWorkspaceMenuEnabled(enabled: boolean, viewState?: ViewMenuState): Promise<void> {
   if (!isDesktopHost() || !isLocalWindow()) return
   if (isTauriHost()) {
