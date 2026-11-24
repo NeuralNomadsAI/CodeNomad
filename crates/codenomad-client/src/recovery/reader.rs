@@ -33,7 +33,6 @@ pub(super) struct Reader {
     pub(super) known: HashSet<String>,
     pub(super) owed: HashSet<(String, usize)>,
     pub(super) owed_tools: HashMap<(String, String), u8>,
-    pub(super) failed_tools: HashSet<(String, String)>,
     pub(super) frozen_tools: HashMap<(String, String), u64>,
     pub(super) execution_settlement: u8,
     pub(super) execution_ended_at: Option<u64>,
@@ -63,7 +62,6 @@ impl Reader {
             known: HashSet::new(),
             owed: HashSet::new(),
             owed_tools: HashMap::new(),
-            failed_tools: HashSet::new(),
             frozen_tools: HashMap::new(),
             execution_settlement: 0,
             execution_ended_at: None,
@@ -99,7 +97,6 @@ impl Reader {
                 self.known = HashSet::new();
                 self.owed = HashSet::new();
                 self.owed_tools = HashMap::new();
-                self.failed_tools = HashSet::new();
                 self.frozen_tools = HashMap::new();
                 self.execution_settlement = 0;
                 self.execution_ended_at = None;
@@ -127,7 +124,6 @@ impl Reader {
         self.known.clear();
         self.owed.clear();
         self.owed_tools.clear();
-        self.failed_tools.clear();
         self.frozen_tools.clear();
         self.execution_settlement = 0;
         self.execution_ended_at = None;
@@ -143,7 +139,6 @@ impl Reader {
         self.known.clear();
         self.owed.clear();
         self.owed_tools.clear();
-        self.failed_tools.clear();
         self.frozen_tools.clear();
         self.execution_settlement = 0;
         self.execution_ended_at = None;
@@ -193,9 +188,6 @@ impl Reader {
                         .retain(|(id, call), _| !tool_settled(&page.rows, id, call));
                     let raw_known: HashSet<&str> =
                         page.rows.iter().map(|r| r.id.as_str()).collect();
-                    self.failed_tools.retain(|(id, call)| {
-                        raw_known.contains(id.as_str()) && !tool_settled(&page.rows, id, call)
-                    });
                     self.frozen_tools.retain(|(id, call), _| {
                         raw_known.contains(id.as_str()) && !tool_settled(&page.rows, id, call)
                     });
@@ -303,16 +295,12 @@ impl Reader {
                         }
                         if !self.owed_tools.is_empty() {
                             let mut max_attempt = 0u8;
-                            let failed = &mut self.failed_tools;
-                            self.owed_tools.retain(|key, attempts| {
+                            self.owed_tools.retain(|_, attempts| {
                                 *attempts = attempts.saturating_add(1);
                                 if *attempts <= 3 {
                                     max_attempt = max_attempt.max(*attempts);
                                     true
                                 } else {
-                                    if failed.len() < 64 {
-                                        failed.insert(key.clone());
-                                    }
                                     false
                                 }
                             });
@@ -358,15 +346,7 @@ impl Reader {
                     if !reader_event(reading, self.generation, out, wake, event).await {
                         return Ok(Turn::Stop);
                     }
-                    if !self.historical
-                        && self.owed_tools.is_empty()
-                        && !self.failed_tools.is_empty()
-                    {
-                        self.failed_tools.clear();
-                        if reading.is_some() {
-                            reader_event(reading, self.generation, out, wake, Event::Failed).await;
-                        }
-                    } else if done && reading.is_none() {
+                    if done && reading.is_none() {
                         reader_event(reading, self.generation, out, wake, Event::Done).await;
                     }
                 }

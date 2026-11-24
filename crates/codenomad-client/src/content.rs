@@ -488,6 +488,11 @@ fn charge(resident: &mut usize, added: usize) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn json_bytes(v: &Value) -> usize {
+    let (nodes, text) = resident_json(v);
+    nodes.saturating_add(text)
+}
+
 fn resident_json(v: &Value) -> (usize, usize) {
     let root = size_of::<Value>();
     match v {

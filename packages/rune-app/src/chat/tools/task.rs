@@ -473,7 +473,8 @@ pub(super) fn body(
     if step_count > 0 || live_truncated || live_incomplete {
         let step_key = format!("{key}-task-steps");
         let revealed_steps = s.transcript_display.steps(&step_key);
-        let detached = s.transcript_display.step_scroll_detached(&step_key);
+        let scroll_state = s.transcript_display.step_scroll_state(&step_key);
+        let (is_detached, scroll_ratio) = scroll_state.get();
         let count = (INITIAL_STEPS + REVEAL.saturating_mul(revealed_steps)).min(STEP_LIMIT);
         let mut start = step_count.saturating_sub(count);
         let visible_live: Vec<_> = if child_steps.is_empty() {
@@ -482,15 +483,24 @@ pub(super) fn body(
             visible_steps.collect()
         };
         if !visible_live.is_empty() {
-            if revealed_steps == 0 && !detached.get() {
+            if revealed_steps == 0 && !is_detached {
                 s.transcript_display.unpin_step_anchor(&step_key);
             }
-            if let Some(anchor) = s.transcript_display.step_anchor(&step_key)
-                && let Some(pos) = visible_live
+            if let Some(anchor) = s.transcript_display.step_anchor(&step_key) {
+                if let Some(pos) = visible_live
                     .iter()
                     .position(|(msg, step)| format!("{msg}:{}", step.id) == anchor)
-            {
-                start = start.min(pos);
+                {
+                    start = start.min(pos);
+                } else if is_detached {
+                    // Prior anchor slid out of the 200-step retention cap while scrolled up:
+                    // keep the oldest retained step mounted instead of snapping back to the tail.
+                    start = 0;
+                    if let Some((msg, step)) = visible_live.first() {
+                        s.transcript_display
+                            .pin_step_anchor(&step_key, format!("{msg}:{}", step.id));
+                    }
+                }
             }
             if let Some(cid) = child_id {
                 let focused = s.transcript_display.focused_key();
@@ -503,12 +513,15 @@ pub(super) fn body(
                     start = start.min(protected);
                 }
             }
-            if detached.get()
-                && s.transcript_display.step_anchor(&step_key).is_none()
-                && let Some((msg, step)) = visible_live.get(start)
-            {
-                s.transcript_display
-                    .pin_step_anchor(&step_key, format!("{msg}:{}", step.id));
+            if is_detached {
+                let mounted = visible_live.len().saturating_sub(start);
+                let ratio = scroll_ratio.clamp(0.0, 1.0);
+                let reading = start + ((mounted.saturating_sub(1)) as f32 * ratio).floor() as usize;
+                let reading = reading.min(visible_live.len().saturating_sub(1));
+                if let Some((msg, step)) = visible_live.get(reading) {
+                    s.transcript_display
+                        .pin_step_anchor(&step_key, format!("{msg}:{}", step.id));
+                }
             }
         }
         let mut list = col()
@@ -545,14 +558,15 @@ pub(super) fn body(
             let mut next_ancestors = Vec::with_capacity(ancestors.len() + 1);
             next_ancestors.extend_from_slice(ancestors);
             next_ancestors.push(child_id);
+            let own_steps: Vec<_> = visible_live.into_iter().skip(start).collect();
+            let own_cap = own_steps.len().min(*budget);
+            budget_truncated = own_cap < own_steps.len();
+            let drop_oldest = own_steps.len().saturating_sub(own_cap);
+            let mut child_budget = budget.saturating_sub(own_cap);
+            *budget = 0;
             list = s.transcript_display.tool_clock.with_clip(&pane_clip, || {
                 let mut list = list;
-                for (message, step) in visible_live.into_iter().skip(start) {
-                    if *budget == 0 {
-                        budget_truncated = true;
-                        break;
-                    }
-                    *budget -= 1;
+                for (message, step) in own_steps.into_iter().skip(drop_oldest) {
                     rendered_live += 1;
                     let owner = format!("child:{child_id}:{message}");
                     let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
@@ -563,12 +577,13 @@ pub(super) fn body(
                             step,
                             &child_key,
                             &next_ancestors,
-                            budget,
+                            &mut child_budget,
                         ),
                     ));
                 }
                 list
             });
+            *budget = child_budget;
         }
         for (index, step) in legacy
             .iter()
@@ -693,13 +708,19 @@ pub(super) fn body(
                 .key(format!("copy-{key}-steps")),
             );
         }
-        let scroll_detached = detached.clone();
+        let scroll_cell = scroll_state.clone();
         result = result.child(super::duration::observe_clip(
             s,
             markdown::tool_pane(list, true)
                 .drawn_rect_into(&pane_clip)
                 .on_scroll_offset(move |pos| {
-                    scroll_detached.set(pos.max[1] > 0.0 && pos.offset[1] + 24.0 < pos.max[1]);
+                    let detached = pos.max[1] > 0.0 && pos.offset[1] + 24.0 < pos.max[1];
+                    let ratio = if pos.max[1] > 0.0 {
+                        (pos.offset[1] / pos.max[1]).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+                    scroll_cell.set((detached, ratio));
                 }),
         ));
     }

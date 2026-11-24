@@ -26,7 +26,7 @@ pub struct Display {
     pub(crate) receipts: super::receipts::Receipts,
     pub(crate) messages: super::message_actions::Actions,
     focused_key: Option<String>,
-    step_scroll: RefCell<HashMap<String, std::rc::Rc<std::cell::Cell<bool>>>>,
+    step_scroll: RefCell<HashMap<String, std::rc::Rc<std::cell::Cell<(bool, f32)>>>>,
 }
 
 #[derive(Default)]
@@ -42,7 +42,7 @@ struct SessionDisplay {
     toggled: HashSet<String>,
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
-    step_anchors: RefCell<HashMap<String, String>>,
+    step_anchors: RefCell<(VecDeque<String>, HashMap<String, String>)>,
     search_revealed: VecDeque<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     diagram_sources: HashMap<String, BTreeSet<usize>>,
@@ -201,51 +201,61 @@ impl Display {
     }
 
     pub(super) fn step_anchor(&self, key: &str) -> Option<String> {
-        self.active.step_anchors.borrow().get(key).cloned()
+        self.active.step_anchors.borrow().1.get(key).cloned()
     }
 
     pub(super) fn focused_key(&self) -> Option<&str> {
         self.focused_key.as_deref()
     }
 
-    pub(super) fn step_scroll_detached(&self, key: &str) -> std::rc::Rc<std::cell::Cell<bool>> {
+    pub(super) fn step_scroll_state(&self, key: &str) -> std::rc::Rc<std::cell::Cell<(bool, f32)>> {
         let mut map = self.step_scroll.borrow_mut();
         if map.len() >= 64 && !map.contains_key(key) {
             map.retain(|_, flag| std::rc::Rc::strong_count(flag) > 1);
         }
         map.entry(key.into())
-            .or_insert_with(|| std::rc::Rc::new(std::cell::Cell::new(false)))
+            .or_insert_with(|| std::rc::Rc::new(std::cell::Cell::new((false, 1.0))))
             .clone()
     }
 
     pub(super) fn pin_step_anchor(&self, key: &str, anchor: String) {
-        self.active
-            .step_anchors
-            .borrow_mut()
-            .insert(key.into(), anchor);
+        let mut anchors = self.active.step_anchors.borrow_mut();
+        if !anchors.1.contains_key(key) {
+            while anchors.1.len() >= 64 {
+                if let Some(oldest) = anchors.0.pop_front() {
+                    anchors.1.remove(&oldest);
+                } else {
+                    break;
+                }
+            }
+            anchors.0.push_back(key.into());
+        }
+        anchors.1.insert(key.into(), anchor);
     }
 
     pub(super) fn unpin_step_anchor(&self, key: &str) {
-        self.active.step_anchors.borrow_mut().remove(key);
+        let mut anchors = self.active.step_anchors.borrow_mut();
+        if anchors.1.remove(key).is_some() {
+            anchors.0.retain(|k| k != key);
+        }
     }
 
     pub(super) fn reveal_steps(s: &mut State, key: &str, anchor: Option<String>) {
         if let Some(anchor) = anchor {
-            s.transcript_display
-                .active
-                .step_anchors
-                .borrow_mut()
-                .insert(key.into(), anchor);
+            s.transcript_display.pin_step_anchor(key, anchor);
         }
         Self::reveal_next(s, key);
     }
 
     pub(super) fn clear_step_anchors(&mut self, prefix: &str) {
         let nested = format!("{prefix}-");
-        self.active
-            .step_anchors
-            .get_mut()
+        let anchors = self.active.step_anchors.get_mut();
+        anchors
+            .1
             .retain(|key, _| key != prefix && !key.starts_with(&nested));
+        anchors
+            .0
+            .retain(|key| key != prefix && !key.starts_with(&nested));
         self.step_scroll
             .get_mut()
             .retain(|key, _| key != prefix && !key.starts_with(&nested));

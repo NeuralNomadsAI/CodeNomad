@@ -68,6 +68,7 @@ enum ReportCopy {
     Idle,
     Loading {
         key: CopyKey,
+        lease: Option<Weak<()>>,
         _cancel: codenomad_client::Sender<()>,
         rx: Receiver<Option<String>>,
     },
@@ -187,23 +188,53 @@ impl Children {
         children
             .waiting
             .retain(|(_, card, _)| card != key && !card.starts_with(&prefix));
-        let matches_card = |report_key: &ReportCopyKey| {
-            report_key
-                .key
+        let matches_card = |ui_key: &str| {
+            ui_key
                 .strip_prefix("copy-")
-                .and_then(|rest| rest.strip_suffix("-output"))
+                .and_then(|rest| {
+                    rest.strip_suffix("-output")
+                        .or_else(|| rest.strip_suffix("-steps"))
+                })
                 .is_some_and(|card| card == key || card.starts_with(&prefix))
         };
+        let clear_copy = match &children.report_copy {
+            ReportCopy::Loading { key: current, .. }
+            | ReportCopy::Ready { key: current, .. }
+            | ReportCopy::Failed { key: current } => match current {
+                CopyKey::Report(k) => matches_card(&k.key),
+                CopyKey::Steps { key: k, .. } => matches_card(k),
+            },
+            ReportCopy::Idle => false,
+        };
+        if clear_copy {
+            children.report_copy = ReportCopy::Idle;
+        }
         let clear_expand = match &children.expanded_report {
             ReportExpand::Loading { key: current, .. }
             | ReportExpand::Loaded { key: current, .. }
-            | ReportExpand::Failed { key: current } => matches_card(current),
+            | ReportExpand::Failed { key: current } => matches_card(&current.key),
             ReportExpand::Idle => false,
         };
         if clear_expand {
             children.expanded_report = ReportExpand::Idle;
         }
         Self::promote_waiting(s);
+    }
+
+    fn card_lease(&self, ui_key: &str) -> Option<Weak<()>> {
+        let card = ui_key.strip_prefix("copy-").and_then(|rest| {
+            rest.strip_suffix("-output")
+                .or_else(|| rest.strip_suffix("-steps"))
+        })?;
+        self.entries
+            .values()
+            .find_map(|entry| entry.cards.get(card).cloned())
+            .or_else(|| {
+                self.waiting
+                    .iter()
+                    .find(|(_, wkey, _)| wkey == card)
+                    .map(|(_, _, lease)| lease.clone())
+            })
     }
 
     fn fetch_report(
@@ -266,6 +297,7 @@ impl Children {
     }
 
     pub(super) fn copy_report(s: &mut State, key: ReportCopyKey) {
+        let lease = s.transcript_display.children.card_lease(&key.key);
         let copy_key = CopyKey::Report(key.clone());
         let Some((cancel, rx)) = Self::fetch_report(s, &key) else {
             s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
@@ -273,12 +305,14 @@ impl Children {
         };
         s.transcript_display.children.report_copy = ReportCopy::Loading {
             key: copy_key,
+            lease,
             _cancel: cancel,
             rx,
         };
     }
 
     pub(super) fn copy_steps(s: &mut State, key: String, parent: Option<String>, child: String) {
+        let lease = s.transcript_display.children.card_lease(&key);
         let copy_key = CopyKey::Steps {
             key,
             parent: parent.clone(),
@@ -296,6 +330,7 @@ impl Children {
         let (cancel, cancelled) = bounded(1);
         s.transcript_display.children.report_copy = ReportCopy::Loading {
             key: copy_key,
+            lease,
             _cancel: cancel,
             rx,
         };
@@ -338,17 +373,26 @@ impl Children {
 
     pub(crate) fn poll_copy(&mut self, tx: &mut rune::Tx) -> bool {
         let outcome = match &self.report_copy {
-            ReportCopy::Loading { rx, .. } => match rx.try_recv() {
-                Ok(body) => Some(body),
-                Err(error) if error.is_closed() => Some(None),
-                Err(_) => return false,
-            },
+            ReportCopy::Loading { lease, rx, .. } => {
+                if lease.as_ref().is_some_and(|w| w.strong_count() == 0) {
+                    self.report_copy = ReportCopy::Idle;
+                    return false;
+                }
+                match rx.try_recv() {
+                    Ok(body) => Some(body),
+                    Err(error) if error.is_closed() => Some(None),
+                    Err(_) => return false,
+                }
+            }
             _ => return false,
         };
-        let key = match std::mem::take(&mut self.report_copy) {
-            ReportCopy::Loading { key, .. } => key,
+        let (key, lease) = match std::mem::take(&mut self.report_copy) {
+            ReportCopy::Loading { key, lease, .. } => (key, lease),
             _ => return false,
         };
+        if lease.as_ref().is_some_and(|w| w.strong_count() == 0) {
+            return false;
+        }
         match outcome {
             Some(Some(text)) => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -499,43 +543,52 @@ impl Children {
                 let mut last_exec_end: Option<u64> = None;
                 let mut live_page: Option<crate::history::Page> = None;
                 loop {
-                    let (ended_calls, tool_events, exec_ended, exec_ended_at) = settlement.take();
-                    for end in ended_calls {
-                        let key = (end.message, end.call);
-                        if let Some(ts) = end.ended
-                            && (frozen_ends.contains_key(&key) || frozen_ends.len() < 128)
-                        {
-                            frozen_ends.entry(key.clone()).or_insert(ts);
-                        }
-                        if owed_calls.contains_key(&key) || owed_calls.len() < 64 {
-                            let entry = owed_calls.entry(key).or_insert((0, end.ended));
-                            if entry.1.is_none() {
-                                entry.1 = end.ended;
+                    let (ended_calls, tool_events, exec_ended, exec_ended_at, revoked) =
+                        settlement.take();
+                    if revoked {
+                        owed_calls.clear();
+                        frozen_ends.clear();
+                        execution_owed = 0;
+                        last_exec_end = None;
+                        live_page = None;
+                    } else {
+                        for end in ended_calls {
+                            let key = (end.message, end.call);
+                            if let Some(ts) = end.ended
+                                && (frozen_ends.contains_key(&key) || frozen_ends.len() < 128)
+                            {
+                                frozen_ends.entry(key.clone()).or_insert(ts);
+                            }
+                            if owed_calls.contains_key(&key) || owed_calls.len() < 64 {
+                                let entry = owed_calls.entry(key).or_insert((0, end.ended));
+                                if entry.1.is_none() {
+                                    entry.1 = end.ended;
+                                }
                             }
                         }
-                    }
-                    if exec_ended {
-                        execution_owed = 3;
-                        last_exec_end =
-                            exec_ended_at.or(Some(crate::platform::storage::unix_millis()));
-                    }
-                    if !tool_events.is_empty()
-                        && let Some(page) = live_page.as_mut()
-                    {
-                        let mut changed = false;
-                        for ev in &tool_events {
-                            changed |= codenomad_client::content::apply_tool_event(
-                                &mut page.rows,
-                                ev.message.as_deref(),
-                                &ev.kind,
-                                &ev.data,
-                                ev.at,
-                            );
+                        if exec_ended {
+                            execution_owed = 3;
+                            last_exec_end =
+                                exec_ended_at.or(Some(crate::platform::storage::unix_millis()));
                         }
-                        if changed {
-                            let snap = snapshot_with_frozen(page.clone(), &frozen_ends);
-                            if out.try_send(ChildUpdate::Loaded(snap)).is_ok() {
-                                wake();
+                        if !tool_events.is_empty()
+                            && let Some(page) = live_page.as_mut()
+                        {
+                            let mut changed = false;
+                            for ev in &tool_events {
+                                changed |= codenomad_client::content::apply_tool_event(
+                                    &mut page.rows,
+                                    ev.message.as_deref(),
+                                    &ev.kind,
+                                    &ev.data,
+                                    ev.at,
+                                );
+                            }
+                            if changed {
+                                let snap = snapshot_with_frozen(page.clone(), &frozen_ends);
+                                if out.try_send(ChildUpdate::Loaded(snap)).is_ok() {
+                                    wake();
+                                }
                             }
                         }
                     }

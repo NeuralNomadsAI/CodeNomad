@@ -51,8 +51,8 @@ fn specialized_titles_prose_and_header_controls() {
     let tree = rt.accessibility_json().to_string();
     assert!(tree.contains("Fetch https://example.test/report"));
     assert!(
-        tree.contains("Missing_custom")
-            && tree.contains("\"name\":\"Shell\"")
+        tree.contains("\"name\":\"Invalid Missing_custom\"")
+            && tree.contains("\"name\":\"Invalid Shell\"")
             && tree.contains("\"name\":\"Invalid\"")
     );
     assert!(tree.contains("\"3s\""));

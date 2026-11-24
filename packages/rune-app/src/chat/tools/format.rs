@@ -64,7 +64,11 @@ pub(super) fn title(tool: &Tool) -> String {
     let mut title = if name == "websearch" {
         name.into()
     } else if name == "invalid" && !string(&tool.input, &["tool"]).trim().is_empty() {
-        label(string(&tool.input, &["tool"]))
+        format!(
+            "{} {}",
+            label("invalid"),
+            label(string(&tool.input, &["tool"]))
+        )
     } else {
         label(name)
     };

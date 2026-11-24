@@ -193,7 +193,7 @@ pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u
             tool.metadata = data["metadata"].clone();
         }
         "session.tool.success" | "session.tool.failed" => {
-            if tool.ended.is_some() || !matches!(tool.status.as_str(), "streaming" | "running") {
+            if !matches!(tool.status.as_str(), "streaming" | "running") {
                 return Fit::Drop;
             }
             let Some(ended) = at.or(tool.ended) else {

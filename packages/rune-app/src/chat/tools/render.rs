@@ -291,6 +291,23 @@ fn render_body(
             .expanded(expanded),
         )
         .child(status_el);
+    if is_task
+        && let Some(child_id) = task::watched_child(tool)
+        && crate::workspace::active_session(s) != Some(child_id)
+    {
+        let target = child_id.to_owned();
+        header = header.child(
+            layout::button_tx(
+                t("messageBlock.tool.goToSession.label"),
+                false,
+                screen::action_tx(&s.input_scope, move |s, tx| {
+                    crate::launcher::choose(s, target.clone(), tx);
+                }),
+            )
+            .key(format!("goto-{key}"))
+            .disabled(!crate::launcher::can_change_session(s)),
+        );
+    }
     if shared_wrap {
         header = header.child(wrap_control(s, &wrap_key, wrap));
     }

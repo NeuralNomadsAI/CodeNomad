@@ -10,6 +10,8 @@ use std::{
 const MAX_ANCESTOR_HOPS: usize = 5;
 const MAX_OWED_CALLS: usize = 64;
 const MAX_LIVE_EVENTS: usize = 64;
+const MAX_EVENT_BYTES: usize = 256 * 1024;
+const MAX_QUEUE_BYTES: usize = 512 * 1024;
 const MAX_COPY_PAGES: usize = 64;
 const MAX_COPY_BYTES: usize = 8 * 1024 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -28,6 +30,7 @@ pub struct ChildToolEvent {
     pub kind: String,
     pub data: Value,
     pub at: Option<u64>,
+    bytes: usize,
 }
 
 #[derive(Default)]
@@ -37,8 +40,10 @@ pub struct ChildSettlement(Mutex<SettlementState>);
 struct SettlementState {
     calls: HashMap<(Option<String>, String), Option<u64>>,
     events: Vec<ChildToolEvent>,
+    event_bytes: usize,
     execution_ended: bool,
     execution_ended_at: Option<u64>,
+    revoked: bool,
 }
 
 impl ChildSettlement {
@@ -48,49 +53,85 @@ impl ChildSettlement {
         };
         match signal {
             ChildSignal::Dirty => {}
-            ChildSignal::ToolEvent(ev) => Self::push_event(&mut state.events, ev),
-            ChildSignal::ToolEnded(end, ev) => {
-                if let Some(ev) = ev {
-                    Self::push_event(&mut state.events, ev);
+            ChildSignal::Revoked => {
+                state.revoked = true;
+                state.events.clear();
+                state.event_bytes = 0;
+                state.calls.clear();
+                state.execution_ended = false;
+                state.execution_ended_at = None;
+            }
+            ChildSignal::ToolEvent(ev) => {
+                if !state.revoked {
+                    Self::push_event(&mut state, ev);
                 }
-                if let Some(end) = end {
-                    let key = (end.message.clone(), end.call.clone());
-                    if state.calls.contains_key(&key) || state.calls.len() < MAX_OWED_CALLS {
-                        state.calls.insert(key, end.ended);
+            }
+            ChildSignal::ToolEnded(end, ev) => {
+                if !state.revoked {
+                    if let Some(ev) = ev {
+                        Self::push_event(&mut state, ev);
                     }
-                } else {
-                    state.execution_ended = true;
+                    if let Some(end) = end {
+                        let key = (end.message.clone(), end.call.clone());
+                        if state.calls.contains_key(&key) || state.calls.len() < MAX_OWED_CALLS {
+                            state.calls.insert(key, end.ended);
+                        }
+                    } else {
+                        state.execution_ended = true;
+                    }
                 }
             }
             ChildSignal::ExecutionEnded(at) => {
-                state.execution_ended = true;
-                if at.is_some() {
-                    state.execution_ended_at = *at;
+                if !state.revoked {
+                    state.execution_ended = true;
+                    if at.is_some() {
+                        state.execution_ended_at = *at;
+                    }
                 }
             }
         }
     }
 
-    fn push_event(events: &mut Vec<ChildToolEvent>, ev: &ChildToolEvent) {
+    fn push_event(state: &mut SettlementState, ev: &ChildToolEvent) {
+        if ev.bytes > MAX_EVENT_BYTES {
+            return;
+        }
         if ev.kind == "session.tool.progress"
             && let Some(call) = ev.data["id"].as_str()
-            && let Some(existing) = events.iter_mut().rev().find(|prev| {
+            && let Some(existing) = state.events.iter_mut().rev().find(|prev| {
                 prev.kind == "session.tool.progress"
                     && prev.message == ev.message
                     && prev.data["id"].as_str() == Some(call)
             })
         {
-            *existing = ev.clone();
+            let next_bytes = state
+                .event_bytes
+                .saturating_sub(existing.bytes)
+                .saturating_add(ev.bytes);
+            if next_bytes <= MAX_QUEUE_BYTES {
+                *existing = ev.clone();
+                state.event_bytes = next_bytes;
+            }
             return;
         }
-        if events.len() < MAX_LIVE_EVENTS {
-            events.push(ev.clone());
+        let next_bytes = state.event_bytes.saturating_add(ev.bytes);
+        if state.events.len() < MAX_LIVE_EVENTS && next_bytes <= MAX_QUEUE_BYTES {
+            state.events.push(ev.clone());
+            state.event_bytes = next_bytes;
         }
     }
 
-    pub fn take(&self) -> (Vec<ChildToolEnd>, Vec<ChildToolEvent>, bool, Option<u64>) {
+    pub fn take(
+        &self,
+    ) -> (
+        Vec<ChildToolEnd>,
+        Vec<ChildToolEvent>,
+        bool,
+        Option<u64>,
+        bool,
+    ) {
         let Ok(mut state) = self.0.lock() else {
-            return (Vec::new(), Vec::new(), false, None);
+            return (Vec::new(), Vec::new(), false, None, false);
         };
         let calls = state
             .calls
@@ -102,14 +143,17 @@ impl ChildSettlement {
             })
             .collect();
         let events = std::mem::take(&mut state.events);
+        state.event_bytes = 0;
         let execution_ended = std::mem::take(&mut state.execution_ended);
         let execution_ended_at = state.execution_ended_at.take();
-        (calls, events, execution_ended, execution_ended_at)
+        let revoked = std::mem::take(&mut state.revoked);
+        (calls, events, execution_ended, execution_ended_at, revoked)
     }
 }
 
 pub(crate) enum ChildSignal {
     Dirty,
+    Revoked,
     ToolEvent(ChildToolEvent),
     ToolEnded(Option<ChildToolEnd>, Option<ChildToolEvent>),
     ExecutionEnded(Option<u64>),
@@ -286,7 +330,7 @@ impl Backend {
             };
             let key = request.to_string();
             if !seen_cursors.insert(key) {
-                break;
+                return Err("child steps history incomplete".into());
             }
             let page = target.page(request).await?;
             for row in &page.rows {
@@ -322,6 +366,9 @@ impl Backend {
             }
             cursor = page.newer;
         }
+        if cursor.is_some() {
+            return Err("child steps history incomplete".into());
+        }
         out.push_str(if count > 0 { "\n]" } else { "]" });
         Ok((self
             .verify_child_ownership(child, Some(expected_parent))
@@ -337,6 +384,7 @@ pub(super) fn observe(b: &Backend, event: &Value) {
         Some(
             "session.tool.input.started"
             | "session.tool.input.delta"
+            | "session.tool.input.ended"
             | "session.tool.called"
             | "session.tool.progress"
             | "session.tool.success"
@@ -358,6 +406,10 @@ pub(super) fn observe(b: &Backend, event: &Value) {
                     data["id"]
                         .as_str()
                         .filter(|c| !c.is_empty() && c.len() <= 256)?;
+                    let bytes = crate::content::json_bytes(data);
+                    if bytes > MAX_EVENT_BYTES {
+                        return None;
+                    }
                     Some(ChildToolEvent {
                         message: data["assistantMessageID"]
                             .as_str()
@@ -366,15 +418,16 @@ pub(super) fn observe(b: &Backend, event: &Value) {
                         kind: kind.to_owned(),
                         data: data.clone(),
                         at: event["created"].as_u64(),
+                        bytes,
                     })
                 };
                 let signal = match kind {
-                    Some(
-                        k @ ("session.tool.input.started"
-                        | "session.tool.input.delta"
-                        | "session.tool.called"
-                        | "session.tool.progress"),
-                    ) => tool_event(k).map_or(ChildSignal::Dirty, ChildSignal::ToolEvent),
+                    Some("session.moved" | "session.deleted" | "session.revert.committed") => {
+                        ChildSignal::Revoked
+                    }
+                    Some(k @ ("session.tool.called" | "session.tool.progress")) => {
+                        tool_event(k).map_or(ChildSignal::Dirty, ChildSignal::ToolEvent)
+                    }
                     Some(k @ ("session.tool.success" | "session.tool.failed")) => {
                         let end = event["data"]["id"]
                             .as_str()

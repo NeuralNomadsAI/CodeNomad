@@ -74,7 +74,7 @@ impl Reader {
                             self.owed_tools.retain(|(id, call), _| {
                                 self.known.contains(id) && !tool_settled(&raw_rows, id, call)
                             });
-                            self.failed_tools.retain(|(id, call)| {
+                            self.frozen_tools.retain(|(id, call), _| {
                                 self.known.contains(id) && !tool_settled(&raw_rows, id, call)
                             });
                             if !self.historical && !self.owed_tools.is_empty() && !self.dirty {
@@ -156,8 +156,9 @@ impl Reader {
             self.owed_tools.retain(|(id, call), _| {
                 self.known.contains(id) && !tool_settled(&raw_rows, id, call)
             });
-            self.failed_tools
-                .retain(|(id, call)| self.known.contains(id) && !tool_settled(&raw_rows, id, call));
+            self.frozen_tools.retain(|(id, call), _| {
+                self.known.contains(id) && !tool_settled(&raw_rows, id, call)
+            });
             self.anchored = None;
             self.parked = false;
             if !self.historical && !self.owed_tools.is_empty() {
