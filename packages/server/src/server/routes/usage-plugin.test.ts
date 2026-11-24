@@ -303,3 +303,55 @@ test("expired plugin quota timer after RPC 404 still returns supported=false whe
     assert.equal(response.json().ok, false)
   } finally { await app.close() }
 })
+
+test("absent plugin RPC falls back to Codex usage when a custom provider alias resolves to openai", async t => {
+  const expires = Date.now() + 3_600_000
+  const nativeCalls: string[] = []
+  const app = Fastify()
+  const workspace = {} as NonNullable<ReturnType<UsageRouteDeps["workspaceManager"]["get"]>>
+  const nativeFetch: typeof fetch = async (input) => {
+    const target = new URL(input instanceof Request ? input.url : String(input))
+    nativeCalls.push(target.pathname)
+    if (target.pathname === "/api/session/session") return Response.json({ data: { id: "session", location: { directory: "/repo" } } })
+    if (target.pathname === "/api/rpc/provider-usage.my-codex/read") {
+      return Response.json({ _tag: "RpcError", type: "rpc.unavailable", message: "RPC is unavailable" }, { status: 400 })
+    }
+    if (target.pathname === "/api/provider/my-codex") {
+      return Response.json({ location: { directory: "/repo" }, data: { id: "my-codex", name: "My Codex", activation: "auto", package: "my-codex", integrationID: "openai" } })
+    }
+    if (target.pathname === "/api/integration/openai") {
+      return Response.json({ location: { directory: "/repo" }, data: { id: "openai", name: "OpenAI", methods: [], connections: [{ type: "credential", method: "oauth", id: "cred_1", label: "Work" }] } })
+    }
+    if (target.pathname === "/api/credential") {
+      return Response.json({ data: [{ id: "cred_1", integrationID: "openai", active: true, label: "Work", value: { type: "oauth", methodID: "chatgpt-headless", access: "secret-access", refresh: "secret-refresh", expires, metadata: { accountID: "acct_1" } } }] })
+    }
+    return Response.json({}, { status: 404 })
+  }
+  const client = OpenCode.make({ baseUrl: "http://isolated-native.invalid", fetch: nativeFetch })
+  const connection = { endpoint: { url: "http://isolated-native.invalid" }, fetch: nativeFetch, client, assertCurrent: () => {} } as ServiceConnection
+  const manager: UsageRouteDeps["workspaceManager"] = {
+    get: id => id === "instance" ? workspace : undefined,
+    getSharedServiceConnection: async () => connection,
+    ownsLocation: async (_id, location) => location.directory === "/repo",
+    getSessionEnvironment: async () => ({}),
+    getServiceWslDistro: () => undefined,
+    getHostPathForServicePath: async () => undefined,
+  }
+  const freeUsage = createOpenCodeFreeUsage()
+  registerUsageRoutes(app, { workspaceManager: manager, freeUsage })
+  app.addHook("onClose", async () => { freeUsage.dispose() })
+  t.mock.method(globalThis, "fetch", async (input: unknown) => {
+    assert.equal(String(input), "https://chatgpt.com/backend-api/wham/usage")
+    return Response.json({ rate_limit: { primary_window: { used_percent: 20, limit_window_seconds: 18_000, reset_at: Math.floor(expires / 1000) } } })
+  })
+  try {
+    const response = await app.inject("/api/usage/my-codex?instanceId=instance&sessionId=session&modelId=gpt-5")
+    assert.equal(response.statusCode, 200, response.body)
+    assert.equal(nativeCalls.includes("/api/rpc/provider-usage.my-codex/read"), true)
+    assert.equal(nativeCalls.includes("/api/provider/my-codex"), true)
+    assert.equal(response.json().providerId, "codex")
+    assert.equal(response.json().supported, true)
+    assert.equal(response.json().ok, true)
+    assert.equal(response.json().windows["5h"]?.usedPercent, 20)
+  } finally { await app.close() }
+})

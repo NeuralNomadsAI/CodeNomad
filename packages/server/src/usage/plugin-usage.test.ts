@@ -129,6 +129,9 @@ test("parsePluginUsageOutput clears windows on failure and rejects malformed, pr
   assert.equal(noDoubleRound.windows.weekly?.usedPercent, 99.99)
   assert.equal(noDoubleRound.windows.weekly?.remainingPercent, 0.01)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { credits: { balanceUSD: { remaining: 5, total: -1 } } } }, { requestedProviderId: "x", providerId: "x" }), null)
+  // Out-of-range JS Date timestamps (> 8.64e15 ms) are rejected for resetAt and fetchedAt.
+  assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { "5h": { usedPercent: 10, resetAt: 1e30 } } }, { requestedProviderId: "x", providerId: "x" }), null)
+  assert.equal(parsePluginUsageOutput({ configured: true, ok: true, fetchedAt: 8_640_000_000_000_001, windows: {} }, { requestedProviderId: "x", providerId: "x" }), null)
 })
 
 test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and caps response size", async () => {
@@ -194,10 +197,10 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
   // Internal/invalid output from a registered plugin reports supported + unavailable without leaking text.
   for (const response of [
     () => Response.json({ _tag: "RpcInternalError", type: "rpc.internal", message: "secret-token-leak" }, { status: 500 }),
-    () => Response.json({ _tag: "RpcInternalError", type: "rpc.invalid_output", message: "secret-token-leak" }, { status: 500 }),
+    () => Response.json({ _tag: "RpcInternalError", type: "rpc.invalid_output", message: "secret-token-leak", data: { detail: "secret-token-leak" } }, { status: 500 }),
     () => Response.json({ _tag: "RpcError", type: "rpc.invalid_output", message: "secret-token-leak" }, { status: 400 }),
     () => Response.json({ _tag: "RpcError", type: "quota.failed", message: "" }, { status: 400 }),
-    () => Response.json({ _tag: "RpcError", type: "quota.failed", message: "secret-token-leak" }, { status: 400 }),
+    () => Response.json({ _tag: "RpcError", type: "quota.failed", message: "secret-token-leak" + "x".repeat(17_000) }, { status: 400 }),
   ]) {
     const broken = await readPluginProviderUsage(
       makeConnection(async () => response()),

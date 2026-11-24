@@ -35,6 +35,8 @@ const displayText = (max: number) =>
 const canonicalWindowKey = z.string().min(1).max(64).refine(isCanonicalWindowKey)
 
 const finite = z.number().refine(Number.isFinite)
+const MAX_EPOCH_MS = 8_640_000_000_000_000
+const epochMs = finite.refine(value => value > 0 && value <= MAX_EPOCH_MS)
 // Parse JS's shortest decimal string directly so neither binary scaling (`1.005 * 100`)
 // nor intermediate rounding (`99.9949999`) alters hundredths or complement cutoffs.
 function toHundredths(value: number): number {
@@ -54,7 +56,7 @@ const pluginWindowSchema = z.object({
   usedPercent: percent.nullable().optional(),
   remainingPercent: percent.nullable().optional(),
   windowSeconds: finite.refine(value => value >= 0).nullable().optional(),
-  resetAt: finite.refine(value => value > 0).nullable().optional(),
+  resetAt: epochMs.nullable().optional(),
   valueLabel: displayText(128).optional(),
   balanceUSD: z.object({ remaining: finite, total: finite.refine(value => value >= 0).optional() }).strict().optional(),
   limitUSD: finite.refine(value => value >= 0).optional(),
@@ -76,22 +78,23 @@ const absentRpcErrorSchema = z.object({
 
 const registeredRpcErrorSchema = z.object({
   _tag: z.literal("RpcError"),
-  type: z.string().min(1).max(256).refine(type => type !== "rpc.unavailable" && type !== "rpc.method_not_found"),
-  message: z.string().max(16_384),
+  type: z.string().min(1).refine(type => type !== "rpc.unavailable" && type !== "rpc.method_not_found"),
+  message: z.string(),
   data: z.unknown().optional(),
 }).strict()
 
 const registeredRpcInternalErrorSchema = z.object({
   _tag: z.literal("RpcInternalError"),
-  type: z.string().min(1).max(256),
-  message: z.string().max(16_384),
+  type: z.string().min(1),
+  message: z.string(),
+  data: z.unknown().optional(),
 }).strict()
 
 const pluginUsageOutputSchema = z.object({
   providerName: displayText(128).optional(),
   configured: z.boolean(),
   ok: z.boolean(),
-  fetchedAt: finite.refine(value => value > 0).optional(),
+  fetchedAt: epochMs.optional(),
   windows: z.record(canonicalWindowKey, pluginWindowSchema)
     .refine(record => Object.keys(record).length <= PLUGIN_USAGE_MAX_WINDOWS),
 })
