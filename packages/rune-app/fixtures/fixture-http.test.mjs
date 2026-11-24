@@ -4,7 +4,7 @@ import {Agent,createServer,request} from 'node:http'
 import net from 'node:net'
 import {test} from 'node:test'
 import {promisify} from 'node:util'
-import {createAttestedFetch,createAttestedHttpAgent,createAttestedRelay,fixtureFetch,relayTarget,verifyLoopbackConnectionPeer,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedHttpAgent,createAttestedRelay,createStreamRedactor,fixtureFetch,relayTarget,verifyLoopbackConnectionPeer,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {sseReader} from '../../../scripts/perf/lib.mjs'
 
 async function listen(t,handler){
@@ -256,5 +256,82 @@ test('acquireProfileLock serializes concurrent stale recovery and reclaims aged 
   await new Promise(resolve=>survivor.once('close',resolve))
   const afterDaemonExit=await acquireProfileLock(lockPath)
   await afterDaemonExit.close()
+  await unlink(lockPath)
+})
+
+test('createStreamRedactor redacts split secrets and never leaks partial secret prefixes via peek',{timeout:10000},()=>{
+  const secret='fixture-secret-value-9876'
+  const basic=Buffer.from(`opencode:${secret}`).toString('base64')
+  const r=createStreamRedactor([secret])
+  let out=''
+  out+=r.push('server listening on http://127.0.0.1:54321\n')
+  assert.equal((out+r.peek()).includes('server listening on http://127.0.0.1:54321\n'),true)
+  out+=r.push('auth=fixture-secret-')
+  const peeked=out+r.peek()
+  assert.equal(peeked.includes('fixture-secret-'),false,'peek must not leak a partial secret prefix')
+  out+=r.push('value-9876 next ')
+  out+=r.push(basic.slice(0,12))
+  assert.equal((out+r.peek()).includes(basic.slice(0,12)),false,'peek must not leak a partial base64 credential prefix')
+  out+=r.push(basic.slice(12))
+  out+=r.flush()
+  assert.equal(out.includes(secret),false)
+  assert.equal(out.includes(basic),false)
+  assert.equal(out.split('<fixture password>').length-1,2)
+})
+
+test('acquireProfileLock enforces cross-process SQLite exclusion and live daemon_pid blocking',{timeout:20000},async t=>{
+  const {mkdtemp,rm,unlink}=await import('node:fs/promises')
+  const os=await import('node:os')
+  const path=await import('node:path')
+  const {acquireProfileLock}=await import('./live-access.mjs')
+  const dir=await mkdtemp(path.join(os.tmpdir(),'codenomad-xproc-lock-'))
+  t.after(()=>rm(dir,{recursive:true,force:true}))
+  const lockPath=path.join(dir,'running.lock')
+  const liveAccessUrl=new URL('./live-access.mjs',import.meta.url).href
+  const script=`
+    import {acquireProfileLock} from ${JSON.stringify(liveAccessUrl)}
+    const [lockPath, holdMs, daemonPid] = process.argv.slice(1)
+    try {
+      const lock = await acquireProfileLock(lockPath)
+      if (daemonPid) await lock.setDaemonPid(Number(daemonPid))
+      console.log('ACQUIRED')
+      if (Number(holdMs) > 0) {
+        await new Promise(resolve => setTimeout(resolve, Number(holdMs)))
+        await lock.close()
+      }
+      process.exit(0)
+    } catch (error) {
+      if (error?.code === 'EEXIST') process.exit(42)
+      console.error(error)
+      process.exit(1)
+    }
+  `
+  const runChild=(holdMs,daemonPid='')=>new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,['--input-type=module','-e',script,lockPath,String(holdMs),String(daemonPid)],{
+      stdio:['ignore','pipe','pipe'],windowsHide:true,
+    })
+    let stdout='',stderr=''
+    child.stdout.on('data',d=>{stdout+=d})
+    child.stderr.on('data',d=>{stderr+=d})
+    child.once('error',reject)
+    child.once('close',code=>resolve({code,stdout,stderr}))
+  })
+  // Two separate Node processes race for the same lock; exactly one acquires, the other exits 42 (EEXIST).
+  const [a,b]=await Promise.all([runChild(600),runChild(600)])
+  const codes=[a.code,b.code].sort((x,y)=>x-y)
+  assert.deepEqual(codes,[0,42],`Expected one winner (0) and one EEXIST loser (42), got: ${JSON.stringify({a,b})}`)
+  // Child acquires lock, records a live survivor daemon_pid in SQLite, then exits without closing (simulating crash).
+  const survivor=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true})
+  t.after(()=>{try{survivor.kill('SIGKILL')}catch{}})
+  await new Promise((resolve,reject)=>{survivor.once('spawn',resolve);survivor.once('error',reject)})
+  const crashed=await runChild(0,survivor.pid)
+  assert.equal(crashed.code,0)
+  // Another process must be blocked by SQLite daemon_pid even after the launcher exited.
+  const blocked=await runChild(0)
+  assert.equal(blocked.code,42,'live daemon_pid in SQLite must block takeover after launcher crash')
+  survivor.kill('SIGKILL')
+  await new Promise(resolve=>survivor.once('close',resolve))
+  const reclaimed=await acquireProfileLock(lockPath)
+  await reclaimed.close()
   await unlink(lockPath)
 })

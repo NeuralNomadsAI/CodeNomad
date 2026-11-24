@@ -4,7 +4,7 @@ import { execFileSync, spawn } from "node:child_process"
 const parentPid = Number(process.env.CODENOMAD_FIXTURE_PARENT_PID || 0)
 delete process.env.CODENOMAD_FIXTURE_PARENT_PID
 const rawGrace = Number(process.env.CODENOMAD_FIXTURE_GRACE_MS || 0)
-const graceBudgetMs = Number.isFinite(rawGrace) && rawGrace >= 50 && rawGrace <= 2000 ? rawGrace : 800
+const graceBudgetMs = Number.isFinite(rawGrace) && rawGrace >= 50 && rawGrace <= 2000 ? rawGrace : 400
 const childEnv = { ...process.env, CODENOMAD_FIXTURE_GRACE_MS: String(Math.max(50, Math.floor(graceBudgetMs / 4))) }
 const rawArgs = process.argv.slice(2)
 const sameGroup = rawArgs[0] === "--same-group"
@@ -20,11 +20,13 @@ let childExited = false
 
 function sameGroupPeers() {
   const peers = new Set()
+  let psOk = false
   if (!childExited && child.pid) {
     try { process.kill(child.pid, 0); peers.add(child.pid) } catch (error) { if (error.code === "EPERM") peers.add(child.pid) }
   }
   try {
     const out = execFileSync("ps", ["-ax", "-o", "pid=,pgid=,ppid=,comm="], { encoding: "utf8", timeout: 1000 })
+    psOk = true
     for (const line of out.split(/\r?\n/)) {
       const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
       if (!match) continue
@@ -33,7 +35,7 @@ function sameGroupPeers() {
       if (pgid === process.pid && pid !== process.pid && Number.isSafeInteger(pid) && pid > 0) peers.add(pid)
     }
   } catch {}
-  return [...peers]
+  return { peers: [...peers], psOk }
 }
 
 function signalFamily(signal) {
@@ -42,7 +44,7 @@ function signalFamily(signal) {
     if (signal === "SIGTERM") {
       try { process.kill(-process.pid, "SIGTERM") } catch {}
     } else {
-      for (const pid of sameGroupPeers()) {
+      for (const pid of sameGroupPeers().peers) {
         try { process.kill(pid, signal) } catch {}
       }
     }
@@ -53,7 +55,10 @@ function signalFamily(signal) {
 
 function familyAlive() {
   if (!child.pid) return false
-  if (sameGroup) return sameGroupPeers().length > 0
+  if (sameGroup) {
+    const { peers, psOk } = sameGroupPeers()
+    return !psOk || peers.length > 0
+  }
   try { process.kill(-child.pid, 0); return true } catch (error) { return error.code === "EPERM" }
 }
 

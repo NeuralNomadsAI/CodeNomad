@@ -127,7 +127,7 @@ fn grace_budget_ms() -> u64 {
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|&ms| ms >= 50 && ms <= 2000)
-        .unwrap_or(800)
+        .unwrap_or(400)
 }
 
 fn run() -> io::Result<i32> {

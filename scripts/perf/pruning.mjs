@@ -5,16 +5,18 @@ import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {createHash} from 'node:crypto'
 import {spawnFixtureChild, stopFixtureChild} from '../native-fixture-guards.mjs'
-import {fixtureFetch, fixtureTarget, resolveWorktreePackage, withoutFixtureProxy} from '../native-fixture-http.mjs'
+import {assertWorktreeModuleResolution,fixtureFetch,fixtureTarget,resolveWorktreePackage,withoutFixtureProxy,worktreeDependencyRoots} from '../native-fixture-http.mjs'
 import {fixtureSystemEnvironment} from '../../packages/rune-app/fixtures/private-profile.mjs'
 import {privatePath} from './isolation.mjs'
 
 export async function preparePruning(root, config, buildEnv) {
+  const {repoRootReal,nodeModulesReal}=worktreeDependencyRoots()
   const esbuildUrl = resolveWorktreePackage('esbuild')
   const openCodeUrl = resolveWorktreePackage('@opencode/client')
   const tsxUrl = resolveWorktreePackage('tsx/esm/api')
-  // Verify transitive dependency required by navigation-contract.ts lives inside the worktree boundary.
-  resolveWorktreePackage('zod')
+  const navigationContractPath = fileURLToPath(new URL('../../packages/server/src/opencode/session-pruning/navigation-contract.ts', import.meta.url))
+  // Verify the actual transitive dependency resolved from navigation-contract.ts stays inside the worktree boundary.
+  assertWorktreeModuleResolution('zod', navigationContractPath)
   const [{OpenCode},{tsImport}]=await Promise.all([
     import(openCodeUrl),
     import(tsxUrl),
@@ -26,17 +28,36 @@ export async function preparePruning(root, config, buildEnv) {
   const entryPoint=fileURLToPath(new URL('../../packages/server/src/opencode/session-pruning/desktop-plugin.ts',import.meta.url))
   const pluginBuildUrl=new URL('../../packages/server/scripts/native-plugin-build.mjs',import.meta.url).href
   const buildScript=`
-    const [esbuildUrl, pluginBuildUrl, entryPoint, outfile] = process.argv.slice(1)
+    import { realpathSync } from 'node:fs'
+    import path from 'node:path'
+    const [esbuildUrl, pluginBuildUrl, entryPoint, outfile, repoRootReal, nodeModulesReal] = process.argv.slice(1)
+    const isWithin = (base, target) => {
+      const rel = path.relative(base, target)
+      return rel === '' || (Boolean(rel) && !path.isAbsolute(rel) && rel.split(path.sep)[0] !== '..')
+    }
+    const boundaryPlugin = {
+      name: 'codenomad-worktree-boundary',
+      setup(build) {
+        build.onLoad({ filter: /.*/, namespace: 'file' }, args => {
+          const resolved = realpathSync(args.path)
+          if (!isWithin(repoRootReal, resolved) && !isWithin(nodeModulesReal, resolved)) {
+            throw Error('Pruning bundle input resolved outside worktree boundary: ' + resolved)
+          }
+          return null
+        })
+      },
+    }
     const [{ build }, { nativePluginBuild }] = await Promise.all([import(esbuildUrl), import(pluginBuildUrl)])
     await build({
       ...nativePluginBuild,
+      plugins: [...(nativePluginBuild.plugins ?? []), boundaryPlugin],
       entryPoints: [entryPoint],
       outfile,
       banner: { js: '// CodeNomad plugin IDs: ["codenomad-session-pruning"]\\nimport { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
     })
   `
   const isolatedBuildEnv = withoutFixtureProxy({ ...(buildEnv ?? fixtureSystemEnvironment()) })
-  const builder = spawnFixtureChild(process.execPath, ['--input-type=module', '-e', buildScript, esbuildUrl, pluginBuildUrl, entryPoint, outfile], {
+  const builder = spawnFixtureChild(process.execPath, ['--input-type=module', '-e', buildScript, esbuildUrl, pluginBuildUrl, entryPoint, outfile, repoRootReal, nodeModulesReal], {
     cwd: root, env: isolatedBuildEnv, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   })
   let buildStderr = ''

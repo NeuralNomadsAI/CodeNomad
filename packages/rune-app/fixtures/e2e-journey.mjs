@@ -48,23 +48,23 @@ async function journeyDesktop({origin,rustPid,password,project,profile,env},repo
       ...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:password,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'en',
       RUNE_STATE_DIR:state,RUNE_JOURNEY_OUTPUT:report.output,RUNE_JOURNEY_PHASE:phase,RUNE_JOURNEY_SESSION_FILE:session,
     },{RUNE_PASSWORD:password})})
-    let windowClosed=false
+    let windowClosed=false,result
     try{
-      const result=await Promise.race([child.closed,delay(220000,124,{ref:false})])
-      await writeFile(path.join(report.output,`windows-${phase}.log`),redactSecrets(child.output(),[password]))
-      for(const line of redactSecrets(child.stdout(),[password]).split(/\r?\n/)){
-        let event
-        try{event=JSON.parse(line)}catch{continue}
-        if(event.step)report.steps.push(event)
-        if(event.nativeWindowClosed)windowClosed=true
-      }
-      assert.equal(result,0,`Native journey ${phase} failed (${result}); see windows-${phase}.log`)
-      if(phase==='start'){
-        assert(windowClosed,'The hidden Windows close callback did not run')
-        report.nativeWindowClosed=true
-      }
+      result=await Promise.race([child.closed,delay(220000,124,{ref:false})])
     }finally{
       await child.stop()
+      await writeFile(path.join(report.output,`windows-${phase}.log`),redactSecrets(child.output(),[password]))
+    }
+    for(const line of redactSecrets(child.stdout(),[password]).split(/\r?\n/)){
+      let event
+      try{event=JSON.parse(line)}catch{continue}
+      if(event.step)report.steps.push(event)
+      if(event.nativeWindowClosed)windowClosed=true
+    }
+    assert.equal(result,0,`Native journey ${phase} failed (${result}); see windows-${phase}.log`)
+    if(phase==='start'){
+      assert(windowClosed,'The hidden Windows close callback did not run')
+      report.nativeWindowClosed=true
     }
   }
   }finally{await rustRelay.close().catch(()=>{})}

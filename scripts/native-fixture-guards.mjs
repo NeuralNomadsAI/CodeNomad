@@ -33,7 +33,10 @@ export function spawnFixtureChild(command, args, options) {
     throw new Error("The fixture launcher accepts executable arguments and standard streams only")
   }
   const env = { ...(options?.env ?? process.env), CODENOMAD_FIXTURE_PARENT_PID: String(process.pid) }
-  const { detached: _detached, ...restOptions } = options ?? {}
+  if (options?.graceMs != null && !env.CODENOMAD_FIXTURE_GRACE_MS) {
+    env.CODENOMAD_FIXTURE_GRACE_MS = String(Math.max(50, Math.min(2000, Math.floor(options.graceMs / 2))))
+  }
+  const { detached: _detached, graceMs: _graceMs, ...restOptions } = options ?? {}
   const supervisor = exe
     ? [exe, [command, ...args]]
     : [process.execPath, [fileURLToPath(new URL("./native-fixture-posix-supervisor.mjs", import.meta.url)), command, ...args]]

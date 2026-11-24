@@ -77,7 +77,7 @@ try {
 } finally {
   observed?.abort();void stream?.body?.cancel?.().catch(()=>{})
   if(observeTask)await Promise.race([observeTask,delay(2000,undefined,{ref:false})])
-  try{await child?.stop()}finally{await Promise.allSettled([rustFetch?.close(),rustRelay?.close(),server.stop()])}
+  try{await child?.stop()}finally{try{await Promise.allSettled([rustFetch?.close(),rustRelay?.close()])}finally{await server.stop()}}
   await writeFile(path.join(profile,'backend.log'),server.output())
 }
 },{profile:manifest?.profile})

@@ -103,10 +103,12 @@ export async function withTui(cli, daemon, session, run) {
     data.dispose()
     term.dispose()
     // The PTY owns just this child. Refuse to leave it running after the sample.
-    killTui()
-    let timer
-    try {
-      await Promise.race([exited, new Promise((_, reject) => { timer = setTimeout(() => reject(Error("Fixture TUI did not exit")), 5000) })])
-    } finally { clearTimeout(timer) }
+    await stopTui()
+    if (!didExit) {
+      let timer
+      try {
+        await Promise.race([exited, new Promise((_, reject) => { timer = setTimeout(() => reject(Error("Fixture TUI did not exit")), 5000) })])
+      } finally { clearTimeout(timer) }
+    }
   }
 }

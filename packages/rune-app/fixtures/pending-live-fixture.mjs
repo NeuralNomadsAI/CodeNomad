@@ -15,11 +15,11 @@ await withNative(async native=>{
 const {profile:root,project,password}=native
 const secrets=[password,'fixture-rune-native-pending']
 const env=native.runtimeEnv,proof={root,project,native:true,ui:'Rune Runtime, offscreen',modelCalls:0,tools:0,requests:[],events:[],stages:[],visible:[],cases:[],cleaned:false,result:1}
-let rust,ui,client,observer,watch,session,origin,cookie,uiLines='',protocolError,rustFetch,rustRelay
+let rust,ui,client,observer,watch,watchError,session,origin,cookie,uiLines='',protocolError,rustFetch,rustRelay
 const ids=['once','always','reject'].map(decision=>`per_rune_live_${decision}_${randomUUID().replaceAll('-','')}`),forms=new Map()
 const expected=['once','always','reject','typed-question','cancel-question'];let position=0,awaiting='ready',protocol=Promise.resolve()
 const post=body=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
-async function until(check,label){const end=Date.now()+30000;while(Date.now()<end){if(protocolError)throw protocolError;const remaining=Math.max(100,end-Date.now());const value=await Promise.race([Promise.resolve().then(()=>check(remaining)),delay(remaining,null,{ref:false})]);if(value)return value;await delay(Math.min(30,Math.max(0,end-Date.now())))}throw Error(`Timeout: ${label}`)}
+async function until(check,label){const end=Date.now()+30000;while(Date.now()<end){if(protocolError)throw protocolError;if(watchError)throw watchError;const remaining=Math.max(100,end-Date.now());const value=await Promise.race([Promise.resolve().then(()=>check(remaining)),delay(remaining,null,{ref:false})]);if(value)return value;await delay(Math.min(30,Math.max(0,end-Date.now())))}throw Error(`Timeout: ${label}`)}
 async function relay(route,init={},timeoutMs=15000){
   const target=fixtureTarget(route,origin)
   assert(target,'Foreign fixture origin forbidden')
@@ -48,7 +48,7 @@ async function stage(event){
 try{
   client=OpenCode.make({baseUrl:native.origin,fetch:async(input,init)=>{const request=new Request(input,init),url=new URL(request.url);assert(!url.pathname.endsWith('/prompt')&&!url.pathname.includes('/shell'),'No model or shell execution');const response=await native.send(request);proof.requests.push({host:'native',method:request.method,path:url.pathname,status:response.status});return response}})
   proof.version=(await client.server.info()).version
-  observer=new AbortController();watch=(async()=>{for await(const event of client.event.subscribe({signal:observer.signal})){proof.events.push({type:event.type,sessionID:event.data?.sessionID,id:event.data?.id});assert(proof.events.length<256)}})();void watch.catch(()=>{})
+  observer=new AbortController();watch=(async()=>{try{for await(const event of client.event.subscribe({signal:observer.signal})){proof.events.push({type:event.type,sessionID:event.data?.sessionID,id:event.data?.id});assert(proof.events.length<256)}}catch(error){if(!observer.signal.aborted&&error?.name!=='AbortError')watchError??=error}})()
   await until(()=>proof.events.some(e=>e.type==='server.connected'),'native SSE')
   session=await client.session.create({location:{directory:project},title:'Rune private native pending UI',permissions:[{action:'*',resource:'*',effect:'deny'},{action:'rune_fixture',resource:'*',effect:'ask'}]});assert.equal(path.resolve(session.location.directory),project);proof.session=session.id
   rust=launchFixture(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{cwd:root,shutdown:'shutdown\n',redact:[password,native.relayPassword,'fixture-rune-native-pending'],env:{...env,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}})
@@ -77,6 +77,7 @@ try{
   proof.receipts=receipts.map(r=>({decision:r.decision,reason:r.reason,origin:r.origin})).sort((a,b)=>a.decision.localeCompare(b.decision));assert.deepEqual(proof.receipts,['always','once','reject'].map(decision=>({decision,reason:`Motif réel Rune ${decision} 🦀`,origin:'codenomad'})))
   const history=await relay(`/api/workspaces/${proof.workspace}/session-history/window`,post({sessionID:session.id,target:{kind:'latest'}}))
   assert.equal(history.body?.status,'window');assert.deepEqual(history.body.messages,[])
+  if(watchError)throw watchError
   assert(!proof.events.some(e=>e.type.startsWith('session.tool.')||e.type.startsWith('session.execution.')))
   assert.equal(proof.events.filter(e=>e.type==='permission.asked').length,3);assert.equal(proof.events.filter(e=>e.type==='form.created').length,2)
   proof.result=0

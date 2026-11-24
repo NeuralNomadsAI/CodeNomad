@@ -63,7 +63,7 @@ export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000,redact=
   assert(env,'An explicit fixture environment is required')
   assert(!cleaningSignals,'Fixture shutting down')
   const group=process.platform!=='win32'
-  const child=spawnFixtureChild(binary,args,{cwd,env:withoutFixtureProxy(env),detached:group,windowsHide:true,stdio:[shutdown?'pipe':'ignore','pipe','pipe']})
+  const child=spawnFixtureChild(binary,args,{cwd,env:withoutFixtureProxy(env),detached:group,graceMs,windowsHide:true,stdio:[shutdown?'pipe':'ignore','pipe','pipe']})
   const startedBy=new Date()
   let output='',stdout='',error,stopping
   const sanitize=text=>redactSecrets(text,redact)

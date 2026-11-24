@@ -33,7 +33,7 @@ function sameLockfile(dirA,dirB){
   return hash(lockA)===hash(lockB)
 }
 
-export function resolveWorktreePackage(specifier,nodeModulesDir=worktreeNodeModules){
+export function worktreeDependencyRoots(nodeModulesDir=worktreeNodeModules){
   assert(existsSync(nodeModulesDir),'Worktree node_modules is required; parent checkout dependencies are forbidden')
   const rootReal=realpathSync(nodeModulesDir)
   const inWorktree=isWithin(repoRootReal,rootReal)
@@ -45,6 +45,20 @@ export function resolveWorktreePackage(specifier,nodeModulesDir=worktreeNodeModu
     && sameLockfile(repoRootReal,path.dirname(rootReal))
   assert(inWorktree||inLockMatchedSibling,
     `node_modules resolved outside repository boundary: ${rootReal}`)
+  return {repoRootReal,nodeModulesReal:rootReal}
+}
+
+export function assertWorktreeModuleResolution(specifier,fromFile,nodeModulesDir=worktreeNodeModules){
+  const {nodeModulesReal}=worktreeDependencyRoots(nodeModulesDir)
+  const scopedRequire=createRequire(fromFile)
+  const resolvedPath=realpathSync(scopedRequire.resolve(specifier))
+  assert(isWithin(nodeModulesReal,resolvedPath)&&resolvedPath!==nodeModulesReal,
+    `Dependency ${specifier} from ${fromFile} resolved outside worktree node_modules: ${resolvedPath}`)
+  return pathToFileURL(resolvedPath).href
+}
+
+export function resolveWorktreePackage(specifier,nodeModulesDir=worktreeNodeModules){
+  const {nodeModulesReal:rootReal}=worktreeDependencyRoots(nodeModulesDir)
   const pkg=packageNameOf(specifier)
   const pkgDir=path.join(nodeModulesDir,...pkg.split('/'))
   assert(existsSync(path.join(pkgDir,'package.json')),
@@ -84,6 +98,21 @@ export function redactSecrets(text,secrets=[]){
   return value
 }
 
+function safePrefixLength(text,tokens){
+  if(!text||!tokens.length)return text.length
+  let unsafeSuffix=0
+  for(const token of tokens){
+    const maxCheck=Math.min(text.length,token.length-1)
+    for(let len=maxCheck;len>unsafeSuffix;len--){
+      if(text.endsWith(token.slice(0,len))){
+        unsafeSuffix=len
+        break
+      }
+    }
+  }
+  return text.length-unsafeSuffix
+}
+
 export function createStreamRedactor(secrets=[]){
   const tokens=[]
   for(const secret of secrets){
@@ -110,17 +139,25 @@ export function createStreamRedactor(secrets=[]){
       return remaining
     },
     peek(){
-      return redactSecrets(tail,secrets)
+      const redacted=redactSecrets(tail,secrets)
+      return redacted.slice(0,safePrefixLength(redacted,tokens))
     },
   }
 }
 
 const netstatBin=()=>{
-  if(process.platform!=='win32')return 'netstat'
-  const candidate=path.join(process.env.SystemRoot||process.env.WINDIR||'C:\\Windows','System32','netstat.exe')
-  return existsSync(candidate)?candidate:'netstat.exe'
+  const systemRoot=process.env.SystemRoot||process.env.WINDIR
+  assert(systemRoot&&isLocalAbsolutePath(systemRoot),'SystemRoot is required to locate System32\\netstat.exe')
+  const candidate=path.join(systemRoot,'System32','netstat.exe')
+  assert(existsSync(candidate),`Expected system netstat executable at ${candidate}`)
+  return candidate
 }
-const lsofBin=()=>process.platform==='darwin'&&existsSync('/usr/sbin/lsof')?'/usr/sbin/lsof':'lsof'
+const lsofBin=()=>{
+  for(const candidate of ['/usr/sbin/lsof','/usr/bin/lsof']){
+    if(existsSync(candidate))return candidate
+  }
+  throw Error('Expected system lsof executable at /usr/sbin/lsof or /usr/bin/lsof')
+}
 
 const {Agent,Pool,buildConnector,fetch:undiciFetch}=await import(resolveWorktreePackage('undici'))
 

@@ -257,7 +257,8 @@ function withLeaseDb(dbPath,run){
   try{
     db.exec('PRAGMA journal_mode=DELETE; BEGIN EXCLUSIVE;')
     try{
-      db.exec('CREATE TABLE IF NOT EXISTS lease (id INTEGER PRIMARY KEY CHECK (id = 1), pid INTEGER NOT NULL, daemon_pid INTEGER, nonce TEXT NOT NULL, updated_at INTEGER NOT NULL);')
+      db.exec('CREATE TABLE IF NOT EXISTS lease (id INTEGER PRIMARY KEY CHECK (id = 1), pid INTEGER NOT NULL, supervisor_pid INTEGER, daemon_pid INTEGER, nonce TEXT NOT NULL, updated_at INTEGER NOT NULL);')
+      try{db.exec('ALTER TABLE lease ADD COLUMN supervisor_pid INTEGER;')}catch{}
       const result=run(db)
       db.exec('COMMIT;')
       return result
@@ -275,7 +276,10 @@ export async function acquireProfileLock(lease){
   const dbPath=`${lease}.sqlite`
   const nonce=randomUUID()
   const now=Date.now()
+  let dbCommitted=false
   let acquired=false
+  let trackedSupervisorPid=null
+  let trackedDaemonPid=null
   try{
     let existingFile=null
     let existingStat=null
@@ -284,11 +288,12 @@ export async function acquireProfileLock(lease){
       existingStat=await stat(lease)
     }catch(error){if(error.code!=='ENOENT')throw error}
     withLeaseDb(dbPath,db=>{
-      const row=db.prepare('SELECT pid, daemon_pid, nonce, updated_at FROM lease WHERE id = 1').get()
+      const row=db.prepare('SELECT pid, supervisor_pid, daemon_pid, nonce, updated_at FROM lease WHERE id = 1').get()
       if(row){
         const ownerLive=row.pid===process.pid||pidAlive(row.pid)
+        const supervisorLive=row.supervisor_pid!=null&&pidAlive(row.supervisor_pid)
         const daemonLive=row.daemon_pid!=null&&pidAlive(row.daemon_pid)
-        if(ownerLive||daemonLive)throw leaseBusyError(lease)
+        if(ownerLive||supervisorLive||daemonLive)throw leaseBusyError(lease)
       }
       if(existingFile!==null){
         if(!existingFile.trim()){
@@ -297,31 +302,49 @@ export async function acquireProfileLock(lease){
           try{
             const raw=JSON.parse(existingFile)
             const ownerLive=Number.isSafeInteger(raw?.pid)&&raw.pid>0&&(raw.pid===process.pid||pidAlive(raw.pid))
+            const supervisorLive=Number.isSafeInteger(raw?.supervisorPid)&&raw.supervisorPid>0&&pidAlive(raw.supervisorPid)
             const daemonLive=Number.isSafeInteger(raw?.daemonPid)&&raw.daemonPid>0&&pidAlive(raw.daemonPid)
-            if(ownerLive||daemonLive)throw leaseBusyError(lease)
+            if(ownerLive||supervisorLive||daemonLive)throw leaseBusyError(lease)
           }catch(parseError){
             if(parseError.code==='EEXIST')throw parseError
             if(!existingStat||now-existingStat.mtimeMs<2_000)throw leaseBusyError(lease)
           }
         }
       }
-      db.prepare('INSERT OR REPLACE INTO lease (id, pid, daemon_pid, nonce, updated_at) VALUES (1, ?, NULL, ?, ?)').run(process.pid,nonce,now)
+      db.prepare('INSERT OR REPLACE INTO lease (id, pid, supervisor_pid, daemon_pid, nonce, updated_at) VALUES (1, ?, NULL, NULL, ?, ?)').run(process.pid,nonce,now)
     })
-    await writeFile(lease,JSON.stringify({pid:process.pid,daemonPid:null,nonce})+'\n')
+    dbCommitted=true
+    await writeFile(lease,JSON.stringify({pid:process.pid,supervisorPid:null,daemonPid:null,nonce})+'\n')
     acquired=true
   }catch(error){
+    if(dbCommitted){
+      try{
+        withLeaseDb(dbPath,db=>{
+          db.prepare('DELETE FROM lease WHERE id = 1 AND nonce = ?').run(nonce)
+        })
+      }catch{}
+    }
     heldLeases.delete(key)
     if(/database is locked/i.test(error?.message??''))throw leaseBusyError(lease)
     throw error
   }
   let closed=false
   return {
+    async setSupervisorPid(supervisorPid){
+      if(closed||!acquired)return
+      trackedSupervisorPid=supervisorPid
+      withLeaseDb(dbPath,db=>{
+        db.prepare('UPDATE lease SET supervisor_pid = ?, updated_at = ? WHERE id = 1 AND nonce = ?').run(supervisorPid,Date.now(),nonce)
+      })
+      await writeFile(lease,JSON.stringify({pid:process.pid,supervisorPid:trackedSupervisorPid,daemonPid:trackedDaemonPid,nonce})+'\n').catch(()=>{})
+    },
     async setDaemonPid(daemonPid){
       if(closed||!acquired)return
+      trackedDaemonPid=daemonPid
       withLeaseDb(dbPath,db=>{
         db.prepare('UPDATE lease SET daemon_pid = ?, updated_at = ? WHERE id = 1 AND nonce = ?').run(daemonPid,Date.now(),nonce)
       })
-      await writeFile(lease,JSON.stringify({pid:process.pid,daemonPid,nonce})+'\n').catch(()=>{})
+      await writeFile(lease,JSON.stringify({pid:process.pid,supervisorPid:trackedSupervisorPid,daemonPid:trackedDaemonPid,nonce})+'\n').catch(()=>{})
     },
     async close(){
       if(closed)return
@@ -400,8 +423,11 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
             }
           }
         } finally {
-          await lock.close()
-          await tryRemoveLease()
+          const daemonStopped=!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null
+          if(daemonStopped){
+            await lock.close()
+            await tryRemoveLease()
+          }
         }
       }
     })()
@@ -453,6 +479,7 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
       if(pruning){const {preparePruning}=await import('../../../scripts/perf/pruning.mjs');plugin=await preparePruning(profile,config,runtimeEnv)}
       checkActive()
       daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env,redact:[password]})
+      if(daemon.child.pid)await lock.setSupervisorPid(daemon.child.pid)
       const origin=await daemon.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1])
       checkActive()
       const pid=await Promise.race([

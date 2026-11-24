@@ -26,7 +26,7 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
     OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_PROJECT_CONFIG: "1",
     OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
-    OPENCODE_DISABLE_AUTOUPDATE: "true", OPENCODE_SERVER_PASSWORD: password,
+    OPENCODE_DISABLE_AUTOUPDATE: "true",
   })
   await mkdir(env.OPENCODE_CONFIG_DIR)
   const gitEnv = {
@@ -108,7 +108,8 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
   const relayPassword = randomUUID()
   const relayAuthorization = `Basic ${Buffer.from(`opencode:${relayPassword}`).toString("base64")}`
   try {
-    const daemonEnv = { ...env, ...gitEnv }
+    const childEnv = { ...env, ...gitEnv }
+    const daemonEnv = { ...childEnv, OPENCODE_SERVER_PASSWORD: password }
     daemon = launchFixture(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {cwd: project, env: daemonEnv, redact: [password, relayPassword]})
     const url = await daemon.ready(stdout => stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1], 60_000)
     const pid = await daemon.pid()
@@ -117,7 +118,7 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
     const {send} = attested
     const call = (method, route, body) => json(send, route, {method, body})
     await pruning?.activate({project,url,authorization,send},()=>assert.equal(daemon.child.exitCode,null,'Owned pruning daemon exited'))
-    await run({ project, env: daemonEnv, url, relayUrl: nativeRelay.origin, relayPassword, password, authorization, call, send, markers, pid, cli, pruning,
+    await run({ project, env: childEnv, url, relayUrl: nativeRelay.origin, relayPassword, password, authorization, call, send, markers, pid, cli, pruning,
       arm(pass, size) {
         const { promise: start, resolve: release } = Promise.withResolvers()
         batch = { pass, size, start, release, ready: new Set() }
