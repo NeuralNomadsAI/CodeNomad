@@ -3,6 +3,111 @@ use rune::{Env, Runtime};
 use serde_json::Value;
 
 #[test]
+fn unsupported_advanced_switch_is_disabled_with_keyboard_help() {
+    fn find_switch(tree: &Value) -> Option<&Value> {
+        if tree["role"] == "switch" && tree["name"] == "Hold long assistant replies" {
+            return Some(tree);
+        }
+        tree["children"].as_array()?.iter().find_map(find_switch)
+    }
+
+    let state = Window {
+        section: Section::Advanced,
+        ..Window::default()
+    };
+    let mut prefs = state.shared.borrow_mut();
+    prefs.fixture();
+    prefs.fixture_locale("en");
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    drop(prefs);
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    let switch = find_switch(&tree).unwrap();
+    assert!(
+        switch["states"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::from("disabled"))
+    );
+    rt.update(|_, tx| tx.focus("advanced-help-holdLongAssistantReplies", true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text(" ".into()),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(rt.state.advanced_help == Some(crate::settings::advanced::Toggle::LongReplies));
+}
+
+#[test]
+fn keyboard_shortcuts_records_the_focused_save_binding() {
+    let state = Window {
+        section: Section::Shortcuts,
+        ..Window::default()
+    };
+    state.shared.borrow_mut().fixture();
+    state.shared.borrow_mut().backend =
+        Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.02);
+    let click_edit = |rt: &mut Runtime<Window>| {
+        let (x, y) = rt.find("settings-file-save-edit").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.02);
+        assert!(rt.state.recording_shortcut);
+    };
+    click_edit(&mut rt);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Escape,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    assert!(!rt.state.shared.borrow().file_save_pending());
+    click_edit(&mut rt);
+    rt.window_focus(false);
+    rt.frame(0.02);
+    rt.window_focus(true);
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    click_edit(&mut rt);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Function(8),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    assert!(rt.state.shared.borrow().file_save_pending());
+}
+
+#[test]
+fn stats_tab_mounts_without_opening_a_project() {
+    let state = Window::default();
+    state.shared.borrow_mut().fixture();
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let (x, y) = rt.find("settings-stats").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.state.section == Section::Stats);
+    let tree = rt.accessibility_json().to_string();
+    let expected = crate::strings::with_locale(
+        rt.state
+            .shared
+            .borrow()
+            .locale()
+            .unwrap_or_else(crate::strings::locale),
+        || t("settings.usage.noProject"),
+    );
+    assert!(tree.contains(expected), "{tree}");
+    assert!(rt.find("stats-refresh").is_none());
+    assert!(rt.find("stats-period").is_none());
+}
+
+#[test]
 fn notifications_tab_mounts_the_routing_table_and_the_focused_switch() {
     let state =
         Window::default().with_notification_permission(notification_settings::Permission::Granted);

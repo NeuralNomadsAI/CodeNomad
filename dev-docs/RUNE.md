@@ -32,6 +32,8 @@ Controls shared by screens live in `components/` or the theme. Application butto
 - Desktop-only features (server launch, local files, system notifications, clipboard, windows, updates) sit behind a platform interface with a web implementation.
 - Layouts adapt to phone, tablet and desktop, with touch input.
 
+Preferences → Stats uses the captured project's backend for the service-wide aggregate, owner, and display cache. The section owns its reads and restores the period through the backend; terminal events on the existing stream invalidate the display without loading transcripts. See [Settings](SETTINGS.md) and [Stats restoration](CACHE_REFRESH_CONVENTIONS.md#stats-restoration-and-native-cost).
+
 ## Conversion
 
 Each Solid component or module is converted as is, then simplified:
@@ -62,7 +64,10 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | Preferences → OpenCode | `opencode-settings-section.tsx`, `opencode-setup-panel.tsx` | `settings/opencode.rs`: demand-only host version and connection status, explicit recheck and initially folded version details. Browser Preferences shows the section on the local host channel. Installation and updates revalidate the local host and displayed offer while the section is open, submit once and reread the diagnostic after settlement even if Preferences has closed. The diagnostic reports the running daemon independently of the installed version. The log level reads and writes `server.logLevel` through the server configuration owner. |
 | Preferences → Notifications | `notifications-settings-section.tsx`, `notification-routing-table.tsx` | `settings/notification_settings.rs`: nine categories and three destinations in the UI owner, with first-save migration of legacy switches. Checking System in the browser requests permission in the same gesture. Shell uses confirmed routes and the foreground switch for system delivery of session requests and completions. |
 | Preferences → Providers | `providers-settings-section.tsx`, `provider-manager-modal.tsx` | `settings/providers.rs`: read-only active-account metadata for the captured project and conversation, including the sanitized login when the backend exposes provider accounts. Models opens by default, remembers its fold state and excludes search-only integrations. An SSE disconnect cancels the read and clears its snapshot; reconnect reads once for the same project. The browser uses the same catalogue in an embedded panel. |
-| Preferences → Remote Access | `remote-control-settings-section.tsx` | `settings/remote.rs`: the local host lists paired devices and creates one-time HTTPS pairing links only for origins it advertises. Device revocation refreshes the list. Pairing links are copied on request; native copy uses the expiring secret clipboard. |
+| Preferences → Remote Access | `remote-control-settings-section.tsx` | `settings/remote.rs`: the local host lists paired devices with origin and last activity and creates one-time HTTPS pairing links only for advertised origins. Links can be copied from the visible card; browser clipboard errors appear in the card. An unconfirmed mutation refreshes status and devices without replay. Device actions wait for a confirmed list. |
+| Preferences → Keyboard shortcuts | `hotkeys-settings-section.tsx`, `hotkey-bindings.ts` | `settings/shortcuts/`: confirmed host overrides, filter and conflict feedback. Capture rejects function keys that the Web editor drops without Ctrl/Cmd ([Rune #1661](https://github.com/anomalyco/rune/issues/1661)) and paste chords consumed by focused editors ([Rune #1662](https://github.com/anomalyco/rune/issues/1662)). The focused filter ends capture. A confirmed Web change announces conflicts through `Tx::announce` ([Rune #1677](https://github.com/anomalyco/rune/issues/1677)). |
+| Preferences → Info | `info-settings-section.tsx` | `settings/info.rs` and `info/diagnostics.rs`: native and Web read host versions, filtered connectivity and release offers on demand. Changing the update feed uses the server owner and rereads metadata after settlement. Download update opens the offered release page. The diagnostics report can be copied or saved; the public bug form receives only version and platform fields. External launch feedback covers immediate validation ([Rune #1688](https://github.com/anomalyco/rune/issues/1688)). |
+| Preferences → Config Files / Advanced | `config-files-settings-section.tsx`, `advanced-settings-section.tsx` | `settings/config_files.rs` opens the advertised `config-files` catalogue, keeps a local draft and asks before discarding edits. JSON/JSONC syntax diagnostics name the line while Save stays available. Save sends one PUT; an uncertain receipt rereads the selected file. Advanced edits the Files whitespace filter and server environment. See [Advanced parity gaps](#advanced-parity-gaps). |
 | Preferences → Memory | `agent-memory-settings-card.tsx`, `agent-memory-editor.tsx` | Native and browser General share the memory switch, a folded scope list and revision-checked editing and Forget. Project reads use the captured workspace and native session Location. Consultation badges use a visit-stable baseline from browser storage or the native client-state store. Closing native Preferences with unsaved memory edits asks before discarding. Tidy up rechecks the opener, memory and authorized directory before creating a session and sending the fixed prompt once. An unconfirmed creation stops before prompt dispatch, disables the action for that visit and directs the user to the project’s sessions. Reopening Preferences allows a fresh confirmed attempt in a new session. |
 | Window close | `components/window-close-button.tsx` | `components/window_close_button.rs`: six Windows light/dark pairs, accessibility and interaction qualified at scale 1 |
 | Server startup | Tauri `cli_manager.rs` | `platform/host/`: isolated Windows bootstrap, shutdown and generation qualified |
@@ -76,6 +81,19 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | File row actions | `FileRowActions.tsx`, `row-compact-actions.ts` | Shared `file_row_actions`: pinned toggles, inline/overflow state, inert secondary controls, focus handoff and generated CSS tints exercised in native Runtime. Complete Source/native capture, motion, pointer lifecycle and caller assembly remain pending |
 
 ## Workspace and qualification
+
+### Advanced parity gaps
+
+Solid lists the switches in `packages/ui/src/components/settings/advanced-settings-section.tsx:13–29` and the folded environment editor at `:31–50`. Rune displays each pending switch disabled with a keyboard-accessible explanation; the second-launch switch belongs to native Preferences.
+
+| Preference | Pending effect | Owner |
+|---|---|---|
+| `autoCleanupBlankSessions` | Clean up blank sessions | Shell |
+| `keepUnseenSubagentIdleStatus` | Retain unseen subagent idle markers | Shell |
+| `focusExistingWindowOnSecondLaunch` | Focus the existing window on launch | Shell / native launcher |
+| `showProviderUsageCreditBalance` | Show credit balance in Status → Provider Usage | Shell |
+| `holdLongAssistantReplies` | Hold automatic following during long replies | Transcript |
+| `environmentVariables` | Apply the profile's overrides when starting a stopped service; the server applies them to conversation sends | Server |
 
 The composer's worktree selector changes conversation placement through the server's family transaction. Browsing Git checkouts stays independent. A settled reply and fresh placement and activity reads precede rebinding; the occurrence retains its draft and reading anchor. A lost reply keeps the family on hold for the life of the window.
 
@@ -96,6 +114,12 @@ Files controllers belong to the validated project/session occurrence and move wi
 Workspace uses the shared file-row actions. Windows local connections offer folder open/terminal and file default open/reveal. Relative path copy uses the displayed row, including offline, and the preview eye requires an active conversation. Opening a Workspace file replaces the central Git diff; opening a Git diff replaces the Workspace reader. Switching Files modes leaves the reader open and keeps the tree's scroll position. A session move closes its reader before its old stream ends. The open reader keeps worktree inventory revalidation active; a confirmed checkout removal also closes it. Drafts stay under their original checkout and path. The host rereads the owned checkout before canonicalizing the relative entry and launching Explorer, Terminal or the Windows application handler. The web clipboard retains the HTTP copy fallback. The web accessibility mirror omits the overflow container's `menu` role ([Rune #118](https://github.com/anomalyco/rune/issues/118)).
 
 The source reader shares its word-wrap choice across project tabs and file readers in a window. The workspace snapshot stores the Solid layout key `opencode-session-right-panel-files-word-wrap-v1` as `on` or `off`. Web readers also use that key in same-origin localStorage. Diff and Markdown block wrapping keep their own controls.
+
+Source selection and both scroll offsets survive reopening in the same project tab and checkout. The window keeps five recently closed source positions in memory, separate from file drafts. Selection uses line and UTF-16 column and clamps to UTF-8 boundaries. When source content refreshes or wrap width changes, the editable source keeps the first visible logical line and clamps the offset inside that line.
+
+The focused source editor uses the host's configured Save shortcut. Rune handles Ctrl+V before the editor on Windows ([#1662](https://github.com/anomalyco/rune/issues/1662)); the Web bridge filters unmodified F8 in text fields ([#1661](https://github.com/anomalyco/rune/issues/1661)).
+
+Windows Workspace file actions label the default action by extension: Open, Edit, or Choose an application. The host classifies the resolved file before dispatch, uses the Edit verb for script formats, and falls back to the chooser if Edit fails. It reports an immediate chooser launch failure through the existing file-action error.
 
 The typed workspace write API requires an observed opaque version and sends the exact directory/path with `expectedVersion` to the shared Rust server. It distinguishes saved content from a conflict, bounds UTF-8 content and serialized JSON before dispatch, and performs one request. Document owners retain their drafts and reconcile uncertain mutations before dependent reads.
 

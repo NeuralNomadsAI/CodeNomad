@@ -1226,7 +1226,7 @@
   },
   "sources": {
     "packages/ui/postcss.config.js": "aca4c5d8a44abcaa54e72615c5d31f28b24d2e1f5651e22be318eadaf1d57144",
-    "packages/ui/src/components/instance/instance-shell2.tsx": "9ed475d0a59935991feda3f0e47c87117649a9d0a5c30d9f506348073b138a62",
+    "packages/ui/src/components/instance/instance-shell2.tsx": "c62ac67c242e2196f77cd058ba1dd42c8bf0593a5232ac973ea8944e14721e23",
     "packages/ui/src/components/instance/shell/right-panel/components/WorkspaceTree.tsx": "d7a5fece63b366f70f2cd8b6826700c1a052812eda50dd518dcae07721d2d568",
     "packages/ui/src/components/instance/shell/right-panel/row-compact-actions.ts": "805d85e79b9279be23495643d69e5efcafef3b946819a1b488e2fb7b9abf7bad",
     "packages/ui/src/components/instance/shell/storage.ts": "b16b0b05343896ec3b7f069431942064aa8912bd85e528ce534d5649e6c55740",
@@ -1369,7 +1369,7 @@
     "packages/ui/src/styles/panels/panel-shell.css": "bfe9049484f69a20fed7bfc82683fcdd4ef98b4b3c3e6b2a9a1040c57b89012b",
     "packages/ui/src/styles/panels/right-panel-customization.css": "4c721c53a2d6c2b3bc6c8a8de03f6efb27116bf594140b54117498ed365f6d4a",
     "packages/ui/src/styles/panels/right-panel.css": "3447f0e94d208892f7d8e1865ca7566be764e0d52f9d1b4b63f5a294eeb703fe",
-    "packages/ui/src/styles/panels/session-layout.css": "c624e3e0990fc313deab6eba639bcf0e2d53815a31e4c19c12088143b9384273",
+    "packages/ui/src/styles/panels/session-layout.css": "481a1f141baec5c5f0822f8e848c653e3086ad5f28106d20575a302ba1fd22ee",
     "packages/ui/src/styles/panels/session-toolbar-touch.css": "c033c7d957556c83356ccb320a0edca88016d5050bbd75d51774774acbc8fa80",
     "packages/ui/src/styles/panels/shell-panel-toggles.css": "38e569949f47f6cc13bf9caaba85ec5847f0334fd7503e73228482d5cf0859e2",
     "packages/ui/src/styles/panels/status-goal.css": "80603ceb6a5cb61f484e937278dcc8483fcea5a27d9679ac2b26b1a9a47ab6ba",

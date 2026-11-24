@@ -1,4 +1,5 @@
 //! Preferences geometry follows settings-screen.css and the native Preferences bounds.
+pub mod stats;
 use crate::{
     Space, TextRole,
     layout::{self, Layout},
@@ -333,6 +334,19 @@ pub fn info_link<S: 'static>(help: &str, open: impl Fn(&mut S, &mut rune::Tx) + 
     layout::button_tx("ⓘ", false, open).label(help).help(help)
 }
 
+pub fn info_tip<S: 'static>(
+    label: &str,
+    help: &str,
+    open: bool,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    layout::button("ⓘ", false, toggle)
+        .label(label)
+        .description(help)
+        .help(help)
+        .help_open(open)
+}
+
 pub fn setting_switch<S: 'static>(
     label: &str,
     checked: bool,
@@ -352,10 +366,18 @@ pub fn primary_action<S: 'static>(
     disabled: bool,
     press: impl Fn(&mut S) + 'static,
 ) -> El {
+    primary_action_tx(label, disabled, move |s, _| press(s))
+}
+
+pub fn primary_action_tx<S: 'static>(
+    label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
     rune_kit::Button::new(label)
         .variant(rune_kit::ButtonVariant::Submit)
         .disabled(disabled)
-        .on_press(press)
+        .on_press_tx(press)
         .build(crate::kit(layout::dark()))
 }
 

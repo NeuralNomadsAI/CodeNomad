@@ -1,4 +1,6 @@
 export const advancedSettingsMessages = {
+  "advancedSettings.unavailable": "Rune n’applique pas encore ce réglage.",
+  "advancedSettings.environmentVariables.maskValue": "Masquer la valeur par défaut",
   "advancedSettings.title": "Paramètres avancés",
   "advancedSettings.environmentVariables.title": "Variables d'environnement",
   "advancedSettings.environmentVariables.subtitle": "Appliquées avant chaque prompt ou commande de session",

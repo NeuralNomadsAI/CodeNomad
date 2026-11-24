@@ -1,11 +1,15 @@
 use super::*;
+mod advanced;
 mod appearance;
 mod behavior;
 mod events;
+mod info;
 mod memory;
 mod notifications;
 mod opencode;
 mod providers;
+mod shortcuts;
+mod tab_shortcuts;
 use codenomad_client::bounded;
 use std::time::Duration;
 use tokio::{
@@ -687,7 +691,7 @@ fn settings_passive_reads_never_retry_unconfirmed_writes_but_the_retry_action_do
             "a successful read of the old value is not success"
         );
         platform::block_on(async {
-            prefs.retry();
+            prefs.retry_general();
             assert!(prefs.poll());
             let read = request(&listener).await;
             assert!(read.first.starts_with("GET "));

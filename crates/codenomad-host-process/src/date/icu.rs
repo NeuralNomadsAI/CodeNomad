@@ -12,6 +12,7 @@ use windows_sys::Win32::{
 
 type Handle = *mut *mut c_void;
 type Close = unsafe extern "C" fn(Handle);
+type DefaultZone = unsafe extern "C" fn(*mut u16, i32, *mut UErrorCode) -> i32;
 type PatternOpen = unsafe extern "C" fn(*const u8, *mut UErrorCode) -> Handle;
 type PatternBest =
     unsafe extern "C" fn(Handle, *const u16, i32, *mut u16, i32, *mut UErrorCode) -> i32;
@@ -41,6 +42,7 @@ struct Icu {
     open_date: DateOpen,
     format_date: DateFormat,
     close_date: Close,
+    default_zone: Option<DefaultZone>,
 }
 
 impl Icu {
@@ -66,6 +68,8 @@ impl Icu {
                     open_date: std::mem::transmute::<_, DateOpen>(get(c"udat_open")?),
                     format_date: std::mem::transmute::<_, DateFormat>(get(c"udat_format")?),
                     close_date: std::mem::transmute::<_, Close>(get(c"udat_close")?),
+                    default_zone: get(c"ucal_getDefaultTimeZone")
+                        .map(|symbol| std::mem::transmute::<_, DefaultZone>(symbol)),
                 })
             })();
             if loaded.is_none() {
@@ -77,12 +81,34 @@ impl Icu {
     }
 }
 
+static ICU: OnceLock<Option<Icu>> = OnceLock::new();
+
+pub(super) fn timezone() -> Option<String> {
+    let query = ICU.get_or_init(Icu::load).as_ref()?.default_zone?;
+    let mut text = [0; 128];
+    let mut status = 0;
+    // ICU writes at most the advertised capacity; the returned length excludes the terminator.
+    let len = unsafe { query(text.as_mut_ptr(), text.len() as i32, &mut status) };
+    (status <= 0 && len > 0)
+        .then(|| String::from_utf16(text.get(..len as usize)?).ok())
+        .flatten()
+}
+
 pub(super) fn month_day(millis: f64, locale: &str) -> Option<String> {
-    static ICU: OnceLock<Option<Icu>> = OnceLock::new();
+    format(millis, locale, "MMMd", None)
+}
+
+pub(super) fn format(
+    millis: f64,
+    locale: &str,
+    skeleton: &str,
+    zone: Option<&str>,
+) -> Option<String> {
     let icu = ICU.get_or_init(Icu::load).as_ref()?;
     let locale = CString::new(locale).ok()?;
     let locale = locale.as_ptr().cast();
-    let skeleton = [b'M' as u16, b'M' as u16, b'M' as u16, b'd' as u16];
+    let skeleton = skeleton.encode_utf16().collect::<Vec<_>>();
+    let zone = zone.map(|zone| zone.encode_utf16().collect::<Vec<_>>());
     let mut pattern = [0; 128];
     let mut text = [0; 128];
     let mut status = 0;
@@ -109,8 +135,8 @@ pub(super) fn month_day(millis: f64, locale: &str) -> Option<String> {
             UDAT_PATTERN,
             UDAT_PATTERN,
             locale,
-            null(),
-            0,
+            zone.as_ref().map_or(null(), Vec::as_ptr),
+            zone.as_ref().map_or(0, |zone| zone.len() as i32),
             pattern.as_ptr(),
             len,
             &mut status,

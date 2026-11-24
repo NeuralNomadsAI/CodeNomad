@@ -23,11 +23,9 @@ pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<St
         {
             use rune_theme_codenomad::layout::Layout;
             // Opening or closing a modal must keep the shell at the same Rune path.
-            rune::col()
-                .full_width()
-                .full_height()
-                .child(body)
-                .children(conversation::web_view(s, &prefs).or_else(|| web::view(s, &prefs, more)))
+            rune::col().full_width().full_height().child(body).children(
+                conversation::web_view(s, &prefs).or_else(|| web::view(s, &prefs, more, cx)),
+            )
         }
         #[cfg(not(target_arch = "wasm32"))]
         body

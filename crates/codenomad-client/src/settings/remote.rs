@@ -22,6 +22,7 @@ pub struct Status {
 pub struct Device {
     pub id: String,
     pub name: String,
+    pub origin: Option<String>,
     pub last_seen_at: String,
 }
 
@@ -79,6 +80,10 @@ pub async fn devices(backend: &Backend) -> Result<Option<Vec<Device>>> {
                 || device.name.trim().is_empty()
                 || device.name.encode_utf16().count() > 80
                 || device.name.chars().any(|c| c.is_ascii_control())
+                || device
+                    .origin
+                    .as_ref()
+                    .is_some_and(|value| value.len() > 512 || origin(value).is_none())
                 || OffsetDateTime::parse(&device.last_seen_at, &Rfc3339).is_err()
         })
     {

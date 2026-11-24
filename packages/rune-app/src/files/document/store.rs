@@ -1,7 +1,8 @@
+use super::editor::SavedPosition;
 use super::source_text::Snapshot;
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex, MutexGuard, Weak},
 };
 
@@ -144,6 +145,7 @@ struct Stored {
     live: HashMap<SavedKey, Weak<Mutex<Draft>>>,
     revision: u64,
     read_blocked: bool,
+    positions: VecDeque<(Key, SavedPosition)>,
 }
 #[derive(Clone, Default)]
 pub struct Store(Arc<Mutex<Stored>>);
@@ -154,6 +156,22 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 impl Store {
+    pub(super) fn source_position(&self, key: &Key) -> Option<SavedPosition> {
+        lock(&self.0)
+            .positions
+            .iter()
+            .find(|(saved, _)| saved == key)
+            .map(|(_, position)| *position)
+    }
+
+    pub(super) fn remember_position(&self, key: Key, position: SavedPosition) {
+        let mut store = lock(&self.0);
+        store.positions.retain(|(saved, _)| saved != &key);
+        store.positions.push_front((key, position));
+        if store.positions.len() > 5 {
+            store.positions.pop_back();
+        }
+    }
     pub(crate) fn block_file_draft_updates(&self, blocked: bool) {
         lock(&self.0).read_blocked = blocked;
     }
@@ -370,6 +388,56 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_positions_are_bounded_and_belong_to_one_occurrence_and_checkout() {
+        let store = Store::default();
+        let key = Key {
+            server: "transport".into(),
+            instance: "tab-a".into(),
+            native_project: None,
+            directory: "/project".into(),
+            path: "file".into(),
+        };
+        for index in 0..6 {
+            store.remember_position(
+                Key {
+                    path: format!("file-{index}"),
+                    ..key.clone()
+                },
+                SavedPosition::default(),
+            );
+        }
+        assert!(
+            store
+                .source_position(&Key {
+                    path: "file-0".into(),
+                    ..key.clone()
+                })
+                .is_none()
+        );
+        let recent = Key {
+            path: "file-1".into(),
+            ..key
+        };
+        assert!(
+            store
+                .source_position(&Key {
+                    instance: "tab-b".into(),
+                    ..recent.clone()
+                })
+                .is_none()
+        );
+        assert!(
+            store
+                .source_position(&Key {
+                    directory: "/other".into(),
+                    ..recent.clone()
+                })
+                .is_none()
+        );
+        assert!(store.source_position(&recent).is_some());
+    }
 
     #[test]
     fn retry_keeps_unseen_saved_text_when_the_open_reader_is_clean_or_edited() {

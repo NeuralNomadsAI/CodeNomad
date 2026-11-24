@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {readFile} from 'node:fs/promises'
 import path from 'node:path'
+import {setTimeout as delay} from 'node:timers/promises'
 import {chromium} from 'playwright'
 import {bundleAssetPaths} from '../../../scripts/rune/web-workspace-policy.mjs'
 
@@ -9,7 +10,13 @@ const bundle = path.resolve(process.argv[2] ?? 'target/rune-web-settings-provide
 const loseHeaders = process.argv.includes('--lost-headers')
 const opencodeMode = process.argv.find(arg => arg === '--local-opencode' || arg === '--remote-opencode')
 const remoteAccess = process.argv.includes('--remote-access')
+const remoteReceipts = process.argv.includes('--remote-receipts')
 const notifications = process.argv.includes('--notifications')
+const shortcuts = process.argv.includes('--shortcuts')
+const about = process.argv.includes('--info')
+const configFiles = process.argv.includes('--config-files')
+const releasePage = 'https://github.com/NeuralNomadsAI/CodeNomad/releases/tag/v9.1.0-dev'
+const stats = process.argv.includes('--stats')
 const noDeviceRegistry = process.argv.includes('--no-device-registry')
 const local = opencodeMode === '--local-opencode' || remoteAccess
 const files = await bundleAssetPaths(bundle)
@@ -19,10 +26,34 @@ const base = '/workspaces/catalogue/instance/api/'
 const streams = new Map()
 const unexpected = []
 const reads = []
+const aggregates = []
+let statsRead
+let selectedPeriod = 7
+let startHeld, closeHeld
+const held = new Promise(resolve => {startHeld = resolve})
+const heldClosed = new Promise(resolve => {closeHeld = resolve})
+const usageRoute = `/api/workspaces/${project.id}/service-usage`
+const proof = {owner:'fixture-owner',identity:'fixture-root',connection:'fixture-live'}
+const day = 86_400_000
+function snapshot(to, days, id) {
+  const tokens = {input:12345,output:102,reasoning:44,cache:{read:12,write:3}}
+  return {scope:'service',...proof,stats:{range:{from:to-days*day,to},sessions:12,subagents:3,prompts:38,
+    steps:52,tokens,cost:0.0025,tools:{mode:'none'},activeDays:2,streak:1,
+    models:id ? [{model:{providerID:'fixture',id,variant:'fast'},steps:52,tokens,cost:0.0025}]:[],
+    activity:id ? [{date:'2026-11-20',steps:52}]:[]}}
+}
 const mime = {'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm','.css':'text/css','.json':'application/json','.woff2':'font/woff2'}
 let account = 'First fixture account', detached = false
+const configPath = '/api/config-files'
+const configFile = `${configPath}/opencode-global-config-jsonc/content`
+const configOther = `${configPath}/opencode-global-config/content`
+let configContent = '{\r\n  // comment\r\n}\r\n', configWrites = 0, hideWhitespace = true
+let environmentVariables = {}, secureEnvVars = []
 let contrast = 'on', permissions = 'autonomous'
 let notificationRouting, notifyFocused
+let hotkeyOverrides = { 'new-instance': [{key:'n',mod:true}], 'file-save': [{key:'n',mod:true}] }
+let updateFeed = 'stable', infoReads = 0, invalidOffer = false, failFeed = false
+const feedWrites = []
 const writes = []
 const memoryRequests = []
 const opencodeRequests = []
@@ -31,6 +62,7 @@ const remoteRequests = []
 const directOrigin = 'https://fixture.example:444'
 const deviceId = '004633fb-53c4-477c-8b01-4cc5c177724b'
 let deviceExists = true
+let losePair = remoteReceipts, failDeviceRead = false
 let logLevel = 'DEBUG'
 let releaseInstall, installed = false
 const installReady = new Promise(resolve => { releaseInstall = resolve })
@@ -41,6 +73,7 @@ const personal = {...entry,id:'global-entry',title:'Personal memory',text:'Perso
 let projectEntries = [entry]
 let cleanupCreates = 0, cleanupPrompts = 0, cleanupSession
 const promptIds = new Set()
+const projectClaims = new Set()
 let memoryEnabled = false
 let releaseState
 const stateReady = new Promise(resolve => { releaseState = resolve })
@@ -49,9 +82,42 @@ const server = createServer(async (req,res) => {
   const p = url.pathname
   const json = value => res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(value))
   try {
-    if (p === '/api/meta') return json({apiContract:1,serverId:'fixture-settings',capabilities:['integrations'],localRequest:local})
+    if (p === '/api/meta') {
+      const meta = {apiContract:1,serverId:'fixture-settings',
+        capabilities:['integrations',...(configFiles?['config-files']:[]),...(stats?['service-usage']:[])],localRequest:local}
+      if (!about) return json(meta)
+      infoReads++
+      return json({...meta,updateFeed,serverVersion:'9.0.1',ui:{version:'9.0.2',source:'fixture'},
+        listeningMode:'all',host:'192.0.2.10',localUrl:'http://127.0.0.1:3456',
+        remoteUrl:'https://192.0.2.10:3457',workspaceRoot:directory,system:{platform:'win32',arch:'x64'},
+        addresses:[{ip:'192.0.2.10',family:'ipv4',scope:'internal',remoteUrl:'https://192.0.2.10:3457'},
+          {ip:'192.0.2.11',family:'ipv4',scope:'internal',remoteUrl:'https://192.0.2.11:3457'}],
+        update:updateFeed!=='preview'?null:invalidOffer?
+          {version:'9.2.0-dev',tag:'v9.2.0-dev',channel:'preview',url:'https://example.test/release'}:
+          {version:'9.1.0-dev',tag:'v9.1.0-dev',channel:'preview',url:releasePage}})
+    }
+    if (p.startsWith(configPath)) {
+      assert(configFiles)
+      if (p === configPath) return json([
+        {id:'opencode-global-config-jsonc',label:'OpenCode Global Config (JSONC)',path:'~/.config/opencode/opencode.jsonc',language:'jsonc'},
+        {id:'opencode-global-config',label:'OpenCode Global Config',path:'~/.config/opencode/opencode.json',language:'json'},
+      ])
+      if (p === configFile && req.method === 'PUT') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        configWrites++
+        configContent = JSON.parse(body).contents
+        return res.writeHead(204).end()
+      }
+      if (p === configFile) return json({id:'opencode-global-config-jsonc',contents:configContent,exists:true})
+      if (p === configOther) return json({id:'opencode-global-config',contents:'',exists:false})
+    }
     if (p === '/api/opencode/update') {
       opencodeRequests.push(`${req.method}${url.search}`)
+      if (about) {
+        assert.equal(req.method,'GET')
+        return json({state:'ready',serviceState:'ready',currentVersion:'2.3.2',daemonVersion:'2.3.1'})
+      }
       assert(local,'The remote pane must not try to read or mutate OpenCode')
       if (req.method === 'POST') {
         let body = ''
@@ -66,6 +132,31 @@ const server = createServer(async (req,res) => {
         latestVersion:'2.3.2',updateAvailable:!installed,canUpgrade:!installed,binaryPath:'/fixture/opencode'})
     }
     if (p === '/api/auth/status') return json({authenticated:true})
+    if (stats && p.startsWith(usageRoute)) {
+      assert.equal(req.method,'GET')
+      if (p === `${usageRoute}/owner`) return json(proof)
+      assert.equal(url.searchParams.get('timezone'),'Europe/Paris')
+      if (p === `${usageRoute}/cache`) {
+        const days = Number(url.searchParams.get('days') ?? selectedPeriod)
+        const id = days === 90 ? 'other-window' : days === 7 ? 'cached' : undefined
+        return json({days,...proof,...(id && {snapshot:snapshot(1_800_000_000_000,days,id)})})
+      }
+      assert.equal(p,usageRoute)
+      const query = url.searchParams
+      const to = Number(query.get('to')), days = (to-Number(query.get('from')))/day
+      const restore = query.get('restorePeriod') === 'true'
+      assert([7,30,90,365].includes(days))
+      const index = aggregates.push({days,restore}) - 1
+      if (index === 0) return statsRead = () => json(snapshot(to,7,'fresh'))
+      if (index === 2) return res.writeHead(503).end()
+      if (index === 4) {
+        res.on('close',()=>closeHeld(!res.writableEnded))
+        startHeld()
+        return
+      }
+      if (!restore) selectedPeriod = days
+      return json(snapshot(to,restore ? selectedPeriod : days,index === 1 ? 'updated' : undefined))
+    }
     if (p.startsWith('/api/remote-control/')) {
       assert(remoteAccess && local)
       remoteRequests.push(`${req.method} ${p.slice('/api/remote-control/'.length)}`)
@@ -74,18 +165,34 @@ const server = createServer(async (req,res) => {
       }
       if (p === '/api/remote-control/devices') {
         if (noDeviceRegistry) return res.writeHead(501).end()
-        return json({devices:deviceExists?[{id:deviceId,name:'Fixture Tablet',lastSeenAt:date}]:[]})
+        if (failDeviceRead) {
+          failDeviceRead = false
+          return res.writeHead(503).end()
+        }
+        return json({devices:deviceExists?[{id:deviceId,name:'Fixture Tablet',origin:directOrigin,lastSeenAt:date}]:[]})
       }
       if (p === '/api/remote-control/pairings') {
         assert.equal(req.method,'POST')
         let body = ''
         for await (const chunk of req) body += chunk
         assert.deepEqual(JSON.parse(body),{origin:directOrigin})
+        if (losePair) {
+          losePair = false
+          res.writeHead(200,{'content-type':'application/json','content-length':'80'})
+          res.write('{"url":')
+          return setTimeout(()=>res.destroy(),50)
+        }
         return json({url:`${directOrigin}/remote-pair#abcdefghijklmnopqrstuv`,expiresAt:new Date(Date.now()+240000).toISOString()})
       }
       assert.equal(p,`/api/remote-control/devices/${deviceId}`)
       assert.equal(req.method,'DELETE')
       deviceExists = false
+      if (remoteReceipts) {
+        failDeviceRead = true
+        res.writeHead(200,{'content-type':'application/json','content-length':'80'})
+        res.write('{')
+        return setTimeout(()=>res.destroy(),50)
+      }
       return res.writeHead(204).end()
     }
     if (p === '/api/workspaces' && req.method === 'GET') return json([project])
@@ -94,7 +201,14 @@ const server = createServer(async (req,res) => {
       for await (const chunk of req) body += chunk
       const {path:requested,requestId} = JSON.parse(body)
       assert.equal(requested,directory)
+      projectClaims.add(requestId)
       return json({...project,requestId})
+    }
+    if (p === `/api/workspaces/${project.id}/creation/release` && req.method === 'POST') {
+      let body = ''
+      for await (const chunk of req) body += chunk
+      assert(projectClaims.delete(JSON.parse(body).requestId),'Release must match a fixture project claim')
+      return res.writeHead(204).end()
     }
     if (p === '/api/workspaces/catalogue' && req.method === 'DELETE') return res.writeHead(204).end()
     if (p === '/api/events') {
@@ -112,6 +226,10 @@ const server = createServer(async (req,res) => {
         for await (const chunk of req) body += chunk
         const patch = JSON.parse(body)
         writes.push(patch)
+        hideWhitespace = patch.settings.hideDiffWhitespaceChanges ?? hideWhitespace
+        if (shortcuts && Array.isArray(patch.settings.hotkeyOverrides?.['close-instance'])) {
+          return res.writeHead(503).end()
+        }
         contrast = patch.settings.highContrast ?? contrast
         permissions = patch.settings.newConversationPermissions ?? permissions
         if (patch.settings.notificationRouting) {
@@ -121,9 +239,15 @@ const server = createServer(async (req,res) => {
           }
         }
         notifyFocused = patch.settings.osNotificationsAllowWhenVisible ?? notifyFocused
+        if (patch.settings.hotkeyOverrides === null) hotkeyOverrides = {}
+        else for (const [id, binding] of Object.entries(patch.settings.hotkeyOverrides ?? {})) {
+          if (binding === null) delete hotkeyOverrides[id]
+          else hotkeyOverrides[id] = binding
+        }
       }
       return json({settings:{locale:'en',highContrast:contrast,newConversationPermissions:permissions,
-        notificationRouting,osNotificationsAllowWhenVisible:notifyFocused}})
+        notificationRouting,osNotificationsAllowWhenVisible:notifyFocused,hotkeyOverrides,
+        hideDiffWhitespaceChanges:hideWhitespace,holdLongAssistantReplies:true}})
     }
     if (p === '/api/storage/state/ui') {
       await stateReady
@@ -163,6 +287,29 @@ const server = createServer(async (req,res) => {
       return json({deleted:true})
     }
     if (p === '/api/storage/config/server') {
+      if (configFiles) {
+        if (req.method === 'PATCH') {
+          let body = ''
+          for await (const chunk of req) body += chunk
+          const patch = JSON.parse(body)
+          assert.deepEqual(patch,{environmentVariables:{CN_FIXTURE:'fixture'},secureEnvVars:['CN_FIXTURE']})
+          environmentVariables = {...environmentVariables,...patch.environmentVariables}
+          secureEnvVars = patch.secureEnvVars
+        }
+        return json({environmentVariables,secureEnvVars})
+      }
+      if (about) {
+        if (req.method === 'PATCH') {
+          let body = ''
+          for await (const chunk of req) body += chunk
+          const patch = JSON.parse(body)
+          assert.deepEqual(patch,{updateFeed:failFeed?'stable':'preview'})
+          feedWrites.push(patch)
+          if (failFeed) return res.writeHead(503).end()
+          updateFeed = patch.updateFeed
+        }
+        return json({updateFeed})
+      }
       assert(local,'Only the local OpenCode pane reads server configuration')
       if (req.method === 'PATCH') {
         let body = ''
@@ -233,7 +380,36 @@ await new Promise(resolve => server.listen(0,'127.0.0.1',resolve))
 let browser, page
 try {
   browser = await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
-  page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true})
+  page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true,
+    ...(stats && {timezoneId:'Europe/Paris'})})
+  if (configFiles) {
+    // Drop the page's receipt after the PUT settles. A socket reset on a reused
+    // connection would instead make Chromium retry the idempotent PUT itself.
+    await page.route(`**${configFile}`, async route => {
+      if (route.request().method() !== 'PUT') return route.continue()
+      const response = await route.fetch({maxRetries:0})
+      assert.equal(response.status(),204)
+      await route.abort('failed')
+    })
+  }
+  if (about) {
+    await page.route('https://raw.githubusercontent.com/**',route=>route.abort())
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator,'userAgentData',{value:{
+        platform:'Windows',mobile:false,
+        getHighEntropyValues:async()=>({platformVersion:'15.0.0',architecture:'x86',bitness:'64'}),
+      }})
+      window.openedInfoLinks = []
+      window.open = url => { window.openedInfoLinks.push(String(url)); return null }
+      window.diagnosticClipboard = null
+      window.rejectDiagnosticClipboard = true
+      Clipboard.prototype.writeText = function(text) {
+        if (window.rejectDiagnosticClipboard) return Promise.reject(new DOMException('Fixture refusal','NotAllowedError'))
+        window.diagnosticClipboard = text
+        return Promise.resolve()
+      }
+    })
+  }
   if (notifications) await page.addInitScript(() => {
     window.permissionGestures = []
     window.Notification = class {
@@ -243,6 +419,13 @@ try {
         this.permission = 'granted'
         return Promise.resolve(this.permission)
       }
+    }
+  })
+  if (remoteAccess) await page.addInitScript(() => {
+    Clipboard.prototype.writeText = function(text) {
+      if (window.rejectPairingCopy) return Promise.reject(new DOMException('Fixture refusal','NotAllowedError'))
+      window.pairingClipboard = text
+      return Promise.resolve()
     }
   })
   const click = name => page.getByRole('button',{name,exact:true}).click({force:true,timeout:15000})
@@ -261,10 +444,288 @@ try {
   releaseState()
   await click(directory)
   await visible('No session selected')
-  if (notifications) await checkNotifications()
+  if (configFiles) await checkConfigFiles()
+  else if (about) await checkInfo()
+  else if (shortcuts) await checkShortcuts()
+  else if (stats) await checkStats()
+  else if (notifications) await checkNotifications()
   else if (remoteAccess) await checkRemoteAccess()
   else if (opencodeMode) await checkOpenCode()
   else await checkProviders()
+
+  async function checkConfigFiles() {
+    await click('Settings')
+    await radio('Config Files').press('Enter')
+    await visible('~/.config/opencode/opencode.jsonc')
+    const focused = page.getByRole('textbox',{name:'Config Files',exact:true})
+    for (let i=0;i<24 && !await focused.count();i++) await page.keyboard.press('Tab')
+    await focused.fill('{\n  // edited\n  "key": invalid\n}\n')
+    await visible('Unsaved changes')
+    await visible('Syntax error on line 3')
+    await radio('OpenCode Global Config').press('Enter')
+    await visible('Discard unsaved changes before continuing?')
+    await page.getByRole('button',{name:'Keep editing',exact:true}).press('Enter')
+    await visible('Unsaved changes')
+    await page.getByRole('button',{name:'Save',exact:true}).press('Enter')
+    await visible('Config file saved.')
+    assert.equal(configWrites,1)
+    assert.equal(configContent,'{\r\n  // edited\r\n  "key": invalid\r\n}\r\n')
+    await radio('OpenCode Global Config').press('Enter')
+    await visible('File will be created on save')
+    await radio('Advanced').press('Enter')
+    const whitespace = page.getByRole('switch',{name:'Hide whitespace-only changes',exact:true})
+    assert.equal(await whitespace.getAttribute('aria-checked'),'true')
+    await whitespace.press('Enter')
+    await page.getByRole('switch',{name:'Hide whitespace-only changes',checked:false,exact:true}).waitFor({state:'attached'})
+    assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
+    // Rune's current mirror omits disabled switches; their keyboard help stays available.
+    assert.equal(await page.getByRole('button',{name:'Focus existing window on second launch',exact:true}).count(),0)
+    assert.deepEqual(await page.getByRole('switch').allTextContents(),['Hide whitespace-only changes'])
+    const info = page.getByRole('button',{name:'Hold long assistant replies',exact:true})
+    assert.equal(await info.getAttribute('aria-description'),'Rune does not apply this setting yet.')
+    await info.press('Enter')
+    assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
+    await page.getByRole('button',{name:'Environment Variables (0 variables)',exact:true}).press('Enter')
+    const focusField = async (label, value) => {
+      const field = page.locator(`[aria-label="${label}"]:focus`)
+      for (let i=0;i<24 && !await field.count();i++) await page.keyboard.press('Tab')
+      await field.fill(value)
+    }
+    await page.getByRole('button',{name:'Show value',exact:true}).press('Enter')
+    await focusField('Variable name','CN_FIXTURE')
+    // Move directly from the name to the value on Rune's input bridge.
+    await page.keyboard.press('Tab')
+    // Rune uses one private password input for secure editors, also when revealed.
+    await page.locator('input[type=password]:focus').waitFor({state:'attached'})
+    await page.keyboard.insertText('fixture')
+    await page.getByRole('button',{name:'Add variable',exact:true}).press('Enter')
+    await page.getByRole('button',{name:'Environment Variables (1 variable)',exact:true}).waitFor({state:'attached'})
+    assert.deepEqual(secureEnvVars,['CN_FIXTURE'])
+    assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
+    console.log(JSON.stringify({fixture:'config-files',configWrites,hideWhitespace,environmentStored:true}))
+  }
+
+  async function checkInfo() {
+    await click('Settings')
+    await radio('Info').press('Enter')
+    await visible('9.0.1')
+    await visible('9.0.2')
+    await visible('WebAssembly')
+    await visible('Firewall, router or certificate settings may prevent connections.')
+    assert.equal(await page.getByText('https://192.0.2.10:3457',{exact:true}).count(),2)
+    assert.equal(await page.getByText('https://192.0.2.11:3457',{exact:true}).count(),0)
+    await visible('Specific network interface')
+    const downloadRelease = page.getByRole('button',{name:'Download update',exact:true})
+    assert.equal(await downloadRelease.count(),0)
+    await page.getByRole('group',{name:'Update feed',exact:true}).waitFor({state:'attached'})
+    const before = infoReads
+    const preview = radio('Previews and stable releases')
+    await preview.press('Enter')
+    await page.getByRole('radio',{name:'Previews and stable releases',exact:true,checked:true}).waitFor({state:'attached'})
+    assert.deepEqual(feedWrites,[{updateFeed:'preview'}])
+    assert.equal(infoReads,before+1)
+    await visible('9.1.0-dev')
+    await downloadRelease.press('Enter')
+    await page.waitForFunction(url=>window.openedInfoLinks.includes(url),releasePage)
+    failFeed = true
+    const reread = page.waitForResponse(response=>new URL(response.url()).pathname==='/api/meta')
+    await radio('Stable releases').press('Enter')
+    await reread
+    await page.locator('[aria-live="assertive"]').filter({hasText:'Could not save the update feed.'}).waitFor({state:'attached'})
+    assert.deepEqual(feedWrites,[{updateFeed:'preview'},{updateFeed:'stable'}])
+    assert.equal(infoReads,before+2)
+    await page.getByRole('radio',{name:'Previews and stable releases',exact:true,checked:true}).waitFor({state:'attached'})
+    const copy = page.getByRole('button',{name:'Copy to clipboard',exact:true})
+    await copy.press('Enter')
+    await page.locator('[aria-live="assertive"]').filter({hasText:'Could not copy diagnostics.'}).waitFor({state:'attached'})
+    assert.equal(await page.evaluate(()=>window.diagnosticClipboard),null)
+    await page.evaluate(()=>{window.rejectDiagnosticClipboard=false})
+    await copy.press('Enter')
+    await page.locator('[aria-live="polite"]').filter({hasText:'Diagnostics copied.'}).waitFor({state:'attached'})
+    const report = await page.evaluate(()=>window.diagnosticClipboard)
+    assert(report.includes(directory) && report.includes('2.3.2') && report.includes('2.3.1'))
+    assert(!report.includes('192.0.2.11'))
+    const file = page.waitForEvent('download')
+    await page.getByRole('button',{name:'Download .txt',exact:true}).press('Enter')
+    const exported = await file
+    assert.match(exported.suggestedFilename(),/^codenomad-diagnostics.*\.txt$/)
+    const exportedText = await readFile(await exported.path(),'utf8')
+    assert(exportedText.includes(directory) && !exportedText.includes('192.0.2.11'))
+    await page.getByRole('button',{name:'Report a bug',exact:true}).press('Enter')
+    await page.waitForFunction(()=>window.openedInfoLinks.some(url=>url.includes('/issues/new?')))
+    const bug = new URL(await page.evaluate(()=>window.openedInfoLinks.find(url=>url.includes('/issues/new?'))))
+    assert.equal(bug.searchParams.get('template'),'bug_report.yml')
+    assert.equal(bug.searchParams.get('codenomad-version'),'9.0.1 (UI 9.0.2)')
+    assert.equal(bug.searchParams.get('opencode-version'),'2.3.2 (running daemon 2.3.1)')
+    assert.equal(bug.searchParams.get('os-version'),'Windows 11 x64')
+    const context = bug.searchParams.get('extra')
+    assert(context.includes('Web browser (desktop, remote window)') && context.includes('Server OS: Windows x64'))
+    assert(context.includes(`- Browser: ${await page.evaluate(()=>navigator.userAgent)}`))
+    assert(!decodeURIComponent(bug.href).includes(directory) && !bug.href.includes('192.0.2.10'))
+    invalidOffer = true
+    await page.getByRole('button',{name:'Refresh',exact:true}).press('Enter')
+    await visible('9.2.0-dev')
+    assert.equal(await downloadRelease.count(),0)
+    console.log(JSON.stringify({fixture:'info-preferences',feedWrites,confirmedRead:true,release:true,diagnostics:true}))
+  }
+
+  async function checkShortcuts() {
+    await page.evaluate(() => {
+      window.shortcutAnnouncements = []
+      new MutationObserver(records => {
+        for (const record of records) {
+          if (record.target.getAttribute?.('aria-live') !== 'polite') continue
+          for (const node of record.addedNodes) {
+            const spoken = node.textContent.replaceAll('\u200b','')
+            if (spoken) window.shortcutAnnouncements.push(spoken)
+          }
+        }
+      }).observe(document.body,{childList:true,subtree:true})
+    })
+    await click('Settings')
+    await radio('Keyboard shortcuts').press('Enter')
+    const save = page.getByRole('group',{name:'Save file',exact:true})
+    const edit = save.getByRole('button',{name:'Edit',exact:true})
+    await edit.waitFor({state:'attached'})
+    assert.match(await save.getAttribute('aria-description'),/is also assigned to: New instance/)
+    const inactive = page.getByRole('group',{name:'Open command palette',exact:true})
+    assert.equal(await inactive.getAttribute('aria-description'),'This action has no configurable shortcut in Rune yet.')
+    assert.equal(await inactive.getByRole('button',{name:'Edit',exact:true}).count(),0)
+    // Rune assigns the browser textbox its accessible label when its field gains focus.
+    const filterFocused = () => page.evaluate(() =>
+      document.activeElement?.getAttribute('aria-label')==='Filter shortcuts')
+    const capture = page.getByRole('button',{name:'Press a key combination',exact:true})
+    for (let i=0;i<24 && !await filterFocused();i++) await page.keyboard.press('Tab')
+    assert(await filterFocused())
+    const caret = await page.getByRole('textbox',{name:'Filter shortcuts',exact:true}).boundingBox()
+    assert(caret)
+    await edit.press('Enter')
+    await capture.waitFor({state:'attached'})
+    await page.mouse.click(caret.x + 4, caret.y + caret.height / 2)
+    await capture.waitFor({state:'detached'})
+    assert.deepEqual(writes,[])
+    await edit.press('Enter')
+    await capture.waitFor({state:'attached'})
+    await page.mouse.click(caret.x + 4, caret.y + caret.height / 2)
+    await page.keyboard.insertText('Save file')
+    await capture.waitFor({state:'detached'})
+    await inactive.waitFor({state:'detached'})
+    assert.deepEqual(writes,[])
+    const confirm = expect => page.waitForResponse(response=>response.request().method()==='PATCH'
+      && expect(response.request().postDataJSON()?.settings?.hotkeyOverrides))
+    const editFocused = () => page.evaluate(() => {
+      const id = document.activeElement?.getAttribute('aria-activedescendant')
+      return id && document.getElementById(id)?.getAttribute('aria-label') === 'Edit'
+    })
+    for (let i=0;i<12 && !await editFocused();i++) await page.keyboard.press('Tab')
+    assert(await editFocused())
+    await page.keyboard.press('Space')
+    await capture.waitFor({state:'attached',timeout:5000})
+    await page.keyboard.press('F8')
+    await page.locator('[aria-live="assertive"]').filter({hasText:'The editor reserves this shortcut.'}).waitFor({state:'attached'})
+    assert.deepEqual(writes,[])
+    await Promise.all([
+      confirm(overrides=>overrides?.['file-save']?.[0]?.key==='f8'),
+      page.keyboard.press('Control+F8'),
+    ])
+    await save.getByText('Ctrl+F8',{exact:true}).waitFor({state:'attached'})
+    // An unrelated failed write must neither announce a conflict nor suppress the next one.
+    const filter = page.getByRole('textbox',{name:'Filter shortcuts',exact:true})
+    await page.mouse.click(caret.x + 4, caret.y + caret.height / 2)
+    await filter.press('Control+a')
+    await filter.press('Backspace')
+    const close = page.getByRole('group',{name:'Close app tab',exact:true})
+    const clear = close.getByRole('button',{name:'Clear shortcut',exact:true})
+    const failed = close.getByText('Could not save keyboard shortcuts. Try again.',{exact:true})
+    await clear.press('Enter')
+    await failed.waitFor({state:'attached'})
+    assert.deepEqual(await page.evaluate(()=>window.shortcutAnnouncements),[])
+    await edit.press('Enter')
+    await capture.waitFor({state:'attached'})
+    await page.getByRole('application',{name:'CodeNomad',exact:true}).focus()
+    await Promise.all([
+      confirm(overrides=>overrides?.['file-save']?.[0]?.key==='n'),
+      page.keyboard.press('Control+n'),
+    ])
+    await page.locator('[aria-live="polite"]').filter({hasText:'Ctrl+N is also assigned to: New instance'}).waitFor({state:'attached'})
+    assert.equal(await failed.count(),1)
+    const reset = confirm(overrides=>overrides===null)
+    await page.getByRole('button',{name:'Reset all',exact:true}).press('Enter')
+    await reset
+    assert.deepEqual(hotkeyOverrides,{})
+    await failed.waitFor({state:'detached'})
+    assert.deepEqual(await page.evaluate(()=>window.shortcutAnnouncements),['Ctrl+N is also assigned to: New instance'])
+    console.log(JSON.stringify({fixture:'shortcuts-preferences',catalogue:true,conflict:true,recorded:true,reset:true}))
+  }
+
+  async function checkStats() {
+    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
+    assert(stream,'Project catalogue stream must be attached')
+    const emit = value => stream.write(`data: ${JSON.stringify({instanceId:project.id,...value})}\n\n`)
+    const hint = type => emit({type:'instance.event',event:{type,data:{sessionID:'ses_unselected'}}})
+    const model = id => page.getByRole('rowheader',{name:`fixture/${id} · fast`,exact:true})
+    const dialog = page.getByRole('dialog',{name:'Settings',exact:true})
+    const stale = dialog.getByText('Previous statistics · awaiting refresh',{exact:true})
+    await click('Settings')
+    assert.equal(aggregates.length,0)
+    await Promise.all([
+      page.waitForRequest(request=>new URL(request.url()).pathname===usageRoute),
+      radio('Stats').press('Enter'),
+    ])
+    await model('cached').waitFor({state:'attached'})
+    assert.deepEqual(aggregates,[{days:30,restore:true}])
+    await stale.waitFor({state:'attached'})
+    assert(statsRead)
+    statsRead()
+    await model('fresh').waitFor({state:'attached'})
+    assert.equal(await model('cached').count(),0)
+    assert.equal(await page.getByRole('columnheader',{name:'Model'}).count(),1)
+    await visible('12,345')
+    const activity = page.getByRole('group',{name:'2026-11-20 · Steps: 52'})
+    await activity.waitFor({state:'attached'})
+    if (process.env.RUNE_STATS_SCREENSHOT) await page.screenshot({path:process.env.RUNE_STATS_SCREENSHOT})
+    hint('session.deleted')
+    await model('updated').waitFor({state:'attached'})
+    await stale.waitFor({state:'detached'})
+    emit({type:'instance.eventStatus',status:'disconnected',generation:2})
+    await stale.waitFor({state:'attached'})
+    assert.equal(await model('updated').count(),1)
+    selectedPeriod = 90 // The other window's successful aggregate selected this period on the backend.
+    emit({type:'instance.eventStatus',status:'connected',generation:2})
+    await dialog.getByText('Could not refresh statistics. Check the OpenCode connection.',{exact:true}).waitFor({state:'attached'})
+    await model('other-window').waitFor({state:'attached'})
+    assert.equal(await model('updated').count(),0)
+    assert.deepEqual(aggregates[2],{days:7,restore:true})
+    const period = page.getByRole('button',{name:'Period · Last 90 days',exact:true})
+    await period.press('Enter')
+    await page.getByRole('option',{name:'Last 365 days',exact:true}).press('Enter')
+    await model('other-window').waitFor({state:'detached'})
+    await visible('Daily activity')
+    assert.deepEqual(aggregates.at(-1),{days:365,restore:false})
+    assert.equal(await page.getByRole('rowheader').count(),0)
+    assert.equal(await activity.count(),0)
+    const setVisibility = state => page.evaluate(state => {
+      Object.defineProperty(document, 'visibilityState', {configurable:true, get:()=>state})
+      document.dispatchEvent(new Event('visibilitychange'))
+    },state)
+    hint('session.deleted')
+    await Promise.race([held, delay(10000,undefined,{ref:false}).then(()=>assert.fail('In-flight aggregate did not start'))])
+    await setVisibility('hidden')
+    await stale.waitFor({state:'attached'})
+    assert.equal(await Promise.race([heldClosed,delay(10000,false,{ref:false})]),true,'Hiding the document aborts the HTTP request')
+    hint('session.execution.succeeded')
+    hint('session.deleted')
+    assert.equal(aggregates.length,5)
+    await setVisibility('visible')
+    await stale.waitFor({state:'detached'})
+    assert.equal(aggregates.length,6)
+    await radio('General').press('Enter')
+    hint('session.deleted')
+    await page.waitForFunction(()=>!document.body.innerText.includes('Daily activity'))
+    assert.equal(aggregates.length,6)
+    assert.deepEqual(unexpected,[])
+    console.log(JSON.stringify({fixture:'settings-stats',mobile:true,aggregates,restoredOtherWindow:true,emptyBreakdowns:true,hiddenAbort:true,hiddenRefresh:false}))
+  }
 
   async function checkNotifications() {
     const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
@@ -334,7 +795,7 @@ try {
 
   async function checkRemoteAccess() {
     await click('Settings')
-    await radio('Remote Access').click({force:true})
+    await radio('Remote Access').press('Enter')
     if (noDeviceRegistry) {
       await visible('Remote Control is off')
       assert.equal(await page.getByRole('heading',{name:'Paired devices',exact:true}).count(),0)
@@ -344,19 +805,46 @@ try {
       return
     }
     await visible('Fixture Tablet')
+    await visible(`HTTPS · ${directOrigin}`)
+    const seen = page.getByText(/^Last seen /)
+    await seen.waitFor({state:'attached'})
+    const revoke = page.getByRole('button',{name:/^Revoke · Fixture Tablet · HTTPS · https:\/\/fixture\.example:444 · Last seen /})
+    await revoke.waitFor({state:'attached'})
     assert.deepEqual(remoteRequests,['GET status','GET devices'])
     assert.equal(await page.getByRole('button',{name:'Start Remote Control',exact:true}).count(),0)
-    await click('Create HTTPS pairing link')
-    await page.getByRole('button',{name:'Copy link',exact:true}).waitFor({state:'attached'})
-    assert.equal(await page.getByText(/abcdefghijklmnopqrstuv/).count(),0)
-    assert.deepEqual(remoteRequests,['GET status','GET devices','POST pairings'])
-    await page.context().grantPermissions(['clipboard-read','clipboard-write'])
-    await click('Copy link')
-    await page.waitForFunction(async expected => await navigator.clipboard.readText() === expected,
-      `${directOrigin}/remote-pair#abcdefghijklmnopqrstuv`)
-    await click('Revoke · Fixture Tablet')
+    const pair = page.getByRole('button',{name:'Create HTTPS pairing link',exact:true})
+    if (remoteReceipts) {
+      await pair.press('Enter')
+      await visible('Connection failed')
+      assert.deepEqual(remoteRequests,['GET status','GET devices','POST pairings','GET status','GET devices'])
+      assert.equal(await page.getByRole('button',{name:'Copy link',exact:true}).count(),0)
+    }
+    await pair.press('Enter')
+    const copy = page.getByRole('button',{name:'Copy link',exact:true})
+    await copy.waitFor({state:'attached'})
+    const link = `${directOrigin}/remote-pair#abcdefghijklmnopqrstuv`
+    await visible(link)
+    await page.evaluate(()=>{window.rejectPairingCopy=true})
+    await copy.press('Enter')
+    await visible('Copy failed')
+    await page.evaluate(()=>{window.rejectPairingCopy=false})
+    await copy.press('Enter')
+    await page.waitForFunction(expected=>window.pairingClipboard===expected,link)
+    await visible('Copied')
+    await revoke.press('Enter')
+    if (remoteReceipts) {
+      await visible('Revocation pending')
+      // The pinned mirror omits disabled state. Exercise activation and verify
+      // the complete request sequence below, including no second DELETE.
+      await revoke.press('Enter')
+      assert.equal(remoteRequests.filter(value=>value.startsWith('DELETE')).length,1)
+      await page.getByRole('button',{name:'Refresh',exact:true}).press('Enter')
+    }
     await visible('No devices are paired yet.')
-    assert.deepEqual(remoteRequests,['GET status','GET devices','POST pairings',`DELETE devices/${deviceId}`,'GET status','GET devices'])
+    assert.equal(await page.getByText('Connection failed',{exact:true}).count(),0)
+    assert.deepEqual(remoteRequests,remoteReceipts
+      ? ['GET status','GET devices','POST pairings','GET status','GET devices','POST pairings',`DELETE devices/${deviceId}`,'GET status','GET devices','GET status','GET devices']
+      : ['GET status','GET devices','POST pairings',`DELETE devices/${deviceId}`,'GET status','GET devices'])
     assert.deepEqual(opencodeRequests,[])
     console.log(JSON.stringify({fixture:'remote-access',remoteRequests}))
   }
@@ -512,7 +1000,11 @@ try {
   console.log(JSON.stringify({fixture:'providers-web',contrastSaved:true,defaultPermissionSaved:true,memoryReviewed:true,memoryEdited:true,cleanupCreates,cleanupPrompts,cleanupIdentities:promptIds.size,initialThemeGated:true,updated:true,revokedWhileDisconnected:true,reconnected:true,requests:reads.length}))
   }
 } catch (error) {
-  console.error(JSON.stringify({opencodeRequests,mirror:await page?.locator('body').innerText()}))
+  console.error(JSON.stringify({opencodeRequests,writes,focus:await page?.evaluate(() => ({
+    tag:document.activeElement?.tagName,
+    name:document.activeElement?.getAttribute('aria-label'),
+    descendant:document.getElementById(document.activeElement?.getAttribute('aria-activedescendant'))?.getAttribute('aria-label'),
+  })),mirror:await page?.locator('body').innerText()}))
   throw error
 } finally {
   releaseInstall()

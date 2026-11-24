@@ -25,7 +25,7 @@ Workspace `.mmd` files open as diagrams. Use **Show source** to edit and **Show 
 
 1. Open a Workspace text file with its eye action.
 2. For Markdown, choose **Show source** to edit, or **Preview Markdown** to read the rendering.
-3. Edit and choose **Save**, or press **Ctrl/Cmd+S** while the editor has focus.
+3. Edit and choose **Save**, or press **Ctrl/Cmd+S** while the editor has focus. Change or clear **Save file** in [Keyboard shortcuts](shortcuts.md).
 
 If the desktop app opens a draft recovery window, use **Copy** to keep each listed edit before closing it.
 4. If the file changed externally, review the overwrite confirmation; choose **Cancel** to keep your draft without overwriting that change.
@@ -39,6 +39,8 @@ Closing the reader with its trailing close button returns to the conversation; t
 Reader replacement and closure affect only the current project tab. Duplicate tabs can read different files or keep a file beside chat/web/Mission content. Source/rendered choice, editor selection and scroll survive tab switches while their in-memory target/model is retained. Files mode is restored per tab; diff and wrap preferences remain shared.
 
 The source reader remembers word wrap across files and project tabs, and restores it with the saved window state.
+Reopening a recently viewed source file in the same project tab restores its selection and scroll position.
+The first visible source line stays in view when the file refreshes or the reader is resized.
 
 ## Read-only and bounded previews {#preview-limits}
 

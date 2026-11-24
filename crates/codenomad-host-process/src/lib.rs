@@ -12,11 +12,18 @@ use std::{
 #[cfg(windows)]
 mod date;
 #[cfg(unix)]
+#[path = "date/unix.rs"]
+mod date;
+#[cfg(any(unix, test))]
+#[path = "date/posix.rs"]
+mod posix_date;
+#[cfg(unix)]
 mod unix;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
 pub use date::local_month_day;
+pub use date::{local_date_time, local_time_zone};
 #[cfg(unix)]
 use unix::Family;
 #[cfg(windows)]

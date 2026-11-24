@@ -113,6 +113,8 @@ If your system supports notification actions, clicking a notification opens the 
 
 ## Advanced options {#advanced}
 
+In Rune, focus **i** beside an unavailable switch to learn why it is disabled. Config Files reports JSON/JSONC syntax errors by line and still lets you save.
+
 1. Open **Advanced**.
 2. Check or clear only the options you need; each change saves through CodeNomad preferences. To change the session execution environment, expand the folded **Environment Variables** group at the end.
 

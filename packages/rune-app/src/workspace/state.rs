@@ -4,6 +4,7 @@ pub use tabs::{can_new, close, new_tab, select};
 
 mod drafts;
 mod notification;
+mod observation;
 mod panel_state;
 mod polling;
 mod strip;
@@ -13,6 +14,8 @@ pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
     observes_notification, open_notification, owns_notification, workspace_notification,
 };
+#[cfg(target_arch = "wasm32")]
+pub(crate) use observation::poll_cached_notifications;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use panel_state::set_files_tab;
 pub use panel_state::{
@@ -22,8 +25,6 @@ pub(crate) use panel_state::{
     mission_event, mission_panel, mission_supported, right_panel_tab, set_right_panel_tab,
     suspend_missions,
 };
-#[cfg(target_arch = "wasm32")]
-pub(crate) use polling::poll_cached_notifications;
 pub use polling::{poll, status};
 pub use strip::strip;
 

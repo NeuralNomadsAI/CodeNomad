@@ -1,4 +1,6 @@
 export const advancedSettingsMessages = {
+  "advancedSettings.unavailable": "Rune 尚未应用此设置。",
+  "advancedSettings.environmentVariables.maskValue": "默认隐藏值",
   "advancedSettings.title": "高级设置",
   "advancedSettings.environmentVariables.title": "环境变量",
   "advancedSettings.environmentVariables.subtitle": "每次发送提示或会话命令前应用",

@@ -154,9 +154,10 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
     }
-    if crate::settings::matches_shortcut(s, "new-instance", event, 'n') && workspace::can_new(s) {
+    if crate::settings::matches_shortcut(s, "new-instance", event, tx, 'n') && workspace::can_new(s)
+    {
         workspace::new_tab(s, tx);
-    } else if crate::settings::matches_shortcut(s, "close-instance", event, 'w') {
+    } else if crate::settings::matches_shortcut(s, "close-instance", event, tx, 'w') {
         let Some(key) = s.workspace.as_ref().map(|ui| ui.active_key().to_owned()) else {
             return false;
         };
