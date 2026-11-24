@@ -2451,15 +2451,50 @@ fn document_pending_cache_retains_65_rows_across_empty_gap_and_isolates_created_
 fn cleanup_pagination_stays_within_2000_row_display_and_seen_cap() {
     crate::platform::block_on(async {
         let http = Http::new().await;
-        let (wake, _done) = witness();
-        let mut panel = super::super::Panel::new(
-            http.backend.clone(),
-            Some("project".into()),
-            Default::default(),
-            wake,
-        );
-        let total = 41 * 50u64;
-        for page in 0..41u64 {
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let (wake, done) = witness();
+        let mut panel =
+            super::super::Panel::new(backend, Some("project".into()), Default::default(), wake);
+        panel.show(true);
+        let empty_digest = "XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc";
+        for _ in 0..2 {
+            let req = http.accept().await;
+            let source = req.body["source"]
+                .as_str()
+                .unwrap_or("summaries")
+                .to_owned();
+            let mut page = json!({
+                "available": true, "version": 1, "source": source, "projectID": "project",
+                "discardedEvents": 0, "controlUnavailable": false,
+                "notificationUnavailable": false, "cleanupUnavailable": false,
+                "window": {"order": empty_digest, "offset": 0, "end": 0, "total": 0},
+                "page": {"digest": empty_digest, "total": 0, "pieces": []}
+            });
+            if source == "summaries" {
+                page["finishHighWater"] = json!(0);
+            }
+            req.reply(200, page).await;
+        }
+        for _ in 0..50 {
+            panel.poll();
+            crate::platform::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        // Serve 2,001 pending rows with a document-only cleanup last. After loading 2,000,
+        // continuation must stay available, the 2,001st row must become reachable and retryable,
+        // and resident display + seen stay capped at 2,000.
+        let total = 2_001u64;
+        for page in 0..40u64 {
             let offset = page * 50;
             let rows: Vec<Cleanup> = (0..50)
                 .map(|i| {
@@ -2470,16 +2505,229 @@ fn cleanup_pagination_stays_within_2000_row_display_and_seen_cap() {
                     r
                 })
                 .collect();
-            let accepted = panel.accept_more_cleanups_for_test("stable-order", offset, total, rows);
-            if page < 40 {
-                assert!(accepted, "page {page} should be accepted within cap");
-            } else {
-                assert!(!accepted, "page 41 past 2000-row cap must be refused");
-            }
+            assert!(
+                panel.accept_more_cleanups_for_test("stable-order", offset, total, rows),
+                "page {page} should be accepted"
+            );
         }
         assert_eq!(panel.cleanups.len(), 2_000);
         assert_eq!(panel.cleanup_seen_count(), 2_000);
+        assert!(
+            panel.has_more(super::super::directory::Kind::Cleanups),
+            "Load more must remain available at row 2,000 when row 2,001 exists"
+        );
+        let mut last_doc = cleanup_row(0, true);
+        last_doc.mission_id = "msn-2000".into();
+        last_doc.deletion_id = "del-2000".into();
+        assert!(panel.accept_more_cleanups_for_test(
+            "stable-order",
+            2_000,
+            total,
+            vec![last_doc.clone()]
+        ));
+        assert_eq!(panel.cleanups.len(), 2_000);
+        assert!(panel.cleanup_seen_count() <= 2_000);
         assert!(!panel.has_more(super::super::directory::Kind::Cleanups));
+        assert!(
+            panel.cleanups.iter().any(|r| r.deletion_id == "del-2000"),
+            "2,001st document-only cleanup must be reachable in the sliding window"
+        );
+        let mut lifecycle = super::super::Lifecycle::default();
+        let sc = panel.cleanup_scope().unwrap();
+        while done.try_recv().is_ok() {}
+        panel.retry_cleanup(&mut lifecycle, &sc, last_doc);
+        let pre = http.accept().await;
+        assert!(pre.header.contains("/missions/msn-2000"));
+        pre.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [{
+                    "missionID": "msn-2000", "deletionID": "del-2000", "requestID": "req-1",
+                    "expectedRevision": 3, "deleteManagedSessions": false,
+                    "objective": "Old", "createdAt": 1, "removed": 0, "retained": 0,
+                    "pending": 0, "reasons": [], "documentPending": false
+                }]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        let settled = lifecycle.poll_after_deletes();
+        assert_eq!(settled.cleanup.settled_cleanups.len(), 1);
+        assert_eq!(
+            settled.cleanup.settled_cleanups[0].1.deletion_id,
+            "del-2000"
+        );
+    });
+}
+
+#[test]
+fn cleanup_retry_rejects_settlement_when_document_pending_learned_during_preflight() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let (wake, done) = witness();
+        let mut panel =
+            super::super::Panel::new(backend, Some("project".into()), Default::default(), wake);
+        panel.show(true);
+        let empty_digest = "XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc";
+        for _ in 0..2 {
+            let req = http.accept().await;
+            let source = req.body["source"]
+                .as_str()
+                .unwrap_or("summaries")
+                .to_owned();
+            let mut page = json!({
+                "available": true, "version": 1, "source": source, "projectID": "project",
+                "discardedEvents": 0, "controlUnavailable": false,
+                "notificationUnavailable": false, "cleanupUnavailable": false,
+                "window": {"order": empty_digest, "offset": 0, "end": 0, "total": 0},
+                "page": {"digest": empty_digest, "total": 0, "pieces": []}
+            });
+            if source == "summaries" {
+                page["finishHighWater"] = json!(0);
+            }
+            req.reply(200, page).await;
+        }
+        for _ in 0..50 {
+            panel.poll();
+            crate::platform::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        let mut initial: Cleanup = serde_json::from_value(json!({
+            "missionID": "old", "deletionID": "del-1", "requestID": "req-1",
+            "expectedRevision": 1, "deleteManagedSessions": false,
+            "objective": "Old", "createdAt": 1, "removed": 0, "retained": 0,
+            "pending": 1, "reasons": []
+        }))
+        .unwrap();
+        assert_eq!(initial.document_pending, None);
+        assert!(panel.accept_cleanups_for_test(vec![initial.clone()]));
+
+        let mut lifecycle = super::super::Lifecycle::default();
+        let sc = panel.cleanup_scope().unwrap();
+        panel.retry_cleanup(&mut lifecycle, &sc, initial.clone());
+        let held_get = http.accept().await;
+        assert!(held_get.header.starts_with("GET /api/workspaces/"));
+
+        // While preflight GET is held, the directory learns documentPending: true for the same row.
+        initial.document_pending = Some(true);
+        assert!(panel.accept_cleanups_for_test(vec![initial]));
+        panel.observe_cleanups(&mut lifecycle);
+        assert!(
+            !panel.cleanup_view_live.load(Ordering::Acquire) || lifecycle.cleanup.cleanup_busy(&sc),
+            "pending set change with documentPending: true must revoke the stale retry view"
+        );
+
+        // Preflight GET now replies with pending: 0 and omitted documentPending.
+        held_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "cleanups": [{
+                        "missionID": "old", "deletionID": "del-1", "requestID": "req-1",
+                        "expectedRevision": 1, "deleteManagedSessions": false,
+                        "objective": "Old", "createdAt": 1, "removed": 1, "retained": 0,
+                        "pending": 0, "reasons": []
+                    }]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        http.quiet().await;
+        let settled = lifecycle.poll_after_deletes();
+        assert!(
+            settled.cleanup.settled_cleanups.is_empty(),
+            "retry must not publish settlement without explicit documentPending: false"
+        );
+        assert!(settled.cleanup.deleted_missions.is_empty());
+    });
+}
+
+#[test]
+fn stale_cleanup_directory_refresh_does_not_revert_adopted_settled_receipt() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        let pending_doc = cleanup_row(0, true);
+        let settled_doc = cleanup_row(0, false);
+        assert!(panel.accept_cleanups_for_test(vec![pending_doc.clone()]));
+        assert!(panel.cleanups[0].is_pending());
+
+        // Adopt exact settled receipt (e.g. from GET -> DELETE 409 -> GET).
+        panel.adopt_settled_cleanup(settled_doc);
+        assert!(!panel.cleanups[0].is_pending());
+
+        // A lagging cleanup directory refresh returns the old documentPending: true row.
+        assert!(panel.accept_cleanups_for_test(vec![pending_doc]));
+        assert_eq!(panel.cleanups.len(), 1);
+        assert!(
+            !panel.cleanups[0].is_pending(),
+            "stale directory refresh must not revert an adopted settled receipt back to pending"
+        );
+        assert_eq!(panel.cleanups[0].document_pending, Some(false));
+    });
+}
+
+#[test]
+fn remember_document_pending_is_linear_per_page_at_2000_rows() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        for page in 0..40u64 {
+            let offset = page * 50;
+            let rows: Vec<Cleanup> = (0..50)
+                .map(|i| {
+                    let idx = offset + i;
+                    let mut r = cleanup_row(0, true);
+                    r.mission_id = format!("old-m-{idx}");
+                    r.deletion_id = format!("old-d-{idx}");
+                    r
+                })
+                .collect();
+            assert!(panel.accept_more_cleanups_for_test("order-1", offset, 2_000, rows));
+        }
+        assert_eq!(panel.cleanups.len(), 2_000);
+        panel.doc_cache_lookups = 0;
+
+        // Prepend 50 brand-new document-pending rows on a new order.
+        let new_rows: Vec<Cleanup> = (0..50)
+            .map(|i| {
+                let mut r = cleanup_row(0, true);
+                r.mission_id = format!("new-m-{i}");
+                r.deletion_id = format!("new-d-{i}");
+                r
+            })
+            .collect();
+        assert!(panel.accept_more_cleanups_for_test("order-2", 0, 2_000, new_rows));
+        assert!(
+            panel.doc_cache_lookups <= 5_000,
+            "document-pending cache maintenance must be O(N) per page, got {} lookups",
+            panel.doc_cache_lookups
+        );
     });
 }
 

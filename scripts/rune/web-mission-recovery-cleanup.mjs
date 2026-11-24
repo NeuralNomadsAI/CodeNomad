@@ -91,7 +91,7 @@ export function recoveryCleanupFixture(){
           await route.fulfill({status:409,json:{code:'recovery-busy'}})
           return true
         }
-        alphaRevision++
+        // Active-mission recovery admission does not advance the revision on its own.
         await route.fulfill({json:{admitted:true,mission:{
           id:'alpha',projectID:'fixture-project',projectCanonical:'/fixture',
           coordinatorSessionId:'ses_existing',revision:alphaRevision,
@@ -210,6 +210,9 @@ export async function checkRecoveryAndDelete(page,messages,counts,filter){
   await pressControl(page,recover)
   assert.equal((await ok).status(),200)
   await page.getByText(messages['missions.recovery.error.busy'],{exact:true}).waitFor({state:'detached'})
+  // Pressing Recover again at the same revision must be a no-op (disabled after admission).
+  await recover.click({force:true})
+  await page.waitForTimeout(300)
   assert.equal(counts().alphaRecoveryCalls,2)
 
   // Toggle missionDeleteSessions to true in Web Preferences -> Missions, delete Alpha

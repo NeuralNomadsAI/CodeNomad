@@ -84,6 +84,7 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
     mission_lifecycle: crate::missions::Lifecycle,
+    mission_auth_expired: Option<Backend>,
     entries: Vec<Entry>,
     active: usize,
     next_key: u64,
@@ -106,6 +107,7 @@ impl Ui {
         Self {
             openings: Default::default(),
             mission_lifecycle: Default::default(),
+            mission_auth_expired: None,
             entries: vec![entry("tab-0".into(), Tab::Blank)],
             active: 0,
             next_key: 1,

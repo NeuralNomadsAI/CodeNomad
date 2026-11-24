@@ -2,14 +2,24 @@ use super::{
     LifecycleTarget,
     directory::panel_id,
     lifecycle::{CONTROL_TIMEOUT, MAX_REVISION},
+    stream_json::read_filtered_json,
 };
 use crate::{
-    backend::{Backend, read_json_typed_limited},
+    backend::Backend,
     history::{Result, valid_id},
 };
 use serde::{Deserialize, Serialize};
 
-const RECOVERY_RESPONSE_LIMIT: usize = 64 * 1024 * 1024;
+const RECOVERY_KEPT_LIMIT: usize = 4 * 1024 * 1024;
+const RECOVERY_ROOT_KEYS: &[&str] = &["admitted", "code"];
+const RECOVERY_MISSION_KEYS: &[&str] = &[
+    "id",
+    "projectID",
+    "projectCanonical",
+    "coordinatorSessionId",
+    "revision",
+    "actors",
+];
 
 #[derive(Default, Deserialize)]
 struct RecoveryBody {
@@ -156,6 +166,7 @@ impl RecoveryError {
 pub enum RecoveryOutcome {
     Admitted(u64),
     Refused(RecoveryError),
+    AuthenticationRequired,
 }
 
 impl Backend {
@@ -183,9 +194,19 @@ impl Backend {
             ]);
         let response = recovery_post(self, url, request).send().await?;
         let status = response.status();
-        let body: RecoveryBody = read_json_typed_limited(response, RECOVERY_RESPONSE_LIMIT)
-            .await
-            .unwrap_or_default();
+        if status == reqwest::StatusCode::UNAUTHORIZED
+            && self.authentication_status().await.ok() == Some(false)
+        {
+            return Ok(RecoveryOutcome::AuthenticationRequired);
+        }
+        let body: RecoveryBody = read_filtered_json(
+            response,
+            RECOVERY_ROOT_KEYS,
+            RECOVERY_MISSION_KEYS,
+            RECOVERY_KEPT_LIMIT,
+        )
+        .await
+        .unwrap_or_default();
         Ok(settle_recovery(status, &body, target, request))
     }
 }
@@ -369,7 +390,7 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn large_recovery_acknowledgement_over_4_mib_is_admitted() {
+    fn large_recovery_acknowledgement_over_64_mib_is_admitted() {
         use tokio::{
             io::{AsyncReadExt, AsyncWriteExt},
             net::TcpListener,
@@ -380,60 +401,50 @@ mod tests {
             .build()
             .unwrap()
             .block_on(async {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = listener.local_addr().unwrap();
-            let padding = "x".repeat(4_500_000);
-            let body = serde_json::to_vec(&json!({
-                "admitted": true,
-                "mission": {
-                    "id": "msn-large",
-                    "projectID": "project",
-                    "projectCanonical": "/fixture",
-                    "coordinatorSessionId": "coordinator",
-                    "revision": 8,
-                    "actors": [{
-                        "kind": "coordinator",
-                        "sessionId": "coordinator",
-                        "location": {"directory": "/fixture"}
-                    }],
-                    "history": [{"text": padding}]
-                }
-            }))
-            .unwrap();
-            assert!(body.len() > 4 * 1024 * 1024);
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let addr = listener.local_addr().unwrap();
+                let prefix = br#"{"admitted":true,"mission":{"id":"msn-large","projectID":"project","projectCanonical":"/fixture","coordinatorSessionId":"coordinator","revision":7,"actors":[{"kind":"coordinator","sessionId":"coordinator","location":{"directory":"/fixture"}}],"history":[{"text":""#;
+                let suffix = br#""}]}}"#;
+                let chunk = vec![b'x'; 64 * 1024];
+                let chunk_count = 1040usize; // 65 MiB of unselected history payload
+                let total_len = prefix.len() + chunk.len() * chunk_count + suffix.len();
+                assert!(total_len > 64 * 1024 * 1024);
 
-            let server = tokio::spawn(async move {
-                let (mut socket, _) = listener.accept().await.unwrap();
-                let mut req = Vec::new();
-                let mut buf = [0u8; 4096];
-                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
-                    let n = socket.read(&mut buf).await.unwrap();
-                    if n == 0 {
-                        break;
+                let server = tokio::spawn(async move {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut req = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let n = socket.read(&mut buf).await.unwrap();
+                        if n == 0 {
+                            break;
+                        }
+                        req.extend_from_slice(&buf[..n]);
                     }
-                    req.extend_from_slice(&buf[..n]);
-                }
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
-                );
-                socket.write_all(head.as_bytes()).await.unwrap();
-                socket.write_all(&body).await.unwrap();
-            });
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {total_len}\r\nConnection: close\r\n\r\n"
+                    );
+                    socket.write_all(head.as_bytes()).await.unwrap();
+                    socket.write_all(prefix).await.unwrap();
+                    for _ in 0..chunk_count {
+                        socket.write_all(&chunk).await.unwrap();
+                    }
+                    socket.write_all(suffix).await.unwrap();
+                });
 
-            let mut backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
-            backend.workspace = "owned".into();
-            let target = LifecycleTarget {
-                mission: "msn-large".into(),
-                project: "project".into(),
-                canonical: "/fixture".into(),
-                coordinator: "coordinator".into(),
-                coordinator_location: Some(("/fixture".into(), None)),
-            };
-            let request = RecoveryRequest::new(7, RecoveryTarget::Coordinator).unwrap();
-            let outcome = backend.recover_mission(&target, &request).await.unwrap();
-            assert_eq!(outcome, RecoveryOutcome::Admitted(8));
-            server.await.unwrap();
-        });
+                let mut backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+                backend.workspace = "owned".into();
+                let target = LifecycleTarget {
+                    mission: "msn-large".into(),
+                    project: "project".into(),
+                    canonical: "/fixture".into(),
+                    coordinator: "coordinator".into(),
+                    coordinator_location: Some(("/fixture".into(), None)),
+                };
+                let request = RecoveryRequest::new(7, RecoveryTarget::Coordinator).unwrap();
+                let outcome = backend.recover_mission(&target, &request).await.unwrap();
+                assert_eq!(outcome, RecoveryOutcome::Admitted(7));
+                server.await.unwrap();
+            });
     }
 }

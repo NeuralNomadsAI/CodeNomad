@@ -328,9 +328,19 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
     for old in retired_panels {
         retire_unused_mission_scope(&ui.entries, &mut ui.mission_lifecycle, Some(old));
     }
+    // Propagate passively observed documentPending: true into active delete intents BEFORE
+    // polling delete completions so a same-poll bare {deleted: true} cannot drop the intent.
+    for entry in &ui.entries {
+        if let Some(panel) = &entry.missions {
+            panel.observe_cleanups(&mut ui.mission_lifecycle);
+        }
+    }
     // Phase 1: apply direct deletion completions first so any resulting selection clear revokes
     // `cleanup_view_live` before cleanup-row retries evaluate their publication fences.
     let deletes = ui.mission_lifecycle.poll_deletes();
+    if let Some(expired) = deletes.auth_expired() {
+        ui.mission_auth_expired = Some(expired);
+    }
     changed |= deletes.changed();
     if deletes.changed() {
         for (index, entry) in ui.entries.iter_mut().enumerate() {
@@ -345,6 +355,9 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
     }
     // Phase 2: poll cleanup-row retries, recovery and lifecycle controls against the updated fences.
     let finished = ui.mission_lifecycle.poll_after_deletes();
+    if let Some(expired) = finished.auth_expired() {
+        ui.mission_auth_expired = Some(expired);
+    }
     changed |= finished.changed();
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if let Some(panel) = &mut entry.missions {

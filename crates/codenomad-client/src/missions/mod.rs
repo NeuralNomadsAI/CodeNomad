@@ -9,7 +9,8 @@ mod directory;
 mod lifecycle;
 mod model;
 mod recovery;
-pub use activity::{Activity, Actor, ActorState, Coverage};
+mod stream_json;
+pub use activity::{Activity, Actor, ActorState, Coverage, ObservedQuestion};
 pub use attention::Attention;
 pub use cleanup::{
     DeletionCode, DeletionError, DeletionOutcome, DeletionRequest, MissionSnapshotRead,

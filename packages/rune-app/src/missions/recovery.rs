@@ -44,6 +44,7 @@ enum Attempt {
         scope: WorkspaceScope,
         mission: MissionKey,
         target: LifecycleTarget,
+        backend: Backend,
         flight: Receiver<RecoveryOutcome>,
         retired: bool,
     },
@@ -85,7 +86,11 @@ pub(super) struct Recovery {
     errors: HashMap<RecoveryErrorScope, (u64, RecoveryError)>,
 }
 
-pub(super) fn coordinator_eligible(header: &MapHeader, observation: &Observation) -> bool {
+pub(super) fn coordinator_eligible(
+    header: &MapHeader,
+    observation: &Observation,
+    tasks: Option<&super::task_rows::TaskRows>,
+) -> bool {
     let resuming = header.root.status == Status::Failed;
     if header.root.status != Status::Active && !resuming {
         return false;
@@ -101,7 +106,7 @@ pub(super) fn coordinator_eligible(header: &MapHeader, observation: &Observation
         return false;
     }
     if !resuming {
-        observation.interrupted(header)
+        observation.interrupted(header, tasks)
     } else {
         observation.actor_state(coordinator).is_none_or(|state| {
             matches!(state, ActorState::Unknown | ActorState::IdleWithoutReport)
@@ -113,6 +118,7 @@ pub(super) fn coordinator_eligible(header: &MapHeader, observation: &Observation
 pub(super) struct RecoveryPolled {
     pub admitted: Vec<(MissionKey, LifecycleTarget, u64)>,
     pub refreshed_scopes: Vec<WorkspaceScope>,
+    pub auth_expired: Option<Backend>,
     pub changed: bool,
 }
 
@@ -213,6 +219,7 @@ impl Recovery {
                 scope: source.workspace_scope(),
                 mission: source.mission.clone(),
                 target: lifecycle_target.clone(),
+                backend: backend.clone(),
                 flight: inbox,
                 retired: false,
             },
@@ -236,6 +243,7 @@ impl Recovery {
                 scope,
                 mission,
                 target,
+                backend,
                 flight,
                 retired,
             } = attempt
@@ -246,22 +254,29 @@ impl Recovery {
                     scope.clone(),
                     mission.clone(),
                     target.clone(),
+                    backend.clone(),
                     *retired,
                     outcome,
                 ));
             }
         }
         polled.changed = !settled.is_empty();
-        for (key, scope, mission, target, retired, outcome) in settled {
+        for (key, scope, mission, target, backend, retired, outcome) in settled {
             if retired {
                 self.attempts.remove(&key);
                 continue;
             }
-            if !polled.refreshed_scopes.contains(&scope) {
-                polled.refreshed_scopes.push(scope);
-            }
             match outcome {
+                RecoveryOutcome::AuthenticationRequired => {
+                    self.attempts.remove(&key);
+                    if polled.auth_expired.is_none() {
+                        polled.auth_expired = Some(backend);
+                    }
+                }
                 RecoveryOutcome::Admitted(revision) => {
+                    if !polled.refreshed_scopes.contains(&scope) {
+                        polled.refreshed_scopes.push(scope);
+                    }
                     let err_scope = RecoveryErrorScope::from_key(&key);
                     self.errors.remove(&err_scope);
                     self.seq = self.seq.wrapping_add(1);
@@ -269,6 +284,9 @@ impl Recovery {
                     polled.admitted.push((mission, target, revision));
                 }
                 RecoveryOutcome::Refused(error) => {
+                    if !polled.refreshed_scopes.contains(&scope) {
+                        polled.refreshed_scopes.push(scope);
+                    }
                     let err_scope = RecoveryErrorScope::from_key(&key);
                     self.attempts.remove(&key);
                     self.seq = self.seq.wrapping_add(1);

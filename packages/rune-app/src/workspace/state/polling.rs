@@ -51,7 +51,20 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.persistence.file_draft_error,
         ui.persistence.partial,
     );
+    let mission_auth_expired = ui.mission_auth_expired.take();
     s.workspace = Some(ui);
+    if let Some(backend) = mission_auth_expired {
+        #[cfg(target_arch = "wasm32")]
+        platform::pairing::observe(s);
+        crate::settings::conversation_authentication(
+            s,
+            codenomad_client::transport::Authentication {
+                backend,
+                confirmed: true,
+            },
+        );
+        changed = true;
+    }
     if became_ready {
         resume(s, tx);
     }

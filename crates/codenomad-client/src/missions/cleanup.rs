@@ -2,12 +2,22 @@ use super::{
     Cleanup,
     directory::panel_id,
     lifecycle::{CONTROL_TIMEOUT, MAX_REVISION, request_id, request_id_valid},
+    stream_json::read_filtered_json,
 };
 use crate::{
     backend::{Backend, read_json_limited},
     history::{Result, valid_id},
 };
 use serde::Serialize;
+
+const RECONCILE_ROOT_KEYS: &[&str] = &[
+    "available",
+    "version",
+    "projectID",
+    "cleanupUnavailable",
+    "cleanups",
+];
+const RECONCILE_MISSION_KEYS: &[&str] = &["id", "projectID", "revision"];
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,6 +104,7 @@ pub enum DeletionOutcome {
     Deleted(Option<Box<Cleanup>>),
     Failed(DeletionError),
     Unconfirmed,
+    AuthenticationRequired,
 }
 
 impl DeletionOutcome {
@@ -137,7 +148,13 @@ impl Backend {
     ) -> Result<MissionSnapshotRead> {
         let url = mission_url(self, mission_id)?;
         let response = self.client.get(url).send().await?.error_for_status()?;
-        let body = read_json_limited(response, 4 * 1024 * 1024).await?;
+        let body: serde_json::Value = read_filtered_json(
+            response,
+            RECONCILE_ROOT_KEYS,
+            RECONCILE_MISSION_KEYS,
+            4 * 1024 * 1024,
+        )
+        .await?;
         parse_reconciliation(&body, project, mission_id)
     }
 
@@ -156,6 +173,11 @@ impl Backend {
         let url = mission_url(self, mission_id)?;
         let response = delete_request(self, url, request).send().await?;
         let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED
+            && self.authentication_status().await.ok() == Some(false)
+        {
+            return Ok(DeletionOutcome::AuthenticationRequired);
+        }
         let body = read_json_limited(response, 4 * 1024 * 1024)
             .await
             .unwrap_or(serde_json::Value::Null);
@@ -599,5 +621,62 @@ mod tests {
         let row = dup["cleanups"][0].clone();
         dup["cleanups"].as_array_mut().unwrap().push(row);
         assert!(parse_reconciliation(&dup, "proj", "msn-1").is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn large_compact_reconciliation_over_4_mib_is_read() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let addr = listener.local_addr().unwrap();
+                let prefix = br#"{"available":true,"version":1,"projectID":"proj","generatedAt":1,"mission":{"id":"msn-big","projectID":"proj","revision":7,"tasks":[{"brief":""#;
+                let suffix = br#""}]},"cleanups":[]}"#;
+                let chunk = vec![b'b'; 64 * 1024];
+                let chunk_count = 80usize; // 5 MiB of unselected compact map fields
+                let total_len = prefix.len() + chunk.len() * chunk_count + suffix.len();
+                assert!(total_len > 4 * 1024 * 1024);
+
+                let server = tokio::spawn(async move {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut req = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let n = socket.read(&mut buf).await.unwrap();
+                        if n == 0 {
+                            break;
+                        }
+                        req.extend_from_slice(&buf[..n]);
+                    }
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {total_len}\r\nConnection: close\r\n\r\n"
+                    );
+                    socket.write_all(head.as_bytes()).await.unwrap();
+                    socket.write_all(prefix).await.unwrap();
+                    for _ in 0..chunk_count {
+                        socket.write_all(&chunk).await.unwrap();
+                    }
+                    socket.write_all(suffix).await.unwrap();
+                });
+
+                let mut backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+                backend.workspace = "owned".into();
+                let snapshot = backend
+                    .read_mission_reconciliation("proj", "msn-big")
+                    .await
+                    .unwrap();
+                assert_eq!(snapshot.mission_revision, Some(7));
+                assert!(snapshot.cleanups.is_empty());
+                assert!(!snapshot.cleanup_unavailable);
+                server.await.unwrap();
+            });
     }
 }

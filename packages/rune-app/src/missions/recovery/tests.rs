@@ -78,12 +78,21 @@ fn obs_page(
         coverage,
         requests,
         actors: actors
-            .into_iter()
+            .iter()
             .map(|(id, state, request)| codenomad_client::missions::Actor {
-                session_id: id.into(),
-                title: id.into(),
-                state,
-                request,
+                session_id: (*id).into(),
+                title: (*id).into(),
+                state: *state,
+                request: *request,
+            })
+            .collect(),
+        questions: actors
+            .into_iter()
+            .filter_map(|(id, _, request)| {
+                request.map(|_| codenomad_client::missions::ObservedQuestion {
+                    actor_session_id: id.into(),
+                    session_id: id.into(),
+                })
             })
             .collect(),
     };
@@ -117,7 +126,7 @@ fn witness() -> (Wake, Receiver<()>) {
 fn coordinator_eligibility_requires_complete_fresh_interrupted_active_or_resumable_failed() {
     let active = header_value("msn", "active", Some("running"), 7, true, None);
     let idle_coord = obs_with(7, vec![("ses_coord", ActorState::IdleWithoutReport, None)]);
-    assert!(coordinator_eligible(&active, &idle_coord));
+    assert!(coordinator_eligible(&active, &idle_coord, None));
 
     // Partial coverage or unloaded actor pages must keep Pause instead of Recover.
     let partial_coverage = obs_page(
@@ -127,7 +136,7 @@ fn coordinator_eligibility_requires_complete_fresh_interrupted_active_or_resumab
         1,
         vec![("ses_coord", ActorState::IdleWithoutReport, None)],
     );
-    assert!(!coordinator_eligible(&active, &partial_coverage));
+    assert!(!coordinator_eligible(&active, &partial_coverage, None));
 
     let partial_requests = obs_page(
         7,
@@ -136,7 +145,7 @@ fn coordinator_eligibility_requires_complete_fresh_interrupted_active_or_resumab
         1,
         vec![("ses_coord", ActorState::IdleWithoutReport, None)],
     );
-    assert!(!coordinator_eligible(&active, &partial_requests));
+    assert!(!coordinator_eligible(&active, &partial_requests, None));
 
     let unloaded_second_page = obs_page(
         7,
@@ -146,17 +155,17 @@ fn coordinator_eligibility_requires_complete_fresh_interrupted_active_or_resumab
         vec![("ses_coord", ActorState::IdleWithoutReport, None)],
     );
     assert!(
-        !coordinator_eligible(&active, &unloaded_second_page),
+        !coordinator_eligible(&active, &unloaded_second_page, None),
         "unloaded actor page may contain a working specialist"
     );
 
     // Same-revision invalidation must immediately revoke Recover eligibility until refreshed.
     let mut invalidated = obs_with(7, vec![("ses_coord", ActorState::IdleWithoutReport, None)]);
     invalidated.invalidate(10.0);
-    assert!(!coordinator_eligible(&active, &invalidated));
+    assert!(!coordinator_eligible(&active, &invalidated, None));
 
     let unknown_coord = obs_with(7, vec![("ses_coord", ActorState::Unknown, None)]);
-    assert!(!coordinator_eligible(&active, &unknown_coord));
+    assert!(!coordinator_eligible(&active, &unknown_coord, None));
 
     let quiet_reported_specialist = obs_with(
         7,
@@ -166,7 +175,7 @@ fn coordinator_eligibility_requires_complete_fresh_interrupted_active_or_resumab
         ],
     );
     assert!(
-        coordinator_eligible(&active, &quiet_reported_specialist),
+        coordinator_eligible(&active, &quiet_reported_specialist, None),
         "a quiet specialist projecting Unknown in a fully Observed window does not block Recover"
     );
 
@@ -177,22 +186,26 @@ fn coordinator_eligibility_requires_complete_fresh_interrupted_active_or_resumab
             ("ses_worker", ActorState::Running, None),
         ],
     );
-    assert!(!coordinator_eligible(&active, &worker_running));
+    assert!(!coordinator_eligible(&active, &worker_running, None));
 
     let pending_control = header_value("msn", "active", Some("running"), 7, true, Some(1));
-    assert!(!coordinator_eligible(&pending_control, &idle_coord));
+    assert!(!coordinator_eligible(&pending_control, &idle_coord, None));
 
     let paused = header_value("msn", "active", Some("paused"), 7, true, None);
-    assert!(!coordinator_eligible(&paused, &idle_coord));
+    assert!(!coordinator_eligible(&paused, &idle_coord, None));
 
     let failed = header_value("msn", "failed", Some("running"), 7, true, None);
-    assert!(coordinator_eligible(&failed, &unknown_coord));
-    assert!(coordinator_eligible(&failed, &Observation::default()));
+    assert!(coordinator_eligible(&failed, &unknown_coord, None));
+    assert!(coordinator_eligible(&failed, &Observation::default(), None));
     let failed_running = obs_with(7, vec![("ses_coord", ActorState::Running, None)]);
-    assert!(!coordinator_eligible(&failed, &failed_running));
+    assert!(!coordinator_eligible(&failed, &failed_running, None));
 
     let no_actor = header_value("msn", "failed", Some("running"), 7, false, None);
-    assert!(!coordinator_eligible(&no_actor, &Observation::default()));
+    assert!(!coordinator_eligible(
+        &no_actor,
+        &Observation::default(),
+        None
+    ));
 }
 
 #[test]
@@ -225,6 +238,7 @@ fn separate_activity_windows_never_manufacture_idle_proof_and_sse_loss_persists_
                 request: None,
             })
             .collect(),
+        questions: vec![],
     };
     let page2 = Activity {
         revision: 7,
@@ -243,13 +257,14 @@ fn separate_activity_windows_never_manufacture_idle_proof_and_sse_loss_persists_
             state: ActorState::Missing,
             request: None,
         }],
+        questions: vec![],
     };
     let mut obs = Observation::default();
     obs.observe(7);
     assert!(obs.adopt_page(0, page1));
     assert!(obs.adopt_page(160, page2));
     assert!(
-        !coordinator_eligible(&active, &obs),
+        !coordinator_eligible(&active, &obs, None),
         "separately observed windows never manufacture a whole-mission idle proof"
     );
 
@@ -293,11 +308,12 @@ fn separate_activity_windows_never_manufacture_idle_proof_and_sse_loss_persists_
             state: ActorState::IdleWithoutReport,
             request: None,
         }],
+        questions: vec![],
     };
     panel.observation.observe(7);
     assert!(panel.observation.adopt_page(0, single_idle));
     assert!(
-        !coordinator_eligible(&active, &panel.observation),
+        !coordinator_eligible(&active, &panel.observation, None),
         "switching missions while SSE is disconnected must keep Recover unavailable"
     );
 }
@@ -433,6 +449,7 @@ fn settled_guard_capacity_never_evicts_pending_attempts() {
             scope: src.workspace_scope(),
             mission: src.mission.clone(),
             target: src.target.clone(),
+            backend: Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
             flight: inbox,
             retired: false,
         },
@@ -624,13 +641,37 @@ fn independent_task_form_does_not_suppress_coordinator_recovery() {
             ),
         ],
     );
+    let make_tasks = |status: &str| {
+        let task: codenomad_client::missions::Task = serde_json::from_value(json!({
+            "id": "tsk-1", "key": "task-1", "title": "Specialist task", "status": status,
+            "blockedBy": [], "role": "specialist", "order": 0, "createdAt": 1, "updatedAt": 1,
+            "dependents": 0, "reportCount": 0, "outstandingExecution": false,
+            "actorSessionId": "ses_independent_task"
+        }))
+        .unwrap();
+        super::super::task_rows::TaskRows::new(vec![task])
+    };
+    // A live task carries its own Form on its chevron, so coordinator recovery stays eligible.
+    let live_tasks = make_tasks("needs-input");
     assert!(
-        obs.interrupted(&header),
-        "Form owned by an independent task must not suppress interrupted coordinator detection"
+        obs.interrupted(&header, Some(&live_tasks)),
+        "Form owned by a live independent task must not suppress interrupted coordinator detection"
     );
     assert!(
-        coordinator_eligible(&header, &obs),
-        "coordinator recovery must remain eligible when only an independent task awaits a Form"
+        coordinator_eligible(&header, &obs, Some(&live_tasks)),
+        "coordinator recovery must remain eligible when a live independent task owns the Form"
+    );
+
+    // A finished specialist task cannot carry a question, so the Form moves to the Mission flag
+    // and suppresses Recover (keeping Pause).
+    let finished_tasks = make_tasks("completed");
+    assert!(
+        !obs.interrupted(&header, Some(&finished_tasks)),
+        "Form on a completed specialist moves to the Mission flag and takes precedence over interrupted"
+    );
+    assert!(
+        !coordinator_eligible(&header, &obs, Some(&finished_tasks)),
+        "Mission-level question from a finished specialist must keep Pause and suppress Recover"
     );
 
     // By contrast, a Form on the coordinator itself MUST still suppress recovery.
@@ -645,6 +686,10 @@ fn independent_task_form_does_not_suppress_coordinator_recovery() {
             Some(ActorState::Form),
         )],
     );
-    assert!(!coord_form_obs.interrupted(&header));
-    assert!(!coordinator_eligible(&header, &coord_form_obs));
+    assert!(!coord_form_obs.interrupted(&header, Some(&live_tasks)));
+    assert!(!coordinator_eligible(
+        &header,
+        &coord_form_obs,
+        Some(&live_tasks)
+    ));
 }

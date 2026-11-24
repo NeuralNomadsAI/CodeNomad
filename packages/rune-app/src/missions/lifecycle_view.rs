@@ -40,7 +40,8 @@ pub(crate) fn controls<S: 'static>(
     let delete_state = owner.cleanup.delete_state(&source);
     let delete_active = delete_state.is_some();
     let recover_key = RecoveryKey::coordinator(&source, revision);
-    let recover_eligible = recovery::coordinator_eligible(header, &panel.observation);
+    let tasks = panel.detail.snapshot.as_ref().map(|s| s.tasks.as_ref());
+    let recover_eligible = recovery::coordinator_eligible(header, &panel.observation, tasks);
     let recovery_busy = owner.recovery.any_pending_for(&source);
     let recover_pending = owner.recovery.pending(&recover_key);
     let recover_admitted = owner.recovery.admitted(&recover_key);

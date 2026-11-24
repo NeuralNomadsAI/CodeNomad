@@ -23,6 +23,23 @@ impl TaskRows {
         self.keys.contains_key(key)
     }
 
+    pub fn carries_question(
+        &self,
+        coordinator_session_id: &str,
+        actor_session_id: &str,
+        session_id: &str,
+    ) -> bool {
+        if session_id == coordinator_session_id || actor_session_id == coordinator_session_id {
+            return false;
+        }
+        self.rows.iter().any(|task| {
+            task.is_live()
+                && task.actor_session_id().is_some_and(|actor| {
+                    actor != coordinator_session_id && actor == actor_session_id
+                })
+        })
+    }
+
     pub fn new(mut tasks: Vec<Task>) -> Self {
         tasks.sort_unstable_by_key(|task| task.order);
         let mut own = Self {

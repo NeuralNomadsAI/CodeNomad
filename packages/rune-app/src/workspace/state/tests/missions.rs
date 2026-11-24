@@ -915,3 +915,355 @@ fn parked_tab_preserves_active_retry_error_and_reauth_carries_document_pending_a
         );
     });
 }
+
+#[test]
+fn same_poll_document_pending_page_blocks_bare_delete_settlement() {
+    crate::platform::block_on(async {
+        let http = test_http::Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let wake: codenomad_client::Wake = std::sync::Arc::new(|| {});
+        let mut s = crate::init();
+        let mut tx = rune::Tx::default();
+        crate::gallery::shell::fixture(&mut s);
+        if !crate::shell::right_panel_visible(&s) {
+            crate::shell::toggle_panel(&mut s, 1, &mut tx);
+        }
+        assert!(crate::shell::right_panel_visible(&s));
+
+        let mut saved = workspace("alpha", "");
+        saved.view.right_panel = RightPanelTab::Missions;
+        saved.view.selected_mission = Some("msn-bare".into());
+        let mut active_entry = entry("tab-active".into(), Tab::Workspace(saved));
+        active_entry.binding = Some(backend.clone());
+        active_entry.project = Some(codenomad_client::catalog::Project {
+            id: backend.workspace.clone(),
+            path: "/fixture".into(),
+        });
+        let mut panel = crate::missions::Panel::new(
+            backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        panel.show(true);
+        let empty_digest = "XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc";
+        for _ in 0..2 {
+            let req = http.accept().await;
+            let source = req.body["source"]
+                .as_str()
+                .unwrap_or("summaries")
+                .to_owned();
+            let mut page = json!({
+                "available": true, "version": 1, "source": source, "projectID": "project",
+                "discardedEvents": 0, "controlUnavailable": false,
+                "notificationUnavailable": false, "cleanupUnavailable": false,
+                "window": {"order": empty_digest, "offset": 0, "end": 0, "total": 0},
+                "page": {"digest": empty_digest, "total": 0, "pieces": []}
+            });
+            if source == "summaries" {
+                page["finishHighWater"] = json!(0);
+            }
+            req.reply(200, page).await;
+        }
+        for _ in 0..50 {
+            panel.poll();
+            crate::platform::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panel.seed_summary_for_test("msn-bare");
+        let sc = panel.cleanup_scope().unwrap();
+        active_entry.missions = Some(panel);
+
+        let mut ui = Ui::new();
+        ui.entries = vec![active_entry];
+        ui.active = 0;
+
+        // Launch DELETE (deleteManagedSessions: false) and hold it.
+        ui.mission_lifecycle.start_delete_for_test(
+            "tab-active",
+            &http.backend,
+            "project",
+            "msn-bare",
+            7,
+            wake.clone(),
+        );
+        let del_req = http.accept().await;
+        assert!(del_req.header.starts_with("DELETE "));
+        let request_id = del_req.body["requestId"].as_str().unwrap().to_owned();
+
+        // Trigger directory refresh so a cleanups page containing the exact documentPending: true
+        // tombstone AND the bare 200 {deleted: true} land before a single poll_missions call.
+        ui.entries[0].missions.as_mut().unwrap().refresh_for_test();
+        let row_json = json!({
+            "missionID": "msn-bare", "deletionID": "del-bare", "requestID": request_id,
+            "expectedRevision": 7, "deleteManagedSessions": false,
+            "objective": "Bare", "createdAt": 1, "removed": 0, "retained": 0,
+            "pending": 0, "reasons": [], "documentPending": true
+        });
+        let row_text = serde_json::to_string(&row_json).unwrap();
+        let row_digest = utf16_array_digest(&row_text);
+        let sum_json = json!({
+            "id": "msn-bare", "title": "msn-bare", "objective": "msn-bare",
+            "status": "active", "coordinatorSessionId": "ses_c", "actorCount": 1,
+            "updatedAt": 1, "revision": 7
+        });
+        let sum_text = serde_json::to_string(&sum_json).unwrap();
+        let sum_digest = utf16_array_digest(&sum_text);
+        for _ in 0..2 {
+            let req = http.accept().await;
+            let source = req.body["source"].as_str().unwrap();
+            if source == "cleanups" {
+                req.reply(
+                    200,
+                    json!({
+                        "available": true, "version": 1, "source": "cleanups", "projectID": "project",
+                        "discardedEvents": 0, "controlUnavailable": false,
+                        "notificationUnavailable": false, "cleanupUnavailable": false,
+                        "window": {"order": row_digest, "offset": 0, "end": 1, "total": 1},
+                        "page": {"digest": row_digest, "total": 1, "pieces": [
+                            {"index": 0, "offset": 0, "characters": row_text.encode_utf16().count(), "text": row_text}
+                        ]}
+                    }),
+                )
+                .await;
+            } else {
+                req.reply(
+                    200,
+                    json!({
+                        "available": true, "version": 1, "source": "summaries", "projectID": "project",
+                        "finishHighWater": 0,
+                        "discardedEvents": 0, "controlUnavailable": false,
+                        "notificationUnavailable": false, "cleanupUnavailable": false,
+                        "window": {"order": sum_digest, "offset": 0, "end": 1, "total": 1},
+                        "page": {"digest": sum_digest, "total": 1, "pieces": [
+                            {"index": 0, "offset": 0, "characters": sum_text.encode_utf16().count(), "text": sum_text}
+                        ]}
+                    }),
+                )
+                .await;
+            }
+        }
+        // Reply bare {deleted: true} without cleanup receipt; wait for both to queue, then ONE poll.
+        del_req.reply(200, json!({"deleted": true})).await;
+        crate::platform::sleep(std::time::Duration::from_millis(80)).await;
+        super::super::panel_state::poll_missions(&mut ui, &s, &mut tx);
+
+        assert_eq!(
+            ui.entries[0].missions.as_ref().unwrap().selected.as_deref(),
+            Some("msn-bare"),
+            "bare 200 must not clear selection when same-poll cleanup page reported documentPending: true"
+        );
+        assert!(
+            ui.mission_lifecycle
+                .has_delete_intent_for_test(&sc, "msn-bare")
+        );
+        // Even after a subsequent empty cleanup page, the frozen intent stays reachable.
+        assert!(
+            ui.entries[0]
+                .missions
+                .as_mut()
+                .unwrap()
+                .accept_cleanups_for_test(vec![])
+        );
+        assert!(
+            ui.mission_lifecycle
+                .has_delete_intent_for_test(&sc, "msn-bare")
+        );
+    });
+}
+
+#[test]
+fn mission_delete_401_probes_auth_status_shows_signin_and_preserves_frozen_intent() {
+    crate::platform::block_on(async {
+        let http = test_http::Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let wake: codenomad_client::Wake = std::sync::Arc::new(|| {});
+        let mut s = crate::init();
+        let mut tx = rune::Tx::default();
+        s.screen = crate::Screen::Chat { launcher: None };
+        crate::settings::connected(&mut s, &backend);
+
+        let mut saved = workspace("alpha", "");
+        saved.view.right_panel = RightPanelTab::Missions;
+        saved.view.selected_mission = Some("msn-401".into());
+        let mut active_entry = entry("tab-active".into(), Tab::Workspace(saved));
+        active_entry.binding = Some(backend.clone());
+        active_entry.project = Some(codenomad_client::catalog::Project {
+            id: backend.workspace.clone(),
+            path: "/fixture".into(),
+        });
+        let panel = crate::missions::Panel::new(
+            backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        let sc = panel.cleanup_scope().unwrap();
+        active_entry.missions = Some(panel);
+        let mut ui = Ui::new();
+        ui.entries = vec![active_entry];
+        ui.active = 0;
+
+        ui.mission_lifecycle.start_delete_for_test(
+            "tab-active",
+            &http.backend,
+            "project",
+            "msn-401",
+            7,
+            wake.clone(),
+        );
+        let first_del = http.accept().await;
+        assert!(first_del.header.starts_with("DELETE "));
+        let frozen_request_id = first_del.body["requestId"].as_str().unwrap().to_owned();
+        // Return 401 on DELETE and expired login on /api/auth/status.
+        first_del.reply(401, json!({"error": "unauthorized"})).await;
+        let auth_probe = http.accept().await;
+        assert!(
+            auth_probe.header.starts_with("GET /api/auth/status "),
+            "DELETE 401 must probe /api/auth/status, got: {}",
+            auth_probe.header
+        );
+        auth_probe.reply(200, json!({"authenticated": false})).await;
+
+        s.workspace = Some(ui);
+        let mut polled_auth = false;
+        for _ in 0..100 {
+            if super::super::poll(&mut s, 1.0, &mut tx)
+                && crate::chat::authentication::dialog(&s).is_some()
+            {
+                polled_auth = true;
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            polled_auth,
+            "401 with expired auth status must initiate reauthentication and show sign-in dialog"
+        );
+        // No automatic DELETE replay may occur.
+        http.quiet().await;
+
+        // Frozen intent survives and explicit Retry reuses the exact requestId/revision/option.
+        let ui = s.workspace.as_mut().unwrap();
+        assert!(
+            ui.mission_lifecycle
+                .has_delete_intent_for_test(&sc, "msn-401")
+        );
+        ui.mission_lifecycle
+            .retry_delete_for_test(&sc, "msn-401", http.backend.clone(), wake);
+        let pre = http.accept().await;
+        assert!(pre.header.starts_with("GET /api/workspaces/"));
+        pre.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "mission": {"id": "msn-401", "projectID": "project", "revision": 7},
+                "cleanups": []
+            }),
+        )
+        .await;
+        let replay = http.accept().await;
+        assert!(replay.header.starts_with("DELETE "));
+        assert_eq!(replay.body["requestId"], json!(frozen_request_id));
+        assert_eq!(replay.body["expectedRevision"], json!(7));
+        assert_eq!(replay.body["deleteManagedSessions"], json!(false));
+        replay.reply(200, json!({"deleted": true})).await;
+    });
+}
+
+fn utf16_array_digest(row: &str) -> String {
+    use base64::Engine as _;
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+    let mut data: Vec<u8> = format!("[{row}]")
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let bit_len = (data.len() as u64) * 8;
+    data.push(0x80);
+    while data.len() % 64 != 56 {
+        data.push(0);
+    }
+    data.extend_from_slice(&bit_len.to_be_bytes());
+    let mut h: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    for chunk in data.chunks_exact(64) {
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
+            ]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let t1 = hh
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[i])
+                .wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let t2 = s0.wrapping_add(maj);
+            hh = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(t1);
+            d = c;
+            c = b;
+            b = a;
+            a = t1.wrapping_add(t2);
+        }
+        for (slot, delta) in h.iter_mut().zip([a, b, c, d, e, f, g, hh]) {
+            *slot = slot.wrapping_add(delta);
+        }
+    }
+    let mut out = [0u8; 32];
+    for (i, word) in h.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    }
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(out)
+}

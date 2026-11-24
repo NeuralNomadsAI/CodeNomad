@@ -141,12 +141,12 @@ test('Mission recovery, reconciliation and deletion are admitted only to the fix
     assert(!p.allows('DELETE',oldPath,{expectedRevision:1,requestId:'other',deleteManagedSessions:false}))
     assert(!p.allows('DELETE',oldPath,{expectedRevision:1,requestId:'request',deleteManagedSessions:true}))
     const alphaPath='/api/workspaces/one/missions/alpha'
-    const alphaDel={expectedRevision:6,requestId:'12345678-1234-4123-8123-123456789abc',deleteManagedSessions:true}
+    const alphaDel={expectedRevision:5,requestId:'12345678-1234-4123-8123-123456789abc',deleteManagedSessions:true}
     assert.equal(p.allows('GET',alphaPath),missions)
     assert.equal(p.allows('DELETE',alphaPath,alphaDel),missions)
     assert(!p.allows('DELETE',alphaPath,{...alphaDel,extra:true}))
     assert(!p.allows('DELETE',alphaPath,{...alphaDel,requestId:'not-a-uuid'}))
-    assert(!p.allows('DELETE',alphaPath,{...alphaDel,expectedRevision:5}))
+    assert(!p.allows('DELETE',alphaPath,{...alphaDel,expectedRevision:6}))
     assert(!p.allows('DELETE',alphaPath,{...alphaDel,deleteManagedSessions:false}))
     assert(!p.allows('DELETE',alphaPath.replace('/one/','/outside/'),alphaDel))
     assert(!p.allows('GET','/api/workspaces/one/missions/other'))

@@ -70,12 +70,19 @@ pub(crate) enum Gesture {
 pub(crate) struct Settled {
     lifecycle: Vec<(MissionKey, LifecycleTarget, LifecycleOutcome)>,
     recovery: RecoveryPolled,
-    cleanup: CleanupPolled,
+    pub(super) cleanup: CleanupPolled,
 }
 
 impl Settled {
     pub fn changed(&self) -> bool {
         !self.lifecycle.is_empty() || self.recovery.changed || !self.cleanup.is_empty()
+    }
+
+    pub fn auth_expired(&self) -> Option<Backend> {
+        self.cleanup
+            .auth_expired
+            .clone()
+            .or_else(|| self.recovery.auth_expired.clone())
     }
 }
 
@@ -106,22 +113,29 @@ impl Panel {
         {
             return;
         }
-        if !self
+        let Some(current) = self
             .cleanups
             .iter()
-            .any(|row| row.is_pending() && row.matches_saved(&cleanup))
-        {
+            .find(|row| row.is_pending() && row.matches_saved(&cleanup))
+            .cloned()
+        else {
             return;
-        }
-        let row_live = self.cleanup_row_live(&cleanup.mission_id, &cleanup.deletion_id);
+        };
+        let row_live = self.cleanup_row_live(&current.mission_id, &current.deletion_id);
         owner.cleanup.start_cleanup_retry(
             scope.clone(),
-            cleanup,
+            current,
             self.cleanup_view_live.clone(),
             row_live,
             self.backend.clone(),
             self.wake.clone(),
         );
+    }
+
+    pub(crate) fn observe_cleanups(&self, owner: &mut Lifecycle) {
+        if let Some(scope) = self.cleanup_scope() {
+            owner.cleanup.observe_cleanups(&scope, &self.cleanups);
+        }
     }
 
     pub(crate) fn act_orphaned_delete(
@@ -262,7 +276,11 @@ impl Panel {
                     && !owner.unresolved(source, header)
                     && !owner.busy(source)
                     && (header.root.status == Status::Failed || owner.idle(source, header))
-                    && recovery::coordinator_eligible(header, &self.observation) =>
+                    && recovery::coordinator_eligible(
+                        header,
+                        &self.observation,
+                        self.detail.snapshot.as_ref().map(|s| s.tasks.as_ref()),
+                    ) =>
             {
                 owner.recovery.start(
                     source,
@@ -485,6 +503,43 @@ impl Lifecycle {
     #[cfg(test)]
     pub(crate) fn cleanup_error_for_test(&self, scope: &WorkspaceScope) -> Option<&'static str> {
         self.cleanup.cleanup_error(scope)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_delete_intent_for_test(
+        &self,
+        scope: &WorkspaceScope,
+        mission_id: &str,
+    ) -> bool {
+        let key = MissionKey {
+            server: scope.server.clone(),
+            id: mission_id.into(),
+        };
+        self.cleanup
+            .orphaned_deletes(scope, None)
+            .into_iter()
+            .any(|(k, _)| k == &key)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retry_delete_for_test(
+        &mut self,
+        scope: &WorkspaceScope,
+        mission_id: &str,
+        backend: Backend,
+        wake: Wake,
+    ) {
+        let key = MissionKey {
+            server: scope.server.clone(),
+            id: mission_id.into(),
+        };
+        self.cleanup.retry_delete_in_scope(
+            scope,
+            &key,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            backend,
+            wake,
+        );
     }
 
     #[cfg(test)]

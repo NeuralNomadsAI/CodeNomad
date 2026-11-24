@@ -41,6 +41,13 @@ pub struct Activity {
     pub coverage: Coverage,
     pub requests: Coverage,
     pub actors: Vec<Actor>,
+    pub questions: Vec<ObservedQuestion>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservedQuestion {
+    pub actor_session_id: String,
+    pub session_id: String,
 }
 
 pub struct Actor {
@@ -272,6 +279,7 @@ fn decode(page: Verified, mission: &str, offset: u64, order: Option<&str>) -> Re
         return invalid();
     }
     let mut requests = HashMap::new();
+    let mut questions = Vec::with_capacity(row.requests.items.len());
     for item in &row.requests.items {
         let id = item.actor_session_id.as_str();
         let session = item.request.session_id.as_str();
@@ -281,6 +289,10 @@ fn decode(page: Verified, mission: &str, offset: u64, order: Option<&str>) -> Re
         {
             return invalid();
         }
+        questions.push(ObservedQuestion {
+            actor_session_id: item.actor_session_id.clone(),
+            session_id: item.request.session_id.clone(),
+        });
         let state = if item.kind == RequestKind::Permission {
             ActorState::Permission
         } else {
@@ -311,6 +323,7 @@ fn decode(page: Verified, mission: &str, offset: u64, order: Option<&str>) -> Re
         coverage: row.coverage,
         requests: row.requests.state,
         actors,
+        questions,
     })
 }
 

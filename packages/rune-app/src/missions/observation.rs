@@ -121,10 +121,47 @@ impl Observation {
             })
     }
 
-    pub fn interrupted(&self, header: &MapHeader) -> bool {
+    fn has_mission_level_question(
+        &self,
+        header: &MapHeader,
+        tasks: Option<&super::task_rows::TaskRows>,
+    ) -> bool {
+        let coordinator = &header.root.coordinator_session_id;
+        for page in self.pages.iter().filter(|page| self.current(page)) {
+            if page.questions.iter().any(|q| {
+                tasks.is_none_or(|rows| {
+                    !rows.carries_question(coordinator, &q.actor_session_id, &q.session_id)
+                })
+            }) {
+                return true;
+            }
+            if page.questions.is_empty()
+                && page.actors.iter().any(|actor| {
+                    actor.request.is_some()
+                        && tasks.is_none_or(|rows| {
+                            !rows.carries_question(
+                                coordinator,
+                                &actor.session_id,
+                                &actor.session_id,
+                            )
+                        })
+                })
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn interrupted(
+        &self,
+        header: &MapHeader,
+        tasks: Option<&super::task_rows::TaskRows>,
+    ) -> bool {
         header.root.status == Status::Active
             && header.root.run_state.unwrap_or(RunState::Running) == RunState::Running
             && self.complete_and_fresh(header.root.revision)
+            && !self.has_mission_level_question(header, tasks)
             && !self.any_actor_running()
             && self.actor_state(&header.root.coordinator_session_id)
                 == Some(ActorState::IdleWithoutReport)
@@ -445,6 +482,7 @@ mod tests {
             coverage: Coverage::Partial,
             requests: Coverage::Unknown,
             actors: vec![],
+            questions: vec![],
         }
     }
 

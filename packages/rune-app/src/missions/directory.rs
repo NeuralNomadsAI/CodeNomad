@@ -80,6 +80,10 @@ pub(crate) struct Panel {
     cleanup_tokens: HashMap<(String, String), Arc<AtomicBool>>,
     remembered_document_pending: HashSet<CleanupIdentity>,
     remembered_document_order: VecDeque<CleanupIdentity>,
+    settled_cleanups: HashMap<CleanupIdentity, Cleanup>,
+    settled_cleanup_order: VecDeque<CleanupIdentity>,
+    #[cfg(test)]
+    pub(super) doc_cache_lookups: usize,
     supported: Option<bool>,
     capability: Option<Receiver<Option<bool>>>,
     probe_attempted: bool,
@@ -119,6 +123,10 @@ impl Panel {
             cleanup_tokens: HashMap::new(),
             remembered_document_pending: HashSet::new(),
             remembered_document_order: VecDeque::new(),
+            settled_cleanups: HashMap::new(),
+            settled_cleanup_order: VecDeque::new(),
+            #[cfg(test)]
+            doc_cache_lookups: 0,
             supported: None,
             capability: None,
             probe_attempted: false,
@@ -175,25 +183,90 @@ impl Panel {
             .clone_from(&old.remembered_document_pending);
         self.remembered_document_order
             .clone_from(&old.remembered_document_order);
+        self.settled_cleanups.clone_from(&old.settled_cleanups);
+        self.settled_cleanup_order
+            .clone_from(&old.settled_cleanup_order);
+    }
+
+    fn remember_settled_cleanup(&mut self, receipt: Cleanup) {
+        if receipt.is_pending() {
+            return;
+        }
+        let key = cleanup_identity(&receipt);
+        if self.settled_cleanups.contains_key(&key) {
+            self.settled_cleanups.insert(key, receipt);
+            return;
+        }
+        while self.settled_cleanups.len() >= CLEANUP_DISPLAY_CAP {
+            let Some(evict) = self.settled_cleanup_order.pop_front() else {
+                break;
+            };
+            self.settled_cleanups.remove(&evict);
+        }
+        self.settled_cleanup_order.push_back(key.clone());
+        self.settled_cleanups.insert(key, receipt);
     }
 
     fn remember_document_pending(&mut self, key: CleanupIdentity) {
-        if self.remembered_document_pending.contains(&key) {
+        self.remember_document_pending_batch(&[(key, Some(true))]);
+    }
+
+    fn remember_document_pending_batch(&mut self, updates: &[(CleanupIdentity, Option<bool>)]) {
+        let mut to_add: Vec<&CleanupIdentity> = Vec::new();
+        for (id, doc_pending) in updates {
+            match doc_pending {
+                Some(true) => {
+                    #[cfg(test)]
+                    {
+                        self.doc_cache_lookups += 1;
+                    }
+                    if !self.remembered_document_pending.contains(id) {
+                        to_add.push(id);
+                    }
+                }
+                Some(false) => {
+                    self.forget_document_pending(id);
+                }
+                None => {}
+            }
+        }
+        if to_add.is_empty() {
             return;
         }
-        while self.remembered_document_pending.len() >= CLEANUP_DISPLAY_CAP {
-            let evict_pos = self
-                .remembered_document_order
-                .iter()
-                .position(|id| !self.cleanups.iter().any(|row| cleanup_identity(row) == *id))
-                .unwrap_or(0);
-            let Some(evict) = self.remembered_document_order.remove(evict_pos) else {
-                break;
-            };
-            self.remembered_document_pending.remove(&evict);
+        // If evictions are needed, partition the queue once in O(N) so absent rows evict before
+        // currently displayed rows, then evict each excess entry in O(1).
+        if self.remembered_document_pending.len() + to_add.len() > CLEANUP_DISPLAY_CAP {
+            let live: HashSet<CleanupIdentity> =
+                self.cleanups.iter().map(cleanup_identity).collect();
+            let mut absent = VecDeque::with_capacity(self.remembered_document_order.len());
+            let mut present = VecDeque::new();
+            while let Some(id) = self.remembered_document_order.pop_front() {
+                #[cfg(test)]
+                {
+                    self.doc_cache_lookups += 1;
+                }
+                if live.contains(&id) {
+                    present.push_back(id);
+                } else {
+                    absent.push_back(id);
+                }
+            }
+            absent.extend(present);
+            self.remembered_document_order = absent;
         }
-        self.remembered_document_order.push_back(key.clone());
-        self.remembered_document_pending.insert(key);
+        for id in to_add {
+            if self.remembered_document_pending.contains(id) {
+                continue;
+            }
+            while self.remembered_document_pending.len() >= CLEANUP_DISPLAY_CAP {
+                let Some(evict) = self.remembered_document_order.pop_front() else {
+                    break;
+                };
+                self.remembered_document_pending.remove(&evict);
+            }
+            self.remembered_document_order.push_back(id.clone());
+            self.remembered_document_pending.insert(id.clone());
+        }
     }
 
     fn forget_document_pending(&mut self, key: &CleanupIdentity) {
@@ -305,12 +378,14 @@ impl Panel {
                 lane_seen.remove(&row_key(&removed));
             }
         }
-        if !receipt.is_pending()
-            && let Some(token) = self
+        if !receipt.is_pending() {
+            self.remember_settled_cleanup(receipt.clone());
+            if let Some(token) = self
                 .cleanup_tokens
                 .remove(&(receipt.mission_id, receipt.deletion_id))
-        {
-            token.store(false, Ordering::Release);
+            {
+                token.store(false, Ordering::Release);
+            }
         }
         if pending_cleanup_keys(&self.cleanups) != before {
             self.renew_cleanup_view();
@@ -400,6 +475,11 @@ impl Panel {
                 }
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn refresh_for_test(&mut self) {
+        self.refresh();
     }
 
     pub(crate) fn invalidate(&mut self, change: Option<(&str, u64)>, now: f64) {
@@ -550,40 +630,30 @@ impl Panel {
     }
 
     pub(super) fn has_more(&self, kind: Kind) -> bool {
-        let limit = if kind == Kind::Cleanups {
-            CLEANUP_DISPLAY_CAP as u64
-        } else {
-            u64::MAX
-        };
         self.lanes[kind as usize]
             .window
             .as_ref()
-            .is_some_and(|w| w.end < w.total && w.end < limit)
+            .is_some_and(|w| w.end < w.total)
     }
 
     pub(super) fn covered(&self, kind: Kind) -> bool {
         self.loaded(kind)
             && !self.failed(kind)
             && !self.busy(kind)
-            && self.lanes[kind as usize]
-                .window
-                .as_ref()
-                .is_some_and(|w| w.end == w.total)
+            && self.lanes[kind as usize].window.as_ref().is_some_and(|w| {
+                w.end == w.total
+                    && (kind != Kind::Cleanups || w.total <= CLEANUP_DISPLAY_CAP as u64)
+            })
     }
 
     fn start(&mut self, kind: Kind, read: Read) {
         if !self.visible || self.busy(kind) {
             return;
         }
-        let limit = if kind == Kind::Cleanups {
-            CLEANUP_DISPLAY_CAP as u64
-        } else {
-            u64::MAX
-        };
         let lane = &mut self.lanes[kind as usize];
         let (offset, order) = match (read, &lane.window) {
             (Read::Refresh, _) => (0, None),
-            (Read::More, Some(window)) if window.end < window.total && window.end < limit => {
+            (Read::More, Some(window)) if window.end < window.total => {
                 (window.end, Some(window.order.as_str()))
             }
             _ => return,
@@ -784,38 +854,67 @@ impl Panel {
                 }
             }
             (Kind::Cleanups, DirectoryRows::Cleanups(mut rows)) => {
-                if read == Read::More && lane.seen.len() >= CLEANUP_DISPLAY_CAP {
-                    return false;
-                }
+                let current_doc_pending: HashSet<CleanupIdentity> = self
+                    .cleanups
+                    .iter()
+                    .filter(|old| old.document_pending == Some(true))
+                    .map(cleanup_identity)
+                    .collect();
                 for row in &mut rows {
-                    if row.document_pending.is_none() {
-                        let id = cleanup_identity(row);
-                        if self.remembered_document_pending.contains(&id)
-                            || self.cleanups.iter().any(|old| {
-                                cleanup_identity(old) == id && old.document_pending == Some(true)
-                            })
-                        {
-                            row.document_pending = Some(true);
-                        }
+                    let id = cleanup_identity(row);
+                    if row.is_pending()
+                        && let Some(settled) = self.settled_cleanups.get(&id)
+                    {
+                        *row = settled.clone();
+                        continue;
+                    }
+                    if row.document_pending.is_none()
+                        && (self.remembered_document_pending.contains(&id)
+                            || current_doc_pending.contains(&id))
+                    {
+                        row.document_pending = Some(true);
                     }
                 }
                 let before_pending = pending_cleanup_keys(&self.cleanups);
-                if rows.iter().any(|row| {
-                    self.cleanups.iter().any(|old| {
-                        old.mission_id == row.mission_id
-                            && old.deletion_id == row.deletion_id
-                            && (old.request_id != row.request_id
-                                || old.expected_revision != row.expected_revision
-                                || old.delete_managed_sessions != row.delete_managed_sessions)
+                let mut existing_meta: HashMap<(&str, &str), (&str, u64, bool)> =
+                    HashMap::with_capacity(self.cleanups.len());
+                for old in &self.cleanups {
+                    existing_meta.insert(
+                        (old.mission_id.as_str(), old.deletion_id.as_str()),
+                        (
+                            old.request_id.as_str(),
+                            old.expected_revision,
+                            old.delete_managed_sessions,
+                        ),
+                    );
+                }
+                let contradictory = rows.iter().any(|row| {
+                    existing_meta
+                        .get(&(row.mission_id.as_str(), row.deletion_id.as_str()))
+                        .is_some_and(|&(req, rev, del_ses)| {
+                            req != row.request_id
+                                || rev != row.expected_revision
+                                || del_ses != row.delete_managed_sessions
+                        })
+                });
+                drop(existing_meta);
+                if contradictory
+                    || !merge(&mut self.cleanups, lane, read, &page.window, rows, |row| {
+                        (row.mission_id.clone(), Some(row.deletion_id.clone()))
                     })
-                }) || !merge(&mut self.cleanups, lane, read, &page.window, rows, |row| {
-                    (row.mission_id.clone(), Some(row.deletion_id.clone()))
-                }) {
+                {
                     return false;
                 }
                 let mut truncated = false;
                 if self.cleanups.len() > CLEANUP_DISPLAY_CAP {
-                    self.cleanups.drain(CLEANUP_DISPLAY_CAP..);
+                    if read == Read::More {
+                        // Sliding window: keep freshly paged rows at the tail reachable within the cap.
+                        let excess = self.cleanups.len() - CLEANUP_DISPLAY_CAP;
+                        self.cleanups.drain(..excess);
+                        truncated = true;
+                    } else {
+                        self.cleanups.drain(CLEANUP_DISPLAY_CAP..);
+                    }
                     if lane.seen.len() > CLEANUP_DISPLAY_CAP {
                         lane.seen = self
                             .cleanups
@@ -825,7 +924,9 @@ impl Panel {
                         truncated = true;
                     }
                 }
-                let covered = page.window.end == page.window.total && !truncated;
+                let covered = page.window.end == page.window.total
+                    && !truncated
+                    && page.window.total <= CLEANUP_DISPLAY_CAP as u64;
                 self.project = Some(page.project_id);
                 lane.window = Some(page.window);
                 let doc_updates: Vec<(CleanupIdentity, Option<bool>)> = self
@@ -833,15 +934,7 @@ impl Panel {
                     .iter()
                     .map(|row| (cleanup_identity(row), row.document_pending))
                     .collect();
-                for (id, doc_pending) in doc_updates {
-                    match doc_pending {
-                        Some(true) => self.remember_document_pending(id),
-                        Some(false) => {
-                            self.forget_document_pending(&id);
-                        }
-                        None => {}
-                    }
-                }
+                self.remember_document_pending_batch(&doc_updates);
                 self.sync_cleanup_tokens(covered);
                 if pending_cleanup_keys(&self.cleanups) != before_pending {
                     self.renew_cleanup_view();
@@ -974,7 +1067,9 @@ pub(super) fn title(row: &Summary) -> &str {
         .unwrap_or(&row.objective)
 }
 
-fn pending_cleanup_keys(cleanups: &[Cleanup]) -> Vec<(String, String, String, u64, bool, u64)> {
+fn pending_cleanup_keys(
+    cleanups: &[Cleanup],
+) -> Vec<(String, String, String, u64, bool, u64, Option<bool>)> {
     let mut keys: Vec<_> = cleanups
         .iter()
         .filter(|row| row.is_pending())
@@ -986,6 +1081,7 @@ fn pending_cleanup_keys(cleanups: &[Cleanup]) -> Vec<(String, String, String, u6
                 row.expected_revision,
                 row.delete_managed_sessions,
                 row.created_at.to_bits(),
+                row.document_pending,
             )
         })
         .collect();

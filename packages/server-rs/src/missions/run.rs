@@ -440,8 +440,10 @@ async fn mutate(
         if lifetime.is_cancelled() {
             return Err(plugin_unavailable());
         }
-        let (status, body) =
-            scope.call(&app, method, &input, 85, 4 * 1024 * 1024).await.map_err(|_| plugin_unavailable())?;
+        let (status, body) = scope
+            .call(&app, method, &input, 85, rpc_response_limit(method))
+            .await
+            .map_err(|_| plugin_unavailable())?;
         if !status.is_success() {
             return Err(creation_admission::rejection(&body).unwrap_or_else(plugin_unavailable));
         }
@@ -712,6 +714,10 @@ async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> R
     Ok(json!({"nativeAcknowledgement":ack}))
 }
 
+fn rpc_response_limit(method: &str) -> usize {
+    if method == "recover" { 128 * 1024 * 1024 } else { 4 * 1024 * 1024 }
+}
+
 /// Mission mutations use the same private bridge registration as the desktop tools.
 pub fn new_token() -> Option<String> {
     (crate::config::serve() || crate::bench::missions_run()).then(crate::automation::new_token).flatten()
@@ -782,5 +788,11 @@ mod tests {
             mutation_body::<Delete>(json!({"requestId":"a","expectedRevision":1,"foreign":false}), invalid).is_err()
         );
         assert_eq!(mutation_ids(" mission ", " id ", 1, invalid).unwrap(), ("mission", "id"));
+    }
+
+    #[test]
+    fn recovery_rpc_response_limit_exceeds_four_mib() {
+        assert!(rpc_response_limit("recover") > 4 * 1024 * 1024);
+        assert_eq!(rpc_response_limit("delete"), 4 * 1024 * 1024);
     }
 }

@@ -48,6 +48,23 @@ pub struct Task {
     extra: HashMap<String, Value>,
 }
 
+impl Task {
+    pub fn is_live(&self) -> bool {
+        !matches!(
+            self.status,
+            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Withdrawn
+        ) && self
+            .extra
+            .get("replacedByTaskKey")
+            .and_then(Value::as_str)
+            .is_none()
+    }
+
+    pub fn actor_session_id(&self) -> Option<&str> {
+        self.extra.get("actorSessionId").and_then(Value::as_str)
+    }
+}
+
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Report {

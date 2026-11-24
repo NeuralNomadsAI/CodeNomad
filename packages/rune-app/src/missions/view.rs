@@ -58,7 +58,10 @@ pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El, c
             && row.status == Status::Active
             && row.run_state.unwrap_or(RunState::Running) == RunState::Running
             && ui.detail.snapshot.as_ref().is_some_and(|snap| {
-                snap.header.root.id == row.id && ui.observation.interrupted(&snap.header)
+                snap.header.root.id == row.id
+                    && ui
+                        .observation
+                        .interrupted(&snap.header, Some(snap.tasks.as_ref()))
             });
         let description = if interrupted {
             t("missionsPanel.state.interrupted")

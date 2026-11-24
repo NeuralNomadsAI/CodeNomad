@@ -70,7 +70,7 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if(missions&&method==='DELETE'&&owned[2]==='missions/old')return body?.expectedRevision===1&&
         body.requestId==='request'&&body.deleteManagedSessions===false&&
         Object.keys(body).every(key=>['expectedRevision','requestId','deleteManagedSessions'].includes(key))
-      if(missions&&method==='DELETE'&&owned[2]==='missions/alpha')return body?.expectedRevision===6&&
+      if(missions&&method==='DELETE'&&owned[2]==='missions/alpha')return body?.expectedRevision===5&&
         typeof body.requestId==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.requestId)&&
         body.deleteManagedSessions===true&&
         Object.keys(body).every(key=>['expectedRevision','requestId','deleteManagedSessions'].includes(key))
