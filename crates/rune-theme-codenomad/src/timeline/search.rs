@@ -26,7 +26,15 @@ impl Query<'_> {
         let Some(phrase) = self.terms.first().filter(|term| !term.is_empty()) else {
             return Vec::new();
         };
-        let needle = phrase.to_lowercase();
+        let fold_char = |ch: char| match ch {
+            '\u{17f}' => 's',
+            'ς' => 'σ',
+            _ => ch,
+        };
+        let needle: String = phrase
+            .chars()
+            .flat_map(|ch| ch.to_lowercase().map(fold_char))
+            .collect();
         if text.is_ascii() {
             return text
                 .to_ascii_lowercase()
@@ -35,13 +43,19 @@ impl Query<'_> {
                 .map(|(start, _)| start..start + needle.len())
                 .collect();
         }
-        let folded = text.to_lowercase();
+        let folded: String = text
+            .chars()
+            .flat_map(|ch| ch.to_lowercase().map(fold_char))
+            .collect();
         // Map expanding folds back to whole original UTF-8 characters.
         let mut offsets = text
             .char_indices()
             .scan(0, |at, (source, ch)| {
                 let start = *at;
-                *at += ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+                *at += ch
+                    .to_lowercase()
+                    .map(|c| fold_char(c).len_utf8())
+                    .sum::<usize>();
                 Some((start, *at, source, source + ch.len_utf8()))
             })
             .peekable();
@@ -351,4 +365,12 @@ fn unicode_terms_highlight_complete_words_without_rewriting_the_excerpt() {
             .collect::<Vec<_>>(),
         ["été", "FRANÇAIS", "İstanbul"]
     );
+    let greek = vec!["λογοσ".to_string()];
+    let literal = Query {
+        terms: &greek,
+        ranked: false,
+        active: false,
+        claimed: None,
+    };
+    assert_eq!(literal.ranges("Ο ΛΟΓΟΣ", 4).len(), 1);
 }

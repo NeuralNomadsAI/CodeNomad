@@ -204,6 +204,38 @@ fn running_tool_duration_ticks_through_view_memo_and_stops_when_settled() {
     rt.update(|_, tx| tx.focus(&toggle_key, true));
     rt.frame(1.15);
     rt.update(|_, tx| assert_eq!(tx.focused(), Some(toggle_key.as_str())));
+    // Speculative search probe for a completed version of the same tool must not retire the live clock.
+    let completed_probe = crate::history::decode_message(&json!({
+        "type":"assistant","id":"live","time":{"completed":start + 66_000},"content":[
+            {"type":"tool","id":"cmd","name":"bash","time":{"ran":start,"completed":start + 66_000},
+             "state":{"status":"completed","input":{"command":"sleep 90"}}}
+        ]
+    }))
+    .unwrap();
+    let crate::content::Part::Tool(probe_tool) = &completed_probe.parts[0] else {
+        panic!("tool part");
+    };
+    let probe_hit = codenomad_client::search::Hit {
+        session: "s".into(),
+        message: "live".into(),
+        role: "assistant".into(),
+        part: 0,
+        kind: codenomad_client::search::Kind::Tool,
+        excerpt: String::new(),
+    };
+    let probe_search = crate::chat::search_hit::SearchHit::new(&probe_hit, "sleep", false);
+    rt.update(|s, _| {
+        crate::settings::fixture_transcript(s, json!({"toolInputsVisibility":"hidden"}));
+        let _ = super::match_hidden_by_inputs(
+            s,
+            "live",
+            probe_tool,
+            probe_search.query(Some((codenomad_client::search::Kind::Tool, 0))),
+        );
+    });
+    rt.update(|s, tx| ticked = Display::poll(s, false, 2.2, tx));
+    assert!(ticked);
+
     // SSE settlement sets ended before HTTP completes: freeze duration while keeping live output.
     rt.update(|s, _| {
         let row = std::sync::Arc::make_mut(&mut s.messages[0]);
@@ -212,15 +244,15 @@ fn running_tool_duration_ticks_through_view_memo_and_stops_when_settled() {
         };
         std::sync::Arc::make_mut(tool).ended = Some(start + 66_000);
     });
-    rt.frame(1.18);
+    rt.frame(3.5);
     let tree = rt.accessibility_json().to_string();
     assert!(
         tree.contains("1m 6s") && tree.contains("LIVE_BASH_PREVIEW"),
         "{tree}"
     );
-    rt.update(|s, tx| ticked = Display::poll(s, false, 2.3, tx));
+    rt.update(|s, tx| ticked = Display::poll(s, false, 3.6, tx));
     assert!(!ticked);
-    rt.frame(0.0);
+    rt.frame(3.7);
     assert!(rt.wake_deadline().is_none());
     rt.update(|_, tx| assert_eq!(tx.focused(), Some(toggle_key.as_str())));
     rt.update(|s, _| {
@@ -582,4 +614,79 @@ fn task_duration_runs_for_foreground_and_follows_background_reports() {
     });
     rt.frame(2.1);
     assert!(rt.wake_deadline().is_none());
+
+    // Relaunching the same child with a <background-result kind="subagent"> report must keep the first launch's 9s duration.
+    let bg_second = crate::history::decode_message(&json!({
+        "type":"assistant","id":"bg2","time":{"completed":start + 15_500},"content":[
+            {"type":"tool","id":"call2","name":"subagent","time":{"ran":start + 15_000,"completed":start + 15_500},
+             "state":{"status":"completed","input":{"description":"Second run"},
+                      "metadata":{"sessionID":"child","status":"running"}}}
+        ]
+    }))
+    .unwrap();
+    let bg_second_report = crate::history::decode_message(&json!({
+        "type":"synthetic","id":"rep2","time":{"created":start + 21_000},
+        "text":"<background-result kind=\"subagent\" sessionID=\"child\" state=\"completed\">\nSecond done\n</background-result>"
+    }))
+    .unwrap();
+    rt.update(|s, _| {
+        s.messages.push(bg_second.into());
+        s.messages.push(bg_second_report.into());
+    });
+    rt.frame(2.2);
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.contains("\"9s\"") && tree.contains("\"6s\"") && !tree.contains("\"21s\""),
+        "{tree}"
+    );
+}
+
+#[test]
+fn skill_search_hit_inside_mermaid_fence_reveals_source_with_match_anchor() {
+    let raw_skill = "```mermaid\nflowchart LR\n  %% MERMAID_SEARCH_NEEDLE\n  A --> B\n```";
+    let row = crate::history::decode_message(&json!({
+        "type":"assistant","id":"mmd","time":{"completed":10000},"content":[
+            {"type":"tool","id":"sk","name":"skill",
+             "state":{"status":"completed","input":{"name":"diagram"},
+                      "content":[{"type":"text","text":raw_skill}]}}
+        ]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    let hit = codenomad_client::search::Hit {
+        session: "s".into(),
+        message: "mmd".into(),
+        role: "assistant".into(),
+        part: 0,
+        kind: codenomad_client::search::Kind::Tool,
+        excerpt: String::new(),
+    };
+    state.transcript_display.search_highlight = Some(crate::chat::search_hit::SearchHit::new(
+        &hit,
+        "MERMAID_SEARCH_NEEDLE",
+        false,
+    ));
+    state.messages = vec![row.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| {
+            cx.web_focus();
+            with_locale("en", || {
+                let crate::content::Part::Tool(tool) = &s.messages[0].parts[0] else {
+                    panic!("tool part")
+                };
+                super::view(s, "mmd", tool)
+            })
+        },
+        (960.0, 820.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    assert!(rt.find("history-search-match").is_some());
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("MERMAID_SEARCH_NEEDLE")
+    );
 }

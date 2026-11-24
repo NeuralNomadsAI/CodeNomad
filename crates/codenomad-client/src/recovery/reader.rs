@@ -32,12 +32,14 @@ pub(super) struct Reader {
     pub(super) resident: Vec<history::Row>,
     pub(super) known: HashSet<String>,
     pub(super) owed: HashSet<(String, usize)>,
+    pub(super) owed_tools: HashSet<(String, String)>,
     pub(super) seen: Seen,
     first: Option<String>,
     older: Option<Value>,
     newer: Option<Value>,
     pub(super) repairs: u8,
     pub(super) settlement_reads: u8,
+    pub(super) tool_settlement_reads: u8,
     pub(super) dirty: bool,
     pub(super) parked: bool,
     pub(super) quiet: Instant,
@@ -57,6 +59,7 @@ impl Reader {
             resident: Vec::new(),
             known: HashSet::new(),
             owed: HashSet::new(),
+            owed_tools: HashSet::new(),
             seen: Seen {
                 entries: VecDeque::new(),
                 bytes: 0,
@@ -66,6 +69,7 @@ impl Reader {
             newer: None,
             repairs: 0,
             settlement_reads: 0,
+            tool_settlement_reads: 0,
             dirty: true,
             parked: false,
             quiet: Instant::now(),
@@ -88,6 +92,7 @@ impl Reader {
                 self.resident = Vec::new();
                 self.known = HashSet::new();
                 self.owed = HashSet::new();
+                self.owed_tools = HashSet::new();
                 self.seen.entries.clear();
                 self.seen.bytes = 0;
                 self.first = None;
@@ -95,6 +100,7 @@ impl Reader {
                 self.newer = None;
                 self.repairs = 0;
                 self.settlement_reads = 0;
+                self.tool_settlement_reads = 0;
                 self.dirty = self.active_reader;
                 self.parked = false;
                 self.quiet = Instant::now();
@@ -111,6 +117,8 @@ impl Reader {
         self.resident.clear();
         self.known.clear();
         self.owed.clear();
+        self.owed_tools.clear();
+        self.tool_settlement_reads = 0;
     }
 
     pub(super) fn clear_window_on_revert(&mut self) {
@@ -122,6 +130,8 @@ impl Reader {
         self.newer = None;
         self.known.clear();
         self.owed.clear();
+        self.owed_tools.clear();
+        self.tool_settlement_reads = 0;
     }
 
     pub(super) async fn sync(
@@ -180,6 +190,20 @@ impl Reader {
                             })
                             .is_some_and(|t| t.provenance == TextProvenance::Closed)
                     });
+                    self.owed_tools.retain(|(id, call)| {
+                        page.rows
+                            .iter()
+                            .find(|r| &r.id == id)
+                            .and_then(|r| {
+                                r.parts.iter().find_map(|p| match p {
+                                    Part::Tool(t) if &t.id == call => Some(t),
+                                    _ => None,
+                                })
+                            })
+                            .is_some_and(|t| {
+                                matches!(t.status.as_str(), "pending" | "streaming" | "running")
+                            })
+                    });
                     self.fence = stamp;
                     *connection_lost = false;
                     self.dirty = false;
@@ -191,6 +215,17 @@ impl Reader {
                     self.newer = page.newer.clone();
                     self.known = page.rows.iter().map(|r| r.id.clone()).collect();
                     self.resident = page.rows.clone();
+                    if self.owed_tools.is_empty() {
+                        self.tool_settlement_reads = 0;
+                    } else if !self.historical && self.tool_settlement_reads < 3 {
+                        self.tool_settlement_reads += 1;
+                        self.dirty = true;
+                        self.quiet = Instant::now()
+                            + Duration::from_millis(100 * u64::from(self.tool_settlement_reads));
+                    } else {
+                        self.owed_tools.clear();
+                        self.tool_settlement_reads = 0;
+                    }
                     let done = (self.terminal || self.busy) && !page.running;
                     if done && !self.historical && !self.owed.is_empty() {
                         self.settlement_reads += 1;

@@ -54,6 +54,7 @@ pub(in crate::chat) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
         std::rc::Rc::as_ptr(&s.input_scope) as usize,
         locale(),
         live_tick,
+        display.search_revealed(&key),
         display
             .search_highlight
             .as_ref()
@@ -107,13 +108,18 @@ pub(in crate::chat) fn match_hidden_by_inputs(
     if settings::transcript_mode(s, TranscriptRow::Inputs) != "hidden" || tool.input.is_null() {
         return false;
     }
+    let key = tool_key(message, &tool.id);
     if !tool
         .input
         .as_str()
         .map(std::borrow::Cow::Borrowed)
         .or_else(|| {
-            input_json(&tool.input, document::search_limit(Some(query)), true)
-                .map(std::borrow::Cow::Owned)
+            input_json(
+                &tool.input,
+                document::search_limit_for(s, &key, Some(query)),
+                true,
+            )
+            .map(std::borrow::Cow::Owned)
         })
         .is_some_and(|input| query.matches(&input))
     {
@@ -121,7 +127,6 @@ pub(in crate::chat) fn match_hidden_by_inputs(
     }
     // Use the actual output renderer: shell commands, patches and errors can expose the same hit.
     let claimed = std::cell::Cell::new(false);
-    let key = tool_key(message, &tool.id);
     let _ = render_body(
         s,
         message,
@@ -131,6 +136,7 @@ pub(in crate::chat) fn match_hidden_by_inputs(
             claimed: Some(&claimed),
             ..query
         }),
+        true,
     );
     !claimed.get()
 }
@@ -141,7 +147,7 @@ pub(super) fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> E
         claimed: Some(&claimed),
         ..query
     });
-    render_body(s, message, tool, key, query)
+    render_body(s, message, tool, key, query, false)
 }
 
 fn render_body(
@@ -150,6 +156,7 @@ fn render_body(
     tool: &Arc<Tool>,
     key: &str,
     query: Option<Query<'_>>,
+    probe: bool,
 ) -> El {
     let active = query.is_some_and(|q| q.active);
     let expanded = active
@@ -214,7 +221,14 @@ fn render_body(
         && result_list.is_none()
         && !rich_diff
         && !matches!(tool.name.as_str(), "question" | "todowrite");
-    let timing = if let Some((_, running, ended)) = task_status {
+    let timing = if is_task && tool.status == "completed" && tool.metadata["status"] == "running" {
+        let ended = report
+            .filter(|r| r.state != "running" && r.created > 0)
+            .map(|r| r.created)
+            .or_else(|| {
+                task_status.and_then(|(_, running, ended)| (!running).then_some(ended).flatten())
+            });
+        let running = ended.is_none() && task_status.is_some_and(|(_, running, _)| running);
         if running {
             tool.started.map(|start| (start, None))
         } else {
@@ -223,8 +237,11 @@ fn render_body(
     } else {
         super::duration::tool_timing(tool)
     };
-    let status_el =
-        super::duration::view(s, key, timing, text(t(status)).text_role(TextRole::Label));
+    let status_el = if probe {
+        text(t(status)).text_role(TextRole::Label)
+    } else {
+        super::duration::view(s, key, timing, text(t(status)).text_role(TextRole::Label))
+    };
     let mut header = layout::action_row()
         .child(
             layout::button(
@@ -253,7 +270,7 @@ fn render_body(
     {
         header = header.child(copy(s, message, &tool.id, Section::Output));
     }
-    let header = if expanded && is_task && !nested {
+    let header = if !probe && expanded && is_task && !nested {
         task::observe(s, key, tool, header)
     } else {
         header
@@ -312,8 +329,12 @@ fn render_body(
                     .as_str()
                     .map(std::borrow::Cow::Borrowed)
                     .or_else(|| {
-                        input_json(&tool.input, document::search_limit(query), active)
-                            .map(std::borrow::Cow::Owned)
+                        input_json(
+                            &tool.input,
+                            document::search_limit_for(s, key, query),
+                            active,
+                        )
+                        .map(std::borrow::Cow::Owned)
                     })
             })
             .flatten();
@@ -346,7 +367,7 @@ fn render_body(
                         s,
                         input_key,
                         &[&input],
-                        document::search_limit(query),
+                        document::search_limit_for(s, key, query),
                         |shown, units| {
                             markdown::search_code(
                                 shown,
@@ -382,17 +403,21 @@ fn render_body(
             block = block.child(patch);
         }
         if skill {
-            block = block.child(markdown::tool_pane(
-                document::prose_search(
-                    s,
-                    message,
-                    key,
-                    format!("{key}-tool_output"),
-                    parts[0],
-                    query,
-                ),
-                false,
-            ));
+            let output_key = format!("{key}-tool_output");
+            if probe {
+                if let Some(q) = query
+                    && let Some(claimed) = q.claimed
+                    && !claimed.get()
+                    && document::skill_prose_matches(s, key, &output_key, parts[0], q)
+                {
+                    claimed.set(true);
+                }
+            } else {
+                block = block.child(markdown::tool_pane(
+                    document::prose_search(s, message, key, output_key, parts[0], query),
+                    false,
+                ));
+            }
         } else if has_output && !specialized_task {
             let formatted = (tool.name == "execute" && tool.status == "completed")
                 .then(|| execute::formatted_output(parts[0]))
@@ -425,7 +450,7 @@ fn render_body(
                             s,
                             output_key,
                             &parts,
-                            document::search_limit(query),
+                            document::search_limit_for(s, key, query),
                             |shown, units| {
                                 if tool.status == "running" && shell::matches(tool) {
                                     s.transcript_display.live_ansi(key, shown, wrap, query)
@@ -503,7 +528,7 @@ fn render_error(
                     s,
                     format!("{key}-error"),
                     &[error],
-                    document::search_limit(query),
+                    document::search_limit_for(s, key, query),
                     |shown, _| {
                         rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
                             .full_width()

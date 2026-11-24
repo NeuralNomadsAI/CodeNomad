@@ -67,8 +67,8 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
         let index = fetched.part_index;
         *fetched = live.clone();
         Arc::make_mut(fetched).part_index = index;
-    } else if live.status == "running" && fetched.status == "running" {
-        if fetched.started.is_none() && live.started.is_some() {
+    } else if matches!(fetched.status.as_str(), "streaming" | "running") {
+        if live.status == "running" && fetched.started.is_none() && live.started.is_some() {
             Arc::make_mut(fetched).started = live.started;
         }
         if fetched.ended.is_none() && live.ended.is_some() {
@@ -484,5 +484,43 @@ mod tests {
         };
         assert_eq!(failed.status, "running");
         assert_eq!(failed.ended, Some(8_000));
+
+        // Even if `called` was missed and live stayed `streaming`, a running HTTP page inherits `ended`.
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.input.started",
+                &json!({"id":"c","name":"bash"}),
+                Some(9_000)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.success",
+                &json!({"id":"c"}),
+                Some(11_000)
+            ),
+            Fit::Settled(_)
+        ));
+        let mut running_c = [Arc::new(
+            crate::history::decode_message(&json!({
+                "id":"row","type":"assistant","content":[
+                    {"type":"tool","id":"c","name":"bash","time":{"ran":9500},"state":{"status":"running","input":{"command":"true"}}}
+                ]
+            }))
+            .unwrap(),
+        )];
+        crate::content::merge_page(&[Arc::new(live)], &mut running_c).unwrap();
+        let merged_c = running_c[0]
+            .parts
+            .iter()
+            .find_map(|part| match part {
+                Part::Tool(tool) if tool.id == "c" => Some(tool),
+                _ => None,
+            })
+            .expect("merged tool c");
+        assert_eq!(merged_c.ended, Some(11_000));
     }
 }

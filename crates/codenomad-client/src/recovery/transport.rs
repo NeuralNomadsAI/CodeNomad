@@ -495,6 +495,8 @@ pub(crate) async fn run_with_reading(
                             }
                             content::ToolFit::Settled(tool) => {
                                 history::check(&reader.resident)?;
+                                reader.owed_tools.insert((id.into(), tool.id.clone()));
+                                reader.tool_settlement_reads = 0;
                                 reader_event(
                                     reading,
                                     reader.generation,

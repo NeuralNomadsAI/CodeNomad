@@ -29,29 +29,30 @@ pub(crate) struct Clock {
     paused: bool,
 }
 
-fn in_viewport(rect: [f32; 4], bounds: [f32; 4]) -> bool {
-    if bounds[2] <= 0.0 || bounds[3] <= 0.0 {
-        return true;
-    }
-    rect[2] > 0.0
-        && rect[3] > 0.0
-        && rect[0] < bounds[0] + bounds[2]
-        && rect[0] + rect[2] > bounds[0]
-        && rect[1] < bounds[1] + bounds[3]
-        && rect[1] + rect[3] > bounds[1]
+fn intersect(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let x0 = a[0].max(b[0]);
+    let y0 = a[1].max(b[1]);
+    let x1 = (a[0] + a[2]).min(b[0] + b[2]);
+    let y1 = (a[1] + a[3]).min(b[1] + b[3]);
+    [x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)]
 }
 
 fn in_bounds(rect: [f32; 4], bounds: [f32; 4], mut clip: Option<&Clip>) -> bool {
-    if !in_viewport(rect, bounds) {
+    if rect[2] <= 0.0 || rect[3] <= 0.0 {
         return false;
     }
+    let mut visible = rect;
+    if bounds[2] > 0.0 && bounds[3] > 0.0 {
+        visible = intersect(visible, bounds);
+    }
     while let Some(node) = clip {
-        if !in_viewport(rect, node.rect.get()) {
-            return false;
+        let clip_rect = node.rect.get();
+        if clip_rect[2] > 0.0 && clip_rect[3] > 0.0 {
+            visible = intersect(visible, clip_rect);
         }
         clip = node.parent.as_deref();
     }
-    true
+    visible[2] > 0.0 && visible[3] > 0.0
 }
 
 fn online(phase: &Phase) -> bool {
@@ -305,4 +306,19 @@ fn duration_captions_match_compact_live_and_localized_rules() {
     with_locale("ne", || {
         assert_eq!(caption(65_000, true).as_deref(), Some("१ मिनेट ०५ सेकेन्ड"));
     });
+    // Disjoint history_bounds (0..100) and nested pane clip (110..200) must reject a spanning header (95..120).
+    let clip = Clip {
+        rect: Rc::new(DrawnRect::new([0.0, 110.0, 400.0, 90.0])),
+        parent: None,
+    };
+    assert!(!in_bounds(
+        [0.0, 95.0, 100.0, 25.0],
+        [0.0, 0.0, 400.0, 100.0],
+        Some(&clip)
+    ));
+    assert!(in_bounds(
+        [0.0, 95.0, 100.0, 25.0],
+        [0.0, 0.0, 400.0, 120.0],
+        Some(&clip)
+    ));
 }

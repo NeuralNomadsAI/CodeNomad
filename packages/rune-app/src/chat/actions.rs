@@ -39,7 +39,7 @@ struct SessionDisplay {
     toggled: HashSet<String>,
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
-    search_revealed: HashSet<String>,
+    search_revealed: VecDeque<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     diagram_sources: HashMap<String, BTreeSet<usize>>,
     compact_diffs: (u64, HashSet<String>),
@@ -99,11 +99,23 @@ impl Display {
     }
 
     pub(crate) fn mark_search_revealed(&mut self, key: &str) {
-        self.active.search_revealed.insert(key.into());
+        if !key.starts_with("tool-") {
+            return;
+        }
+        let entries = &mut self.active.search_revealed;
+        if let Some(pos) = entries.iter().position(|existing| existing == key) {
+            entries.remove(pos);
+        } else if entries.len() >= 64 {
+            entries.pop_front();
+        }
+        entries.push_back(key.into());
     }
 
     pub(super) fn search_revealed(&self, key: &str) -> bool {
-        self.active.search_revealed.contains(key)
+        self.active
+            .search_revealed
+            .iter()
+            .any(|existing| existing == key)
     }
 
     pub fn toggled(&self, key: &str) -> bool {

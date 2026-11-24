@@ -29,6 +29,30 @@ pub(super) fn search_limit(
         }
 }
 
+pub(super) fn search_limit_for(
+    s: &State,
+    card_key: &str,
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+) -> usize {
+    let revealed =
+        query.is_some_and(|query| query.active) || s.transcript_display.search_revealed(card_key);
+    TOOL_LIMIT + if revealed { STEP } else { 0 }
+}
+
+pub(super) fn skill_prose_matches(
+    s: &State,
+    card_key: &str,
+    key: &str,
+    source: &str,
+    query: rune_theme_codenomad::timeline::search::Query<'_>,
+) -> bool {
+    let revealed = query.active || s.transcript_display.search_revealed(card_key);
+    let limit = PROSE_LIMIT + if revealed { STEP } else { 0 };
+    let budget = limit.saturating_add(STEP.saturating_mul(s.transcript_display.steps(key)));
+    let (shown, _, _, _) = prefix_measured(&[source], budget, units(source));
+    markdown::prose_has_match(&shown, query)
+}
+
 pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
     prose_for(s, message, key, source, streaming, PROSE_LIMIT, None)
 }
@@ -76,15 +100,8 @@ fn prose_for(
             .map(|hit| hit.query(None))
     });
     window(s, key, &[source], limit, |shown, units| {
-        let claim_active = match query {
-            Some(q) if q.active => match q.claimed {
-                Some(claimed) => {
-                    !claimed.get() && markdown::prose_has_match(shown, q) && !claimed.replace(true)
-                }
-                None => true,
-            },
-            _ => false,
-        };
+        let claim_active =
+            query.is_some_and(|q| q.active && q.claimed.is_none_or(|claimed| !claimed.get()));
         let prose_query = query.map(|q| rune_theme_codenomad::timeline::search::Query {
             active: claim_active,
             claimed: None,
@@ -104,6 +121,9 @@ fn prose_for(
         );
         let build = || {
             let diagram_sources = diagram_sources.clone();
+            let search_terms = prose_query
+                .filter(|q| q.active)
+                .map(|q| (q.terms.to_vec(), q.ranked));
             markdown::prose(
                 shown,
                 streaming,
@@ -150,9 +170,18 @@ fn prose_for(
                     .key(format!("{group}-code-{index}-wrap"))
                     .checked(frame.wrapped);
                     if diagram {
+                        let search_hit = search_terms.as_ref().is_some_and(|(terms, ranked)| {
+                            rune_theme_codenomad::timeline::search::Query {
+                                terms,
+                                ranked: *ranked,
+                                active: true,
+                                claimed: None,
+                            }
+                            .matches(frame.source)
+                        });
                         return mermaid::frame(
                             frame.open || streaming,
-                            diagram_sources.contains(&index),
+                            diagram_sources.contains(&index) || search_hit,
                             frame.source,
                             format!("{group}-code-{index}"),
                             screen::action(&scope, move |s| {

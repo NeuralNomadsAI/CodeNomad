@@ -77,13 +77,20 @@ fn prose_ranges(
     let options =
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     let mut out = Vec::new();
+    let mut blocks = 0usize;
     let mut rendered = String::new();
     // (rendered_start, rendered_end, source_start, source_end, verbatim)
     let mut map: Vec<(usize, usize, usize, usize, bool)> = Vec::new();
     let flush = |rendered: &mut String,
                  map: &mut Vec<(usize, usize, usize, usize, bool)>,
-                 out: &mut Vec<Vec<std::ops::Range<usize>>>| {
-        if rendered.is_empty() || out.len() >= limit {
+                 out: &mut Vec<Vec<std::ops::Range<usize>>>,
+                 blocks: &mut usize| {
+        if rendered.is_empty() {
+            map.clear();
+            return;
+        }
+        *blocks += 1;
+        if out.len() >= limit {
             rendered.clear();
             map.clear();
             return;
@@ -157,15 +164,18 @@ fn prose_ranges(
                 | pulldown_cmark::TagEnd::CodeBlock
                 | pulldown_cmark::TagEnd::TableCell,
             ) => {
-                flush(&mut rendered, &mut map, &mut out);
-                if out.len() >= limit {
+                flush(&mut rendered, &mut map, &mut out, &mut blocks);
+                if limit == 1 && !out.is_empty() {
                     break;
                 }
             }
             _ => {}
         }
     }
-    flush(&mut rendered, &mut map, &mut out);
+    flush(&mut rendered, &mut map, &mut out, &mut blocks);
+    if limit > 1 {
+        out.truncate((16_384 / blocks.max(1)).clamp(1, limit));
+    }
     out
 }
 
@@ -396,4 +406,8 @@ fn prose_search_bounds_matches_and_skips_link_destinations() {
         claimed: None,
     };
     assert_eq!(prose_ranges(&dense_bold, bold_query, 512).len(), 512);
+
+    let many_blocks = "hit\n\n".repeat(2_000);
+    let capped = prose_ranges(&many_blocks, bold_query, 512);
+    assert!(!capped.is_empty() && capped.len() <= 16);
 }
