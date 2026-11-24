@@ -7,6 +7,7 @@ import { createNativeCodexUsage } from "../../usage/native-codex"
 import { claudeCodeAuthEntry, claudeCodeCredential, type ClaudeCodeHost } from "../../usage/claude-credential"
 import { readUsageCredentials } from "../../usage/native-credentials"
 import { readUsageProviderSettings } from "../../usage/native-settings"
+import { readPluginProviderUsage } from "../../usage/plugin-usage"
 import { getProviderUsage, resolveUsageProvider } from "../../usage/service"
 import { isOpenCodeFreeModel } from "../../usage/opencode-free-estimate"
 import type { OpenCodeFreeUsage } from "../../usage/opencode-free-usage"
@@ -54,9 +55,10 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 15_000)
       const signal = controller.signal
-      // Google and free-model Console reads share an entry-time deadline,
-      // including credentials, leaving 3 seconds for publication revalidation.
-      const quotaController = resolveUsageProvider(params.data.providerId)?.id === "google" ||
+      // Google, free-model Console and plugin RPC reads share an entry-time deadline,
+      // leaving 3 seconds for publication revalidation.
+      const resolvedProvider = resolveUsageProvider(params.data.providerId)
+      const quotaController = !resolvedProvider || resolvedProvider.id === "google" ||
         isOpenCodeFreeModel(params.data.providerId, modelId) ? new AbortController() : null
       const quotaTimeout = quotaController ? setTimeout(() => quotaController.abort(), 12_000) : undefined
       const quotaSignal = quotaController ? AbortSignal.any([signal, quotaController.signal]) : signal
@@ -84,8 +86,13 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             ? await nativeCodexUsage(connection, { instanceId, sessionId, directory: location.directory,
               providerId: params.data.providerId, modelId }, signal)
             : null
-          const auth = !native && provider ? await readUsageCredentials(connection, signal) : {}
-          const settings = !native && provider && provider.id !== "google" && provider.id !== "opencode-console"
+          const plugin = !native && !provider
+            ? await readPluginProviderUsage(connection, {
+              providerId: params.data.providerId, location, modelId,
+            }, signal, quotaSignal)
+            : null
+          const auth = !native && !plugin && provider ? await readUsageCredentials(connection, signal) : {}
+          const settings = !native && !plugin && provider && provider.id !== "google" && provider.id !== "opencode-console"
             ? await readUsageProviderSettings(connection, params.data.providerId, location.directory, signal) : undefined
           signal.throwIfAborted()
           if (provider?.id === "opencode-go") {
@@ -123,7 +130,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             supported: true, configured: true, ok: false, windows: {}, fetchedAt: Date.now(),
             unavailableReason: "opencode-console-network-error",
           }, publicationSignal)
-          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId, auth,
+          const usage = native ?? plugin ?? await getProviderUsage(params.data.providerId, { modelId, auth,
             context: { ...settings?.context, signal: quotaSignal } })
           consoleTimeout = undefined
           return publish(usage, signal)
