@@ -83,8 +83,8 @@ impl Reader {
                     reader_event(reading, self.generation, out, wake, failed()).await;
                 }
                 Err(PageFailure::AuthenticationExpired) => {
-                    expire_reading(backend, reading, wire, out, wake).await;
-                    return Ok(Turn::Stop);
+                    expire_reading(reading, wire, out).await;
+                    return Ok(Turn::AuthenticationExpired);
                 }
                 Err(PageFailure::Read(_)) => {
                     reader_event(reading, self.generation, out, wake, failed()).await;

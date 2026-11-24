@@ -16,23 +16,12 @@ async fn close_for_authentication(wire: &stream::State, out: &Sender<Event>) {
 }
 
 pub(super) async fn expire_reading(
-    backend: &Backend,
     reading: Option<&ReadingLane>,
     wire: &stream::State,
     out: &Sender<Event>,
-    wake: &crate::Wake,
 ) {
     ReadingLane::invalidate_connection(reading);
     close_for_authentication(wire, out).await;
-    publish(
-        out,
-        wake,
-        Event::AuthenticationRequired(crate::transport::Authentication {
-            backend: backend.clone(),
-            confirmed: true,
-        }),
-    )
-    .await;
 }
 
 pub(super) async fn rejected_by_authentication(
@@ -41,10 +30,10 @@ pub(super) async fn rejected_by_authentication(
     out: &Sender<Event>,
     wake: &crate::Wake,
     wire: &stream::State,
-) -> bool {
+) -> Option<bool> {
     let authenticated = backend.authentication_status().await;
     if matches!(authenticated, Ok(true)) {
-        return false;
+        return None;
     }
     close_for_authentication(wire, out).await;
     // A native proxy mutation is detached before revocation, so a 401 response cannot prove it was not transmitted.
@@ -57,14 +46,5 @@ pub(super) async fn rejected_by_authentication(
         },
     )
     .await;
-    publish(
-        out,
-        wake,
-        Event::AuthenticationRequired(crate::transport::Authentication {
-            backend: backend.clone(),
-            confirmed: matches!(authenticated, Ok(false)),
-        }),
-    )
-    .await;
-    true
+    Some(matches!(authenticated, Ok(false)))
 }

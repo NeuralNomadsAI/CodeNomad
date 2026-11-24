@@ -24,6 +24,7 @@ pub(super) struct Cache {
     paging: bool,
     error: bool,
     history_detached: bool,
+    stream_offline: bool,
     launcher_visible: bool,
     input_scope: std::rc::Rc<()>,
     status_permissions: crate::shell::status_permissions::Permissions,
@@ -94,6 +95,7 @@ impl Cache {
             paging: std::mem::take(&mut s.paging),
             error: std::mem::take(&mut s.history_error),
             history_detached: std::mem::take(&mut s.history_detached),
+            stream_offline: std::mem::take(&mut s.stream_offline),
             launcher_visible: s.screen.is_launcher(),
             input_scope: s.input_scope.clone(),
             status_permissions: std::mem::take(&mut s.status_permissions),
@@ -120,6 +122,7 @@ impl Cache {
         s.paging = self.paging;
         s.history_error = self.error;
         s.history_detached = self.history_detached;
+        s.stream_offline = self.stream_offline;
         if self.launcher_visible {
             s.screen.show_launcher();
         } else {

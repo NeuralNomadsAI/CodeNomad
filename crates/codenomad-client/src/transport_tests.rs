@@ -311,7 +311,7 @@ fn prompt_during_stream_gap(with_reading: bool) {
             let task = if with_reading {
                 tokio::spawn(crate::transport::run_backend_reading(
                     backend, out, input, Arc::new(|| {}), ReadingLane {
-                    demand: observer, events: content, connection: Default::default()
+                    demand: observer, events: content, connection: Default::default(), revoked: Default::default()
                 }))
             } else {
                 tokio::spawn(crate::transport::run_backend(backend, out, input, Arc::new(|| {})))
@@ -382,9 +382,14 @@ fn prompt_during_stream_gap(with_reading: bool) {
                 ).await.unwrap();
                 let replayed = Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let replayed_flag = replayed.clone();
+                let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
                 let sync_server = tokio::spawn(async move {
                     loop {
-                        let Ok((socket, _)) = listener.accept().await else {
+                        let accept = tokio::select! {
+                            _ = &mut stop_rx => break,
+                            accepted = listener.accept() => accepted,
+                        };
+                        let Ok((socket, _)) = accept else {
                             break;
                         };
                         let mut req = BufReader::new(socket);
@@ -436,7 +441,8 @@ fn prompt_during_stream_gap(with_reading: bool) {
                 drop(reconnected);
                 commands.send(Command::Close).await.unwrap();
                 task.await.unwrap().unwrap();
-                sync_server.abort();
+                let _ = stop_tx.send(());
+                sync_server.await.unwrap();
                 assert!(!replayed.load(SeqCst), "reconnecting SSE must not replay the prompt");
                 return;
             }
@@ -1173,5 +1179,137 @@ fn unsynced_reconnect_headers_do_not_reset_attempts_and_escalate_to_reconnecting
         })
         .await
         .expect("unsynced reconnect drop must escalate to Reconnecting");
+    });
+}
+
+#[test]
+fn repeated_upstream_disconnect_escalates_to_reconnecting() {
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let mut backend = Backend::unauthenticated(&format!("http://{address}/")).unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let (out, events) = bounded(16);
+            let (commands, input) = bounded(2);
+            let task = tokio::spawn(crate::transport::run_backend(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+            ));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .get_mut()
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"disconnected\"}\n\n",
+                )
+                .await
+                .unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::ConnectionLost) {}
+            stream
+                .get_mut()
+                .write_all(
+                    b"data: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"disconnected\"}\n\n",
+                )
+                .await
+                .unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
+            drop(stream);
+            drop(commands);
+            task.await.unwrap().unwrap();
+        })
+        .await
+        .expect("repeated upstream disconnects must escalate to Reconnecting");
+    });
+}
+
+#[test]
+fn revoked_reading_lane_rejects_queued_prompt_without_http_post() {
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let mut backend = Backend::unauthenticated(&format!("http://{address}/")).unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let (out, events) = bounded(8);
+            let (commands, input) = bounded(1);
+            let (demand, observer) = demand::open();
+            let (content, _snapshots) = bounded(1);
+            demand.publish(None);
+            let revoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let task = tokio::spawn(crate::transport::run_backend_reading(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+                ReadingLane {
+                    demand: observer,
+                    events: content,
+                    connection: Default::default(),
+                    revoked: revoked.clone(),
+                },
+            ));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
+            revoked.store(true, SeqCst);
+            let id = "msg_00000000000000000000000000000010";
+            commands
+                .send(Command::Prompt(crate::prompt::Prompt {
+                    id: Some(id.into()),
+                    text: "after pairing loss".into(),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
+            commands.close();
+            let mut saw_rejected = false;
+            while let Ok(event) = events.recv().await {
+                if let Event::PromptAcknowledged { attempted, outcome } = event
+                    && attempted == id
+                {
+                    assert!(
+                        matches!(outcome, PromptOutcome::Rejected),
+                        "revoked reading lane must reject queued prompt without POST"
+                    );
+                    saw_rejected = true;
+                    break;
+                }
+            }
+            assert!(saw_rejected);
+            drop(stream);
+            task.await.unwrap().unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                    .await
+                    .is_err(),
+                "no HTTP POST may be sent once ReadingLane is revoked"
+            );
+        })
+        .await
+        .expect("revoked reading lane must deliver Rejected without HTTP POST");
     });
 }

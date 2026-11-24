@@ -11,6 +11,7 @@ const MAX_WINDOW_DEVICE_FILES: usize = super::super::MAX_DRAFTS * MAX_FILES;
 pub(super) struct LiveDraft {
     text: Option<String>,
     parts: Option<(Draft, bool)>,
+    unconfirmed: Option<crate::composer::PendingSend>,
 }
 
 impl Ui {
@@ -121,12 +122,16 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
         if owns_draft {
             let too_long = oversized(text);
             let has_device_parts = draft.inline_usage().0 != 0;
-            if too_long || has_device_parts {
+            let unconfirmed = s.composer.unconfirmed_state().cloned();
+            if too_long || has_device_parts || unconfirmed.is_some() {
                 let live = item.live_drafts.entry(key.into()).or_default();
                 live.text = too_long.then(|| text.clone());
-                let mut draft = draft.clone();
-                draft.literal_spans = crate::composer::literal::ranges(edit).collect();
-                live.parts = Some((draft, missing));
+                live.parts = (too_long || has_device_parts).then(|| {
+                    let mut draft = draft.clone();
+                    draft.literal_spans = crate::composer::literal::ranges(edit).collect();
+                    (draft, missing)
+                });
+                live.unconfirmed = unconfirmed;
             } else {
                 item.live_drafts.remove(key);
             }
@@ -187,6 +192,9 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
     };
     saved.active_session_id = Some(backend.session.clone());
     let live = item.live_drafts.get(&backend.session);
+    if !same_session && let Some(unconfirmed) = live.and_then(|draft| draft.unconfirmed.as_ref()) {
+        s.composer.restore_unconfirmed(unconfirmed.clone());
+    }
     if !same_session && let Some((draft, missing)) = live.and_then(|draft| draft.parts.as_ref()) {
         s.composer.draft = draft.clone();
         s.composer.attachments_missing = *missing;

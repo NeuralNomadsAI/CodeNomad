@@ -6,6 +6,7 @@ const MAX_UNCONFIRMED: usize = 100;
 
 pub(super) type Target = (Project, String);
 
+#[derive(Clone)]
 pub(crate) struct CommandAttempt {
     pub(super) target: Target,
     pub(super) name: String,

@@ -288,6 +288,7 @@ pub(super) fn retire_session(s: &mut State, id: &str) {
     s.attachments = Default::default();
     s.composer = Default::default();
     s.history_detached = false;
+    s.stream_offline = false;
     s.messages.clear();
     s.chat_title.clear();
     s.draft = TextEdit::new("");

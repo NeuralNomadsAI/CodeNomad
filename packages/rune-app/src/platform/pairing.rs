@@ -91,14 +91,18 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         if let Some(l) = s.screen.launcher_mut() {
             l.password = rune::edit::TextEdit::new("");
         }
+        crate::chat::events::poll_chat(s, 64);
+        s.composer.picker.set_attachments_supported(false);
+        let _ = crate::composer::menu::poll(s, tx);
         s.renew_scope();
+        if let Some(reader) = &s.reader {
+            reader.revoke();
+        }
         if let Some(commands) = s.commands.take() {
             commands.close();
         }
-        s.incoming = None;
-        crate::composer::settle_pending(s, codenomad_client::transport::PromptOutcome::Unconfirmed);
-        s.composer.picker.set_attachments_supported(false);
         s.phase = crate::Phase::Failed;
+        s.stream_offline = true;
         s.pairing.focus = FocusCheck::new(s.wake.clone());
     } else {
         s.pairing.focus = None;

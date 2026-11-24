@@ -88,6 +88,7 @@ struct State {
     paging: bool,
     history_error: bool,
     history_detached: bool,
+    stream_offline: bool,
 }
 #[derive(PartialEq)]
 enum Phase {
@@ -165,6 +166,7 @@ fn init() -> State {
         paging: false,
         history_error: false,
         history_detached: false,
+        stream_offline: false,
     }
 }
 #[cfg(feature = "test-support")]
@@ -261,6 +263,12 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = !timeline::input_precedes_admission(s, tx) && poll_chat(s, 64);
     if std::mem::take(&mut s.composer.announce_send_error) {
         rune_theme_codenomad::layout::announce_alert(tx, strings::t("promptInput.send.errorTitle"));
+    }
+    if std::mem::take(&mut s.composer.announce_unconfirmed) {
+        rune_theme_codenomad::layout::announce_alert(
+            tx,
+            strings::t("missionsPanel.action.requestUpdateUncertain"),
+        );
     }
     shell::notifications::collect(s, workspace::notification_target);
     if !s.screen.is_launcher()

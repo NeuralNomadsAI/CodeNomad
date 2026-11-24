@@ -18,7 +18,7 @@ pub(crate) fn announce_paging(tx: &mut Tx) {
 }
 
 pub(crate) fn oldest(s: &mut State, tx: &mut Tx) {
-    if s.phase.reconnecting() {
+    if s.phase.reconnecting() || s.phase == crate::Phase::Failed || s.stream_offline {
         return;
     }
     if s.can_older {
@@ -36,6 +36,7 @@ pub(crate) fn oldest(s: &mut State, tx: &mut Tx) {
 
 pub(crate) fn request_page(s: &mut State, edge: HistoryEdge) -> bool {
     if s.paging
+        || s.stream_offline
         || !matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming) && s.reader.is_some()
         || !match edge {
             HistoryEdge::Before | HistoryEdge::Oldest => s.can_older,

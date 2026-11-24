@@ -14,7 +14,7 @@ use std::{
     collections::{HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
     },
     time::Duration,
 };
@@ -23,6 +23,7 @@ pub(super) enum Turn {
     Process,
     Next,
     Stop,
+    AuthenticationExpired,
 }
 
 pub(super) struct Reader {
@@ -234,8 +235,8 @@ impl Reader {
                     self.quiet = Instant::now() + Duration::from_millis(200);
                 }
                 Err(PageFailure::AuthenticationExpired) => {
-                    expire_reading(backend, reading, wire, out, wake).await;
-                    return Ok(Turn::Stop);
+                    expire_reading(reading, wire, out).await;
+                    return Ok(Turn::AuthenticationExpired);
                 }
                 Err(PageFailure::Read(error)) => {
                     if cfg!(target_arch = "wasm32")
@@ -291,6 +292,7 @@ pub struct ReadingLane {
     pub demand: demand::Observer,
     pub events: Sender<(u64, u64, Event)>,
     pub connection: Arc<AtomicU64>,
+    pub revoked: Arc<AtomicBool>,
 }
 
 impl ReadingLane {

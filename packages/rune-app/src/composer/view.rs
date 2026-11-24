@@ -51,7 +51,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
             crate::components::button_tx(
                 "oldest",
                 t("messageSection.scroll.toFirstAriaLabel"),
-                s.paging || s.phase.reconnecting() || s.phase == Phase::Failed,
+                s.paging || s.phase.reconnecting() || s.phase == Phase::Failed || s.stream_offline,
                 screen::action_tx(&scope, crate::chat::reader::oldest),
             )
         }))

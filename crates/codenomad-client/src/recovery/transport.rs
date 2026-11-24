@@ -71,6 +71,27 @@ async fn close_and_reject_queued(
     }
 }
 
+async fn finish_authentication_required(
+    commands: &Receiver<Command>,
+    rx: &Receiver<Input>,
+    forward_done: &Receiver<()>,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+    backend: &Backend,
+    confirmed: bool,
+) {
+    close_and_reject_queued(commands, rx, forward_done, out, wake).await;
+    publish(
+        out,
+        wake,
+        Event::AuthenticationRequired(crate::transport::Authentication {
+            backend: backend.clone(),
+            confirmed,
+        }),
+    )
+    .await;
+}
+
 fn can_admit_send(
     wire: &stream::State,
     reading: Option<&ReadingLane>,
@@ -82,6 +103,7 @@ fn can_admit_send(
     !out.is_closed()
         && !wire.placement_closed()
         && !wire.auth_expired.load(SeqCst)
+        && !reading.is_some_and(|lane| lane.revoked.load(SeqCst))
         && (reading.is_some() || !reader.parked && !reader.historical && (opened || stream_gap))
 }
 
@@ -164,13 +186,18 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Closed(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
-                stream_gap = opened && attempts == 0 && wire.upstream.load(SeqCst);
+                let first_gap = opened
+                    && (attempts == 0
+                        || attempts == 1 && stream_gap && !wire.upstream.load(SeqCst));
+                stream_gap = first_gap;
                 opened = false;
                 connection_closed = true;
                 connection_lost = true;
                 reader.dirty = true;
                 publish(&out, &wake, Event::ConnectionLost).await;
-                attempts = attempts.saturating_add(1);
+                if !first_gap || attempts == 0 {
+                    attempts = attempts.saturating_add(1);
+                }
                 retry =
                     Some(Instant::now() + Duration::from_millis(250 * (1u64 << attempts.min(4))));
                 if !stream_gap {
@@ -183,25 +210,33 @@ pub(crate) async fn run_with_reading(
                 }
             }
             Some(Input::AuthenticationRequired(e)) if e == epoch => {
-                close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake).await;
-                publish(&out, &wake, Event::authentication_required(backend.clone())).await;
+                finish_authentication_required(
+                    &pending_commands,
+                    &rx,
+                    &forward_done,
+                    &out,
+                    &wake,
+                    &backend,
+                    false,
+                )
+                .await;
                 return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
-                stream_gap = opened && attempts == 0;
+                let first_gap = opened && attempts == 0;
+                stream_gap = first_gap;
+                attempts = attempts.saturating_add(1);
                 ReadingLane::invalidate_connection(reading);
                 reader.dirty = true;
                 if reading.is_some() || !reader.historical {
-                    publish(
-                        &out,
-                        &wake,
-                        if stream_gap || reading.is_some() {
-                            Event::ConnectionLost
-                        } else {
-                            Event::Reconnecting
-                        },
-                    )
-                    .await;
+                    publish(&out, &wake, Event::ConnectionLost).await;
+                    if !stream_gap {
+                        if attempts <= 6 {
+                            publish(&out, &wake, Event::Reconnecting).await;
+                        } else if attempts == 7 && reading.is_none() {
+                            publish(&out, &wake, Event::Failed).await;
+                        }
+                    }
                 }
             }
             Some(Input::Available(e, v)) if e == epoch => {
@@ -259,6 +294,19 @@ pub(crate) async fn run_with_reading(
                     Turn::Process => {}
                     Turn::Next => continue,
                     Turn::Stop => return Ok(()),
+                    Turn::AuthenticationExpired => {
+                        finish_authentication_required(
+                            &pending_commands,
+                            &rx,
+                            &forward_done,
+                            &out,
+                            &wake,
+                            &backend,
+                            true,
+                        )
+                        .await;
+                        return Ok(());
+                    }
                 }
             }
             Some(Input::Command(Command::Latest)) => {
@@ -278,11 +326,20 @@ pub(crate) async fn run_with_reading(
                 text,
             })) => {
                 let admitted = can_admit_send(&wire, reading, &reader, opened, stream_gap, &out);
-                if !receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
-                    .await
+                if let receipts::SlashReceipt::AuthenticationRequired { confirmed } =
+                    receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
+                        .await
                 {
-                    close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
-                        .await;
+                    finish_authentication_required(
+                        &pending_commands,
+                        &rx,
+                        &forward_done,
+                        &out,
+                        &wake,
+                        &backend,
+                        confirmed,
+                    )
+                    .await;
                     return Ok(());
                 }
             }
@@ -290,13 +347,25 @@ pub(crate) async fn run_with_reading(
                 let Some(id) = &prompt.id else { continue };
                 // The compose gesture owns one attempt even if its tab suspends before dispatch.
                 let admitted = can_admit_send(&wire, reading, &reader, opened, stream_gap, &out);
-                let Some(outcome) =
-                    receipts::prompt(&backend, &out, &wake, &wire, admitted, id, &prompt).await
-                else {
-                    close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
-                        .await;
-                    return Ok(());
-                };
+                let outcome =
+                    match receipts::prompt(&backend, &out, &wake, &wire, admitted, id, &prompt)
+                        .await
+                    {
+                        receipts::PromptReceipt::Outcome(outcome) => outcome,
+                        receipts::PromptReceipt::AuthenticationRequired { confirmed } => {
+                            finish_authentication_required(
+                                &pending_commands,
+                                &rx,
+                                &forward_done,
+                                &out,
+                                &wake,
+                                &backend,
+                                confirmed,
+                            )
+                            .await;
+                            return Ok(());
+                        }
+                    };
                 if !matches!(outcome, PromptOutcome::Rejected)
                     && !reader.busy
                     && prompt.delivery != Some(crate::prompt::Delivery::Queue)
@@ -624,13 +693,30 @@ pub(crate) async fn run_with_reading(
             out: &out,
             wake: &wake,
         };
-        if matches!(
-            reader.sync(&lane, opened, &mut connection_lost).await?,
-            Turn::Stop
-        ) {
-            return Ok(());
+        match reader.sync(&lane, opened, &mut connection_lost).await? {
+            Turn::Stop => return Ok(()),
+            Turn::AuthenticationExpired => {
+                finish_authentication_required(
+                    &pending_commands,
+                    &rx,
+                    &forward_done,
+                    &out,
+                    &wake,
+                    &backend,
+                    true,
+                )
+                .await;
+                return Ok(());
+            }
+            Turn::Process | Turn::Next => {}
         }
-        if opened && wire.upstream.load(SeqCst) && !reader.dirty {
+        if reader.parked {
+            stream_gap = false;
+        }
+        if opened
+            && wire.upstream.load(SeqCst)
+            && (!reader.active_reader || reader.historical || (!reader.dirty && !reader.parked))
+        {
             attempts = 0;
             stream_gap = false;
         }

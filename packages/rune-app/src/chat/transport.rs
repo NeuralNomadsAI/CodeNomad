@@ -58,6 +58,7 @@ fn launch(s: &mut crate::State, startup: Startup, anchor: Option<String>) {
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);
     s.commands = Some(commands);
+    s.stream_offline = false;
     let reading = match &startup {
         Startup::Bound(_) => {
             let (mut reader, lane) = super::reader::Reader::open();

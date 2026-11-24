@@ -13,10 +13,11 @@ pub struct Owner {
     pub draft: Draft,
     pub picker: super::picker::Picker,
     pub menu: rune_theme_codenomad::action_menu::State<State>,
-    sending: Option<Send>,
+    sending: Option<PendingSend>,
     pub send_error: bool,
     pub(crate) announce_send_error: bool,
-    unconfirmed: Option<Send>,
+    pub(crate) announce_unconfirmed: bool,
+    unconfirmed: Option<PendingSend>,
     pub restored: bool,
     pub attachments_missing: bool,
     pub(crate) recall: Option<super::recall::Recall>,
@@ -31,6 +32,12 @@ impl Owner {
     pub fn unconfirmed_id(&self) -> Option<&str> {
         self.unconfirmed.as_ref().map(|send| send.id.as_str())
     }
+    pub(crate) fn unconfirmed_state(&self) -> Option<&PendingSend> {
+        self.unconfirmed.as_ref()
+    }
+    pub(crate) fn restore_unconfirmed(&mut self, pending: PendingSend) {
+        self.unconfirmed = Some(pending);
+    }
     pub(crate) fn mark_edited(&mut self) {
         if let Some(send) = &mut self.sending {
             send.edited = true;
@@ -44,7 +51,8 @@ impl Owner {
         self.sending.as_ref().map(|send| send.edit.text.as_str())
     }
 }
-struct Send {
+#[derive(Clone)]
+pub(crate) struct PendingSend {
     id: String,
     edit: TextEdit,
     draft: Draft,
@@ -148,7 +156,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             let recallable =
                 super::recall::record(s, format!("/{} {}", slash.name, slash.args), true);
             s.composer.picker.remember_command(&slash.name);
-            s.composer.sending = Some(Send {
+            s.composer.sending = Some(PendingSend {
                 id,
                 edit: s.draft.clone(),
                 draft: s.composer.draft.clone(),
@@ -196,7 +204,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
     s.composer.send_error = false;
     s.composer.announce_send_error = false;
     let recallable = super::recall::record(s, body.clone(), false);
-    s.composer.sending = Some(Send {
+    s.composer.sending = Some(PendingSend {
         id: id.clone(),
         edit: s.draft.clone(),
         draft: std::mem::take(&mut s.composer.draft),
@@ -291,6 +299,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         }
         if matches!(outcome, PromptOutcome::Unconfirmed) {
             s.command_receipts.hold(send.id, slash);
+            s.composer.announce_unconfirmed = true;
         }
         let rejected = matches!(outcome, PromptOutcome::Rejected);
         s.composer.send_error = rejected;
@@ -303,11 +312,12 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         if may_restore && s.composer.draft.attachments.is_empty() {
             super::recall::replace_edit(s, send.edit.clone());
             s.composer.draft = send.draft.clone();
-            s.composer.restored = true;
         } else {
             send.edited = true;
         }
         s.composer.unconfirmed = Some(send);
+        s.composer.restored = true;
+        s.composer.announce_unconfirmed = true;
         return;
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
@@ -361,21 +371,27 @@ pub fn settle_pending(s: &mut State, outcome: PromptOutcome) {
 }
 
 pub fn reconcile(s: &mut State) {
-    if s.composer.unconfirmed.as_ref().is_some_and(|send| {
+    let confirmed = s.composer.unconfirmed.as_ref().is_some_and(|send| {
         s.messages
             .iter()
             .any(|row| row.id == send.id && row.role == "user")
-    }) && let Some(send) = s.composer.unconfirmed.take()
-        && !send.edited
+    });
+    if !confirmed {
+        return;
+    }
+    let Some(send) = s.composer.unconfirmed.take() else {
+        return;
+    };
+    if !send.edited
         && s.composer.recall.is_none()
         && s.draft.text == send.edit.text
         && s.composer.draft.attachments == send.draft.attachments
     {
         s.draft.clear();
         s.composer.draft = Draft::default();
-        if s.workspace.is_some() {
-            workspace::capture(s);
-        }
+    }
+    if s.workspace.is_some() {
+        workspace::capture(s);
     }
 }
 
@@ -497,5 +513,74 @@ mod tests {
         reconcile(&mut rt.state);
         assert!(rt.state.composer.unconfirmed.is_none());
         assert_eq!(rt.state.draft.text, "new draft");
+    }
+
+    #[test]
+    fn unconfirmed_lock_persists_across_session_reopen_and_announces_uncertainty() {
+        let (sender, receiver) = codenomad_client::bounded(2);
+        let mut s = crate::init();
+        s.workspace = Some(workspace::Ui::new());
+        let mut first = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        first.workspace = "ws".into();
+        first.session = "ses-1".into();
+        let mut second = first.clone();
+        second.session = "ses-2".into();
+        let project = crate::catalog::Project {
+            id: "ws".into(),
+            path: "/tmp/ws".into(),
+        };
+        workspace::opened(&mut s, &project);
+        workspace::bound(&mut s, &first);
+        s.phase = Phase::Ready;
+        s.commands = Some(sender.clone());
+        s.draft = TextEdit::new("attempt");
+        let mut rt = Runtime::new(s, crate::view, (600.0, 600.0), Env::new(false, 1.0));
+        rt.update(|s, tx| send(s, tx, false));
+        let Command::Prompt(prompt) = receiver.try_recv().unwrap() else {
+            panic!("expected prompt")
+        };
+        let id = prompt.id.unwrap();
+        let row = rt.state.messages.pop().unwrap();
+        acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
+        assert!(rt.state.composer.announce_unconfirmed);
+        assert!(rt.state.composer.restored);
+        workspace::capture(&mut rt.state);
+        workspace::bound(&mut rt.state, &second);
+        assert!(rt.state.composer.unconfirmed_id().is_none());
+        let restored_draft = workspace::bound(&mut rt.state, &first);
+        rt.state.draft = TextEdit::new(restored_draft);
+        assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
+        assert!(!can_send(&rt.state));
+        rt.state.messages.push(row);
+        reconcile(&mut rt.state);
+        assert!(rt.state.composer.unconfirmed_id().is_none());
+        workspace::bound(&mut rt.state, &second);
+        workspace::bound(&mut rt.state, &first);
+        assert!(rt.state.composer.unconfirmed_id().is_none());
+    }
+
+    #[test]
+    fn oldest_is_blocked_while_stream_is_offline_in_detached_history() {
+        let (sender, receiver) = codenomad_client::bounded(1);
+        let mut s = crate::init();
+        s.phase = Phase::Ready;
+        s.history_detached = true;
+        s.stream_offline = true;
+        s.can_older = true;
+        s.commands = Some(sender);
+        s.messages.push(
+            Message {
+                completed: true,
+                id: "m1".into(),
+                role: "user".into(),
+                body: "hello".into(),
+                usage: None,
+                parts: vec![],
+            }
+            .into(),
+        );
+        let mut rt = Runtime::new(s, crate::view, (600.0, 600.0), Env::new(false, 1.0));
+        rt.update(|s, tx| crate::chat::reader::oldest(s, tx));
+        assert!(receiver.try_recv().is_err());
     }
 }

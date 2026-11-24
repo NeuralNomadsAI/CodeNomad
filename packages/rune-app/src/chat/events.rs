@@ -263,6 +263,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 } else {
                     Phase::Ready
                 };
+                s.stream_offline = false;
             }
             Event::Older(page) => chat::reader::install_page(s, page, None),
             Event::PageOffered {
@@ -276,6 +277,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::Reconnecting | Event::ConnectionLost => {
                 let stream_lost = matches!(event, Event::ConnectionLost);
+                s.stream_offline = true;
                 s.transcript_display.messages.offline();
                 s.status_permissions.online(false);
                 if !stream_lost {
@@ -339,6 +341,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.phase = Phase::Reconnecting;
             }
             Event::WorkspaceMissing => {
+                s.stream_offline = true;
                 s.transcript_display.receipts.clear();
                 s.status_permissions.online(false);
                 s.status_usage.disconnect();
@@ -357,6 +360,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             Event::History(messages) => {
                 s.messages = messages;
                 s.phase = Phase::Ready;
+                s.stream_offline = false;
             }
             Event::Message(m) => {
                 if !s.messages.iter().any(|existing| existing.id == m.id) {
@@ -428,6 +432,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.history_error = true;
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
+                s.stream_offline = true;
                 s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
                 s.transcript_display.pictures.clear();

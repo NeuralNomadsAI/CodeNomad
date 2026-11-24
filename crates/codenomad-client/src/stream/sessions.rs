@@ -12,6 +12,18 @@ pub(super) async fn relay(
 ) -> Result<()> {
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
+    if own
+        && value["type"] == "instance.event"
+        && matches!(
+            native["type"].as_str(),
+            Some("session.moved" | "session.deleted")
+        )
+        && native["data"]["sessionID"] == b.session
+        && let Some((cancel, _)) = &state.placement
+    {
+        // Closing the signal before any send fences reads and prompts even if the relay inbox is full.
+        cancel.close();
+    }
     if own && value["type"] == "instance.event" {
         children::observe(b, native);
         if let Some(urgent) = native["type"]
@@ -154,15 +166,6 @@ pub(super) async fn relay(
         ) {
             state.history_revision.fetch_add(1, SeqCst);
         }
-        if matches!(
-            native["type"].as_str(),
-            Some("session.moved" | "session.deleted")
-        ) && native["data"]["sessionID"] == b.session
-            && let Some((cancel, _)) = &state.placement
-        {
-            // Closing the signal fences the current body and every later read or send on this wire.
-            cancel.close();
-        }
         out.send(Input::Native(epoch, version, native.clone()))
             .await?;
     } else if own
@@ -221,5 +224,56 @@ fn instance_storage_updates_leave_the_window_valid_but_native_hints_do_not() {
             .unwrap();
             assert!(!state.valid(stamp));
             assert!(matches!(inbox.try_recv().unwrap(), Input::Hint(1, _)));
+        });
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn session_deleted_closes_placement_before_waiting_on_a_full_relay_channel() {
+    use serde_json::json;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            backend.workspace = "project".into();
+            backend.session = "session".into();
+            let (out, inbox) = crate::bounded(1);
+            let (events_tx, _events_rx) = crate::bounded(1);
+            let state = std::sync::Arc::new(State::observing_preferences(
+                events_tx,
+                std::sync::Arc::new(|| {}),
+            ));
+            out.send(Input::Opened(1)).await.unwrap();
+            let payload = json!({
+                "type": "instance.event",
+                "instanceId": "project",
+                "event": {"type": "session.deleted", "data": {"sessionID": "session"}}
+            });
+            let relay_task = tokio::spawn({
+                let out = out.clone();
+                let state = state.clone();
+                async move { relay(&backend, 1, &out, &state, &payload).await }
+            });
+            // Even while relay awaits space in the full inbox for StatsChanged, placement is closed.
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                while !state.placement_closed() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("placement must close before relay waits on the full channel");
+            assert!(
+                !relay_task.is_finished(),
+                "relay must still be blocked on the full inbox"
+            );
+            while !relay_task.is_finished() {
+                if inbox.try_recv().is_err() {
+                    tokio::task::yield_now().await;
+                }
+            }
+            relay_task.await.unwrap().unwrap();
+            assert!(state.placement_closed());
         });
 }

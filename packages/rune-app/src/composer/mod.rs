@@ -16,4 +16,6 @@ mod tokens;
 pub(crate) mod view;
 #[cfg(all(not(target_arch = "wasm32"), feature = "test-support"))]
 pub(crate) use actions::command_held;
-pub(crate) use actions::{Owner, acknowledge, can_send, reconcile, send, settle_pending};
+pub(crate) use actions::{
+    Owner, PendingSend, acknowledge, can_send, reconcile, send, settle_pending,
+};

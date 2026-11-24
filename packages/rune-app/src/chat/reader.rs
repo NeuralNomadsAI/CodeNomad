@@ -13,13 +13,14 @@ use codenomad_client::{
 use rune::Tx;
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering::SeqCst},
+    atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
 };
 
 pub(crate) struct Reader {
     request: Demand,
     events: Receiver<(u64, u64, Event)>,
     connection: Arc<AtomicU64>,
+    revoked: Arc<AtomicBool>,
     generation: u64,
     bookmark: Bookmark,
     installed: bool,
@@ -37,11 +38,13 @@ impl Reader {
         let (request, demand) = demand::open();
         let (out, events) = bounded(8);
         let connection = Arc::new(AtomicU64::new(0));
+        let revoked = Arc::new(AtomicBool::new(false));
         (
             Self {
                 request,
                 events,
                 connection: connection.clone(),
+                revoked: revoked.clone(),
                 generation: 0,
                 bookmark: Bookmark::Latest,
                 installed: false,
@@ -57,8 +60,14 @@ impl Reader {
                 demand,
                 events: out,
                 connection,
+                revoked,
             },
         )
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn revoke(&self) {
+        self.revoked.store(true, SeqCst);
     }
 
     fn drain(&self) {
