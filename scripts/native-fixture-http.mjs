@@ -1,5 +1,9 @@
+import assert from 'node:assert/strict'
+import {existsSync} from 'node:fs'
 import {Agent as HttpAgent} from 'node:http'
 import {Agent,fetch as undiciFetch} from 'undici'
+
+assert(existsSync(new URL('../node_modules',import.meta.url)),'Worktree node_modules is required; parent checkout dependencies are forbidden')
 
 const dispatcher=new Agent()
 export const fixtureHttpAgent=new HttpAgent({keepAlive:true,proxyEnv:{}})

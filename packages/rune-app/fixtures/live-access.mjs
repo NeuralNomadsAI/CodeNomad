@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
-import {copyFile, lstat, mkdir, open, readdir, readFile, realpath, unlink, writeFile} from 'node:fs/promises'
+import {copyFile, lstat, mkdir, open, readdir, readFile, realpath, rm, unlink, writeFile} from 'node:fs/promises'
 import {createServer} from 'node:http'
 import path from 'node:path'
 import {setTimeout as delay} from 'node:timers/promises'
@@ -14,19 +14,24 @@ export const args=process.argv.slice(2).filter((arg,i,all)=>arg!=='--opencode'&&
 const marker='.rune-private-opencode'
 const forbidden='the shared OpenCode service is forbidden'
 
-export function requirePrivateCli(){
-  const argv=process.argv.slice(2), index=argv.indexOf('--opencode'), cli=argv[index+1]
-  assert(index>=0&&index===argv.lastIndexOf('--opencode')&&cli&&path.isAbsolute(cli),
-    `Pass --opencode <absolute executable>; ${forbidden}`)
+const isUnc=value=>typeof value==='string'&&/^(\\\\|\/\/)/.test(value)
+
+export function requirePrivateCli(argv=process.argv.slice(2)){
+  const index=argv.indexOf('--opencode'), cli=argv[index+1]
+  assert(index>=0&&index===argv.lastIndexOf('--opencode')&&cli&&path.isAbsolute(cli)&&!isUnc(cli),
+    `Pass --opencode <absolute local executable>; ${forbidden}`)
   return cli
 }
 
-export async function attestNative(origin,child,authorization,request=fixtureFetch,pid=child.pid){
+export async function attestNative(origin,child,authorization,request=fixtureFetch,...rest){
+  const pid=rest.length?rest[0]:child.pid
   const endpoint=new URL(origin)
   assert(endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1'&&endpoint.pathname==='/'&&
     !endpoint.search&&!endpoint.hash&&!endpoint.username&&!endpoint.password&&endpoint.port&&endpoint.port!=='0',
     `Expected the fixture child's loopback listener; ${forbidden}`)
   const alive=()=>assert(child.pid&&child.exitCode===null&&child.signalCode===null,'Private OpenCode has exited')
+  assert(Number.isSafeInteger(pid)&&pid>0,`Fixture child did not report its PID; ${forbidden}`)
+  alive()
   const send=async(route,init={})=>{
     const url=fixtureTarget(route instanceof Request?route.url:route,endpoint)
     assert(url,`Fixture cannot address another OpenCode endpoint; ${forbidden}`)
@@ -47,7 +52,6 @@ export async function attestNative(origin,child,authorization,request=fixtureFet
   }
   try{
     const info=await read('/api/info')
-    assert(Number.isSafeInteger(pid)&&pid>0,'Fixture child did not report its PID')
     assert.equal(info.pid,pid,'OpenCode PID differs from the fixture child')
     alive()
   }catch(cause){throw Error(`Could not attest the private OpenCode process; ${forbidden}: ${cause.message}`,{cause})}
@@ -70,6 +74,7 @@ export async function validatePrivateTree(profile){
 }
 
 export async function privateManifest(file){
+  assert(typeof file==='string'&&file.length>0&&!isUnc(file),'Expected a local private fixture manifest')
   const actual=path.resolve(file)
   const profile=path.dirname(actual)
   assert.equal(privatePath(profile),profile,'Expected an unlinked private fixture profile')
@@ -78,7 +83,9 @@ export async function privateManifest(file){
   assert.equal(await readFile(path.join(profile,marker),'utf8'),'Rune private OpenCode v1\n')
   const data=JSON.parse(await readFile(actual,'utf8'))
   assert.equal(data.profile,profile)
-  assert.equal(await realpath(data.project),path.join(profile,'project'),'Expected the private fixture project')
+  const expectedProject=path.join(profile,'project')
+  assert(typeof data.project==='string'&&!isUnc(data.project)&&path.resolve(data.project)===expectedProject,'Expected the private fixture project')
+  assert.equal(await realpath(data.project),expectedProject,'Expected the private fixture project')
   assert(/^[A-Za-z0-9_-]{1,256}$/.test(data.sessionID),'Expected a fixture session ID')
   return data
 }
@@ -142,18 +149,19 @@ export async function withNative(run,{profile,pruning=true}={}){
   assert.equal(await readFile(path.join(profile,marker),'utf8'),'Rune private OpenCode v1\n')
   const lease=path.join(profile,'running.lock')
   const lock=await open(lease,'wx')
-  let daemon,model,plugin,password,executable
+  let daemon,model,plugin,password,executable,config
   const owned=name=>{
     const expected=path.join(profile,name)
     assert.equal(privatePath(expected),expected,'A private fixture path was redirected')
     return expected
   }
   try{
-    const project=owned('project'), config=owned('native-config')
+    const project=owned('project')
+    config=owned(`native-config-${randomUUID()}`)
     const database=owned('opencode.db')
     for(const name of ['home','xdg','tmp','config','ProgramData','npm-cache','empty.npmrc','empty-global.npmrc',
       'home/AppData','home/AppData/Local','home/AppData/Roaming','xdg/config','xdg/data','xdg/state','xdg/cache'])owned(name)
-    await mkdir(project,{recursive:true});await mkdir(config,{recursive:true})
+    await mkdir(project,{recursive:true});await mkdir(config)
     executable=path.join(profile,`opencode-${randomUUID()}${process.platform==='win32'?'.exe':''}`)
     await copyFile(await realpath(cli),executable)
     password=randomUUID()
@@ -173,7 +181,7 @@ export async function withNative(run,{profile,pruning=true}={}){
     }
     await mkdir(env.ProgramData,{recursive:true})
     if(pruning){const {preparePruning}=await import('../../../scripts/perf/pruning.mjs');plugin=await preparePruning(profile,config)}
-    daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env})
+    daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env,redact:[password]})
     const origin=await daemon.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1])
     const pid=await daemon.pid()
     const {read,send}=await attestNative(origin,daemon.child,authorization,fixtureFetch,pid)
@@ -185,8 +193,11 @@ export async function withNative(run,{profile,pruning=true}={}){
       if(model)await new Promise(resolve=>model.close(resolve))
       try{
         const log=daemon?.output()??''
-        await writeFile(path.join(profile,'daemon.log'),password?log.replaceAll(password,'<fixture password>'):log)
-        if(executable)await removeExecutable(executable)
+        try{await writeFile(path.join(profile,'daemon.log'),password?log.replaceAll(password,'<fixture password>'):log)}
+        finally{
+          try{if(executable)await removeExecutable(executable)}
+          finally{if(config)await rm(config,{recursive:true,force:true})}
+        }
       } finally {
         await lock.close()
         if(!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null)await unlink(lease)

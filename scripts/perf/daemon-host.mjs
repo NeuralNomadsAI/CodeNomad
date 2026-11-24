@@ -24,7 +24,7 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
   const env = await fixtureEnvironment(root, {
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
     OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
-    OPENCODE_SERVER_PASSWORD: password,
+    OPENCODE_DISABLE_AUTOUPDATE: "true", OPENCODE_SERVER_PASSWORD: password,
   })
   await mkdir(env.OPENCODE_CONFIG_DIR)
   const git = (...args) => execFileSync("git", args, { cwd: project, env, windowsHide: true })
@@ -99,7 +99,7 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
   } catch(error){provider.closeAllConnections();await new Promise(resolve=>provider.close(resolve));throw error}
   let daemon
   try {
-    daemon = launchFixture(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {cwd: project, env})
+    daemon = launchFixture(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {cwd: project, env, redact: [password]})
     const url = await daemon.ready(stdout => stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1], 60_000)
     const pid = await daemon.pid()
     const {send} = await attestNative(url, daemon.child, authorization, fixtureFetch, pid)

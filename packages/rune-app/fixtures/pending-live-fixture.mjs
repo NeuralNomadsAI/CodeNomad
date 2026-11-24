@@ -51,7 +51,7 @@ try{
   observer=new AbortController();watch=(async()=>{for await(const event of client.event.subscribe({signal:observer.signal})){proof.events.push({type:event.type,sessionID:event.data?.sessionID,id:event.data?.id});assert(proof.events.length<256)}})();void watch.catch(()=>{})
   await until(()=>proof.events.some(e=>e.type==='server.connected'),'native SSE')
   session=await client.session.create({location:{directory:project},title:'Rune private native pending UI',permissions:[{action:'*',resource:'*',effect:'deny'},{action:'rune_fixture',resource:'*',effect:'ask'}]});assert.equal(path.resolve(session.location.directory),project);proof.session=session.id
-  rust=launchFixture(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{cwd:root,shutdown:'shutdown\n',env:{...env,CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:password,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}})
+  rust=launchFixture(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{cwd:root,shutdown:'shutdown\n',redact:[password,'fixture-rune-native-pending'],env:{...env,CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:password,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}})
   origin=await rust.ready(rustOrigin)
   const login=await fixtureFetch(`${origin}/api/auth/login`,post({username:'codenomad',password:'fixture-rune-native-pending'}));assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await relay('/api/workspaces',post({path:project,requestId:`rune-native-ui-${randomUUID()}`}));assert.equal(opened.status,201);assert.equal(path.resolve(opened.body.path),project);proof.workspace=opened.body.id
@@ -63,9 +63,10 @@ try{
     proof.historyStatus={status:window.status,kind:window.body?.status,reason:window.body?.reason}
     return window.body?.status==='window'
   },'native history window ready')
-  ui=launchFixture(clientBinary,['--probe-real-pending'],{cwd:root,env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-rune-native-pending',RUNE_WORKSPACE:proof.workspace,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_PENDING_OUT:root,RUNE_PENDING_IDS:JSON.stringify(ids),RUNE_LOCALE:'fr'}})
+  ui=launchFixture(clientBinary,['--probe-real-pending'],{cwd:root,redact:[password,'fixture-rune-native-pending'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-rune-native-pending',RUNE_WORKSPACE:proof.workspace,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_PENDING_OUT:root,RUNE_PENDING_IDS:JSON.stringify(ids),RUNE_LOCALE:'fr'}})
   ui.child.stdout.on('data',b=>{
-    uiLines+=b;assert(uiLines.length<65536)
+    uiLines+=b
+    if(uiLines.length>=65536){protocolError??=Error('Pending probe stdout exceeded 64 KiB');ui.child.kill();return}
     for(let at;(at=uiLines.indexOf('\n'))>=0;){const line=uiLines.slice(0,at);uiLines=uiLines.slice(at+1);let value;try{value=JSON.parse(line)}catch{continue}protocol=protocol.then(()=>stage(value)).catch(error=>{protocolError??=error;ui.child.kill()})}
   })
   const code=await Promise.race([ui.closed,delay(60000,124,{ref:false})]);await protocol;if(protocolError)throw protocolError;assert.equal(code,0);assert.equal(position,5);assert.equal(proof.visible.length,5);assert(proof.complete)
@@ -78,7 +79,7 @@ try{
   proof.result=0
 }catch(error){proof.error=String(error?.stack??error);process.exitCode=1}
 finally{
-  observer?.abort();await watch?.catch(()=>{})
+  observer?.abort();if(watch)await Promise.race([watch.catch(()=>{}),delay(2000,undefined,{ref:false})])
   try{await ui?.stop();if(client&&session){await client.session.remove({sessionID:session.id});proof.cleaned=true;assert(!(await client.session.list({location:{directory:project}})).data.some(s=>s.id===session.id))}}
   catch(error){proof.result=1;proof.cleanupError=String(error);process.exitCode=1}
   finally{await rust?.stop();proof.rustExit=rust?.child.exitCode??null

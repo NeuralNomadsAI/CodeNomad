@@ -19,6 +19,8 @@ export async function withBrowser(daemon, tree, root, followLongReplies, run) {
         viewport: { width: 1440, height: 1440 }, locale: "en-US", serviceWorkers: "block",
       })
       await context.addInitScript({ path: fileURLToPath(new URL("./page-probe.js", import.meta.url)) })
+      const localOrigin = new URL(url).origin
+      await context.route("**/*", route => new URL(route.request().url()).origin === localOrigin ? route.continue() : route.abort("blockedbyclient"))
       await context.addCookies([{ name: "codenomad_session", value: cookie, url }])
       const page = context.pages()[0] ?? await context.newPage()
       page.setDefaultTimeout(60_000)

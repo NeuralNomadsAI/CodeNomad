@@ -3,7 +3,7 @@ import {link,mkdtemp,mkdir,realpath,rm,symlink,writeFile} from 'node:fs/promises
 import os from 'node:os'
 import path from 'node:path'
 import {test} from 'node:test'
-import {attestNative,fixtureTarget,validatePrivateTree} from './live-access.mjs'
+import {attestNative,fixtureTarget,requirePrivateCli,validatePrivateTree} from './live-access.mjs'
 
 const origin='http://127.0.0.1:42395'
 const auth='fixture-credential'
@@ -14,13 +14,19 @@ test('live fixtures fail closed before work when the listener cannot prove its P
   for(const response of [Response.json({pid:381}),Response.json({}, {status:401}),Response.json({})]){
     const requests=[]
     await assert.rejects(attestNative(origin,child,auth,async(url,init)=>{
-      requests.push([url.pathname,init.method??'GET'])
-      assert.equal(init.headers.get('authorization'),auth)
-      assert.equal(init.redirect,'error')
+      requests.push({path:url.pathname,method:init.method??'GET',auth:init.headers.get('authorization'),redirect:init.redirect})
       return response
     }),/the shared OpenCode service is forbidden/)
-    assert.deepEqual(requests,[['/api/info','GET']])
+    assert.deepEqual(requests,[{path:'/api/info',method:'GET',auth,redirect:'error'}])
   }
+  const missingPid=[]
+  await assert.rejects(attestNative(origin,child,auth,async url=>{missingPid.push(url.href);return Response.json({pid:127})},undefined),/did not report its PID/)
+  assert.deepEqual(missingPid,[])
+})
+
+test('live fixtures reject UNC executables before touching the filesystem',()=>{
+  assert.throws(()=>requirePrivateCli(['--opencode','\\\\server\\share\\opencode.exe']),/absolute local executable/)
+  assert.throws(()=>requirePrivateCli(['--opencode','//server/share/opencode']),/absolute local executable/)
 })
 
 test('a fixture refuses a redirected target and an exited child before sending',async()=>{

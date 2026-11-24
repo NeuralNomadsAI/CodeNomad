@@ -1,4 +1,5 @@
 import { createRequire } from "node:module"
+import { withoutFixtureProxy } from "../native-fixture-http.mjs"
 import { MARKER, now } from "./lib.mjs"
 
 const require = createRequire(import.meta.url)
@@ -9,7 +10,7 @@ export async function withTui(cli, daemon, session, run) {
   const cols = 200, rows = 60
   const p = pty.spawn(cli, ["--server", daemon.url, "--session", session, daemon.project], {
     name: "xterm-256color", cols, rows, cwd: daemon.project,
-    env: { ...daemon.env, TERM: "xterm-256color", COLORTERM: "truecolor" },
+    env: withoutFixtureProxy({ ...daemon.env, TERM: "xterm-256color", COLORTERM: "truecolor" }),
   })
   const exited = new Promise(resolve => p.onExit(resolve))
   const term = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 0 })

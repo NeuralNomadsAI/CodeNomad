@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
+import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
 import {args,requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
@@ -26,8 +27,9 @@ await native.read(`/api/session/${fork.id}`,{method:'PATCH',body:JSON.stringify(
 const verified=(await native.read(`/api/session/${fork.id}`)).data;assert.deepEqual(verified.permissions,deny)
 const copied=await native.read(`/api/session/${fork.id}/message?limit=200`);assert.equal(copied.data.length,200);assert(copied.cursor?.next)
 const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'interactive-rune-owned-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
-const server=launchFixture(serverBinary,[directory,path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n'})
-let child,observer,guard,stopped=false,newID
+const server=launchFixture(serverBinary,[directory,path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,'interactive-rune-owned-backend']})
+let child,observer,stream,watchTask,guardTask,stopped=false,newID
+const guarded=new Set([source.id,fork.id])
 const stats={sourceID:source.id,longID:fork.id,longTitle,newTitle,sourceRowsInPage:first.data.length,sourceHasOlder:true,longCopiedRowsInPage:copied.data.length,newID:null,turns:[],tools:0}
 const save=()=>writeFile(path.join(profile,'proof.json'),JSON.stringify(stats,null,2))
 try{
@@ -36,7 +38,7 @@ try{
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const call=(route,init={})=>fixtureFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
   observer=new AbortController()
-  const stream=await fixtureFetch(`${origin}/api/events?clientId=rune-interactive-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal});assert.equal(stream.status,200)
+  stream=await fixtureFetch(`${origin}/api/events?clientId=rune-interactive-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal});assert.equal(stream.status,200)
   const fragments=new Map()
   async function watch(){
     let buffer='';const decoder=new TextDecoder()
@@ -57,24 +59,31 @@ try{
       }
     }
   }
-  watch().catch(error=>{if(!stopped&&error.name!=='AbortError')console.error('observer:',error.message)})
-  guard=setInterval(async()=>{
-    if(newID||stopped)return
-    try{
-      const rows=await native.read(`/api/session?${new URLSearchParams({directory,limit:'200'})}`)
-      const found=rows.data.filter(r=>r.title===newTitle&&!r.parentID)
-      if(found.length===1){
-        assert.equal(found[0].location.directory.toLowerCase(),directory.toLowerCase())
-        await native.read(`/api/session/${found[0].id}`,{method:'PATCH',body:JSON.stringify({permissions:deny})})
-        const readback=(await native.read(`/api/session/${found[0].id}`)).data;assert.deepEqual(readback.permissions,deny)
-        newID=found[0].id;stats.newID=newID;await save();console.log(JSON.stringify({type:'INTERACTIVE_NEW_SESSION_GUARDED',session:newID}))
-      }
-    }catch(error){console.error('guard:',error.message)}
-  },1000)
+  watchTask=watch().catch(error=>{if(!stopped&&error.name!=='AbortError')console.error('observer:',error.message)})
+  guardTask=(async()=>{
+    while(!stopped){
+      try{
+        const rows=await native.read(`/api/session?${new URLSearchParams({directory,limit:'200'})}`,{signal:observer.signal})
+        for(const row of rows.data.filter(r=>!r.parentID&&!guarded.has(r.id))){
+          assert.equal(row.location.directory.toLowerCase(),directory.toLowerCase())
+          await native.read(`/api/session/${row.id}`,{method:'PATCH',body:JSON.stringify({permissions:deny}),signal:observer.signal})
+          const readback=(await native.read(`/api/session/${row.id}`,{signal:observer.signal})).data;assert.deepEqual(readback.permissions,deny)
+          guarded.add(row.id)
+          if(row.title===newTitle&&!newID){newID=row.id;stats.newID=newID;await save();console.log(JSON.stringify({type:'INTERACTIVE_NEW_SESSION_GUARDED',session:newID}))}
+        }
+      }catch(error){if(!stopped&&error.name!=='AbortError')console.error('guard:',error.message)}
+      try{await delay(1000,undefined,{signal:observer.signal})}catch{break}
+    }
+  })()
   await save();await writeFile(path.join(profile,'session.json'),JSON.stringify({profile,directory,sourceID:source.id,longID:fork.id,longTitle,newTitle}))
-  child=launchFixture(clientBinary,[],{cwd:profile,env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
+  child=launchFixture(clientBinary,[],{cwd:profile,redact:[native.password,'interactive-rune-owned-backend'],env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
   child.child.stderr.on('data',d=>console.error(String(d).trim()))
   console.log(JSON.stringify({type:'INTERACTIVE_READY',profile,directory,longTitle,newTitle,pid:await child.pid()}))
   assert.equal(await child.closed,0,child.output())
-}finally{stopped=true;clearInterval(guard);observer?.abort();try{await child?.stop()}finally{await server.stop()}await save();await writeFile(path.join(profile,'rust.log'),server.output())}
+}finally{
+  stopped=true;observer?.abort();void stream?.body?.cancel?.().catch(()=>{})
+  await Promise.race([Promise.allSettled([watchTask,guardTask].filter(Boolean)),delay(2000,undefined,{ref:false})])
+  try{await child?.stop()}finally{await server.stop()}
+  await save();await writeFile(path.join(profile,'rust.log'),server.output())
+}
 })

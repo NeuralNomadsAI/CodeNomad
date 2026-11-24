@@ -1,6 +1,7 @@
 // Explicit real OpenCode test. Own empty project/session; deny all model tools.
 import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
+import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
 import {requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
@@ -17,9 +18,10 @@ const title='Rune disposable agent-controls test'
 const session=(await native.read('/api/session',{method:'POST',body:JSON.stringify({title,location:{directory:project},permissions,model:{id:target.id,providerID:target.providerID}})})).data
 await writeFile(path.join(profile,'session.json'),JSON.stringify({session:session.id,project,title},null,2))
 assert(session?.id&&session.location.directory===project)
+assert.deepEqual(session.permissions,permissions,'session must enforce deny-all before launching Rune')
 const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'fixture-controls-live',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile}
-const server=launchFixture(serverBinary,[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,shutdown:'shutdown\n'})
-let client,result=1,observer,watch,events=[],cleaned=false
+const server=launchFixture(serverBinary,[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,'fixture-controls-live']})
+let client,result=1,observer,stream,watch,watchError=null,events=[],cleaned=false
 try{
   const origin=await server.ready(rustOrigin)
   const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'fixture-controls-live'})});assert.equal(login.status,200)
@@ -28,7 +30,7 @@ try{
   assert.equal(response.status,201)
   const workspace=await response.json();assert(workspace.id&&path.resolve(workspace.path)===project)
   observer=new AbortController()
-  const stream=await fixtureFetch(`${origin}/api/events?clientId=controls-live-observer&connectionId=owned`,{headers:{cookie},signal:observer.signal});assert.equal(stream.status,200)
+  stream=await fixtureFetch(`${origin}/api/events?clientId=controls-live-observer&connectionId=owned`,{headers:{cookie},signal:observer.signal});assert.equal(stream.status,200)
   watch=(async()=>{let buffer='';const decoder=new TextDecoder();for await(const chunk of stream.body){
     buffer+=decoder.decode(chunk,{stream:true});assert(buffer.length<2*1024*1024);let index
     while((index=buffer.indexOf('\n\n'))>=0){const block=buffer.slice(0,index);buffer=buffer.slice(index+2)
@@ -36,10 +38,11 @@ try{
       const raw=block.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5)).join('\n');if(!raw)continue
       const value=JSON.parse(raw);if(value.type==='instance.event'&&value.event?.data?.sessionID===session.id)events.push(value.event.type)
     }
-  }})().catch(error=>{if(!observer.signal.aborted)throw error})
-  client=launchFixture(clientBinary,['--probe-real-controls'],{cwd:profile,env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-controls-live',RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_TEST_MODEL:JSON.stringify(target),RUNE_LOCALE:'fr'}})
+  }})().catch(error=>{if(!observer.signal.aborted)watchError??=error})
+  client=launchFixture(clientBinary,['--probe-real-controls'],{cwd:profile,env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-controls-live',RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_TEST_MODEL:JSON.stringify(target),RUNE_LOCALE:'fr'},redact:[native.password,'fixture-controls-live']})
   result=await client.closed
   process.stdout.write(client.output())
+  if(watchError)throw watchError
   assert.equal(result,0)
   const fresh=(await native.read(`/api/session/${session.id}`)).data
   assert.deepEqual(fresh.model,target);assert.deepEqual(fresh.permissions,permissions)
@@ -49,7 +52,8 @@ try{
   assert(events.includes('session.execution.interrupted'),'native interruption event')
   console.log(JSON.stringify({result:'real-controls-qualified',deltaEvents:events.filter(t=>t==='session.text.delta').length,toolEvents:0,rows:exported.messages.length,profile}))
 }finally{
-  observer?.abort();await watch?.catch(()=>{})
+  observer?.abort();void stream?.body?.cancel?.().catch(()=>{})
+  if(watch)await Promise.race([watch,delay(2000,undefined,{ref:false})])
   try{
   await client?.stop()
   const fresh=(await native.read(`/api/session/${session.id}`)).data

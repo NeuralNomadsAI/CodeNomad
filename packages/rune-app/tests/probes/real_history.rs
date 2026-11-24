@@ -92,7 +92,9 @@ pub fn run() {
                 return false;
             }
             let stats = control("stats");
-            stats["terminals"] == 1 && stats["cuts"] == 1
+            stats["terminals"] == 1
+                && stats["cuts"] == 1
+                && stats["lastOutcome"] == "session.execution.succeeded"
         },
         sample,
     );
@@ -101,14 +103,32 @@ pub fn run() {
         "sample both the outage and recovery"
     );
     let expected = control("expected");
-    let rows = expected["rows"].as_array().unwrap();
+    let rows = expected["rows"]
+        .as_array()
+        .expect("expected rows array after recovery");
+    assert!(
+        rows.len() >= 400,
+        "expected at least 400 stored rows after recovery, got {}",
+        rows.len()
+    );
     canonical(&rt, &rows[400..]);
     let stats = control("stats");
     assert_eq!(stats["prompts"], 1);
     assert_eq!(stats["cuts"], 1);
     assert_eq!(stats["tools"], 0);
-    assert!(stats["nativeFragments"].as_u64().unwrap() >= 2);
-    assert!(stats["sseConnections"].as_u64().unwrap() >= 2);
+    assert_eq!(stats["lastOutcome"], "session.execution.succeeded");
+    assert!(
+        stats["nativeFragments"]
+            .as_u64()
+            .expect("nativeFragments counter")
+            >= 2
+    );
+    assert!(
+        stats["sseConnections"]
+            .as_u64()
+            .expect("sseConnections counter")
+            >= 2
+    );
     println!(
         "{}",
         json!({"result":"real-opencode-history-recovery-ok","nativeRows":rt.state.messages.len(),"maxAnchorJumpPoints":max_jump,"sampledFrames":frames,"reconnectingFrames":reconnecting,"stats":stats})

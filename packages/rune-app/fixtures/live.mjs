@@ -1,6 +1,7 @@
 // Own backend and private OpenCode, with every tool denied.
 import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
+import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
 import {prepareLive} from './live-session.mjs'
 import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
@@ -20,9 +21,9 @@ assert.deepEqual(current.permissions,[{action:'*',resource:'*',effect:'deny'}])
 const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:live.origin,CNRS_FIXTURE_PASSWORD:live.password,
   CNRS_SERVER_PASSWORD:'rune-live-private-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
 const server=launchFixture(serverBinary,
-  [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n'})
+  [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[live.password,'rune-live-private-backend']})
 let child
-let observed
+let observed,stream,observeTask
 try {
   const origin=await server.ready(rustOrigin)
   const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'rune-live-private-backend'})})
@@ -33,7 +34,7 @@ try {
   const workspace=await opened.json();assert.equal(opened.status,201,'Disposable workspace admission')
   const abort=new AbortController()
   observed=abort
-  const stream=await fixtureFetch(`${origin}/api/events?clientId=rune-live-observer&connectionId=demo-observer`,{headers:{cookie},signal:abort.signal})
+  stream=await fixtureFetch(`${origin}/api/events?clientId=rune-live-observer&connectionId=demo-observer`,{headers:{cookie},signal:abort.signal})
   assert.equal(stream.status,200)
   const stats={turn:0,chunks:0,body:'',ids:[],tools:0}
   const observe=async()=>{
@@ -62,15 +63,16 @@ try {
       }
     }
   }
-  observe().catch(error=>{if(error.name!=='AbortError')console.error(`Live observer: ${error.message}`)})
+  observeTask=observe().catch(error=>{if(!abort.signal.aborted&&error.name!=='AbortError')console.error(`Live observer: ${error.message}`)})
   console.log(JSON.stringify({type:'RUNE_LIVE_READY',profile,project,sessionID,workspace:workspace.id,tools:'deny-all'}))
-  child=launchFixture(clientBinary,[],{cwd:profile,
+  child=launchFixture(clientBinary,[],{cwd:profile,redact:[live.password,'rune-live-private-backend'],
     env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:sessionID,
       RUNE_PASSWORD:'rune-live-private-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:'1',RUNE_LIVE_TITLE:'1'}})
   console.log(JSON.stringify({type:'RUNE_LIVE_WINDOW',pid:await child.pid()}))
   assert.equal(await child.closed,0,child.output())
 } finally {
-  observed?.abort()
+  observed?.abort();void stream?.body?.cancel?.().catch(()=>{})
+  if(observeTask)await Promise.race([observeTask,delay(2000,undefined,{ref:false})])
   try{await child?.stop()}finally{await server.stop()}
   await writeFile(path.join(profile,'backend.log'),server.output())
 }
