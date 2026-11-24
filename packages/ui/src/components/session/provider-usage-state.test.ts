@@ -10,6 +10,7 @@ const response = (used: number): ProviderUsageResponse => ({ requestedProviderId
 test("shouldShowProviderUsageWindow applies the credit-balance preference to bare and scoped credits_balance keys", () => {
   assert.equal(shouldShowProviderUsageWindow("credits_balance", false), false)
   assert.equal(shouldShowProviderUsageWindow("credits_balance:Team", false), false)
+  assert.equal(shouldShowProviderUsageWindow("credits_balance :Team", false), false)
   assert.equal(shouldShowProviderUsageWindow("credits_balance", true), true)
   assert.equal(shouldShowProviderUsageWindow("credits_balance:Team", true), true)
   assert.equal(shouldShowProviderUsageWindow("5h", false), true)

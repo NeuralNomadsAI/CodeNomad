@@ -14,7 +14,7 @@ export const providerUsageKey = (source: ProviderUsageSource) => JSON.stringify(
 
 export const shouldShowProviderUsageWindow = (label: string, showCreditBalance: boolean) => {
   const scope = label.indexOf(":")
-  const base = scope > 0 ? label.slice(0, scope) : label
+  const base = (scope > 0 ? label.slice(0, scope) : label).trim()
   return base !== "credits_balance" || showCreditBalance
 }
 

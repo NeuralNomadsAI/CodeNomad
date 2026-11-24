@@ -8,7 +8,7 @@ export const PLUGIN_USAGE_RPC_METHOD = "read"
 export const PLUGIN_USAGE_MAX_WINDOWS = 16
 export const PLUGIN_USAGE_MAX_RESPONSE_BYTES = 256 * 1024
 
-const RPC_PROVIDER_ID = /^[A-Za-z0-9._-]{1,128}$/
+const RPC_PROVIDER_ID = /^[A-Za-z0-9._-]{1,100}$/
 const CONTROL_CHARS = /[\x00-\x1f\x7f-\x9f]/
 const FORBIDDEN_KEYS = new Set([
   "__proto__", "prototype", ...Object.getOwnPropertyNames(Object.prototype),
@@ -20,12 +20,19 @@ function isForbiddenWindowKey(label: string): boolean {
   return scope > 0 && FORBIDDEN_KEYS.has(label.slice(0, scope))
 }
 
-const displayText = (max: number) =>
-  z.string().trim().min(1).max(max).refine(value => !CONTROL_CHARS.test(value))
+function isCanonicalWindowKey(value: string): boolean {
+  if (value !== value.trim() || CONTROL_CHARS.test(value) || isForbiddenWindowKey(value)) return false
+  const scope = value.indexOf(":")
+  if (scope < 0) return true
+  const base = value.slice(0, scope)
+  const detail = value.slice(scope + 1)
+  return base.length > 0 && detail.length > 0 && base === base.trim() && detail === detail.trim()
+}
 
-const canonicalWindowKey = z.string().min(1).max(64).refine(value =>
-  value === value.trim() && !CONTROL_CHARS.test(value) && !isForbiddenWindowKey(value),
-)
+const displayText = (max: number) =>
+  z.string().refine(value => !CONTROL_CHARS.test(value)).transform(value => value.trim()).pipe(z.string().min(1).max(max))
+
+const canonicalWindowKey = z.string().min(1).max(64).refine(isCanonicalWindowKey)
 
 const finite = z.number().refine(Number.isFinite)
 // Parse JS's shortest decimal string directly so neither binary scaling (`1.005 * 100`)
@@ -65,6 +72,19 @@ const absentRpcErrorSchema = z.object({
   _tag: z.literal("RpcError"),
   type: z.enum(["rpc.unavailable", "rpc.method_not_found"]),
   message: z.string().min(1).max(4096),
+}).strict()
+
+const registeredRpcErrorSchema = z.object({
+  _tag: z.literal("RpcError"),
+  type: z.string().min(1).max(256).refine(type => type !== "rpc.unavailable" && type !== "rpc.method_not_found"),
+  message: z.string().max(16_384),
+  data: z.unknown().optional(),
+}).strict()
+
+const registeredRpcInternalErrorSchema = z.object({
+  _tag: z.literal("RpcInternalError"),
+  type: z.string().min(1).max(256),
+  message: z.string().max(16_384),
 }).strict()
 
 const pluginUsageOutputSchema = z.object({
@@ -273,10 +293,7 @@ export async function readPluginProviderUsage(
       signal.throwIfAborted()
       const body = json.ok ? asRecord(json.value) : null
       if (absentRpcErrorSchema.safeParse(body).success) return null
-      if (body?._tag === "RpcError" && body.type !== "rpc.unavailable" && body.type !== "rpc.method_not_found"
-        && typeof body.type === "string" && body.type.length > 0 && typeof body.message === "string" && body.message.length > 0) {
-        return unavailable(target.providerId, target.modelId)
-      }
+      if (registeredRpcErrorSchema.safeParse(body).success) return unavailable(target.providerId, target.modelId)
       throw new Error("Plugin usage RPC rejected request")
     }
 
@@ -298,7 +315,7 @@ export async function readPluginProviderUsage(
       const json = await readBoundedJson(response, quotaSignal)
       signal.throwIfAborted()
       const body = json.ok ? asRecord(json.value) : null
-      if (body?._tag === "RpcInternalError") return unavailable(target.providerId, target.modelId)
+      if (registeredRpcInternalErrorSchema.safeParse(body).success) return unavailable(target.providerId, target.modelId)
       throw new Error("Plugin usage daemon error")
     }
 

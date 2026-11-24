@@ -12,7 +12,8 @@ import {
 test("pluginUsageRpcId accepts safe provider IDs and rejects traversal or invalid characters", () => {
   assert.equal(pluginUsageRpcId("agy-agent"), "provider-usage.agy-agent")
   assert.equal(pluginUsageRpcId("  acme.provider_1  "), "provider-usage.acme.provider_1")
-  for (const invalid of ["", "   ", "a/b", "a..b", "a b", "a\nb", "x".repeat(129)]) {
+  assert.equal(pluginUsageRpcId("x".repeat(100)), `provider-usage.${"x".repeat(100)}`)
+  for (const invalid of ["", "   ", "a/b", "a..b", "a b", "a\nb", "x".repeat(101)]) {
     assert.equal(pluginUsageRpcId(invalid), null, invalid)
   }
 })
@@ -95,13 +96,17 @@ test("parsePluginUsageOutput clears windows on failure and rejects malformed, pr
   for (let i = 0; i <= PLUGIN_USAGE_MAX_WINDOWS; i++) tooMany[`w${i}`] = { usedPercent: i }
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: tooMany }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ providerName: "bad\nname", configured: true, ok: true, windows: {} }, { requestedProviderId: "x", providerId: "x" }), null)
+  assert.equal(parsePluginUsageOutput({ providerName: "\tDisplay", configured: true, ok: true, windows: {} }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ providerName: "bad\u0085name", configured: true, ok: true, windows: {} }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { "weekly:\u0085scope": { usedPercent: 1 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { "5h": { usedPercent: Number.NaN } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { "5h": { unknownProp: 1 } } }, { requestedProviderId: "x", providerId: "x" }), null)
-  // Non-canonical window keys (whitespace collisions) and Object.prototype keys (bare or scoped) are rejected.
+  // Non-canonical window keys (whitespace around edges or `:`) and Object.prototype keys (bare or scoped) are rejected.
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 1 }, " weekly ": { usedPercent: 2 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { " 5h": { usedPercent: 1 } } }, { requestedProviderId: "x", providerId: "x" }), null)
+  for (const key of ["credits_balance :Team", "credits_balance: Team", ":Team", "5h:"]) {
+    assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { [key]: { usedPercent: 1 } } }, { requestedProviderId: "x", providerId: "x" }), null, key)
+  }
   for (const key of ["__proto__", "constructor", "prototype", "toString", "valueOf", "hasOwnProperty", "hasOwnProperty:Scope", "toString:Model"]) {
     const raw = JSON.parse(`{"configured":true,"ok":true,"windows":${JSON.stringify({ [key]: { usedPercent: 1 } })}}`)
     assert.equal(parsePluginUsageOutput(raw, { requestedProviderId: "x", providerId: "x" }), null, key)
@@ -170,6 +175,7 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     ["malformed JSON 404", async () => new Response("{bad", { status: 404, headers: { "content-type": "application/json" } })],
     ["whitespace-only JSON 404", async () => new Response("   ", { status: 404, headers: { "content-type": "application/json" } })],
     ["SessionNotFoundError 404", async () => Response.json({ _tag: "SessionNotFoundError", message: "gone" }, { status: 404 })],
+    ["incomplete RpcInternalError 500", async () => Response.json({ _tag: "RpcInternalError" }, { status: 500 })],
     ["contract error 500", async () => Response.json({ _tag: "OpenCodeContractError", status: 500 }, { status: 500 })],
     ["bad gateway 502", async () => new Response("Bad Gateway", { status: 502 })],
     ["transport error", async () => { throw new TypeError("fetch failed") }],
@@ -190,6 +196,7 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     () => Response.json({ _tag: "RpcInternalError", type: "rpc.internal", message: "secret-token-leak" }, { status: 500 }),
     () => Response.json({ _tag: "RpcInternalError", type: "rpc.invalid_output", message: "secret-token-leak" }, { status: 500 }),
     () => Response.json({ _tag: "RpcError", type: "rpc.invalid_output", message: "secret-token-leak" }, { status: 400 }),
+    () => Response.json({ _tag: "RpcError", type: "quota.failed", message: "" }, { status: 400 }),
     () => Response.json({ _tag: "RpcError", type: "quota.failed", message: "secret-token-leak" }, { status: 400 }),
   ]) {
     const broken = await readPluginProviderUsage(
