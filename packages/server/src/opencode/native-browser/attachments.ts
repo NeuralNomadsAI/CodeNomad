@@ -61,7 +61,9 @@ export class NativeBrowserAttachments {
     if (this.closed || !this.available) throw new Error("Browser automation is unavailable in this host")
     if (!this.sessions.has(sessionID) && this.sessions.size >= MAX_SESSIONS) throw new Error("Too many attached browser sessions")
     this.holds.set(holdID, { workspaceID, sessionID, expires: Date.now() + HOLD_MS })
-    if (!this.sessions.has(sessionID)) this.attach(sessionID)
+    const session = this.sessions.get(sessionID)
+    if (session) session.renew()
+    else this.attach(sessionID)
   }
 
   release(holdID: string): void {
@@ -158,6 +160,10 @@ export class NativeBrowserAttachments {
   }
 }
 
+function current(connection: ServiceConnection): boolean {
+  try { connection.assertCurrent(); return true } catch { return false }
+}
+
 class SessionAttachment {
   connectionID: string | undefined
   /** The holding workspace whose ownership the current attachment uses. */
@@ -189,6 +195,11 @@ class SessionAttachment {
 
   /** Ends the current attachment; the loop attaches again through a current owner. */
   retarget(): void { this.attachment.abort() }
+
+  /** A replaced service connection (a reconnect to OpenCode) ends the attachment made on it. */
+  renew(): void {
+    if (this.connection && !current(this.connection)) this.retarget()
+  }
 
   control(control: Control): void {
     if (control.type === "attached") void this.publish().catch(error => this.warn("Browser state publication failed", error))
@@ -294,10 +305,15 @@ class SessionAttachment {
   private async rpc(method: string, input: Record<string, unknown>, signal: AbortSignal, client = this.connection?.client): Promise<unknown> {
     const location = this.location
     if (!client || !location || !this.connectionID) throw new Error("Browser attachment is unavailable")
-    const response = await client.rpc.call({ rpcID: RPC_ID, method, location: { directory: location.directory },
-      input: { sessionID: this.sessionID, connectionID: this.connectionID, ...input } },
-      { ...locationRequestOptions(location), signal })
-    return response.output
+    try {
+      const response = await client.rpc.call({ rpcID: RPC_ID, method, location: { directory: location.directory },
+        input: { sessionID: this.sessionID, connectionID: this.connectionID, ...input } },
+        { ...locationRequestOptions(location), signal })
+      return response.output
+    } catch (error) {
+      this.renew()
+      throw error
+    }
   }
 
   private warn(message: string, error: unknown): void {

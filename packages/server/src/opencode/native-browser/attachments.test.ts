@@ -99,3 +99,46 @@ test("NativeBrowserAttachments attaches through an owner, runs each command once
   assert.match(refused.message, /owns this conversation/)
   assert.equal(nativeCalls.some(call => call.method === "browser.execute"), false)
 })
+
+test("a reconnect to OpenCode ends the attachment made on the replaced connection, and it attaches again", async t => {
+  const attaches: Array<{ connectionID: string; release: (outcome: string) => void }> = []
+  const app = Fastify({ logger: false })
+  app.get("/openapi.json", async () => modernContractFixture)
+  app.get("/api/session/:id", async request => ({ data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } } }))
+  app.post("/api/rpc/:rpcID/:method", async (request, reply) => {
+    const { method } = request.params as { rpcID: string; method: string }
+    const input = (request.body as { input: Record<string, unknown> }).input
+    if (method !== "attach") return { output: { ok: true } }
+    const outcome = await new Promise<string>(release => {
+      attaches.push({ connectionID: String(input.connectionID), release })
+      request.raw.once("close", () => release("closed"))
+    })
+    return reply.send({ output: outcome })
+  })
+  const address = await app.listen({ host: "127.0.0.1", port: 0 })
+  t.after(async () => { for (const attach of attaches) attach.release("replaced"); await app.close() })
+  const endpoint = { url: address, auth: undefined }
+  rememberRuntime(endpoint, { version: "2.4.1", pid: 1234, discovery: "status" })
+  const connect = () => {
+    const connection = { endpoint, client: OpenCode.make({ baseUrl: address, fetch: globalThis.fetch }), fetch: globalThis.fetch, stale: false,
+      assertCurrent: () => { if (connection.stale) throw new Error("OpenCode connection changed; refresh before retrying") },
+      invalidate: () => {}, profile: async () => "modern" as const }
+    return connection
+  }
+  let connection = connect()
+  const attachments = new NativeBrowserAttachments({
+    workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
+    eventBus: new EventBus(),
+    nativeParent: { available: true, browserAutomationUnavailable: false, request: async () => ({ available: false }) } as never,
+    logger: { warn: () => {}, debug: () => {}, info: () => {}, error: () => {}, trace: () => {}, isLevelEnabled: () => false } as never,
+  })
+  t.after(() => attachments.close())
+  attachments.hold("hold", "ws", "ses-1")
+  await until(() => attaches.length === 1, "first attach")
+  // The service reconnects: the old connection is invalidated and a new one replaces it.
+  connection.stale = true
+  connection = connect()
+  attachments.hold("hold", "ws", "ses-1")
+  await until(() => attaches.length === 2, "attach on the new connection")
+  assert.notEqual(attaches[1].connectionID, attaches[0].connectionID)
+})

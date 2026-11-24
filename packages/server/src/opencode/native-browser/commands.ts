@@ -103,7 +103,11 @@ export class PreviewTab {
 
   /** Commands run one at a time: a check reads, then clicks, and another command must not act in between. */
   async run(action: Action, generation: number | undefined, signal: AbortSignal): Promise<BrowserOutcome> {
-    if (action.type === "tabs.list") return this.execute(action, generation, signal)
+    if (action.type === "tabs.list") {
+      // Same-document navigation keeps the target: the address, title and history are read again.
+      this.urlTarget = undefined
+      return this.execute(action, generation, signal)
+    }
     const previous = this.queue
     let release!: () => void
     this.queue = new Promise<void>(resolve => { release = resolve })
@@ -245,7 +249,7 @@ export class PreviewTab {
     for (;;) {
       const remaining = timeout - (Date.now() - started)
       try {
-        await page({ action: "wait", text: String(action.text), gone: action.condition === "textGone", timeout: Math.max(0, Math.min(PAGE_WAIT_MS, remaining)) })
+        await page({ action: "wait", text: String(action.text), gone: action.condition === "textGone", timeout: Math.max(0, Math.min(PAGE_WAIT_MS, remaining)), literal: true })
         return this.success(this.tab())
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -292,9 +296,11 @@ const select = (target: unknown, values: unknown): BrowserPageAction =>
 
 /** The control's checked state, read from the snapshot attributes after its ref: its quoted name and values never count. */
 export function checkState(line: string, targetRef: string): "checked" | "unchecked" | "checked=mixed" | undefined {
-  const at = line.indexOf(`[${targetRef}]`)
+  // Quoted names and values are emptied first: they may contain a ref or a state word.
+  const bare = line.replace(/"(?:[^"\\]|\\.)*"/g, '""')
+  const at = bare.indexOf(`[${targetRef}]`)
   if (at < 0) return undefined
-  const attributes = line.slice(at + targetRef.length + 2).replace(/"(?:[^"\\]|\\.)*"/g, "")
+  const attributes = bare.slice(at + targetRef.length + 2)
   return /(?:^|\s)(checked=mixed|checked|unchecked)(?=\s|$)/.exec(attributes)?.[1] as "checked" | "unchecked" | "checked=mixed" | undefined
 }
 

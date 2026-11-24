@@ -104,6 +104,14 @@
     "handle": false,
     "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const needle = String(args[0]).replace(/\\s+/g, \" \").trim().toLowerCase();\n  const root = element;\n  const text = value => String(value || \"\").replace(/\\s+/g, \" \").toLowerCase();\n  if (text(root.innerText || root.textContent).includes(needle)) return true;\n  for (const item of root.querySelectorAll(\"[aria-label], [title], [placeholder], input, textarea\")) {\n    if ([item.getAttribute(\"aria-label\"), item.getAttribute(\"title\"), item.getAttribute(\"placeholder\"), item.value].some(value => text(value).includes(needle))) return true;\n  }\n  return false; }"
   },
+  "body-text-includes": {
+    "scope": "element",
+    "args": [
+      "string"
+    ],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const body = element.ownerDocument.body;\n  return !!body && body.innerText.includes(String(args[0])); }"
+  },
   "active-element": {
     "scope": "global",
     "args": [],

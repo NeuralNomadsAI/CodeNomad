@@ -4,7 +4,7 @@ import { checkState, keyRefusal, PreviewTab, type PreviewHost } from "./commands
 
 function fixture() {
   const calls: Record<string, unknown>[] = []
-  const state = { target: undefined as string | undefined, document: 0, checked: false, locked: false, loading: 0, locationFailures: 0,
+  const state = { target: undefined as string | undefined, document: 0, checked: false, locked: false, loading: 0, locationFailures: 0, locationReads: 0,
     shot: "iVBORw0KGgo=", onPage: undefined as undefined | ((action: string) => void) }
   const host: PreviewHost = {
     probe: async () => {
@@ -22,6 +22,7 @@ function fixture() {
       if (action.action !== "location") calls.push({ ...action, at })
       state.onPage?.(action.action)
       if (action.action === "location") {
+        state.locationReads++
         if (state.locationFailures-- > 0) throw new Error("Native request timed out: browser.page.begin")
         return { url: "http://127.0.0.1/page", title: "Fixture page", canGoBack: state.document > 1, canGoForward: false }
       }
@@ -195,6 +196,7 @@ test("checked state comes from the attributes after the ref only", () => {
   assert.equal(checkState('- checkbox "Terms" [e5] value="checked"', "e5"), undefined)
   assert.equal(checkState('- checkbox "Mixed" [e5] checked=mixed', "e5"), "checked=mixed")
   assert.equal(checkState('- button "checked" [e1]', "e1"), undefined)
+  assert.equal(checkState('- checkbox "Billing [e5] checked by Finance" [e5] unchecked', "e5"), "unchecked", "a name quoting the ref and a state never counts")
 })
 
 test("commands run one at a time, so two concurrent checks set the box once", async () => {
@@ -213,4 +215,17 @@ test("the tab reports the document's title and history", async () => {
   await tab.run({ type: "navigate", tabID: tab.id, url: "http://127.0.0.1/next" }, undefined, signal)
   const [listed] = (await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value.tabs
   assert.deepEqual([listed.title, listed.canGoBack, listed.canGoForward], ["Fixture page", true, false])
+})
+
+test("tabs.list reads the address, title and history again, and text waits match the visible body literally", async () => {
+  const { tab, calls, state } = fixture()
+  await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
+  const listed = async () => (await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value.tabs[0]
+  const before = state.locationReads
+  assert.equal((await listed()).title, "Fixture page")
+  assert.equal((await listed()).title, "Fixture page")
+  assert.equal(state.locationReads - before, 2, "each list reads the document's metadata")
+  calls.length = 0
+  await tab.run({ type: "wait", tabID: tab.id, condition: "text", text: "Saved", timeoutMs: 1 }, undefined, signal)
+  assert.equal(calls[0].literal, true)
 })

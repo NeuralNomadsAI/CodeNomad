@@ -14,7 +14,7 @@ export type PageAction =
   | Target & { kind: "drag"; to: Target }
   | { kind: "scroll"; target?: Target; direction: "up" | "down" | "left" | "right"; amount: number }
   | { kind: "press"; key: string; target?: Target }
-  | { kind: "wait"; text: string; gone: boolean; timeoutMs: number }
+  | { kind: "wait"; text: string; gone: boolean; timeoutMs: number; literal?: true }
 export interface PageActionResult { value?: string; selected?: string[]; focused?: string; found?: boolean; waitedMs?: number }
 
 export function bindRefs(action: RefAction, resolve: (ref: string) => number): PageAction {
@@ -27,7 +27,7 @@ export function bindRefs(action: RefAction, resolve: (ref: string) => number): P
     case "drag": return { kind: "drag", ...target(action.ref), to: target(action.to) }
     case "scroll": return { kind: "scroll", direction: action.direction, amount: action.amount, ...(action.ref ? { target: target(action.ref) } : {}) }
     case "press": return { kind: "press", key: action.key, ...(action.ref ? { target: target(action.ref) } : {}) }
-    case "wait": return { kind: "wait", text: action.text, gone: action.gone, timeoutMs: action.timeout }
+    case "wait": return { kind: "wait", text: action.text, gone: action.gone, timeoutMs: action.timeout, ...(action.literal ? { literal: true as const } : {}) }
   }
 }
 export async function readAccessibilityTree(session: PageSession): Promise<AxNode[]> {
@@ -81,7 +81,7 @@ export async function performAction(session: PageSession, action: PageAction): P
         try { return { focused: await focusedElement(session) } }
         catch (error) { throw new Error("Key input was sent, but the current focus could not be read; inspect before retrying.", { cause: error }) }
       }
-      case "wait": return await waitForText(session, action.text, action.gone, action.timeoutMs)
+      case "wait": return await waitForText(session, action.text, action.gone, action.timeoutMs, action.literal)
     }
   } finally { await releaseObjects(session) }
 }

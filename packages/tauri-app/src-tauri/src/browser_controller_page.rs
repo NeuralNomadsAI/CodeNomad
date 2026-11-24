@@ -240,13 +240,12 @@ impl BrowserController {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             self.webkit_cleanup(app, session_id, operation_id, deadline, fence);
             #[cfg(windows)]
-            let label = self.inner.0.lock().ok().and_then(|inner| {
-                inner
-                    .page_leases
-                    .get(operation_id)
-                    .filter(|lease| lease.session_id == session_id)
-                    .map(|lease| lease.registration.webview_label.clone())
-            });
+            let label = self
+                .inner
+                .0
+                .lock()
+                .ok()
+                .and_then(|mut inner| inner.file_picker_intercepts.remove(operation_id));
             self.end_page(session_id, operation_id);
             #[cfg(windows)]
             if let Some(webview) = label.and_then(|label| app.get_webview(&label)) {
@@ -345,6 +344,12 @@ impl BrowserController {
                     let intercept = |params| {
                         cdp(&webview, "Page.setInterceptFileChooserDialog", params, deadline.min(lease.expires))
                     };
+                    if let Ok(mut inner) = self.inner.0.lock() {
+                        inner.file_picker_intercepts.insert(
+                            operation_id.to_string(),
+                            lease.registration.webview_label.clone(),
+                        );
+                    }
                     if intercept(json!({ "enabled": true, "cancel": true })).is_err() {
                         intercept(json!({ "enabled": true }))?;
                     }
@@ -391,7 +396,10 @@ impl BrowserController {
             #[cfg(windows)]
             {
                 self.release_page(&lease);
-                // The released lease's end finds nothing to clear: the person's own file pickers return now.
+                // The person's own file pickers return now, not only at the operation's end.
+                if let Ok(mut inner) = self.inner.0.lock() {
+                    inner.file_picker_intercepts.remove(operation_id);
+                }
                 if let Some(webview) = app.get_webview(&lease.registration.webview_label) {
                     let _ = cdp(
                         &webview,
