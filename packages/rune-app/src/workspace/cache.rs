@@ -58,6 +58,16 @@ impl Cache {
         {
             return false;
         }
+        if matches!(
+            event,
+            codenomad_client::transport::WorkspaceEvent::UiPreferencesChanged
+        ) {
+            if let Some(git) = &mut self.git.owner {
+                git.event(event);
+                return true;
+            }
+            return false;
+        }
         let Some(target) = super::state::event_workspace_id(event) else {
             return false;
         };

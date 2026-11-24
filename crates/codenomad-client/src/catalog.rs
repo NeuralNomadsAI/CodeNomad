@@ -385,9 +385,12 @@ impl Backend {
             .json(&json!({"title":title.trim(),"location":{"directory":project.path}}))
             .send()
             .await?;
-        if response.status().is_client_error()
-            && response.status() != reqwest::StatusCode::REQUEST_TIMEOUT
-        {
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::BAD_REQUEST
+                | reqwest::StatusCode::UNAUTHORIZED
+                | reqwest::StatusCode::FORBIDDEN
+        ) {
             return Err(CreateRejected.into());
         }
         let data = read_json(response.error_for_status()?).await?;
@@ -415,9 +418,12 @@ impl Backend {
             .json(&json!({"location":{"directory":location}}))
             .send()
             .await?;
-        if response.status().is_client_error()
-            && response.status() != reqwest::StatusCode::REQUEST_TIMEOUT
-        {
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::BAD_REQUEST
+                | reqwest::StatusCode::UNAUTHORIZED
+                | reqwest::StatusCode::FORBIDDEN
+        ) {
             return Err(CreateRejected.into());
         }
         let data = read_json(response.error_for_status()?).await?;

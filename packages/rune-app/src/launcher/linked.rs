@@ -162,9 +162,11 @@ pub(super) fn load(s: &mut State) {
                                         .await
                                         .ok()
                                         .is_some_and(|trees| {
-                                            trees.repository
-                                                == codenomad_client::git::Repository::Git
-                                                && !trees.trees.iter().any(|tree| {
+                                            matches!(
+                                                trees.repository,
+                                                codenomad_client::git::Repository::Git
+                                                    | codenomad_client::git::Repository::Uninitialized
+                                            ) && !trees.trees.iter().any(|tree| {
                                                     !tree.missing
                                                         && (codenomad_client::same_server_path(
                                                             &tree.directory,

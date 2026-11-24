@@ -305,6 +305,13 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
     let mut delivered = false;
     let active_detached = s.screen.is_launcher() && s.incoming.is_none();
     for event in events {
+        if matches!(event, WorkspaceEvent::UiPreferencesChanged) {
+            if active_detached && s.git.owner.is_some() {
+                crate::git::event(s, event);
+                delivered = true;
+            }
+            continue;
+        }
         let Some(target) = event_workspace_id(event) else {
             continue;
         };

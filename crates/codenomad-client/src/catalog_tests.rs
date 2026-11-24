@@ -871,6 +871,7 @@ fn create_untitled_session_distinguishes_explicit_4xx_rejection_from_ambiguous_e
         let server = Server::start(vec![
             reply(route, body.clone(), 403, json!({"error":"forbidden"})),
             reply(route, body.clone(), 408, json!({})),
+            reply(route, body.clone(), 409, json!({"error":"conflict"})),
             reply(route, body, 503, json!({})),
         ]);
         let backend = Backend::connect(&server.address, "").await.unwrap();
@@ -890,6 +891,12 @@ fn create_untitled_session_distinguishes_explicit_4xx_rejection_from_ambiguous_e
             .err()
             .unwrap();
         assert!(!timeout.is::<crate::catalog::CreateRejected>());
+        let conflict = backend
+            .create_untitled_session(&project, "/linked")
+            .await
+            .err()
+            .unwrap();
+        assert!(!conflict.is::<crate::catalog::CreateRejected>());
         let unavailable = backend
             .create_untitled_session(&project, "/linked")
             .await

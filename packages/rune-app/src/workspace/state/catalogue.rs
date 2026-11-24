@@ -85,14 +85,17 @@ async fn verify_uncertain_linked(
         workspace.git_worktrees(true).await
     };
     let target_absent = trees.ok().is_some_and(|trees| {
-        trees.repository == codenomad_client::git::Repository::Git
-            && !trees.trees.iter().any(|tree| {
-                !tree.missing
-                    && (codenomad_client::same_server_path(&tree.directory, target_dir)
-                        || tree.service_directory.as_deref().is_some_and(|service| {
-                            codenomad_client::same_server_path(service, target_dir)
-                        }))
-            })
+        matches!(
+            trees.repository,
+            codenomad_client::git::Repository::Git
+                | codenomad_client::git::Repository::Uninitialized
+        ) && !trees.trees.iter().any(|tree| {
+            !tree.missing
+                && (codenomad_client::same_server_path(&tree.directory, target_dir)
+                    || tree.service_directory.as_deref().is_some_and(|service| {
+                        codenomad_client::same_server_path(service, target_dir)
+                    }))
+        })
     });
     if !target_absent {
         return Some(LinkedCheck::Unverified);

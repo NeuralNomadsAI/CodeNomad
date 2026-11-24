@@ -513,6 +513,8 @@ fn bind_at(
             .record(&b.session, visit, l.listed_sessions.contains(&b.session));
         if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
             row.title.clone_from(&title);
+        } else if let Some(row) = l.linked.rows.iter_mut().find(|row| row.id == b.session) {
+            row.title.clone_from(&title);
         } else {
             l.sessions.insert(
                 0,
