@@ -8,7 +8,8 @@ import { backendOf } from "../lib/backend-client"
 import { backgroundReads } from "../lib/background-read-queue"
 import { barePathCandidates, type BarePathCandidate } from "../lib/markdown-bare-paths"
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
-import type { SessionLinkBase } from "./markdown-session-links"
+import { canOpenLocalPaths } from "../lib/workspace-open"
+import type { SessionLinkBase, SessionLinkTitles } from "./markdown-session-links"
 
 interface FlightState {
   controller: AbortController
@@ -77,7 +78,8 @@ const trackConsumer = (signal: AbortSignal | undefined, state: FlightState, key:
   }, { once: true })
 }
 
-/** File names of one directory inside the worktree `directory`. Concurrent
+/** Linkable names of one directory inside the worktree `directory`: files,
+ * and folders where they open with the system. Concurrent
  * and sequential callers share one flight; a render pass may leave through
  * its signal, and the listing is cancelled only when the last consumer has
  * gone — a streaming rerender's successor keeps it alive. Every dispatched
@@ -114,7 +116,9 @@ export function fileNamesInDirectory(instanceId: string, directory: string, pare
       // never aborted — its lifetime belongs to the cache, not a caller.
       const entries = (await backgroundReads.run(state.controller.signal, async () =>
         backendOf(instanceId).api.listWorkspaceFiles(instanceId, parentPath || ".", directory, state.controller.signal))) as Array<{ name: string; type?: string }>
-      fetched = new Set(entries.filter(entry => entry.type !== "directory").map(entry => entry.name))
+      // Folders link only where a click opens them with the system.
+      const folders = canOpenLocalPaths(instanceId)
+      fetched = new Set(entries.filter(entry => folders || entry.type !== "directory").map(entry => entry.name))
     } catch {
       // A failed read verifies nothing; the caller converts no paths.
     } finally {
@@ -145,7 +149,7 @@ export interface LinkBarePathsOptions {
   instanceId: string
   sessionId: string
   base: SessionLinkBase
-  titles: { preview: string; file: string }
+  titles: SessionLinkTitles
   signal: AbortSignal
 }
 
@@ -180,7 +184,7 @@ const resolveTarget = (href: string, base: string): ResolvedTarget | undefined =
 }
 
 /** One existence-gated pass over a rendered markdown container: bare-path
- * candidates that resolve inside the session's worktree and exist as files
+ * candidates that resolve inside the session's worktree and name a linkable entry
  * become anchors the shared click routing and link decoration already
  * serve. The container is walked once to warm the directory cache and walked
  * again after the listings land, so a fallback/final html commit between the

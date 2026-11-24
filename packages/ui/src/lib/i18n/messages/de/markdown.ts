@@ -13,4 +13,7 @@ export const markdownMessages = {
 
   "markdown.link.previewOpens": "Wird in der Web-Vorschau geöffnet. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet ihn im Browser.",
   "markdown.link.fileOpens": "Wird in der Dateivorschau geöffnet. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet ihn im Browser.",
+  "markdown.link.pathOpens": "Wird in der Dateivorschau geöffnet, wenn sie ihn anzeigen kann, sonst mit Ihrem System. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet ihn mit Ihrem System.",
+  "markdown.link.systemOpens": "Wird mit Ihrem System geöffnet.",
+  "markdown.link.openMissing": "Nicht gefunden: {path}",
 } as const

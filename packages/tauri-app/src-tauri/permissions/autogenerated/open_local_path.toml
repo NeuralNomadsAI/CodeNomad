@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-local-path"
+description = "Enables the open_local_path command without any pre-configured scope."
+commands.allow = ["open_local_path"]
+
+[[permission]]
+identifier = "deny-open-local-path"
+description = "Denies the open_local_path command without any pre-configured scope."
+commands.deny = ["open_local_path"]

@@ -105,6 +105,7 @@ fn main() {
             "check_desktop_update",
             "take_desktop_update_failure",
             "open_workspace_target",
+            "open_local_path",
             "set_workspace_menu_enabled",
             "browser_target_register",
             "browser_target_ownership",

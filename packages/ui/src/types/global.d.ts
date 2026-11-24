@@ -53,6 +53,7 @@ declare global {
       path?: string
       editor?: "vscode" | "cursor" | "zed" | "vscodium"
     }) => Promise<{ ok: true }>
+    openLocalPath?: (payload: { path: string; keep: import("../lib/workspace-open").LocalPathKeep }) => Promise<{ result: import("../lib/workspace-open").LocalPathResult }>
     setWorkspaceMenuEnabled?: (enabled: boolean, viewState?: import("../lib/native/view-menu").ViewMenuState) => Promise<{ ok: true }>
     newWindow?: () => Promise<{ ok: true }>
     nextPendingFolder?: () => Promise<string | null>
@@ -155,6 +156,8 @@ declare global {
        __CODENOMAD_NOTIFICATION_ACTIONS__?: boolean
        __CODENOMAD_NOTIFICATION_PERMISSION__?: boolean
        __CODENOMAD_BROWSER_CAPABILITIES__?: import("../lib/native/browser").BrowserHostCapabilities
+      /** Set by Tauri local windows whose host provides `open_local_path`. */
+      __CODENOMAD_LOCAL_PATHS__?: boolean
        __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote" | "preferences"
        readonly __CODENOMAD_WINDOW_ID__?: string | null
        __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: (phase?: false | "cancel" | "prepare" | "release" | "navigation" | "navigation-cancel") => Promise<void>

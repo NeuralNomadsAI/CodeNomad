@@ -1,5 +1,6 @@
 import { Show, Suspense, createEffect, createSignal, lazy, on, onCleanup } from "solid-js"
 import { Save, WrapText, X } from "lucide-solid"
+import { previewImageType } from "../lib/preview-image-types"
 import { useI18n } from "../lib/i18n"
 import { withHotkey } from "../lib/hotkeys"
 import { useTheme } from "../lib/theme"
@@ -18,7 +19,6 @@ import { decodeWorkspaceText, useWorkspaceFileEditor, workspaceFileFingerprint }
 import { showConfirmDialog } from "../stores/alerts"
 
 const MonacoFileViewer = lazy(() => import("./file-viewer/monaco-file-viewer").then(module => ({ default: module.MonacoFileViewer })))
-const imageTypes: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml", ico: "image/x-icon", bmp: "image/bmp", avif: "image/avif" }
 // One light snapshot per live target; releasing a selection releases its view.
 const views = new WeakMap<FilePreviewTarget, { source: boolean; scrollTop: number }>()
 
@@ -43,7 +43,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     const request = controller = new AbortController(), target = props.target
     const operation = captureBackendOperation(props.instanceId, request.signal)
     if (!operation.current()) return
-    if (!previewable() && !imageTypes[target.path.split(".").pop()!.toLowerCase()]) void loadMonaco().catch(() => {})
+    if (!previewable() && !previewImageType(target.path)) void loadMonaco().catch(() => {})
     setLoading(true)
     setError(null)
     try {
@@ -59,7 +59,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
         }
         return
       }
-      const mime = imageTypes[target.path.split(".").pop()!.toLowerCase()]
+      const mime = previewImageType(target.path)
       if (mime && result.encoding === "base64") setContent({ image: `data:${mime};base64,${result.contents}` })
       else {
         try {
