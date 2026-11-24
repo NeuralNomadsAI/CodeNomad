@@ -317,14 +317,23 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
         const canvas = document.querySelector('canvas'), height = visualViewport.height
         return Math.abs(canvas.getBoundingClientRect().height-height)<1 && Math.abs(canvas.height-height*devicePixelRatio)<=1
       })
-      const field = await fieldRect(), button = await send.boundingBox()
       const shown = await canvas.boundingBox()
       const viewportBounds = await page.evaluate(() => ({top:visualViewport.offsetTop,bottom:visualViewport.offsetTop+visualViewport.height,
         left:visualViewport.offsetLeft,right:visualViewport.offsetLeft+visualViewport.width}))
       const {top,bottom,left,right}=viewportBounds
+      let field, button
+      // Mirror updates defer off rAF after resize/scroll settle (#1670).
+      for(const until=Date.now()+2000;;){
+        field = await fieldRect()
+        button = await send.boundingBox()
+        if(field&&field.height>0&&field.y>=top-1&&field.y+field.height<=bottom+1&&field.x>=left-1&&field.x+field.width<=right+1
+          &&button&&button.y>=top&&button.y+button.height<=bottom+1) break
+        if(Date.now()>=until) break
+        await page.waitForTimeout(25)
+      }
       await waitValue(value)
       assert(field&&field.height>0&&field.y>=top-1&&field.y+field.height<=bottom+1&&field.x>=left-1&&field.x+field.width<=right+1,
-        'The composer field must stay visible in the smaller viewport')
+        `The composer field must stay visible in the smaller viewport: ${JSON.stringify({field,viewportBounds})}`)
       const clip=inkClip(field)
       let draftInk,resizedDraft
       for(const until=Date.now()+2500;;){

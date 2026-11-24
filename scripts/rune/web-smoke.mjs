@@ -389,7 +389,6 @@ try {
         records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,tabBar,...measured,
           ...(values.mobile?{requiredChecksPassed:true,knownGaps:[
             ...(measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]),
-            ...(measured.passwordProxy?.status==='known-gap'?['password-input-bridge-proxy']:[]),
           ]}:{pass:true})})
       } catch (error) {
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
