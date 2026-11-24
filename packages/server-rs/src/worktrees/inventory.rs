@@ -4,7 +4,7 @@ use super::linked::{conflict, git, missing, native, native_error, physical};
 use crate::{App, Error, Workspace, files};
 use axum::http::Method;
 pub use cache::{EventCache, event_catalogue, forget, invalidate, invalidate_project};
-pub(super) use cache::{receipt_catalogue, revision};
+pub(super) use cache::{history_catalogue, receipt_catalogue, revision};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -58,14 +58,28 @@ struct Physical {
 pub(super) const CONFIG_CHANGED_ERROR: &str = "Git configuration changed during worktree validation";
 
 fn config_changed_error() -> Error {
-    crate::error(axum::http::StatusCode::BAD_GATEWAY, CONFIG_CHANGED_ERROR)
+    crate::error(axum::http::StatusCode::BAD_REQUEST, CONFIG_CHANGED_ERROR)
+}
+
+fn file_identity_stamp(path: &Path) -> Option<String> {
+    // On Unix, `meta_stamp` already captures `(dev, ino, ctime, ctime_nsec)` from `lstat`/`stat`
+    // without opening the file, so a replaced POSIX FIFO can never stall an open() call.
+    #[cfg(unix)]
+    {
+        let _ = path;
+        Some(String::new())
+    }
+    #[cfg(not(unix))]
+    {
+        files::host_identity(path).ok()
+    }
 }
 
 fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => Some(Some(ConfigStamp {
             entry: meta_stamp(&meta)?,
-            identity: Some(files::host_identity(path).ok()?),
+            identity: Some(file_identity_stamp(path)?),
             target: None,
         })),
         Ok(meta) if meta.file_type().is_symlink() => {
@@ -75,7 +89,7 @@ fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
             match dunce::canonicalize(path) {
                 Ok(real) => match std::fs::metadata(&real) {
                     Ok(target_meta) if target_meta.is_file() => {
-                        let id = files::host_identity(&real).ok()?;
+                        let id = file_identity_stamp(&real)?;
                         Some(Some(ConfigStamp {
                             entry,
                             identity: None,
@@ -593,11 +607,14 @@ async fn catalogue_in_at(
     // edits inside included config files are detected before publication (TS `git-worktrees.ts:104-135`).
     let effective_config = crate::git::run(&local.root, &["config", "--null", "--list", "--includes"], 4 << 20)
         .await
+        .map_err(|_| native_error())?
         .ok()
-        .and_then(|out| out.ok().ok())
-        .map(|out| out.text());
+        .map_err(|_| native_error())?
+        .text();
     let include_snapshot = effective_config
-        .filter(|cfg| cfg.split('\0').any(|entry| entry.split_once('\n').is_some_and(|(k, _)| k == "include.path")));
+        .split('\0')
+        .any(|entry| entry.split_once('\n').is_some_and(|(k, _)| k == "include.path"))
+        .then_some(effective_config);
     let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
     let project = project.as_str();
     let tail = w.path.strip_prefix(&local.root).map_err(|_| native_error())?;

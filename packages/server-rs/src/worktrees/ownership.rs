@@ -656,6 +656,9 @@ pub(crate) async fn media_directory(
         if !subfolders {
             return if strict_media { Err(native_error()) } else { Ok(None) };
         }
+        if strict_media {
+            super::strict_non_git_workspace(workspace).await?;
+        }
         let root_path = workspace.path.clone();
         let Some(root_id) =
             tokio::task::spawn_blocking(move || crate::files::directory_identity(&root_path).ok()).await.ok().flatten()
@@ -809,13 +812,13 @@ pub(crate) async fn owns_loaded(
 
 /// Request-local validated checkout inventory for history fan-out and provenance.
 pub(crate) struct HistoryInventory {
-    catalogue: Option<super::inventory::Catalogue>,
+    catalogue: Option<std::sync::Arc<super::inventory::Catalogue>>,
     allow_subfolders: bool,
 }
 
 impl HistoryInventory {
     pub(crate) async fn load(
-        app: &App,
+        app: &crate::Shared,
         workspace: &Workspace,
         endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
     ) -> Option<Self> {
@@ -823,19 +826,9 @@ impl HistoryInventory {
             return Some(Self { catalogue: None, allow_subfolders });
         }
         Some(Self {
-            // Refresh native worktree registrations on cold/invalidated history inventory load
-            // using the search's captured endpoint (TS `manager.ts:467-482`, `native-worktrees.ts:86-95`).
-            catalogue: Some(
-                super::inventory::catalogue_at(
-                    app,
-                    workspace,
-                    true,
-                    Some(endpoint),
-                    std::time::Duration::from_secs(12),
-                )
-                .await
-                .ok()?,
-            ),
+            // Reuse the shared 10-second validated inventory cache (TS `worktree-inventory.ts:13-93`)
+            // which refreshes native worktree registrations on cold/invalidated loads.
+            catalogue: Some(super::inventory::history_catalogue(app, workspace, endpoint).await?),
             allow_subfolders: true,
         })
     }

@@ -75,6 +75,39 @@ pub(super) async fn send_with_timeout(
 async fn native_get(app: &App, path: &str, max: usize) -> Result<Value, Error> {
     native(app, Method::GET, path, &[], None, max).await
 }
+/// `DELETE /api/worktree` without force, pinned to an acquired endpoint.
+async fn delete_worktree_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    project: &str,
+    directory: &str,
+) -> Result<(), Error> {
+    if !app.native.current(endpoint) {
+        return Err(native_error());
+    }
+    let body = json!({"projectID": project, "directory": directory, "force": false});
+    let url = endpoint.url.join("/api/worktree").map_err(|_| native_error())?;
+    let request = app.native.client.request(Method::DELETE, url).basic_auth("opencode", Some(&endpoint.password));
+    send(request, &[], Some(body), 16384).await.map(drop)
+}
+
+async fn native_at(
+    app: &App,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    method: Method,
+    path: &str,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+) -> Result<Value, Error> {
+    if !app.native.current(endpoint) {
+        return Err(native_error());
+    }
+    let url = endpoint.url.join(path).map_err(|_| native_error())?;
+    let request = app.native.client.request(method, url).basic_auth("opencode", Some(&endpoint.password));
+    send(request, query, body, max).await
+}
+
 /// `DELETE /api/worktree` without force.
 async fn delete_worktree(app: &App, project: &str, directory: &str) -> Result<(), Error> {
     let body = json!({"projectID": project, "directory": directory, "force": false});
@@ -149,8 +182,10 @@ pub async fn create(
         return Err(invalid("Invalid worktree branch"));
     }
     let w = app.workspace(&id)?;
+    let endpoint =
+        app.native.acquire(tokio::time::Instant::now() + Duration::from_secs(30)).await.map_err(|_| native_error())?;
     let from_slug = input.from_slug.as_deref().unwrap_or("root");
-    let catalogue = catalogue(&app, &w, true).await?;
+    let catalogue = super::inventory::catalogue_at(&app, &w, true, Some(&endpoint), Duration::from_secs(12)).await?;
     git::guard_config(&catalogue.main).await?;
     let from = catalogue.get(from_slug)?;
     if !from.creatable_source() {
@@ -159,7 +194,7 @@ pub async fn create(
     let mut paths: Vec<_> = catalogue.trees.iter().map(|tree| super::fence::identity(tree.registered())).collect();
     paths.push(super::fence::identity(&catalogue.parent));
     let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A worktree is being removed"))?;
-    let confirmed = self::catalogue(&app, &w, false).await?;
+    let confirmed = super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), Duration::from_secs(12)).await?;
     if confirmed.get(from_slug).ok() != Some(from) || !from.source_live() {
         return Err(conflict("Source worktree changed"));
     }
@@ -208,16 +243,28 @@ pub async fn create(
                 return Err(conflict("Worktree parent was replaced"));
             }
         }
-        let info = into.open_dir(".git/info").map_err(|_| conflict("Git exclude is unavailable"))?;
-        if into.canonicalize(".git/info").ok().as_deref() != Some(Path::new(".git/info")) {
+        // Resolve the effective Git exclude path (`git-worktrees.ts:163-165`) so repositories
+        // created with `git init --separate-git-dir` work identically to standard `.git/info`.
+        let exclude_raw = git(&catalogue.main, &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"])
+            .await
+            .map_err(|_| conflict("Git exclude is unavailable"))?;
+        let exclude_path = PathBuf::from(exclude_raw.trim());
+        let info_dir_path = exclude_path.parent().ok_or_else(|| conflict("Git exclude is unavailable"))?;
+        let info_canon = dunce::canonicalize(info_dir_path).map_err(|_| conflict("Git exclude is unavailable"))?;
+        if info_canon != info_dir_path {
             return Err(conflict("Git exclude is not physically owned"));
         }
+        let info = cap_std::fs::Dir::open_ambient_dir(&info_canon, cap_std::ambient_authority())
+            .map_err(|_| conflict("Git exclude is unavailable"))?;
+        let exclude_name =
+            exclude_path.file_name().and_then(|n| n.to_str()).ok_or_else(|| conflict("Git exclude is unavailable"))?;
         let mut options = cap_std::fs::OpenOptions::new();
         options.read(true).append(true).create(true);
-        if info.symlink_metadata("exclude").is_ok_and(|m| !m.is_file() || m.is_symlink()) {
+        if info.symlink_metadata(exclude_name).is_ok_and(|m| !m.is_file() || m.is_symlink()) {
             return Err(conflict("Git exclude is not physically owned"));
         }
-        let mut excludes = info.open_with("exclude", &options).map_err(|_| conflict("Git exclude is unavailable"))?;
+        let mut excludes =
+            info.open_with(exclude_name, &options).map_err(|_| conflict("Git exclude is unavailable"))?;
         let mut contents = Vec::new();
         let unavailable = || conflict("Git exclude is unavailable");
         (&mut excludes).take(64 * 1024 + 1).read_to_end(&mut contents).map_err(|_| unavailable())?;
@@ -232,29 +279,40 @@ pub async fn create(
     let name = branch.replace('/', "-");
     let body = json!({"projectID": catalogue.project, "from": from.service_root, "branch": rev,
         "directory": catalogue.parent, "name": name});
-    let created = native(&app, Method::POST, "/api/worktree", &[], Some(body), 64 * 1024).await?;
+    let created = native_at(&app, &endpoint, Method::POST, "/api/worktree", &[], Some(body), 64 * 1024).await?;
     let service = created["directory"].as_str().ok_or_else(native_error)?;
     let inside = |d: &PathBuf| *d != catalogue.parent && d.starts_with(&catalogue.parent);
     physical(service).filter(inside).ok_or_else(native_error)?;
-    let confirmed = self::catalogue(&app, &w, false).await?;
-    let checkout = confirmed
-        .by_registered(service)
-        .filter(|t| t.slug != "root" && t.head.as_deref() == Some(&rev))
-        .ok_or_else(native_error)?;
+    let read_catalogue_once_retry = || async {
+        match super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), Duration::from_secs(12)).await {
+            Ok(cat) => Ok(cat),
+            Err(err) if err.1["error"].as_str() == Some(super::inventory::CONFIG_CHANGED_ERROR) => {
+                super::inventory::catalogue_at(&app, &w, false, Some(&endpoint), Duration::from_secs(12)).await
+            }
+            Err(err) => Err(err),
+        }
+    };
+    let confirmed = match read_catalogue_once_retry().await {
+        Ok(cat) => cat,
+        Err(err) => {
+            let _ = delete_worktree_at(&app, &endpoint, &catalogue.project, service).await;
+            return Err(err);
+        }
+    };
+    let Some(checkout) =
+        confirmed.by_registered(service).filter(|t| t.slug != "root" && t.head.as_deref() == Some(&rev))
+    else {
+        let _ = delete_worktree_at(&app, &endpoint, &catalogue.project, service).await;
+        return Err(native_error());
+    };
     let args = if existing { vec!["switch", "--", branch] } else { vec!["switch", "-c", branch] };
     if git(checkout.registered(), &args).await.is_err() {
-        delete_worktree(&app, &catalogue.project, service).await?;
+        delete_worktree_at(&app, &endpoint, &catalogue.project, service).await?;
         return Err(conflict("Unable to attach the branch"));
     }
     // Retry the final inventory read once ONLY on `WorktreeConfigChangedError` so a newly created
     // and attached worktree is not falsely reported as failed (TS `native-worktrees.ts:256-264`).
-    let updated = match self::catalogue(&app, &w, false).await {
-        Ok(cat) => cat,
-        Err(err) if err.1["error"].as_str() == Some(super::inventory::CONFIG_CHANGED_ERROR) => {
-            self::catalogue(&app, &w, false).await?
-        }
-        Err(err) => return Err(err),
-    };
+    let updated = read_catalogue_once_retry().await?;
     let row = updated
         .by_registered(service)
         .filter(|r| r.branch.as_deref() == Some(branch))

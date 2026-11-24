@@ -100,7 +100,7 @@ pub fn forget(app: &App, id: Uuid) {
     drop_entries(app, Some(id))
 }
 pub async fn event_catalogue(app: &crate::Shared, w: &Workspace) -> Option<Arc<Catalogue>> {
-    cached_catalogue(app, w, &app.native.endpoint()?, true).await
+    cached_catalogue(app, w, &app.native.endpoint()?, true, false).await
 }
 
 pub(in crate::worktrees) async fn receipt_catalogue(
@@ -108,7 +108,18 @@ pub(in crate::worktrees) async fn receipt_catalogue(
     w: &Workspace,
     endpoint: &Arc<crate::opencode::Endpoint>,
 ) -> Option<Arc<Catalogue>> {
-    cached_catalogue(app, w, endpoint, false).await
+    cached_catalogue(app, w, endpoint, false, false).await
+}
+
+/// Shared 10-second validated inventory for history search (`query`/`ranked`), coalescing
+/// concurrent loads and calling `worktree.refresh` on cold/invalidated scans (TS
+/// `worktree-inventory.ts:13, 30-42, 69-93`).
+pub(in crate::worktrees) async fn history_catalogue(
+    app: &crate::Shared,
+    w: &Workspace,
+    endpoint: &Arc<crate::opencode::Endpoint>,
+) -> Option<Arc<Catalogue>> {
+    cached_catalogue(app, w, endpoint, false, true).await
 }
 
 async fn cached_catalogue(
@@ -116,6 +127,7 @@ async fn cached_catalogue(
     w: &Workspace,
     endpoint: &Arc<crate::opencode::Endpoint>,
     for_event: bool,
+    refresh_on_load: bool,
 ) -> Option<Arc<Catalogue>> {
     let (epoch, loading) = {
         let mut cache = app.linked_events.lock().unwrap();
@@ -162,7 +174,14 @@ async fn cached_catalogue(
                 let (app, w, endpoint) = (app.clone(), w.clone(), endpoint.clone());
                 tokio::spawn(async move {
                     let started = Instant::now();
-                    let result = catalogue_in(&app, &w, false, false).await.ok().map(Arc::new);
+                    let result = if refresh_on_load {
+                        super::catalogue_at(&app, &w, true, Some(&endpoint), Duration::from_secs(12))
+                            .await
+                            .ok()
+                            .map(Arc::new)
+                    } else {
+                        catalogue_in(&app, &w, false, false).await.ok().map(Arc::new)
+                    };
                     crate::bench::trace_elapsed("registered-catalogue", started);
                     let mut cache = app.linked_events.lock().unwrap();
                     let owns_flight =

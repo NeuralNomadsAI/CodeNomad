@@ -336,16 +336,29 @@ impl Scope<'_> {
             .collect();
         self.current().then_some(dirs)
     }
-    async fn call(&self, owned: &Owned, method: &str, input: &Value, source: Option<(&str, &Value)>) -> Option<Call> {
+    async fn call(
+        &self,
+        owned: &Owned,
+        method: &str,
+        input: &Value,
+        source: Option<(&str, &Value)>,
+        extra_fences: &[Arc<AtomicBool>],
+    ) -> Option<Call> {
         let ready = self.deadline.min(Instant::now() + Duration::from_secs(5));
         history::prepare(self.app, &self.endpoint, &owned.directory, ready).await?;
-        if !self.session_current(source).await || !self.owned_current(owned).await {
+        if extra_fences.iter().any(|f| !f.load(Relaxed))
+            || !self.session_current(source).await
+            || !self.owned_current(owned).await
+        {
             return None;
         }
         let left = self.remaining();
         let (status, bytes) =
             history::rpc_with_timeout(self.app, &self.endpoint, &owned.directory, method, input, left).await.ok()?;
-        if !self.session_current(source).await || !self.owned_current(owned).await {
+        if extra_fences.iter().any(|f| !f.load(Relaxed))
+            || !self.session_current(source).await
+            || !self.owned_current(owned).await
+        {
             return None;
         }
         let value: Value = serde_json::from_slice(&bytes).ok()?;
@@ -523,7 +536,7 @@ async fn query(scope: &Scope<'_>, mut input: Value, token: Option<&str>) -> Resu
         input["cursor"] = json!(page);
     }
     let Some(Call::Result(mut output)) =
-        scope.call(&owned, "history", &input, session.as_deref().zip(source.as_ref())).await
+        scope.call(&owned, "history", &input, session.as_deref().zip(source.as_ref()), &[]).await
     else {
         return Ok(blocked());
     };

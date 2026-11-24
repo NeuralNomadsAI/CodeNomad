@@ -274,6 +274,15 @@ impl Placement {
         if !self.operation_current(app, id).await {
             return Err(crate::opencode::upstream_error());
         }
+        // Validate `newest.location` shape BEFORE comparing against `self.source` so a malformed
+        // final `session.get` (e.g. `workspaceID: null`) reports unavailable (`502`/`404`/
+        // `blocked/unavailable`) rather than conflict (`409`/`blocked/conflict`, TS `location.ts:5-11`).
+        let newest_loc = &newest["location"];
+        if !newest_loc["directory"].as_str().is_some_and(crate::files::paths::local_absolute)
+            || newest_loc.get("workspaceID").is_some_and(|w| !w.as_str().is_some_and(|s| !s.is_empty()))
+        {
+            return Err(crate::opencode::upstream_error());
+        }
         if newest["id"] != self.source["id"]
             || newest["location"]["directory"] != self.source["location"]["directory"]
             || newest["location"].get("workspaceID") != self.source["location"].get("workspaceID")
@@ -906,8 +915,9 @@ pub async fn handle(
             }
             let rpc_limit = 24 * 1024 * 1024 + 64 * 1024;
             // Reserve `ResponsePool::History` memory BEFORE reading the up-to-24 MiB RPC payload
-            // so concurrent `HISTORY_SLOTS` callers cannot hold 4x24 MiB outside the 64 MiB pool,
-            // then shrink the permit to the actual serialized response size once projected.
+            // (+ 8 MiB peak for one decoded deferred image URI during `window` projection) so
+            // concurrent callers never exceed the 64 MiB pool, then shrink once projected.
+            let reserve_bytes = rpc_limit + if action == "window" && defer { 8 * 1024 * 1024 } else { 0 };
             let mem = {
                 let workspace_closed = async {
                     loop {
@@ -921,7 +931,7 @@ pub async fn handle(
                 tokio::select! {
                     biased;
                     _ = workspace_closed => return blocked("unavailable"),
-                    permit = crate::shared::reserve_response_memory(crate::shared::ResponsePool::History, rpc_limit) => {
+                    permit = crate::shared::reserve_response_memory(crate::shared::ResponsePool::History, reserve_bytes) => {
                         match permit {
                             Ok(permit) => Some(permit),
                             Err(_) => return blocked("unavailable"),

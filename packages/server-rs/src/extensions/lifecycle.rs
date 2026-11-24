@@ -54,6 +54,9 @@ struct State {
     preparing: Option<(Arc<crate::opencode::Endpoint>, Arc<Notify>)>,
     /// Lifecycle shutdown token so detached `prepare()` flights cancel discovery immediately on stop.
     stop: Option<CancellationToken>,
+    /// Leases whose immediate rollback disposal failed (e.g. Windows sharing violation), retained so
+    /// shutdown retries removing them and reports `incomplete` if any still remain on disk.
+    stranded: Vec<Vec<provision::Installed>>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -171,7 +174,7 @@ fn content(app: &App, feature: &str) -> String {
     }
 }
 
-fn status(app: &App, state: &State) -> (std::path::PathBuf, Vec<u8>) {
+fn status(app: &App, state: &State) -> (u64, std::path::PathBuf, Vec<u8>) {
     let current = state.current.map(|i| &state.installations[i]);
     let features: Vec<Value> = current
         .map(|i| {
@@ -195,14 +198,20 @@ fn status(app: &App, state: &State) -> (std::path::PathBuf, Vec<u8>) {
     let doc = json!({"version":1,"state":state_name,"pid":std::process::id(),"expected":state.expected,
         "connections":state.connections,"namespaces":state.installations.len(),
         "discovery":current.map(|i|&i.paths.config),"features":features,"error":state.last});
-    (app.data.join("plugin-provision.json"), doc.to_string().into_bytes())
+    let seq = NEXT_STATUS_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    (seq, app.data.join("plugin-provision.json"), doc.to_string().into_bytes())
 }
 
-static STATUS_WRITE: Mutex<()> = Mutex::new(());
+static NEXT_STATUS_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static STATUS_WRITE: Mutex<u64> = Mutex::new(0);
 
-async fn write_status((path, bytes): (std::path::PathBuf, Vec<u8>)) {
+async fn write_status((seq, path, bytes): (u64, std::path::PathBuf, Vec<u8>)) {
     let _ = tokio::task::spawn_blocking(move || {
-        let _guard = STATUS_WRITE.lock().unwrap();
+        let mut last = STATUS_WRITE.lock().unwrap();
+        if seq < *last {
+            return;
+        }
+        *last = seq;
         let _ = crate::auth::tls::write_private(&path, &bytes);
     })
     .await;
@@ -281,9 +290,12 @@ async fn connection_at(
                                 });
                                 match result {
                                     Ok(i) => done.push(i),
-                                    // A failed attempt relinquishes only its own new leases.
+                                    // A failed attempt relinquishes only its own new leases; record
+                                    // any lease that fails immediate removal so shutdown retries it.
                                     Err(e) => {
-                                        provision::dispose(&done);
+                                        if provision::dispose_checked(&done).is_err() {
+                                            STATE.lock().unwrap().stranded.push(done);
+                                        }
                                         return Err(format!(
                                             "Failed to provision bundled desktop plugins for the current connection: {e}"
                                         ));
@@ -296,7 +308,9 @@ async fn connection_at(
                                 || ep_check.as_ref().is_some_and(|ep| !app_check.native.current(ep))
                             {
                                 drop(state);
-                                provision::dispose(&done);
+                                if provision::dispose_checked(&done).is_err() {
+                                    STATE.lock().unwrap().stranded.push(done);
+                                }
                                 return Err("OpenCode connection replaced during plugin provisioning".into());
                             }
                             let readiness = done
@@ -324,14 +338,28 @@ async fn connection_at(
             }
         }
     };
-    let snapshot = {
+    let (snapshot, stale_install) = {
         let mut state = STATE.lock().unwrap();
+        let mut stale_install = None;
         match outcome {
             Ok((index, fresh)) => {
                 if !state.active
                     || stop.is_some_and(CancellationToken::is_cancelled)
                     || endpoint.is_some_and(|ep| !app.native.current(ep))
                 {
+                    // Remove a freshly added installation if the connection rotated before commit
+                    // so its lease is disposed immediately rather than renewed (TS `desktop-plugin-lifecycle.ts:99-117`).
+                    if fresh && index < state.installations.len() {
+                        let removed = state.installations.remove(index);
+                        if state.current.is_some_and(|c| c == index) {
+                            state.current = None;
+                        } else if let Some(c) = &mut state.current
+                            && *c > index
+                        {
+                            *c -= 1;
+                        }
+                        stale_install = Some(removed);
+                    }
                     state.current = None;
                     state.prepared = None;
                 } else {
@@ -354,8 +382,21 @@ async fn connection_at(
                 state.last = Some(message);
             }
         }
-        status(app, &state)
+        (status(app, &state), stale_install)
     };
+    if let Some(stale) = stale_install {
+        if let Some(owner) = stale.readiness {
+            let _ = tokio::time::timeout(Duration::from_secs(1), owner.close()).await;
+        }
+        let features = stale.features;
+        let _ = tokio::task::spawn_blocking(move || {
+            let _io = LEASE_IO.read().unwrap();
+            if provision::dispose_checked(&features).is_err() {
+                STATE.lock().unwrap().stranded.push(features);
+            }
+        })
+        .await;
+    }
     write_status(snapshot).await;
 }
 
@@ -532,14 +573,17 @@ pub fn start(
         // shutdown never claims `complete` with a potentially unregistered in-flight lease.
         let serial_guard = tokio::time::timeout(Duration::from_secs(2), SERIAL.lock()).await.ok();
         let serial_timed_out = serial_guard.is_none();
-        let (owners, leases, snapshot): (Vec<_>, Vec<_>, _) = {
+        let (owners, mut leases, snapshot): (Vec<_>, Vec<_>, _) = {
             let mut state = STATE.lock().unwrap();
             state.active = false;
             let installations = std::mem::take(&mut state.installations);
+            let stranded = std::mem::take(&mut state.stranded);
             state.current = None;
             state.prepared = None;
             let snapshot = status(&app, &state);
-            let (owners, leases) = installations.into_iter().map(|i| (i.readiness, i.features)).unzip();
+            let (owners, mut leases): (Vec<_>, Vec<_>) =
+                installations.into_iter().map(|i| (i.readiness, i.features)).unzip();
+            leases.extend(stranded);
             (owners, leases, snapshot)
         };
         let _ = tokio::time::timeout(Duration::from_secs(1), write_status(snapshot)).await;
@@ -561,6 +605,7 @@ pub fn start(
             Duration::from_secs(5),
             tokio::task::spawn_blocking(move || -> Result<(), String> {
                 let _io = LEASE_IO.write().unwrap();
+                leases.extend(std::mem::take(&mut STATE.lock().unwrap().stranded));
                 let mut last_err = None;
                 for attempt in 0..2 {
                     let mut first_err = None;

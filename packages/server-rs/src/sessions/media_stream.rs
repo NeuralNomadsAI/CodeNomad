@@ -519,6 +519,8 @@ impl MessageListStream {
             .saturating_add(self.undo_bytes)
             .saturating_add(self.out.capacity())
             .saturating_add(self.item.capacity())
+            .saturating_add(self.segments.capacity().saturating_mul(std::mem::size_of::<(axum::body::Bytes, usize)>()))
+            .saturating_add(self.undo.capacity().saturating_mul(std::mem::size_of::<(usize, Vec<UndoPatch>)>()))
     }
 
     pub(crate) fn needs_blocking_finish(&self) -> bool {
@@ -539,6 +541,8 @@ impl MessageListStream {
             .saturating_add(self.undo_bytes)
             .saturating_add(self.out.len())
             .saturating_add(self.item.len())
+            .saturating_add(self.segments.capacity().saturating_mul(std::mem::size_of::<(axum::body::Bytes, usize)>()))
+            .saturating_add(self.undo.capacity().saturating_mul(std::mem::size_of::<(usize, Vec<UndoPatch>)>()))
     }
 
     fn push_out(&mut self, byte: u8) -> Result<(), ()> {
@@ -853,13 +857,18 @@ impl MessageListStream {
             return Err(());
         }
         self.changed |= changed;
-        let seg_idx = self.push_segment(projected)?;
-        if changed
-            && !self.undo_overflow
-            && let Some(idx) = seg_idx
-        {
-            self.undo_bytes += undo_len;
-            self.undo.push((idx, undo_patches));
+        if (!changed || self.undo_overflow) && projected.len() <= 4096 {
+            // Coalesce small non-rollback items directly into `self.out` to avoid per-item deque growth.
+            self.extend_out(&projected)?;
+        } else {
+            let seg_idx = self.push_segment(projected)?;
+            if changed
+                && !self.undo_overflow
+                && let Some(idx) = seg_idx
+            {
+                self.undo_bytes += undo_len;
+                self.undo.push((idx, undo_patches));
+            }
         }
         self.push_out(delimiter)?;
         self.state = if delimiter == b',' { State::DataArrayNext } else { State::ObjAfterValue };

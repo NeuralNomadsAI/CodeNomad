@@ -134,7 +134,7 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
             Err(Some(err)) => return Err(err),
             Err(None) => return Ok(blocked()),
         }
-        let output = match scope.call(&owned, "historyRanked", &request, None).await {
+        let output = match scope.call(&owned, "historyRanked", &request, None, &selected_fences).await {
             Some(Call::Result(output)) => output,
             Some(Call::Unsupported) => {
                 if selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.owned_current(&root).await {
@@ -201,9 +201,13 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
             return Ok(blocked());
         }
     }
-    // Re-check all selected deletion fences AFTER the final async revalidation (TS
-    // `session-history-ranked.ts:127-139`) so an unqueried worktree deleted mid-check invalidates.
-    if selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.current() {
+    // Re-check ALL selected and contributor deletion fences synchronously AFTER the final async
+    // revalidation (TS `session-history-ranked.ts:127-139`) so a deletion during a later check
+    // cannot slip past publication.
+    if selected_fences.iter().any(|f| !f.load(Relaxed))
+        || fences.iter().any(|owned| owned.fences.iter().any(|f| !f.load(Relaxed)))
+        || !scope.current()
+    {
         return Ok(blocked());
     }
     let ids: HashSet<_> = approved.iter().filter_map(|owner| owner["sessionID"].as_str()).collect();

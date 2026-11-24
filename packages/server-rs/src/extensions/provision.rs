@@ -346,6 +346,7 @@ pub fn dispose_checked(installed: &[Installed]) -> io::Result<()> {
     }
 }
 
+#[cfg(test)]
 pub fn dispose(installed: &[Installed]) {
     let _ = dispose_checked(installed);
 }
