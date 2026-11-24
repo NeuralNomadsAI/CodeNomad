@@ -11,7 +11,7 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { locationRequestOptions } from "../compatibility/location"
 import { createRuntimeTransport } from "../compatibility/transport"
-import { PreviewTab, type PreviewHost } from "./commands"
+import { PreviewTab, type BrowserOutcome, type PreviewHost } from "./commands"
 
 /** OpenCode's desktop browser contract (`@opencode/plugin-browser/rpc`). */
 export const BROWSER_CONTROL_EVENT = "rpc.experimental.browser.control"
@@ -61,7 +61,7 @@ export class NativeBrowserAttachments {
     if (this.closed || !this.available) throw new Error("Browser automation is unavailable in this host")
     if (!this.sessions.has(sessionID) && this.sessions.size >= MAX_SESSIONS) throw new Error("Too many attached browser sessions")
     this.holds.set(holdID, { workspaceID, sessionID, expires: Date.now() + HOLD_MS })
-    if (!this.sessions.has(sessionID)) this.attach(workspaceID, sessionID)
+    if (!this.sessions.has(sessionID)) this.attach(sessionID)
   }
 
   release(holdID: string): void {
@@ -69,9 +69,9 @@ export class NativeBrowserAttachments {
     this.expire()
   }
 
-  private attach(workspaceID: string, sessionID: string): void {
-    const session = new SessionAttachment(workspaceID, sessionID, this.host(workspaceID, sessionID),
-      connection => this.attachClient(connection), this.deps.workspaceManager, this.deps.logger)
+  private attach(sessionID: string): void {
+    const session: SessionAttachment = new SessionAttachment(sessionID, () => this.holders(sessionID),
+      this.host(sessionID, () => session.owners), connection => this.attachClient(connection), this.deps.workspaceManager, this.deps.logger)
     this.sessions.set(sessionID, session)
     session.start()
   }
@@ -96,11 +96,13 @@ export class NativeBrowserAttachments {
     for (const [id, hold] of this.holds) if (hold.expires <= now) this.holds.delete(id)
     for (const [sessionID, session] of this.sessions) {
       const holders = this.holders(sessionID)
-      if (holders.includes(session.workspaceID)) continue
-      session.stop()
-      this.sessions.delete(sessionID)
-      // Another workspace's view still shows the session: it takes the attachment over.
-      if (holders.length && !this.closed) this.attach(holders.at(-1)!, sessionID)
+      if (!holders.length) {
+        session.stop()
+        this.sessions.delete(sessionID)
+      } else if (session.workspaceID && !holders.includes(session.workspaceID)) {
+        // Another workspace's view still shows the session: it attaches again through an owner among them.
+        session.retarget()
+      }
     }
   }
 
@@ -125,7 +127,8 @@ export class NativeBrowserAttachments {
     return client
   }
 
-  private host(workspaceID: string, sessionID: string): PreviewHost {
+  /** `owners` names the holding workspaces verified to own the session for the running command. */
+  private host(sessionID: string, owners: () => string[]): PreviewHost {
     // A sent native request cannot be recalled: a cancelled command never sends one and stops waiting for it.
     const native = <T>(method: string, params: Record<string, unknown>, deadline: number, signal: AbortSignal): Promise<T> => {
       signal.throwIfAborted()
@@ -144,7 +147,7 @@ export class NativeBrowserAttachments {
         return result?.available === true && typeof result.target === "string" ? { target: result.target, loading: result.loading === true } : undefined
       },
       // The views that show the session are in these workspaces' project tabs.
-      open: (url, deadline, signal) => native("browser.execute", { command: { action: "open", url }, workspaceIDs: this.holders(sessionID).length ? this.holders(sessionID) : [workspaceID] }, deadline, signal),
+      open: (url, deadline, signal) => native("browser.execute", { command: { action: "open", url }, workspaceIDs: owners() }, deadline, signal),
       navigate: (url, target, deadline, signal) => execute({ action: "navigate", url }, target, deadline, signal),
       back: (target, deadline, signal) => execute({ action: "back" }, target, deadline, signal),
       forward: (target, deadline, signal) => execute({ action: "forward" }, target, deadline, signal),
@@ -157,7 +160,12 @@ export class NativeBrowserAttachments {
 
 class SessionAttachment {
   connectionID: string | undefined
+  /** The holding workspace whose ownership the current attachment uses. */
+  workspaceID: string | undefined
+  /** Holding workspaces verified to own the session, for the running command. */
+  owners: string[] = []
   private readonly stopping = new AbortController()
+  private attachment = new AbortController()
   private readonly requests = new Map<string, AbortController>()
   /** Request IDs already taken: the relay can deliver one control event once per owning workspace. */
   private readonly taken = new Set<string>()
@@ -165,7 +173,7 @@ class SessionAttachment {
   private connection: ServiceConnection | undefined
   private location: Location | undefined
 
-  constructor(readonly workspaceID: string, private readonly sessionID: string, host: PreviewHost,
+  constructor(private readonly sessionID: string, private readonly holders: () => string[], host: PreviewHost,
     private readonly attachClient: (connection: ServiceConnection) => OpenCodeClient,
     private readonly workspaceManager: WorkspaceManager, private readonly logger: Logger) {
     this.tab = new PreviewTab(host)
@@ -175,8 +183,12 @@ class SessionAttachment {
 
   stop(): void {
     this.stopping.abort()
+    this.attachment.abort()
     this.cancelRequests()
   }
+
+  /** Ends the current attachment; the loop attaches again through a current owner. */
+  retarget(): void { this.attachment.abort() }
 
   control(control: Control): void {
     if (control.type === "attached") void this.publish().catch(error => this.warn("Browser state publication failed", error))
@@ -194,31 +206,49 @@ class SessionAttachment {
     this.requests.clear()
   }
 
+  /** The holding workspaces that own the session's location now. */
+  private async verifiedOwners(location: Location, signal: AbortSignal): Promise<string[]> {
+    const owners: string[] = []
+    for (const workspaceID of this.holders().reverse()) {
+      if (await this.workspaceManager.ownsLocation(workspaceID, location, undefined, { signal }).catch(() => false)) owners.push(workspaceID)
+    }
+    return owners
+  }
+
   private async loop(): Promise<void> {
-    const signal = this.stopping.signal
     let unavailable = 0
-    while (!signal.aborted) {
+    while (!this.stopping.signal.aborted) {
       let wait = RETRY_MS
+      if (this.attachment.signal.aborted) this.attachment = new AbortController()
+      const signal = AbortSignal.any([this.stopping.signal, this.attachment.signal])
       try {
-        const connection = await this.workspaceManager.getSharedServiceConnection(this.workspaceID)
-        if (!connection) throw new Error("OpenCode is unavailable")
-        const session = await connection.client.session.get({ sessionID: this.sessionID }, { signal })
+        const reader = this.holders().at(-1)
+        const readConnection = reader && await this.workspaceManager.getSharedServiceConnection(reader)
+        if (!readConnection) throw new Error("OpenCode is unavailable")
+        const session = await readConnection.client.session.get({ sessionID: this.sessionID }, { signal })
         const location = session.location as Location
-        if (!await this.workspaceManager.ownsLocation(this.workspaceID, location, undefined, { signal })) return
-        this.connection = connection
-        this.location = location
-        this.connectionID = randomUUID()
-        const outcome = await this.rpc("attach", { version: VERSION }, signal, this.attachClient(connection))
-        // Another desktop took the session over: this one attaches again once every view has released it.
-        if (outcome === "replaced") { this.connectionID = undefined; this.cancelRequests(); return }
+        // A holder that does not own the session never attaches it; a later owner's hold does.
+        const [owner] = await this.verifiedOwners(location, signal)
+        const connection = owner && await this.workspaceManager.getSharedServiceConnection(owner)
+        if (connection) {
+          this.workspaceID = owner
+          this.connection = connection
+          this.location = location
+          this.connectionID = randomUUID()
+          const outcome = await this.rpc("attach", { version: VERSION }, signal, this.attachClient(connection))
+          // Another desktop took the session over: this one attaches again once every view has released it.
+          if (outcome === "replaced") { this.connectionID = undefined; this.cancelRequests(); return }
+        }
       } catch (error) {
         // A runtime with `-opencode.browser` or a Location still loading its plugins answers rpc.unavailable.
         if ((error as { type?: unknown })?.type === "rpc.unavailable") { if (++unavailable > 5) wait = UNAVAILABLE_RETRY_MS }
         else if (!signal.aborted) this.warn("OpenCode browser attachment ended", error)
       }
       this.connectionID = undefined
+      this.workspaceID = undefined
       this.cancelRequests()
-      await new Promise(resolve => setTimeout(resolve, wait))
+      if (this.stopping.signal.aborted) return
+      if (!this.attachment.signal.aborted) await new Promise(resolve => setTimeout(resolve, wait))
     }
   }
 
@@ -227,18 +257,33 @@ class SessionAttachment {
     const controller = new AbortController()
     this.requests.set(requestID, controller)
     const signal = AbortSignal.any([controller.signal, this.stopping.signal])
+    let lost = false
     try {
       const command = await this.rpc("command", { requestID }, signal) as { action: Record<string, unknown> & { type: string }; generation?: number; inspect?: boolean }
-      const outcome = command.inspect
-        ? { type: "failure" as const, code: "unsupported", message: "Target inspection is unavailable in the CodeNomad browser." }
-        : await this.tab.run(command.action, command.generation, signal)
+      // Ownership is checked again for every command: a project can stop owning the session while it is shown.
+      this.owners = this.location ? await this.verifiedOwners(this.location, signal) : []
+      lost = !this.workspaceID || !this.owners.includes(this.workspaceID)
+      const outcome: BrowserOutcome = command.inspect
+        ? { type: "failure", code: "unsupported", message: "Target inspection is unavailable in the CodeNomad browser." }
+        : lost
+          ? { type: "failure", code: "operation_failed", message: "No project shown on this computer owns this conversation's browser." }
+          : await this.tab.run(command.action, command.generation, signal)
       if (connectionID !== this.connectionID) return
       // The server reads tabs from the published inventory, so it precedes every result.
       await this.publish(signal)
-      await this.rpc("result", { requestID, outcome }, signal)
+      await this.rpc("result", { requestID, outcome }, signal).catch(async error => {
+        // A result OpenCode refuses (for example an oversized file) still settles the request.
+        if (signal.aborted) throw error
+        await this.rpc("result", { requestID, outcome: { type: "failure", code: "operation_failed",
+          message: `The browser result could not be delivered: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2_000) } }, signal)
+      })
     } catch (error) {
       if (!signal.aborted) this.warn("OpenCode browser command failed", error)
-    } finally { this.requests.delete(requestID) }
+    } finally {
+      this.requests.delete(requestID)
+      // The attachment no longer has an owner: it attaches again through a current one.
+      if (lost) this.retarget()
+    }
   }
 
   private async publish(signal = this.stopping.signal): Promise<void> {

@@ -577,7 +577,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   app.addHook("onClose", async () => developerCdp.close())
   const nativeBrowser = new NativeBrowserAttachments({ workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, nativeParent: deps.nativeParent, logger: deps.logger })
-  registerNativeBrowserRoutes(app, { attachments: nativeBrowser, authManager: deps.authManager })
+  registerNativeBrowserRoutes(app, { attachments: nativeBrowser, localUiRequest: backendUiAccess.localUiRequest })
   app.addHook("onClose", async () => nativeBrowser.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager, freeUsage })
   const missionActivityCache = new MissionActivityCache()

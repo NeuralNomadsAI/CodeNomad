@@ -617,6 +617,11 @@ export class BrowserController {
           }
           await this.refreshDocument(registration.guest, Math.min(deadline, lease.expires), check)
           check()
+          // Agent page operations never open a native file picker on the person's screen.
+          const intercept = (params: Record<string, unknown>) => withDeadline(
+            () => registration.guest.debugger.sendCommand("Page.setInterceptFileChooserDialog", params), Math.min(deadline, lease.expires))
+          await intercept({ enabled: true, cancel: true }).catch(() => intercept({ enabled: true }))
+          check()
           const url = this.checkLease(lease, deadline, checkAdmission)
           return { generation: lease.generation, url, driver: "cdp", contractVersion: PAGE_DRIVER_VERSION }
         }, deadline)
@@ -718,6 +723,9 @@ export class BrowserController {
     if (this.pageLeases.get(lease.operationID) !== lease) return
     this.pageLeases.delete(lease.operationID)
     clearTimeout(lease.timer)
+    const { guest } = lease.registration
+    if (!guest.isDestroyed() && guest.debugger.isAttached())
+      void guest.debugger.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => undefined)
   }
 
   private detachDebugger(guest: WebContents): void {

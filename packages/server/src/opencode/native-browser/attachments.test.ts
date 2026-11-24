@@ -7,8 +7,16 @@ import { modernContractFixture } from "../compatibility/contract-fixture"
 import { rememberRuntime } from "../compatibility/runtime"
 import { BROWSER_CONTROL_EVENT, NativeBrowserAttachments } from "./attachments"
 
-test("NativeBrowserAttachments holds owned sessions, publishes state before result, and refuses unowned sessions", async t => {
+const until = async (condition: () => boolean, label: string, timeout = 5_000) => {
+  for (const end = Date.now() + timeout; !condition();) {
+    if (Date.now() > end) throw new Error(`Timed out: ${label}`)
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+}
+
+test("NativeBrowserAttachments attaches through an owner, runs each command once, and rechecks ownership per command", async t => {
   const rpcCalls: Array<{ method: string; input: Record<string, unknown> }> = []
+  const nativeCalls: Array<{ method: string; params: Record<string, unknown> }> = []
   let releaseAttach: (outcome: string) => void = () => {}
   let attached!: (connectionID: string) => void
   const attachedReady = new Promise<string>(resolve => { attached = resolve })
@@ -25,7 +33,7 @@ test("NativeBrowserAttachments holds owned sessions, publishes state before resu
       attached(String(input.connectionID))
       return { output: await new Promise<string>(done => { releaseAttach = done }) }
     }
-    if (method === "command") return { output: { action: { type: "tabs.list" } } }
+    if (method === "command") return { output: { action: input.requestID === "req-2" ? { type: "tabs.open", url: "https://example.com/" } : { type: "tabs.list" } } }
     return { output: { ok: true } }
   })
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
@@ -38,47 +46,56 @@ test("NativeBrowserAttachments holds owned sessions, publishes state before resu
   const client = OpenCode.make({ baseUrl: address, fetch: globalThis.fetch })
   const connection = { endpoint, client, fetch: globalThis.fetch, assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
   const eventBus = new EventBus()
-  let owns = false
+  const owners = new Set<string>()
   const attachments = new NativeBrowserAttachments({
     workspaceManager: {
       getSharedServiceConnection: async () => connection,
-      ownsLocation: async () => owns,
+      ownsLocation: async (workspaceID: string) => owners.has(workspaceID),
     } as never,
     eventBus,
     nativeParent: {
       available: true,
       browserAutomationUnavailable: false,
-      request: async (method: string) => method === "browser.probe" ? { available: false } : {},
+      request: async (method: string, params: Record<string, unknown>) => {
+        nativeCalls.push({ method, params })
+        return method === "browser.probe" ? { available: false } : { url: "https://example.com/" }
+      },
     } as never,
     logger: { warn: () => {}, debug: () => {}, info: () => {}, error: () => {}, trace: () => {}, isLevelEnabled: () => false } as never,
   })
   t.after(() => attachments.close())
+  const publish = (instanceId: string, data: Record<string, unknown>) =>
+    eventBus.publish({ type: "instance.event", instanceId, event: { type: BROWSER_CONTROL_EVENT, data } } as any)
 
-  // Unowned session does not attach.
-  attachments.hold("hold-unowned", "ws-1", "ses-unowned")
-  await new Promise(resolve => setTimeout(resolve, 100))
+  // A holder that does not own the session never attaches it; a later owner's hold does.
+  attachments.hold("hold-unowned", "ws-1", "ses-1")
+  await new Promise(resolve => setTimeout(resolve, 150))
   assert.equal(rpcCalls.length, 0)
-  attachments.release("hold-unowned")
-
-  // Owned session attaches, publishes state on `attached`, and publishes state before `result` on `command`.
-  owns = true
-  attachments.hold("hold-owned", "ws-1", "ses-owned")
+  owners.add("ws-2")
+  attachments.hold("hold-owner", "ws-2", "ses-1")
   const connectionID = await attachedReady
-  eventBus.publish({ type: "instance.event", instanceId: "ws-1", event: { type: BROWSER_CONTROL_EVENT, data: { type: "attached", connectionID } } as any })
-  eventBus.publish({ type: "instance.event", instanceId: "ws-1", event: { type: BROWSER_CONTROL_EVENT, data: { type: "command", connectionID, requestID: "req-1" } } as any })
-  for (let i = 0; i < 50 && !rpcCalls.some(c => c.method === "result"); i++) await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(rpcCalls.filter(c => c.method === "attach").length, 1)
+
+  // State is published on `attached` and before every result.
+  publish("ws-2", { type: "attached", connectionID })
+  publish("ws-2", { type: "command", connectionID, requestID: "req-1" })
+  await until(() => rpcCalls.some(c => c.method === "result"), "first result")
   const methods = rpcCalls.map(c => c.method)
-  assert.equal(methods[0], "attach")
-  assert.ok(methods.includes("command"))
   assert.ok(methods.lastIndexOf("state") < methods.lastIndexOf("result"), "state is published before every result")
-  const resultCall = rpcCalls.find(c => c.method === "result")
-  assert.deepEqual((resultCall?.input.outcome as any)?.result?.value, { tabs: [], focusedTabID: null })
+  assert.deepEqual((rpcCalls.find(c => c.method === "result")?.input.outcome as any)?.result?.value, { tabs: [], focusedTabID: null })
 
   // The relay delivers a control event once per owning workspace: the command runs once.
-  eventBus.publish({ type: "instance.event", instanceId: "ws-2", event: { type: BROWSER_CONTROL_EVENT, data: { type: "command", connectionID, requestID: "req-1" } } as any })
-  // A second workspace showing the same session shares its single attachment.
-  attachments.hold("hold-other", "ws-2", "ses-owned")
-  await new Promise(resolve => setTimeout(resolve, 200))
+  publish("ws-1", { type: "command", connectionID, requestID: "req-1" })
+  await new Promise(resolve => setTimeout(resolve, 150))
   assert.equal(rpcCalls.filter(c => c.method === "command").length, 1)
-  assert.equal(rpcCalls.filter(c => c.method === "attach").length, 1)
+
+  // The project stops owning the session: the next command fails before any native request.
+  owners.delete("ws-2")
+  nativeCalls.length = 0
+  publish("ws-2", { type: "command", connectionID, requestID: "req-2" })
+  await until(() => rpcCalls.filter(c => c.method === "result").length === 2, "second result")
+  const refused = rpcCalls.filter(c => c.method === "result")[1].input.outcome as any
+  assert.equal(refused.type, "failure")
+  assert.match(refused.message, /owns this conversation/)
+  assert.equal(nativeCalls.some(call => call.method === "browser.execute"), false)
 })

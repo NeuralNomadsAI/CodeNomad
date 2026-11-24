@@ -239,7 +239,24 @@ impl BrowserController {
         if method == "browser.page.end" {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             self.webkit_cleanup(app, session_id, operation_id, deadline, fence);
+            #[cfg(windows)]
+            let label = self.inner.0.lock().ok().and_then(|inner| {
+                inner
+                    .page_leases
+                    .get(operation_id)
+                    .filter(|lease| lease.session_id == session_id)
+                    .map(|lease| lease.registration.webview_label.clone())
+            });
             self.end_page(session_id, operation_id);
+            #[cfg(windows)]
+            if let Some(webview) = label.and_then(|label| app.get_webview(&label)) {
+                let _ = cdp(
+                    &webview,
+                    "Page.setInterceptFileChooserDialog",
+                    json!({ "enabled": false }),
+                    deadline,
+                );
+            }
             return Ok(json!({}));
         }
         let begin = method == "browser.page.begin";
@@ -321,6 +338,18 @@ impl BrowserController {
             } else {
                 json!({})
             };
+            // Agent page operations never open a native file picker on the person's screen.
+            #[cfg(windows)]
+            if begin {
+                if let Some(webview) = app.get_webview(&lease.registration.webview_label) {
+                    let intercept = |params| {
+                        cdp(&webview, "Page.setInterceptFileChooserDialog", params, deadline.min(lease.expires))
+                    };
+                    if intercept(json!({ "enabled": true, "cancel": true })).is_err() {
+                        intercept(json!({ "enabled": true }))?;
+                    }
+                }
+            }
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             let response = if let Some(_) = &operation {
                 let response =

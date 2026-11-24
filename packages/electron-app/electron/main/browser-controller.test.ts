@@ -192,6 +192,20 @@ describe("BrowserController private page channel", () => {
     await assert.rejects(page(h.controller, "check", lease), /no longer current/)
   })
 
+  it("intercepts native file pickers from a page lease's start to its end", async () => {
+    const h = createHarness()
+    const intercepts: unknown[] = []
+    const { guest } = createGuest({ id: 4, owner: h.owner, sendCommand: async (method, params) => {
+      if (method === "Page.setInterceptFileChooserDialog") intercepts.push(params)
+      return {}
+    } })
+    h.add(guest, "one")
+    const lease = await begin(h.controller)
+    assert.deepEqual(intercepts, [{ enabled: true, cancel: true }])
+    await page(h.controller, "end", lease)
+    assert.deepEqual(intercepts, [{ enabled: true, cancel: true }, { enabled: false }])
+  })
+
   it("accepts only the fixed protocol commands and bounded object params/responses", async () => {
     const h = createHarness()
     const calls: string[] = []
@@ -207,7 +221,8 @@ describe("BrowserController private page channel", () => {
     for (const params of [null, [], "bad", { text: "x".repeat(256 * 1024) }]) {
       await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.insertText", params }), /parameters/)
     }
-    assert.deepEqual(calls, ["Page.enable"])
+    // A page lease intercepts native file pickers for its length.
+    assert.deepEqual(calls, ["Page.enable", "Page.setInterceptFileChooserDialog"])
     const valid = [
       [{op:"tree"},{nodes:[]}], [{op:"resolve",node:42},{}], [{op:"scroll-into-view",node:42},{ok:true}],
       [{op:"geometry",node:42},{ok:true}], [{op:"hit-test",x:0,y:0},{}], [{op:"viewport"},{}],
@@ -483,7 +498,8 @@ describe("BrowserController preview lifecycle", () => {
       await page(h.controller, "send", { sessionID, operationID, generation, operation: { op: "keyboard", event: { type: "keyDown", key: "Enter" } } })
     }, /Browser target is stale/)
     await assert.rejects(h.controller.execute(sessionID, { action: "screenshot" }, Infinity, target), /Browser target is stale/)
-    assert.deepEqual(calls, ["Page.enable"])
+    // The first lease's file-picker interception, then its release; the stale lease reached nothing.
+    assert.deepEqual(calls, ["Page.enable", "Page.setInterceptFileChooserDialog", "Page.setInterceptFileChooserDialog"])
     assert.deepEqual(inputs, [])
     const { target: refreshed } = await h.controller.probe(sessionID)
     assert.notEqual(refreshed, target)

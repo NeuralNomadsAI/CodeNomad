@@ -25,7 +25,29 @@ export type BrowserOutcome =
 type Action = Record<string, unknown> & { type: string }
 
 /** OpenCode's wait bound; CodeNomad's page wait runs in chunks of at most its own bound. */
-const MAX_WAIT_MS = 30_000, PAGE_WAIT_MS = 15_000, LOAD_POLL_MS = 100, MAX_TEXT = 100_000
+const MAX_WAIT_MS = 30_000, PAGE_WAIT_MS = 15_000, LOAD_POLL_MS = 100, MAX_TEXT = 100_000, DEFAULT_SNAPSHOT_CHARS = 20_000
+/** OpenCode's limit for one result file. */
+const MAX_FILE_BYTES = 5 * 1024 * 1024
+/** The parameters each operation honors. Any other option that changes its meaning is refused, never ignored. */
+const HONORED: Record<string, readonly string[]> = {
+  "tabs.list": [], "tabs.open": ["url"], "tabs.focus": [], navigate: ["url"], back: [], forward: [], reload: [],
+  snapshot: ["ref", "maxChars", "maxLines"], find: ["text", "maxChars", "maxLines"],
+  click: ["ref"], hover: ["ref"], drag: ["from", "to"], fill: ["ref", "text"], fill_form: ["fields"],
+  select: ["ref", "values"], check: ["ref", "checked"], press: ["key"], scroll: ["deltaX", "deltaY"],
+  wait: ["condition", "text", "timeoutMs"], screenshot: [],
+}
+/** Option values that ask for what the operation does anyway. */
+const DEFAULTS: Record<string, unknown> = { focus: true, ignoreCache: false, button: "left", count: 1, interactive: false, boxes: false, fullPage: false, format: "png" }
+
+function unhonored(action: Action): string | undefined {
+  const honored = HONORED[action.type]
+  if (!honored) return undefined
+  for (const [key, value] of Object.entries(action)) {
+    if (key === "type" || key === "tabID" || honored.includes(key) || value === undefined || value === null) continue
+    if ((Object.hasOwn(DEFAULTS, key) && DEFAULTS[key] === value) || (key === "modifiers" && Array.isArray(value) && !value.length)) continue
+    return `${action.type} with ${key}`
+  }
+}
 const failure = (code: string, message: string): BrowserOutcome => ({ type: "failure", code, message: message.slice(0, 2_000) })
 const unsupported = (action: string) => failure("unsupported",
   `browser.${action} is not available in the CodeNomad browser. Use tabs, navigate, back, forward, reload, snapshot, find, click, hover, drag, fill, fill_form, select, check, press, scroll, wait or screenshot.`)
@@ -39,6 +61,8 @@ export class PreviewTab {
   readonly id = `tab_${randomUUID()}`
   private target: string | undefined
   private url = "about:blank"
+  /** The target whose address `url` holds: a failed read is retried on the next refresh. */
+  private urlTarget: string | undefined
   private loading = false
   private generation = 0
 
@@ -53,15 +77,25 @@ export class PreviewTab {
     const probed = await this.host.probe(deadline, signal).catch(() => undefined)
     if (!probed) { this.target = undefined; this.loading = false; return }
     this.loading = probed.loading
-    if (probed.target === this.target) return
-    this.target = probed.target
-    this.generation++
+    if (probed.target !== this.target) {
+      this.target = probed.target
+      this.generation++
+    }
+    if (this.urlTarget === probed.target) return
     const location = await this.host.page({ action: "location" }, probed.target, deadline, signal).catch(() => undefined)
-    if (typeof location?.url === "string") this.url = location.url
+    this.noteURL(probed.target, location?.url)
+  }
+
+  private noteURL(target: string, url: unknown): void {
+    if (typeof url !== "string" || !url || target !== this.target) return
+    this.url = url
+    this.urlTarget = target
   }
 
   async run(action: Action, generation: number | undefined, signal: AbortSignal): Promise<BrowserOutcome> {
     const deadline = Date.now() + 55_000
+    const refused = unhonored(action)
+    if (refused) return unsupported(refused)
     await this.refresh(deadline, signal)
     if (action.type === "tabs.list") return this.success(this.state())
     if (action.type === "tabs.open") return this.open(action, deadline, signal)
@@ -79,7 +113,11 @@ export class PreviewTab {
   }
 
   private async perform(action: Action, target: string, deadline: number, signal: AbortSignal): Promise<BrowserOutcome> {
-    const page = (step: BrowserPageAction) => this.host.page(step, target, deadline, signal)
+    const page = async (step: BrowserPageAction) => {
+      const result = await this.host.page(step, target, deadline, signal)
+      this.noteURL(target, result.url)
+      return result
+    }
     const act = async (step: BrowserPageAction) => { await page(step); return this.success(this.tab()) }
     switch (action.type) {
       case "tabs.focus": return this.success(this.tab())
@@ -89,17 +127,17 @@ export class PreviewTab {
       case "reload": return this.loaded(await this.host.reload(target, deadline, signal), deadline, signal)
       case "snapshot":
       case "find": {
-        if (action.frameID !== undefined) return unsupported(`${action.type} with frameID`)
         const query = action.type === "find" ? String(action.text) : undefined
         const result = await page({ action: "snapshot", ...(action.ref ? { ref: ref(action.ref) } : {}), ...(query ? { query } : {}) })
-        const text = String(result.snapshot ?? ""), limit = Math.min(MAX_TEXT, Number(action.maxChars) || MAX_TEXT)
-        return this.success({ tab: this.tab(), content: text.slice(0, limit), truncated: Boolean(result.collapsed) || text.length > limit })
+        let text = String(result.snapshot ?? ""), truncated = Boolean(result.collapsed)
+        const maxLines = Number(action.maxLines) || 0, limit = Math.min(MAX_TEXT, Number(action.maxChars) || DEFAULT_SNAPSHOT_CHARS)
+        const lines = text.split("\n")
+        if (maxLines && lines.length > maxLines) { text = lines.slice(0, maxLines).join("\n"); truncated = true }
+        if (text.length > limit) { text = text.slice(0, limit); truncated = true }
+        return this.success({ tab: this.tab(), content: text, truncated })
       }
-      case "click": {
-        if (action.button === "middle" || action.count === 2 || (Array.isArray(action.modifiers) && action.modifiers.length))
-          return unsupported("click with middle button, double click or modifiers")
-        return act({ action: "click", ref: ref(action.ref), ...(action.button === "right" ? { button: "right" as const } : {}) })
-      }
+      // A left click only: native context menus are unavailable to agents, as in OpenCode's browser.
+      case "click": return act({ action: "click", ref: ref(action.ref) })
       case "hover": return act({ action: "hover", ref: ref(action.ref) })
       case "drag": return act({ action: "drag", ref: ref(action.from), to: ref(action.to) })
       case "fill": return act({ action: "type", ref: ref(action.ref), text: String(action.text), clear: true })
@@ -128,9 +166,9 @@ export class PreviewTab {
       }
       case "wait": return this.wait(action, page, deadline, signal)
       case "screenshot": {
-        if (action.ref !== undefined || action.fullPage || (action.format !== undefined && action.format !== "png"))
-          return unsupported("screenshot of an element, of the full page or in another format than PNG")
         const { image } = await this.host.screenshot(target, deadline, signal)
+        const bytes = Math.floor(image.data.length * 3 / 4) - (image.data.endsWith("==") ? 2 : image.data.endsWith("=") ? 1 : 0)
+        if (bytes > MAX_FILE_BYTES) return failure("operation_failed", "The screenshot exceeds the 5 MiB file limit; make the preview smaller and capture again.")
         return this.success({ tab: this.tab() }, [{ id: `file_${randomUUID()}`, name: "screenshot.png", mime: image.mime, data: image.data }])
       }
       default: return unsupported(action.type)
@@ -201,6 +239,10 @@ export class PreviewTab {
       return failure("operation_failed", "A selected radio button cannot be unchecked; check another option in its group.")
     }
     await page({ action: "click", ref: targetRef })
+    // The page may refuse the change: only the state read back counts.
+    const after = await page({ action: "snapshot", ref: targetRef })
+    if ((checkState(String(after.snapshot ?? "").split("\n", 1)[0] ?? "", targetRef) === "checked") !== wanted)
+      return failure("operation_failed", `${targetRef} did not stay ${wanted ? "checked" : "unchecked"}; the page kept its previous state.`)
     return this.success(this.tab())
   }
 
