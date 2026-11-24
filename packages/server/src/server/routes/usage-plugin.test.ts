@@ -202,6 +202,31 @@ test("workspace eviction during initial or final ownership check blocks dispatch
       assert.equal(response.statusCode, 403)
     } finally { await app.close() }
   }
+
+  // Eviction scheduled two microtasks after the second ownsLocation resolves must still block
+  // both the absent-RPC Codex fallback and successful quota publication.
+  for (const mode of ["absent", "success"] as const) {
+    const { app, state } = harness(
+      async () => mode === "absent"
+        ? Response.json({ _tag: "RpcError", type: "rpc.unavailable", message: "missing" }, { status: 400 })
+        : Response.json({ output: { configured: true, ok: true, windows: { "5h": { usedPercent: 10, remainingPercent: 90 } } } }),
+      {
+        onOwnsLocation: (index) => {
+          if (index === 2) {
+            queueMicrotask(() => queueMicrotask(() => { state.evicted = true }))
+          }
+        },
+      },
+    )
+    try {
+      const response = await app.inject(url)
+      assert.equal(response.statusCode, 403, mode)
+      if (mode === "absent") {
+        assert.equal(state.nativeCalls.some(path => path.startsWith("/api/provider/")), false)
+        assert.equal(state.nativeCalls.includes("/api/credential"), false)
+      }
+    } finally { await app.close() }
+  }
 })
 
 test("route preserves HTTP status: generic 404 degrades to supported=false while 400/500/transport fail with 503", async () => {

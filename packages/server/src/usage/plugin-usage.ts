@@ -61,6 +61,12 @@ const pluginWindowSchema = z.object({
     || Math.abs(toHundredths(item.usedPercent) + toHundredths(item.remainingPercent) - 10_000) <= 5,
 )
 
+const absentRpcErrorSchema = z.object({
+  _tag: z.literal("RpcError"),
+  type: z.enum(["rpc.unavailable", "rpc.method_not_found"]),
+  message: z.string().min(1).max(4096),
+}).strict()
+
 const pluginUsageOutputSchema = z.object({
   providerName: displayText(128).optional(),
   configured: z.boolean(),
@@ -174,7 +180,6 @@ async function readBoundedJson(response: Response, signal: AbortSignal): Promise
     pending.catch(() => {})
     const text = await awaitBounded(pending, signal)
     if (Buffer.byteLength(text, "utf8") > PLUGIN_USAGE_MAX_RESPONSE_BYTES) return { ok: false, reason: "overflow" }
-    if (!text.trim()) return { ok: false, reason: "non-json" }
     try { return { ok: true, value: JSON.parse(text) } }
     catch { return { ok: false, reason: "malformed" } }
   }
@@ -201,7 +206,6 @@ async function readBoundedJson(response: Response, signal: AbortSignal): Promise
     reader.releaseLock()
   }
   const text = Buffer.concat(chunks, total).toString("utf8")
-  if (!text.trim()) return { ok: false, reason: "non-json" }
   try { return { ok: true, value: JSON.parse(text) } }
   catch { return { ok: false, reason: "malformed" } }
 }
@@ -268,9 +272,10 @@ export async function readPluginProviderUsage(
       const json = await readBoundedJson(response, quotaSignal)
       signal.throwIfAborted()
       const body = json.ok ? asRecord(json.value) : null
-      if (body?._tag === "RpcError") {
-        if (body.type === "rpc.unavailable" || body.type === "rpc.method_not_found") return null
-        if (typeof body.type === "string" && body.type.length > 0) return unavailable(target.providerId, target.modelId)
+      if (absentRpcErrorSchema.safeParse(body).success) return null
+      if (body?._tag === "RpcError" && body.type !== "rpc.unavailable" && body.type !== "rpc.method_not_found"
+        && typeof body.type === "string" && body.type.length > 0 && typeof body.message === "string" && body.message.length > 0) {
+        return unavailable(target.providerId, target.modelId)
       }
       throw new Error("Plugin usage RPC rejected request")
     }

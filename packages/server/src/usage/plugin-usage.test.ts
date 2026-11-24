@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { createRuntimeTransport } from "../opencode/compatibility/transport"
 import {
   PLUGIN_USAGE_MAX_RESPONSE_BYTES,
   PLUGIN_USAGE_MAX_WINDOWS,
@@ -162,9 +163,12 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
   for (const [label, responder] of [
     ["plain-text 500", async () => new Response("Internal Server Error", { status: 500 })],
     ["untagged 400 {}", async () => Response.json({}, { status: 400 })],
+    ["RpcError 400 missing message", async () => Response.json({ _tag: "RpcError", type: "rpc.unavailable" }, { status: 400 })],
+    ["RpcError 400 extra field", async () => Response.json({ _tag: "RpcError", type: "rpc.unavailable", message: "missing", extra: true }, { status: 400 })],
     ["LocationNotFoundError 404", async () => Response.json({ _tag: "LocationNotFoundError", message: "gone" }, { status: 404 })],
     ["oversized LocationNotFoundError 404", async () => Response.json({ _tag: "LocationNotFoundError", message: "x".repeat(PLUGIN_USAGE_MAX_RESPONSE_BYTES + 16) }, { status: 404 })],
     ["malformed JSON 404", async () => new Response("{bad", { status: 404, headers: { "content-type": "application/json" } })],
+    ["whitespace-only JSON 404", async () => new Response("   ", { status: 404, headers: { "content-type": "application/json" } })],
     ["SessionNotFoundError 404", async () => Response.json({ _tag: "SessionNotFoundError", message: "gone" }, { status: 404 })],
     ["contract error 500", async () => Response.json({ _tag: "OpenCodeContractError", status: 500 }, { status: 500 })],
     ["bad gateway 502", async () => new Response("Bad Gateway", { status: 502 })],
@@ -317,4 +321,45 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
       outer.signal,
     ),
   )
+
+  // Through the real createRuntimeTransport adapter, 404 problem+json LocationNotFoundError fails closed
+  // and a plain-text 502 with a never-settling body cancel rejects immediately rather than timing out.
+  {
+    const endpoint = { url: "http://127.0.0.1:4321" }
+    const transportProblem = createRuntimeTransport(endpoint, async (input) => {
+      const target = new URL(input instanceof Request ? input.url : String(input))
+      if (target.pathname === "/api/info") return Response.json({ version: "2.4.1" })
+      return new Response(JSON.stringify({ _tag: "LocationNotFoundError", message: "gone" }), {
+        status: 404,
+        headers: { "content-type": "application/problem+json" },
+      })
+    })
+    await assert.rejects(
+      readPluginProviderUsage(
+        { endpoint, fetch: transportProblem.fetch },
+        { providerId: "agy-agent", location: { directory: "/repo" } },
+        new AbortController().signal,
+      ),
+      Error,
+    )
+
+    const transport502 = createRuntimeTransport(endpoint, async (input) => {
+      const target = new URL(input instanceof Request ? input.url : String(input))
+      if (target.pathname === "/api/info") return Response.json({ version: "2.4.1" })
+      const hungCancel = new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new TextEncoder().encode("Bad Gateway")) },
+        cancel() { return new Promise<void>(() => {}) },
+      })
+      return new Response(hungCancel, { status: 502, headers: { "content-type": "text/plain" } })
+    })
+    await assert.rejects(
+      readPluginProviderUsage(
+        { endpoint, fetch: transport502.fetch },
+        { providerId: "agy-agent", location: { directory: "/repo" } },
+        new AbortController().signal,
+        AbortSignal.timeout(500),
+      ),
+      Error,
+    )
+  }
 })
