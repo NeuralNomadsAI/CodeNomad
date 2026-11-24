@@ -21,7 +21,7 @@ impl Backend {
             .json(&json!({"name":name,"text":text,"delivery":"steer"}))
             .send()
             .await
-            .map_err(|_| PromptError::Unconfirmed)?;
+            .map_err(|error| crate::backend::send_transport_error(&error))?;
         if cfg!(not(target_arch = "wasm32"))
             && response.status() == reqwest::StatusCode::UNAUTHORIZED
         {

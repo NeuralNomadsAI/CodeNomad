@@ -15,6 +15,7 @@ pub struct Owner {
     pub menu: rune_theme_codenomad::action_menu::State<State>,
     sending: Option<Send>,
     pub send_error: bool,
+    pub(crate) announce_send_error: bool,
     unconfirmed: Option<Send>,
     pub restored: bool,
     pub attachments_missing: bool,
@@ -59,6 +60,10 @@ pub(crate) fn command_held(s: &State) -> bool {
 }
 
 pub fn can_send(s: &State) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    if crate::platform::pairing::required(s) {
+        return false;
+    }
     let stream_disconnected = matches!(s.phase, Phase::StreamDisconnected { .. });
     (stream_disconnected || matches!(s.phase, Phase::Ready | Phase::Streaming))
         && !s
@@ -88,6 +93,7 @@ pub fn can_send(s: &State) -> bool {
 
 pub(crate) fn refuse_send(s: &mut State, tx: &mut Tx) {
     s.composer.send_error = true;
+    s.composer.announce_send_error = false;
     rune_theme_codenomad::layout::announce_alert(
         tx,
         crate::strings::t("promptInput.send.errorTitle"),
@@ -105,19 +111,22 @@ pub(crate) fn send_button(s: &mut State, tx: &mut Tx) {
 
 pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
     if !can_send(s) {
+        if s.composer.draft.can_send(&s.draft) {
+            refuse_send(s, tx);
+        }
         return;
     }
     let Ok(id) = message_id() else {
-        s.composer.send_error = true;
+        refuse_send(s, tx);
         return;
     };
     if let Some((name, text)) = s.composer.picker.selected_command(&s.draft.text) {
         let Some(text) = s.composer.draft.resolve_args(&s.draft, text) else {
-            s.composer.send_error = true;
+            refuse_send(s, tx);
             return;
         };
         let Some(target) = super::recall::command_target(s) else {
-            s.composer.send_error = true;
+            refuse_send(s, tx);
             return;
         };
         let slash = CommandAttempt {
@@ -156,8 +165,9 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             renew_editor(s, tx);
             workspace::capture(s);
             s.composer.send_error = false;
+            s.composer.announce_send_error = false;
         } else {
-            s.composer.send_error = true;
+            refuse_send(s, tx);
         }
         return;
     }
@@ -169,7 +179,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
     );
     let queued = delivery == Delivery::Queue;
     let Some((prompt, parts)) = s.composer.draft.prepare(&s.draft, &id, delivery) else {
-        s.composer.send_error = true;
+        refuse_send(s, tx);
         return;
     };
     let body = prompt.text.clone();
@@ -178,10 +188,11 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         .as_ref()
         .is_some_and(|pipe| pipe.try_send(Command::Prompt(prompt)).is_ok())
     {
-        s.composer.send_error = true;
+        refuse_send(s, tx);
         return;
     }
     s.composer.send_error = false;
+    s.composer.announce_send_error = false;
     let recallable = super::recall::record(s, body.clone(), false);
     s.composer.sending = Some(Send {
         id: id.clone(),
@@ -279,7 +290,11 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         if matches!(outcome, PromptOutcome::Unconfirmed) {
             s.command_receipts.hold(send.id, slash);
         }
-        s.composer.send_error = matches!(outcome, PromptOutcome::Rejected);
+        let rejected = matches!(outcome, PromptOutcome::Rejected);
+        s.composer.send_error = rejected;
+        if rejected {
+            s.composer.announce_send_error = true;
+        }
         return;
     }
     if matches!(outcome, PromptOutcome::Unconfirmed) {
@@ -323,6 +338,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         s.messages.remove(index);
     }
     s.composer.send_error = true;
+    s.composer.announce_send_error = true;
     if may_restore && s.composer.draft.attachments.is_empty() {
         super::recall::replace_edit(s, send.edit);
         s.composer.draft = send.draft;

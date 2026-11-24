@@ -18,6 +18,18 @@ impl std::fmt::Debug for Backend {
         f.write_str("CodeNomadConnection")
     }
 }
+pub(crate) fn send_transport_error(error: &reqwest::Error) -> crate::prompt::PromptError {
+    #[cfg(not(target_arch = "wasm32"))]
+    if error.is_connect() || error.is_builder() {
+        return crate::prompt::PromptError::Rejected;
+    }
+    #[cfg(target_arch = "wasm32")]
+    if error.is_builder() {
+        return crate::prompt::PromptError::Rejected;
+    }
+    crate::prompt::PromptError::Unconfirmed
+}
+
 impl Backend {
     pub async fn connect(address: &str, password: &str) -> Result<Self> {
         Self::connect_with_bootstrap(address, password, None).await
@@ -116,7 +128,8 @@ impl Backend {
         &self,
         input: &crate::prompt::Prompt,
     ) -> Result<crate::prompt::Acknowledgement> {
-        let body = crate::prompt::encode(input)?;
+        let body =
+            crate::prompt::encode(input).map_err(|_| crate::prompt::PromptError::Rejected)?;
         let response = self
             .client
             .post(format!(
@@ -127,7 +140,7 @@ impl Backend {
             .body(body)
             .send()
             .await
-            .map_err(|_| crate::prompt::PromptError::Unconfirmed)?;
+            .map_err(|error| send_transport_error(&error))?;
         if cfg!(not(target_arch = "wasm32"))
             && response.status() == reqwest::StatusCode::UNAUTHORIZED
         {

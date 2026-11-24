@@ -230,6 +230,7 @@ fn local_stress() -> bool {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn send(s: &mut State, tx: &mut Tx) {
     composer::send(s, tx, false);
 }
@@ -258,6 +259,9 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let gesture = timeline::poll_edge(s, tx);
     let chat = !timeline::input_precedes_admission(s, tx) && poll_chat(s, 64);
+    if std::mem::take(&mut s.composer.announce_send_error) {
+        rune_theme_codenomad::layout::announce_alert(tx, strings::t("promptInput.send.errorTitle"));
+    }
     shell::notifications::collect(s, workspace::notification_target);
     if !s.screen.is_launcher()
         && !git::has_preview(s)

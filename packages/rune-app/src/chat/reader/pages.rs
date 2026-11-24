@@ -18,6 +18,9 @@ pub(crate) fn announce_paging(tx: &mut Tx) {
 }
 
 pub(crate) fn oldest(s: &mut State, tx: &mut Tx) {
+    if s.phase.reconnecting() {
+        return;
+    }
     if s.can_older {
         cancel_page(s);
         if request_page(s, HistoryEdge::Oldest) {

@@ -95,9 +95,7 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Closed(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
-                if opened {
-                    stream_gap = wire.upstream.load(SeqCst);
-                }
+                stream_gap = opened && wire.upstream.load(SeqCst);
                 opened = false;
                 connection_closed = true;
                 connection_lost = true;
@@ -163,6 +161,7 @@ pub(crate) async fn run_with_reading(
                 }
             }
             Some(Input::Command(Command::Retry)) => {
+                stream_gap = false;
                 ReadingLane::invalidate_connection(reading);
                 attempts = 0;
                 reader.dirty = true;
@@ -202,6 +201,7 @@ pub(crate) async fn run_with_reading(
                 }
             }
             Some(Input::Command(Command::Latest)) => {
+                stream_gap = false;
                 reader.clear_window();
                 reader.dirty = true;
                 reader.parked = false;
@@ -219,7 +219,11 @@ pub(crate) async fn run_with_reading(
                 let admitted = reading.is_some()
                     || !reader.parked
                         && !reader.historical
-                        && (stream_gap || opened && wire.upstream.load(SeqCst));
+                        && if opened {
+                            wire.upstream.load(SeqCst)
+                        } else {
+                            stream_gap
+                        };
                 if !receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
                     .await
                 {
@@ -232,7 +236,11 @@ pub(crate) async fn run_with_reading(
                 let admitted = reading.is_some()
                     || !reader.parked
                         && !reader.historical
-                        && (stream_gap || opened && wire.upstream.load(SeqCst));
+                        && if opened {
+                            wire.upstream.load(SeqCst)
+                        } else {
+                            stream_gap
+                        };
                 let Some(outcome) =
                     receipts::prompt(&backend, &out, &wake, &wire, admitted, id, &prompt).await
                 else {
