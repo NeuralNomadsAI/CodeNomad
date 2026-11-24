@@ -128,8 +128,20 @@ mod native {
             self.save_file("state.json", MAX_BYTES, bytes)
         }
         fn save_file(&self, name: &str, limit: usize, bytes: &[u8]) -> Result<()> {
+            self.save_file_if(name, limit, bytes, || true).map(|_| ())
+        }
+        pub(super) fn save_file_if(
+            &self,
+            name: &str,
+            limit: usize,
+            bytes: &[u8],
+            still_current: impl Fn() -> bool,
+        ) -> Result<bool> {
             if bytes.len() > limit {
                 return Err("state too large".into());
+            }
+            if !still_current() {
+                return Ok(false);
             }
             let destination = self.directory.join(name);
             plain(&destination, false)?;
@@ -149,12 +161,15 @@ mod native {
                 file.write_all(bytes)?;
                 file.sync_all()?;
                 drop(file);
+                if !still_current() {
+                    return Ok(false);
+                }
                 fs::rename(&temporary, &destination)?;
                 #[cfg(unix)]
                 File::open(&self.directory)?.sync_all()?;
-                Ok(())
+                Ok(true)
             })();
-            if result.is_err() {
+            if !matches!(result, Ok(true)) {
                 let _ = fs::remove_file(temporary);
             }
             result
@@ -260,14 +275,14 @@ mod native {
         pub fn start_file_drafts_save(
             &self,
             bytes: Vec<u8>,
-        ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
+        ) -> impl std::future::Future<Output = Result<bool>> + Send + 'static {
             self.start_file_drafts_save_with_timeout(bytes, std::time::Duration::from_secs(5))
         }
         pub(super) fn start_file_drafts_save_with_timeout(
             &self,
             bytes: Vec<u8>,
             timeout: std::time::Duration,
-        ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
+        ) -> impl std::future::Future<Output = Result<bool>> + Send + 'static {
             // Claim generation synchronously at admission so an unpolled background task
             // can never outrank a later save or exit flush.
             let generation = self
@@ -280,23 +295,27 @@ mod native {
             async move {
                 let latest_for_blocking = latest.clone();
                 let task = tokio::task::spawn_blocking(move || {
-                    if latest_for_blocking.load(std::sync::atomic::Ordering::Acquire) != generation
-                    {
-                        return Ok(());
+                    let current = || {
+                        latest_for_blocking.load(std::sync::atomic::Ordering::Acquire) == generation
+                    };
+                    if !current() {
+                        return Ok(false);
                     }
                     let _guard = file_drafts_lock
                         .lock()
                         .map_err(|_| "state store unavailable")?;
-                    if latest_for_blocking.load(std::sync::atomic::Ordering::Acquire) != generation
-                    {
-                        return Ok(());
-                    }
-                    files.save_file("workspace-file-drafts.json", FILE_DRAFT_BYTES, &bytes)
+                    files.save_file_if(
+                        "workspace-file-drafts.json",
+                        FILE_DRAFT_BYTES,
+                        &bytes,
+                        current,
+                    )
                 });
                 match tokio::time::timeout(timeout, task).await {
                     Ok(joined) => joined?,
                     Err(elapsed) => {
-                        // Invalidate a timed-out generation so a late lock acquisition skips disk I/O.
+                        // Invalidate a timed-out generation so a late lock acquisition or
+                        // post-sync_all step skips rename and removes its temporary file.
                         let _ = latest.compare_exchange(
                             generation,
                             generation + 1,
@@ -310,7 +329,10 @@ mod native {
         }
         pub fn save_file_drafts_exit(&self, bytes: Vec<u8>) -> Result<()> {
             let write = self.start_file_drafts_save(bytes);
-            crate::platform::block_on(write)
+            match crate::platform::block_on(write)? {
+                true => Ok(()),
+                false => Err("file draft write superseded".into()),
+            }
         }
         #[cfg(test)]
         pub(super) fn lock_file_drafts(&self) -> std::sync::MutexGuard<'_, ()> {

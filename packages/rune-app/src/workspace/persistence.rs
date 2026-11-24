@@ -320,8 +320,6 @@ impl Persistence {
                     self.file_drafts_due =
                         (now + FILE_DRAFT_DEBOUNCE_SECS).min(first + FILE_DRAFT_MAX_WAIT_SECS);
                 }
-            } else if self.file_drafts_first_dirty.is_none() {
-                self.file_drafts_first_dirty = Some(now);
             }
             let Some(store) = self.store.clone() else {
                 return;
@@ -349,7 +347,7 @@ impl Persistence {
             self.saving_file_drafts = Some(input);
             let write = store.start_file_drafts_save(bytes);
             crate::platform::spawn(async move {
-                let ok = write.await.is_ok();
+                let ok = matches!(write.await, Ok(true));
                 let _ = out.send((revision, ok)).await;
                 wake();
             });
@@ -648,13 +646,16 @@ mod tests {
         assert!(rt.state.0.file_draft_error);
         assert_eq!(rt.state.0.saved_file_drafts, 0);
         assert_eq!(wakes.load(Ordering::SeqCst), 1);
-        // Even a new edit does not trigger automatic retries while file_draft_error is active.
+        // Even a new edit past both debounce (2.25) and max-wait (4.0) does not trigger
+        // automatic retries while file_draft_error is active.
         rt.state
             .1
             .insert_test_file_draft("src/main.rs", "edited after failure");
+        let after_failure_wake = wake.clone();
+        rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 2.0, tx, after_failure_wake));
         for _ in 0..10 {
             let wake = wake.clone();
-            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 2.0, tx, wake));
+            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 4.5, tx, wake));
         }
         assert!(rt.state.0.saving_file_drafts.is_none());
         assert_eq!(wakes.load(Ordering::SeqCst), 1);
@@ -665,7 +666,7 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !(rt.state.0.saved_file_drafts == 2 && wakes.load(Ordering::SeqCst) == 2) {
             let wake = wake.clone();
-            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 3.0, tx, wake));
+            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 5.0, tx, wake));
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -683,7 +684,7 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !(rt.state.0.saved_file_drafts == 3 && wakes.load(Ordering::SeqCst) == 3) {
             let wake = wake.clone();
-            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 4.0, tx, wake));
+            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 6.0, tx, wake));
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }

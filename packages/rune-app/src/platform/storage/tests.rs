@@ -110,7 +110,7 @@ fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
     let unpolled_stale = store.start_file_drafts_save(b"stale-before-exit".to_vec());
     store.save_file_drafts_exit(b"exit-fresh".to_vec()).unwrap();
     crate::platform::block_on(async {
-        unpolled_stale.await.unwrap();
+        assert!(!unpolled_stale.await.unwrap());
         assert_eq!(
             store.load_file_drafts().await.unwrap().unwrap(),
             b"exit-fresh"
@@ -128,12 +128,13 @@ fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
             assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(2)), Ok(true));
         }
         let older = store.start_file_drafts_save(b"older".to_vec());
-        let newer = store.start_file_drafts_save(b"newer".to_vec());
         let older_task = tokio::spawn(older);
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+        let newer = store.start_file_drafts_save(b"newer".to_vec());
         let newer_task = tokio::spawn(newer);
         drop(guard);
-        older_task.await.unwrap().unwrap();
-        newer_task.await.unwrap().unwrap();
+        assert!(!older_task.await.unwrap().unwrap());
+        assert!(newer_task.await.unwrap().unwrap());
         assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"newer");
         // A timed-out write cancels its generation and skips disk I/O once the lock frees.
         let guard = store.lock_file_drafts();
@@ -158,4 +159,41 @@ fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
             b"newer"
         );
     });
+}
+
+#[test]
+fn pre_rename_staleness_cancels_publication_and_removes_temp_file() {
+    let root = Root::new();
+    let files = root.open();
+    assert!(
+        files
+            .save_file_if(
+                "workspace-file-drafts.json",
+                super::FILE_DRAFT_BYTES,
+                b"kept",
+                || true,
+            )
+            .unwrap()
+    );
+    let checks = std::cell::Cell::new(0usize);
+    let published = files
+        .save_file_if(
+            "workspace-file-drafts.json",
+            super::FILE_DRAFT_BYTES,
+            b"stale-after-sync",
+            || {
+                let count = checks.get();
+                checks.set(count + 1);
+                count == 0
+            },
+        )
+        .unwrap();
+    assert!(!published);
+    assert_eq!(checks.get(), 2);
+    assert_eq!(
+        fs::read(root.0.join("rune/workspace-file-drafts.json")).unwrap(),
+        b"kept"
+    );
+    // Only state.lock and workspace-file-drafts.json remain; the temporary file is removed.
+    assert_eq!(fs::read_dir(root.0.join("rune")).unwrap().count(), 2);
 }
