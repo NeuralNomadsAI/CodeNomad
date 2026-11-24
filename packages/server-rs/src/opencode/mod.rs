@@ -496,6 +496,17 @@ async fn session_record_segment_at(
     }
 }
 
+/// Returns `Ok(Some(directory))` when the session belongs to a local directory with no
+/// `workspaceID`, `Ok(None)` when the session carries a native `workspaceID` selector (foreign
+/// workspace), and `Err` when the native record cannot be read.
+pub async fn session_location(app: &App, id: &str) -> Result<Option<String>, Error> {
+    let record = session_record(app, id).await?;
+    if record["location"].get("workspaceID").is_some() {
+        return Ok(None);
+    }
+    record["location"]["directory"].as_str().map(|dir| Some(dir.to_owned())).ok_or_else(upstream_error)
+}
+
 pub async fn session_directory(app: &App, id: &str) -> Result<String, Error> {
-    session_record(app, id).await?["location"]["directory"].as_str().map(str::to_owned).ok_or_else(upstream_error)
+    session_location(app, id).await?.ok_or_else(upstream_error)
 }

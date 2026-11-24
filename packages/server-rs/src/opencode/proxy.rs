@@ -197,13 +197,16 @@ fn parse_location_context(headers: &axum::http::HeaderMap) -> Result<Option<Valu
 async fn resolve_media_path_async(
     scope: std::path::PathBuf,
     raw: String,
-    slot: Option<tokio::sync::OwnedSemaphorePermit>,
-) -> (Option<(std::path::PathBuf, std::path::PathBuf)>, Option<tokio::sync::OwnedSemaphorePermit>) {
-    // Move the admission permit into `spawn_blocking` so cancelling a stalled request never
-    // releases a slot while the detached filesystem probe worker is still running.
-    tokio::task::spawn_blocking(move || (crate::worktrees::ownership::resolve_media_path(&scope, &raw), slot))
-        .await
-        .unwrap_or((None, None))
+    slot: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
+) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    // Keep the `Arc<OwnedSemaphorePermit>` alive inside `spawn_blocking` so cancelling a stalled
+    // request never releases a slot while the detached filesystem probe worker is still running.
+    tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        crate::worktrees::ownership::resolve_media_path(&scope, &raw)
+    })
+    .await
+    .ok()?
 }
 
 fn one_location(location: &Value, directory: &str) -> Result<(), Error> {
@@ -392,8 +395,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let list_admission_slots = || {
         std::sync::Arc::clone(LIST_ADMISSION_SLOTS.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4))))
     };
-    let mut list_admission_slot = if message_list {
-        Some(match list_admission_slots().try_acquire_owned() {
+    let list_admission_slot = if message_list {
+        Some(std::sync::Arc::new(match list_admission_slots().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => tokio::select! {
                 biased;
@@ -404,21 +407,26 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     permit.map_err(|_| upstream_error())?.map_err(|_| upstream_error())?
                 }
             },
-        })
+        }))
     } else {
         None
     };
     let admission_work = async {
         for req in &requested_dirs {
             if message_list {
-                let (resolved_pair, returned_slot) =
-                    resolve_media_path_async(app.scope.clone(), req.clone(), list_admission_slot.take()).await;
-                list_admission_slot = returned_slot;
-                let Some((resolved, anchor)) = resolved_pair else {
+                let Some((resolved, anchor)) =
+                    resolve_media_path_async(app.scope.clone(), req.clone(), list_admission_slot.clone()).await
+                else {
                     return Err(foreign());
                 };
-                let _proof = crate::worktrees::ownership::media_directory(
-                    &app, &workspace, &endpoint, &resolved, &anchor, false,
+                let _proof = crate::worktrees::ownership::media_directory_with_slot(
+                    &app,
+                    &workspace,
+                    &endpoint,
+                    &resolved,
+                    &anchor,
+                    false,
+                    list_admission_slot.clone(),
                 )
                 .await
                 .ok()
@@ -444,14 +452,19 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             let ctx_resolved = if let Some((_, resolved)) = verified_media_dirs.iter().find(|(raw, _)| raw == ctx_dir) {
                 resolved.clone()
             } else {
-                let (resolved_pair, returned_slot) =
-                    resolve_media_path_async(app.scope.clone(), ctx_dir.to_owned(), list_admission_slot.take()).await;
-                list_admission_slot = returned_slot;
-                let Some((resolved, anchor)) = resolved_pair else {
+                let Some((resolved, anchor)) =
+                    resolve_media_path_async(app.scope.clone(), ctx_dir.to_owned(), list_admission_slot.clone()).await
+                else {
                     return Err(foreign());
                 };
-                let _proof = crate::worktrees::ownership::media_directory(
-                    &app, &workspace, &endpoint, &resolved, &anchor, false,
+                let _proof = crate::worktrees::ownership::media_directory_with_slot(
+                    &app,
+                    &workspace,
+                    &endpoint,
+                    &resolved,
+                    &anchor,
+                    false,
+                    list_admission_slot.clone(),
                 )
                 .await
                 .ok()
@@ -534,8 +547,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let initial_identity = if message_list {
         if let Some(raw) = native_directory {
             let (scope, raw) = (app.scope.clone(), raw.to_owned());
-            let held_slot = list_admission_slot.take();
-            let (resolved, returned_slot) = tokio::select! {
+            let held_slot = list_admission_slot.clone();
+            tokio::select! {
                 biased;
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
@@ -543,18 +556,16 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 res = tokio::time::timeout_at(
                     list_deadline,
                     tokio::task::spawn_blocking(move || {
-                        let resolved = crate::worktrees::ownership::resolve_media_path(&scope, &raw).and_then(
+                        let _slot = held_slot;
+                        crate::worktrees::ownership::resolve_media_path(&scope, &raw).and_then(
                             |(resolved, anchor)| {
                                 let identity = crate::files::directory_identity(&anchor).ok()?;
                                 Some((resolved, anchor, identity))
                             },
-                        );
-                        (resolved, held_slot)
+                        )
                     }),
                 ) => res.map_err(|_| upstream_error())?.map_err(|_| upstream_error())?,
-            };
-            list_admission_slot = returned_slot;
-            resolved
+            }
         } else {
             None
         }
@@ -572,13 +583,14 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 _ = workspace_closed() => return Err(not_found()),
                 proof = tokio::time::timeout_at(
                     list_deadline,
-                    crate::worktrees::ownership::media_directory(
+                    crate::worktrees::ownership::media_directory_with_slot(
                         &app,
                         &workspace,
                         &endpoint,
                         resolved,
                         anchor,
                         false,
+                        list_admission_slot.clone(),
                     ),
                 ) => proof.map_err(|_| upstream_error())?.ok().flatten(),
             }
@@ -680,7 +692,18 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 prompt_locations.push((raw.to_owned(), context, (live, observed)));
             }
         } else if !message_list {
-            one_location(&context, directory)?;
+            // Match TS `http-server.ts:1224-1269` & `compatibility/location.ts:74-83`: an ambient
+            // `x-codenomad-location` only needs to belong to this workspace and agree with any
+            // explicit query selector, NOT with the target session's own linked worktree.
+            let ctx_dir = context["directory"].as_str().ok_or_else(invalid)?;
+            if !crate::worktrees::owns(&app, &workspace, ctx_dir).await {
+                return Err(foreign());
+            }
+            if let Some(req) = requested.as_deref()
+                && req != ctx_dir
+            {
+                return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
+            }
         }
         // For `message_list`, shape, ownership, and query conflicts were already verified before
         // session lookup; TS (`location.ts:35-37, 74-84`) strips `x-codenomad-location` and does

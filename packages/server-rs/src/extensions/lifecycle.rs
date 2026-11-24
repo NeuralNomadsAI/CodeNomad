@@ -264,16 +264,17 @@ async fn connection_at(
                     {
                         Err("OpenCode connection replaced before plugin installation".into())
                     } else {
-                        let contents: Vec<String> = features.iter().map(|f| content(app, f)).collect();
-                        let (target, chosen, written) = (paths.clone(), features.to_vec(), contents.clone());
+                        let (target, chosen) = (paths.clone(), features.to_vec());
                         let app_check = app.clone();
                         let ep_check = endpoint.cloned();
                         let stop_check = stop.cloned();
-                        // Run installation AND STATE registration (or immediate stale disposal) under
-                        // `LEASE_IO` inside `spawn_blocking` so cancelling `connection_at` during
-                        // shutdown can never leave an unregistered `.lease` file on disk.
+                        // Compute lease contents (which may read `config.yaml` for Memory) AND run
+                        // installation + STATE registration under `LEASE_IO` inside `spawn_blocking`
+                        // so neither the single-thread Tokio executor nor `LEASE_IO` blocks on
+                        // config I/O and shutdown can never leave an unregistered `.lease` file.
                         // Lock order is strictly `LEASE_IO` -> `STATE`.
                         tokio::task::spawn_blocking(move || {
+                            let written: Vec<String> = chosen.iter().map(|f| content(&app_check, f)).collect();
                             let _io = LEASE_IO.read().unwrap();
                             let still_current = || {
                                 !stop_check.as_ref().is_some_and(CancellationToken::is_cancelled)

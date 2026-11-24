@@ -242,63 +242,111 @@ pub async fn create(
                 return Err(conflict("Worktree parent was replaced"));
             }
         }
-        // Ensure `.codenomad/worktrees/` is listed in the effective `info/exclude` (creating
-        // `info/` if absent), matching TS `git-worktrees.ts:163-165`, `worktree-map.ts:62-74`,
-        // `native-worktrees.ts:218-229`, and `worktrees.ts:359-364` (propagate write failure as
-        // `400` before calling `POST /api/worktree`). Run off the Tokio executor with Unix
-        // `O_NONBLOCK` + `fstat` regular-file check so a racing FIFO can never block the runtime.
-        let exclude_raw = git(&catalogue.main, &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"])
-            .await
-            .map_err(|_| error(Status::BAD_REQUEST, "Git exclude is unavailable"))?;
-        let exclude_path = PathBuf::from(exclude_raw.trim());
-        let exclude_updated = tokio::task::spawn_blocking(move || -> Result<(), Error> {
-            let unavailable = || error(Status::BAD_REQUEST, "Git exclude is unavailable");
-            let info_dir_path = exclude_path.parent().ok_or_else(unavailable)?;
-            std::fs::create_dir_all(info_dir_path).map_err(|_| unavailable())?;
-            let info_canon = dunce::canonicalize(info_dir_path).map_err(|_| unavailable())?;
-            if info_canon != info_dir_path {
-                return Err(error(Status::BAD_REQUEST, "Git exclude is not physically owned"));
+        // Ensure `.codenomad/worktrees/` is listed in the effective `info/exclude`, matching TS
+        // `worktree-map.ts:6-21, 62-74`, `native-worktrees.ts:217-229`, and `worktrees.ts:359-364`:
+        // ignore mkdir/read failures (e.g. unwritable info dir or directory at `info/exclude`), and
+        // propagate only append failures as `400` before `POST /api/worktree`. Anchor every step
+        // to the verified Git common directory via `cap_std` + Unix `O_NONBLOCK` + `fstat` so a
+        // racing symlink at `info/` or FIFO at `exclude` can neither escape the repo nor block.
+        let git_paths = git(
+            &catalogue.main,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir", "--git-path", "info/exclude"],
+        )
+        .await;
+        if let Ok(raw) = git_paths {
+            let mut lines = raw.lines();
+            if let (Some(common_raw), Some(exclude_raw)) = (lines.next(), lines.next()) {
+                let common_path = PathBuf::from(common_raw.trim());
+                let exclude_path = PathBuf::from(exclude_raw.trim());
+                let exclude_updated = tokio::task::spawn_blocking(move || -> Result<(), Error> {
+                    let Ok(common_canon) = dunce::canonicalize(&common_path) else { return Ok(()) };
+                    let rel = match exclude_path
+                        .strip_prefix(&common_path)
+                        .or_else(|_| exclude_path.strip_prefix(&common_canon))
+                    {
+                        Ok(r) => r.to_path_buf(),
+                        Err(_) => return Ok(()),
+                    };
+                    let mut comps = rel.components();
+                    let (
+                        Some(std::path::Component::Normal(info_comp)),
+                        Some(std::path::Component::Normal(file_comp)),
+                        None,
+                    ) = (comps.next(), comps.next(), comps.next())
+                    else {
+                        return Ok(());
+                    };
+                    let Ok(common_dir) =
+                        cap_std::fs::Dir::open_ambient_dir(&common_canon, cap_std::ambient_authority())
+                    else {
+                        return Ok(());
+                    };
+                    // Match TS `worktree-map.ts:8-12`: ignore mkdir/open failure for `info/`.
+                    let _ = common_dir.create_dir(info_comp);
+                    let Ok(info) = common_dir.open_dir(info_comp) else { return Ok(()) };
+                    #[cfg(unix)]
+                    let add_nonblock = |opts: &mut cap_std::fs::OpenOptions| {
+                        use cap_std::fs::OpenOptionsExt;
+                        #[cfg(any(
+                            target_os = "macos",
+                            target_os = "freebsd",
+                            target_os = "openbsd",
+                            target_os = "netbsd"
+                        ))]
+                        const O_NONBLOCK: i32 = 0x0004;
+                        #[cfg(not(any(
+                            target_os = "macos",
+                            target_os = "freebsd",
+                            target_os = "openbsd",
+                            target_os = "netbsd"
+                        )))]
+                        const O_NONBLOCK: i32 = 0x0800;
+                        opts.custom_flags(O_NONBLOCK);
+                    };
+                    // Match TS `worktree-map.ts:15-20`: missing file is empty; any other read failure
+                    // (including a directory, symlink, or FIFO at `info/exclude`) returns without error.
+                    let mut contents = Vec::new();
+                    match info.symlink_metadata(file_comp) {
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                        Ok(m) if m.is_file() && !m.is_symlink() => {
+                            let mut read_opts = cap_std::fs::OpenOptions::new();
+                            read_opts.read(true);
+                            #[cfg(unix)]
+                            add_nonblock(&mut read_opts);
+                            let Ok(mut reader) = info.open_with(file_comp, &read_opts) else { return Ok(()) };
+                            if !reader.metadata().is_ok_and(|m| m.is_file()) {
+                                return Ok(());
+                            }
+                            if (&mut reader).take(64 * 1024 + 1).read_to_end(&mut contents).is_err()
+                                || contents.len() > 64 * 1024
+                            {
+                                return Ok(());
+                            }
+                        }
+                        _ => return Ok(()),
+                    }
+                    let text = String::from_utf8_lossy(&contents);
+                    if text.lines().any(|line| line.trim_end_matches('\r') == ".codenomad/worktrees/") {
+                        return Ok(());
+                    }
+                    // Match TS `worktree-map.ts:21, 62-74`: append failure propagates as `400`.
+                    let write_err = || error(Status::BAD_REQUEST, "Git exclude is unavailable");
+                    let mut append_opts = cap_std::fs::OpenOptions::new();
+                    append_opts.append(true).create(true);
+                    #[cfg(unix)]
+                    add_nonblock(&mut append_opts);
+                    let mut writer = info.open_with(file_comp, &append_opts).map_err(|_| write_err())?;
+                    if !writer.metadata().is_ok_and(|m| m.is_file()) {
+                        return Err(write_err());
+                    }
+                    writer.write_all(b"\n# codenomad\n.codenomad/worktrees/\n").map_err(|_| write_err())?;
+                    Ok(())
+                })
+                .await
+                .map_err(|_| error(Status::BAD_REQUEST, "Git exclude is unavailable"))?;
+                exclude_updated?;
             }
-            let info = cap_std::fs::Dir::open_ambient_dir(&info_canon, cap_std::ambient_authority())
-                .map_err(|_| unavailable())?;
-            let exclude_name = exclude_path.file_name().and_then(|n| n.to_str()).ok_or_else(unavailable)?;
-            if info.symlink_metadata(exclude_name).is_ok_and(|m| !m.is_file() || m.is_symlink()) {
-                return Err(error(Status::BAD_REQUEST, "Git exclude is not physically owned"));
-            }
-            let mut options = cap_std::fs::OpenOptions::new();
-            options.read(true).append(true).create(true);
-            #[cfg(unix)]
-            {
-                use cap_std::fs::OpenOptionsExt;
-                #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
-                const O_NONBLOCK: i32 = 0x0004;
-                #[cfg(not(any(
-                    target_os = "macos",
-                    target_os = "freebsd",
-                    target_os = "openbsd",
-                    target_os = "netbsd"
-                )))]
-                const O_NONBLOCK: i32 = 0x0800;
-                options.custom_flags(O_NONBLOCK);
-            }
-            let mut excludes = info.open_with(exclude_name, &options).map_err(|_| unavailable())?;
-            if !excludes.metadata().is_ok_and(|m| m.is_file()) {
-                return Err(error(Status::BAD_REQUEST, "Git exclude is not physically owned"));
-            }
-            let mut contents = Vec::new();
-            (&mut excludes).take(64 * 1024 + 1).read_to_end(&mut contents).map_err(|_| unavailable())?;
-            if contents.len() > 64 * 1024 {
-                return Err(error(Status::BAD_REQUEST, "Git exclude exceeds the limit"));
-            }
-            let text = String::from_utf8_lossy(&contents);
-            if !text.lines().any(|line| line == ".codenomad/worktrees/") {
-                excludes.write_all(b"\n# codenomad\n.codenomad/worktrees/\n").map_err(|_| unavailable())?;
-            }
-            Ok(())
-        })
-        .await
-        .map_err(|_| error(Status::BAD_REQUEST, "Git exclude is unavailable"))?;
-        exclude_updated?;
+        }
     }
     let name = branch.replace('/', "-");
     let body = json!({"projectID": catalogue.project, "from": from.service_root, "branch": rev,

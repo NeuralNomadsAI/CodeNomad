@@ -206,20 +206,30 @@ async fn cached_catalogue(
                 if cache.entries.len() >= EVENT_ENTRIES * 2 {
                     cache.entries.retain(|_, e| e.loading.is_some() || e.at.elapsed() < EVENT_STALE_LIMIT);
                 }
-                let admitted = cache.entries.len() < EVENT_ENTRIES * 2 || cache.entries.contains_key(&key);
+                if cache.entries.len() >= EVENT_ENTRIES * 2 && !cache.entries.contains_key(&key) {
+                    if let Some(oldest) = cache
+                        .entries
+                        .iter()
+                        .filter(|(_, e)| e.loading.is_none())
+                        .min_by_key(|(_, e)| e.at)
+                        .map(|(&k, _)| k)
+                    {
+                        cache.entries.remove(&oldest);
+                    }
+                }
                 let (done, receive) = tokio::sync::oneshot::channel();
                 let loading = async move { receive.await.ok().flatten() }.boxed().shared();
                 let flight = Uuid::new_v4();
-                if admitted {
-                    let entry = cache.entries.entry(key).or_insert_with(|| EventEntry {
-                        at: Instant::now(),
-                        value: None,
-                        endpoint: endpoint.clone(),
-                        loading: None,
-                    });
-                    entry.endpoint = endpoint.clone();
-                    entry.loading = Some((flight, epoch, loading.clone()));
-                }
+                // Always register active `loading` flights so concurrent callers coalesce even
+                // when the idle cache is full; idle retention stays bounded below on completion.
+                let entry = cache.entries.entry(key).or_insert_with(|| EventEntry {
+                    at: Instant::now(),
+                    value: None,
+                    endpoint: endpoint.clone(),
+                    loading: None,
+                });
+                entry.endpoint = endpoint.clone();
+                entry.loading = Some((flight, epoch, loading.clone()));
                 let (app, w, endpoint) = (app.clone(), w.clone(), endpoint.clone());
                 tokio::spawn(async move {
                     let started = Instant::now();
@@ -245,7 +255,7 @@ async fn cached_catalogue(
                         .is_some_and(|(id, _, _)| *id == flight);
                     if !cache.valid(epoch, result.as_ref().map(|c| c.project.as_str()))
                         || !app.native.current(&endpoint)
-                        || admitted && !owns_flight
+                        || !owns_flight
                     {
                         if owns_flight {
                             if let Some(entry) = cache.entries.get_mut(&key) {
@@ -257,17 +267,19 @@ async fn cached_catalogue(
                         }
                         return;
                     }
-                    if admitted {
-                        if let Some(res) = result.clone() {
+                    if let Some(res) = result.clone() {
+                        if cache.entries.len() > EVENT_ENTRIES * 2 {
+                            cache.entries.remove(&key);
+                        } else {
                             cache.entries.insert(
                                 key,
                                 EventEntry { at: Instant::now(), value: Some(res), endpoint, loading: None },
                             );
-                        } else if let Some(entry) = cache.entries.get_mut(&key) {
-                            entry.loading = None;
-                            if entry.value.is_none() {
-                                cache.entries.remove(&key);
-                            }
+                        }
+                    } else if let Some(entry) = cache.entries.get_mut(&key) {
+                        entry.loading = None;
+                        if entry.value.is_none() {
+                            cache.entries.remove(&key);
                         }
                     }
                     let _ = done.send(result);

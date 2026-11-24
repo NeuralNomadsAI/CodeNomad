@@ -993,7 +993,45 @@ pub(crate) fn may_contain_image_uri(haystack: &[u8]) -> bool {
     if haystack.len() < NEEDLE.len() {
         return false;
     }
-    haystack.windows(NEEDLE.len()).any(|w| w.eq_ignore_ascii_case(NEEDLE)) || haystack.windows(2).any(|w| w == b"\\u")
+    if haystack.windows(NEEDLE.len()).any(|w| w.eq_ignore_ascii_case(NEEDLE)) {
+        return true;
+    }
+    // Only return true for `\u`-escaped text if a JSON string literal actually begins with
+    // ASCII case-insensitive `data:image`, avoiding false positives on ordinary Unicode text.
+    if !haystack.windows(2).any(|w| w == b"\\u") {
+        return false;
+    }
+    let mut i = 0usize;
+    while let Some(rel) = memchr::memchr(b'"', &haystack[i..]) {
+        let mut p = i + rel + 1;
+        let mut matched = 0usize;
+        while matched < NEEDLE.len() && p < haystack.len() {
+            let ch = if haystack[p] == b'\\' && haystack.get(p + 1) == Some(&b'u') {
+                let Some(code) = parse_hex4(haystack, p + 2) else { break };
+                if code > 0x7f {
+                    break;
+                }
+                p += 6;
+                code as u8
+            } else if haystack[p] == b'\\' && haystack.get(p + 1) == Some(&b'/') {
+                p += 2;
+                b'/'
+            } else {
+                let b = haystack[p];
+                p += 1;
+                b
+            };
+            if !ch.eq_ignore_ascii_case(&NEEDLE[matched]) {
+                break;
+            }
+            matched += 1;
+        }
+        if matched == NEEDLE.len() {
+            return true;
+        }
+        i = i + rel + 1;
+    }
+    false
 }
 
 fn parse_string(raw: &str) -> Option<String> {
@@ -1445,7 +1483,7 @@ pub(super) fn collect_item_patches(
 /// Returns the projected bytes and the `UndoPatch` list needed to restore the original bytes if
 /// a subsequent chunk renders the full document invalid JSON.
 pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, mut raw: Vec<u8>) -> (Vec<u8>, Vec<UndoPatch>) {
-    if !may_contain_image_uri(&raw) {
+    if raw.len() > super::media::MESSAGE_LIMIT || !may_contain_image_uri(&raw) {
         return (raw, Vec::new());
     }
     let patches =

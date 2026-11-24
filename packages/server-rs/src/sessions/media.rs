@@ -14,7 +14,7 @@ use super::{history::Placement, user_files};
 use crate::{Error, Shared, auth::Principal, error};
 
 pub(super) const URI_LIMIT: usize = 8 * 1024 * 1024;
-const MESSAGE_LIMIT: usize = 16 * 1024 * 1024;
+pub(super) const MESSAGE_LIMIT: usize = 16 * 1024 * 1024;
 const INLINE_LIMIT: usize = 32 * 1024;
 
 pub(crate) fn encode(id: &str) -> String {

@@ -107,10 +107,16 @@ impl Held {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CachedLocation {
+    Directory(String),
+    ForeignWorkspace,
+}
+
 #[derive(Default)]
 struct Routes {
     held: Mutex<Held>,
-    locations: Mutex<(u64, HashMap<String, (Instant, String)>)>,
+    locations: Mutex<(u64, HashMap<String, (Instant, CachedLocation)>)>,
 }
 
 impl Routes {
@@ -124,10 +130,15 @@ impl Routes {
         guard.1.clear();
         guard.0
     }
-    /// The directory a session event is routed by: its envelope's, else a fresh cached one.
-    /// Located events refresh the cache; a move or deletion clears it.
-    fn directory(&self, generation: u64, kind: &str, session: Option<&str>, event: &Value) -> Option<String> {
-        let located = event["location"]["directory"].as_str().map(str::to_owned);
+    /// The location a session event is routed by: its envelope's, else a fresh cached one.
+    /// Preserves native `workspaceID` selectors so events for foreign workspaces are never
+    /// delivered to local workspaces (TS `instance-events.ts:375-386`, `manager.ts:337-342`).
+    fn location(&self, generation: u64, kind: &str, session: Option<&str>, event: &Value) -> Option<CachedLocation> {
+        let located = if event["location"].get("workspaceID").is_some() {
+            Some(CachedLocation::ForeignWorkspace)
+        } else {
+            event["location"]["directory"].as_str().map(|dir| CachedLocation::Directory(dir.to_owned()))
+        };
         let Some(session) = session else { return located };
         let mut guard = self.locations.lock().unwrap();
         if guard.0 != generation {
@@ -135,30 +146,30 @@ impl Routes {
         }
         let cache = &mut guard.1;
         let now = Instant::now();
-        if matches!(kind, "session.moved" | "session.deleted") || event["location"].get("workspaceID").is_some() {
+        if matches!(kind, "session.moved" | "session.deleted") {
             cache.remove(session);
-        } else if let Some(dir) = &located {
-            Self::cache(cache, session, dir, now);
-        } else if located.is_none() {
-            return cache.get(session).filter(|(until, _)| *until > now).map(|(_, dir)| dir.clone());
+        } else if let Some(loc) = &located {
+            Self::cache(cache, session, loc.clone(), now);
+        } else {
+            return cache.get(session).filter(|(until, _)| *until > now).map(|(_, loc)| loc.clone());
         }
         located
     }
-    fn learn(&self, generation: u64, session: &str, dir: &str) {
+    fn learn(&self, generation: u64, session: &str, loc: CachedLocation) {
         let mut guard = self.locations.lock().unwrap();
         if guard.0 == generation {
-            Self::cache(&mut guard.1, session, dir, Instant::now());
+            Self::cache(&mut guard.1, session, loc, Instant::now());
         }
     }
 
-    fn cache(cache: &mut HashMap<String, (Instant, String)>, session: &str, dir: &str, now: Instant) {
+    fn cache(cache: &mut HashMap<String, (Instant, CachedLocation)>, session: &str, loc: CachedLocation, now: Instant) {
         if cache.len() >= SESSION_RECIPIENT_LIMIT && !cache.contains_key(session) {
             cache.retain(|_, (until, _)| *until > now);
             if cache.len() >= SESSION_RECIPIENT_LIMIT {
                 return;
             }
         }
-        cache.insert(session.to_owned(), (now + LOCATION_TTL, dir.to_owned()));
+        cache.insert(session.to_owned(), (now + LOCATION_TTL, loc));
     }
 }
 
@@ -446,15 +457,26 @@ async fn route(
         .as_str()
         .or_else(|| event["data"]["form"]["sessionID"].as_str())
         .filter(|s| crate::opencode::valid_id(s));
-    let mut directory = routes.directory(generation, kind, session, &event);
-    if directory.is_none()
+    let mut resolved = routes.location(generation, kind, session, &event);
+    if resolved.is_none()
         && let Some(session) = session
     {
-        directory = crate::opencode::session_directory(app, session).await.ok();
-        if let Some(dir) = directory.as_deref().filter(|_| kind != "session.deleted") {
-            routes.learn(generation, session, dir);
+        if let Ok(found) = crate::opencode::session_location(app, session).await {
+            let loc = match found {
+                Some(dir) => CachedLocation::Directory(dir),
+                None => CachedLocation::ForeignWorkspace,
+            };
+            if kind != "session.deleted" {
+                routes.learn(generation, session, loc.clone());
+            }
+            resolved = Some(loc);
         }
     }
+    let foreign_workspace = matches!(resolved, Some(CachedLocation::ForeignWorkspace));
+    let directory = match resolved {
+        Some(CachedLocation::Directory(dir)) => Some(dir),
+        _ => None,
+    };
     let session_id = event["data"]["sessionID"].as_str();
     let session_id = session_id.filter(|s| *s != "global" && crate::opencode::valid_id(s)).map(str::to_owned);
     let mut recipients = Vec::new();
@@ -512,7 +534,8 @@ async fn route(
                 break;
             }
         }
-    } else if event["location"].get("workspaceID").is_none()
+    } else if !foreign_workspace
+        && event["location"].get("workspaceID").is_none()
         && (directory.is_some() || GLOBAL.split(' ').any(|g| g == kind) || kind == "session.deleted")
     {
         let candidates = app.inner.lock().unwrap().workspaces.clone();
@@ -644,33 +667,37 @@ mod tests {
         let routes = Routes::default();
         let gen0 = routes.reset_locations();
         let at = |dir: &str| json!({"location":{"directory":dir}});
-        assert_eq!(routes.directory(gen0, "session.execution.started", Some("ses_a"), &json!({})), None);
-        assert_eq!(routes.directory(gen0, "session.text.delta", Some("ses_a"), &at("/w")).as_deref(), Some("/w"));
-        assert_eq!(routes.directory(gen0, "session.usage.updated", Some("ses_a"), &json!({})).as_deref(), Some("/w"));
+        let dir = |s: &str| Some(CachedLocation::Directory(s.to_owned()));
+        assert_eq!(routes.location(gen0, "session.execution.started", Some("ses_a"), &json!({})), None);
+        assert_eq!(routes.location(gen0, "session.text.delta", Some("ses_a"), &at("/w")), dir("/w"));
+        assert_eq!(routes.location(gen0, "session.usage.updated", Some("ses_a"), &json!({})), dir("/w"));
         let scoped = json!({"location":{"directory":"/remote","workspaceID":"x"}});
-        assert_eq!(routes.directory(gen0, "session.text.delta", Some("ses_b"), &scoped).as_deref(), Some("/remote"));
         assert_eq!(
-            routes.directory(gen0, "session.usage.updated", Some("ses_b"), &json!({})),
-            None,
-            "a scoped location is not cached"
+            routes.location(gen0, "session.text.delta", Some("ses_b"), &scoped),
+            Some(CachedLocation::ForeignWorkspace)
         );
-        assert_eq!(routes.directory(gen0, "session.moved", Some("ses_a"), &at("/w")).as_deref(), Some("/w"));
         assert_eq!(
-            routes.directory(gen0, "session.usage.updated", Some("ses_a"), &json!({})),
+            routes.location(gen0, "session.usage.updated", Some("ses_b"), &json!({})),
+            Some(CachedLocation::ForeignWorkspace),
+            "a scoped location is remembered as foreign rather than routed locally"
+        );
+        assert_eq!(routes.location(gen0, "session.moved", Some("ses_a"), &at("/w")), dir("/w"));
+        assert_eq!(
+            routes.location(gen0, "session.usage.updated", Some("ses_a"), &json!({})),
             None,
             "a move forgets the location"
         );
-        routes.learn(gen0, "ses_a", "/v");
+        routes.learn(gen0, "ses_a", CachedLocation::Directory("/v".to_owned()));
         routes.locations.lock().unwrap().1.get_mut("ses_a").unwrap().0 = Instant::now() - Duration::from_millis(1);
         assert_eq!(
-            routes.directory(gen0, "session.usage.updated", Some("ses_a"), &json!({})),
+            routes.location(gen0, "session.usage.updated", Some("ses_a"), &json!({})),
             None,
             "expired after 2 s"
         );
         let gen1 = routes.reset_locations();
-        routes.learn(gen0, "ses_a", "/stale");
+        routes.learn(gen0, "ses_a", CachedLocation::Directory("/stale".to_owned()));
         assert_eq!(
-            routes.directory(gen1, "session.usage.updated", Some("ses_a"), &json!({})),
+            routes.location(gen1, "session.usage.updated", Some("ses_a"), &json!({})),
             None,
             "stale subscription worker cannot repopulate locations after reconnect"
         );

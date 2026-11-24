@@ -597,8 +597,17 @@ pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, Pa
     resolve_media_path_checked(scope, raw).ok().flatten()
 }
 
-async fn proof_live_async(proof: DirectoryProof, path: PathBuf) -> Option<DirectoryProof> {
-    tokio::task::spawn_blocking(move || proof.live(&path).then_some(proof)).await.ok()?
+async fn proof_live_async(
+    proof: DirectoryProof,
+    path: PathBuf,
+    slot: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
+) -> Option<DirectoryProof> {
+    tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        proof.live(&path).then_some(proof)
+    })
+    .await
+    .ok()?
 }
 
 async fn catalogue_proof_live_async(
@@ -606,8 +615,10 @@ async fn catalogue_proof_live_async(
     path: PathBuf,
     external: bool,
     scope: Option<PathBuf>,
+    slot: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
 ) -> Option<DirectoryProof> {
     tokio::task::spawn_blocking(move || {
+        let _slot = slot;
         catalogue_proof(&catalogue, &path, external, ProofMode::Media).filter(|proof| {
             scope
                 .as_ref()
@@ -624,7 +635,7 @@ pub(crate) async fn catalogue_owns_event(
     path: PathBuf,
     external: bool,
 ) -> bool {
-    catalogue_proof_live_async(catalogue, path, external, None).await.is_some()
+    catalogue_proof_live_async(catalogue, path, external, None, None).await.is_some()
 }
 
 pub(crate) async fn media_directory(
@@ -634,6 +645,18 @@ pub(crate) async fn media_directory(
     path: &Path,
     anchor: &Path,
     strict_media: bool,
+) -> Result<Option<DirectoryProof>, crate::Error> {
+    media_directory_with_slot(app, workspace, endpoint, path, anchor, strict_media, None).await
+}
+
+pub(crate) async fn media_directory_with_slot(
+    app: &App,
+    workspace: &Workspace,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    path: &Path,
+    anchor: &Path,
+    strict_media: bool,
+    slot: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
 ) -> Result<Option<DirectoryProof>, crate::Error> {
     use super::{inventory, linked::native_error};
     let current = || app.native.current(endpoint) && app.workspace(&workspace.id.to_string()).is_ok();
@@ -646,9 +669,14 @@ pub(crate) async fn media_directory(
     let external = !path.starts_with(&workspace.path);
     if path == workspace.path {
         let root_path = workspace.path.clone();
-        let Some(root_id) =
-            tokio::task::spawn_blocking(move || crate::files::directory_identity(&root_path).ok()).await.ok().flatten()
-        else {
+        let held = slot.clone();
+        let Some(root_id) = tokio::task::spawn_blocking(move || {
+            let _slot = held;
+            crate::files::directory_identity(&root_path).ok()
+        })
+        .await
+        .ok()
+        .flatten() else {
             return Ok(None);
         };
         let proof = DirectoryProof {
@@ -658,7 +686,7 @@ pub(crate) async fn media_directory(
             external,
             media: true,
         };
-        return Ok(proof_live_async(proof, path.to_path_buf()).await);
+        return Ok(proof_live_async(proof, path.to_path_buf(), slot).await);
     }
     if !external && let Some(subfolders) = super::root_only(workspace).await? {
         if !current() {
@@ -671,9 +699,14 @@ pub(crate) async fn media_directory(
             super::strict_non_git_workspace(workspace).await?;
         }
         let root_path = workspace.path.clone();
-        let Some(root_id) =
-            tokio::task::spawn_blocking(move || crate::files::directory_identity(&root_path).ok()).await.ok().flatten()
-        else {
+        let held = slot.clone();
+        let Some(root_id) = tokio::task::spawn_blocking(move || {
+            let _slot = held;
+            crate::files::directory_identity(&root_path).ok()
+        })
+        .await
+        .ok()
+        .flatten() else {
             return Ok(None);
         };
         let proof = DirectoryProof {
@@ -683,7 +716,7 @@ pub(crate) async fn media_directory(
             external,
             media: true,
         };
-        return Ok(proof_live_async(proof, path.to_path_buf()).await);
+        return Ok(proof_live_async(proof, path.to_path_buf(), slot).await);
     }
     if external && path == anchor {
         let shared = if strict_media {
@@ -711,8 +744,14 @@ pub(crate) async fn media_directory(
             if !current() {
                 return Err(native_error());
             }
-            let proof =
-                catalogue_proof_live_async(std::sync::Arc::new(catalogue), path.to_path_buf(), external, None).await;
+            let proof = catalogue_proof_live_async(
+                std::sync::Arc::new(catalogue),
+                path.to_path_buf(),
+                external,
+                None,
+                slot.clone(),
+            )
+            .await;
             if !current() {
                 return Err(native_error());
             }
@@ -737,7 +776,8 @@ pub(crate) async fn media_directory(
             tried_cache = true;
             let cached = app.linked_events.lock().unwrap().cached(workspace.id, endpoint);
             if let Some(catalogue) = cached {
-                let proof = catalogue_proof_live_async(catalogue, path.to_path_buf(), external, None).await;
+                let proof =
+                    catalogue_proof_live_async(catalogue, path.to_path_buf(), external, None, slot.clone()).await;
                 if !current() {
                     return Err(native_error());
                 }
@@ -755,8 +795,14 @@ pub(crate) async fn media_directory(
         if !current() {
             return Err(native_error());
         }
-        let proof =
-            catalogue_proof_live_async(std::sync::Arc::clone(&catalogue), path.to_path_buf(), external, None).await;
+        let proof = catalogue_proof_live_async(
+            std::sync::Arc::clone(&catalogue),
+            path.to_path_buf(),
+            external,
+            None,
+            slot.clone(),
+        )
+        .await;
         if !current() {
             return Err(native_error());
         }

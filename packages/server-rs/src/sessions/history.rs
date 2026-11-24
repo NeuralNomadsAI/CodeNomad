@@ -545,10 +545,17 @@ async fn rpc_with_limit(
 struct Envelope<'a> {
     #[serde(borrow)]
     output: Option<&'a RawValue>,
-    #[serde(rename = "_tag")]
-    tag: Option<String>,
-    #[serde(rename = "type")]
-    kind: Option<String>,
+    #[serde(borrow, rename = "_tag")]
+    tag: Option<&'a RawValue>,
+    #[serde(borrow, rename = "type")]
+    kind: Option<&'a RawValue>,
+}
+
+fn raw_str_eq(raw: Option<&RawValue>, expected: &str) -> bool {
+    raw.is_some_and(|r| {
+        let text = r.get();
+        text.len() <= 128 && serde_json::from_str::<String>(text).ok().as_deref() == Some(expected)
+    })
 }
 
 fn blocked(reason: &str) -> Response {
@@ -574,8 +581,9 @@ fn process_window_payload(
     session: &str,
     reference: bool,
     defer: bool,
-) -> Result<Bytes, Response> {
+) -> Result<(Bytes, bool), Response> {
     use super::media_stream;
+    let mut refs_valid = true;
     let (raw_range, patches) = {
         let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return Err(blocked("unavailable")) };
         let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
@@ -626,10 +634,11 @@ fn process_window_payload(
             (raw_range, Vec::new())
         } else {
             let user_files_marker = envelope_map.remove("userFiles");
-            if user_files_marker.as_ref().is_some_and(|v| v.as_str() != Some(user_files::REFERENCE))
-                || (reference && user_files_marker.is_none())
-            {
+            if user_files_marker.as_ref().is_some_and(|v| v.as_str() != Some(user_files::REFERENCE)) {
                 return Err(blocked("unavailable"));
+            }
+            if reference && user_files_marker.is_none() {
+                refs_valid = false;
             }
             let Some(messages_str) = messages_raw else {
                 return Err(blocked("unavailable"));
@@ -702,11 +711,12 @@ fn process_window_payload(
                     && let Some(files_tok) = files_tok
                     && !media_stream::valid_reference_files(files_tok, user_files::FILE_COUNT)
                 {
-                    messages_ok = false;
-                    return;
+                    // Defer rejecting invalid reference-v1 files until after `placement.current`
+                    // (matching TS `session-navigation.ts:86-91` so `blocked/conflict` takes priority).
+                    refs_valid = false;
                 }
                 check_messages.push(json!({"id": id_val, "type": type_val, "time": {"created": created_val}}));
-                if can_defer && type_val.as_str() == Some("assistant") {
+                if can_defer && type_val.as_str() == Some("assistant") && msg_str.len() <= media::MESSAGE_LIMIT {
                     let msg_offset = msg_str.as_ptr() as usize - raw_base;
                     if let Some(item_patches) = media_stream::collect_item_patches(&ws_enc, &ses_enc, msg_str) {
                         for (start, end, replacement) in item_patches {
@@ -766,7 +776,7 @@ fn process_window_payload(
         }
         body.truncate(write_pos);
         body.shrink_to_fit();
-        return Ok(body.into());
+        return Ok((body.into(), refs_valid));
     }
     let raw_len = raw_range.len();
     if reference && raw_len > 24 * 1024 * 1024 {
@@ -777,7 +787,7 @@ fn process_window_payload(
     }
     body.truncate(raw_len);
     body.shrink_to_fit();
-    Ok(body.into())
+    Ok((body.into(), refs_valid))
 }
 
 fn valid_outline_payload(action: &str, raw: &str) -> bool {
@@ -990,7 +1000,7 @@ fn process_history_payload(
     session: &str,
     reference: bool,
     defer: bool,
-) -> Result<Bytes, Response> {
+) -> Result<(Bytes, bool), Response> {
     body.shrink_to_fit();
     if action == "window" {
         return process_window_payload(status, body, id, session, reference, defer);
@@ -1012,7 +1022,7 @@ fn process_history_payload(
     {
         return Err(blocked("unavailable"));
     }
-    Ok(detach_or_slice(body, raw_range))
+    Ok((detach_or_slice(body, raw_range), true))
 }
 
 pub async fn handle(
@@ -1153,8 +1163,7 @@ pub async fn handle(
             };
             if action == "outline" && status == Status::BAD_REQUEST {
                 let fallback = serde_json::from_slice::<Envelope>(&body).ok().is_some_and(|envelope| {
-                    envelope.tag.as_deref() == Some("RpcError")
-                        && envelope.kind.as_deref() == Some("rpc.method_not_found")
+                    raw_str_eq(envelope.tag, "RpcError") && raw_str_eq(envelope.kind, "rpc.method_not_found")
                 });
                 if fallback {
                     // Release the first RPC buffer before reading the fallback so two ~24 MiB
@@ -1210,7 +1219,7 @@ pub async fn handle(
                 (process_history_payload(status, body, &action, &id, session, reference, defer), slot, mem)
             };
             if defer || body_len > 32 * 1024 {
-                let keep_bytes = projected.as_ref().map_or(0, |p| p.len().saturating_add(4096));
+                let keep_bytes = projected.as_ref().map_or(0, |(p, _)| p.len().saturating_add(4096));
                 let keep_units = if keep_bytes == 0 {
                     0
                 } else {
@@ -1227,15 +1236,22 @@ pub async fn handle(
             } else {
                 mem = None;
             }
+            // Match TS `session-navigation.ts:86-91` exact error priority:
+            // 1) RPC schema parse failure -> `blocked/unavailable`
+            // 2) Final session/revert revalidation -> `blocked/conflict`
+            // 3) Invalid `reference-v1` user files -> `blocked/unavailable`
+            let (payload, refs_valid) = match projected {
+                Ok(pair) => pair,
+                Err(invalid_response) => return invalid_response,
+            };
             match placement.current(&app, &id, session).await {
                 Recheck::Current => {}
                 Recheck::Conflict => return blocked("conflict"),
                 Recheck::Unavailable => return blocked("unavailable"),
             }
-            let payload = match projected {
-                Ok(payload) => payload,
-                Err(invalid_response) => return invalid_response,
-            };
+            if !refs_valid {
+                return blocked("unavailable");
+            }
             drop(slot);
             if principal.live().is_err() {
                 return crate::auth::unauthorized().into_response();
