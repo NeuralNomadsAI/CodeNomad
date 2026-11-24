@@ -117,7 +117,7 @@ Workspace uses the shared file-row actions. Windows local connections offer fold
 
 The source reader shares its word-wrap choice across project tabs and file readers in a window. The workspace snapshot stores the Solid layout key `opencode-session-right-panel-files-word-wrap-v1` as `on` or `off`. Web readers also use that key in same-origin localStorage. Diff and Markdown block wrapping keep their own controls.
 
-Source selection and both scroll offsets survive reopening in the same project tab and checkout. The window keeps five recently closed source positions in memory, separate from file drafts. Selection uses line and UTF-16 column and clamps to UTF-8 boundaries. When source content refreshes or wrap width changes, the editable source keeps the first visible logical line and clamps the offset inside that line.
+Source selection and both scroll offsets survive reopening in the same project tab and checkout. The window keeps five recently closed source positions in memory, separate from file drafts. Selection uses line and UTF-16 column and clamps to UTF-8 boundaries. When source content refreshes, reopens at another width, or changes wrap width, the editable source restores the wrapped segment containing the captured UTF-16 column and its sub-line offset, clamping within the target line if text shortens.
 
 The focused source editor uses the host's configured Save shortcut. Rune handles Ctrl+V before the editor on Windows ([#1662](https://github.com/anomalyco/rune/issues/1662)); the Web bridge filters unmodified F8 in text fields ([#1661](https://github.com/anomalyco/rune/issues/1661)).
 
