@@ -261,6 +261,13 @@ mod native {
             &self,
             bytes: Vec<u8>,
         ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
+            self.start_file_drafts_save_with_timeout(bytes, std::time::Duration::from_secs(5))
+        }
+        pub(super) fn start_file_drafts_save_with_timeout(
+            &self,
+            bytes: Vec<u8>,
+            timeout: std::time::Duration,
+        ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
             // Claim generation synchronously at admission so an unpolled background task
             // can never outrank a later save or exit flush.
             let generation = self
@@ -271,27 +278,47 @@ mod native {
             let file_drafts_lock = self.file_drafts_lock.clone();
             let latest = self.file_drafts_generation.clone();
             async move {
-                tokio::task::spawn_blocking(move || {
+                let latest_for_blocking = latest.clone();
+                let task = tokio::task::spawn_blocking(move || {
+                    if latest_for_blocking.load(std::sync::atomic::Ordering::Acquire) != generation
+                    {
+                        return Ok(());
+                    }
                     let _guard = file_drafts_lock
                         .lock()
                         .map_err(|_| "state store unavailable")?;
-                    if latest.load(std::sync::atomic::Ordering::Acquire) != generation {
+                    if latest_for_blocking.load(std::sync::atomic::Ordering::Acquire) != generation
+                    {
                         return Ok(());
                     }
                     files.save_file("workspace-file-drafts.json", FILE_DRAFT_BYTES, &bytes)
-                })
-                .await?
+                });
+                match tokio::time::timeout(timeout, task).await {
+                    Ok(joined) => joined?,
+                    Err(elapsed) => {
+                        // Invalidate a timed-out generation so a late lock acquisition skips disk I/O.
+                        let _ = latest.compare_exchange(
+                            generation,
+                            generation + 1,
+                            std::sync::atomic::Ordering::AcqRel,
+                            std::sync::atomic::Ordering::Acquire,
+                        );
+                        Err(elapsed.into())
+                    }
+                }
             }
         }
         pub fn save_file_drafts_exit(&self, bytes: Vec<u8>) -> Result<()> {
             let write = self.start_file_drafts_save(bytes);
-            crate::platform::block_on(async {
-                tokio::time::timeout(std::time::Duration::from_secs(5), write).await?
-            })
+            crate::platform::block_on(write)
         }
         #[cfg(test)]
         pub(super) fn lock_file_drafts(&self) -> std::sync::MutexGuard<'_, ()> {
             self.file_drafts_lock.lock().unwrap()
+        }
+        #[cfg(test)]
+        pub(super) fn files_refcount(&self) -> usize {
+            std::sync::Arc::strong_count(&self.files)
         }
         pub async fn load_outlines(&self) -> Result<Option<Vec<u8>>> {
             let files = self.files.clone();

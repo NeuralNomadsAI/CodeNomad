@@ -648,6 +648,10 @@ mod tests {
         assert!(rt.state.0.file_draft_error);
         assert_eq!(rt.state.0.saved_file_drafts, 0);
         assert_eq!(wakes.load(Ordering::SeqCst), 1);
+        // Even a new edit does not trigger automatic retries while file_draft_error is active.
+        rt.state
+            .1
+            .insert_test_file_draft("src/main.rs", "edited after failure");
         for _ in 0..10 {
             let wake = wake.clone();
             rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 2.0, tx, wake));
@@ -659,38 +663,38 @@ mod tests {
         rt.state.0.retry();
         assert!(rt.state.0.file_draft_error);
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !(rt.state.0.saved_file_drafts == 1 && wakes.load(Ordering::SeqCst) == 2) {
+        while !(rt.state.0.saved_file_drafts == 2 && wakes.load(Ordering::SeqCst) == 2) {
             let wake = wake.clone();
             rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 3.0, tx, wake));
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
         assert!(!rt.state.0.file_draft_error);
-        assert_eq!(rt.state.0.saved_file_drafts, 1);
+        assert_eq!(rt.state.0.saved_file_drafts, 2);
         assert_eq!(wakes.load(Ordering::SeqCst), 2);
         // A Retry clicked while a failing write is still queued triggers a fresh write on the next poll.
         let (stale_tx, stale_rx) = bounded(1);
-        stale_tx.try_send((2, false)).unwrap();
+        stale_tx.try_send((3, false)).unwrap();
         rt.state.0.saving_file_drafts = Some(stale_rx);
         rt.state
             .1
             .insert_test_file_draft("src/main.rs", "retried after in-flight failure");
         rt.state.0.retry();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !(rt.state.0.saved_file_drafts == 2 && wakes.load(Ordering::SeqCst) == 3) {
+        while !(rt.state.0.saved_file_drafts == 3 && wakes.load(Ordering::SeqCst) == 3) {
             let wake = wake.clone();
             rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 4.0, tx, wake));
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
         assert!(!rt.state.0.file_draft_error);
-        // Third edit flushed synchronously on exit.
+        // Fourth edit flushed synchronously on exit.
         rt.state
             .1
             .insert_test_file_draft("src/main.rs", "flushed on exit");
-        let exit_expected = rt.state.1.file_draft_snapshot(2).unwrap().1;
+        let exit_expected = rt.state.1.file_draft_snapshot(3).unwrap().1;
         assert!(rt.state.0.flush_file_drafts(&rt.state.1));
-        assert_eq!(rt.state.0.saved_file_drafts, 3);
+        assert_eq!(rt.state.0.saved_file_drafts, 4);
         assert!(!rt.state.0.file_draft_error);
         drop(rt);
         let loaded = crate::platform::block_on(async {

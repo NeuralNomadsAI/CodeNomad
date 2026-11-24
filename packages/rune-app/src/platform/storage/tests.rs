@@ -119,7 +119,14 @@ fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
         // while independent state/preferences operations do not block on file-draft I/O.
         let guard = store.lock_file_drafts();
         #[cfg(target_os = "windows")]
-        store.save_preferences_frame(b"{}").unwrap();
+        {
+            let pref_store = store.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(pref_store.save_preferences_frame(b"{}").is_ok());
+            });
+            assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(2)), Ok(true));
+        }
         let older = store.start_file_drafts_save(b"older".to_vec());
         let newer = store.start_file_drafts_save(b"newer".to_vec());
         let older_task = tokio::spawn(older);
@@ -127,6 +134,20 @@ fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
         drop(guard);
         older_task.await.unwrap().unwrap();
         newer_task.await.unwrap().unwrap();
+        assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"newer");
+        // A timed-out write cancels its generation and skips disk I/O once the lock frees.
+        let guard = store.lock_file_drafts();
+        let timed_out = store.start_file_drafts_save_with_timeout(
+            b"timed-out".to_vec(),
+            std::time::Duration::from_millis(20),
+        );
+        assert!(timed_out.await.is_err());
+        drop(guard);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while store.files_refcount() > 1 {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
         assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"newer");
     });
     drop(store);
