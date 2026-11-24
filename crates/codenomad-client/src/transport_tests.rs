@@ -377,44 +377,51 @@ fn prompt_during_stream_gap(with_reading: bool) {
                 reconnected.get_mut().write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"connected\"}\n\n"
                 ).await.unwrap();
+                let replayed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let replayed_flag = replayed.clone();
+                let sync_server = tokio::spawn(async move {
+                    loop {
+                        let Ok((socket, _)) = listener.accept().await else {
+                            break;
+                        };
+                        let mut req = BufReader::new(socket);
+                        let mut req_line = String::new();
+                        assert!(req.read_line(&mut req_line).await.unwrap() > 0);
+                        if req_line.starts_with("POST ") {
+                            replayed_flag.store(true, SeqCst);
+                            break;
+                        }
+                        loop {
+                            let mut line = String::new();
+                            assert!(req.read_line(&mut line).await.unwrap() > 0);
+                            if line == "\r\n" { break; }
+                        }
+                        let body = if req_line.contains("/message") {
+                            r#"{"data":[],"cursor":{}}"#
+                        } else if req_line.contains("/api/session/session ") {
+                            r#"{"data":{"id":"session","time":{}}}"#
+                        } else {
+                            r#"{"data":{}}"#
+                        };
+                        let ok = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+                        req.get_mut().write_all(ok.as_bytes()).await.unwrap();
+                    }
+                });
                 loop {
-                    tokio::select! {
-                        event = events.recv() => {
-                            match event.unwrap() {
-                                Event::Reconnecting | Event::Failed => {
-                                    panic!("reopening SSE after a stream gap must not emit Reconnecting or Failed");
-                                }
-                                Event::Sync(_) => break,
-                                _ => {}
-                            }
+                    match events.recv().await.unwrap() {
+                        Event::Reconnecting | Event::Failed => {
+                            panic!("reopening SSE after a stream gap must not emit Reconnecting or Failed");
                         }
-                        accepted = listener.accept() => {
-                            let (socket, _) = accepted.unwrap();
-                            let mut req = BufReader::new(socket);
-                            let mut req_line = String::new();
-                            assert!(req.read_line(&mut req_line).await.unwrap() > 0);
-                            assert!(
-                                !req_line.starts_with("POST "),
-                                "reconnecting SSE must not replay the prompt: {req_line}"
-                            );
-                            loop {
-                                let mut line = String::new();
-                                assert!(req.read_line(&mut line).await.unwrap() > 0);
-                                if line == "\r\n" { break; }
-                            }
-                            let body = if req_line.contains("/message") {
-                                r#"{"data":[],"cursor":{}}"#
-                            } else if req_line.contains("/api/session/session ") {
-                                r#"{"data":{"id":"session","time":{}}}"#
-                            } else {
-                                r#"{"data":{}}"#
-                            };
-                            let ok = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len());
-                            req.get_mut().write_all(ok.as_bytes()).await.unwrap();
-                        }
+                        Event::Sync(_) => break,
+                        _ => {}
                     }
                 }
                 drop(reconnected);
+                commands.send(Command::Close).await.unwrap();
+                task.await.unwrap().unwrap();
+                sync_server.abort();
+                assert!(!replayed.load(SeqCst), "reconnecting SSE must not replay the prompt");
+                return;
             }
             commands.send(Command::Close).await.unwrap();
             task.await.unwrap().unwrap();
