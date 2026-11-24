@@ -38,6 +38,11 @@ impl Owner {
     pub(crate) fn sending_state(&self) -> Option<&PendingSend> {
         self.sending.as_ref()
     }
+    pub(crate) fn recall_inline_usage(&self) -> (usize, usize) {
+        self.recall
+            .as_ref()
+            .map_or((0, 0), super::recall::Recall::inline_usage)
+    }
     pub(crate) fn restore_unconfirmed(&mut self, pending: PendingSend) {
         self.unconfirmed = Some(pending);
     }
@@ -141,7 +146,9 @@ pub fn can_send(s: &State) -> bool {
         && !s.history_detached
         && !s.status_permissions.settling()
         && !crate::git::placement_unconfirmed(s)
-        && s.reader.as_ref().is_none_or(|reader| !reader.blocks_send())
+        && s.reader
+            .as_ref()
+            .is_none_or(|reader| !reader.blocks_send_while(stream_disconnected))
         && s.composer.sending.is_none()
         && !s.transcript_display.messages.pending()
         && !s.composer.picker.open()

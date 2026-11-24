@@ -131,6 +131,9 @@ impl ClosedUnconfirmed {
     }
 }
 impl Ui {
+    pub(super) fn unconfirmed_locks_full(&self) -> bool {
+        self.closed_unconfirmed.len() >= MAX_UNCONFIRMED_LOCKS
+    }
     pub(super) fn remember_closed_unconfirmed(
         &mut self,
         workspace: &Workspace,
@@ -146,10 +149,6 @@ impl Ui {
             session_id,
             attempt_id,
         });
-        if self.closed_unconfirmed.len() > MAX_UNCONFIRMED_LOCKS {
-            let overflow = self.closed_unconfirmed.len() - MAX_UNCONFIRMED_LOCKS;
-            self.closed_unconfirmed.drain(..overflow);
-        }
     }
     pub(super) fn closed_unconfirmed_id(
         &self,

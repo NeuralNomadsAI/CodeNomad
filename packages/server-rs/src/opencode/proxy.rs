@@ -342,19 +342,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     };
     let mut subpath = None;
     let mut seen_directory = false;
-    let canonical_directory = crate::files::paths::canonical(&app.scope, directory);
-    let matches_directory = |candidate: &str| {
-        candidate == directory
-            || canonical_directory.as_ref().is_some_and(|expected| {
-                crate::files::paths::canonical(&app.scope, candidate).as_ref() == Some(expected)
-            })
-    };
     for (key, value) in target.query_pairs() {
         match key.as_ref() {
             "directory" | "location[directory]" => {
-                if seen_directory
-                    || !prompt_query.as_deref().map_or_else(|| matches_directory(&value), matches_directory)
-                {
+                if seen_directory || (prompt_query.is_none() && value != directory) {
                     return Err(foreign());
                 }
                 seen_directory = true;
@@ -375,13 +366,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
     }
     if let Some(translated) = prompt_query {
-        let forwarded_directory = native_directory.unwrap_or(&translated);
         let query: Vec<_> = target
             .query_pairs()
             .into_owned()
             .map(|(key, value)| {
                 let value = if matches!(key.as_str(), "directory" | "location[directory]") {
-                    forwarded_directory.to_owned()
+                    translated.clone()
                 } else {
                     value
                 };
@@ -644,8 +634,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         Ok(fresh)
     };
     if send_input {
-        let session = session.ok_or_else(upstream_error)?;
-        let url = endpoint.url.join(&format!("/api/session/{session}/environment")).map_err(|_| upstream_error())?;
+        let session = session.ok_or_else(super::pre_dispatch_unavailable)?;
+        let url = endpoint
+            .url
+            .join(&format!("/api/session/{session}/environment"))
+            .map_err(|_| super::pre_dispatch_unavailable())?;
         let unavailable = super::session_environment::unavailable;
         let variables = super::session_environment::snapshot(app.settings.location.config.clone()).await?;
         if command && let Some(Value::Object(input)) = &input {
@@ -678,7 +671,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         crate::sessions::permission_mode::refresh_before_send(&app, &endpoint, &fresh, || {
             principal.live().is_ok() && app.native.current(&endpoint) && input_location_live()
         })
-        .await?;
+        .await
+        .map_err(|e| if e.0 == Status::BAD_GATEWAY { super::pre_dispatch_unavailable() } else { e })?;
         #[cfg(test)]
         crate::worktrees::fence_test_trace::record("permission rules", "send refresh finished");
     }

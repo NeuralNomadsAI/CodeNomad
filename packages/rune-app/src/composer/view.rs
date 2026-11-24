@@ -35,7 +35,9 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
                     } else {
                         "rune.older"
                     }),
-                    s.paging || s.phase == Phase::Failed || !retry && s.phase.reconnecting(),
+                    s.paging
+                        || s.phase == Phase::Failed
+                        || !retry && (s.phase.reconnecting() || s.stream_offline),
                     screen::action_tx(
                         &scope,
                         if retry {

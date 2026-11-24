@@ -94,7 +94,15 @@ impl Reader {
     }
 
     pub(crate) fn blocks_send(&self) -> bool {
-        self.hidden || self.resume_pending || self.gap || self.parked || self.settling
+        self.blocks_send_while(false)
+    }
+
+    pub(crate) fn blocks_send_while(&self, stream_offline: bool) -> bool {
+        self.hidden
+            || self.gap
+            || self.parked
+            || self.settling
+            || (self.resume_pending && (!self.installed || !stream_offline))
     }
 
     pub(crate) fn has_visible_window(&self) -> bool {

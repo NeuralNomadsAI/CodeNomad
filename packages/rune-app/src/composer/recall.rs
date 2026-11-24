@@ -128,6 +128,12 @@ pub(crate) struct Recall {
     missing: bool,
 }
 
+impl Recall {
+    pub(crate) fn inline_usage(&self) -> (usize, usize) {
+        self.draft.inline_usage()
+    }
+}
+
 pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
     let Some((project, tab, session)) = scope(s) else {
         return false;

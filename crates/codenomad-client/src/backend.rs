@@ -59,6 +59,19 @@ pub(crate) async fn classify_http_error(
                 return crate::prompt::PromptError::Rejected;
             }
         }
+        reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+            if let Ok(body) = crate::prompt_receipt::read(response).await
+                && matches!(
+                    body["error"].as_str(),
+                    Some(
+                        "Mission schedule carrier ownership could not be verified"
+                            | "Conversation permissions unavailable"
+                    )
+                )
+            {
+                return crate::prompt::PromptError::Rejected;
+            }
+        }
         _ => {}
     }
     crate::prompt::PromptError::Unconfirmed

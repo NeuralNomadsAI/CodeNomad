@@ -341,8 +341,14 @@ async fn read_page(
             None => Some(page.await),
         }
     };
+    let stamp = wire.version.load(SeqCst);
     let result = futures_lite::future::race(content, async {
-        wire.placement_changed().await;
+        futures_lite::future::race(wire.placement_changed(), async {
+            while wire.valid(stamp) {
+                crate::runtime::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await;
         None
     })
     .await;

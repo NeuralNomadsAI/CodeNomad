@@ -46,6 +46,15 @@ impl Reader {
             )
             .await
             else {
+                if self.active_reader
+                    && !wire.valid(stamp)
+                    && !wire.placement_closed()
+                    && !cancel.is_some_and(Receiver::is_closed)
+                {
+                    self.dirty = true;
+                    self.quiet = Instant::now() + Duration::from_millis(100);
+                    reader_event(reading, self.generation, out, wake, failed()).await;
+                }
                 return Ok(Turn::Next);
             };
             match page {

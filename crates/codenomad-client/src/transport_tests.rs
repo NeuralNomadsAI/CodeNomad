@@ -790,27 +790,31 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
             }
             stream
                 .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            // Drain startup events (Connected, AgentHint(true), 2x Preferences) so the SSE loop is idle.
+            let (mut saw_connected, mut saw_agent_hint, mut prefs) = (false, false, 0usize);
+            while !(saw_connected && saw_agent_hint && prefs >= 2) {
+                match events.recv().await.unwrap() {
+                    Event::Connected => saw_connected = true,
+                    Event::AgentHint(true) => saw_agent_hint = true,
+                    Event::Preferences(_) => prefs += 1,
+                    Event::PromptAcknowledged { .. } => {
+                        panic!("unexpected PromptAcknowledged before prompt was queued")
+                    }
+                    _ => {}
+                }
+            }
+            // memory.changed fills bounded(1) `out`, holding run_backend open while session.moved closes placement and ping proves order.
+            stream
+                .get_mut()
                 .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"permission.updated\",\"data\":{\"sessionID\":\"session\"}}}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"session\"}}}\n\nevent: codenomad.client.ping\ndata: {}\n\n",
+                    b"data: {\"type\":\"memory.changed\"}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"session\"}}}\n\nevent: codenomad.client.ping\ndata: {}\n\n",
                 )
                 .await
                 .unwrap();
-            // Drain startup events (Connected, AgentHint(true), Preferences) until /pong proves session.moved closed placement.
-            let mut saw_moved = false;
-            let pong_fut = listener.accept();
-            tokio::pin!(pong_fut);
-            let pong_socket = loop {
-                tokio::select! {
-                    accepted = &mut pong_fut => break accepted.unwrap().0,
-                    ev = events.recv() => match ev.unwrap() {
-                        Event::SessionMoved => saw_moved = true,
-                        Event::PromptAcknowledged { .. } => {
-                            panic!("unexpected PromptAcknowledged before prompt was queued")
-                        }
-                        _ => {}
-                    }
-                }
-            };
+            let (pong_socket, _) = listener.accept().await.unwrap();
             let mut pong = BufReader::new(pong_socket);
             let mut first_line = String::new();
             assert!(pong.read_line(&mut first_line).await.unwrap() > 0);
@@ -835,6 +839,7 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
                 }))
                 .await
                 .unwrap();
+            let mut saw_moved = false;
             let mut saw_rejected = false;
             while let Ok(event) = events.recv().await {
                 match event {
@@ -849,9 +854,11 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
                         if session_id == "session" =>
                     {
                         saw_moved = true;
-                        break;
                     }
                     _ => {}
+                }
+                if saw_rejected && saw_moved {
+                    break;
                 }
             }
             assert!(saw_rejected, "queued prompt must receive an explicit Rejected receipt");
@@ -999,26 +1006,29 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
             }
             stream
                 .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            let (mut saw_connected, mut saw_agent_hint, mut prefs) = (false, false, 0usize);
+            while !(saw_connected && saw_agent_hint && prefs >= 2) {
+                match events.recv().await.unwrap() {
+                    Event::Connected => saw_connected = true,
+                    Event::AgentHint(true) => saw_agent_hint = true,
+                    Event::Preferences(_) => prefs += 1,
+                    Event::PromptAcknowledged { .. } => {
+                        panic!("unexpected PromptAcknowledged before prompt was queued")
+                    }
+                    _ => {}
+                }
+            }
+            stream
+                .get_mut()
                 .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"permission.updated\",\"data\":{\"sessionID\":\"session\"}}}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"session\"}}}\n\nevent: codenomad.client.ping\ndata: {}\n\n",
+                    b"data: {\"type\":\"memory.changed\"}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"session\"}}}\n\nevent: codenomad.client.ping\ndata: {}\n\n",
                 )
                 .await
                 .unwrap();
-            let mut saw_invalidated = false;
-            let pong_fut = listener.accept();
-            tokio::pin!(pong_fut);
-            let pong_socket = loop {
-                tokio::select! {
-                    accepted = &mut pong_fut => break accepted.unwrap().0,
-                    ev = events.recv() => match ev.unwrap() {
-                        Event::HistoryInvalidated => saw_invalidated = true,
-                        Event::PromptAcknowledged { .. } => {
-                            panic!("unexpected PromptAcknowledged before prompt was queued")
-                        }
-                        _ => {}
-                    }
-                }
-            };
+            let (pong_socket, _) = listener.accept().await.unwrap();
             let mut pong = BufReader::new(pong_socket);
             let mut first_line = String::new();
             assert!(pong.read_line(&mut first_line).await.unwrap() > 0);
@@ -1043,6 +1053,7 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
                 }))
                 .await
                 .unwrap();
+            let mut saw_invalidated = false;
             let mut saw_rejected = false;
             while let Ok(event) = events.recv().await {
                 match event {

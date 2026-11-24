@@ -43,6 +43,10 @@ impl Cache {
             .is_some_and(|incoming| !incoming.is_closed())
     }
 
+    pub(super) fn is_sending(&self) -> bool {
+        self.composer.pending()
+    }
+
     pub(super) fn unconfirmed_id(&self) -> Option<&str> {
         self.composer.unconfirmed_id()
     }
@@ -61,6 +65,14 @@ impl Cache {
         self.composer
             .sending_state()
             .map_or((0, 0), |send| send.inline_usage())
+    }
+
+    pub(super) fn recalled_draft_inline_usage(&self) -> (usize, usize) {
+        if self.composer.recall.is_some() {
+            self.composer.draft.inline_usage()
+        } else {
+            (0, 0)
+        }
     }
 
     #[cfg(target_arch = "wasm32")]
