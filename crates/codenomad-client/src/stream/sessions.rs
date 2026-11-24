@@ -48,7 +48,7 @@ pub(super) async fn relay(
             .await?;
         }
     } else if own && value["type"] == "instance.eventStatus" && value["status"] == "connected" {
-        b.client.children().invalidate(b, None);
+        b.client.children().invalidate(b, None, false);
     }
     // A conversation move revokes its reader before any send and relays SessionMoved itself.
     if !(own && native["type"] == "session.moved" && native["data"]["sessionID"] == b.session)

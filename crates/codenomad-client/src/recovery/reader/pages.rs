@@ -49,10 +49,14 @@ impl Reader {
                 return Ok(Turn::Next);
             };
             match page {
-                Ok(page) if wire.valid(stamp) && rx.is_empty() => {
+                Ok(mut page) if wire.valid(stamp) && rx.is_empty() => {
                     if advances(&page, edge, &target)
                         && history::edge_page(&page, &self.resident, edge).is_ok()
                     {
+                        let mut merged = page.rows.clone();
+                        if crate::content::merge_page(&self.resident, &mut merged).is_ok() {
+                            page.rows = merged;
+                        }
                         if !crate::timeline::page_offer(cancel, &page, wire, stamp, async |event| {
                             reader_event(reading, self.generation, out, wake, event).await
                         })
@@ -66,6 +70,16 @@ impl Reader {
                             self.first = self.resident.first().map(|r| r.id.clone());
                             self.known = self.resident.iter().map(|r| r.id.clone()).collect();
                             self.owed.retain(|(id, _)| self.known.contains(id));
+                            self.owed_tools.retain(|(id, call), _| {
+                                self.known.contains(id) && !tool_settled(&self.resident, id, call)
+                            });
+                            self.failed_tools.retain(|(id, call)| {
+                                self.known.contains(id) && !tool_settled(&self.resident, id, call)
+                            });
+                            if !self.historical && !self.owed_tools.is_empty() && !self.dirty {
+                                self.dirty = true;
+                                self.quiet = Instant::now() + Duration::from_millis(100);
+                            }
                         }
                         self.older = page.older.clone();
                         self.newer = page.newer.clone();
@@ -139,20 +153,10 @@ impl Reader {
             self.resident = page.rows;
             self.owed.retain(|(id, _)| self.known.contains(id));
             self.owed_tools.retain(|(id, call), _| {
-                self.known.contains(id)
-                    && !self
-                        .resident
-                        .iter()
-                        .find(|r| &r.id == id)
-                        .and_then(|r| {
-                            r.parts.iter().find_map(|p| match p {
-                                crate::content::Part::Tool(t) if &t.id == call => Some(t),
-                                _ => None,
-                            })
-                        })
-                        .is_some_and(|t| {
-                            !matches!(t.status.as_str(), "pending" | "streaming" | "running")
-                        })
+                self.known.contains(id) && !tool_settled(&self.resident, id, call)
+            });
+            self.failed_tools.retain(|(id, call)| {
+                self.known.contains(id) && !tool_settled(&self.resident, id, call)
             });
             self.anchored = None;
             self.parked = false;

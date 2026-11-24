@@ -33,6 +33,7 @@ pub(super) struct Reader {
     pub(super) known: HashSet<String>,
     pub(super) owed: HashSet<(String, usize)>,
     pub(super) owed_tools: HashMap<(String, String), u8>,
+    pub(super) failed_tools: HashSet<(String, String)>,
     pub(super) seen: Seen,
     first: Option<String>,
     older: Option<Value>,
@@ -59,6 +60,7 @@ impl Reader {
             known: HashSet::new(),
             owed: HashSet::new(),
             owed_tools: HashMap::new(),
+            failed_tools: HashSet::new(),
             seen: Seen {
                 entries: VecDeque::new(),
                 bytes: 0,
@@ -91,6 +93,7 @@ impl Reader {
                 self.known = HashSet::new();
                 self.owed = HashSet::new();
                 self.owed_tools = HashMap::new();
+                self.failed_tools = HashSet::new();
                 self.seen.entries.clear();
                 self.seen.bytes = 0;
                 self.first = None;
@@ -115,6 +118,7 @@ impl Reader {
         self.known.clear();
         self.owed.clear();
         self.owed_tools.clear();
+        self.failed_tools.clear();
     }
 
     pub(super) fn clear_window_on_revert(&mut self) {
@@ -127,6 +131,7 @@ impl Reader {
         self.known.clear();
         self.owed.clear();
         self.owed_tools.clear();
+        self.failed_tools.clear();
     }
 
     pub(super) async fn sync(
@@ -185,21 +190,10 @@ impl Reader {
                             })
                             .is_some_and(|t| t.provenance == TextProvenance::Closed)
                     });
-                    self.owed_tools.retain(|(id, call), _| {
-                        !page
-                            .rows
-                            .iter()
-                            .find(|r| &r.id == id)
-                            .and_then(|r| {
-                                r.parts.iter().find_map(|p| match p {
-                                    Part::Tool(t) if &t.id == call => Some(t),
-                                    _ => None,
-                                })
-                            })
-                            .is_some_and(|t| {
-                                !matches!(t.status.as_str(), "pending" | "streaming" | "running")
-                            })
-                    });
+                    self.owed_tools
+                        .retain(|(id, call), _| !tool_settled(&page.rows, id, call));
+                    self.failed_tools
+                        .retain(|(id, call)| !tool_settled(&page.rows, id, call));
                     self.fence = stamp;
                     *connection_lost = false;
                     self.dirty = false;
@@ -211,18 +205,19 @@ impl Reader {
                     self.newer = page.newer.clone();
                     self.known = page.rows.iter().map(|r| r.id.clone()).collect();
                     self.resident = page.rows.clone();
-                    let mut tool_settlement_failed = false;
                     if self.historical {
                         self.owed_tools.retain(|(id, _), _| self.known.contains(id));
+                        self.failed_tools.retain(|(id, _)| self.known.contains(id));
                     } else if !self.owed_tools.is_empty() {
                         let mut max_attempt = 0u8;
-                        self.owed_tools.retain(|_, attempts| {
+                        let failed = &mut self.failed_tools;
+                        self.owed_tools.retain(|key, attempts| {
                             *attempts = attempts.saturating_add(1);
                             if *attempts <= 3 {
                                 max_attempt = max_attempt.max(*attempts);
                                 true
                             } else {
-                                tool_settlement_failed = true;
+                                failed.insert(key.clone());
                                 false
                             }
                         });
@@ -267,9 +262,11 @@ impl Reader {
                     if !reader_event(reading, self.generation, out, wake, event).await {
                         return Ok(Turn::Stop);
                     }
-                    if tool_settlement_failed {
-                        self.parked = true;
-                        self.dirty = false;
+                    if !self.historical
+                        && self.owed_tools.is_empty()
+                        && !self.failed_tools.is_empty()
+                    {
+                        self.failed_tools.clear();
                         reader_event(reading, self.generation, out, wake, Event::Failed).await;
                     } else if done && reading.is_none() {
                         reader_event(reading, self.generation, out, wake, Event::Done).await;
@@ -303,6 +300,18 @@ impl Reader {
         }
         Ok(Turn::Process)
     }
+}
+
+pub(super) fn tool_settled(rows: &[history::Row], id: &str, call: &str) -> bool {
+    rows.iter()
+        .find(|r| r.id == id)
+        .and_then(|r| {
+            r.parts.iter().find_map(|p| match p {
+                Part::Tool(t) if t.id == call => Some(t),
+                _ => None,
+            })
+        })
+        .is_some_and(|t| !matches!(t.status.as_str(), "pending" | "streaming" | "running"))
 }
 
 pub(super) struct Lane<'a> {

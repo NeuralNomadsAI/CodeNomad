@@ -147,9 +147,13 @@ fn prose_ranges(
                 }
                 let src_slice = source.get(range.clone()).unwrap_or_default();
                 let start = if matches!(event, Event::Code(_)) {
-                    src_slice
+                    let ticks = src_slice.bytes().take_while(|&b| b == b'`').count();
+                    let inner = src_slice
+                        .get(ticks..src_slice.len().saturating_sub(ticks))
+                        .unwrap_or(src_slice);
+                    inner
                         .find(text.as_ref())
-                        .map_or(range.start, |off| range.start + off)
+                        .map_or(range.start + ticks, |off| range.start + ticks + off)
                 } else {
                     range.start
                 };

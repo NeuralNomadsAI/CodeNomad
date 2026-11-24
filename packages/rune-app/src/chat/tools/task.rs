@@ -29,7 +29,8 @@ pub(in crate::chat) struct DeliveryCache {
 #[derive(Default)]
 struct ChildDeliveries {
     launches: Vec<u64>,
-    reports: Vec<(u64, String, Arc<crate::content::SubagentReport>)>,
+    // Lightweight (created, row_index, part_index) refs; bodies stay owned by `s.messages`.
+    reports: Vec<(u64, usize, usize)>,
 }
 
 impl DeliveryCache {
@@ -50,8 +51,8 @@ impl DeliveryCache {
         }
         self.fingerprint = fp;
         self.by_child.clear();
-        for row in rows {
-            for part in &row.parts {
+        for (row_idx, row) in rows.iter().enumerate() {
+            for (part_idx, part) in row.parts.iter().enumerate() {
                 match part {
                     Part::Tool(other) if is_task(other) => {
                         let cid = child(other);
@@ -70,7 +71,7 @@ impl DeliveryCache {
                             .entry(report.child.clone())
                             .or_default()
                             .reports
-                            .push((report.created, row.id.clone(), Arc::new(report.clone())));
+                            .push((report.created, row_idx, part_idx));
                     }
                     _ => {}
                 }
@@ -79,11 +80,11 @@ impl DeliveryCache {
     }
 }
 
-pub(super) struct Delivery {
+pub(super) struct Delivery<'a> {
     pub status: &'static str,
     pub running: bool,
     pub ended: Option<u64>,
-    pub report: Option<Arc<crate::content::SubagentReport>>,
+    pub report: Option<&'a crate::content::SubagentReport>,
     pub report_truncated: bool,
 }
 
@@ -117,11 +118,11 @@ fn parent_child(message: &str) -> Option<&str> {
         .map(|(parent, _)| parent)
 }
 
-fn resolve_delivery(
+fn resolve_delivery<'a>(
     tool: &Tool,
     launches: &[u64],
-    reports: &[(u64, &str, &Arc<crate::content::SubagentReport>, bool)],
-) -> Delivery {
+    reports: &[(u64, &'a str, &'a crate::content::SubagentReport, bool)],
+) -> Delivery<'a> {
     let report = tool.started.and_then(|from| {
         let mut boundaries: Vec<_> = launches.iter().copied().filter(|at| *at > from).collect();
         boundaries.sort_unstable();
@@ -138,7 +139,7 @@ fn resolve_delivery(
             .iter()
             .filter(|(created, _, _, _)| *created >= from && *created < end)
             .max_by_key(|(created, id, _, _)| (*created, *id))
-            .map(|(_, _, report, truncated)| (Arc::clone(report), *truncated))
+            .map(|(_, _, report, truncated)| (*report, *truncated))
     });
     let newest = launches.iter().copied().max().or(tool.started);
     let latest = newest.and_then(|from| {
@@ -174,7 +175,7 @@ fn resolve_delivery(
     }
 }
 
-pub(super) fn delivery(s: &State, message: &str, tool: &Tool) -> Option<Delivery> {
+pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<Delivery<'a>> {
     if tool.status != "completed" || tool.metadata["status"] != "running" {
         return None;
     }
@@ -210,7 +211,7 @@ pub(super) fn delivery(s: &State, message: &str, tool: &Tool) -> Option<Delivery
                 (
                     entry.report.created,
                     entry.row_id.as_str(),
-                    &entry.report,
+                    entry.report.as_ref(),
                     entry.truncated,
                 )
             })
@@ -232,7 +233,13 @@ pub(super) fn delivery(s: &State, message: &str, tool: &Tool) -> Option<Delivery
     let reports: Vec<_> = entry
         .reports
         .iter()
-        .map(|(created, id, report)| (*created, id.as_str(), report, false))
+        .filter_map(|&(created, row_idx, part_idx)| {
+            let row = rows.get(row_idx)?;
+            let crate::content::Part::SubagentReport(report) = row.parts.get(part_idx)? else {
+                return None;
+            };
+            Some((created, row.id.as_str(), report, false))
+        })
         .collect();
     Some(resolve_delivery(tool, &entry.launches, &reports))
 }

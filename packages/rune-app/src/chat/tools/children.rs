@@ -89,7 +89,7 @@ impl Children {
         let Some(backend) = children.backend.clone() else {
             return;
         };
-        let Some(dirty) = backend.watch_child(id) else {
+        let Some((dirty, terminal)) = backend.watch_child(id) else {
             return;
         };
         let (out, result) = bounded(1);
@@ -107,8 +107,14 @@ impl Children {
         let wake = s.wake.clone();
         let reads = s.reads.clone();
         crate::platform::spawn(async move {
+            use std::sync::atomic::Ordering::SeqCst;
             crate::platform::reads::cancellable(&cancelled, async {
+                let mut settlement_retries = 0u8;
                 loop {
+                    let saw_terminal = terminal.swap(false, SeqCst);
+                    if saw_terminal {
+                        settlement_retries = 3;
+                    }
                     let snapshot = {
                         let Some(_slot) = reads.background(&cancelled).await else {
                             break;
@@ -119,10 +125,23 @@ impl Children {
                             .ok()
                             .map(|page| page.map_or_else(Snapshot::default, snapshot))
                     };
+                    let still_running = snapshot.as_ref().is_some_and(|snap| {
+                        snap.steps
+                            .iter()
+                            .any(|(_, t)| matches!(t.status.as_str(), "streaming" | "running"))
+                    });
                     if out.send(snapshot).await.is_err() {
                         break;
                     }
                     wake();
+                    if still_running && settlement_retries > 0 {
+                        settlement_retries -= 1;
+                        let delay = Duration::from_millis(100 * u64::from(3 - settlement_retries));
+                        runtime::sleep(delay).await;
+                        let _ = dirty.try_recv();
+                        continue;
+                    }
+                    settlement_retries = 0;
                     if dirty.recv().await.is_err() {
                         break;
                     }
@@ -187,8 +206,7 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
         })
         .collect();
     tools.reverse();
-    let mut report_bytes = STEP_BYTES;
-    let mut reports: Reports = page
+    let raw_reports: Vec<_> = page
         .rows
         .iter()
         .rev()
@@ -199,13 +217,28 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
             })
         })
         .take(STEP_LIMIT)
-        .map(|(row, report)| {
-            let (body, truncated) = if report.body.len() <= report_bytes {
-                report_bytes -= report.body.len();
+        .collect();
+    // Shortest-first water-filling keeps short older reports intact even beside giant ones.
+    let mut order: Vec<usize> = (0..raw_reports.len()).collect();
+    order.sort_by_key(|&i| raw_reports[i].1.body.len());
+    let mut caps = vec![0usize; raw_reports.len()];
+    let mut report_bytes = STEP_BYTES;
+    for (pos, &idx) in order.iter().enumerate() {
+        let share = report_bytes / (order.len() - pos);
+        let len = raw_reports[idx].1.body.len();
+        let take = len.min(share);
+        caps[idx] = take;
+        report_bytes -= take;
+    }
+    let mut reports: Reports = raw_reports
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (row, report))| {
+            let cap = caps[idx];
+            let (body, truncated) = if report.body.len() <= cap {
                 (report.body.clone(), false)
             } else {
-                let end = report.body.floor_char_boundary(report_bytes);
-                report_bytes -= end;
+                let end = report.body.floor_char_boundary(cap);
                 (report.body[..end].to_owned(), true)
             };
             ChildReport {

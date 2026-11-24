@@ -197,10 +197,7 @@ fn render_body(
     let pending = matches!(tool.status.as_str(), "pending" | "streaming");
     let lang = output(tool, &mut parts);
     if is_task {
-        parts[0] = task::output(
-            tool,
-            task_delivery.as_ref().and_then(|d| d.report.as_deref()),
-        );
+        parts[0] = task::output(tool, task_delivery.as_ref().and_then(|d| d.report));
     } else if tool.name == "skill" && tool.status != "completed" {
         parts = [""; 4];
     }

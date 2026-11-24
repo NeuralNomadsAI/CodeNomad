@@ -1,7 +1,10 @@
 //! Child transcript readers reuse the parent's multiplexed connection.
 use crate::{Receiver, Sender, backend::Backend, history, http::Http};
 use serde_json::Value;
-use std::sync::Mutex;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering::SeqCst},
+};
 
 #[derive(Default)]
 pub(crate) struct Children(Mutex<Vec<Watch>>);
@@ -11,10 +14,11 @@ struct Watch {
     root: String,
     child: String,
     dirty: Sender<()>,
+    terminal: Arc<AtomicBool>,
 }
 
 impl Children {
-    pub(crate) fn invalidate(&self, b: &Backend, child: Option<&str>) {
+    pub(crate) fn invalidate(&self, b: &Backend, child: Option<&str>, terminal: bool) {
         if let Ok(mut watches) = self.0.lock() {
             watches.retain(|watch| !watch.dirty.is_closed());
             for watch in watches.iter().filter(|watch| {
@@ -22,6 +26,9 @@ impl Children {
                     && watch.root == b.session
                     && child.is_none_or(|id| watch.child == id)
             }) {
+                if terminal {
+                    watch.terminal.store(true, SeqCst);
+                }
                 let _ = watch.dirty.try_send(());
             }
         }
@@ -29,7 +36,7 @@ impl Children {
 }
 
 impl Backend {
-    pub fn watch_child(&self, child: &str) -> Option<Receiver<()>> {
+    pub fn watch_child(&self, child: &str) -> Option<(Receiver<()>, Arc<AtomicBool>)> {
         if child == self.session || !history::valid_id(child) {
             return None;
         }
@@ -39,13 +46,15 @@ impl Backend {
             return None;
         }
         let (dirty, rx) = crate::bounded(1);
+        let terminal = Arc::new(AtomicBool::new(false));
         watches.push(Watch {
             workspace: self.workspace.clone(),
             root: self.session.clone(),
             child: child.into(),
             dirty,
+            terminal: terminal.clone(),
         });
-        Some(rx)
+        Some((rx, terminal))
     }
 
     pub async fn child_page(&self, child: &str) -> history::Result<Option<history::Page>> {
@@ -81,7 +90,8 @@ impl Backend {
 }
 
 pub(super) fn observe(b: &Backend, event: &Value) {
-    match event["type"].as_str() {
+    let kind = event["type"].as_str();
+    match kind {
         Some(
             "session.tool.called"
             | "session.tool.progress"
@@ -99,10 +109,20 @@ pub(super) fn observe(b: &Backend, event: &Value) {
             if let Some(id) = event["data"]["sessionID"].as_str()
                 && id != b.session
             {
-                b.client.children().invalidate(b, Some(id));
+                let terminal = matches!(
+                    kind,
+                    Some(
+                        "session.tool.success"
+                            | "session.tool.failed"
+                            | "session.execution.succeeded"
+                            | "session.execution.failed"
+                            | "session.execution.interrupted"
+                    )
+                );
+                b.client.children().invalidate(b, Some(id), terminal);
             }
         }
-        Some("server.connected") => b.client.children().invalidate(b, None),
+        Some("server.connected") => b.client.children().invalidate(b, None, false),
         _ => {}
     }
 }

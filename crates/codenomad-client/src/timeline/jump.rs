@@ -122,7 +122,10 @@ impl Jump {
             }
             return None;
         };
-        let _ = crate::content::merge_page(resident, &mut page.rows);
+        let mut merged = page.rows.clone();
+        if crate::content::merge_page(resident, &mut merged).is_ok() {
+            page.rows = merged;
+        }
         let (admit, verdict) = bounded(1);
         if !send(Event::Anchor {
             ticket,

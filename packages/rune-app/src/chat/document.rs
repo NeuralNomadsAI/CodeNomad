@@ -108,6 +108,7 @@ pub(super) fn bounded_prose_matches_for(
     bounded_prose_matches(s, key, source, limit, query)
 }
 
+#[cfg(test)]
 pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, limit: usize) -> El {
     prose_for(s, "", key, source, streaming, limit, None)
 }
@@ -165,6 +166,7 @@ fn prose_for(
             active_locale,
             layout::dark(),
             &unwrapped,
+            search_id,
             prose_query.map(|q| (q.terms, q.ranked, q.active)),
             &diagram_sources,
             &search_overrides,
