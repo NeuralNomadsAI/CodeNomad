@@ -268,7 +268,7 @@ fn saved_outline_revalidates_sparse_ranges_and_refuses_a_different_undo_boundary
             (RECORD, None, reverted, false),
         ],
         async |mut backend, revision| {
-            assert!(backend.client.verify_server_identity("installation"));
+            assert!(backend.client.attest("installation", vec![]));
             backend.session_directory = Some(ROOT.into());
             let first = backend
                 .read_outline_cached(&revision, Some(ROOT), None, |_| panic!("cold seed"))

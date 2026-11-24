@@ -501,8 +501,8 @@ try {
       ts = await start("ts", local, tsRoot, password, missionServe ? undefined : path.join(remote.root, "rust.data", "tls", "ca-cert.pem"))
       assert.notEqual(ts.daemonPID, rs.daemonPID)
       result.daemons = [ts.status, rs.status]
-      // Attachment history opens and authenticates its own workspaces. Pending
-      // question recovery belongs to the general qualification, not this mode.
+      // Modes that open and authenticate their own workspaces (or run dedicated
+      // mutation-fence scenarios) skip the generic pending-question qualification.
       if (!["attachment-history", "history-search", "receipt-reconnect", "meta-update", "mutation-fence"].includes(mode)) await qualify(ts, rs, password, rsRoot)
       if (mode === "solid") return await solid({ ts, rs, local, remote, tsRoot, rsRoot, password })
       const hosts = []
@@ -520,11 +520,11 @@ try {
       sequenceFailed = true
       throw error
     } finally {
-      const cleanup = (await Promise.allSettled([ts?.close(), rs?.close(), bench?.close?.()]))
-        .filter(item => item.status === "rejected").map(item => item.reason?.stack ?? String(item.reason))
-      if (cleanup.length) {
-        result.cleanupErrors = cleanup
-        if (!sequenceFailed) throw new Error(cleanup.join("\n"))
+      const closed = await Promise.allSettled([ts?.close(), rs?.close(), bench?.close?.()])
+      const errors = closed.flatMap(item => item.status === "rejected" ? [String(item.reason?.stack ?? item.reason)] : [])
+      if (errors.length) {
+        result.cleanupErrors = errors
+        if (!sequenceFailed) throw new Error(`Bench teardown failed:\n${errors.join("\n")}`)
       }
     }
     assert(!result.leaks, "A server logged a synthetic provider credential")

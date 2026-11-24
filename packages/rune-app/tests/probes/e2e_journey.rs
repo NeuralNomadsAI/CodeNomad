@@ -139,7 +139,9 @@ pub(super) fn run() {
     step(&mut rt, &path, "launch", |rt| assert!(a11y(rt, "connect")));
     step(&mut rt, &path, "open-project", |rt| {
         tap(rt, "connect");
-        ui(rt, "folder field", |rt| rt.find("folder-path").is_some());
+        ui(rt, "folder field", |rt| {
+            workspace::input_ready(&rt.state) && rt.find("folder-path").is_some()
+        });
         type_text(rt, "folder-path", &folder);
         tap(rt, "open-folder");
         ui(rt, "session title field", |rt| {

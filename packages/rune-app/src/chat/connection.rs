@@ -10,6 +10,9 @@ use codenomad_client::{Receiver, Sender};
 use rune::Tx;
 
 pub(crate) fn retry_connection(s: &mut State, tx: &mut Tx) {
+    if s.status_permissions.writing() {
+        return;
+    }
     #[cfg(target_arch = "wasm32")]
     {
         if platform::pairing::required(s) {

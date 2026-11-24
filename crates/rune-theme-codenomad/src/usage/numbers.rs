@@ -3,6 +3,12 @@ pub fn exact(locale: &str, count: u64) -> String {
     localized(locale, &count.to_string())
 }
 
+pub fn decimal(locale: &str, amount: f64) -> String {
+    let raw = fixed(amount, 8);
+    let decimal = raw.trim_end_matches('0').trim_end_matches('.');
+    localized(locale, decimal)
+}
+
 pub fn compact(locale: &str, count: u64) -> String {
     let (value, suffix) = match count {
         1_000_000_000.. => (format!("{:.1}", count as f64 / 1e9), "B"),
@@ -22,17 +28,17 @@ pub fn usd(locale: &str, cost: f64, small_cost_precision: bool) -> String {
             format!("{cost:.decimal_places$}")
         }
     } else {
-        format!("{cost:.2}")
+        fixed(cost.abs(), 2)
     };
-    currency(locale, &raw)
+    currency(locale, &raw, cost.is_sign_negative())
 }
 
 pub fn dashboard_usd(locale: &str, cost: f64) -> String {
-    let mut raw = fixed(cost, 4);
+    let mut raw = fixed(cost.abs(), 4);
     while raw.ends_with('0') && raw.split_once('.').is_some_and(|(_, frac)| frac.len() > 2) {
         raw.pop();
     }
-    currency(locale, &raw)
+    currency(locale, &raw, cost.is_sign_negative())
 }
 
 // Intl's halfExpand rounds the shortest decimal representation, not the binary float.
@@ -70,20 +76,27 @@ fn fixed(amount: f64, places: usize) -> String {
     digits.into_iter().map(char::from).collect()
 }
 
-fn currency(locale: &str, raw: &str) -> String {
+fn currency(locale: &str, raw: &str, negative: bool) -> String {
     let amount = localized(locale, raw);
+    let sign = if negative { "-" } else { "" };
     match locale {
-        "es" => format!("{amount}\u{a0}US$"),
-        "fr" => format!("{amount}\u{a0}$US"),
-        "de" | "ru" => format!("{amount}\u{a0}$"),
-        "he" => format!("\u{200f}{amount}\u{a0}\u{200f}$"),
-        "zh-Hans" => format!("US${amount}"),
-        "ne" => format!("US$\u{a0}{amount}"),
-        _ => format!("${amount}"),
+        "es" => format!("{sign}{amount}\u{a0}US$"),
+        "fr" => format!("{sign}{amount}\u{a0}$US"),
+        "de" | "ru" => format!("{sign}{amount}\u{a0}$"),
+        "he" => format!(
+            "\u{200f}{}{amount}\u{a0}\u{200f}$",
+            if sign.is_empty() { "" } else { "\u{200e}-" }
+        ),
+        "zh-Hans" => format!("{sign}US${amount}"),
+        "ne" => format!("{sign}US$\u{a0}{amount}"),
+        _ => format!("{sign}${amount}"),
     }
 }
 
 fn localized(locale: &str, ascii: &str) -> String {
+    if let Some(magnitude) = ascii.strip_prefix('-') {
+        return format!("-{}", localized(locale, magnitude));
+    }
     let group = match locale {
         "de" | "es" | "tr" => '.',
         "fr" => '\u{202f}',
@@ -127,6 +140,8 @@ fn formats_keep_units_and_usd_but_use_the_app_locales_symbols() {
     assert_eq!(compact("fr", 1_200_000), "1,2M");
     assert_eq!(exact("fr", 1_234_567), "1\u{202f}234\u{202f}567");
     assert_eq!(exact("es", 1234), "1234");
+    assert_eq!(decimal("fr", 64744.83), "64\u{202f}744,83");
+    assert_eq!(decimal("en", -123.25), "-123.25");
     assert_eq!(exact("ne", 12345678), "१,२३,४५,६७८");
     assert_eq!(usd("en", 0.0068, true), "$0.0068");
     assert_eq!(usd("fr", 0.0068, true), "0,0068\u{a0}$US");
@@ -134,4 +149,34 @@ fn formats_keep_units_and_usd_but_use_the_app_locales_symbols() {
     assert_eq!(usd("he", 0.5, false), "\u{200f}0.50\u{a0}\u{200f}$");
     assert_eq!(dashboard_usd("fr", 0.03125), "0,0313\u{a0}$US");
     assert_eq!(dashboard_usd("en", 9.99995), "$10.00");
+}
+
+#[cfg(test)]
+#[test]
+fn usd_matches_intl_half_expand_for_all_app_locales() {
+    for (locale, positive, negative) in [
+        ("en", "$1,024.13", "-$1,024.13"),
+        ("de", "1.024,13\u{a0}$", "-1.024,13\u{a0}$"),
+        ("es", "1024,13\u{a0}US$", "-1024,13\u{a0}US$"),
+        (
+            "fr",
+            "1\u{202f}024,13\u{a0}$US",
+            "-1\u{202f}024,13\u{a0}$US",
+        ),
+        (
+            "he",
+            "\u{200f}1,024.13\u{a0}\u{200f}$",
+            "\u{200f}\u{200e}-1,024.13\u{a0}\u{200f}$",
+        ),
+        ("ja", "$1,024.13", "-$1,024.13"),
+        ("ne", "US$\u{a0}१,०२४.१३", "-US$\u{a0}१,०२४.१३"),
+        ("ru", "1\u{a0}024,13\u{a0}$", "-1\u{a0}024,13\u{a0}$"),
+        ("tr", "$1.024,13", "-$1.024,13"),
+        ("zh-Hans", "US$1,024.13", "-US$1,024.13"),
+    ] {
+        assert_eq!(usd(locale, 1024.125, false), positive);
+        assert_eq!(usd(locale, -1024.125, false), negative);
+    }
+    assert_eq!(usd("en", 1.005, false), "$1.01");
+    assert_eq!(usd("en", 9.995, false), "$10.00");
 }

@@ -1,6 +1,8 @@
 //! The checkouts a workspace owns: its folder and linked worktrees (`inventory`,
 //! `linked`), location ownership (`ownership`) and the deletion fence (`fence`).
 pub mod fence;
+#[cfg(test)]
+pub(crate) mod fence_test_trace;
 mod inventory;
 pub mod linked;
 pub mod ownership;
@@ -46,13 +48,21 @@ pub async fn root_only(workspace: &Workspace) -> Result<Option<bool>, Error> {
         .await
         .unwrap_or(false);
     if !canonical_ok {
+        crate::bench::route_trace(format_args!("root-proof canonical path changed"));
         return Err(probe_error());
     }
     match git(workspace, &["rev-parse", "--show-toplevel"]).await {
         Ok(output) if output.status.success() => Ok(None),
         Ok(output) if String::from_utf8_lossy(&output.stderr).contains("not a git repository") => Ok(Some(true)),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(Some(false)),
-        _ => Err(probe_error()),
+        Ok(output) => {
+            crate::bench::route_trace(format_args!("root-proof git exited {:?}", output.status.code()));
+            Err(probe_error())
+        }
+        Err(err) => {
+            crate::bench::route_trace(format_args!("root-proof git failed: {:?}", err.kind()));
+            Err(probe_error())
+        }
     }
 }
 

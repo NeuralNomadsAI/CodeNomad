@@ -17,6 +17,7 @@ struct State {
     blocked: HashMap<String, usize>,
     active: HashMap<String, usize>,
     displays: Vec<(String, Weak<AtomicBool>)>,
+    deleting_roots: Vec<String>,
 }
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
 static IDLE: LazyLock<Notify> = LazyLock::new(Notify::new);
@@ -32,11 +33,56 @@ pub fn normalize(directory: &str) -> String {
     let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'/';
     if drive || n.starts_with("//") { n.to_lowercase() } else { n.to_string() }
 }
+fn contains(root: &str, target: &str) -> bool {
+    target == root || target.starts_with(&if root.ends_with('/') { root.to_string() } else { format!("{root}/") })
+}
 fn overlap(left: &str, right: &str) -> bool {
-    let contains = |root: &str, target: &str| {
-        target == root || target.starts_with(&if root.ends_with('/') { root.to_string() } else { format!("{root}/") })
-    };
     contains(left, right) || contains(right, left)
+}
+/// `reserveWorktreeDeletion` (`workspaces/manager.ts`): reserves only the deleted
+/// target checkout root so new workspace opens under it are refused without stalling
+/// workspace opens on the main checkout or sibling worktrees.
+pub struct DeletionRoot(String);
+impl Drop for DeletionRoot {
+    fn drop(&mut self) {
+        let mut s = STATE.lock().unwrap();
+        if let Some(pos) = s.deleting_roots.iter().position(|r| r == &self.0) {
+            s.deleting_roots.remove(pos);
+        }
+    }
+}
+pub fn reserve_deletion_root(directory: &str) -> Result<DeletionRoot, &'static str> {
+    let target = normalize(directory);
+    let mut s = STATE.lock().unwrap();
+    if s.deleting_roots.iter().any(|root| overlap(root, &target)) {
+        return Err("Worktree deletion is already in progress");
+    }
+    s.deleting_roots.push(target.clone());
+    Ok(DeletionRoot(target))
+}
+pub fn is_deleting_root(directory: &str) -> bool {
+    let candidate = normalize(directory);
+    STATE.lock().unwrap().deleting_roots.iter().any(|root| contains(root, &candidate))
+}
+/// Nearest checkout root (`path` or an ancestor within `scope` containing `.git`),
+/// matching TS `getWorktreeIdentityForPath` without spawning Git on every write.
+pub fn checkout_root(scope: &std::path::Path, path: &std::path::Path) -> std::path::PathBuf {
+    for dir in path.ancestors() {
+        if !dir.starts_with(scope) {
+            break;
+        }
+        if std::fs::symlink_metadata(dir.join(".git")).is_ok() {
+            return dir.to_path_buf();
+        }
+    }
+    path.to_path_buf()
+}
+pub fn covered(blocked: &std::collections::HashSet<String>, needed: &std::collections::HashSet<String>) -> bool {
+    let roots: Vec<_> = blocked.iter().map(|b| normalize(b)).collect();
+    needed.iter().all(|path| {
+        let target = normalize(path);
+        roots.iter().any(|root| contains(root, &target))
+    })
 }
 /// `canonicalWorktreeIdentity` for host paths.
 pub fn identity(directory: &std::path::Path) -> String {
@@ -101,7 +147,18 @@ pub fn enter(directories: &[String]) -> Option<Entered> {
 }
 
 pub(crate) fn admit(directories: &[String]) -> Result<Entered, crate::Error> {
-    enter(directories).ok_or_else(|| crate::error(axum::http::StatusCode::CONFLICT, "Worktree deletion is in progress"))
+    let permit = enter(directories);
+    #[cfg(test)]
+    {
+        super::fence_test_trace::record("checkout fence", if permit.is_some() { "admitted" } else { "refused" });
+        if directories.iter().any(|key| key.starts_with("session:")) {
+            super::fence_test_trace::record(
+                "session reservation",
+                if permit.is_some() { "admitted" } else { "refused" },
+            );
+        }
+    }
+    permit.ok_or_else(|| crate::error(axum::http::StatusCode::CONFLICT, "Worktree deletion is in progress"))
 }
 
 /// A deletion in progress; dropping it unblocks its directories.
@@ -150,21 +207,29 @@ pub async fn block(directories: &[String]) -> Result<Blocked, &'static str> {
         idle.as_mut().enable();
         let busy = STATE.lock().unwrap().active.keys().any(|a| guard.0.iter().any(|b| overlap(b, a)));
         if !busy {
+            #[cfg(test)]
+            super::fence_test_trace::record("checkout fence", "drained");
             return Ok(guard);
         }
+        #[cfg(test)]
+        super::fence_test_trace::record("checkout fence", "waiting on admitted mutations");
         if tokio::time::timeout_at(deadline, idle).await.is_err() {
             return Err("Timed out waiting for worktree mutations to finish");
         }
     }
 }
 
+/// `serializeMutation`: one write at a time per target key, reporting whether the caller waited.
+pub async fn serialize_checked(key: String) -> (tokio::sync::OwnedMutexGuard<()>, bool) {
+    let lock = queue(key);
+    match lock.clone().try_lock_owned() {
+        Ok(guard) => (guard, false),
+        Err(_) => (lock.lock_owned().await, true),
+    }
+}
 /// `serializeMutation`: one write at a time per target key, idle keys pruned.
 pub async fn serialize(key: String) -> tokio::sync::OwnedMutexGuard<()> {
-    queue(key).lock_owned().await
-}
-
-pub(crate) fn try_serialize(key: String) -> Option<tokio::sync::OwnedMutexGuard<()>> {
-    queue(key).try_lock_owned().ok()
+    serialize_checked(key).await.0
 }
 
 fn queue(key: String) -> Arc<tokio::sync::Mutex<()>> {

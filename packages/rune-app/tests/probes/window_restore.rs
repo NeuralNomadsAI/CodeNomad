@@ -20,6 +20,14 @@ pub(super) fn wait(rt: &mut Runtime<State>, label: &str, condition: impl Fn(&Sta
         rt.frame(1.0 / 60.0);
     }
 }
+pub(super) fn wait_control(rt: &mut Runtime<State>, key: &str) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while rt.find(key).is_none() {
+        assert!(Instant::now() < deadline, "restore timeout: {key}");
+        rt.frame(1.0 / 60.0);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 pub(super) fn tap(rt: &mut Runtime<State>, key: &str) {
     rt.update(|_, tx| {
         tx.scroll_into_view(key);
@@ -66,10 +74,13 @@ fn ready(s: &State, id: &str) -> bool {
         && active_session(s).as_deref() == Some(id)
 }
 fn select(rt: &mut Runtime<State>, index: usize, id: &str) {
-    tap(rt, &format!("t-tab-{index}"));
+    let tab = format!("t-tab-{index}");
+    wait_control(rt, &tab);
+    tap(rt, &tab);
     wait(rt, "selected conversation", |s| ready(s, id));
 }
 fn open(rt: &mut Runtime<State>, title: &str, id: &str) {
+    wait_control(rt, "folder-path");
     type_text(
         rt,
         "folder-path",

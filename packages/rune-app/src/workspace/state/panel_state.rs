@@ -81,7 +81,48 @@ pub(crate) fn mission_supported(s: &State) -> bool {
 }
 
 pub(crate) fn mission_panel(s: &State) -> El {
-    mission_owner(s).map_or_else(rune::el, |panel| missions::panel(panel, mission_edit))
+    let Some(ui) = s.workspace.as_ref() else {
+        return rune::el();
+    };
+    let entry = &ui.entries[ui.active];
+    entry.missions.as_ref().map_or_else(rune::el, |panel| {
+        missions::panel_body(
+            panel,
+            mission_edit,
+            missions::controls(panel, &ui.mission_lifecycle, &entry.key, control),
+        )
+    })
+}
+
+pub(crate) fn mission_confirmation(s: &State) -> Option<El> {
+    if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
+        return None;
+    }
+    let ui = s.workspace.as_ref()?;
+    let entry = &ui.entries[ui.active];
+    let (source, _) = entry.missions.as_ref()?.control_source(&entry.key)?;
+    if ui
+        .mission_lifecycle
+        .confirmation
+        .as_ref()
+        .is_none_or(|(key, _)| key != &source)
+    {
+        return None;
+    }
+    missions::confirmation(&ui.mission_lifecycle, control)
+}
+
+fn control(s: &mut State, source: &missions::Source, gesture: missions::Gesture) {
+    if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
+        return;
+    }
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    let entry = &mut ui.entries[ui.active];
+    if let Some(panel) = &mut entry.missions {
+        panel.control(&entry.key, &mut ui.mission_lifecycle, source, gesture);
+    }
 }
 
 fn mission_owner(s: &State) -> Option<&missions::Panel> {
@@ -101,9 +142,33 @@ fn mission_edit(s: &mut State) -> (Option<&mut missions::Panel>, &mut TextEdit) 
 }
 
 pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
-    let mut changed = false;
+    let finished = ui.mission_lifecycle.poll();
+    let mut changed = !finished.is_empty();
     let mut selection_changed = false;
     let mounted = crate::shell::right_panel_visible(s);
+    let current = &ui.entries[ui.active];
+    let current_source = (mounted
+        && matches!(&current.saved, Tab::Workspace(saved)
+        if saved.view.right_panel == RightPanelTab::Missions))
+    .then(|| {
+        current
+            .missions
+            .as_ref()?
+            .control_source(&current.key)
+            .map(|(key, _)| key)
+    })
+    .flatten();
+    ui.mission_lifecycle
+        .retain_checks_for(current_source.as_ref());
+    if ui
+        .mission_lifecycle
+        .confirmation
+        .as_ref()
+        .is_some_and(|(source, _)| current_source.as_ref() != Some(source))
+    {
+        ui.mission_lifecycle.confirmation = None;
+        changed = true;
+    }
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if index != ui.active {
             if let Some(panel) = &mut entry.missions {
@@ -124,6 +189,8 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
                 });
         let Some(backend) = target else {
             changed |= entry.missions.take().is_some();
+            ui.mission_lifecycle.retain_checks_for(None);
+            ui.mission_lifecycle.confirmation = None;
             continue;
         };
         let Tab::Workspace(saved) = &mut entry.saved else {
@@ -134,6 +201,8 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
             .as_ref()
             .is_none_or(|panel| !panel.matches(&backend))
         {
+            ui.mission_lifecycle.retain_checks_for(None);
+            ui.mission_lifecycle.confirmation = None;
             let mut panel = missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone());
             panel.selected.clone_from(&saved.view.selected_mission);
             entry.missions = Some(panel);
@@ -154,6 +223,9 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
             }
             changed |= panel.poll();
             panel.show(panel.supported() && visible);
+            if panel.supported() && visible {
+                panel.settle_controls(&entry.key, &mut ui.mission_lifecycle, &finished);
+            }
             if saved.view.selected_mission != panel.selected {
                 saved.view.selected_mission.clone_from(&panel.selected);
                 selection_changed = true;
@@ -167,11 +239,13 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
 }
 
 pub(crate) fn suspend_missions(s: &mut State) {
-    if let Some(ui) = &mut s.workspace
-        && let Some(panel) = &mut ui.entries[ui.active].missions
-    {
-        panel.show(false);
-        panel.cancel_probe();
+    if let Some(ui) = &mut s.workspace {
+        ui.mission_lifecycle.confirmation = None;
+        ui.mission_lifecycle.retain_checks_for(None);
+        if let Some(panel) = &mut ui.entries[ui.active].missions {
+            panel.show(false);
+            panel.cancel_probe();
+        }
     }
 }
 
@@ -207,6 +281,31 @@ pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
         None => panel.invalidate(None, ui.clock),
         _ => {}
     }
+}
+
+pub(crate) fn mission_observation_project(s: &State) -> Option<&str> {
+    // Cached streams belong to other occurrences. Only the current conversation
+    // can carry this occurrence's events in place of the project observer.
+    if !crate::shell::right_panel_visible(s)
+        || right_panel_tab(s) != RightPanelTab::Missions
+        || s.incoming
+            .as_ref()
+            .is_some_and(|stream| !stream.is_closed())
+    {
+        return None;
+    }
+    let ui = s.workspace.as_ref()?;
+    let entry = &ui.entries[ui.active];
+    let backend = s.screen.launcher()?.connection.as_ref()?;
+    if !entry
+        .binding
+        .as_ref()?
+        .client
+        .same_connection(&backend.client)
+    {
+        return None;
+    }
+    Some(entry.project.as_ref()?.id.as_str())
 }
 
 pub fn restore_files_mode(s: &mut State) {

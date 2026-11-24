@@ -57,7 +57,7 @@ Les reçus sont des annotations CodeNomad en lecture seule, pas des messages nat
 
 ## Mode de permissions par conversation {#conversation-mode}
 
-Sélectionnez une conversation, ouvrez **Statut → Permissions** et cliquez sur un mode. Quand la section est repliée, un éclair (Autonome) ou un bouclier (Supervisé) indique le dernier mode connu.
+Sélectionnez une conversation, ouvrez **Statut → Permissions** et choisissez un mode. La section repliée indique le dernier mode connu.
 
 - **Autonome** — Applique les règles de permissions d’OpenCode.
 - **Supervisé** — Demande confirmation avant que l’agent modifie des fichiers ou exécute des commandes shell. Pour ces actions, les interdictions globales, du projet et de la conversation restent en vigueur, et les règles d’autorisation deviennent des demandes. Les accords **Toujours autoriser** enregistrés par OpenCode restent valables pour les demandes correspondantes.

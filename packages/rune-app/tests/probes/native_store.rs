@@ -1,4 +1,4 @@
-use super::window_restore::{finish, tap, type_text, wait};
+use super::window_restore::{finish, tap, type_text, wait, wait_control};
 use crate::{
     Phase, State, init, poll, request_older, view,
     workspace::{self, Tab},
@@ -19,10 +19,13 @@ fn ready(s: &State, id: &str) -> bool {
         && matches!(saved.active.and_then(|i| saved.tabs.get(i)), Some(Tab::Workspace(w)) if w.active_session_id.as_deref() == Some(id))
 }
 fn select(rt: &mut Runtime<State>, index: usize, id: &str) {
-    tap(rt, &format!("t-tab-{index}"));
+    let tab = format!("t-tab-{index}");
+    wait_control(rt, &tab);
+    tap(rt, &tab);
     wait(rt, "selected native session", |s| ready(s, id));
 }
 fn open(rt: &mut Runtime<State>, id: &str, title: &str) {
+    wait_control(rt, "folder-path");
     type_text(
         rt,
         "folder-path",

@@ -62,6 +62,23 @@ pub struct Native {
 static UNCONNECTED: std::sync::LazyLock<Url> = std::sync::LazyLock::new(|| Url::parse("http://127.0.0.1:0/").unwrap());
 
 impl Native {
+    #[cfg(test)]
+    pub(crate) fn test_connection(address: std::net::SocketAddr) -> Self {
+        let url = Url::parse(&format!("http://{address}")).unwrap();
+        Self {
+            client: Client::builder().no_proxy().build().unwrap(),
+            endpoint: RwLock::new(Some(Arc::new(Endpoint {
+                url,
+                password: "synthetic".into(),
+                version: String::new(),
+                pid: 0,
+            }))),
+            lifecycle: None,
+            validated: Mutex::new(Some(Instant::now())),
+            acquiring: Default::default(),
+        }
+    }
+
     /// The bench's fixture daemon when the positional launch injects it, else the CLI lifecycle of `binary`.
     pub fn connect(binary: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let client = Client::builder()

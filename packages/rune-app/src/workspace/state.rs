@@ -22,8 +22,8 @@ pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
 };
 pub(crate) use panel_state::{
-    mission_event, mission_panel, mission_supported, right_panel_tab, set_right_panel_tab,
-    suspend_missions,
+    mission_confirmation, mission_event, mission_observation_project, mission_panel,
+    mission_supported, right_panel_tab, set_right_panel_tab, suspend_missions,
 };
 pub use polling::{poll, status};
 pub use strip::strip;
@@ -83,6 +83,7 @@ pub(crate) fn contains_project(s: &State, id: &str) -> bool {
 }
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
+    mission_lifecycle: crate::missions::Lifecycle,
     entries: Vec<Entry>,
     active: usize,
     next_key: u64,
@@ -104,6 +105,7 @@ impl Ui {
     pub fn new() -> Self {
         Self {
             openings: Default::default(),
+            mission_lifecycle: Default::default(),
             entries: vec![entry("tab-0".into(), Tab::Blank)],
             active: 0,
             next_key: 1,
@@ -256,7 +258,8 @@ fn entry(key: String, mut saved: Tab) -> Entry {
     }
 }
 fn busy(s: &State) -> bool {
-    s.screen.launcher().is_some_and(|l| l.pending)
+    s.status_permissions.settling()
+        || s.screen.launcher().is_some_and(|l| l.pending)
         || s.workspace.as_ref().is_some_and(|ui| !ui.ready)
 }
 pub fn input_ready(s: &State) -> bool {

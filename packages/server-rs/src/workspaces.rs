@@ -130,9 +130,9 @@ async fn create(
     let Some(path) = dunce::canonicalize(candidate).ok().filter(authorized) else {
         return bad_request("Workspace directory is not authorized".into());
     };
-    let Ok(_admitted) = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&path)]) else {
-        return crate::error(Status::CONFLICT, "Worktree deletion is in progress").into_response();
-    };
+    if crate::worktrees::fence::is_deleting_root(&crate::worktrees::fence::identity(&path)) {
+        return bad_request("Workspace directory is being removed".into());
+    }
     let validation = async {
         let deadline = tokio::time::Instant::now() + daemon::TIMEOUT;
         let endpoint = app.native.acquire(deadline).await?;
@@ -182,6 +182,9 @@ async fn create(
         return bad_request("Workspace folder changed during opening".into());
     }
     let mut store = app.inner.lock().unwrap();
+    if crate::worktrees::fence::is_deleting_root(&crate::worktrees::fence::identity(&path)) {
+        return bad_request("Workspace directory is being removed".into());
+    }
     if store.workspaces.len() >= 128 {
         return bad_request("Too many open workspaces".into());
     }
