@@ -7,7 +7,7 @@
 // count as successful qualification.
 // Never discovers the shared service, user home, database or a real provider.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { createServer } from "node:http"
 import { mkdtemp, mkdir, writeFile, realpath } from "node:fs/promises"
 import path from "node:path"
@@ -15,7 +15,7 @@ import os from "node:os"
 import { setTimeout as delay } from "node:timers/promises"
 import { tsImport } from "tsx/esm/api"
 import pino from "pino"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const cli = process.argv[2]
 if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute isolated CLI executable")

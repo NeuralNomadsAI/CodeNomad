@@ -1,6 +1,7 @@
 //! Native qualification entry points, enabled exclusively by `test-support`.
 mod composer_attachments;
 mod controls;
+mod e2e_journey;
 mod files_document;
 mod files_reader;
 mod files_state;
@@ -34,11 +35,7 @@ fn rendered_text(text: &str) -> String {
 
 /// Dispatch qualification CLI without entering the native window event loop.
 pub fn dispatch() -> bool {
-    if crate::platform::has_flag("--test-support-info") {
-        println!("{{\"testSupport\":true,\"nativeProbes\":true}}");
-        return true;
-    }
-    for (flag, run) in [
+    let probes = [
         ("--probe-latency", latency::run as fn()),
         ("--probe-owned-startup", owned_startup::run as fn()),
         ("--probe-real-controls", live_controls::run),
@@ -46,6 +43,7 @@ pub fn dispatch() -> bool {
         ("--probe-native-store", native_store::run),
         ("--probe-pending-open", pending_open::run),
         ("--probe-controls", controls::run),
+        ("--probe-e2e-journey", e2e_journey::run),
         ("--probe-files-state", files_state::run),
         ("--probe-git-panel", git_panel::run),
         ("--probe-launcher", launcher::run),
@@ -58,11 +56,27 @@ pub fn dispatch() -> bool {
         ("--probe-contract", session_transport::contract),
         ("--probe-slash", slash::run),
         ("--probe-attachments", composer_attachments::run),
-    ] {
-        if crate::platform::has_flag(flag) {
-            run();
-            return true;
+    ];
+    let mut requested = std::env::args().filter(|arg| arg.starts_with("--probe-"));
+    let probe = requested.next();
+    let run = probe
+        .as_deref()
+        .and_then(|name| probes.iter().find(|(flag, _)| *flag == name));
+    if requested.next().is_some() || (probe.is_some() && run.is_none()) {
+        eprintln!("Expected one known qualification probe");
+        std::process::exit(2);
+    }
+    if crate::platform::has_flag("--test-support-info") {
+        let mut info = serde_json::json!({"testSupport":true,"nativeProbes":true});
+        if let Some(name) = probe {
+            info["probe"] = name.into();
         }
+        println!("{info}");
+        return true;
+    }
+    if let Some((_, run)) = run {
+        run();
+        return true;
     }
     false
 }

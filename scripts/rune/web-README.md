@@ -1,5 +1,7 @@
 # Coquille web Rune
 
+`packages/rune-app/fixtures/launcher-fixture.mjs --web-git-images` ouvre les différences SVG et AVIF d’un dépôt privé. Le banc vérifie les octets Git, les deux noms accessibles et les couleurs réellement peintes dans le canvas Chromium. Utiliser un bundle produit dédié via `RUNE_WEB_DIR`.
+
 `packages/rune-app/fixtures/launcher-fixture.mjs --web-missions` vérifie le panneau Missions monté avec le bundle produit (`RUNE_WEB_DIR`), un serveur Rust privé et des réponses de page déterministes. Chromium charge le WASM via HTTP avec WebCrypto désactivée. La sonde vérifie la reprise après refus d’ordre, la fiche sélectionnée, la pagination du répertoire et des tâches, l’activité et les tâches à examiner dans l’arborescence accessible.
 
 Compiler le même binaire `codenomad-rune` pour `wasm32-unknown-unknown`, puis empaqueter son fichier `.wasm` explicitement. Le cache Cargo reste celui du développeur. `bundle-web.mjs` utilise le contrat de `Rune/scripts/web-build.sh` : génération `wasm-bindgen --target web`, copie des snippets et des faces Inter complètes à côté de `app.js`.

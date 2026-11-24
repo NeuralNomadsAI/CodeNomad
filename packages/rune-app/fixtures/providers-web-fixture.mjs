@@ -3,7 +3,7 @@ import {createServer} from 'node:http'
 import {readFile} from 'node:fs/promises'
 import path from 'node:path'
 import {setTimeout as delay} from 'node:timers/promises'
-import {chromium} from 'playwright'
+import {activateControl,launchChromium} from '../../../scripts/rune/web-chromium.mjs'
 import {bundleAssetPaths} from '../../../scripts/rune/web-workspace-policy.mjs'
 
 const bundle = path.resolve(process.argv[2] ?? 'target/rune-web-settings-providers')
@@ -49,7 +49,10 @@ const configFile = `${configPath}/opencode-global-config-jsonc/content`
 const configOther = `${configPath}/opencode-global-config/content`
 let configContent = '{\r\n  // comment\r\n}\r\n', configWrites = 0, hideWhitespace = true
 let environmentVariables = {}, secureEnvVars = []
-let contrast = 'on', permissions = 'autonomous'
+let contrast = 'on', permissions = 'autonomous', locale = 'en'
+let showMessageTimeline, scrollControlsInTimelineCorner, diffViewMode, autoExpandActiveSubsessions, followUpBehavior
+let appearancePreferences = {mode:'light',light:{scheme:{id:'light'}}}
+const stateWrites = []
 let notificationRouting, notifyFocused
 let hotkeyOverrides = { 'new-instance': [{key:'n',mod:true}], 'file-save': [{key:'n',mod:true}] }
 let updateFeed = 'stable', infoReads = 0, invalidOffer = false, failFeed = false
@@ -231,7 +234,13 @@ const server = createServer(async (req,res) => {
           return res.writeHead(503).end()
         }
         contrast = patch.settings.highContrast ?? contrast
+        locale = patch.settings.locale ?? locale
         permissions = patch.settings.newConversationPermissions ?? permissions
+        showMessageTimeline = patch.settings.showMessageTimeline ?? showMessageTimeline
+        scrollControlsInTimelineCorner = patch.settings.scrollControlsInTimelineCorner ?? scrollControlsInTimelineCorner
+        diffViewMode = patch.settings.diffViewMode ?? diffViewMode
+        autoExpandActiveSubsessions = patch.settings.autoExpandActiveSubsessions ?? autoExpandActiveSubsessions
+        followUpBehavior = patch.settings.followUpBehavior ?? followUpBehavior
         if (patch.settings.notificationRouting) {
           notificationRouting ??= {}
           for (const [category, row] of Object.entries(patch.settings.notificationRouting)) {
@@ -245,13 +254,30 @@ const server = createServer(async (req,res) => {
           else hotkeyOverrides[id] = binding
         }
       }
-      return json({settings:{locale:'en',highContrast:contrast,newConversationPermissions:permissions,
+      return json({settings:{locale,highContrast:contrast,newConversationPermissions:permissions,
+        ...(showMessageTimeline !== undefined && {showMessageTimeline}),
+        ...(scrollControlsInTimelineCorner !== undefined && {scrollControlsInTimelineCorner}),
+        ...(diffViewMode !== undefined && {diffViewMode}),
+        ...(autoExpandActiveSubsessions !== undefined && {autoExpandActiveSubsessions}),
+        ...(followUpBehavior !== undefined && {followUpBehavior}),
         notificationRouting,osNotificationsAllowWhenVisible:notifyFocused,hotkeyOverrides,
         hideDiffWhitespaceChanges:hideWhitespace,holdLongAssistantReplies:true}})
     }
     if (p === '/api/storage/state/ui') {
       await stateReady
-      return json({appearancePreferences:{mode:'light',light:{scheme:{id:'light'}}}})
+      if (req.method === 'PATCH') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        const patch = JSON.parse(body)
+        stateWrites.push(patch)
+        if (patch.appearancePreferences) {
+          appearancePreferences = {
+            ...appearancePreferences,
+            ...patch.appearancePreferences,
+          }
+        }
+      }
+      return json({appearancePreferences})
     }
     if (p === '/api/memory/settings') {
       memoryRequests.push(req.method)
@@ -379,7 +405,7 @@ const server = createServer(async (req,res) => {
 await new Promise(resolve => server.listen(0,'127.0.0.1',resolve))
 let browser, page
 try {
-  browser = await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
+  browser = await launchChromium(process.env.CODENOMAD_BROWSER_PATH||undefined)
   page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true,
     ...(stats && {timezoneId:'Europe/Paris'})})
   if (configFiles) {
@@ -428,7 +454,7 @@ try {
       return Promise.resolve()
     }
   })
-  const click = name => page.getByRole('button',{name,exact:true}).click({force:true,timeout:15000})
+  const click = name => activateControl(page,page.getByRole('button',{name,exact:true}),{timeout:15000})
   const afterPaint = () => page.evaluate(() => new Promise(resolve =>
     requestAnimationFrame(() => requestAnimationFrame(resolve))))
   const radio = name => page.getByRole('radio',{name,exact:true})
@@ -968,6 +994,64 @@ try {
   await savedPermissions
   assert.deepEqual(writes.at(-1),{settings:{newConversationPermissions:'supervised'}})
   await page.locator('button[aria-description="Supervised"]').waitFor({state:'attached'})
+  const languageTrigger = page.getByRole('button',{name:'Language',exact:true})
+  assert.equal(await languageTrigger.getAttribute('aria-description'),'English')
+  await languageTrigger.click({force:true})
+  const savedFrench = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+  await page.getByRole('option',{name:'Français',exact:true}).click({force:true})
+  await savedFrench
+  assert.deepEqual(writes.at(-1),{settings:{locale:'fr'}})
+  const frenchLanguage = page.getByRole('button',{name:'Langue',exact:true})
+  await frenchLanguage.waitFor({state:'attached'})
+  assert.equal(await frenchLanguage.getAttribute('aria-description'),'Français')
+  await frenchLanguage.click({force:true})
+  const savedEnglish = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+  await page.getByRole('option',{name:'English',exact:true}).click({force:true})
+  await savedEnglish
+  assert.deepEqual(writes.at(-1),{settings:{locale:'en'}})
+  await languageTrigger.waitFor({state:'attached'})
+  assert.equal(await languageTrigger.getAttribute('aria-description'),'English')
+
+  const savedDark = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/state/ui' && response.request().method() === 'PATCH')
+  await radio('Dark').click({force:true})
+  await savedDark
+  assert.deepEqual(stateWrites.at(-1),{appearancePreferences:{mode:'dark'}})
+  const paletteTrigger = page.getByRole('button',{name:'Color scheme',exact:true})
+  await paletteTrigger.and(page.locator('[aria-description="Mist"]')).waitFor({state:'attached'})
+  await paletteTrigger.click({force:true})
+  const savedBasalt = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/state/ui' && response.request().method() === 'PATCH')
+  await page.getByRole('option',{name:'Basalt',exact:true}).click({force:true})
+  await savedBasalt
+  assert.deepEqual(stateWrites.at(-1),{appearancePreferences:{dark:{scheme:{id:'basalt',appearance:'dark',colors:null},presetId:null}}})
+  await paletteTrigger.and(page.locator('[aria-description="Basalt"]')).waitFor({state:'attached'})
+  const savedLight = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/state/ui' && response.request().method() === 'PATCH')
+  await radio('Light').click({force:true})
+  await savedLight
+  assert.deepEqual(stateWrites.at(-1),{appearancePreferences:{mode:'light'}})
+  await paletteTrigger.and(page.locator('[aria-description="Classic"]')).waitFor({state:'attached'})
+  await paletteTrigger.click({force:true})
+  const savedLinen = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/state/ui' && response.request().method() === 'PATCH')
+  await page.getByRole('option',{name:'Linen',exact:true}).click({force:true})
+  await savedLinen
+  assert.deepEqual(stateWrites.at(-1),{appearancePreferences:{light:{scheme:{id:'linen',appearance:'light',colors:null},presetId:null}}})
+  await paletteTrigger.and(page.locator('[aria-description="Linen"]')).waitFor({state:'attached'})
+
+  assert.equal(await page.getByRole('checkbox',{name:'Keep the computer awake while CodeNomad is running',exact:true}).count(),0,'Keep awake is desktop-only')
+  for (const [label, initial, expectedPatch] of [
+    ['Show the message timeline', true, {showMessageTimeline:false}],
+    ['Put the first/latest message arrows under the timeline', false, {scrollControlsInTimelineCorner:true}],
+    ['Split tool-call diffs', true, {diffViewMode:'unified'}],
+    ['Automatically expand subsessions', true, {autoExpandActiveSubsessions:false}],
+    ['Queue sent prompts', false, {followUpBehavior:'queue'}],
+  ]) {
+    const box = page.getByRole('checkbox',{name:label,exact:true})
+    assert.equal(await box.getAttribute('aria-checked'),String(initial),label)
+    const saved = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+    await box.click({force:true})
+    await saved
+    assert.deepEqual(writes.at(-1),{settings:expectedPatch})
+    await page.getByRole('checkbox',{name:label,checked:!initial,exact:true}).waitFor({state:'attached'})
+  }
   assert.equal(reads.length,0,'General does not load the provider catalogue')
   await radio('Providers').click({force:true})
   await visible(account)

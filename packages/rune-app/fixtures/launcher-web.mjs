@@ -4,13 +4,14 @@ import {createHash} from 'node:crypto'
 import {readFile} from 'node:fs/promises'
 import {chromium} from 'playwright'
 import path from 'node:path'
+import {spawnFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 import {serverBinary} from './fixture-binaries.mjs'
 
 export async function launchWeb({
   root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog,http,mobile,restart,
-  webMobile,webAndroid,webMissions,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,
+  webMobile,webAndroid,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,
 }, state) {
   if(webTimeline||webSearch||webOutline){
     const config=await http.patch('/api/storage/config/ui',{data:{settings:{showThinkingBlocks:true,systemMessagesVisibility:'expanded',
@@ -47,13 +48,16 @@ export async function launchWeb({
   if(webTimeline)args.push(webTouchHistory?'--touch-history':'--timeline')
   if(webSearch)args.push('--history-search')
   if(webOutline)args.push('--outline')
+  if(mobileSessionSearch)args.push('--mobile-session-search')
+  if(webGitImages)args.push('--git-images')
   const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
   if(webAndroid){
     androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
     state.deviceLease=androidLease(androidDevice(androidEnv),uiOrigin)
     await state.deviceLease.open()
   }
-  const client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
+  const launch=webMobile?spawn:spawnFixtureChild
+  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
   state.client=client
   if(webAndroid)state.clientClosed=new Promise(resolve=>client.once('close',resolve))
   if(mobile)client.on('message',action=>{

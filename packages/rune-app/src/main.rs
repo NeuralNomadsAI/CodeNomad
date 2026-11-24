@@ -144,6 +144,21 @@ fn init() -> State {
         history_detached: false,
     }
 }
+#[cfg(feature = "test-support")]
+fn load_loopback_scene(s: &mut State) {
+    s.messages.push(
+        Message {
+            id: "loopback-fixture".into(),
+            role: "assistant".into(),
+            completed: true,
+            parts: vec![],
+            usage: None,
+            body: chat::LOOPBACK_LINK_SCENE.into(),
+        }
+        .into(),
+    );
+    s.phase = Phase::Ready;
+}
 fn setup(s: &mut State, wake: rune::Waker) {
     #[cfg(target_arch = "wasm32")]
     let wake = shell::notifications::with_background_wake(s, wake);
@@ -151,6 +166,12 @@ fn setup(s: &mut State, wake: rune::Waker) {
     #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
     if platform::scene_is("transcript-images") {
         chat::images_fixture::load(s);
+        return;
+    }
+    #[cfg(feature = "test-support")]
+    if platform::scene_is("transcript-loopback") {
+        #[cfg(target_arch = "wasm32")]
+        load_loopback_scene(s);
         return;
     }
     #[cfg(feature = "test-support")]
@@ -327,6 +348,8 @@ fn run_app() {
                 }),
                 #[cfg(not(target_arch = "wasm32"))]
                 ("transcript", transcript::load_scene),
+                #[cfg(not(target_arch = "wasm32"))]
+                ("transcript-loopback", load_loopback_scene),
                 #[cfg(not(target_arch = "wasm32"))]
                 ("git-changes", probes::git_scene::changes),
                 #[cfg(not(target_arch = "wasm32"))]

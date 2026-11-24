@@ -1,6 +1,6 @@
 import { appendFileSync, writeFileSync } from "node:fs"
 import { mkdtemp, mkdir } from "node:fs/promises"
-import { spawn } from "node:child_process"
+import { spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import os from "node:os"
 import path from "node:path"
 import { channel } from "node:diagnostics_channel"

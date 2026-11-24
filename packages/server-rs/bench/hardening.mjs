@@ -2,7 +2,7 @@
 // floods (M1), lexical paths and cross-site navigation (M2), Git configuration guard (M3), protected data
 // folder (F2), event stream budgets (F3). `node hardening.mjs <opencode executable>`
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile, rm } from "node:fs/promises"
 import { existsSync } from "node:fs"
@@ -13,7 +13,7 @@ import tls from "node:tls"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
-import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
 import { dropRegistration, out, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 const cli = process.argv[2]
@@ -310,8 +310,9 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
   } finally {
     for (const s of open) s.destroy()
     child.stdin.write("shutdown\n")
-    await stopFixtureChild(child, stopped).catch(() => child.kill())
-    await dropRegistration(env, child.pid)
+    const pid = await fixtureChildPid(child)
+    await stopFixtureChild(child, stopped)
+    await dropRegistration(env, pid)
     await writeJson("hardening.json", { binary: bin, failures, results })
     await writeFile(path.join(out, "hardening-rs.log"), lines)
   }

@@ -1,6 +1,7 @@
 // Real HTTP servers, independent recording OpenCode substitutes, no provider or service discovery.
 import assert from 'node:assert/strict'
-import {execFile,spawn} from 'node:child_process'
+import {execFile} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {createHash, randomUUID} from 'node:crypto'
 import {createServer, request as httpRequest} from 'node:http'
 import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'

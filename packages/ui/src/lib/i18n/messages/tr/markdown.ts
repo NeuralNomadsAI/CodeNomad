@@ -1,4 +1,5 @@
 export const markdownMessages = {
+  "markdown.link.loopbackOnHost": "Sunucuda değil, bu cihazda açılır",
   "markdown.mermaid.diagram": "Mermaid diyagramı",
   "markdown.mermaid.preview": "Diyagramı göster",
   "markdown.mermaid.source": "Kaynağı göster",

@@ -2,14 +2,13 @@
 // Host and Origin, throttling, single use, revocation closing a live SSE), then Rust's certificate reuse,
 // provided chain and SAN rotation across restarts. `node security.mjs <opencode executable>`
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID, X509Certificate } from "node:crypto"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import http from "node:http"
 import https from "node:https"
 import path from "node:path"
 import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
-import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
 import { setTimeout as delay } from "node:timers/promises"
 import { dist, dropRegistration, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
@@ -133,7 +132,8 @@ await withProductRuntime(exe,async()=>({}),async ({root:home,env,connection})=>{
       assert(local&&remote,lines)
       return {local,remote}
     }
-    return {child,stopped,origins,close:async()=>{await (child.exitCode===null?stopFixtureChild(child,stopped):stopped);await dropRegistration(env,child.pid)}}
+    const pid=fixtureChildPid(child)
+    return {child,stopped,origins,close:async()=>{await stopFixtureChild(child,stopped);await dropRegistration(env,await pid)}}
   }
   const server=start("risk"),{child,stopped}=server
   const cleanup=[]

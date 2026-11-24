@@ -1,7 +1,6 @@
 // Explicit isolated CLI and private database: never the shared service.
 // Usage: node scripts/test-temporary-workspaces-native.mjs <absolute OpenCode CLI executable>
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises"
 import os from "node:os"
@@ -10,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import pino from "pino"
 import { OpenCode, isSessionNotFoundError } from "@opencode/client"
 import { tsImport } from "tsx/esm/api"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const cli = process.argv[2]
 assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")

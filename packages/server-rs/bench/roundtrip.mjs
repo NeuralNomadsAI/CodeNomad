@@ -3,7 +3,7 @@
 // the others wrote: TLS authority and certificates, paired and revoked devices, `config.yaml` and
 // `state.yaml`, server identity, local password and agent memory. `node roundtrip.mjs <opencode executable>`
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { spawnFixtureChild as spawn } from "../../../scripts/native-fixture-guards.mjs"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, readdir } from "node:fs/promises"
 import https from "node:https"

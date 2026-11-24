@@ -1,13 +1,13 @@
 // Windows native popup/focus acceptance. Uses synthetic home/config and no OpenCode CLI.
 import assert from 'node:assert/strict'
-import { spawn, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, writeFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { chromium } from 'playwright'
-import { stopFixtureChild } from './native-fixture-guards.mjs'
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from './native-fixture-guards.mjs'
 import { boundedFixtureOperation } from './fixtures/wsl-fixture-bounds.mjs'
 
 assert.equal(process.platform, 'win32')
@@ -41,8 +41,9 @@ const stopped=new Promise(resolve=>child.once('exit',resolve))
 let output='',browser
 child.stdout.on('data',c=>{output=(output+c).slice(-1024*1024)})
 child.stderr.on('data',c=>{output=(output+c).slice(-1024*1024)})
+const pid=await fixtureChildPid(child)
 const native=(action='snapshot',handle=0,index=0,menuHandle=0)=>JSON.parse(execFileSync('pwsh',[
-  '-NoProfile','-File',path.join(repo,'scripts/fixtures/tauri-menu-windows.ps1'),'-OwnerPid',String(child.pid),
+  '-NoProfile','-File',path.join(repo,'scripts/fixtures/tauri-menu-windows.ps1'),'-OwnerPid',String(pid),
   '-Action',action,'-Handle',String(handle),'-Index',String(index),'-MenuHandle',String(menuHandle)],{encoding:'utf8',timeout:8000,windowsHide:true}))
 const checks=[]
 try {

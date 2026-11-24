@@ -1,7 +1,8 @@
 // Mode `files`: Files and Git routes on a rich repository (rename, gitlink, conflict, CRLF, large and binary
 // files), mutations, refusals and watches; `populate` seeds every bench project, `browserFiles` is the Solid step.
 import assert from "node:assert/strict"
-import { execFile, spawn } from "node:child_process"
+import { execFile } from "node:child_process"
+import { spawnFixtureChild as spawn } from "../../../scripts/native-fixture-guards.mjs"
 import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { promisify } from "node:util"

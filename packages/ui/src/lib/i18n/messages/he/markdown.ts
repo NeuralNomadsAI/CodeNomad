@@ -1,4 +1,5 @@
 export const markdownMessages = {
+  "markdown.link.loopbackOnHost": "נפתח במכשיר שלך, לא בשרת",
   "markdown.mermaid.diagram": "תרשים Mermaid",
   "markdown.mermaid.preview": "הצג תרשים",
   "markdown.mermaid.source": "הצג מקור",

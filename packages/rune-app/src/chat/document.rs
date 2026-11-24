@@ -63,11 +63,12 @@ fn prose_for(
             (q.terms, q.ranked)
         });
     window(s, key, &[source], limit, |shown, units| {
+        let active_locale = locale();
         let stamp = (
             version,
             steps,
             std::rc::Rc::as_ptr(&scope) as usize,
-            locale(),
+            active_locale,
             &unwrapped,
             terms,
             &diagram_sources,
@@ -84,11 +85,9 @@ fn prose_for(
                         HIGHLIGHT_LIMIT
                     },
                 terms,
-                move |s: &mut State, url, tx| {
-                    if s.current_scope(&link_scope) {
-                        links::open(s, url, tx);
-                    }
-                },
+                links::on_open(link_scope.clone()),
+                links::on_menu(link_scope, active_locale),
+                links::help,
                 {
                     let unwrapped = unwrapped.clone();
                     move |index, _| !unwrapped.contains(&index)

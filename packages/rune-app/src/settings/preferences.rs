@@ -697,7 +697,10 @@ impl Preferences {
 }
 
 fn general_config(choice: Choice) -> bool {
-    matches!(choice, Choice::Locale | Choice::Contrast)
+    matches!(
+        choice,
+        Choice::Locale | Choice::Contrast | Choice::GeneralBehavior(_)
+    )
 }
 
 fn is_transcript(choice: Choice) -> bool {

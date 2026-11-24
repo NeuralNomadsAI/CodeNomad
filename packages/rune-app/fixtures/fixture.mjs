@@ -1,7 +1,7 @@
 // Synthetic loopback backend with CodeNomad's HTTP/SSE wire shapes.
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {randomUUID} from 'node:crypto'
 import path from 'node:path'
 import {responseFor,textStream} from './fixture-response.mjs'

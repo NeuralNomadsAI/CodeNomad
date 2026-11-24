@@ -928,6 +928,7 @@
   "markdown.codeBlock.wrap.enable": "Activar ajuste de línea",
   "markdown.copy": "Copiar",
   "markdown.link.fileOpens": "Se abre en la vista previa del archivo. Ctrl+clic (⌘-clic en macOS) o clic central lo abre en tu navegador.",
+  "markdown.link.loopbackOnHost": "Se abre en tu dispositivo, no en el servidor",
   "markdown.link.previewOpens": "Se abre en la vista previa web. Ctrl+clic (⌘-clic en macOS) o clic central lo abre en tu navegador.",
   "markdown.mermaid.diagram": "Diagrama Mermaid",
   "markdown.mermaid.failed": "Comprueba el código y los formatos de diagrama compatibles.",

@@ -4,27 +4,32 @@ import {mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
-import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
+import {activateControl,launchChromium} from './web-chromium.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
-import {mobileLive, revokedLauncher} from './web-live.mjs'
+import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
 import {historySearch} from './web-history-search.mjs'
 import {markerFilters} from './web-marker-filters.mjs'
+import {recordTouches} from './web-touch-trace.mjs'
+import {checkGitImages, gitImageReadAllowed} from './web-git-images.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'paste-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
 if(values.connected){assert(values.workspace&&values.project&&values['storage-state']);url.searchParams.delete('scene')}
 else url.searchParams.set('scene', values['paste-only'] ? 'synthetic-paste' : 'synthetic')
 if(values.mobile)assert(values.connected && url.protocol==='https:')
+const searchOnly=values['mobile-session-search']
+assert(!searchOnly||values.mobile)
 if(values['paste-only'])assert(!values.connected)
 if(values.missions)assert(values.connected&&!values.mobile&&url.protocol==='http:')
+if(values['git-images'])assert(values.connected&&!values.mobile&&!values.missions)
 url.searchParams.set('locale', values.locale)
 const catalogueIndex = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/catalogues.json'), 'utf8'))
 assert(catalogueIndex.locales.includes(values.locale), 'Select a supported locale from the generated catalogue')
@@ -38,8 +43,7 @@ if(values.connected){
 }
 await mkdir(out, {recursive: true})
 if(privateScope)assert(privateScope.inside(privateScope.profile,await realpath(out)),'Output link escapes fixture')
-const browser = await chromium.launch({headless: true, ...(values.executable ? {executablePath: values.executable} : {}),
-  args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader']})
+const browser = await launchChromium(values.executable)
 const records = []
 const imagePage = await browser.newPage()
 const palette = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/theme.json'), 'utf8'))
@@ -51,26 +55,19 @@ const connectedPalettes = values.connected
   if(values.mobile)assets.add('/remote-pair')
 try {
   const android=mobileContext(browser)
-  const sizes=values.missions?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
+  const sizes=values.missions||values['git-images']?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
   for (const [name, width, height, touch] of sizes) {
     const control=name==='phone-dpr1-control'
-    for (const colorScheme of control?['light']:['light','dark']) {
+    if(searchOnly&&control)continue
+    for (const colorScheme of control||searchOnly?['light']:['light','dark']) {
       const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch, colorScheme,
         ...(values.mobile?{...android,ignoreHTTPSErrors:true,...(control?{deviceScaleFactor:1}:{})}:{}),
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
+      const touches = touch ? [] : undefined
+      const flushTouches = touch ? await recordTouches(context, touches) : async () => {}
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
-      await page.addInitScript(() => {
-        const events = []
-        globalThis.__codenomadPointerTrace = events
-        for (const type of ['pointerdown', 'pointerup', 'pointercancel']) {
-          window.addEventListener(type, e => {
-            events.push({type, timeStamp: e.timeStamp, now: performance.now(), pointerType: e.pointerType, pointerId: e.pointerId, x: e.clientX, y: e.clientY})
-            if (events.length > 64) events.shift()
-          }, {capture: true, passive: true})
-        }
-      })
       if (values.mobile) await page.addInitScript(() => {
         window.Notification = class {
           static permission = 'default'
@@ -79,11 +76,15 @@ try {
       })
       const missions=values.missions?missionsFixture({page,messages,artifact:path.join(out,`missions-${colorScheme}`),project:values.project}):null
       if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
-      const errors = [], forbiddenRequests = [], routes=[], history=[], tapTrace=[]
+      const errors = [], forbiddenRequests = [], routes=[], history=[]
       let holdOlder
       let holdAnchor
       let holdPreview
-      let measured, tabBar
+      let measured, tabBar, lastPress
+      const tap=(x,y,meta)=>{
+        if(meta)lastPress={...meta,x,y,requestedAt:Date.now()}
+        return page.touchscreen.tap(x,y)
+      }
       const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,mobilePreferences:values.mobile===true,markerFilters:values.timeline})
       let eventSource=0
       let releaseLinked
@@ -151,7 +152,15 @@ try {
         }
         await route.continue()
       })
-      const started = performance.now()
+       if(values['git-images'])await context.route('**/api/workspaces/**', async route=>{
+         const request=route.request()
+         if(await gitImageReadAllowed(request,{origin:url.origin,project:values.project,workspaces:policy.workspaces})){
+           const requested=new URL(request.url())
+           routes.push({method:request.method(),path:requested.pathname,query:requested.search,cookie:true})
+           await route.continue()
+         }else await route.fallback()
+       })
+       const started = performance.now()
       try {
         let network
          if(values.mobile){
@@ -194,11 +203,12 @@ try {
             }
           }
           const dispatchPress=async(locator,label,role,box)=>{
-            const point={x:box.x+box.width/2,y:box.y+box.height/2}
-            tapTrace.push({label,role,rect:box,point,at:Date.now()})
-            if(tapTrace.length>32)tapTrace.shift()
-            if(values.mobile)await page.touchscreen.tap(point.x,point.y)
-            else await locator.click({force:true})
+            const x=box.x+box.width/2,y=box.y+box.height/2
+            if(values.mobile)await tap(x,y,{label,role,rect:box})
+            else{
+              lastPress={label,role,rect:box,x,y,requestedAt:Date.now()}
+              await activateControl(page,locator,{touch:false,rect:box})
+            }
           }
           const press=async (label,role='button')=>{
             const button=page.getByRole(role,{name:label,exact:true})
@@ -312,12 +322,19 @@ try {
               linkedContinuationRecovered=true
             }
             assert.equal(await row('Another session').count(),0)
-            await press(messages['sessionList.filter.ariaLabel'])
+            await openSessionSearch(page, sessions, messages, tap)
             await page.locator('textarea:focus').fill('Another session')
             await row('Another session').waitFor()
             assert(routes.some(row=>row.query.includes('search=Another+session')),'Use the native search before loading the next ordinary page')
             await press(messages['sessionList.filter.ariaLabel'])
             await row('Existing history').waitFor()
+            if(searchOnly){
+              await flushTouches()
+              assert.deepEqual(forbiddenRequests,[])
+              assert.deepEqual(errors,[])
+              records.push({name,colorScheme,sessionSearchOpened:true,routes,touches})
+              continue
+            }
             await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
           }
            if(!values['history-search']){
@@ -531,6 +548,7 @@ try {
             await markerFilters(page,messages,url,values.project,{touch:true,pages})
           }
           if(missions)await missions.check(press)
+          if(values['git-images'])await checkGitImages(page,messages,press,path.join(out,`git-images-${colorScheme}`))
          }else{
         // The DOM editing proxy is ready before the browser presents the GPU handover.
         // Start the synthetic interactions on the canvas that will be sampled.
@@ -621,7 +639,7 @@ try {
           assert(Math.abs(backingWidth-width*measured.viewport.dpr)<=1 && Math.abs(backingHeight-height*measured.viewport.dpr)<=1)
           assert.equal(measured.android.touchScroll.moved,true,'Physical touch dispatch must move the portrait transcript')
           measured.live=await mobileLive({page,context,url,messages,revoke:control,
-            eventSources:()=>eventSource,workspaces:policy.workspaces,fromLink:!values['same-origin-pairing']})
+            eventSources:()=>eventSource,workspaces:policy.workspaces,fromLink:!values['same-origin-pairing'],tap})
          }
          assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
         assert.equal(errors.length, 0, 'Web app must initialize and handle multiline input without JS exceptions')
@@ -657,6 +675,7 @@ try {
           // Closing a browser context skips pagehide; use the product's ordinary departure first.
           const departure=values.mobile?new URL('/remote-pair',url).href:'about:blank'
           if(values.mobile)await page.waitForFunction(()=>sessionStorage.getItem('codenomad.rune.alpha.client-state.v1'))
+          await flushTouches()
           await page.goto(departure)
           let after
           for(const until=Date.now()+10000;;){
@@ -676,17 +695,17 @@ try {
             assert.equal(forbiddenRequests.length,0,'Launcher recovery may not submit a password')
           }
         }
-        records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,tabBar,...measured,
+        await flushTouches()
+        records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,tabBar,touches,...measured,
           ...(values.mobile?{requiredChecksPassed:true,knownGaps:[
             ...(measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]),
           ]}:{pass:true})})
       } catch (error) {
+        await flushTouches()
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
         await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,
-          lastTap: tapTrace.at(-1) ?? null, tapTrace,
-          pointerEvents: await page.evaluate(() => globalThis.__codenomadPointerTrace ?? []).catch(() => []),
           mirror:await page.locator('body').ariaSnapshot().catch(() => null),
-          marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime}))).catch(() => [])}, null, 2))
+          touches,lastPress,marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime}))).catch(() => [])}, null, 2))
         throw error
        } finally {missions?.release();releaseLinked?.();await context.close()}
     }
@@ -694,6 +713,6 @@ try {
 } finally {
   await browser.close()
   await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
-    scene: values.connected?'connected':'synthetic', pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
+    scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
 }
 console.log(`Rune web smoke evidence: ${out}`)

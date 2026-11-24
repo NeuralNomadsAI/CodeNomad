@@ -10,11 +10,10 @@ use super::{
     providers, remote, render_with,
 };
 use crate::strings::t;
-use general::Picker;
 use rune::{Cx, El, col, text};
 use rune_theme_codenomad::{
     layout::{self, Layout},
-    palettes, settings as chrome,
+    settings as chrome,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -28,10 +27,9 @@ pub(super) struct Window {
     close_request: Option<Rc<CloseRequest>>,
     confirm_close: bool,
     closing: bool,
-    picker: Cell<Option<Picker>>,
-    palette_choice: Cell<Option<&'static palettes::Palette>>,
-    contrast_help: bool,
-    permissions: super::behavior::Permissions,
+    general: super::general::Controls,
+    transcript_picker: Cell<Option<super::TranscriptRow>>,
+    behavior: super::behavior::General,
     memory_help_failed: bool,
     memory_editor: super::memory::editor::Editor,
     seen_revision: u64,
@@ -196,23 +194,15 @@ impl Window {
 }
 
 pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
-    if let Some(palette) = s.palette_choice.take() {
-        let mut prefs = s.shared.borrow_mut();
-        // Pointer actions can be queued on the previous tree when the system appearance changes.
-        if palette.dark == prefs.dark(cx.system_dark()) {
-            prefs.set_palette(palette);
-            if let Some(wake) = &prefs.window_wake {
-                wake();
-            }
-        }
-    }
+    s.general.commit_palette(&s.shared, cx.system_dark());
     let prefs = s.shared.borrow();
     if prefs.awaiting_appearance() {
         return rune::el().key("preferences-bootstrap");
     }
     let system_dark = cx.system_dark();
     let system_more = cx.system_increased_contrast();
-    s.close_palette_on_slot_change(prefs.dark(system_dark));
+    s.general
+        .close_palette_on_slot_change(prefs.dark(system_dark));
     render_with(cx, &prefs, system_more, |cx| {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
@@ -301,12 +291,12 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 if s.config_files.busy() {
                     return;
                 }
-                s.picker.set(None);
-                s.contrast_help = false;
+                s.general.close();
+                s.transcript_picker.set(None);
                 s.advanced_help = None;
                 s.recording_shortcut = false;
                 s.shortcut_capture = Default::default();
-                s.permissions.close();
+                s.behavior.close();
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
                     "settings-conversation" => Section::Conversation,
@@ -403,12 +393,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 "conversation",
                 super::conversation::content(
                     &prefs,
-                    match s.picker.get() {
-                        Some(Picker::Transcript(row)) => Some(row),
-                        _ => None,
-                    },
+                    s.transcript_picker.get(),
                     &mut layers,
-                    |s: &mut Window, row| s.picker.set(row.map(Picker::Transcript)),
+                    |s: &mut Window, row| s.transcript_picker.set(row),
                     |s: &mut Window, row, mode| s.shared.borrow_mut().set_transcript(row, mode),
                 ),
             ),

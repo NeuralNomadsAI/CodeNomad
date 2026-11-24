@@ -1,13 +1,12 @@
 // Actual Rust filesystem routes and the typed client; no native window or installed daemon.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {randomUUID,createHash} from 'node:crypto'
 import {mkdir,stat,copyFile,readFile,writeFile,symlink} from 'node:fs/promises'
 import {createServer,request} from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import {privateEnvironment} from './private-profile.mjs'
-import {stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {spawnFixtureChild as spawn,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 
 const repository=path.resolve(import.meta.dirname,'../../..')
 const write=process.argv.includes('--write')

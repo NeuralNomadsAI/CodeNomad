@@ -1,7 +1,7 @@
 // node --import tsx scripts/rune/parity/window-close.mjs [--binary ABSOLUTE_EXE]
 import assert from 'node:assert/strict'
 import {mkdir, readFile, writeFile} from 'node:fs/promises'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../native-fixture-guards.mjs'
 import {createHash} from 'node:crypto'
 import path from 'node:path'
 import {parseArgs} from 'node:util'

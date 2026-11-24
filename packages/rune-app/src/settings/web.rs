@@ -10,7 +10,10 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     settings as chrome,
 };
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
@@ -55,8 +58,8 @@ impl Default for Section {
 pub(super) struct Panel {
     shown: bool,
     section: Section,
-    contrast_help: bool,
-    permissions: super::behavior::Permissions,
+    general: super::general::Controls,
+    behavior: super::behavior::General,
     memory_help_failed: bool,
     memory_editor: super::memory::editor::Editor,
     transcript_picker: Option<super::TranscriptRow>,
@@ -92,6 +95,19 @@ impl Default for PermissionRequest {
 }
 
 impl Panel {
+    pub(super) fn commit_palette(
+        &self,
+        shared: &RefCell<Preferences>,
+        system_dark: bool,
+        paired: bool,
+    ) {
+        if self.shown && self.section == Section::General && paired {
+            self.general.commit_palette(shared, system_dark);
+        } else {
+            self.general.discard_palette();
+        }
+    }
+
     pub(super) fn poll_window_actions(&mut self, prefs: &Preferences, tx: &mut rune::Tx) -> bool {
         if self.shown && self.section == Section::Info {
             self.info.announce(prefs, tx);
@@ -226,9 +242,9 @@ fn close(s: &mut State) {
         return;
     }
     panel.shown = false;
-    panel.contrast_help = false;
+    panel.general.close();
     panel.advanced_help = None;
-    panel.permissions.close();
+    panel.behavior.close();
     panel.catalog.suspend();
     panel.stats.suspend();
     let mut prefs = s.settings.shared.borrow_mut();
@@ -354,37 +370,59 @@ pub(super) fn view(
             if panel.section != Section::Info {
                 panel.info.close();
             }
-            panel.contrast_help = false;
+            panel.general.close();
             panel.advanced_help = None;
-            panel.permissions.close();
+            panel.behavior.close();
             panel.memory_help_failed = false;
             prefs.memory.show(panel.section == Section::General);
         },
     );
     let mut layers = Vec::new();
     let body = match panel.section {
-        Section::General => col()
-            .full_width()
-            .child(general(panel, prefs, system_more))
-            .child(super::memory::view(
-                prefs,
-                panel.memory_help_failed,
-                |s: &mut State, desired| {
-                    super::memory::action(&mut s.settings.shared.borrow_mut(), desired)
-                },
-                |s: &mut State, failed| s.settings.web.memory_help_failed = failed,
-                |s: &mut State, edit| s.settings.web.memory_editor.open(edit),
-                |s: &mut State, action| {
-                    super::memory::review_action(&mut s.settings.shared.borrow_mut(), action);
-                },
-            ))
-            .child(
-                panel
-                    .permissions
-                    .view(&s.settings.shared, &mut layers, |s: &mut State| {
-                        &mut s.settings.web.permissions
-                    }),
-            ),
+        Section::General => {
+            let system_dark = cx.system_dark();
+            panel
+                .general
+                .close_palette_on_slot_change(prefs.dark(system_dark));
+            col()
+                .full_width()
+                .children(prefs.general_error().map(|error| {
+                    layout::action_row()
+                        .child(text(t(error)).wrap().role("alert"))
+                        .child(layout::button(
+                            t("sessionList.loadError.retry"),
+                            !prefs.can_retry(),
+                            |s: &mut State| {
+                                s.settings.shared.borrow_mut().retry_general();
+                            },
+                        ))
+                }))
+                .child(panel.general.view(
+                    &s.settings.shared,
+                    system_dark,
+                    system_more,
+                    &mut layers,
+                    |s: &mut State| &mut s.settings.web.general,
+                ))
+                .child(super::memory::view(
+                    prefs,
+                    panel.memory_help_failed,
+                    |s: &mut State, desired| {
+                        super::memory::action(&mut s.settings.shared.borrow_mut(), desired)
+                    },
+                    |s: &mut State, failed| s.settings.web.memory_help_failed = failed,
+                    |s: &mut State, edit| s.settings.web.memory_editor.open(edit),
+                    |s: &mut State, action| {
+                        super::memory::review_action(&mut s.settings.shared.borrow_mut(), action);
+                    },
+                ))
+                .child(panel.behavior.view(
+                    &s.settings.shared,
+                    false,
+                    &mut layers,
+                    |s: &mut State| &mut s.settings.web.behavior,
+                ))
+        }
         Section::Providers => {
             let available =
                 prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online);
@@ -575,31 +613,4 @@ fn open_remote(s: &mut State) {
         panel.info.close();
         panel.section = Section::Remote;
     }
-}
-
-fn general(panel: &Panel, prefs: &Preferences, system_more: bool) -> El {
-    chrome::card(
-        col()
-            .full_width()
-            .separate(Space::Sm)
-            .child(text(t("settings.appearance.colorScheme.title")).role("heading"))
-            .child(super::contrast::view(
-                prefs,
-                system_more,
-                panel.contrast_help,
-                |s: &mut State| s.settings.web.contrast_help = !s.settings.web.contrast_help,
-                |s: &mut State, choice| s.settings.shared.borrow_mut().set_contrast(choice),
-            ))
-            .children(prefs.general_error().map(|error| {
-                layout::action_row()
-                    .child(text(t(error)).wrap().role("alert"))
-                    .child(layout::button(
-                        t("sessionList.loadError.retry"),
-                        !prefs.can_retry(),
-                        |s: &mut State| {
-                            s.settings.shared.borrow_mut().retry_general();
-                        },
-                    ))
-            })),
-    )
 }

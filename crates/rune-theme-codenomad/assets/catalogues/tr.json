@@ -928,6 +928,7 @@
   "markdown.codeBlock.wrap.enable": "Satır kaydırmayı etkinleştir",
   "markdown.copy": "Kopyala",
   "markdown.link.fileOpens": "Dosya önizlemesinde açılır. Ctrl+tıklama (macOS'ta ⌘+tıklama) veya orta tıklama bunu tarayıcınızda açar.",
+  "markdown.link.loopbackOnHost": "Sunucuda değil, bu cihazda açılır",
   "markdown.link.previewOpens": "Web önizlemede açılır. Ctrl+tıklama (macOS'ta ⌘+tıklama) veya orta tıklama bunu tarayıcınızda açar.",
   "markdown.mermaid.diagram": "Mermaid diyagramı",
   "markdown.mermaid.failed": "Kaynağı ve desteklenen diyagram biçimlerini kontrol edin.",
