@@ -385,14 +385,7 @@ pub(super) async fn route(
             bytes.shrink_to_fit();
             principal.live()?;
             const MEDIA_STREAM_MAX: Duration = Duration::from_secs(60);
-            let abort = crate::shared::bounded_stream_abort(
-                app.clone(),
-                r.workspace.clone(),
-                initial_workspace.clone(),
-                placement.endpoint.clone(),
-                principal.0.clone(),
-                MEDIA_STREAM_MAX,
-            );
+            let abort = crate::shared::materialized_stream_abort(principal.0.clone(), MEDIA_STREAM_MAX);
             let length = HeaderValue::from(bytes.len());
             let mut response = (
                 [
@@ -405,14 +398,7 @@ pub(super) async fn route(
                 crate::shared::permit_body(bytes.into(), Some(mem), abort),
             )
                 .into_response();
-            let write_abort = crate::shared::bounded_stream_abort(
-                app.clone(),
-                r.workspace.clone(),
-                initial_workspace.clone(),
-                placement.endpoint.clone(),
-                principal.0.clone(),
-                MEDIA_STREAM_MAX,
-            );
+            let write_abort = crate::shared::materialized_stream_abort(principal.0.clone(), MEDIA_STREAM_MAX);
             response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
             Ok(response)
         };

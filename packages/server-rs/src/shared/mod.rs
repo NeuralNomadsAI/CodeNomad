@@ -161,24 +161,6 @@ pub fn stream_abort(
     })
 }
 
-pub fn bounded_stream_abort(
-    app: crate::Shared,
-    workspace_id: String,
-    workspace: crate::Workspace,
-    endpoint: std::sync::Arc<crate::opencode::Endpoint>,
-    principal: tokio_util::sync::CancellationToken,
-    max_duration: std::time::Duration,
-) -> AbortFuture {
-    let deadline = tokio::time::Instant::now() + max_duration;
-    let inner = stream_abort(app, workspace_id, workspace, endpoint, principal);
-    Box::pin(async move {
-        tokio::select! {
-            _ = inner => {}
-            _ = tokio::time::sleep_until(deadline) => {}
-        }
-    })
-}
-
 /// Stream abort bound to principal revocation, daemon retirement, and an optional total lifetime
 /// (without cancelling on workspace close or server shutdown once a proxied request has been
 /// dispatched, matching TS `proxy.ts:37-115` and `http-server.ts:261-273`).
@@ -202,6 +184,24 @@ pub fn proxy_stream_abort(
                 _ = principal.cancelled() => {}
                 _ = app.native.wait_retired(&endpoint) => {}
             },
+        }
+    })
+}
+
+/// Abort future for already-materialized and validated response bodies: cancels only on
+/// principal revocation or total stream lifetime cap, so a daemon rotation or workspace close
+/// after final validation does not truncate an already-built response (TS `session-media.ts:83-94`,
+/// `session-navigation.ts:96-115`, `compatibility/proxy.ts:81-94`).
+pub fn materialized_stream_abort(
+    principal: tokio_util::sync::CancellationToken,
+    max_duration: std::time::Duration,
+) -> AbortFuture {
+    let deadline = tokio::time::Instant::now() + max_duration;
+    Box::pin(async move {
+        tokio::select! {
+            biased;
+            _ = principal.cancelled() => {}
+            _ = tokio::time::sleep_until(deadline) => {}
         }
     })
 }

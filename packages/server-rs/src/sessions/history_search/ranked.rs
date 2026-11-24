@@ -166,7 +166,8 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
             }
             pages.push(Page { index, page: page.into() });
         }
-        let Some(approved) = scope.filter(owners, None).await else { return Ok(blocked()) };
+        let Some((approved, contrib_fences)) = scope.filter(owners, None).await else { return Ok(blocked()) };
+        fences.extend(contrib_fences);
         if owners.len() != approved.len() {
             add_exclusion(&mut exclusions, "foreign_directory");
         }
@@ -187,7 +188,8 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
         }
         capped |= output["capped"] == true;
     }
-    let Some(approved) = scope.filter(&sessions, None).await else { return Ok(blocked()) };
+    let Some((approved, final_fences)) = scope.filter(&sessions, None).await else { return Ok(blocked()) };
+    fences.extend(final_fences);
     if approved.len() != sessions.len() {
         add_exclusion(&mut exclusions, "foreign_directory");
     }

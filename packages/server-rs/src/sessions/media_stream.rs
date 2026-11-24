@@ -5,9 +5,9 @@
 //! without failing before image URIs are replaced by `/api/workspaces/.../session-media/...`.
 //!
 //! Intentional server-rs safety bounds: unlike the TypeScript proxy's unbounded `response.text()`,
-//! Rust bounds a single raw message item (`ITEM_LIMIT`, 128 MiB) and the projected response buffer
-//! (`OUTPUT_LIMIT`, 256 MiB, aligned with `ResponsePool::List`) to prevent OOM on malformed or
-//! oversized upstream payloads.
+//! Rust bounds a single raw message item (`ITEM_LIMIT`, 72 MiB) and the projected response buffer
+//! (`OUTPUT_LIMIT`, 160 MiB, paired with `ResponsePool::List` 256 MiB via Banker's admission
+//! `3 * 32 + 160 = 256 MiB`) to prevent OOM on malformed or oversized upstream payloads.
 use super::media;
 
 /// Cap on the projected (or unprojected fallback) output buffer. Chosen via Banker's admission
@@ -542,6 +542,7 @@ impl MessageListStream {
     }
 
     fn push_out(&mut self, byte: u8) -> Result<(), ()> {
+        self.evict_undo_if_needed(1);
         let total = self.total_len();
         if total >= OUTPUT_LIMIT {
             return Err(());
@@ -555,6 +556,7 @@ impl MessageListStream {
     }
 
     fn extend_out(&mut self, bytes: &[u8]) -> Result<(), ()> {
+        self.evict_undo_if_needed(bytes.len());
         let total = self.total_len().saturating_add(bytes.len());
         if total > OUTPUT_LIMIT {
             return Err(());
@@ -567,6 +569,7 @@ impl MessageListStream {
     }
 
     fn push_item(&mut self, byte: u8) -> Result<(), ()> {
+        self.evict_undo_if_needed(1);
         let total = self.total_len();
         if self.item.len() >= ITEM_LIMIT || total >= OUTPUT_LIMIT {
             return Err(());
@@ -1614,6 +1617,86 @@ pub(crate) fn json_node_count_within(bytes: &[u8], limit: usize) -> bool {
 /// Validates full RFC 8259 JSON syntax on a native `GET /api/session/:id` response and extracts
 /// only `id`, `projectID`, `location.{directory,workspaceID}`, and `revert` without allocating a
 /// `serde_json::Value` tree over ignored fields.
+/// Zero-allocation validator for `reference-v1` user message `files` arrays (matching
+/// `user_files::reference`): avoids allocating a `serde_json::Value` tree even when a file entry
+/// carries a multi-megabyte `name`, while strictly checking every key and value type.
+pub(crate) fn valid_reference_files(raw: &str, max_count: usize) -> bool {
+    let mut count = 0usize;
+    let mut ok = true;
+    for_each_json_array_item(raw, max_count + 1, |_idx, item| {
+        if !ok {
+            return;
+        }
+        count += 1;
+        if count > max_count || !item.trim_start().starts_with('{') {
+            ok = false;
+            return;
+        }
+        let (mut has_mime, mut has_source) = (false, false);
+        if for_each_json_object_field(item, |k, v| {
+            if !ok {
+                return;
+            }
+            let vt = v.trim();
+            match k {
+                "name" => {
+                    if !vt.starts_with('"') {
+                        ok = false;
+                    }
+                }
+                "mime" => {
+                    // Valid JSON string (already syntax-checked) is non-empty iff raw token != `""`.
+                    if !vt.starts_with('"') || vt.len() <= 2 {
+                        ok = false;
+                    } else {
+                        has_mime = true;
+                    }
+                }
+                "source" => {
+                    if !vt.starts_with('{') {
+                        ok = false;
+                        return;
+                    }
+                    let (mut fields, mut kind, mut sha) = (0usize, None, None);
+                    if for_each_json_object_field(vt, |sk, sv| {
+                        fields += 1;
+                        let svt = sv.trim();
+                        match sk {
+                            "type" => kind = parse_short_string(svt, 32),
+                            "sha256" => sha = parse_short_string(svt, 128),
+                            _ => ok = false,
+                        }
+                    })
+                    .is_none()
+                    {
+                        ok = false;
+                        return;
+                    }
+                    let source_ok = match kind.as_deref() {
+                        Some("unavailable") => fields == 1,
+                        Some("deferred") => fields == 2 && sha.as_deref().is_some_and(super::user_files::valid_digest),
+                        _ => false,
+                    };
+                    if source_ok {
+                        has_source = true;
+                    } else {
+                        ok = false;
+                    }
+                }
+                _ => ok = false,
+            }
+        })
+        .is_none()
+            || !has_mime
+            || !has_source
+        {
+            ok = false;
+        }
+    })
+    .is_some()
+        && ok
+}
+
 pub(crate) fn extract_session_record(raw: &[u8], id: &str, strict_id: bool) -> Result<serde_json::Value, ()> {
     let raw = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(raw);
     let text = std::str::from_utf8(raw).map_err(|_| ())?;

@@ -814,14 +814,28 @@ pub(crate) struct HistoryInventory {
 }
 
 impl HistoryInventory {
-    pub(crate) async fn load(app: &App, workspace: &Workspace) -> Option<Self> {
+    pub(crate) async fn load(
+        app: &App,
+        workspace: &Workspace,
+        endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    ) -> Option<Self> {
         if let Some(allow_subfolders) = super::root_only(workspace).await.ok()? {
             return Some(Self { catalogue: None, allow_subfolders });
         }
         Some(Self {
             // Refresh native worktree registrations on cold/invalidated history inventory load
-            // (TS `manager.ts:467-482`, `native-worktrees.ts:86-95`).
-            catalogue: Some(super::linked::catalogue(app, workspace, true).await.ok()?),
+            // using the search's captured endpoint (TS `manager.ts:467-482`, `native-worktrees.ts:86-95`).
+            catalogue: Some(
+                super::inventory::catalogue_at(
+                    app,
+                    workspace,
+                    true,
+                    Some(endpoint),
+                    std::time::Duration::from_secs(12),
+                )
+                .await
+                .ok()?,
+            ),
             allow_subfolders: true,
         })
     }

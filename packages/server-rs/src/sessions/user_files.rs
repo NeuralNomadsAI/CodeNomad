@@ -23,7 +23,7 @@ pub(super) fn inline(value: &Value) -> Option<Vec<u8>> {
     (bytes.len() <= FILE_BYTES).then_some(bytes)
 }
 
-pub(super) fn reference(value: &Value) -> bool {
+fn reference(value: &Value) -> bool {
     let Some(file) = value.as_object() else { return false };
     file.keys().all(|key| matches!(key.as_str(), "name" | "mime" | "source"))
         && file.get("name").is_none_or(|name| name.as_str().is_some())

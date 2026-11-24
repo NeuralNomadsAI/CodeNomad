@@ -57,7 +57,57 @@ pub async fn root_only(workspace: &Workspace) -> Result<Option<bool>, Error> {
     }
     match git(workspace, &["rev-parse", "--show-toplevel"]).await {
         Ok(output) if output.status.success() => Ok(None),
-        Ok(output) if String::from_utf8_lossy(&output.stderr).contains("not a git repository") => Ok(Some(true)),
+        Ok(output) if String::from_utf8_lossy(&output.stderr).contains("not a git repository") => {
+            // Distinguish a verified non-Git directory from an incomplete/corrupt `.git`, bare,
+            // or separate Git marker on `workspace.path` or its ancestors (TS
+            // `checkout-identity.ts:37-64`), honoring `GIT_CEILING_DIRECTORIES` just as Git does.
+            let ws_path = workspace.path.clone();
+            let raw_ceilings = std::env::var_os("GIT_CEILING_DIRECTORIES");
+            let has_residual_git = tokio::task::spawn_blocking(move || {
+                let ceilings: Vec<std::path::PathBuf> = raw_ceilings
+                    .map(|raw| {
+                        std::env::split_paths(&raw)
+                            .filter(|p| !p.as_os_str().is_empty())
+                            .map(|p| dunce::canonicalize(&p).unwrap_or(p))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                #[cfg(unix)]
+                let root_dev = {
+                    use std::os::unix::fs::MetadataExt;
+                    std::fs::metadata(&ws_path).ok().map(|m| m.dev())
+                };
+                let mut cur = ws_path.as_path();
+                loop {
+                    if cur.file_name().is_some_and(|n| n.eq_ignore_ascii_case(".git")) {
+                        return true;
+                    }
+                    for marker in [".git", "HEAD", "commondir"] {
+                        match std::fs::symlink_metadata(cur.join(marker)) {
+                            Err(e) if e.kind() == ErrorKind::NotFound => {}
+                            _ => return true,
+                        }
+                    }
+                    let Some(parent) = cur.parent() else { return false };
+                    if parent == cur || ceilings.iter().any(|c| c == parent) {
+                        return false;
+                    }
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        if let Some(dev) = root_dev
+                            && std::fs::metadata(parent).ok().map(|m| m.dev()) != Some(dev)
+                        {
+                            return false;
+                        }
+                    }
+                    cur = parent;
+                }
+            })
+            .await
+            .unwrap_or(true);
+            if has_residual_git { Err(probe_error()) } else { Ok(Some(true)) }
+        }
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(Some(false)),
         Ok(output) => {
             crate::bench::route_trace(format_args!("root-proof git exited {:?}", output.status.code()));

@@ -297,14 +297,14 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             Err(_) => return Err(upstream_error()),
         },
     };
-    if message_list {
-        tokio::select! {
-            biased;
-            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-            _ = workspace_closed() => return Err(not_found()),
-            _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(&app, &endpoint)) => {}
-        }
+    // Ensure bundled plugins are prepared for this captured connection before dispatching
+    // (TS `opencode-service.ts:148-166`). Fast-paths when `STATE.prepared` already matches.
+    tokio::select! {
+        biased;
+        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+        _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+        _ = workspace_closed() => return Err(not_found()),
+        _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(&app, &endpoint)) => {}
     }
     if dunce::canonicalize(opened).ok().as_ref() != Some(&workspace.path) {
         return Err(foreign());
@@ -1155,12 +1155,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             Err(_) => tokio::select! {
                 biased;
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = workspace_closed() => return Err(not_found()),
                 _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                 permit = tokio::time::timeout(super::PROXY_IDLE, defer_slots().acquire_owned()) => {
                     permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                 }
             },
         };
+        if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
+            return Err(upstream_error());
+        }
+        principal.live()?;
         // Once dispatched, TS (`proxy.ts:37-115`, `http-server.ts:261-273`) binds `message.list`
         // only to client disconnect (principal revocation) and OpenCode connection retirement.
         let mut response = tokio::select! {
@@ -1460,20 +1465,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             // Preserve upstream `etag` and omit extra `Vary` to match TS `compatibility/proxy.ts:76-94`.
             let length = axum::http::HeaderValue::from(payload_len);
             // Bound total response-drain lifetime (120 s) so a trickle reader cannot pin
-            // `ResponsePool::List` permits indefinitely without triggering the 30 s stall timer.
+            // `ResponsePool::List` permits indefinitely; once materialized and validated, do not
+            // truncate on daemon rotation (TS `compatibility/proxy.ts:81-94`).
             const LIST_STREAM_MAX: Duration = Duration::from_secs(120);
-            let abort = crate::shared::proxy_stream_abort(
-                app.clone(),
-                endpoint.clone(),
-                principal.0.clone(),
-                Some(LIST_STREAM_MAX),
-            );
-            let write_abort = crate::shared::proxy_stream_abort(
-                app.clone(),
-                endpoint.clone(),
-                principal.0.clone(),
-                Some(LIST_STREAM_MAX),
-            );
+            let abort = crate::shared::materialized_stream_abort(principal.0.clone(), LIST_STREAM_MAX);
+            let write_abort = crate::shared::materialized_stream_abort(principal.0.clone(), LIST_STREAM_MAX);
             let builder = headers
                 .into_iter()
                 .fold(Response::builder().status(status), |builder, (name, value)| builder.header(name, value))
@@ -1485,7 +1481,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 .map_err(|_| upstream_error());
         }
         let status = response.status();
-        if status.is_redirection() && status != Status::NOT_MODIFIED {
+        // Fetch `redirect: "error"` rejects only redirect status codes (301/302/303/307/308),
+        // letting 300 Multiple Choices pass through to the contract-error handler (TS `transport.ts:45-65`).
+        if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
             app.native.invalidate(&endpoint);
             return Err(upstream_error());
         }
@@ -1621,7 +1619,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 Err(_) => return Err(upstream_error()),
             },
         };
-        if message_list && response.status().is_redirection() && response.status() != Status::NOT_MODIFIED {
+        if message_list && matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
             drop(response);
             app.native.invalidate(&endpoint);
             return Err(upstream_error());

@@ -39,7 +39,10 @@ pub async fn native(
     body: Option<Value>,
     max: usize,
 ) -> Result<Value, Error> {
-    let request = app.native.request(method, app.native.url().join(path).map_err(|_| native_error())?);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let endpoint = app.native.acquire(deadline).await.map_err(|_| native_error())?;
+    let url = endpoint.url.join(path).map_err(|_| native_error())?;
+    let request = app.native.client.request(method, url).basic_auth("opencode", Some(&endpoint.password));
     send(request, query, body, max).await
 }
 
@@ -243,11 +246,14 @@ pub async fn create(
         delete_worktree(&app, &catalogue.project, service).await?;
         return Err(conflict("Unable to attach the branch"));
     }
-    // Retry the final inventory read once on transient Git config-change invalidation so a
-    // newly created and attached worktree is not falsely reported as failed (TS `native-worktrees.ts:236-264`).
+    // Retry the final inventory read once ONLY on `WorktreeConfigChangedError` so a newly created
+    // and attached worktree is not falsely reported as failed (TS `native-worktrees.ts:256-264`).
     let updated = match self::catalogue(&app, &w, false).await {
         Ok(cat) => cat,
-        Err(_) => self::catalogue(&app, &w, false).await?,
+        Err(err) if err.1["error"].as_str() == Some(super::inventory::CONFIG_CHANGED_ERROR) => {
+            self::catalogue(&app, &w, false).await?
+        }
+        Err(err) => return Err(err),
     };
     let row = updated
         .by_registered(service)

@@ -252,6 +252,7 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
             _ = tokio::time::timeout(Duration::from_secs(20), crate::extensions::lifecycle::prepare(&app, &endpoint)) => {}
         }
         let mut keep_connection = false;
+        let mut disconnect_reason = String::from("Shared OpenCode event stream ended");
         let Ok(event_url) = endpoint.url.join("/api/event") else {
             tokio::select! {
                 biased;
@@ -313,6 +314,8 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                 if !connected {
                     if kind != "server.connected" {
                         keep_connection = true;
+                        disconnect_reason =
+                            format!("Expected initial OpenCode event \"server.connected\", received \"{kind}\"");
                         break;
                     }
                     connected = true;
@@ -394,8 +397,8 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
         if !keep_connection {
             app.native.invalidate(&endpoint);
         }
-        eprintln!("Shared OpenCode event stream disconnected: Shared OpenCode event stream ended");
-        status(&app, "error", Some("Shared OpenCode event stream ended"));
+        eprintln!("Shared OpenCode event stream disconnected: {disconnect_reason}");
+        status(&app, "error", Some(&disconnect_reason));
         tokio::select! {
             biased;
             _ = shutdown.cancelled() => return,

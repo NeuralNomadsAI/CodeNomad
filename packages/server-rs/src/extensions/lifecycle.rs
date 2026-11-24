@@ -57,7 +57,10 @@ struct State {
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
-static LEASE_IO: Mutex<()> = Mutex::new(());
+/// Shared-read / exclusive-shutdown gate for plugin lease I/O: concurrent provisioning and
+/// independent lease renewals take `read()`, while shutdown disposal takes `write()` after
+/// clearing `STATE.active` so no in-flight install or renewal can strand a lease on disk.
+static LEASE_IO: std::sync::RwLock<()> = std::sync::RwLock::new(());
 static CONNECTED: Notify = Notify::const_new();
 static SYNC_NOW: Notify = Notify::const_new();
 /// One provisioning attempt at a time, from a connection's acquirer or from the stream.
@@ -195,11 +198,11 @@ fn status(app: &App, state: &State) -> (std::path::PathBuf, Vec<u8>) {
     (app.data.join("plugin-provision.json"), doc.to_string().into_bytes())
 }
 
-static STATUS_WRITE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static STATUS_WRITE: Mutex<()> = Mutex::new(());
 
 async fn write_status((path, bytes): (std::path::PathBuf, Vec<u8>)) {
-    let _guard = STATUS_WRITE.lock().await;
     let _ = tokio::task::spawn_blocking(move || {
+        let _guard = STATUS_WRITE.lock().unwrap();
         let _ = crate::auth::tls::write_private(&path, &bytes);
     })
     .await;
@@ -262,7 +265,7 @@ async fn connection_at(
                         // shutdown can never leave an unregistered `.lease` file on disk.
                         // Lock order is strictly `LEASE_IO` -> `STATE`.
                         tokio::task::spawn_blocking(move || {
-                            let _io = LEASE_IO.lock().unwrap();
+                            let _io = LEASE_IO.read().unwrap();
                             let still_current = || {
                                 !stop_check.as_ref().is_some_and(CancellationToken::is_cancelled)
                                     && ep_check.as_ref().is_none_or(|ep| app_check.native.current(ep))
@@ -382,7 +385,7 @@ async fn sync(app: &App, renew: bool) {
         let mut out = Vec::with_capacity(plan.len());
         for (inst_idx, feat_idx, lease, rewrite, do_renew, check_ready) in plan {
             let written = {
-                let _io = LEASE_IO.lock().unwrap();
+                let _io = LEASE_IO.read().unwrap();
                 if !STATE.lock().unwrap().active {
                     break;
                 }
@@ -557,7 +560,7 @@ pub fn start(
         let disposed = tokio::time::timeout(
             Duration::from_secs(5),
             tokio::task::spawn_blocking(move || -> Result<(), String> {
-                let _io = LEASE_IO.lock().unwrap();
+                let _io = LEASE_IO.write().unwrap();
                 let mut last_err = None;
                 for attempt in 0..2 {
                     let mut first_err = None;

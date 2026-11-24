@@ -180,8 +180,14 @@ impl Placement {
             })
             .await
             .map_err(|_| unavailable())??;
-            if fenced && path != workspace.path {
-                displays.push(display(&path));
+            if fenced {
+                let raw_path = std::path::Path::new(directory);
+                if raw_path != workspace.path && raw_path != path.as_path() {
+                    displays.push(display(raw_path));
+                }
+                if path != workspace.path {
+                    displays.push(display(&path));
+                }
             }
             let proof =
                 crate::worktrees::ownership::media_directory(app, &workspace, &endpoint, &path, &anchor, strict_media)
@@ -222,7 +228,7 @@ impl Placement {
 
     async fn current(&self, app: &App, id: &str, session: &str) -> Recheck {
         match self.latest(app, id, session).await {
-            Ok(newest) if newest["revert"] == self.source["revert"] => Recheck::Current,
+            Ok(newest) if newest.get("revert") == self.source.get("revert") => Recheck::Current,
             Ok(_) => Recheck::Conflict,
             Err((Status::CONFLICT, _)) => Recheck::Conflict,
             Err(_) => Recheck::Unavailable,
@@ -684,19 +690,10 @@ fn process_window_payload(
                 if reference
                     && type_val.as_str() == Some("user")
                     && let Some(files_tok) = files_tok
+                    && !media_stream::valid_reference_files(files_tok, user_files::FILE_COUNT)
                 {
-                    if !media_stream::json_node_count_within(files_tok.as_bytes(), 4096) {
-                        messages_ok = false;
-                        return;
-                    }
-                    let Ok(Value::Array(files)) = serde_json::from_str::<Value>(files_tok) else {
-                        messages_ok = false;
-                        return;
-                    };
-                    if files.len() > user_files::FILE_COUNT || !files.iter().all(user_files::reference) {
-                        messages_ok = false;
-                        return;
-                    }
+                    messages_ok = false;
+                    return;
                 }
                 check_messages.push(json!({"id": id_val, "type": type_val, "time": {"created": created_val}}));
                 if can_defer && type_val.as_str() == Some("assistant") {
@@ -1032,14 +1029,7 @@ pub async fn handle(
             }
             const HISTORY_STREAM_MAX: Duration = Duration::from_secs(120);
             let length = axum::http::HeaderValue::from(payload.len());
-            let abort = crate::shared::bounded_stream_abort(
-                app.clone(),
-                id.clone(),
-                placement.workspace.clone(),
-                placement.endpoint.clone(),
-                principal.0.clone(),
-                HISTORY_STREAM_MAX,
-            );
+            let abort = crate::shared::materialized_stream_abort(principal.0.clone(), HISTORY_STREAM_MAX);
             let response_body = crate::shared::permit_body(payload, mem, abort);
             let mut response = (
                 [
@@ -1049,14 +1039,7 @@ pub async fn handle(
                 response_body,
             )
                 .into_response();
-            let write_abort = crate::shared::bounded_stream_abort(
-                app.clone(),
-                id.clone(),
-                placement.workspace.clone(),
-                placement.endpoint.clone(),
-                principal.0.clone(),
-                HISTORY_STREAM_MAX,
-            );
+            let write_abort = crate::shared::materialized_stream_abort(principal.0.clone(), HISTORY_STREAM_MAX);
             response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
             response
         };
@@ -1180,21 +1163,10 @@ pub async fn attachment(
                 return Err(error(Status::CONFLICT, "Session location changed"));
             }
             principal.live()?;
+            const ATTACHMENT_STREAM_MAX: Duration = Duration::from_secs(60);
             let length = axum::http::HeaderValue::from(bytes.len());
-            let abort = crate::shared::stream_abort(
-                app.clone(),
-                id.clone(),
-                placement.workspace.clone(),
-                placement.endpoint.clone(),
-                principal.0.clone(),
-            );
-            let write_abort = crate::shared::stream_abort(
-                app.clone(),
-                id.clone(),
-                placement.workspace.clone(),
-                placement.endpoint.clone(),
-                principal.0.clone(),
-            );
+            let abort = crate::shared::materialized_stream_abort(principal.0.clone(), ATTACHMENT_STREAM_MAX);
+            let write_abort = crate::shared::materialized_stream_abort(principal.0.clone(), ATTACHMENT_STREAM_MAX);
             let mut response = (
                 [
                     (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/octet-stream")),

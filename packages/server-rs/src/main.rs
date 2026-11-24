@@ -255,21 +255,29 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
             }
         },
         async {
+            const REMOVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
             match bridge_record {
-                Some(mut record) => match tokio::task::spawn_blocking(move || {
-                    let res = record.remove();
-                    (res, record)
-                })
+                Some(mut record) => match tokio::time::timeout(
+                    REMOVE_TIMEOUT,
+                    tokio::task::spawn_blocking(move || {
+                        let res = record.remove();
+                        (res, record)
+                    }),
+                )
                 .await
                 {
-                    Ok((Ok(()), _record)) => true,
-                    Ok((Err(_), mut record)) => {
+                    Ok(Ok((Ok(()), _record))) => true,
+                    Ok(Ok((Err(_), mut record))) => {
                         // One more cleanup retry after plugin teardown settles, matching TS
                         // `shutdown.ts:85-103` where the cleanup callback stays reusable.
                         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                        matches!(tokio::task::spawn_blocking(move || record.remove()).await, Ok(Ok(())))
+                        matches!(
+                            tokio::time::timeout(REMOVE_TIMEOUT, tokio::task::spawn_blocking(move || record.remove()))
+                                .await,
+                            Ok(Ok(Ok(())))
+                        )
                     }
-                    Err(_) => false,
+                    _ => false,
                 },
                 None => true,
             }

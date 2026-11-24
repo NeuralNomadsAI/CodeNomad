@@ -458,9 +458,16 @@ async fn websocket(app: Shared, mut request: Request) -> Response {
         head.headers.remove(header::TRANSFER_ENCODING);
         return Response::from_parts(head, Body::new(incoming));
     };
+    let shutdown = app.events.shutdown.clone();
     tokio::spawn(async move {
         if let (Ok(client), Ok(server)) = (client.await, server.await) {
-            let _ = tokio::io::copy_bidirectional(&mut TokioIo::new(client), &mut TokioIo::new(server)).await;
+            let mut client = TokioIo::new(client);
+            let mut server = TokioIo::new(server);
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => {}
+                _ = tokio::io::copy_bidirectional(&mut client, &mut server) => {}
+            }
         }
     });
     Response::from_parts(head, Body::empty())

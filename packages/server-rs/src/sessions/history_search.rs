@@ -148,12 +148,12 @@ struct Owned {
     anchor: PathBuf,
     identity: Arc<same_file::Handle>,
     proof: DirectoryProof,
-    fence: Arc<AtomicBool>,
+    fences: Vec<Arc<AtomicBool>>,
     inventory_rev: u64,
 }
 impl Owned {
     async fn current_local(&self, scope: &Scope<'_>) -> bool {
-        if !self.fence.load(Relaxed) || !scope.current() {
+        if self.fences.iter().any(|f| !f.load(Relaxed)) || !scope.current() {
             return false;
         }
         let app_scope = scope.app.scope.clone();
@@ -171,7 +171,7 @@ impl Owned {
         })
         .await
         .unwrap_or(false);
-        ok && self.fence.load(Relaxed) && scope.current()
+        ok && self.fences.iter().all(|f| f.load(Relaxed)) && scope.current()
     }
 }
 impl Scope<'_> {
@@ -193,42 +193,74 @@ impl Scope<'_> {
         self.own(&owned.directory).await.is_some()
     }
     async fn own(&self, directory: &str) -> Option<Owned> {
-        let app_scope = self.app.scope.clone();
-        let dir_owned = directory.to_owned();
-        let (path, anchor, identity) = tokio::task::spawn_blocking(move || {
-            let (path, anchor) = worktrees::ownership::resolve_media_path(&app_scope, &dir_owned)?;
-            let identity = Arc::new(same_file::Handle::from_path(&anchor).ok()?);
-            Some((path, anchor, identity))
-        })
-        .await
-        .ok()??;
-        let fence = display(&anchor);
-        // Exact opened root directory is authorized directly without requiring full worktree
-        // enumeration (TS `manager.ts:388-399`, `session-history.ts:45-52`), so a transient
-        // `worktree.list` failure never reports `403` for the root workspace.
-        let (inventory_rev, proof) = if path == self.workspace.path {
-            (worktrees::inventory_revision(self.app), DirectoryProof::root_direct())
-        } else {
+        loop {
+            if self.remaining().is_zero() || !self.current() {
+                return None;
+            }
+            let app_scope = self.app.scope.clone();
+            let dir_owned = directory.to_owned();
+            let (path, anchor, identity) = tokio::task::spawn_blocking(move || {
+                let (path, anchor) = worktrees::ownership::resolve_media_path(&app_scope, &dir_owned)?;
+                let identity = Arc::new(same_file::Handle::from_path(&anchor).ok()?);
+                Some((path, anchor, identity))
+            })
+            .await
+            .ok()??;
+            // Watch both submitted raw path and resolved anchor (TS `worktree-display-identity.ts:9-17`).
+            let raw_path = Path::new(directory);
+            let mut fences = vec![display(raw_path)];
+            if anchor != raw_path {
+                fences.push(display(&anchor));
+            }
+            // Exact opened root directory is authorized directly without requiring full worktree
+            // enumeration (TS `manager.ts:388-399`, `session-history.ts:45-52`), so a transient
+            // `worktree.list` failure never reports `403` for the root workspace.
+            if path == self.workspace.path {
+                let inventory_rev = worktrees::inventory_revision(self.app);
+                let owned = Owned {
+                    directory: directory.into(),
+                    path,
+                    anchor,
+                    identity,
+                    proof: DirectoryProof::root_direct(),
+                    fences,
+                    inventory_rev,
+                };
+                return owned.current_local(self).await.then_some(owned);
+            }
             let (inventory_rev, inventory) = self.inventory().await?;
             let ws_path = self.workspace.path.clone();
             let path_for_prove = path.clone();
-            let proof =
-                tokio::task::spawn_blocking(move || inventory.prove(&ws_path, &path_for_prove)).await.ok()??;
-            (inventory_rev, proof)
-        };
-        let owned = Owned { directory: directory.into(), path, anchor, identity, proof, fence, inventory_rev };
-        owned.current_local(self).await.then_some(owned)
+            let proof = tokio::task::spawn_blocking(move || inventory.prove(&ws_path, &path_for_prove)).await.ok()?;
+            let Some(proof) = proof else {
+                if worktrees::inventory_revision(self.app) != inventory_rev {
+                    continue;
+                }
+                return None;
+            };
+            let owned = Owned { directory: directory.into(), path, anchor, identity, proof, fences, inventory_rev };
+            if !owned.current_local(self).await {
+                if worktrees::inventory_revision(self.app) != inventory_rev {
+                    continue;
+                }
+                return None;
+            }
+            // Re-verify no `worktree.updated` arrived during proof/local checks (TS `worktree-inventory.ts:61-85`).
+            if worktrees::inventory_revision(self.app) == inventory_rev {
+                return Some(owned);
+            }
+        }
     }
     async fn inventory(&self) -> Option<(u64, Arc<HistoryInventory>)> {
         let mut guard = self.inventory.lock().await;
-        for _ in 0..2 {
+        while !self.remaining().is_zero() && self.current() {
             let before = worktrees::inventory_revision(self.app);
             if let Some((cached_rev, inv)) = guard.as_ref()
                 && *cached_rev == before
             {
                 return Some((*cached_rev, inv.clone()));
             }
-            let loaded = Arc::new(HistoryInventory::load(self.app, &self.workspace).await?);
+            let loaded = Arc::new(HistoryInventory::load(self.app, &self.workspace, &self.endpoint).await?);
             // Only cache the snapshot if no `worktree.updated` invalidation arrived during load;
             // stamping a post-scan revision onto pre-scan data would hide a concurrent removal.
             if worktrees::inventory_revision(self.app) == before {
@@ -368,7 +400,7 @@ impl Scope<'_> {
             }
         }
     }
-    async fn filter<'s>(&self, sessions: &'s [Value], session: Option<&str>) -> Option<Vec<&'s Value>> {
+    async fn filter<'s>(&self, sessions: &'s [Value], session: Option<&str>) -> Option<(Vec<&'s Value>, Vec<Owned>)> {
         let mut owners = BTreeMap::<&str, Option<Owned>>::new();
         for owner in sessions {
             if session.is_some_and(|id| owner["sessionID"] != id) {
@@ -386,6 +418,7 @@ impl Scope<'_> {
             return None;
         }
         let mut out = Vec::with_capacity(sessions.len());
+        let mut kept_dirs = HashSet::new();
         for owner in sessions {
             if owner.get("workspaceID").is_none()
                 && let Some(dir) = owner["directory"].as_str()
@@ -393,9 +426,12 @@ impl Scope<'_> {
                 && self.owned_current(owned).await
             {
                 out.push(owner);
+                kept_dirs.insert(dir);
             }
         }
-        Some(out)
+        let kept_fences =
+            owners.into_iter().filter_map(|(dir, owned)| kept_dirs.contains(dir).then_some(owned).flatten()).collect();
+        Some((out, kept_fences))
     }
 }
 enum Call {
@@ -495,9 +531,16 @@ async fn query(scope: &Scope<'_>, mut input: Value, token: Option<&str>) -> Resu
         return Ok(Json(output).into_response());
     }
     let owners = output.as_object_mut().and_then(|out| out.remove("sessions")).unwrap_or_default();
-    let Some(approved) = scope.filter(list(&owners), session.as_deref()).await else { return Ok(blocked()) };
+    let Some((approved, contributor_fences)) = scope.filter(list(&owners), session.as_deref()).await else {
+        return Ok(blocked());
+    };
     if !scope.owned_current(&owned).await {
         return Ok(blocked());
+    }
+    for fence in &contributor_fences {
+        if !scope.owned_current(fence).await {
+            return Ok(blocked());
+        }
     }
     let ids: HashSet<_> = approved.iter().filter_map(|owner| owner["sessionID"].as_str()).collect();
     let next = output["cursor"]

@@ -55,6 +55,12 @@ struct Physical {
     common_marker: Option<Vec<u8>>,
     stamp: [Option<ConfigStamp>; 2],
 }
+pub(super) const CONFIG_CHANGED_ERROR: &str = "Git configuration changed during worktree validation";
+
+fn config_changed_error() -> Error {
+    crate::error(axum::http::StatusCode::BAD_GATEWAY, CONFIG_CHANGED_ERROR)
+}
+
 fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => Some(Some(ConfigStamp {
@@ -64,13 +70,28 @@ fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
         })),
         Ok(meta) if meta.file_type().is_symlink() => {
             let entry = meta_stamp(&meta)?;
-            let real = dunce::canonicalize(path).ok()?;
-            let target_meta = std::fs::metadata(&real).ok()?;
-            if !target_meta.is_file() {
-                return None;
+            // Represent a dangling config symlink (e.g. unused `config.worktree`) with `target: None`
+            // rather than failing the inventory scan (TS `git-worktrees.ts:72-85`).
+            match dunce::canonicalize(path) {
+                Ok(real) => match std::fs::metadata(&real) {
+                    Ok(target_meta) if target_meta.is_file() => {
+                        let id = files::host_identity(&real).ok()?;
+                        Some(Some(ConfigStamp {
+                            entry,
+                            identity: None,
+                            target: Some((real, meta_stamp(&target_meta)?, id)),
+                        }))
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        Some(Some(ConfigStamp { entry, identity: None, target: None }))
+                    }
+                    _ => None,
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    Some(Some(ConfigStamp { entry, identity: None, target: None }))
+                }
+                Err(_) => None,
             }
-            let id = files::host_identity(&real).ok()?;
-            Some(Some(ConfigStamp { entry, identity: None, target: Some((real, meta_stamp(&target_meta)?, id)) }))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(None),
         _ => None,
@@ -270,7 +291,7 @@ async fn checkout(path: &Path) -> Result<Physical, Error> {
             && pre_admin == admin
             && pre_stamp != stamp
         {
-            return Err(native_error());
+            return Err(config_changed_error());
         }
         Ok(Physical {
             stamp,
@@ -544,7 +565,9 @@ pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalo
 }
 
 async fn catalogue_in(app: &App, w: &Workspace, refresh: bool, scoped: bool) -> Result<Catalogue, Error> {
-    catalogue_in_at(app, w, refresh, scoped, None, std::time::Duration::from_secs(12)).await
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(12);
+    let endpoint = app.native.acquire(deadline).await.map_err(|_| native_error())?;
+    catalogue_in_at(app, w, refresh, scoped, Some(&endpoint), std::time::Duration::from_secs(12)).await
 }
 
 pub(crate) async fn catalogue_at(
@@ -685,7 +708,7 @@ async fn catalogue_in_at(
                     if !check.live() {
                         // A layout that vanished mid-scan is omitted; a config change rejects the
                         // whole scan rather than publishing a partial inventory (TS `git-worktrees.ts:128-135`).
-                        return if git_layout_gone(&root) { Ok(None) } else { Err(native_error()) };
+                        return if git_layout_gone(&root) { Ok(None) } else { Err(config_changed_error()) };
                     }
                     let (tree_path, id, projected_link, nested_missing) = match dunce::canonicalize(&projected) {
                         Ok(real) if real == projected && real.is_dir() => match identity(&projected) {
@@ -696,14 +719,16 @@ async fn catalogue_in_at(
                         // TS resolves a sibling worktree's symlinked projected subfolder and admits it
                         // for media/history ownership when its target stays inside a verified worktree
                         // of the same repo (`manager.ts:582-605`, `worktree-directory.ts:248-278`).
-                        // When its target lies outside verified checkouts, TS still keeps the sibling
-                        // checkout descriptor in `/worktrees` with `nestedFolderMissing: false`
-                        // (`native-worktrees.ts:159-181`) while ownership refuses the foreign target.
-                        Ok(real) if !opened && real.is_dir() && real.starts_with(&scope) => {
-                            if let Some(target_layout) = repo_layouts
-                                .iter()
-                                .filter(|layout| real.starts_with(&layout.root))
-                                .max_by_key(|layout| layout.root.as_os_str().len())
+                        // When its target lies outside verified checkouts or outside `scope`, TS still
+                        // keeps the sibling checkout descriptor in `/worktrees` with
+                        // `nestedFolderMissing: false` (`native-worktrees.ts:159-181`) while ownership
+                        // refuses the foreign target.
+                        Ok(real) if !opened && real.is_dir() => {
+                            if real.starts_with(&scope)
+                                && let Some(target_layout) = repo_layouts
+                                    .iter()
+                                    .filter(|layout| real.starts_with(&layout.root))
+                                    .max_by_key(|layout| layout.root.as_os_str().len())
                             {
                                 match identity(&real) {
                                     Ok(value) => (
@@ -718,7 +743,7 @@ async fn catalogue_in_at(
                                 (projected, None, None, false)
                             }
                         }
-                        Ok(real) if !opened && ((real == projected && real.is_file()) || !root.starts_with(&scope)) => {
+                        Ok(real) if !opened && (real.is_file() || !root.starts_with(&scope)) => {
                             (projected, None, None, true)
                         }
                         Ok(_) if !opened => return Ok(None),
@@ -774,7 +799,7 @@ async fn catalogue_in_at(
             .map_err(|_| native_error())?
             .text();
         if current_config != expected_config {
-            return Err(native_error());
+            return Err(config_changed_error());
         }
     }
     let layouts: Vec<Physical> = std::iter::once(local)
@@ -784,7 +809,7 @@ async fn catalogue_in_at(
     let all_live =
         tokio::task::spawn_blocking(move || layouts.iter().all(Physical::live)).await.map_err(|_| native_error())?;
     if !all_live {
-        return Err(native_error());
+        return Err(config_changed_error());
     }
     checked.sort_by_key(|t| (t.slug != "root", t.branch.clone(), t.slug.clone()));
     Ok(Catalogue {
