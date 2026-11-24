@@ -40,7 +40,7 @@ function createMissionModelActions(props: LibraryProps) {
   const settle = (error: unknown) => { if (alive) { if (error instanceof ConfigOwnerReconciliationPendingError) setReconciliationPending(true); else setFailed(true) } }
   /** Resolves the saved record once acknowledged (including an unreadable-owner acknowledgement), never retrying. */
   const save = async (name: string, draft: MissionModelBrief, replacement?: UserMissionModel,
-    baseline?: UserMissionModel, returnFocus?: () => void): Promise<UserMissionModel | undefined> => {
+    baseline?: UserMissionModel, returnFocus?: () => void, onCommitted?: (saved: UserMissionModel) => void): Promise<UserMissionModel | undefined> => {
     const { target, operation } = capture()
     if (!operation.current()) return
     if (disabled() || !name.trim()) return
@@ -70,6 +70,7 @@ function createMissionModelActions(props: LibraryProps) {
       acknowledged = record
     } catch (error) { if (operation.current()) settle(error) }
     finally { if (operation.current() && alive) setPending(false) }
+    if (operation.current() && acknowledged) onCommitted?.(acknowledged)
     return operation.current() && alive ? acknowledged : undefined
   }
   const remove = async (model: UserMissionModel): Promise<boolean> => {
@@ -204,11 +205,12 @@ export interface MissionBriefSaveTrigger {
   * field shows here; otherwise a labelled button opens it (a window
  * footer passes its own template for the field's buttons). */
 export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; baselines?: readonly UserMissionModel[]; buttonClass?: string
-  captureDraft?: () => () => boolean
-  onOpen?: (open: boolean) => void; onSaved?: (model: UserMissionModel) => void
+  captureCommit?: () => (saved: UserMissionModel) => void
+  onOpen?: (open: boolean) => void
   reading?: () => { failed: boolean; changed?: boolean; onRetry: () => void } | undefined
   trigger?: (trigger: MissionBriefSaveTrigger) => void }) {
   const { t } = useI18n(), config = useConfig(() => props.instanceId), actions = createMissionModelActions(props)
+  const active = () => props.active?.() ?? true
   const buttonClass = () => props.buttonClass ?? "window-action"
   const [open, setOpen] = createSignal(false), [name, setName] = createSignal("")
   createEffect(() => props.onOpen?.(open()))
@@ -216,8 +218,9 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
   // Opened from a menu or button, the field gives focus back to that trigger when it closes.
   let returnTo: (() => HTMLElement | undefined) | undefined
   const focusTrigger = (hadFocus: boolean, target?: () => HTMLElement | undefined) => {
-    const active = document.activeElement
-    const free = !active || active === document.body || root.contains(active)
+    if (!active()) return
+    const activeElement = document.activeElement
+    const free = !activeElement || activeElement === document.body || root.contains(activeElement)
     if (!hadFocus || !free || !target) return
     const element = target()
     if (element?.isConnected && !("disabled" in element && (element as HTMLButtonElement).disabled)) element.focus({ preventScroll: true })
@@ -225,12 +228,12 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
   const close = (hadFocus = root.contains(document.activeElement)) => {
     // Unless the user has moved focus elsewhere meanwhile (a save is asynchronous and
     // disables the focused control, dropping focus to the body).
-    const active = document.activeElement
-    const free = !active || active === document.body || root.contains(active)
+    const activeElement = document.activeElement
+    const free = !activeElement || activeElement === document.body || root.contains(activeElement)
     setOpen(false)
     const target = returnTo; returnTo = undefined
     // Once the closing (and a save's preference update) has re-rendered the trigger.
-    if (hadFocus && free && target) queueMicrotask(() => focusTrigger(true, target))
+    if (hadFocus && free && target && active()) queueMicrotask(() => focusTrigger(true, target))
   }
   const models = () => config.preferences().missionModels
   const trimmed = () => name().trim()
@@ -249,19 +252,19 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
   const save = async () => {
     if (saveDisabled()) return
     const hadFocus = root.contains(document.activeElement), target = returnTo
-    const stillCurrentDraft = props.captureDraft?.() ?? (() => true)
+    const commit = props.captureCommit?.()
     let closed = false
     const saved = await actions.save(name(), props.draft(), replacement(), baseline(), () => {
       // Runs on Kobalte's unmount timer; restore the open field on cancel/failure,
       // or the trigger if a fast save closed the field before FocusScope exited.
       queueMicrotask(() => {
+        if (!active()) return
         if (input?.isConnected && !input.disabled) input.focus({ preventScroll: true })
         else if (closed) focusTrigger(hadFocus, target)
       })
-    })
+    }, commit)
     if (saved) {
-      if (stillCurrentDraft()) props.onSaved?.(saved)
-      closed = true; setName(""); close(hadFocus)
+      closed = true; setName(""); close(hadFocus && active())
     }
   }
   const begin = (fromMenu: boolean, returnFocus?: () => HTMLElement | undefined) => {
