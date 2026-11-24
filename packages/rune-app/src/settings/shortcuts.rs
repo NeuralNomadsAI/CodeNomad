@@ -6,10 +6,6 @@ pub(crate) const FILE_SAVE: &str = "file-save";
 pub(super) mod catalog;
 pub(super) mod editor;
 mod reserved;
-#[cfg(test)]
-const fn primary(key: char) -> Chord {
-    Chord::new(ChordKey::Char(key)).with(ChordMod::Primary)
-}
 
 fn decode(rule: &Value) -> Option<Chord> {
     let rule = rule.as_object()?;
@@ -65,14 +61,6 @@ pub(crate) fn with_shortcut_label(s: &State, label: &str, action: &str) -> Strin
     } else {
         format!("{label} ({shortcut})")
     }
-}
-
-#[cfg(test)]
-fn bindings(overrides: Option<&[Value]>, default: char) -> Vec<Chord> {
-    overrides
-        .filter(|rules| rules.len() <= 8)
-        .and_then(|rules| rules.iter().map(decode).collect())
-        .unwrap_or_else(|| vec![primary(default)])
 }
 
 fn format_chords(bindings: &[Chord]) -> String {
@@ -228,17 +216,16 @@ fn physical_slot(tx: &Tx) -> Option<char> {
 #[test]
 fn resolves_shared_save_overrides() {
     use serde_json::json;
-    assert_eq!(bindings(None, 's'), [primary('s')]);
-    assert!(bindings(Some(&[]), 's').is_empty());
+    let default = [Chord::new(ChordKey::Char('s')).with(ChordMod::Primary)];
+    let mut prefs = Preferences::default();
+    assert_eq!(catalog::resolve(&prefs, FILE_SAVE), default);
+    prefs.fixture_shortcuts(json!({ FILE_SAVE: [] }));
+    assert!(catalog::resolve(&prefs, FILE_SAVE).is_empty());
+    prefs.fixture_shortcuts(json!({ FILE_SAVE: [{"key":"x", "mod":1}] }));
+    assert_eq!(catalog::resolve(&prefs, FILE_SAVE), default);
+    prefs.fixture_shortcuts(json!({ FILE_SAVE: [{"key":"F8"}, {"key":"Digit1","ctrl":true}] }));
     assert_eq!(
-        bindings(Some(&[json!({"key":"x", "mod":1})]), 's'),
-        [primary('s')]
-    );
-    assert_eq!(
-        bindings(
-            Some(&[json!({"key":"F8"}), json!({"key":"Digit1","ctrl":true})]),
-            's'
-        ),
+        catalog::resolve(&prefs, FILE_SAVE),
         [
             Chord::new(ChordKey::Function(8)),
             Chord::new(ChordKey::Char('1')).with(ChordMod::Ctrl)
@@ -297,8 +284,8 @@ fn localized_ctrl_letter_uses_the_key_rune_reports_before_us_fallback() {
                 ..Default::default()
             },
         };
-        let save = bindings(Some(&[json!({"key":"ö","mod":true,"shift":shift})]), 's');
-        let new_tab = bindings(Some(&[json!({"key":";","ctrl":true,"shift":shift})]), 'n');
+        let save = [decode(&json!({"key":"ö","mod":true,"shift":shift})).unwrap()];
+        let new_tab = [decode(&json!({"key":";","ctrl":true,"shift":shift})).unwrap()];
         assert!(matches(
             save[0],
             &event,
@@ -311,7 +298,7 @@ fn localized_ctrl_letter_uses_the_key_rune_reports_before_us_fallback() {
             &new_tab,
             rune::KeyPlatform::Windows
         ));
-        let same_key = bindings(Some(&[json!({"key":"Ö","ctrl":true,"shift":shift})]), 'n');
+        let same_key = [decode(&json!({"key":"Ö","ctrl":true,"shift":shift})).unwrap()];
         assert!(matches(same_key[0], &event, None, Some('ö')));
         assert!(bindings_conflict(
             &save,

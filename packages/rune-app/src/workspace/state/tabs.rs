@@ -275,7 +275,7 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
         return true;
     }
     if ui.active == index {
-        s.composer.pending() || crate::agent::navigation_blocked(s)
+        s.composer.blocks_navigation() || crate::agent::navigation_blocked(s)
     } else {
         ui.entries[index]
             .cache

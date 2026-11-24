@@ -63,7 +63,7 @@ impl Cache {
         self.transcript_display.evict_rendered();
     }
     pub fn navigation_blocked(&self) -> bool {
-        self.composer.pending()
+        self.composer.blocks_navigation()
             || self
                 .agent
                 .as_ref()

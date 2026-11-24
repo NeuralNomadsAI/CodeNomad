@@ -351,20 +351,24 @@ impl Backend {
         .await?;
         session(&data["data"], project)
     }
-    pub async fn create_untitled_session(&self, project: &Project) -> Result<Session> {
+    pub async fn create_untitled_session(
+        &self,
+        project: &Project,
+        directory: &str,
+    ) -> Result<Session> {
         let data = read_json(
             self.client
                 .post(format!(
                     "{}workspaces/{}/instance/api/session",
                     self.base, project.id
                 ))
-                .json(&json!({"location":{"directory":project.path}}))
+                .json(&json!({"location":{"directory":directory}}))
                 .send()
                 .await?
                 .error_for_status()?,
         )
         .await?;
-        session(&data["data"], project)
+        session_at(&data["data"], directory)
     }
 }
 fn server_id(data: &Value) -> Result<String> {

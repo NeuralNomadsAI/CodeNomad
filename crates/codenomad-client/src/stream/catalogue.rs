@@ -26,6 +26,7 @@ pub(super) struct Signals {
     stopped: Mutex<CatalogueChanges>,
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
+    workspace_events: Mutex<VecDeque<WorkspaceEvent>>,
     wake: Wake,
     generation: std::sync::atomic::AtomicU64,
 }
@@ -52,6 +53,7 @@ impl Signals {
 
     fn disconnected(&self) {
         self.attention.lock().unwrap().clear();
+        self.workspace_events.lock().unwrap().clear();
         *self.stats.lock().unwrap() = StatsChanges::default();
         if self.generation.load(SeqCst) % 2 == 1 {
             self.generation.fetch_add(1, SeqCst);
@@ -87,14 +89,27 @@ fn mark_changes(pending: &mut CatalogueChanges, workspace: Option<&str>) -> bool
 
 impl Signals {
     pub(super) fn observe(&self, frame: &Value) {
+        let workspace_event = super::routing::parse_workspace_event(frame).is_some_and(|event| {
+            let mut queue = self.workspace_events.lock().unwrap();
+            if queue.len() >= 256 {
+                queue.pop_front();
+            }
+            queue.push_back(event);
+            true
+        });
         let provider_changed = crate::settings::provider_change(frame)
             .is_some_and(|id| self.mark(&self.providers, Some(id)));
         let kind = frame["type"].as_str();
         let workspace = match kind {
-            Some("workspace.worktreesChanged" | "workspace.stopped") => &frame["workspaceId"],
+            Some("workspace.worktreesChanged" | "workspace.stopped" | "workspace.filesChanged") => {
+                &frame["workspaceId"]
+            }
             _ => &frame["instanceId"],
         };
         let Some(id) = workspace.as_str().filter(|id| valid_id(id)) else {
+            if workspace_event || provider_changed {
+                (self.wake)();
+            }
             return;
         };
         let stopped = kind == Some("workspace.stopped") && self.mark(&self.stopped, Some(id));
@@ -142,6 +157,7 @@ impl Signals {
         };
         if (invalidates && self.mark(&self.pending, Some(id)))
             | provider_changed
+            | workspace_event
             | stopped
             | attention
             | stats
@@ -211,6 +227,7 @@ impl CatalogueWatch {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            workspace_events: Mutex::default(),
             generation: Default::default(),
             wake,
         });
@@ -268,6 +285,10 @@ impl CatalogueWatch {
 
     pub fn take(&self) -> CatalogueChanges {
         std::mem::take(&mut *self.signals.pending.lock().unwrap())
+    }
+
+    pub fn take_workspace_events(&self) -> VecDeque<WorkspaceEvent> {
+        std::mem::take(&mut *self.signals.workspace_events.lock().unwrap())
     }
 
     pub fn take_attention(&self) -> (u64, VecDeque<AttentionHint>) {
@@ -333,6 +354,29 @@ mod tests {
     }
 
     #[test]
+    fn workspace_observer_forwards_files_changed_events() {
+        let (watch, _task) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
+            Arc::new(|| {}),
+        );
+        watch.signals.observe(&json!({
+            "type": "workspace.filesChanged",
+            "workspaceId": "proj-1",
+            "changes": [{"directory": "/repo", "path": "new.txt"}]
+        }));
+        let events = watch.take_workspace_events();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            WorkspaceEvent::FilesChanged { workspace_id, changes }
+                if workspace_id == "proj-1"
+                    && changes.len() == 1
+                    && changes[0].directory == "/repo"
+                    && changes[0].path == "new.txt"
+        ));
+    }
+
+    #[test]
     fn dropped_frame_invalidates_both_catalogues_without_changing_connection() {
         let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let wakes = count.clone();
@@ -342,6 +386,7 @@ mod tests {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            workspace_events: Mutex::default(),
             generation: 3.into(),
             wake: Arc::new(move || {
                 wakes.fetch_add(1, SeqCst);
@@ -373,6 +418,7 @@ mod tests {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            workspace_events: Mutex::default(),
             generation: Default::default(),
             wake: Arc::new(|| {}),
         };
@@ -399,6 +445,7 @@ mod tests {
             stopped: Mutex::default(),
             stats: Mutex::default(),
             attention: Mutex::default(),
+            workspace_events: Mutex::default(),
             generation: Default::default(),
             wake: Arc::new(|| {}),
         };

@@ -23,6 +23,9 @@ impl Owner {
     pub fn pending(&self) -> bool {
         self.sending.is_some()
     }
+    pub fn blocks_navigation(&self) -> bool {
+        self.sending.is_some() || self.unconfirmed.is_some() || self.command_unconfirmed.is_some()
+    }
     pub fn unconfirmed_id(&self) -> Option<&str> {
         self.unconfirmed.as_ref().map(|send| send.id.as_str())
     }

@@ -194,10 +194,26 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let browser_changed = cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s));
     let blocked = !can_change_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
+    let workspace_events = s
+        .screen
+        .launcher()
+        .and_then(|l| l.catalogue_watch.as_ref())
+        .map(|watch| watch.take_workspace_events())
+        .unwrap_or_default();
+    let mut relayed = false;
+    if s.incoming.is_none() {
+        for event in workspace_events {
+            crate::git::event(s, &event);
+            if let Some(files) = &mut s.files {
+                files.event(event);
+            }
+            relayed = true;
+        }
+    }
     let Some(l) = s.screen.launcher_mut() else {
-        return false;
+        return relayed;
     };
-    let mut changed = browser_changed | (!l.pending && l.visits.poll_checks());
+    let mut changed = relayed | browser_changed | (!l.pending && l.visits.poll_checks());
     changed |= connection::poll_boot(l);
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
         if changed {

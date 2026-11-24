@@ -78,10 +78,20 @@ pub(super) async fn dispatch(
 }
 
 fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
-    let id = value["workspaceId"].as_str()?;
-    if id != b.workspace || !crate::history::valid_id(id) {
-        return None;
-    }
+    let event = parse_workspace_event(value)?;
+    let workspace_id = match &event {
+        WorkspaceEvent::Stopped { workspace_id }
+        | WorkspaceEvent::WorktreesChanged { workspace_id }
+        | WorkspaceEvent::FilesChanged { workspace_id, .. } => workspace_id.as_str(),
+        _ => return None,
+    };
+    (workspace_id == b.workspace).then_some(event)
+}
+
+pub(super) fn parse_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
+    let id = value["workspaceId"]
+        .as_str()
+        .filter(|id| crate::history::valid_id(id))?;
     match value["type"].as_str()? {
         "workspace.stopped" => Some(WorkspaceEvent::Stopped {
             workspace_id: id.into(),

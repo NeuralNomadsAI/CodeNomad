@@ -69,6 +69,7 @@ pub(crate) struct Host {
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
     last_display: Option<([&'static str; 6], bool)>,
+    last_revision: u64,
     memory_cleanup: Option<memory::cleanup::Run>,
 }
 
@@ -241,6 +242,8 @@ pub(crate) fn poll(s: &mut State) -> bool {
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
+    let revision_changed =
+        shared.revision != std::mem::replace(&mut s.settings.last_revision, shared.revision);
     let (reconnected, missions) = shared.mission_changes();
     let locale = shared.locale().unwrap_or_else(strings::locale);
     let notify_failure = shared.take_notification_failure();
@@ -278,6 +281,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
         }
     }
     preferences_changed
+        | revision_changed
         | changed
         | expired
         | (display != std::mem::replace(&mut s.settings.last_display, display))

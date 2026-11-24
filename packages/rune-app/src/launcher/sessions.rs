@@ -155,6 +155,7 @@ pub fn create_blank(s: &mut State) {
         return;
     }
     let dismiss = s.shell.floating_sessions();
+    let directory = crate::git::session_directory(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
@@ -164,9 +165,10 @@ pub fn create_blank(s: &mut State) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
+    let directory = directory.unwrap_or_else(|| p.path.clone());
     // A create request is never automatically retried. Refresh reconciles a lost response.
     l.job("rune.create_error", async move {
-        let session = b.create_untitled_session(&p).await?;
+        let session = b.create_untitled_session(&p, &directory).await?;
         let (backend, _, slug) = b.bind_session_placed(&p, &session.id, true).await?;
         Ok(Reply::Created(
             backend,
@@ -263,7 +265,7 @@ fn choose_from(
 }
 pub fn can_change_session(s: &State) -> bool {
     s.phase != Phase::Streaming
-        && !s.composer.pending()
+        && !s.composer.blocks_navigation()
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)
 }
@@ -319,10 +321,15 @@ fn clear_conversation_only(s: &mut State) {
 }
 
 pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
+    let tab_key = s.workspace.as_ref().map(|ui| ui.active_key()).or_else(|| {
+        s.screen
+            .launcher()
+            .and_then(|l| l.project.as_ref())
+            .map(|p| p.id.as_str())
+    });
     if s.screen.is_launcher()
         || !can_change_session(s)
-        || s.composer.unconfirmed_id().is_some()
-        || s.composer.command_unconfirmed.is_some()
+        || tab_key.is_some_and(|key| s.documents.has_tab_edits(key))
         || s.files
             .as_ref()
             .is_some_and(|ui| ui.document.pending() || ui.document.dirty())

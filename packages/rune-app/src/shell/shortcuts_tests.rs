@@ -305,22 +305,41 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
     assert!(!rt.state.screen.is_launcher());
     assert_eq!(workspace::active_session(&rt.state), Some("session"));
 
-    // Dirty file editor blocks close-session.
+    // Dirty file editor blocks close-session even after the reader closes while retained in store.
     send_key(&mut rt, Key::Command('w'), primary_mods(true));
     assert!(!rt.state.screen.is_launcher());
     assert_eq!(workspace::active_session(&rt.state), Some("session"));
 
     if let Some(files) = &mut rt.state.files {
+        files.close_reader();
+    }
+    assert!(rt.state.documents.has_tab_edits("tab-0"));
+    send_key(&mut rt, Key::Command('w'), primary_mods(true));
+    assert!(!rt.state.screen.is_launcher());
+    assert_eq!(workspace::active_session(&rt.state), Some("session"));
+
+    if let Some(files) = &mut rt.state.files {
+        files.open("draft.txt".into());
+        files.reader.scene(Ok(codenomad_client::files::Preview {
+            workspace_id: backend.workspace.clone(),
+            path: "draft.txt".into(),
+            bytes: b"original".to_vec(),
+            version: Some("v1".into()),
+        }));
+        files.document.poll(&mut files.reader);
         let scope = files.document.scope();
         files.document.input(scope).replace_text("original");
         files.document.changed(scope);
     }
 
-    // Unconfirmed slash command blocks close-session so reopening cannot resend it.
+    // Unconfirmed slash command blocks close-session AND session switching AND tab closing.
     rt.state.composer.command_unconfirmed = Some(("compact".into(), String::new()));
     send_key(&mut rt, Key::Command('w'), primary_mods(true));
     assert!(!rt.state.screen.is_launcher());
     assert_eq!(workspace::active_session(&rt.state), Some("session"));
+    assert!(!crate::launcher::can_change_session(&rt.state));
+    send_key(&mut rt, Key::Command('w'), primary_mods(false));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 1);
     rt.state.composer.command_unconfirmed = None;
 
     // Streaming blocks close-session.
@@ -765,4 +784,26 @@ fn file_editor_pagedown_does_not_fire_remapped_global_shortcut() {
     settings::fixture_shortcuts(&rt.state, json!({"instance-next": [{"key": "pagedown"}]}));
     send_key(&mut rt, Key::PageDown, Mods::default());
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+}
+
+#[test]
+fn hidden_git_picker_does_not_block_global_shortcuts() {
+    let mut rt = project_runtime(workspace_state(2));
+    let backend = Backend {
+        workspace: "header-windows".into(),
+        session: "session".into(),
+        ..Backend::unauthenticated("http://127.0.0.1:9/").unwrap()
+    };
+    crate::git::connected(&mut rt.state, &backend);
+    crate::git::show(&mut rt.state, true);
+    crate::git::fixture_open_picker(&mut rt.state);
+    assert!(crate::git::overlay_open(&rt.state));
+    send_key(&mut rt, Key::Command(']'), primary_mods(false));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+
+    // Hiding the right panel clears/ignores the unmounted Git picker so shortcuts work again.
+    crate::git::show(&mut rt.state, false);
+    assert!(!crate::git::overlay_open(&rt.state));
+    send_key(&mut rt, Key::Command(']'), primary_mods(false));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
 }

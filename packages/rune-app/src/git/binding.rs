@@ -52,10 +52,23 @@ pub(crate) fn diff_preferences(s: &State) -> DiffPreferences {
 }
 
 pub(crate) fn overlay_open(s: &State) -> bool {
-    s.git
-        .owner
-        .as_ref()
-        .is_some_and(|ui| ui.open_menu.is_some() || ui.picker || ui.placement_picker.is_some())
+    s.git.owner.as_ref().is_some_and(|ui| {
+        ui.placement_picker.is_some() || (ui.shown && (ui.open_menu.is_some() || ui.picker))
+    })
+}
+
+pub(crate) fn session_directory(s: &State) -> Option<String> {
+    if s.screen.is_launcher() {
+        return None;
+    }
+    let owner = s.git.owner.as_ref()?;
+    owner
+        .inventory
+        .as_ref()?
+        .trees
+        .iter()
+        .find(|tree| tree.slug == owner.session_slug && !tree.missing)
+        .map(|tree| tree.directory.clone())
 }
 
 pub(crate) fn is_composing(s: &State) -> bool {
@@ -81,6 +94,13 @@ pub(crate) fn fixture_commit_draft(s: &mut State, text: Option<&str>) -> Option<
         ui.changes.draft.replace_text(text);
     }
     Some(ui.changes.draft.text.clone())
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_open_picker(s: &mut State) {
+    if let Some(ui) = s.git.owner.as_mut() {
+        ui.picker = true;
+    }
 }
 
 pub(crate) fn set_diff_preferences(s: &mut State, preference: DiffPreferences) {
