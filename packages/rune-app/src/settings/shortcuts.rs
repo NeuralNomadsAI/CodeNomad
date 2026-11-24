@@ -54,8 +54,12 @@ pub(crate) fn save_label(s: &State) -> String {
     format_chords(&catalog::resolve(&s.settings.shared.borrow(), FILE_SAVE))
 }
 
+pub(crate) fn shortcut_label(s: &State, action: &str) -> String {
+    format_chords(&catalog::resolve(&s.settings.shared.borrow(), action))
+}
+
 pub(crate) fn with_shortcut_label(s: &State, label: &str, action: &str) -> String {
-    let shortcut = format_chords(&catalog::resolve(&s.settings.shared.borrow(), action));
+    let shortcut = shortcut_label(s, action);
     if shortcut.is_empty() {
         label.to_owned()
     } else {

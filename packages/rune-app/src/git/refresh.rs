@@ -38,6 +38,7 @@ impl Ui {
                 workspace_id,
                 session_id,
             } if workspace_id == &self.backend.workspace && session_id == &self.backend.session => {
+                self.session_moved = true;
                 self.close_preview();
             }
             WorkspaceEvent::Stopped { workspace_id } if workspace_id == &self.backend.workspace => {

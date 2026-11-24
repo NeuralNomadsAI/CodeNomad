@@ -55,10 +55,20 @@ fn default_index(prefs: &Preferences, platform: KeyPlatform) -> usize {
     2 * usize::from(platform == KeyPlatform::Mac) + usize::from(no_enter)
 }
 
-fn resolve_def(overrides: Option<&[Value]>, def: &Value, index: usize) -> Vec<Chord> {
+fn is_region_cycle(chord: &Chord, platform: KeyPlatform) -> bool {
+    let f6 = Chord::new(rune::ChordKey::Function(6));
+    chord.same_keys(&f6, platform) || chord.same_keys(&f6.with(rune::ChordMod::Shift), platform)
+}
+
+fn resolve_def(
+    overrides: Option<&[Value]>,
+    def: &Value,
+    index: usize,
+    platform: KeyPlatform,
+) -> Vec<Chord> {
     overrides
         .filter(|rules| rules.len() <= 8)
-        .and_then(|rules| rules.iter().map(decode).collect())
+        .and_then(|rules| rules.iter().map(decode).collect::<Option<Vec<_>>>())
         .unwrap_or_else(|| {
             def["defaults"][index]
                 .as_array()
@@ -67,6 +77,9 @@ fn resolve_def(overrides: Option<&[Value]>, def: &Value, index: usize) -> Vec<Ch
                 .filter_map(decode)
                 .collect()
         })
+        .into_iter()
+        .filter(|chord| !is_region_cycle(chord, platform))
+        .collect()
 }
 
 pub(super) fn resolve(prefs: &Preferences, id: &str) -> Vec<Chord> {
@@ -76,8 +89,9 @@ pub(super) fn resolve(prefs: &Preferences, id: &str) -> Vec<Chord> {
     else {
         return Vec::new();
     };
-    let index = default_index(prefs, KeyPlatform::current());
-    resolve_def(prefs.shortcut(id), def, index)
+    let platform = KeyPlatform::current();
+    let index = default_index(prefs, platform);
+    resolve_def(prefs.shortcut(id), def, index, platform)
 }
 
 pub(in crate::settings) fn rows(prefs: &Preferences, filter: &str) -> Vec<Row> {
@@ -100,7 +114,7 @@ pub(in crate::settings) fn rows(prefs: &Preferences, filter: &str) -> Vec<Row> {
                 ],
             );
             let overrides = prefs.shortcut(id);
-            let chords = resolve_def(overrides, def, index);
+            let chords = resolve_def(overrides, def, index, platform);
             Some(Row {
                 id,
                 label,

@@ -26,6 +26,7 @@ pub(super) fn modal_open(s: &State) -> bool {
     settings::blocks_shell_shortcuts(s)
         || notifications::history_open(s)
         || crate::files::modal_open(s)
+        || workspace::mission_confirmation(s).is_some()
 }
 
 fn overlay_open(s: &State) -> bool {
@@ -41,6 +42,7 @@ fn any_editor_composing(s: &State) -> bool {
             .is_some_and(|ui| ui.document.edit().is_composing())
         || crate::git::is_composing(s)
         || workspace::missions_composing(s)
+        || crate::timeline::search::is_composing(s)
         || s.screen.launcher().is_some_and(|l| {
             l.address.is_composing()
                 || l.password.is_composing()
@@ -77,9 +79,12 @@ fn focused_text_field(s: &State, tx: &Tx) -> bool {
 
 fn field_key_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
     let no_command_mod = !event.mods.ctrl && !event.mods.cmd && !event.mods.alt && !event.mods.logo;
-    no_command_mod
-        && matches!(event.key, Key::PageUp | Key::PageDown | Key::Insert)
-        && focused_text_field(s, tx)
+    let is_field_nav = matches!(
+        event.key,
+        Key::PageUp | Key::PageDown | Key::Insert | Key::ContextMenu
+    );
+    let is_context_menu = event.mods.shift && event.key == Key::Function(10);
+    no_command_mod && (is_field_nav || is_context_menu) && focused_text_field(s, tx)
 }
 
 fn authentication_required(s: &State) -> bool {
@@ -151,6 +156,10 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         if browse_home && matches("browse-folder") {
             return Some(Action::BrowseFolder);
         }
+        // Match Solid's registration priority: setupTabKeyboardShortcuts, then registerNavigationShortcuts.
+        if project_open && matches("session-new") {
+            return Some(Action::SessionNew);
+        }
         if has_workspace {
             if matches("new-instance") {
                 return Some(Action::NewInstance);
@@ -158,28 +167,27 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             if matches("close-instance") {
                 return Some(Action::CloseInstance);
             }
+        }
+        if session_open && matches("close-session") {
+            return Some(Action::CloseSession);
+        }
+        if has_workspace {
+            if let Some(index) = APP_TAB_IDS.iter().position(|id| matches(id)) {
+                return Some(Action::AppTab(index));
+            }
             if matches("instance-prev") {
                 return Some(Action::InstancePrev);
             }
             if matches("instance-next") {
                 return Some(Action::InstanceNext);
             }
-            if let Some(index) = APP_TAB_IDS.iter().position(|id| matches(id)) {
-                return Some(Action::AppTab(index));
-            }
         }
         if project_open {
-            if matches("session-new") {
-                return Some(Action::SessionNew);
-            }
             if matches("session-prev") {
                 return Some(Action::SessionPrev);
             }
             if matches("session-next") {
                 return Some(Action::SessionNext);
-            }
-            if session_open && matches("close-session") {
-                return Some(Action::CloseSession);
             }
         }
         None

@@ -79,6 +79,10 @@ pub(super) fn is_open(s: &State) -> bool {
     s.transcript_display.timeline.search.open && visible(s)
 }
 
+pub(crate) fn is_composing(s: &State) -> bool {
+    is_open(s) && s.transcript_display.timeline.search.query.is_composing()
+}
+
 pub(crate) fn close(s: &mut State) {
     clear_selection(s);
     *state(s) = Search::default();

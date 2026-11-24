@@ -173,6 +173,9 @@ pub fn create_blank(s: &mut State) {
             crate::git::SessionDirectory::ResolveSlug(slug) => {
                 b.worktree_directory(&p, &slug).await?
             }
+            crate::git::SessionDirectory::ResolveSession(session_id) => {
+                b.session_directory(&p, &session_id).await?
+            }
         };
         let session = b.create_untitled_session(&p, &directory).await?;
         let (backend, _, slug) = b.bind_created_session(&p, &session.id, &directory).await?;

@@ -24,16 +24,26 @@ impl Owner {
         self.sending.is_some()
     }
     pub fn blocks_navigation(&self) -> bool {
-        self.sending.is_some() || self.unconfirmed.is_some()
+        self.sending.is_some()
     }
     pub fn unconfirmed_id(&self) -> Option<&str> {
         self.unconfirmed.as_ref().map(|send| send.id.as_str())
+    }
+    pub(crate) fn clone_unconfirmed(&self) -> Option<UnconfirmedSend> {
+        self.unconfirmed.clone().map(UnconfirmedSend)
+    }
+    pub(crate) fn restore_unconfirmed(&mut self, send: UnconfirmedSend) {
+        self.unconfirmed = Some(send.0);
     }
     #[cfg(test)]
     pub fn pending_text(&self) -> Option<&str> {
         self.sending.as_ref().map(|send| send.edit.text.as_str())
     }
 }
+#[derive(Clone)]
+pub(crate) struct UnconfirmedSend(Send);
+
+#[derive(Clone)]
 struct Send {
     id: String,
     edit: TextEdit,

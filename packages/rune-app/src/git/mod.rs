@@ -122,6 +122,7 @@ pub(crate) struct Ui {
     inventory: Option<Worktrees>,
     slug: String,
     session_slug: String,
+    session_moved: bool,
     workspace_preview: bool,
     scope: std::rc::Rc<()>,
     tree_epoch: u64,
@@ -173,6 +174,7 @@ impl Ui {
             inventory: None,
             slug: "root".into(),
             session_slug: "root".into(),
+            session_moved: false,
             workspace_preview: false,
             scope: std::rc::Rc::new(()),
             tree_epoch: 0,
@@ -244,18 +246,23 @@ impl Ui {
             if let Some(slug) = placement {
                 self.session_slug = slug.into();
             }
+            self.session_moved = false;
             self.close_preview();
             if self.slug != self.session_slug {
                 self.slug.clone_from(&self.session_slug);
                 self.reset_tree();
             }
+        } else if placement.is_some() {
+            self.session_moved = false;
         }
         true
     }
 
     pub(crate) fn detach_session(&mut self) {
         self.backend.session.clear();
+        self.backend.session_directory = None;
         self.session_slug = "root".into();
+        self.session_moved = false;
         self.placement_picker = None;
     }
 

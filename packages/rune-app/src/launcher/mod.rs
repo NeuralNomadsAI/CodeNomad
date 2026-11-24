@@ -202,26 +202,43 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let blocked = !can_change_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
     let stream_update = s.screen.launcher_mut().and_then(|l| {
-        let (generation, events) = l.catalogue_watch.as_ref()?.take_workspace_events();
+        let (generation, overflow, events) = l.catalogue_watch.as_ref()?.take_workspace_events();
         let previous = l.workspace_stream_generation;
         l.workspace_stream_generation = generation;
-        Some((previous, generation, events))
+        Some((previous, generation, overflow, events))
     });
     let mut relayed = false;
-    if let Some((previous, generation, events)) = stream_update {
+    if let Some((previous, generation, overflow, events)) = stream_update {
+        let mut stopped = Vec::new();
+        let mut other = Vec::new();
+        for event in events {
+            if matches!(
+                event,
+                codenomad_client::transport::WorkspaceEvent::Stopped { .. }
+            ) {
+                stopped.push(event);
+            } else {
+                other.push(event);
+            }
+        }
+        if !stopped.is_empty() {
+            relayed |= crate::workspace::deliver_detached_events(s, &stopped);
+        }
         if generation != previous {
             if generation > 0 && generation % 2 == 0 {
                 relayed |= crate::workspace::set_detached_online(s, false);
             } else if generation % 2 == 1 {
-                if previous > 0 && previous % 2 == 1 {
+                if (previous > 0 && previous % 2 == 1) || overflow {
                     relayed |= crate::workspace::set_detached_online(s, false);
                 }
                 relayed |= crate::workspace::set_detached_online(s, true);
             }
+        } else if overflow {
+            relayed |= crate::workspace::set_detached_online(s, false);
+            relayed |= crate::workspace::set_detached_online(s, true);
         }
-        if !events.is_empty() {
-            let events: Vec<_> = events.into_iter().collect();
-            relayed |= crate::workspace::deliver_detached_events(s, &events);
+        if !other.is_empty() {
+            relayed |= crate::workspace::deliver_detached_events(s, &other);
         }
     }
     let Some(l) = s.screen.launcher_mut() else {

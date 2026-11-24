@@ -118,6 +118,27 @@ fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
     (workspace_id == b.workspace).then_some(event)
 }
 
+pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
+    if let Some(event) = parse_workspace_event(value) {
+        return Some(event);
+    }
+    if value["type"] != "instance.event" {
+        return None;
+    }
+    let id = value["instanceId"]
+        .as_str()
+        .filter(|id| crate::history::valid_id(id))?;
+    match value["event"]["type"].as_str()? {
+        "vcs.branch.updated" => Some(WorkspaceEvent::WorktreesChanged {
+            workspace_id: id.into(),
+        }),
+        "filesystem.changed" => Some(WorkspaceEvent::NativeFilesystemChanged {
+            workspace_id: id.into(),
+        }),
+        _ => None,
+    }
+}
+
 pub(super) fn parse_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
     let id = value["workspaceId"]
         .as_str()

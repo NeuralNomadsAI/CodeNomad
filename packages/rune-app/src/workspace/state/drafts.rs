@@ -11,6 +11,7 @@ const MAX_WINDOW_DEVICE_FILES: usize = super::super::MAX_DRAFTS * MAX_FILES;
 pub(super) struct LiveDraft {
     text: Option<String>,
     parts: Option<(Draft, bool)>,
+    unconfirmed: Option<crate::composer::UnconfirmedSend>,
     command_unconfirmed: Option<(String, String)>,
 }
 
@@ -121,8 +122,9 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
         if owns_draft {
             let too_long = oversized(text);
             let has_device_parts = s.composer.draft.inline_usage().0 != 0;
-            let has_command = s.composer.command_unconfirmed.is_some();
-            if too_long || has_device_parts || has_command {
+            let unconfirmed = s.composer.clone_unconfirmed();
+            let has_unconfirmed = unconfirmed.is_some() || s.composer.command_unconfirmed.is_some();
+            if too_long || has_device_parts || has_unconfirmed {
                 let live = item.live_drafts.entry(key.into()).or_default();
                 live.text = too_long.then(|| text.clone());
                 live.parts = (too_long || has_device_parts).then(|| {
@@ -130,6 +132,7 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
                     draft.literal_spans = crate::composer::literal::ranges(&s.draft).collect();
                     (draft, s.composer.attachments_missing)
                 });
+                live.unconfirmed = unconfirmed;
                 live.command_unconfirmed = s.composer.command_unconfirmed.clone();
             } else {
                 item.live_drafts.remove(key);
@@ -190,6 +193,9 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
     };
     saved.active_session_id = Some(backend.session.clone());
     let live = item.live_drafts.get(&backend.session);
+    if !same_session && let Some(unconfirmed) = live.and_then(|draft| draft.unconfirmed.as_ref()) {
+        s.composer.restore_unconfirmed(unconfirmed.clone());
+    }
     if !same_session && let Some(slash) = live.and_then(|draft| draft.command_unconfirmed.as_ref())
     {
         s.composer.command_unconfirmed = Some(slash.clone());

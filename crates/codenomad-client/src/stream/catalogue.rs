@@ -27,6 +27,8 @@ pub(super) struct Signals {
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
     workspace_events: Mutex<VecDeque<WorkspaceEvent>>,
+    workspace_stopped: Mutex<HashSet<String>>,
+    workspace_overflow: std::sync::atomic::AtomicBool,
     wake: Wake,
     generation: std::sync::atomic::AtomicU64,
 }
@@ -89,14 +91,26 @@ fn mark_changes(pending: &mut CatalogueChanges, workspace: Option<&str>) -> bool
 
 impl Signals {
     pub(super) fn observe(&self, frame: &Value) {
-        let workspace_event = super::routing::parse_workspace_event(frame).is_some_and(|event| {
-            let mut queue = self.workspace_events.lock().unwrap();
-            if queue.len() >= 256 {
-                queue.pop_front();
-            }
-            queue.push_back(event);
-            true
-        });
+        let workspace_event =
+            super::routing::parse_detached_workspace_event(frame).is_some_and(|event| {
+                match event {
+                    WorkspaceEvent::Stopped { workspace_id } => {
+                        let mut stopped = self.workspace_stopped.lock().unwrap();
+                        if stopped.len() < 128 {
+                            stopped.insert(workspace_id);
+                        }
+                    }
+                    other => {
+                        let mut queue = self.workspace_events.lock().unwrap();
+                        if queue.len() >= 256 {
+                            queue.pop_front();
+                            self.workspace_overflow.store(true, SeqCst);
+                        }
+                        queue.push_back(other);
+                    }
+                }
+                true
+            });
         let provider_changed = crate::settings::provider_change(frame)
             .is_some_and(|id| self.mark(&self.providers, Some(id)));
         let kind = frame["type"].as_str();
@@ -228,6 +242,8 @@ impl CatalogueWatch {
             stats: Mutex::default(),
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
             wake,
         });
@@ -287,11 +303,15 @@ impl CatalogueWatch {
         std::mem::take(&mut *self.signals.pending.lock().unwrap())
     }
 
-    pub fn take_workspace_events(&self) -> (u64, VecDeque<WorkspaceEvent>) {
-        (
-            self.signals.generation.load(SeqCst),
-            std::mem::take(&mut *self.signals.workspace_events.lock().unwrap()),
-        )
+    pub fn take_workspace_events(&self) -> (u64, bool, VecDeque<WorkspaceEvent>) {
+        let generation = self.signals.generation.load(SeqCst);
+        let overflow = self.signals.workspace_overflow.swap(false, SeqCst);
+        let mut events = VecDeque::new();
+        for workspace_id in self.signals.workspace_stopped.lock().unwrap().drain() {
+            events.push_back(WorkspaceEvent::Stopped { workspace_id });
+        }
+        events.extend(self.signals.workspace_events.lock().unwrap().drain(..));
+        (generation, overflow, events)
     }
 
     pub fn take_attention(&self) -> (u64, VecDeque<AttentionHint>) {
@@ -367,9 +387,20 @@ mod tests {
             "workspaceId": "proj-1",
             "changes": [{"directory": "/repo", "path": "new.txt"}]
         }));
-        let (generation, events) = watch.take_workspace_events();
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "proj-1",
+            "event": {"type": "vcs.branch.updated"}
+        }));
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "proj-1",
+            "event": {"type": "filesystem.changed"}
+        }));
+        let (generation, overflow, events) = watch.take_workspace_events();
         assert_eq!(generation, 0);
-        assert_eq!(events.len(), 1);
+        assert!(!overflow);
+        assert_eq!(events.len(), 3);
         assert!(matches!(
             &events[0],
             WorkspaceEvent::FilesChanged { workspace_id, changes }
@@ -378,10 +409,37 @@ mod tests {
                     && changes[0].directory == "/repo"
                     && changes[0].path == "new.txt"
         ));
+        assert!(matches!(
+            &events[1],
+            WorkspaceEvent::WorktreesChanged { workspace_id } if workspace_id == "proj-1"
+        ));
+        assert!(matches!(
+            &events[2],
+            WorkspaceEvent::NativeFilesystemChanged { workspace_id } if workspace_id == "proj-1"
+        ));
         watch.signals.reconnected();
         assert_eq!(watch.take_workspace_events().0, 1);
+        watch.signals.observe(&json!({
+            "type": "workspace.stopped",
+            "workspaceId": "proj-1"
+        }));
         watch.signals.disconnected();
-        assert_eq!(watch.take_workspace_events().0, 2);
+        let (generation, _, events) = watch.take_workspace_events();
+        assert_eq!(generation, 2);
+        assert!(matches!(
+            events.front(),
+            Some(WorkspaceEvent::Stopped { workspace_id }) if workspace_id == "proj-1"
+        ));
+        for _ in 0..260 {
+            watch.signals.observe(&json!({
+                "type": "instance.event",
+                "instanceId": "proj-1",
+                "event": {"type": "filesystem.changed"}
+            }));
+        }
+        let (_, overflow, events) = watch.take_workspace_events();
+        assert!(overflow);
+        assert_eq!(events.len(), 256);
         watch.signals.reconnected();
         assert_eq!(watch.take_workspace_events().0, 3);
     }
@@ -397,6 +455,8 @@ mod tests {
             stats: Mutex::default(),
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             generation: 3.into(),
             wake: Arc::new(move || {
                 wakes.fetch_add(1, SeqCst);
@@ -429,6 +489,8 @@ mod tests {
             stats: Mutex::default(),
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
             wake: Arc::new(|| {}),
         };
@@ -456,6 +518,8 @@ mod tests {
             stats: Mutex::default(),
             attention: Mutex::default(),
             workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
             wake: Arc::new(|| {}),
         };

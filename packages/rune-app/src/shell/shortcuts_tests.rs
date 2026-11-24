@@ -161,6 +161,8 @@ fn close_instance_respects_file_edit_and_pending_form_guards() {
         id: "form-1".into(),
         title: "Confirm".into(),
         fields: vec![json!({"key":"name","type":"string"})],
+        tool: None,
+        infer_websearch: false,
     });
     agent.drafts.insert(
         ("form-1".into(), "name".into()),
@@ -332,7 +334,26 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
         files.document.changed(scope);
     }
 
-    // Unconfirmed slash command does NOT trap closing/switching, and its anti-replay lock survives reopen.
+    // Unconfirmed prompt and slash command do NOT trap closing/switching, and both locks survive reopen.
+    let (cmd_tx, cmd_rx) = codenomad_client::bounded(2);
+    rt.state.commands = Some(cmd_tx);
+    rt.state.phase = Phase::Ready;
+    rt.state.draft = TextEdit::new("unsent draft");
+    rt.update(|s, tx| crate::composer::send(s, tx, false));
+    let crate::transport::Command::Prompt(sent) = cmd_rx.try_recv().unwrap() else {
+        panic!("expected prompt");
+    };
+    let unconfirmed_id = sent.id.unwrap();
+    crate::composer::acknowledge(
+        &mut rt.state,
+        &unconfirmed_id,
+        crate::transport::PromptOutcome::Unconfirmed,
+    );
+    assert_eq!(
+        rt.state.composer.unconfirmed_id(),
+        Some(unconfirmed_id.as_str())
+    );
+    rt.state.phase = Phase::Ready;
     rt.state.composer.command_unconfirmed = Some(("compact".into(), String::new()));
     assert!(crate::launcher::can_change_session(&rt.state));
 
@@ -342,7 +363,7 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
     assert!(!rt.state.screen.is_launcher());
     assert_eq!(workspace::active_session(&rt.state), Some("session"));
 
-    // Ready closes the active session while preserving Files tree expansion, Git commit draft, session draft, and unconfirmed command lock.
+    // Ready closes the active session while preserving Files tree expansion, Git commit draft, session draft, and unconfirmed locks.
     rt.state.phase = Phase::Ready;
     send_key(&mut rt, Key::Command('w'), primary_mods(true));
     assert!(rt.state.screen.is_launcher());
@@ -368,6 +389,10 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
     );
     let restored = workspace::bound(&mut rt.state, &backend);
     assert_eq!(restored, "unsent draft");
+    assert_eq!(
+        rt.state.composer.unconfirmed_id(),
+        Some(unconfirmed_id.as_str())
+    );
     assert_eq!(
         rt.state.composer.command_unconfirmed,
         Some(("compact".into(), String::new()))
@@ -647,7 +672,20 @@ fn modals_pickers_composing_inputs_and_repeat_block_global_shortcuts() {
     assert_eq!(rt.state.draft.text, "a");
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
 
-    // Unmodified PageUp remapped to a global shortcut does not fire while a text input has focus.
+    // Unmodified PageUp and Shift+F10 remapped to global shortcuts do not fire while a text input has focus.
+    settings::fixture_shortcuts(
+        &rt.state,
+        json!({"instance-next": [{"key": "f10", "shift": true}]}),
+    );
+    send_key(
+        &mut rt,
+        Key::Function(10),
+        Mods {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
     settings::fixture_shortcuts(&rt.state, json!({"instance-next": [{"key": "pageup"}]}));
     send_key(&mut rt, Key::PageUp, Mods::default());
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
@@ -807,10 +845,25 @@ fn hidden_git_picker_does_not_block_global_shortcuts() {
     send_key(&mut rt, Key::Command(']'), primary_mods(false));
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
 
-    // A saved bare F6 override must never hijack Rune's region focus cycling even with no focus.
+    // A saved bare F6 override is omitted from display and never hijacks Rune's region focus cycling.
     settings::fixture_shortcuts(&rt.state, json!({"instance-next": [{"key": "f6"}]}));
+    assert_eq!(
+        settings::with_shortcut_label(&rt.state, "Next", "instance-next"),
+        "Next"
+    );
     send_key(&mut rt, Key::Function(6), Mods::default());
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+
+    // Solid registration priority: session-new wins over app-tab-1 when both share the same key.
+    rt.state.screen.launcher_mut().unwrap().connection =
+        Some(Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    settings::fixture_shortcuts(
+        &rt.state,
+        json!({"session-new": [{"key": "f8"}], "app-tab-1": [{"key": "f8"}]}),
+    );
+    send_key(&mut rt, Key::Function(8), Mods::default());
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+    assert!(rt.state.screen.launcher().unwrap().pending);
 }
 
 #[test]
@@ -905,6 +958,7 @@ fn session_new_in_linked_worktree_sends_directory_query_and_verifies_placement()
                 repository: codenomad_client::git::Repository::Git,
                 trees: vec![codenomad_client::git::Worktree {
                     slug: "wt-linked".into(),
+                    label: None,
                     directory: "/repo-alias".into(),
                     service_directory: Some("/repo-linked".into()),
                     branch: Some("feat".into()),
@@ -917,52 +971,131 @@ fn session_new_in_linked_worktree_sends_directory_query_and_verifies_placement()
             crate::git::session_directory(&rt.state),
             crate::git::SessionDirectory::Known(ref dir) if dir == "/repo-linked"
         ));
+
+        // After a disconnect/Failed phase or SessionMoved, session_directory requires authoritative session lookup.
+        rt.state.phase = Phase::Failed;
+        assert!(matches!(
+            crate::git::session_directory(&rt.state),
+            crate::git::SessionDirectory::ResolveSession(ref id) if id == "new-linked"
+        ));
     });
 }
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn detached_files_and_git_invalidate_after_stream_reconnect() {
-    let mut s = workspace_state(2);
-    let backend = Backend {
-        workspace: "header-windows".into(),
-        session: "session".into(),
-        ..Backend::unauthenticated("http://127.0.0.1:9/").unwrap()
-    };
-    if let Some(l) = s.screen.launcher_mut() {
-        l.connection = Some(Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
-    }
-    workspace::bound(&mut s, &backend);
-    crate::files::bind(&mut s, &backend);
-    let files = s.files.as_mut().unwrap();
-    files.online(true);
-    files.activate(true);
-    files.show(true);
-    let initial = files.tree.take_refresh();
-    assert_eq!(initial.len(), 1);
-    for read in initial {
-        assert!(files.tree.complete(read, Ok(vec![]), Ok));
-    }
-    assert!(files.tree.take_refresh().is_empty());
-    crate::git::connected(&mut s, &backend);
-    let mut rt = project_runtime(s);
+    crate::platform::block_on(async {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    // Close active session so Files and Git run in detached mode, then move it to a cached background tab.
-    send_key(&mut rt, Key::Command('w'), primary_mods(true));
-    assert!(rt.state.screen.is_launcher());
-    assert_eq!(crate::git::fixture_online(&rt.state), Some(true));
-    rt.state.screen.launcher_mut().unwrap().pending = false;
-    send_key(&mut rt, Key::Command(']'), primary_mods(false));
-    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut buf = [0u8; 2048];
+            let mut sse_count = 0usize;
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let header = String::from_utf8_lossy(&buf[..n]);
+                if header.starts_with("GET /api/events") {
+                    sse_count += 1;
+                    if sse_count == 1 {
+                        let _ = stream
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {\"type\":\"server.connected\"}\n\n",
+                            )
+                            .await;
+                        let _ = stream.shutdown().await;
+                    } else {
+                        let _ = stream
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"type\":\"server.connected\"}\n\n",
+                            )
+                            .await;
+                        let _ = stream.flush().await;
+                        tokio::spawn(async move {
+                            crate::platform::sleep(std::time::Duration::from_secs(3)).await;
+                            drop(stream);
+                        });
+                    }
+                } else {
+                    let body = b"{\"data\":[]}";
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                    let _ = stream.write_all(body).await;
+                    let _ = stream.shutdown().await;
+                }
+            }
+        });
 
-    assert!(workspace::set_detached_online(&mut rt.state, false));
-    assert!(workspace::set_detached_online(&mut rt.state, true));
+        let mut s = workspace_state(2);
+        let root_backend = Backend::unauthenticated(&address).unwrap();
+        let backend = Backend {
+            workspace: "header-windows".into(),
+            session: "session".into(),
+            ..root_backend.clone()
+        };
+        let (watch, task) =
+            codenomad_client::stream::CatalogueWatch::new(root_backend.clone(), s.wake.clone());
+        crate::platform::spawn(task);
+        if let Some(l) = s.screen.launcher_mut() {
+            l.connection = Some(root_backend);
+            l.catalogue_watch = Some(watch);
+        }
+        workspace::bound(&mut s, &backend);
+        crate::files::bind(&mut s, &backend);
+        let files = s.files.as_mut().unwrap();
+        files.online(true);
+        files.activate(true);
+        files.show(true);
+        let initial = files.tree.take_refresh();
+        assert_eq!(initial.len(), 1);
+        for read in initial {
+            assert!(files.tree.complete(read, Ok(vec![]), Ok));
+        }
+        assert!(files.tree.take_refresh().is_empty());
+        crate::git::connected(&mut s, &backend);
+        let mut rt = project_runtime(s);
 
-    // Switch back to tab 0: detached Files tree was invalidated and Git is back online.
-    send_key(&mut rt, Key::Command('['), primary_mods(false));
-    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
-    assert_eq!(crate::git::fixture_online(&rt.state), Some(true));
-    let files = rt.state.files.as_mut().unwrap();
-    files.show(true);
-    files.activate(true);
-    assert!(!files.tree.take_refresh().is_empty());
+        // Close active session so Files and Git run in detached mode, then move it to a cached background tab.
+        send_key(&mut rt, Key::Command('w'), primary_mods(true));
+        assert!(rt.state.screen.is_launcher());
+        rt.state.screen.launcher_mut().unwrap().pending = false;
+        send_key(&mut rt, Key::Command(']'), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+
+        // Poll launcher until the real SSE watch observes disconnect (gen=2) and reconnect (gen=3).
+        for _ in 0..300 {
+            rt.update(|s, tx| {
+                let _ = crate::launcher::poll(s, tx);
+            });
+            if rt
+                .state
+                .screen
+                .launcher()
+                .is_some_and(|l| l.workspace_stream_generation >= 3)
+            {
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            rt.state
+                .screen
+                .launcher()
+                .is_some_and(|l| l.workspace_stream_generation >= 3)
+        );
+        rt.state.screen.launcher_mut().unwrap().pending = false;
+
+        // Switch back to tab 0: real SSE reconnect through launcher::poll invalidated detached Files and restored Git online.
+        send_key(&mut rt, Key::Command('['), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+        assert_eq!(crate::git::fixture_online(&rt.state), Some(true));
+        let files = rt.state.files.as_mut().unwrap();
+        files.show(true);
+        files.activate(true);
+        assert!(!files.tree.take_refresh().is_empty());
+        server.abort();
+    });
 }

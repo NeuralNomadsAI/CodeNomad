@@ -42,11 +42,21 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         .chain(std::iter::once(crate::shell::notifications::history_entry(
             s, touch,
         )));
-    let new_help = crate::settings::with_shortcut_label(
-        s,
-        strings::t("instanceTabs.new.title"),
-        "new-instance",
-    );
+    let browse_shadows_new = crate::platform::folder_picker_available()
+        && matches!(ui.entries[ui.active].saved, Tab::Blank)
+        && {
+            let new_key = crate::settings::shortcut_label(s, "new-instance");
+            !new_key.is_empty() && new_key == crate::settings::shortcut_label(s, "browse-folder")
+        };
+    let new_help = if browse_shadows_new {
+        strings::t("instanceTabs.new.title").to_owned()
+    } else {
+        crate::settings::with_shortcut_label(
+            s,
+            strings::t("instanceTabs.new.title"),
+            "new-instance",
+        )
+    };
     let active_close_help = crate::settings::with_shortcut_label(
         s,
         strings::t("instanceTab.actions.close.ariaLabel"),

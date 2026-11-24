@@ -61,6 +61,7 @@ pub(crate) enum SessionDirectory {
     Root,
     Known(String),
     ResolveSlug(String),
+    ResolveSession(String),
 }
 
 pub(crate) fn session_directory(s: &State) -> SessionDirectory {
@@ -70,6 +71,14 @@ pub(crate) fn session_directory(s: &State) -> SessionDirectory {
     let Some(owner) = s.git.owner.as_ref() else {
         return SessionDirectory::Root;
     };
+    if owner.session_moved || matches!(s.phase, crate::Phase::Failed | crate::Phase::Reconnecting) {
+        let active = crate::workspace::active_session(s)
+            .map(str::to_owned)
+            .or_else(|| (!owner.backend.session.is_empty()).then(|| owner.backend.session.clone()));
+        if let Some(session_id) = active {
+            return SessionDirectory::ResolveSession(session_id);
+        }
+    }
     if owner.session_slug == "root" {
         return SessionDirectory::Root;
     }
