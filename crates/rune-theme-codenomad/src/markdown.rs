@@ -4,34 +4,51 @@ use rune::{El, ScrollSpec, rich};
 use rune_kit::{CodeFrame, Markdown, MarkdownStyle, syntax};
 use std::borrow::Cow;
 
+pub fn prose_has_match(source: &str, query: crate::timeline::search::Query<'_>) -> bool {
+    let source = literal_breaks(source);
+    !prose_ranges(&source, query, 1).is_empty()
+}
+
 pub fn prose<S: 'static>(
     source: &str,
     streaming: bool,
     highlight: bool,
-    query: Option<(&[String], bool)>,
+    query: Option<crate::timeline::search::Query<'_>>,
     link: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
     secondary: impl Fn(&mut S, &str, (f32, f32), &mut rune::Tx) + 'static,
     help: impl Fn(&str) -> Option<String> + 'static,
     wrapped: impl Fn(usize, &str) -> bool + 'static,
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
 ) -> El {
-    let kit = kit(dark());
+    let dark = dark();
+    let kit = kit(dark);
+    let t = tokens(dark);
     let style = MarkdownStyle::from_kit(kit)
         .code_block(kit.c.bg_deep, kit.c.border_base)
         .link(kit.c.text_accent)
         .syntax_highlight(highlight);
     let source = literal_breaks(source).into_owned();
-    let matches = match query {
-        Some((terms, true)) => crate::timeline::search::ranges(&source, terms)
+    let matches: Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)> = match query {
+        Some(q) => prose_ranges(&source, q, 512)
             .into_iter()
-            .map(|range| vec![range])
+            .enumerate()
+            .map(|(i, spans)| {
+                let hl =
+                    if q.active && i == 0 && q.claimed.is_none_or(|claimed| !claimed.replace(true))
+                    {
+                        rune_kit::markdown::Highlight::current()
+                            .bg(t.color("transcript-search-active"))
+                            .fg(t.color("transcript-search-active-ink"))
+                            .radius(0.0)
+                            .key("history-search-match")
+                    } else {
+                        rune_kit::markdown::Highlight::new()
+                            .bg(t.color("transcript-search-mark"))
+                            .radius(0.0)
+                    };
+                (spans, hl)
+            })
             .collect(),
-        Some((terms, false)) => terms.first().map_or_else(Vec::new, |phrase| {
-            Markdown::find(&source, phrase, rune_kit::markdown::Case::Insensitive)
-                .into_iter()
-                .take(512)
-                .collect()
-        }),
         None => Vec::new(),
     };
     Markdown::new(source)
@@ -47,6 +64,93 @@ pub fn prose<S: 'static>(
         .code_wrap(wrapped)
         .code_frame(frame)
         .build(kit)
+}
+
+fn prose_ranges(
+    source: &str,
+    query: crate::timeline::search::Query<'_>,
+    limit: usize,
+) -> Vec<Vec<std::ops::Range<usize>>> {
+    if limit == 0 || source.is_empty() {
+        return Vec::new();
+    }
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
+    let mut out = Vec::new();
+    let mut rendered = String::new();
+    let mut map: Vec<(usize, usize, usize)> = Vec::new();
+    let flush = |rendered: &mut String,
+                 map: &mut Vec<(usize, usize, usize)>,
+                 out: &mut Vec<Vec<std::ops::Range<usize>>>| {
+        if rendered.is_empty() || out.len() >= limit {
+            rendered.clear();
+            map.clear();
+            return;
+        }
+        for hit in query.ranges(rendered, limit - out.len()) {
+            let mut spans: Vec<std::ops::Range<usize>> = Vec::new();
+            for &(r_start, r_end, s_start) in map.iter() {
+                let a = hit.start.max(r_start);
+                let b = hit.end.min(r_end);
+                if a < b {
+                    let span = (s_start + (a - r_start))..(s_start + (b - r_start));
+                    if let Some(prev) = spans.last_mut().filter(|prev| prev.end == span.start) {
+                        prev.end = span.end;
+                    } else {
+                        spans.push(span);
+                    }
+                }
+            }
+            if !spans.is_empty() {
+                out.push(spans);
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+        rendered.clear();
+        map.clear();
+    };
+    for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
+        match event {
+            Event::Text(ref text) | Event::Code(ref text) => {
+                let src_slice = source.get(range.clone()).unwrap_or_default();
+                let start = if matches!(event, Event::Code(_)) {
+                    src_slice
+                        .find(text.as_ref())
+                        .map_or(range.start, |off| range.start + off)
+                } else {
+                    range.start
+                };
+                if source.get(start..start + text.len()) == Some(text.as_ref()) {
+                    let r_start = rendered.len();
+                    rendered.push_str(&text);
+                    map.push((r_start, rendered.len(), start));
+                } else if !text.is_empty() && query.matches(&text) {
+                    out.push(vec![range]);
+                    if out.len() >= limit {
+                        break;
+                    }
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => rendered.push(' '),
+            Event::End(
+                pulldown_cmark::TagEnd::Paragraph
+                | pulldown_cmark::TagEnd::Heading(_)
+                | pulldown_cmark::TagEnd::Item
+                | pulldown_cmark::TagEnd::CodeBlock
+                | pulldown_cmark::TagEnd::TableCell,
+            ) => {
+                flush(&mut rendered, &mut map, &mut out);
+                if out.len() >= limit {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut rendered, &mut map, &mut out);
+    out
 }
 
 pub fn link_menu<S: 'static>(
@@ -223,4 +327,38 @@ pub(crate) fn code_body(body: El, wrap: bool) -> El {
         .inset_surface()
         .pad(Space::Sm)
         .child(viewport)
+}
+
+#[cfg(test)]
+#[test]
+fn prose_search_bounds_matches_and_skips_link_destinations() {
+    let repeated = "abc ".repeat(10_000);
+    let terms = vec!["abc".into()];
+    let query = crate::timeline::search::Query {
+        terms: &terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert_eq!(prose_ranges(&repeated, query, 512).len(), 512);
+    assert!(prose_has_match(&repeated, query));
+
+    let link_only = "[Guide](https://example.test/ONLY_IN_URL) **Pro**of";
+    let url_terms = vec!["ONLY_IN_URL".into()];
+    let url_query = crate::timeline::search::Query {
+        terms: &url_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert!(!prose_has_match(link_only, url_query));
+
+    let split_terms = vec!["Proof".into()];
+    let split_query = crate::timeline::search::Query {
+        terms: &split_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert!(prose_has_match(link_only, split_query));
 }

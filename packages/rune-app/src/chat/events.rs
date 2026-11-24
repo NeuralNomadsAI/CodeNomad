@@ -267,6 +267,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::Reconnecting | Event::ConnectionLost => {
                 s.transcript_display.messages.offline();
+                s.transcript_display.tool_clock.pause();
                 s.status_permissions.online(false);
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::reconnecting(s);
@@ -309,6 +310,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 chat::reader::cancel_page(s);
                 s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
+                s.transcript_display.tool_clock.reset();
                 s.transcript_display.pictures.clear();
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
@@ -324,6 +326,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.status_permissions.online(false);
                 s.status_usage.disconnect();
                 s.transcript_display.children.clear();
+                s.transcript_display.tool_clock.reset();
                 s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]

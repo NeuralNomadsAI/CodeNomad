@@ -19,7 +19,7 @@ impl Query<'_> {
         !self.ranges(text, 1).is_empty()
     }
 
-    fn ranges(self, text: &str, limit: usize) -> Vec<Range<usize>> {
+    pub(crate) fn ranges(self, text: &str, limit: usize) -> Vec<Range<usize>> {
         if self.ranked {
             return ranked_ranges(text, self.terms, limit);
         }
@@ -130,7 +130,8 @@ fn word(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
 }
 
-pub(crate) fn ranges(text: &str, terms: &[String]) -> Vec<std::ops::Range<usize>> {
+#[cfg(test)]
+fn ranges(text: &str, terms: &[String]) -> Vec<std::ops::Range<usize>> {
     ranked_ranges(text, terms, 512)
 }
 

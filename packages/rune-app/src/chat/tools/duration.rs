@@ -1,7 +1,11 @@
 use super::Tool;
-use crate::{State, platform::storage::unix_millis, strings::locale};
+use crate::{Phase, State, platform::storage::unix_millis, strings::locale};
 use rune::{El, Tx, row, text};
-use rune_theme_codenomad::{Space, TextRole, catalogue, layout::Layout, usage::numbers};
+use rune_theme_codenomad::{
+    Space, TextRole, catalogue,
+    layout::{DrawnRect, Layout},
+    usage::numbers,
+};
 use std::{
     cell::Cell,
     collections::HashMap,
@@ -11,10 +15,26 @@ use std::{
 
 #[derive(Default)]
 pub(crate) struct Clock {
-    visible: HashMap<String, Weak<Cell<bool>>>,
+    visible: HashMap<String, (Weak<Cell<bool>>, Rc<DrawnRect>)>,
     next: Option<f64>,
     epoch: u64,
     generation: u64,
+}
+
+fn in_viewport(rect: [f32; 4], bounds: [f32; 4]) -> bool {
+    if bounds[2] <= 0.0 || bounds[3] <= 0.0 {
+        return true;
+    }
+    rect[2] > 0.0
+        && rect[3] > 0.0
+        && rect[0] < bounds[0] + bounds[2]
+        && rect[0] + rect[2] > bounds[0]
+        && rect[1] < bounds[1] + bounds[3]
+        && rect[1] + rect[3] > bounds[1]
+}
+
+fn online(phase: &Phase) -> bool {
+    matches!(phase, Phase::Ready | Phase::Streaming)
 }
 
 impl Clock {
@@ -26,16 +46,24 @@ impl Clock {
         self.generation
     }
 
+    pub(crate) fn pause(&mut self) {
+        self.next = None;
+    }
+
     pub(crate) fn reset(&mut self) {
         self.visible.clear();
         self.next = None;
         self.generation = self.generation.wrapping_add(1);
     }
 
-    pub(crate) fn poll(&mut self, now: f64, tx: &mut Tx) -> bool {
+    pub(crate) fn poll(&mut self, now: f64, bounds: [f32; 4], tx: &mut Tx) -> bool {
         self.visible
-            .retain(|_, lease| lease.upgrade().is_some_and(|active| active.get()));
-        if self.visible.is_empty() {
+            .retain(|_, (lease, _)| lease.upgrade().is_some_and(|active| active.get()));
+        if !self
+            .visible
+            .values()
+            .any(|(_, rect)| in_viewport(rect.get(), bounds))
+        {
             self.next = None;
             return false;
         }
@@ -73,7 +101,7 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
             .tool_clock
             .visible
             .get(&entry_key)
-            .and_then(Weak::upgrade)
+            .and_then(|(lease, _)| lease.upgrade())
         {
             active.set(false);
         }
@@ -98,10 +126,19 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
     let lease = clock
         .visible
         .get(&entry_key)
-        .and_then(Weak::upgrade)
+        .and_then(|(lease, _)| lease.upgrade())
         .filter(|active| active.get())
         .unwrap_or_else(|| Rc::new(Cell::new(true)));
+    let drawn = clock
+        .visible
+        .get(&entry_key)
+        .map(|(_, rect)| rect.clone())
+        .unwrap_or_else(|| Rc::new(DrawnRect::new([0.0; 4])));
     let scope = s.input_scope.clone();
+    let layout_scope = scope.clone();
+    let layout_key = entry_key.clone();
+    let layout_drawn = drawn.clone();
+    let visible_drawn = drawn.clone();
     let observer_key = format!(
         "{entry_key}-{:p}-{}",
         Rc::as_ptr(&scope),
@@ -109,15 +146,37 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
     );
     group
         .key(observer_key)
+        .drawn_rect_into(&drawn)
+        .on_drawn_layout_tx(move |s: &mut State, _, tx| {
+            if s.current_scope(&layout_scope)
+                && online(&s.phase)
+                && s.transcript_display.tool_clock.next.is_none()
+                && s.transcript_display
+                    .tool_clock
+                    .visible
+                    .contains_key(&layout_key)
+                && in_viewport(
+                    layout_drawn.get(),
+                    s.tool_diff_preferences.history_bounds.get(),
+                )
+            {
+                tx.wake_after(Duration::ZERO);
+            }
+            tx.live_only();
+        })
         .on_visible(move |s: &mut State, visible, tx| {
             if s.current_scope(&scope) {
+                let bounds = s.tool_diff_preferences.history_bounds.get();
                 let clock = &mut s.transcript_display.tool_clock;
                 if visible {
-                    if clock
+                    let added = clock
                         .visible
-                        .insert(entry_key.clone(), Rc::downgrade(&lease))
-                        .is_none()
-                    {
+                        .insert(
+                            entry_key.clone(),
+                            (Rc::downgrade(&lease), visible_drawn.clone()),
+                        )
+                        .is_none();
+                    if added && online(&s.phase) && in_viewport(visible_drawn.get(), bounds) {
                         tx.wake_after(Duration::ZERO);
                     }
                 } else {

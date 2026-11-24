@@ -493,6 +493,19 @@ pub(crate) async fn run_with_reading(
                                 )
                                 .await;
                             }
+                            content::ToolFit::Settled(tool) => {
+                                history::check(&reader.resident)?;
+                                reader_event(
+                                    reading,
+                                    reader.generation,
+                                    &out,
+                                    &wake,
+                                    Event::Tool(id.into(), tool),
+                                )
+                                .await;
+                                reader.dirty = true;
+                                reader.quiet = Instant::now() + Duration::from_millis(100);
+                            }
                             content::ToolFit::Drop => {}
                             content::ToolFit::Repair => {
                                 reader.dirty = true;

@@ -208,13 +208,18 @@ fn running_tool_duration_ticks_through_view_memo_and_stops_when_settled() {
 fn active_search_keeps_skill_prose_bounded_and_uses_prose_step() {
     let prefix = "a".repeat(270_000);
     let raw_skill = format!(
-        "# Skill heading\n\n{prefix}\nDEEP_SKILL_NEEDLE\n{}",
+        "# Skill heading\n\n[Guide](https://example.test/LINK_URL_ONLY)\n\n{prefix}\nDEEP_SKILL_NEEDLE\n{}",
         "b".repeat(50_000)
     );
     let row = crate::history::decode_message(&json!({
         "type":"assistant","id":"msg","time":{"completed":10000},"content":[
             {"type":"tool","id":"sk","name":"skill",
-             "state":{"status":"completed","input":{"name":"demo","only_input":"INPUT_ONLY_NEEDLE"},
+             "state":{"status":"completed","input":{
+                 "name":"demo",
+                 "shared":"DEEP_SKILL_NEEDLE",
+                 "link_only":"LINK_URL_ONLY",
+                 "only_input":"INPUT_ONLY_NEEDLE"
+             },
                       "content":[{"type":"text","text":raw_skill}]}}
         ]
     }))
@@ -256,6 +261,7 @@ fn active_search_keeps_skill_prose_bounded_and_uses_prose_step() {
     rt.frame(0.0);
     let skill_key = super::tool_key("msg", "sk");
     assert!(rt.find(&format!("{skill_key}-wrap")).is_none());
+    assert!(rt.find("history-search-match").is_some());
     let tree = rt.accessibility_json().to_string();
     assert!(tree.contains("Skill heading") && !tree.contains("# Skill heading"));
     assert!(tree.contains("DEEP_SKILL_NEEDLE"));
@@ -268,6 +274,13 @@ fn active_search_keeps_skill_prose_bounded_and_uses_prose_step() {
         "msg",
         tool,
         output_hit.query(Some((codenomad_client::search::Kind::Tool, 0))),
+    ));
+    let link_url_hit = crate::chat::search_hit::SearchHit::new(&hit, "LINK_URL_ONLY", false);
+    assert!(super::match_hidden_by_inputs(
+        &rt.state,
+        "msg",
+        tool,
+        link_url_hit.query(Some((codenomad_client::search::Kind::Tool, 0))),
     ));
     let input_hit = crate::chat::search_hit::SearchHit::new(&hit, "INPUT_ONLY_NEEDLE", false);
     assert!(super::match_hidden_by_inputs(
@@ -331,31 +344,80 @@ fn clock_stops_offscreen_or_on_session_change_and_rearms_after_same_session_susp
         assert!(Display::poll(s, false, 1.4, tx));
     });
 
+    let drain = |rt: &mut Runtime<crate::State>| {
+        for _ in 0..30 {
+            rt.frame(0.1);
+        }
+    };
+
+    // Pause clock during disconnect (Reconnecting) and resume when connected again.
+    rt.update(|s, _| {
+        s.phase = Phase::Reconnecting;
+        s.transcript_display.tool_clock.pause();
+    });
+    drain(&mut rt);
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 4.0, tx));
+    });
+    rt.frame(0.0);
+    assert!(rt.wake_deadline().is_none());
+    rt.update(|s, _| s.phase = Phase::Streaming);
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 4.1, tx));
+    });
+    rt.frame(0.0);
+    assert!(rt.wake_deadline().is_some());
+
+    // Clip header outside transcript history_bounds even while still mounted in the window.
+    rt.update(|s, _| {
+        s.tool_diff_preferences
+            .history_bounds
+            .set([0.0, 500.0, 960.0, 200.0]);
+    });
+    drain(&mut rt);
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 7.2, tx));
+    });
+    rt.frame(0.0);
+    assert!(rt.wake_deadline().is_none());
+    rt.update(|s, _| {
+        s.tool_diff_preferences
+            .history_bounds
+            .set([0.0, 0.0, 960.0, 200.0]);
+    });
+    rt.frame(0.1);
+    rt.update(|s, tx| {
+        assert!(!Display::poll(s, false, 7.4, tx));
+    });
+    rt.frame(0.0);
+    assert!(rt.wake_deadline().is_some());
+
     // Scroll the running card off-screen so on_visible(false) stops the shared clock.
     rt.update(|_, tx| tx.scroll_to("scroller", 0.0, 600.0));
-    rt.frame(1.5);
-    rt.frame(1.5);
+    drain(&mut rt);
     rt.update(|s, tx| {
-        assert!(!Display::poll(s, false, 2.6, tx));
+        assert!(!Display::poll(s, false, 10.5, tx));
     });
+    rt.frame(0.0);
     assert!(rt.wake_deadline().is_none());
 
     // Bring back on screen, then switch session via bind() and verify clock stops.
     rt.update(|_, tx| tx.scroll_to("scroller", 0.0, 0.0));
-    rt.frame(2.7);
-    rt.frame(2.7);
+    drain(&mut rt);
     rt.update(|s, tx| {
-        assert!(!Display::poll(s, false, 2.8, tx));
+        assert!(!Display::poll(s, false, 14.0, tx));
     });
+    rt.frame(0.0);
     assert!(rt.wake_deadline().is_some());
     rt.update(|s, _| {
         s.transcript_display.bind("http://a", "ws", "other");
         s.messages.clear();
     });
-    rt.frame(4.0);
+    drain(&mut rt);
     rt.update(|s, tx| {
-        assert!(!Display::poll(s, false, 4.0, tx));
+        assert!(!Display::poll(s, false, 17.5, tx));
     });
+    rt.frame(0.0);
     assert!(rt.wake_deadline().is_none());
 }
 

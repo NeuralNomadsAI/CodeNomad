@@ -70,33 +70,39 @@ fn prose_for(
     let steps = s.transcript_display.steps(&key);
     let version = s.transcript_display.stream_version();
     let memo_key = format!("{group}-markdown");
-    let terms = query.map(|q| (q.terms, q.ranked)).or_else(|| {
+    let query = query.or_else(|| {
         s.transcript_display
             .search_highlight
             .as_ref()
             .filter(|hit| hit.message == message)
-            .map(|hit| {
-                let q = hit.query(None);
-                (q.terms, q.ranked)
-            })
+            .map(|hit| hit.query(None))
     });
     window(s, key, &[source], limit, |shown, units| {
-        if let Some(q) = query
-            && q.active
-            && let Some(claimed) = q.claimed
-            && q.matches(shown)
-        {
-            claimed.set(true);
-        }
+        let claim_active = match query {
+            Some(q) if q.active => match q.claimed {
+                Some(claimed) => {
+                    !claimed.get() && markdown::prose_has_match(shown, q) && !claimed.replace(true)
+                }
+                None => true,
+            },
+            _ => false,
+        };
+        let prose_query = query.map(|q| rune_theme_codenomad::timeline::search::Query {
+            active: claim_active,
+            claimed: None,
+            ..q
+        });
         let active_locale = locale();
         let stamp = (
             version,
             steps,
             std::rc::Rc::as_ptr(&scope) as usize,
             active_locale,
+            layout::dark(),
             &unwrapped,
-            terms,
+            prose_query.map(|q| (q.terms, q.ranked, q.active)),
             &diagram_sources,
+            (!streaming).then_some(shown),
         );
         let build = || {
             let diagram_sources = diagram_sources.clone();
@@ -109,7 +115,7 @@ fn prose_for(
                     } else {
                         HIGHLIGHT_LIMIT
                     },
-                terms,
+                prose_query,
                 links::on_open(link_scope.clone()),
                 links::on_menu(link_scope, active_locale),
                 links::help,
@@ -170,7 +176,7 @@ fn prose_for(
                 },
             )
         };
-        if streaming && units > TOOL_LIMIT {
+        if units > TOOL_LIMIT {
             markdown::hold_frame(memo_key, stamp, build)
         } else {
             build()

@@ -173,9 +173,15 @@ impl Display {
     }
 
     pub fn poll(s: &mut State, changed: bool, now: f64, tx: &mut rune::Tx) -> bool {
-        let timeline = crate::timeline::poll(s, tx)
-            | crate::timeline::search::poll(s, now, tx)
-            | s.transcript_display.tool_clock.poll(now, tx);
+        let clock = if matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming) {
+            let bounds = s.tool_diff_preferences.history_bounds.get();
+            s.transcript_display.tool_clock.poll(now, bounds, tx)
+        } else {
+            s.transcript_display.tool_clock.pause();
+            false
+        };
+        let timeline =
+            crate::timeline::poll(s, tx) | crate::timeline::search::poll(s, now, tx) | clock;
         let stream = &mut s.transcript_display.stream;
         if changed {
             stream.pending = s.messages.last().is_some_and(|row| {
