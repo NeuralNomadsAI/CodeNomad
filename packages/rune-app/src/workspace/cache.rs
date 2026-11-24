@@ -42,11 +42,20 @@ impl Cache {
             .is_some_and(|incoming| !incoming.is_closed())
     }
 
+    fn is_detached(&self) -> bool {
+        self.launcher_visible && self.incoming.is_none()
+    }
+
     pub(super) fn deliver_detached_event(
         &mut self,
         event: &codenomad_client::transport::WorkspaceEvent,
     ) -> bool {
-        if self.has_conversation_stream() {
+        if !self.is_detached()
+            && !matches!(
+                event,
+                codenomad_client::transport::WorkspaceEvent::Stopped { .. }
+            )
+        {
             return false;
         }
         let mut delivered = false;
@@ -62,7 +71,7 @@ impl Cache {
     }
 
     pub(super) fn set_detached_online(&mut self, online: bool) -> bool {
-        if self.has_conversation_stream() {
+        if !self.is_detached() {
             return false;
         }
         let mut changed = false;

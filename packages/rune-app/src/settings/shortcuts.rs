@@ -119,11 +119,11 @@ fn bindings_conflict(first: &[Chord], second: &[Chord], platform: rune::KeyPlatf
 
 pub(super) fn record(event: &KeyEvent, tx: &Tx) -> Option<Value> {
     use serde_json::json;
-    let name = if let Some(c) = physical_slot(tx) {
+    let name = if let Some(c) = tx.physical_key().and_then(physical_slot) {
         c.to_string()
     } else {
         match &event.key {
-            Key::Command(c) => logical_command(*c, event, tx.key_base())
+            Key::Command(c) => logical_command(*c, event, tx.physical_key(), tx.key_base())
                 .to_lowercase()
                 .to_string(),
             Key::Text(text) => text.to_lowercase(),
@@ -182,7 +182,7 @@ pub(super) fn matches_shortcut_in(
 ) -> bool {
     catalog::resolve(preferences, action)
         .iter()
-        .any(|chord| matches(*chord, event, physical_slot(tx), tx.key_base()))
+        .any(|chord| matches(*chord, event, tx.physical_key(), tx.key_base()))
 }
 
 fn canonical_char(c: char) -> char {
@@ -193,22 +193,108 @@ fn canonical_char(c: char) -> char {
     }
 }
 
-fn logical_command(typed: char, event: &KeyEvent, base: Option<char>) -> char {
-    // Rune substitutes the US-position character for non-ASCII Ctrl chords off macOS.
-    if cfg!(not(target_os = "macos")) && typed.is_ascii() && event.mods.ctrl && !event.mods.alt {
+fn is_unshifted_us_char(c: char) -> bool {
+    c.is_ascii_lowercase()
+        || c.is_ascii_digit()
+        || matches!(
+            c,
+            '`' | '-' | '=' | '[' | ']' | '\\' | ';' | '\'' | ',' | '.' | '/'
+        )
+}
+
+fn physical_us_char(key: PhysicalKeyCode) -> Option<char> {
+    Some(match key {
+        PhysicalKeyCode::KeyA => 'a',
+        PhysicalKeyCode::KeyB => 'b',
+        PhysicalKeyCode::KeyC => 'c',
+        PhysicalKeyCode::KeyD => 'd',
+        PhysicalKeyCode::KeyE => 'e',
+        PhysicalKeyCode::KeyF => 'f',
+        PhysicalKeyCode::KeyG => 'g',
+        PhysicalKeyCode::KeyH => 'h',
+        PhysicalKeyCode::KeyI => 'i',
+        PhysicalKeyCode::KeyJ => 'j',
+        PhysicalKeyCode::KeyK => 'k',
+        PhysicalKeyCode::KeyL => 'l',
+        PhysicalKeyCode::KeyM => 'm',
+        PhysicalKeyCode::KeyN => 'n',
+        PhysicalKeyCode::KeyO => 'o',
+        PhysicalKeyCode::KeyP => 'p',
+        PhysicalKeyCode::KeyQ => 'q',
+        PhysicalKeyCode::KeyR => 'r',
+        PhysicalKeyCode::KeyS => 's',
+        PhysicalKeyCode::KeyT => 't',
+        PhysicalKeyCode::KeyU => 'u',
+        PhysicalKeyCode::KeyV => 'v',
+        PhysicalKeyCode::KeyW => 'w',
+        PhysicalKeyCode::KeyX => 'x',
+        PhysicalKeyCode::KeyY => 'y',
+        PhysicalKeyCode::KeyZ => 'z',
+        PhysicalKeyCode::Digit0 => '0',
+        PhysicalKeyCode::Digit1 => '1',
+        PhysicalKeyCode::Digit2 => '2',
+        PhysicalKeyCode::Digit3 => '3',
+        PhysicalKeyCode::Digit4 => '4',
+        PhysicalKeyCode::Digit5 => '5',
+        PhysicalKeyCode::Digit6 => '6',
+        PhysicalKeyCode::Digit7 => '7',
+        PhysicalKeyCode::Digit8 => '8',
+        PhysicalKeyCode::Digit9 => '9',
+        PhysicalKeyCode::Backquote => '`',
+        PhysicalKeyCode::Minus => '-',
+        PhysicalKeyCode::Equal => '=',
+        PhysicalKeyCode::BracketLeft => '[',
+        PhysicalKeyCode::BracketRight => ']',
+        PhysicalKeyCode::Backslash => '\\',
+        PhysicalKeyCode::Semicolon => ';',
+        PhysicalKeyCode::Quote => '\'',
+        PhysicalKeyCode::Comma => ',',
+        PhysicalKeyCode::Period => '.',
+        PhysicalKeyCode::Slash => '/',
+        _ => return None,
+    })
+}
+
+fn logical_command(
+    typed: char,
+    event: &KeyEvent,
+    physical_key: Option<PhysicalKeyCode>,
+    base: Option<char>,
+) -> char {
+    // Rune substitutes the unshifted US-position character for non-ASCII Ctrl chords off macOS.
+    if cfg!(not(target_os = "macos"))
+        && typed.is_ascii()
+        && event.mods.ctrl
+        && !event.mods.alt
+        && physical_key.map_or_else(
+            || is_unshifted_us_char(typed),
+            |key| physical_us_char(key) == Some(typed),
+        )
+    {
         return base.filter(|c| !c.is_ascii()).unwrap_or(typed);
     }
     typed
 }
 
-fn matches(chord: Chord, event: &KeyEvent, physical: Option<char>, base: Option<char>) -> bool {
+fn matches(
+    chord: Chord,
+    event: &KeyEvent,
+    physical_key: Option<PhysicalKeyCode>,
+    base: Option<char>,
+) -> bool {
     if chord.has(ChordMod::Shift) != event.mods.shift {
         return false;
     }
+    let physical = physical_key.and_then(physical_slot);
     // Unlike Rune's menu chords, Solid uses the typed character outside digit/bracket slots.
     if let ChordKey::Char(expected) = chord.key() {
         let char = physical.or_else(|| match &event.key {
-            Key::Command(c) => Some(canonical_char(logical_command(*c, event, base))),
+            Key::Command(c) => Some(canonical_char(logical_command(
+                *c,
+                event,
+                physical_key,
+                base,
+            ))),
             Key::Text(text) => text
                 .chars()
                 .next()
@@ -228,23 +314,21 @@ fn matches(chord: Chord, event: &KeyEvent, physical: Option<char>, base: Option<
     physical.is_none() && chord.matches(event)
 }
 
-fn physical_slot(tx: &Tx) -> Option<char> {
-    tx.physical_key().and_then(|key| {
-        use PhysicalKeyCode::{
-            BracketLeft, BracketRight, Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6,
-            Digit7, Digit8, Digit9,
-        };
-        match key {
-            BracketLeft => Some('['),
-            BracketRight => Some(']'),
-            _ => [
-                Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
-            ]
-            .iter()
-            .position(|digit| *digit == key)
-            .and_then(|i| char::from_digit(i as u32, 10)),
-        }
-    })
+fn physical_slot(key: PhysicalKeyCode) -> Option<char> {
+    use PhysicalKeyCode::{
+        BracketLeft, BracketRight, Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7,
+        Digit8, Digit9,
+    };
+    match key {
+        BracketLeft => Some('['),
+        BracketRight => Some(']'),
+        _ => [
+            Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
+        ]
+        .iter()
+        .position(|digit| *digit == key)
+        .and_then(|i| char::from_digit(i as u32, 10)),
+    }
 }
 
 #[cfg(test)]
@@ -300,7 +384,7 @@ fn logical_punctuation_matches_only_the_character_solid_records() {
     assert!(matches(
         Chord::parse("shift+1").unwrap(),
         &event,
-        Some('1'),
+        Some(PhysicalKeyCode::Digit1),
         None
     ));
 }
@@ -324,23 +408,73 @@ fn localized_ctrl_letter_uses_the_key_rune_reports_before_us_fallback() {
         assert!(matches(
             save[0],
             &event,
-            None,
+            Some(PhysicalKeyCode::Semicolon),
             Some(if shift { 'Ö' } else { 'ö' })
         ));
-        assert!(!matches(new_tab[0], &event, None, Some('ö')));
+        assert!(!matches(
+            new_tab[0],
+            &event,
+            Some(PhysicalKeyCode::Semicolon),
+            Some('ö')
+        ));
         assert!(!bindings_conflict(
             &save,
             &new_tab,
             rune::KeyPlatform::Windows
         ));
         let same_key = [decode(&json!({"key":"Ö","ctrl":true,"shift":shift})).unwrap()];
-        assert!(matches(same_key[0], &event, None, Some('ö')));
+        assert!(matches(
+            same_key[0],
+            &event,
+            Some(PhysicalKeyCode::Semicolon),
+            Some('ö')
+        ));
         assert!(bindings_conflict(
             &save,
             &same_key,
             rune::KeyPlatform::Windows
         ));
     }
+    // German Ctrl+Shift+? on physical Minus: Windows sends logical '?' while base is 'ß'.
+    let german_question = KeyEvent {
+        key: Key::Command('?'),
+        mods: rune::Mods {
+            ctrl: true,
+            cmd: true,
+            shift: true,
+            ..Default::default()
+        },
+    };
+    let next_question = decode(&json!({"key":"?","mod":true,"shift":true})).unwrap();
+    let next_eszett = decode(&json!({"key":"ß","mod":true,"shift":true})).unwrap();
+    assert!(matches(
+        next_question,
+        &german_question,
+        Some(PhysicalKeyCode::Minus),
+        Some('ß')
+    ));
+    assert!(!matches(
+        next_eszett,
+        &german_question,
+        Some(PhysicalKeyCode::Minus),
+        Some('ß')
+    ));
+    let german_eszett = KeyEvent {
+        key: Key::Command('-'),
+        mods: rune::Mods {
+            ctrl: true,
+            cmd: true,
+            shift: false,
+            ..Default::default()
+        },
+    };
+    let eszett_binding = decode(&json!({"key":"ß","mod":true})).unwrap();
+    assert!(matches(
+        eszett_binding,
+        &german_eszett,
+        Some(PhysicalKeyCode::Minus),
+        Some('ß')
+    ));
     let alt_gr = KeyEvent {
         key: Key::Text("@".to_owned()),
         mods: rune::Mods {
@@ -402,7 +536,7 @@ fn bracket_and_digit_slots_match_physical_and_shifted_logical_keys() {
             key: Key::Command('é'),
             mods: ctrl,
         },
-        Some('2'),
+        Some(PhysicalKeyCode::Digit2),
         None
     ));
     assert!(matches(
@@ -411,7 +545,7 @@ fn bracket_and_digit_slots_match_physical_and_shifted_logical_keys() {
             key: Key::Command('@'),
             mods: shift_ctrl,
         },
-        Some('2'),
+        Some(PhysicalKeyCode::Digit2),
         None
     ));
     let instance_next = catalog::resolve(&prefs, "instance-next");

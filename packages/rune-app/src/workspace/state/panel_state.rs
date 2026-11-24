@@ -292,10 +292,7 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
         return false;
     }
     let mut delivered = false;
-    let active_detached = s
-        .incoming
-        .as_ref()
-        .is_none_or(codenomad_client::Receiver::is_closed);
+    let active_detached = s.screen.is_launcher() && s.incoming.is_none();
     for event in events {
         if active_detached || matches!(event, WorkspaceEvent::Stopped { .. }) {
             if s.git.owner.is_some() {
@@ -326,10 +323,7 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
 
 pub(crate) fn set_detached_online(s: &mut State, online: bool) -> bool {
     let mut changed = false;
-    let active_detached = s
-        .incoming
-        .as_ref()
-        .is_none_or(codenomad_client::Receiver::is_closed);
+    let active_detached = s.screen.is_launcher() && s.incoming.is_none();
     if active_detached {
         if s.git.owner.is_some() {
             crate::git::online(s, online);

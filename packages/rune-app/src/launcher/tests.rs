@@ -409,3 +409,67 @@ fn shared_fields_edit_their_inner_models_and_stale_launcher_input_is_discarded()
     );
     assert_eq!(rt.state.draft.text, "current composer");
 }
+
+#[test]
+fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
+    crate::platform::block_on(async {
+        let mut s = crate::init();
+        crate::gallery::shell::fixture(&mut s);
+        let mut ui = crate::workspace::Ui::new();
+        ui.fixture_ready();
+        s.workspace = Some(ui);
+        let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        let project = Project {
+            id: "proj-1".into(),
+            path: "/repo".into(),
+        };
+        if let Some(l) = s.screen.launcher_mut() {
+            l.connection = Some(backend.clone());
+            l.project = Some(project.clone());
+        }
+        crate::workspace::opened(&mut s, &project);
+        let bound = Backend {
+            workspace: project.id.clone(),
+            session: "ses-1".into(),
+            ..backend.clone()
+        };
+        crate::workspace::bound(&mut s, &bound);
+        let (_cmd_tx, _cmd_rx) = bounded::<crate::transport::Command>(1);
+        s.commands = Some(_cmd_tx);
+        let (_ev_tx, ev_rx) = bounded::<crate::transport::Event>(1);
+        s.incoming = Some(ev_rx);
+        s.draft = TextEdit::new("unsent prompt");
+        let (send_tx, _send_rx) = bounded(1);
+        s.commands = Some(send_tx);
+        s.phase = Phase::Ready;
+        let mut rt =
+            rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+        rt.update(|s, tx| {
+            crate::composer::send(s, tx, false);
+        });
+        assert!(rt.state.composer.pending());
+        assert!(rt.state.draft.text.is_empty());
+
+        rt.state.phase = Phase::Reconnecting;
+        let (out, input) = bounded(1);
+        {
+            let l = rt.state.screen.launcher_mut().unwrap();
+            l.authentication_required = true;
+            l.result = Some(input);
+            l.pending = true;
+        }
+        rt.state.show_launcher();
+        let renewed = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        assert!(
+            out.try_send(Ok(Reply::Connected(renewed, vec![project], "srv-1".into())))
+                .is_ok()
+        );
+        rt.update(|s, tx| {
+            assert!(poll(s, tx));
+        });
+        assert!(!rt.state.composer.pending());
+        assert_eq!(rt.state.draft.text, "unsent prompt");
+        assert!(!rt.state.screen.is_launcher());
+        assert!(rt.state.screen.launcher().unwrap().pending);
+    });
+}

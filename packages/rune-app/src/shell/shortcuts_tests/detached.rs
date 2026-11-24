@@ -817,5 +817,25 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         if let Some(l) = rt.state.screen.launcher_mut() {
             l.pending = false;
         }
+
+        // Closed conversation stream must not be treated as detached by set_detached_online.
+        rt.state.show_chat();
+        let (closed_tx, closed_rx) = codenomad_client::bounded(1);
+        drop(closed_tx);
+        rt.state.incoming = Some(closed_rx);
+        crate::git::connected_placed(&mut rt.state, &bound, "root");
+        crate::git::online(&mut rt.state, false);
+        assert!(!crate::workspace::set_detached_online(&mut rt.state, true));
+        assert_eq!(crate::git::fixture_online(&rt.state), Some(false));
+        rt.state.incoming = None;
+
+        // Remapped session-search to PageUp does not open search while composer has focus.
+        settings::fixture_shortcuts(&rt.state, json!({"session-search": [{"key": "PageUp"}]}));
+        rt.update(|_, tx| {
+            tx.focus("composer", true);
+        });
+        settle(&mut rt);
+        send_key(&mut rt, Key::PageUp, Mods::default());
+        assert!(!crate::timeline::search::is_open(&rt.state));
     });
 }

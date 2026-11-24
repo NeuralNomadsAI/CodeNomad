@@ -289,6 +289,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if reauthenticated {
                 crate::workspace::renew_connection(s);
                 if let Some(id) = selected {
+                    if s.composer.pending() {
+                        crate::composer::settle_pending(
+                            s,
+                            codenomad_client::transport::PromptOutcome::Unconfirmed,
+                        );
+                    }
                     s.incoming = None;
                     s.phase = Phase::Failed;
                     s.show_chat();

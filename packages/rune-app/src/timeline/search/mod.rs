@@ -75,7 +75,7 @@ fn visible(s: &State) -> bool {
         && s.transcript_display.timeline.backend.is_some()
 }
 
-pub(super) fn is_open(s: &State) -> bool {
+pub(crate) fn is_open(s: &State) -> bool {
     s.transcript_display.timeline.search.open && visible(s)
 }
 

@@ -163,7 +163,9 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
     }
-    if crate::timeline::search::open_key(s, event, tx) {
+    if !shortcuts::field_key_blocked(s, event, tx)
+        && crate::timeline::search::open_key(s, event, tx)
+    {
         return true;
     }
     if shortcuts::dispatch(s, event, tx) {

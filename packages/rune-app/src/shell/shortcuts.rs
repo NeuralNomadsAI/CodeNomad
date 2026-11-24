@@ -85,7 +85,7 @@ fn focused_text_field(s: &State, tx: &Tx) -> bool {
     false
 }
 
-fn field_key_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
+pub(super) fn field_key_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
     let no_command_mod = !event.mods.ctrl && !event.mods.cmd && !event.mods.alt && !event.mods.logo;
     let is_field_nav = matches!(
         event.key,
