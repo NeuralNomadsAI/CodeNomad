@@ -37,6 +37,7 @@ export interface NativeScheduleCalendarService {
   create(target: Target, current: () => true): Promise<NativeScheduleCalendarInfo>
   pause(target: Target, id: string, current: () => true): Promise<NativeScheduleCalendarInfo>
   resume(target: Target, id: string, current: () => true): Promise<NativeScheduleCalendarInfo>
+  qualifyLegacyProvider(current: () => true): Promise<void>
   remove(target: Target, id: string, current: () => true): Promise<void>
   removeCarrier(target: Target, current: () => true): Promise<void>
   carrierQuiet(target: Target, current: () => true): Promise<boolean>
@@ -160,6 +161,7 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
     if (!existing) throw new Error("Native calendar missing")
     if (action === "resume" && !existing.code) yield* available()
     const legacyModel = isLegacyScheduleCarrierModel((yield* carrier(target)).model)
+    if (!existing.code && !legacyModel) throw new Error("Native calendar carrier differs")
     const nativeID = missionAutomationID(id)
     const value = yield* Effect.suspend(() => { assertCurrent(); assertSynchronousAuthorityGuard(guard, "policy-unqualified"); return schedules[action](nativeID) })
       .pipe(Effect.flatMap(readMissionAutomation), Effect.map(info => {
@@ -224,6 +226,7 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
       return value
     }), guard),
     pause: (target, id, guard) => mutate("pause", target, id, guard), resume: (target, id, guard) => mutate("resume", target, id, guard),
+    qualifyLegacyProvider: guard => invoke(() => available(), guard),
     remove: (input, id, guard) => protect(input, target => Effect.gen(function* () {
       if (!(yield* get(target, id))) return
       yield* carrier(target)

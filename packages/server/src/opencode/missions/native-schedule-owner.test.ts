@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { renameSync } from "node:fs"
+import { renameSync, unlinkSync, writeFileSync } from "node:fs"
 import test from "node:test"
 import { Effect } from "effect"
 import { stableToken } from "../../missions/receipt-identity"
@@ -514,4 +514,47 @@ test("a code auxiliary whose create acknowledgement was lost is identified by it
     assert.equal((await read(1))?.calendar.scheduleID, info.id, "OpenCode counts a code run only after its program returns")
     assert.equal(await read(2), undefined)
   })
+})
+
+test("active legacy prompt adoption and reconciliation require a usable provider while pause and cleanup remain available", async t => {
+  for (const mode of ["damaged-file", "missing-installation-provider", "catalog-collision"] as const) {
+    const f = await ownerFixture(t)
+    f.loseCreateACK("reconciliation")
+    let doc = await f.control("play")
+    assert.equal(doc.calendarOwner?.operation.pending, true)
+    assert.equal(doc.calendarOwner?.auxiliaryReady, false)
+    if (mode === "damaged-file") writeFileSync(f.installation.provider.file, "corrupted")
+    else if (mode === "missing-installation-provider") doc = await f.store.change(doc.id, doc.revision, f.current, value => {
+      delete value.calendarOwner!.installation.provider
+    })
+    else f.failLegacyProvider("schedule-provider-unavailable")
+    const refused = await f.owner.reconcile(doc.id)
+    assert.equal(refused.calendarOwner?.operation.pending, true, `${mode} must keep lost-ACK active prompt adoption pending`)
+    assert.equal(refused.calendarOwner?.auxiliaryReady, false)
+    assert.equal(refused.calendarOwner?.slots.find(item => item.role === "reconciliation")?.creation, "attempted")
+    const paused = await f.control("pause")
+    assert.equal(paused.state, "paused")
+    assert.equal(paused.calendarOwner?.operation.pending, false, `${mode} must still allow pausing legacy prompt calendars`)
+    const stopped = await f.control("stop")
+    assert.equal(stopped.state, "stopped")
+    assert.equal(stopped.calendarOwner?.operation.pending, false, `${mode} must still allow cleaning up legacy prompt calendars`)
+    assert.equal(f.calendars.size, 0); assert.equal(f.sessions.size, 0)
+  }
+
+  const adopted = await ownerFixture(t), armed = await adopted.control("play")
+  assert.equal(missionCalendarOwnerReady(armed), true)
+  unlinkSync(adopted.installation.provider.file)
+  const stale = await adopted.owner.reconcile(armed.id)
+  assert.equal(stale.calendarOwner?.operation.pending, true, "already-active adopted legacy prompt calendar must not reconcile clean without provider.mjs")
+  const cleaned = await adopted.control("stop")
+  assert.equal(cleaned.calendarOwner?.operation.pending, false)
+  assert.equal(adopted.calendars.size, 0)
+
+  const code = await ownerFixture(t)
+  code.createCodeRows(); code.loseCreateACK("reconciliation"); code.failLegacyProvider("schedule-provider-unavailable")
+  unlinkSync(code.installation.provider.file)
+  const pending = await code.control("play")
+  const ready = await code.owner.reconcile(pending.id)
+  assert.equal(ready.calendarOwner?.operation.pending, false)
+  assert.equal(missionCalendarOwnerReady(ready), true)
 })

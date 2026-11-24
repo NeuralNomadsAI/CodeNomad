@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { unlinkSync } from "node:fs"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
@@ -240,4 +241,19 @@ test("an attempted auxiliary resolves its schedule ID from native records, retai
   assert.deepEqual(f.queries.map(query => query.params.slice(0, 2)),
     [[id, descriptor.sessionID], [id.replace(/^msg_sch_/, "msg_aut_"), descriptor.sessionID]])
   assert.deepEqual(await owner.read(), doc) // No service registration: no native adoption or dispatch.
+})
+
+test("legacy prompt carrier foundation refuses registration when provider.mjs is missing or omitted even with intact runtime", async t => {
+  const owner = await ownerFixture(t), f = nativeReads(t, owner.directory)
+  let registered = 0
+  const ctx = { ...owner.ctx, location: f.location,
+    rpc: { register: () => Effect.sync(() => { registered++ }) },
+    aisdk: { hook: () => Effect.void },
+    session: { ...owner.ctx.session, hook: () => Effect.void } } as unknown as Plugin.Context
+  await assert.rejects(f.run(Effect.scoped(registerNativeScheduleCarrierFoundation(ctx, {
+    registrationFile: owner.installation.registrationFile, runtime: owner.installation.runtime,
+  }))), /artifact/)
+  unlinkSync(owner.installation.provider.file)
+  await assert.rejects(f.run(Effect.scoped(registerNativeScheduleCarrierFoundation(ctx, owner.installation))))
+  assert.equal(registered, 0)
 })

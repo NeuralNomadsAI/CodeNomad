@@ -35,7 +35,7 @@ export function registerNativeScheduleCarrierFoundation(ctx: Plugin.Context, opt
   return Effect.gen(function* () {
     const hooks = nativeScheduleCarrierHooks(() => false), invocation = nativeInvocation()
     const transport = createNativeScheduleTransport()
-    const installed = () => assertNativeScheduleCarrierArtifacts(options)
+    const installed = () => assertNativeScheduleCarrierArtifacts(options, { requireProvider: true })
     installed()
 
     const handler = (mode: "wake" | "status", raw: unknown) => Effect.gen(function* () {

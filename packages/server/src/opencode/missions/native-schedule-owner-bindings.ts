@@ -38,6 +38,10 @@ export async function readNativeScheduleAuxiliaryWakeBinding(ctx: Plugin.Context
   // A code run is counted only after its program returns: an uncounted run must be live in this process.
   if (rows.length !== 1 || rows[0].id !== wake.scheduleID || !nativeScheduleCalendarMatches(rows[0], slot) || rows[0].runCount < wake.run
     && !(rows[0].code && rows[0].runCount === wake.run - 1 && missionCodeWakeRunning(wake.scheduleID, wake.run))) return undefined
+  if (!rows[0].code) {
+    assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation, { requireProvider: true })
+    await native.qualifyLegacyProvider(current)
+  }
   const fresh = await run(readNativeScheduleCarrierOwnership(ctx, wake.sessionID))
   guard()
   if (!fresh?.verified || fresh.document?.revision !== doc.revision || canonicalAuthority(fresh.reference) !== canonicalAuthority(ownership.reference)) return undefined

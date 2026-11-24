@@ -17,7 +17,7 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
   options: { model?: { providerID: string; id: string }; onSessionGet?: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void> } = { model: { ...NATIVE_SCHEDULE_CARRIER_MODEL } }) {
   const state: { enabled: boolean; closed: boolean; row?: string; duplicate?: boolean; runCount?: number; action?: Automation.Info["action"]
     status?: Automation.Info["status"]; permissions?: unknown[]; present?: boolean; model?: { providerID: string; id: string } } = {
-    enabled: true, closed: false, present: true, model: options.model }, created: any[] = [], createdSessions: any[] = []
+    enabled: true, closed: false, present: true, model: options.model }, created: any[] = [], createdSessions: any[] = [], resumes: string[] = [], pauses: string[] = []
   const directory = path.resolve("native-calendar-scope-unit-only")
   const location = Schema.decodeUnknownSync(Location.Info)({ directory, project: { id: "project", directory, canonical: directory } })
   const selected: NativeScheduleCalendarTarget = { missionID: "calendar_scope", descriptor: { role: "principal", slot: 0, timeGeneration: 1,
@@ -32,9 +32,11 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
       when: selected.descriptor.when, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount })]),
     get: () => state.runCount === undefined ? Effect.fail({ _tag: "Automation.NotFoundError" }) : Effect.succeed(info({
       sessionID: selected.descriptor.sessionID, name: selected.descriptor.name, when: selected.descriptor.when,
-      action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount })), pause: () => Effect.die("unexpected pause"),
-    resume: () => Effect.succeed(info({ sessionID: selected.descriptor.sessionID, name: selected.descriptor.name,
-      when: selected.descriptor.when, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount ?? 0 })),
+      action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount })),
+    pause: (id: string) => Effect.sync(() => { pauses.push(id); state.status = "paused"; return info({ sessionID: selected.descriptor.sessionID,
+      name: selected.descriptor.name, when: selected.descriptor.when, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount ?? 0 }) }),
+    resume: (id: string) => Effect.sync(() => { resumes.push(id); state.status = "active"; return info({ sessionID: selected.descriptor.sessionID,
+      name: selected.descriptor.name, when: selected.descriptor.when, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount ?? 0 }) }),
     remove: () => Effect.void, enabled: () => Effect.succeed(state.enabled) }
   const carrierID = selected.descriptor.sessionID
   const ctx = { location, session: {
@@ -65,7 +67,7 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
         ...(state.duplicate ? [{ id: "msg_sch_scope_1", type: "user", data: null }] : [])]),
     }) } } }),
     Effect.provideService(Scope.Scope, scope)))
-  return { native, selected, state, created, createdSessions, scope }
+  return { native, selected, state, created, createdSessions, resumes, pauses, scope }
 }
 
 test("native facade pins caller descriptors across asynchronous carrier checks and retires with its Scope", async t => {
@@ -104,7 +106,10 @@ test("Code Mode carriers carry no model and work without local provider, while f
   await f.native.create(f.selected, current)
   f.state.runCount = 0; f.state.action = { type: "code", code: MISSION_WAKE_CODE }; f.state.status = "paused"
   assert.equal((await f.native.list(f.selected, current))[0].code, true)
-  assert.equal((await f.native.resume(f.selected, "sch_scope", current)).code, true)
+  const resumed = await f.native.resume(f.selected, "sch_scope", current)
+  assert.equal(resumed.code, true)
+  assert.equal(resumed.status, "active")
+  assert.deepEqual(f.resumes, ["aut_scope"])
   f.state.action = { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: Session.ID.make(f.selected.descriptor.sessionID) } }
   await assert.rejects(f.native.list(f.selected, current), /carrier differs/)
   await assert.rejects(f.native.get(f.selected, "sch_scope", current), /carrier differs/)
@@ -114,6 +119,26 @@ test("Code Mode carriers carry no model and work without local provider, while f
   f.state.model = { ...NATIVE_SCHEDULE_CARRIER_MODEL }
   f.state.action = { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: Session.ID.make(f.selected.descriptor.sessionID) } }
   await assert.rejects(f.native.resume(f.selected, "sch_scope", current), /schedule-provider-unavailable/)
+  assert.equal(f.resumes.length, 1)
+})
+
+test("legacy prompt pause and resume refuse before mutating native state when the carrier loses its legacy model", async t => {
+  const current = () => true as const
+  const f = await facade(t, () => Effect.sync(() => { f.state.model = undefined }))
+  f.state.runCount = 0; f.state.status = "paused"
+  await assert.rejects(f.native.resume(f.selected, "sch_scope", current), /carrier differs/)
+  assert.deepEqual(f.resumes, [])
+  assert.equal(f.state.status, "paused")
+
+  let reads = 0
+  const pausing = await facade(t, () => Effect.void, {
+    model: { ...NATIVE_SCHEDULE_CARRIER_MODEL },
+    onSessionGet: () => Effect.sync(() => { if (++reads === 2) pausing.state.model = undefined }),
+  })
+  pausing.state.runCount = 0; pausing.state.status = "active"
+  await assert.rejects(pausing.native.pause(pausing.selected, "sch_scope", current), /carrier differs/)
+  assert.deepEqual(pausing.pauses, [])
+  assert.equal(pausing.state.status, "active")
 })
 
 test("prepared wake ACK decodes encoded native SQL timestamps and keeps partial or absent proof closed", async t => {

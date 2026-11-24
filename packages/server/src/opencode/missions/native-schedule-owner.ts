@@ -321,7 +321,12 @@ export class NativeScheduleCalendarOwner {
     const change = async (update: (value: MissionDocument) => void) => { doc = await locked.change(doc.id, doc.revision, guard, update) }
     const owner = () => doc.calendarOwner!
     const updateSlot = async (index: number, update: (slot: MissionCalendarOwnerSlot) => void) => change(value => update(value.calendarOwner!.slots[index]))
-    const ensure = async (index: number) => {
+    const qualifyLegacy = async (info: NativeScheduleCalendarInfo) => {
+      if (info.code) return
+      assertNativeScheduleCarrierArtifacts(owner().installation, { requireProvider: true })
+      await native.qualifyLegacyProvider(guard)
+    }
+    const ensure = async (index: number, qualifyActive = false) => {
       let slot = owner().slots[index]
       await this.options.bindings.register(locked, doc.id, slot, guard)
       await native.ensureCarrier(target(doc, slot), guard)
@@ -329,6 +334,7 @@ export class NativeScheduleCalendarOwner {
       if (slot.creation === "adopted") {
         info = await native.get(target(doc, slot), slot.scheduleID!, guard)
         if (!info || !exact(info, slot)) throw new OwnerPending("native-uncertain")
+        if (qualifyActive && info.status !== "done") await qualifyLegacy(info)
       } else {
         const list = await native.list(target(doc, slot), guard), matches = list.filter(item => exact(item, slot))
         if (list.length !== matches.length) throw new OwnerPending("native-uncertain")
@@ -345,6 +351,7 @@ export class NativeScheduleCalendarOwner {
           info = await native.create(target(doc, slot), guard)
         }
         if (!exact(info, slot)) throw new OwnerPending("native-uncertain")
+        if (qualifyActive && info.status !== "done") await qualifyLegacy(info)
         const id = info.id
         await updateSlot(index, value => { value.creation = "adopted"; value.scheduleID = id; value.ambiguous = [] })
       }
@@ -358,7 +365,7 @@ export class NativeScheduleCalendarOwner {
     const resumeAuxiliary = async () => {
       const index = owner().slots.findIndex(slot => slot.role === "reconciliation")
       if (index < 0) throw new OwnerPending("cleanup-pending")
-      const info = await ensure(index), slot = owner().slots[index]
+      const info = await ensure(index, true), slot = owner().slots[index]
       const fresh = info.status === "paused" ? await native.resume(target(doc, slot), info.id, guard) : info
       if (fresh.status !== "active") throw new OwnerPending("native-uncertain")
       if (!owner().auxiliaryReady) await change(value => { value.calendarOwner!.auxiliaryReady = true })
@@ -430,7 +437,7 @@ export class NativeScheduleCalendarOwner {
         const principalInfos: NativeScheduleCalendarInfo[] = []
         for (let index = 0; index < owner().slots.length; index++) if (owner().slots[index].role === "principal") {
           if (!owner().auxiliaryReady) throw new OwnerPending("native-uncertain")
-          const info = await ensure(index)
+          const info = await ensure(index, true)
           principalInfos.push(info)
           if (info.status === "paused") await native.resume(target(doc, owner().slots[index]), info.id, guard)
         }
