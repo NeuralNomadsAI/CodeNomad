@@ -26,6 +26,10 @@ checks automatic local compaction, retained phase/end and zero provider HTTP cal
 Product checks cover authenticated paused creation, activation/control receipts,
 backend closure and managed-service restart. Terminal checks require original-input
 correlation and whole-family/background-delivery quiescence before settlement.
+`--runtime-only` provisions from a package without `provider.mjs`. `--legacy-bundle <absolute plugin.mjs>`
+arms with a build that creates prompt rows, then serves them after upgrading to the current bundle;
+adding `--runtime-only` makes that upgrade package omit `provider.mjs` and requires the installed
+provider to be kept.
 The paused manual case with an existing coordinator verifies agent-authored
 self-selection, one original input per passage, and two archives in the same conversation.
 Desktop packaging and host-login gates require their own evidence.

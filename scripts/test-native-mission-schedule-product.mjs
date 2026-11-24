@@ -34,7 +34,6 @@ const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: tr
   "legacy-bundle": { type: "string" },
 } })
 assert(!values["legacy-bundle"] || path.isAbsolute(values["legacy-bundle"]) && existsSync(values["legacy-bundle"]), "Legacy bundle must be an absolute existing plugin.mjs")
-assert(!(values["runtime-only"] && values["legacy-bundle"]), "Use separate runs for --runtime-only and --legacy-bundle")
 assert(values["parent-ready"], "Explicit product qualification requires --parent-ready")
 assert(cli && scratch && path.isAbsolute(cli) && path.isAbsolute(scratch) && !existsSync(scratch), "Absolute CLI and fresh approved scratch child required")
 const approved = [path.resolve(process.env.TEMP, "opencode")]
@@ -97,8 +96,10 @@ async function journey(kind) {
   ])
   const bundled = new URL("../packages/server/dist/plugins/missions/plugin.mjs", import.meta.url)
   const providerBundle = new URL("../packages/server/dist/plugins/missions/provider.mjs", import.meta.url)
-  const runtimeOnly = !!values["runtime-only"]
-  const result = { kind, root, status: "running", armOnly: !!values["arm-only"], firstAdmissionRaceMode: !!values["first-admission-race"], crashPendingMode: !!values["crash-pending"], runtimeOnly, productBundleSHA256: hash(await readFile(values["legacy-bundle"] ?? bundled)), providerBundleSHA256: runtimeOnly ? null : hash(await readFile(providerBundle)), serviceStarts: [], http: [] }
+  // With --legacy-bundle, --runtime-only applies to the upgrade: the legacy bundle arms with
+  // its provider, then a package without provider.mjs must keep the installed one.
+  const runtimeOnly = !!values["runtime-only"], upgradeRuntimeOnly = runtimeOnly && !!values["legacy-bundle"]
+  const result = { kind, root, status: "running", armOnly: !!values["arm-only"], firstAdmissionRaceMode: !!values["first-admission-race"], crashPendingMode: !!values["crash-pending"], runtimeOnly, productBundleSHA256: hash(await readFile(values["legacy-bundle"] ?? bundled)), providerBundleSHA256: runtimeOnly && !upgradeRuntimeOnly ? null : hash(await readFile(providerBundle)), serviceStarts: [], http: [] }
   if (values["diagnose-stop"]) assert.equal(result.productBundleSHA256, "3578b0357396e1834221a0f37159a8fe2d6a8a63f81fcad11b3d364b1dca0c10", "Diagnostic requires the unchanged failing qualification bundle")
   receipt.cases.push(result)
   const prefix = `plugin:${Array.from("codenomad.missions").map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
@@ -467,7 +468,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     registration.url = `${baseURL}/api/opencode-plugin/automation`; removeBridge = await publishAutomationBridge(registration)
     const legacy = values["legacy-bundle"]
     let readProvider
-    if (runtimeOnly) {
+    if (runtimeOnly && !upgradeRuntimeOnly) {
       const { copyFile, readdir } = await import("node:fs/promises")
       const { pathToFileURL } = await import("node:url")
       const pkgPrimary = path.join(root, "runtime-only-pkg", "plugins")
@@ -559,7 +560,16 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     if (values["legacy-bundle"]) {
       // Calendars armed by an earlier bundle keep their prompt rows; the current bundle must serve them to their end.
       assert(actionTypes().length && actionTypes().every(type => type === "prompt"), "The legacy bundle arms prompt rows")
-      await plugin.stop(); plugin = new DesktopPluginLifecycle("missions"); await plugin.start(paths)
+      const entry = path.join(paths.config, "plugins", "codenomad-missions.ts"), armedEntry = await readFile(entry, "utf8")
+      await plugin.stop()
+      plugin = upgradeRuntimeOnly ? new DesktopPluginLifecycle("missions", undefined, async () => undefined) : new DesktopPluginLifecycle("missions")
+      await plugin.start(paths)
+      if (upgradeRuntimeOnly) {
+        const provider = shim => JSON.parse(`[${/export default desktopPlugin\((.+)\)\n$/.exec(shim)[1]}]`)[1]?.provider
+        assert(provider(armedEntry), "The legacy bundle installs a provider")
+        assert.deepEqual(provider(await readFile(entry, "utf8")), provider(armedEntry), "A runtime-only upgrade keeps the installed provider")
+        result.retainedProvider = provider(armedEntry).sha256
+      }
       result.upgradedBundleSHA256 = hash(await readFile(bundled))
       assert.notEqual(result.upgradedBundleSHA256, result.productBundleSHA256)
     }

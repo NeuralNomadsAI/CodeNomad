@@ -27,9 +27,11 @@ again before dispatch. The RPC handler uses `nativeScheduleIncarnationGuard`
 after I/O and synchronously before every CAS/native effect, alongside its fresh
 mapping/Location/generation/state guards. The receiver resolves its registration
 path from its owned durable mapping and requires the supplied path to match it.
-Native offers no joint snapshot of the Automation flags, a row and its carrier:
-calendar mutations and scheduled passage qualification read them concurrently
-after every earlier await and act synchronously on that final read.
+Native offers no joint snapshot of the Automation flags, a row and its carrier.
+Calendar mutations read the flags and the carrier concurrently after every earlier
+await, including the row read, and act synchronously on that final read; scheduled
+passage qualification reads the row in that same final read. A change landing during
+the final read counts as landing just after the action.
 
 The adapter calls only the internal `codenomad.missions.schedule.wake` mutation,
 the `status` read and, for [code wakes](#code-wakes), the `admit` mutation through
