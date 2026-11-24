@@ -14,10 +14,14 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Clone)]
 pub struct Http(
     Client,
-    Arc<OnceLock<String>>,
+    Arc<OnceLock<Identity>>,
     Arc<crate::stream::Children>,
     Arc<AtomicBool>,
 );
+struct Identity {
+    server: String,
+    capabilities: Vec<String>,
+}
 impl Http {
     pub fn new() -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -43,10 +47,21 @@ impl Http {
         &self.2
     }
     pub fn server_identity(&self) -> Option<&str> {
-        self.1.get().map(String::as_str)
+        self.1.get().map(|identity| identity.server.as_str())
     }
-    pub(crate) fn verify_server_identity(&self, id: &str) -> bool {
-        self.1.get_or_init(|| id.to_owned()) == id
+    pub fn supports(&self, capability: &str) -> bool {
+        self.1
+            .get()
+            .is_some_and(|identity| identity.capabilities.iter().any(|item| item == capability))
+    }
+    pub(crate) fn attest(&self, id: &str, capabilities: Vec<String>) -> bool {
+        self.1
+            .get_or_init(|| Identity {
+                server: id.to_owned(),
+                capabilities,
+            })
+            .server
+            == id
     }
     pub fn supports_service_usage(&self) -> bool {
         self.3.load(Ordering::Relaxed)

@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.control.reader.loading": "内容を読み取り中…",
   "missions.control.form.loading": "フォームを読み込み中…",
   "missions.control.run.checking": "操作の状態を確認中…",
+  "missions.control.run.superseded": "この操作は新しい操作に置き換えられました。",
   "missions.control.run.pending.start": "ミッションを開始中…",
   "missions.control.run.pending.pause": "ミッションを一時停止中…",
   "missions.control.run.pending.interrupt": "ミッションを中断中…",

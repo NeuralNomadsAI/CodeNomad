@@ -21,7 +21,9 @@ use std::time::Duration;
 #[derive(Default)]
 pub(super) struct Observation {
     pages: Vec<Activity>,
+    current_end: Option<u64>,
     revision: Option<u64>,
+    seen_revision: Option<u64>,
     active: Option<(u64, Receiver<Result<Activity>>)>,
     pending: Option<u64>,
     failed: Option<u64>,
@@ -30,6 +32,24 @@ pub(super) struct Observation {
 }
 
 impl Observation {
+    pub fn working(&self) -> bool {
+        self.pages
+            .iter()
+            .filter(|page| self.current(page))
+            .flat_map(|page| &page.actors)
+            .any(|actor| {
+                actor.request.is_some()
+                    || matches!(
+                        actor.state,
+                        ActorState::Running
+                            | ActorState::Queued
+                            | ActorState::Background
+                            | ActorState::Form
+                            | ActorState::Permission
+                    )
+            })
+    }
+
     pub fn refresh(&mut self) {
         self.pending = Some(0);
     }
@@ -42,6 +62,7 @@ impl Observation {
         self.active = None;
         self.pending = None;
         self.due = None;
+        self.current_end = None;
     }
 
     pub fn invalidate(&mut self, now: f64) {
@@ -63,6 +84,11 @@ impl Observation {
     }
 
     pub fn settle(&mut self, floor: Option<u64>, now: f64, wake: &Wake) -> bool {
+        let advanced = floor > self.revision;
+        if advanced {
+            self.revision = floor;
+            self.refresh();
+        }
         if let Some((offset, result)) = self
             .active
             .as_ref()
@@ -86,7 +112,14 @@ impl Observation {
                         .is_some_and(|old| old.window.order == page.window.order);
                     if self.adopt(offset, page) {
                         self.observe(revision);
-                        previous_failure.map(|failed| if same_order { failed } else { 0 })
+                        self.seen_revision = self.seen_revision.max(Some(revision));
+                        previous_failure.map(|failed| {
+                            if same_order {
+                                failed.min(self.current_end.unwrap_or(0))
+                            } else {
+                                0
+                            }
+                        })
                     } else {
                         Some(offset)
                     }
@@ -97,11 +130,11 @@ impl Observation {
             };
             return true;
         }
-        false
+        advanced
     }
 
     pub fn revision(&self) -> Option<u64> {
-        self.revision
+        self.seen_revision
     }
 
     pub fn poll(
@@ -155,10 +188,13 @@ impl Observation {
     }
 
     fn adopt(&mut self, offset: u64, page: Activity) -> bool {
+        let end = page.window.end;
+        let total = page.window.total;
         if offset == 0 {
             if self.pages.first().is_some_and(|prior| {
                 prior.revision > page.revision
                     || prior.revision == page.revision && prior.observed_at > page.observed_at
+                    || prior.window.order == page.window.order && prior.window.total != total
             }) {
                 return false;
             }
@@ -175,19 +211,34 @@ impl Observation {
                 self.pages.push(page);
             }
         } else {
-            if self.pages.last().is_none_or(|prior| {
-                prior.window.end != page.window.offset
-                    || prior.window.order != page.window.order
-                    || prior.window.total != page.window.total
-            }) || page.actors.iter().any(|actor| {
-                self.pages
-                    .iter()
-                    .flat_map(|page| &page.actors)
-                    .any(|old| old.session_id == actor.session_id)
-            }) {
+            if self.current_end != Some(offset)
+                || self.pages.first().is_none_or(|prior| {
+                    offset != page.window.offset
+                        || prior.window.order != page.window.order
+                        || prior.window.total != page.window.total
+                })
+                || page.actors.iter().any(|actor| {
+                    self.pages
+                        .iter()
+                        .take_while(|prior| prior.window.offset < offset)
+                        .flat_map(|page| &page.actors)
+                        .any(|old| old.session_id == actor.session_id)
+                })
+            {
                 return false;
             }
-            self.pages.push(page);
+            match self
+                .pages
+                .binary_search_by_key(&offset, |prior| prior.window.offset)
+            {
+                Ok(index) => self.pages[index] = page,
+                Err(index) => self.pages.insert(index, page),
+            }
+        }
+        self.current_end = Some(end);
+        if end == total {
+            self.pages
+                .retain(|page| page.window.offset < end || end == 0 && page.window.offset == 0);
         }
         true
     }
@@ -199,14 +250,23 @@ impl Observation {
     }
 
     fn more_offset(&self) -> Option<u64> {
+        let end = self.current_end?;
         self.pages
-            .last()
-            .filter(|page| page.window.end < page.window.total)
-            .map(|page| page.window.end)
+            .first()
+            .filter(|page| end < page.window.total)
+            .map(|_| end)
     }
 
     fn busy(&self) -> bool {
         self.active.is_some() || self.pending.is_some()
+    }
+
+    fn current(&self, page: &Activity) -> bool {
+        self.current_end.is_some_and(|end| page.window.end <= end)
+            && Some(page.revision) >= self.revision
+            && self
+                .failed
+                .is_none_or(|offset| offset != 0 && offset != page.window.offset)
     }
 
     pub fn view<S: 'static>(&self, more: impl Fn(&mut S) + 'static) -> El {
@@ -216,7 +276,7 @@ impl Observation {
             || self.pages.iter().any(|page| {
                 page.coverage != Coverage::Observed
                     || page.requests != Coverage::Observed
-                    || Some(page.revision) != self.revision
+                    || !self.current(page)
             });
         let mut view = col()
             .full_width()
@@ -232,7 +292,7 @@ impl Observation {
                 } else {
                     &actor.title
                 };
-                let state = if Some(page.revision) < self.revision {
+                let state = if !self.current(page) {
                     ActorState::Unknown
                 } else {
                     actor.request.unwrap_or(actor.state)
@@ -309,15 +369,16 @@ mod tests {
         assert!(state.adopt(0, page(7, 100.0, 0, 2)));
         assert!(state.adopt(1, page(7, 107.0, 1, 2)));
         assert!(!state.adopt(0, page(7, 99.0, 0, 2)));
-        assert!(state.adopt(0, page(8, 200.0, 0, 2)));
-        assert_eq!(
-            state
-                .pages
-                .iter()
-                .map(|page| page.revision)
-                .collect::<Vec<_>>(),
-            [8, 7]
+        assert!(state.adopt(0, page(7, 200.0, 0, 2)));
+        assert!(state.current(&state.pages[0]));
+        assert!(
+            !state.current(&state.pages[1]),
+            "same revision is not the same observation cycle"
         );
+        assert_eq!(state.more_offset(), Some(1));
+        assert!(state.adopt(1, page(7, 201.0, 1, 2)));
+        assert!(state.current(&state.pages[1]));
+        assert_eq!(state.more_offset(), None);
     }
 
     #[test]
@@ -327,7 +388,6 @@ mod tests {
         state.active = Some((0, inbox));
         state.invalidate(1.0);
         state.invalidate(2.0);
-        state.observe(8);
         send.try_send(Ok(page(7, 100.0, 0, 2))).ok().unwrap();
         let wake: Wake = std::sync::Arc::new(|| {});
         assert!(state.settle(Some(8), 3.0, &wake));

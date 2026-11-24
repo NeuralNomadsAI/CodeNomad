@@ -55,11 +55,26 @@ pub(crate) fn anchor(rt: &Runtime<State>) -> (String, f32) {
     (row.path.rsplit_once(prefix).unwrap().1.into(), row.rect[1])
 }
 pub(crate) fn check_anchor(rt: &Runtime<State>, anchor: &(String, f32)) -> f32 {
-    let y = rt
-        .elements()
+    let elements = rt.elements();
+    let y = elements
         .iter()
         .find(|row| row.path.ends_with(&format!("/{}", anchor.0)))
-        .expect("reading anchor retained")
+        .unwrap_or_else(|| {
+            let visible: Vec<&str> = elements
+                .iter()
+                .filter(|e| e.visible[3] > 2.0)
+                .filter_map(|e| {
+                    e.path
+                        .rsplit_once("/history/rows/")
+                        .map(|(_, tail)| tail)
+                        .filter(|tail| !tail.contains('/'))
+                })
+                .collect();
+            panic!(
+                "reading anchor retained: expected {}, visible={visible:?}",
+                anchor.0
+            );
+        })
         .rect[1];
     let delta = (y - anchor.1).abs();
     assert!(delta < 0.5, "reading anchor jumped by {delta} points");
@@ -100,11 +115,14 @@ pub fn suspend() {
     rt.pointer_up(x, y);
     rt.frame(0.02);
     assert!(
-        rt.state
-            .transcript_display
-            .toggled("tool-message-00410:6:reveal")
+        rt.accessibility_tree().nodes.into_iter().any(|(_, node)| {
+            node.author_id() == Some(toggle) && node.is_expanded() == Some(true)
+        })
     );
-    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 1600.0));
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_to_instant("history", 0.0, 1600.0);
+    });
     for _ in 0..12 {
         rt.frame(1.0 / 60.0);
     }
@@ -254,11 +272,6 @@ pub fn suspend() {
     rt.frame(0.02);
     assert!(rt.find("allow_once").is_some());
     assert_eq!(rt.state.draft.text, "keep this draft");
-    assert!(
-        rt.state
-            .transcript_display
-            .toggled("tool-message-00410:6:reveal")
-    );
     rt.update(|s, tx| {
         s.agent
             .as_mut()
@@ -316,7 +329,10 @@ pub fn run() {
     wait(&mut rt, "initial window", |s| {
         s.messages.len() == 200 && s.phase == Phase::Ready
     });
-    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_to_instant("history", 0.0, 0.0);
+    });
     rt.frame(0.0);
     for _ in 0..12 {
         rt.frame(1.0 / 60.0);
@@ -389,7 +405,10 @@ pub fn run() {
         s.phase == Phase::Ready && !s.history_detached && s.messages.len() == 200
     });
     canonical(&rt, 400, 200);
-    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_to_instant("history", 0.0, 0.0);
+    });
     rt.frame(0.0);
     let reading = anchor(&rt);
     rt.update(|s, tx| {

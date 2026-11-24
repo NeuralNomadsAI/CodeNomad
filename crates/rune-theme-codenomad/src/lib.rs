@@ -17,6 +17,7 @@ mod kit;
 pub mod layout;
 pub mod markdown;
 pub mod palettes;
+pub mod provider_usage;
 pub mod settings;
 pub mod shell;
 pub mod tabs;

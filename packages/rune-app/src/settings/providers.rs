@@ -169,7 +169,7 @@ type Flight = (Sender<()>, Receiver<Option<Vec<Provider>>>);
 
 pub(super) struct Catalog {
     pub expanded: bool,
-    client_id: Option<String>,
+    scope: Option<(String, String, Option<String>)>,
     authority: u64,
     seen: Option<u64>,
     flight: Option<Flight>,
@@ -181,7 +181,7 @@ impl Default for Catalog {
     fn default() -> Self {
         Self {
             expanded: true,
-            client_id: None,
+            scope: None,
             authority: 0,
             seen: None,
             flight: None,
@@ -205,12 +205,23 @@ impl Catalog {
             return changed;
         };
         let mut changed = false;
-        if self.client_id.as_deref() != Some(&target.backend.client_id)
+        if self
+            .scope
+            .as_ref()
+            .is_none_or(|(client, workspace, session)| {
+                client != &target.backend.client_id
+                    || workspace != &target.workspace
+                    || session != &target.session
+            })
             || self.authority != target.authority
         {
             *self = Self {
                 expanded: true,
-                client_id: Some(target.backend.client_id.clone()),
+                scope: Some((
+                    target.backend.client_id.clone(),
+                    target.workspace.clone(),
+                    target.session.clone(),
+                )),
                 authority: target.authority,
                 ..Self::default()
             };

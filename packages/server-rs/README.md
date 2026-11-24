@@ -12,6 +12,8 @@ Tauri (`cli_manager.rs`, `Runner::Rust`) runs the binary directly with the TypeS
 
 `serve` reads `server.opencodeBinary` from the selected profile at startup. A saved custom executable takes precedence over automatic discovery; an empty selection, `opencode` or `opencode2` uses discovery.
 
+The HTTPS listener serves the selected static UI bundle (Solid or Rune) to paired browsers. Solid’s non-HTML assets, including the PWA manifest, can be fetched without a device cookie. Both bundles use the same static encoding negotiation as the local listener.
+
 The positional launch `codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>` (bench and user service, `src/bench.rs`) keeps its data beside the identity file, its settings there or at `CLI_CONFIG`, and reads `CLI_UNRESTRICTED_ROOT`, `CNRS_SERVER_PASSWORD`, `CNRS_HTTPS_*` and `CNRS_TLS_*`.
 
 ## Architecture

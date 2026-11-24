@@ -47,6 +47,7 @@ pub fn run() {
     rt.state.screen.launcher_mut().unwrap().folder =
         TextEdit::new(std::env::var("RUNE_TEST_FOLDER").unwrap());
     rt.frame(0.0);
+    super::window_restore::wait_control(&mut rt, "open-folder");
     tap(&mut rt, "open-folder");
     wait(&mut rt, "folder", |s| {
         s.screen.launcher().unwrap().project.is_some()

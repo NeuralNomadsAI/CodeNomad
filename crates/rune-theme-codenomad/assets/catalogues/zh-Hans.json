@@ -1270,6 +1270,7 @@
   "missions.control.run.start": "启动任务",
   "missions.control.run.stop": "永久停止任务",
   "missions.control.run.stopConfirm": "永久停止此任务？",
+  "missions.control.run.superseded": "此操作已被更新的操作取代。",
   "missions.control.save": "保存",
   "missions.control.status.active": "进行中",
   "missions.control.status.completed": "已完成",
