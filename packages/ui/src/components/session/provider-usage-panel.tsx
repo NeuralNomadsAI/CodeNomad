@@ -114,7 +114,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     // Model-scoped limits arrive as `window:Model`, e.g. `requests:gemini-2.5-pro` or `7d:Opus`.
     const scope = label.indexOf(":")
     if (scope > 0) return `${windowLabel(label.slice(0, scope))} · ${label.slice(scope + 1)}`
-    const key = ({
+    const labels: Record<string, string> = {
       "5h": "fiveHours",
       "7d": "sevenDays",
       "7d-sonnet": "sevenDaysSonnet",
@@ -139,7 +139,8 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       chat: "chat",
       completions: "completions",
       "mcp-tools": "mcpTools",
-    } as Record<string, string>)[label]
+    }
+    const key = Object.hasOwn(labels, label) ? labels[label] : undefined
     return key ? t(`providerUsage.windows.${key}`) : label
   }
 

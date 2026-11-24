@@ -1,9 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { OpenCode } from "@opencode/client"
 import {
+  PLUGIN_USAGE_MAX_RESPONSE_BYTES,
   PLUGIN_USAGE_MAX_WINDOWS,
-  classifyPluginUsageError,
   parsePluginUsageOutput,
   pluginUsageRpcId,
   readPluginProviderUsage,
@@ -17,7 +16,7 @@ test("pluginUsageRpcId accepts safe provider IDs and rejects traversal or invali
   }
 })
 
-test("parsePluginUsageOutput validates, derives complementary percents and drops unknown top-level fields", () => {
+test("parsePluginUsageOutput validates, derives complementary percents and handles boundary hundredths", () => {
   const parsed = parsePluginUsageOutput(
     {
       providerName: "Antigravity Agent",
@@ -27,7 +26,8 @@ test("parsePluginUsageOutput validates, derives complementary percents and drops
       extraField: "ignored",
       windows: {
         "5h": { remainingPercent: 90.58, windowSeconds: 18_000, resetAt: 1_700_018_000_000 },
-        weekly: { usedPercent: 25, remainingPercent: 75, resetAt: null },
+        weekly: { usedPercent: 0.12, remainingPercent: 99.93, resetAt: null },
+        daily: { usedPercent: 25, remainingPercent: 75.05, resetAt: null },
         credits: { usedPercent: null, remainingPercent: null, valueLabel: "500 left", consumption: { used: 10, limit: 510 } },
       },
     },
@@ -45,6 +45,12 @@ test("parsePluginUsageOutput validates, derives complementary percents and drops
     resetAt: 1_700_018_000_000,
   })
   assert.deepEqual(parsed.windows.weekly, {
+    usedPercent: 0.12,
+    remainingPercent: 99.88,
+    windowSeconds: null,
+    resetAt: null,
+  })
+  assert.deepEqual(parsed.windows.daily, {
     usedPercent: 25,
     remainingPercent: 75,
     windowSeconds: null,
@@ -61,7 +67,7 @@ test("parsePluginUsageOutput validates, derives complementary percents and drops
   assert.equal("extraField" in parsed, false)
 })
 
-test("parsePluginUsageOutput clears windows on failure and rejects malformed, non-canonical or contradictory payloads", () => {
+test("parsePluginUsageOutput clears windows on failure and rejects malformed, prototype or contradictory payloads", () => {
   const failed = parsePluginUsageOutput(
     {
       providerName: "Custom",
@@ -90,48 +96,45 @@ test("parsePluginUsageOutput clears windows on failure and rejects malformed, no
   assert.equal(parsePluginUsageOutput({ providerName: "bad\nname", configured: true, ok: true, windows: {} }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { "5h": { usedPercent: Number.NaN } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { "5h": { unknownProp: 1 } } }, { requestedProviderId: "x", providerId: "x" }), null)
-  // Non-canonical window keys (including whitespace collisions) and prototype keys are rejected.
+  // Non-canonical window keys (whitespace collisions) and Object.prototype keys (bare or scoped) are rejected.
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 1 }, " weekly ": { usedPercent: 2 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { " 5h": { usedPercent: 1 } } }, { requestedProviderId: "x", providerId: "x" }), null)
-  assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: JSON.parse("{\"__proto__\":{\"usedPercent\":1}}") }, { requestedProviderId: "x", providerId: "x" }), null)
+  for (const key of ["__proto__", "constructor", "prototype", "toString", "valueOf", "hasOwnProperty", "hasOwnProperty:Scope", "toString:Model"]) {
+    const raw = JSON.parse(`{"configured":true,"ok":true,"windows":${JSON.stringify({ [key]: { usedPercent: 1 } })}}`)
+    assert.equal(parsePluginUsageOutput(raw, { requestedProviderId: "x", providerId: "x" }), null, key)
+  }
   // Out-of-range or contradictory percentages are rejected.
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 120 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: -1 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 120, remainingPercent: 90 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 40, remainingPercent: 40 } } }, { requestedProviderId: "x", providerId: "x" }), null)
+  assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 0.12, remainingPercent: 99.94 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { credits: { balanceUSD: { remaining: 5, total: -1 } } } }, { requestedProviderId: "x", providerId: "x" }), null)
 })
 
-test("classifyPluginUsageError distinguishes absent RPCs, registered failures and transport/unknown errors", () => {
-  assert.equal(classifyPluginUsageError({ _tag: "RpcError", type: "rpc.unavailable", message: "missing" }), "absent")
-  assert.equal(classifyPluginUsageError({ _tag: "RpcError", type: "rpc.method_not_found", message: "missing" }), "absent")
-  assert.equal(classifyPluginUsageError(new Error("")), "absent")
-  assert.equal(classifyPluginUsageError(Object.assign(new Error("Not found"), { type: "not_found" })), "absent")
-  assert.equal(classifyPluginUsageError({ _tag: "RpcInternalError", type: "rpc.internal", message: "boom" }), "registered")
-  assert.equal(classifyPluginUsageError({ _tag: "RpcError", type: "rpc.invalid_output", message: "bad" }), "registered")
-  assert.equal(classifyPluginUsageError({ _tag: "RpcError", type: "quota.failed", message: "custom" }), "registered")
-  assert.equal(classifyPluginUsageError({ _tag: "LocationNotFoundError", message: "gone" }), "failure")
-  assert.equal(classifyPluginUsageError(Object.assign(new Error("Transport: fetch failed"), { name: "ClientError", reason: "Transport" })), "failure")
-  assert.equal(classifyPluginUsageError(Object.assign(new Error("Internal Server Error"), { error: "Internal Server Error" })), "failure")
-})
-
-test("readPluginProviderUsage maps RPC outcomes, bounds ignored signals and propagates transport errors", async () => {
+test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and caps response size", async () => {
   const makeConnection = (handler: (url: URL, init?: RequestInit) => Promise<Response>) => ({
-    client: OpenCode.make({ baseUrl: "http://isolated-native.invalid", fetch: (input, init) => handler(new URL(String(input)), init) }),
+    endpoint: { url: "http://isolated-native.invalid" },
+    fetch: (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+      handler(new URL(input instanceof Request ? input.url : String(input)), init),
   })
 
   // Missing RPC returns null so the caller reports unsupported.
-  const absent = await readPluginProviderUsage(
-    makeConnection(async () => Response.json({ _tag: "RpcError", type: "rpc.unavailable", message: "RPC is unavailable" }, { status: 400 })),
-    { providerId: "unknown-plugin", location: { directory: "/repo" }, modelId: "m1" },
-    new AbortController().signal,
-  )
-  assert.equal(absent, null)
+  for (const type of ["rpc.unavailable", "rpc.method_not_found"]) {
+    const absent = await readPluginProviderUsage(
+      makeConnection(async () => Response.json({ _tag: "RpcError", type, message: "missing" }, { status: 400 })),
+      { providerId: "unknown-plugin", location: { directory: "/repo" }, modelId: "m1" },
+      new AbortController().signal,
+    )
+    assert.equal(absent, null, type)
+  }
 
-  // Older OpenCode without /api/rpc (404 JSON including `{ type: "not_found" }` or plain text) degrades to null.
+  // Older OpenCode without /api/rpc (any generic 404, JSON or plain text) degrades to null.
   for (const response of [
     () => Response.json({}, { status: 404 }),
     () => Response.json({ type: "not_found", message: "Not found" }, { status: 404 }),
+    () => Response.json({ _tag: "NotFound", message: "Not found" }, { status: 404 }),
+    () => Response.json({ _tag: "OpenCodeContractError", status: 404 }, { status: 404 }),
     () => new Response("Not Found", { status: 404 }),
   ]) {
     const older = await readPluginProviderUsage(
@@ -142,25 +145,56 @@ test("readPluginProviderUsage maps RPC outcomes, bounds ignored signals and prop
     assert.equal(older, null)
   }
 
-  // Transport failures propagate so callers return 503 instead of claiming unsupported.
-  await assert.rejects(
-    readPluginProviderUsage(
-      makeConnection(async () => { throw new TypeError("fetch failed") }),
-      { providerId: "agy-agent", location: { directory: "/repo" } },
-      new AbortController().signal,
-    ),
-  )
+  // Non-route failures (plain-text 500, untagged 400 {}, LocationNotFoundError 404, 502, fetch rejection) propagate -> 503.
+  for (const [label, responder] of [
+    ["plain-text 500", async () => new Response("Internal Server Error", { status: 500 })],
+    ["untagged 400 {}", async () => Response.json({}, { status: 400 })],
+    ["LocationNotFoundError 404", async () => Response.json({ _tag: "LocationNotFoundError", message: "gone" }, { status: 404 })],
+    ["SessionNotFoundError 404", async () => Response.json({ _tag: "SessionNotFoundError", message: "gone" }, { status: 404 })],
+    ["contract error 500", async () => Response.json({ _tag: "OpenCodeContractError", status: 500 }, { status: 500 })],
+    ["bad gateway 502", async () => new Response("Bad Gateway", { status: 502 })],
+    ["transport error", async () => { throw new TypeError("fetch failed") }],
+  ] as const) {
+    await assert.rejects(
+      readPluginProviderUsage(
+        makeConnection(responder),
+        { providerId: "agy-agent", location: { directory: "/repo" } },
+        new AbortController().signal,
+      ),
+      Error,
+      label,
+    )
+  }
 
   // Internal/invalid output from a registered plugin reports supported + unavailable without leaking text.
-  const broken = await readPluginProviderUsage(
-    makeConnection(async () => Response.json({ _tag: "RpcInternalError", type: "rpc.internal", message: "secret-token-leak" }, { status: 500 })),
-    { providerId: "agy-agent", location: { directory: "/repo" }, modelId: "gemini-4-neon" },
+  for (const response of [
+    () => Response.json({ _tag: "RpcInternalError", type: "rpc.internal", message: "secret-token-leak" }, { status: 500 }),
+    () => Response.json({ _tag: "RpcError", type: "rpc.invalid_output", message: "secret-token-leak" }, { status: 400 }),
+    () => Response.json({ _tag: "RpcError", type: "quota.failed", message: "secret-token-leak" }, { status: 400 }),
+  ]) {
+    const broken = await readPluginProviderUsage(
+      makeConnection(async () => response()),
+      { providerId: "agy-agent", location: { directory: "/repo" }, modelId: "gemini-4-neon" },
+      new AbortController().signal,
+    )
+    assert.ok(broken)
+    assert.equal(broken.supported, true)
+    assert.equal(broken.ok, false)
+    assert.equal(JSON.stringify(broken).includes("secret-token-leak"), false)
+  }
+
+  // Oversized 200 JSON responses are bounded and fail closed to unavailable.
+  const oversized = await readPluginProviderUsage(
+    makeConnection(async () => new Response(JSON.stringify({ output: { providerName: "x".repeat(PLUGIN_USAGE_MAX_RESPONSE_BYTES + 16), configured: true, ok: true, windows: {} } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })),
+    { providerId: "agy-agent", location: { directory: "/repo" } },
     new AbortController().signal,
   )
-  assert.ok(broken)
-  assert.equal(broken.supported, true)
-  assert.equal(broken.ok, false)
-  assert.equal(JSON.stringify(broken).includes("secret-token-leak"), false)
+  assert.ok(oversized)
+  assert.equal(oversized.supported, true)
+  assert.equal(oversized.ok, false)
 
   // Quota deadline abort bounds an RPC whose transport ignores the abort signal and resolves late or never settles.
   {

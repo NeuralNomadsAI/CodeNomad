@@ -6,20 +6,30 @@ import type { ServiceConnection } from "../workspaces/opencode-service"
 export const PLUGIN_USAGE_RPC_PREFIX = "provider-usage."
 export const PLUGIN_USAGE_RPC_METHOD = "read"
 export const PLUGIN_USAGE_MAX_WINDOWS = 16
+export const PLUGIN_USAGE_MAX_RESPONSE_BYTES = 256 * 1024
 
 const RPC_PROVIDER_ID = /^[A-Za-z0-9._-]{1,128}$/
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/
-const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"])
+const FORBIDDEN_KEYS = new Set([
+  "__proto__", "prototype", ...Object.getOwnPropertyNames(Object.prototype),
+])
+
+function isForbiddenWindowKey(label: string): boolean {
+  if (FORBIDDEN_KEYS.has(label)) return true
+  const scope = label.indexOf(":")
+  return scope > 0 && FORBIDDEN_KEYS.has(label.slice(0, scope))
+}
 
 const displayText = (max: number) =>
   z.string().trim().min(1).max(max).refine(value => !CONTROL_CHARS.test(value))
 
 const canonicalWindowKey = z.string().min(1).max(64).refine(value =>
-  value === value.trim() && !CONTROL_CHARS.test(value) && !FORBIDDEN_KEYS.has(value),
+  value === value.trim() && !CONTROL_CHARS.test(value) && !isForbiddenWindowKey(value),
 )
 
 const finite = z.number().refine(Number.isFinite)
-const roundPercent = (value: number) => Math.round(value * 100) / 100
+const toHundredths = (value: number) => Math.round(value * 100)
+const roundPercent = (value: number) => toHundredths(value) / 100
 const percent = finite.refine(value => value >= 0 && value <= 100).transform(roundPercent)
 
 const pluginWindowSchema = z.object({
@@ -37,7 +47,7 @@ const pluginWindowSchema = z.object({
   ]).optional(),
 }).strict().refine(item =>
   item.usedPercent == null || item.remainingPercent == null
-    || Math.abs(item.usedPercent + item.remainingPercent - 100) <= 0.05,
+    || Math.abs(toHundredths(item.usedPercent) + toHundredths(item.remainingPercent) - 10_000) <= 5,
 )
 
 const pluginUsageOutputSchema = z.object({
@@ -55,31 +65,6 @@ export function pluginUsageRpcId(providerId: string): string | null {
   return `${PLUGIN_USAGE_RPC_PREFIX}${id}`
 }
 
-export type PluginUsageErrorKind = "absent" | "registered" | "failure"
-
-export function classifyPluginUsageError(error: unknown): PluginUsageErrorKind {
-  if (!error || typeof error !== "object") return "failure"
-  const record = error as { _tag?: unknown; type?: unknown; name?: unknown; reason?: unknown; error?: unknown }
-  if (record._tag === "RpcError") {
-    if (record.type === "rpc.unavailable" || record.type === "rpc.method_not_found") return "absent"
-    return typeof record.type === "string" && record.type.length > 0 ? "registered" : "failure"
-  }
-  if (record._tag === "RpcInternalError") return "registered"
-  if (record._tag !== undefined) return "failure"
-  if (record.name === "ClientError") {
-    return record.reason === "UnsupportedContentType" ? "absent" : "failure"
-  }
-  if (error instanceof Error && record.name === "Error") {
-    const ownKeys = Object.keys(record)
-    if (ownKeys.length === 0 && error.message === "") return "absent"
-    const type = typeof record.type === "string" ? record.type.toLowerCase() : undefined
-    const detail = [error.message, typeof record.error === "string" ? record.error : ""]
-      .join(" ").trim().toLowerCase()
-    if (type === "not_found" || detail.includes("not found") || detail === "404") return "absent"
-  }
-  return "failure"
-}
-
 export function parsePluginUsageOutput(
   raw: unknown,
   context: { requestedProviderId: string; providerId: string; modelId?: string; now?: () => number },
@@ -88,7 +73,7 @@ export function parsePluginUsageOutput(
     ? (raw as { windows?: unknown }).windows
     : undefined
   if (rawWindows && typeof rawWindows === "object" && !Array.isArray(rawWindows)
-    && Object.keys(rawWindows).some(key => FORBIDDEN_KEYS.has(key))) {
+    && Object.keys(rawWindows).some(isForbiddenWindowKey)) {
     return null
   }
   const parsed = pluginUsageOutputSchema.safeParse(raw)
@@ -97,8 +82,13 @@ export function parsePluginUsageOutput(
   const windows: Record<string, ProviderUsageWindow> = {}
   if (data.ok) {
     for (const [label, item] of Object.entries(data.windows)) {
-      const usedPercent = item.usedPercent ?? (item.remainingPercent != null ? roundPercent(100 - item.remainingPercent) : null)
-      const remainingPercent = usedPercent != null ? roundPercent(100 - usedPercent) : null
+      const usedHundredths = item.usedPercent != null
+        ? toHundredths(item.usedPercent)
+        : item.remainingPercent != null
+          ? 10_000 - toHundredths(item.remainingPercent)
+          : null
+      const usedPercent = usedHundredths != null ? usedHundredths / 100 : null
+      const remainingPercent = usedHundredths != null ? (10_000 - usedHundredths) / 100 : null
       windows[label] = {
         usedPercent,
         remainingPercent,
@@ -149,41 +139,138 @@ async function awaitBounded<T>(operation: Promise<T>, signal: AbortSignal): Prom
   finally { signal.removeEventListener("abort", abort) }
 }
 
+function isJsonResponse(response: Response): boolean {
+  const type = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? ""
+  return type === "application/json" || type.endsWith("+json")
+}
+
+async function readBoundedJson(response: Response, signal: AbortSignal): Promise<{ ok: true; value: unknown } | { ok: false }> {
+  if (!isJsonResponse(response)) {
+    await response.body?.cancel().catch(() => {})
+    return { ok: false }
+  }
+  const declaredLength = Number(response.headers.get("content-length"))
+  if (Number.isFinite(declaredLength) && declaredLength > PLUGIN_USAGE_MAX_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => {})
+    return { ok: false }
+  }
+  if (!response.body) {
+    const pending = response.text()
+    pending.catch(() => {})
+    const text = await awaitBounded(pending, signal)
+    if (Buffer.byteLength(text, "utf8") > PLUGIN_USAGE_MAX_RESPONSE_BYTES) return { ok: false }
+    try { return { ok: true, value: JSON.parse(text) } }
+    catch { return { ok: false } }
+  }
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const read = reader.read()
+      read.catch(() => {})
+      const { done, value } = await awaitBounded(read, signal)
+      if (done) break
+      total += value.byteLength
+      if (total > PLUGIN_USAGE_MAX_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => {})
+        return { ok: false }
+      }
+      chunks.push(value)
+    }
+  } catch (error) {
+    void reader.cancel().catch(() => {})
+    throw error
+  } finally {
+    reader.releaseLock()
+  }
+  const text = Buffer.concat(chunks, total).toString("utf8")
+  try { return { ok: true, value: JSON.parse(text) } }
+  catch { return { ok: false } }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
 export async function readPluginProviderUsage(
-  connection: Pick<ServiceConnection, "client">,
+  connection: Pick<ServiceConnection, "endpoint" | "fetch">,
   target: { providerId: string; location: { directory: string; workspaceID?: string }; modelId?: string },
   signal: AbortSignal,
   quotaSignal: AbortSignal = signal,
 ): Promise<ProviderUsageResponse | null> {
   const rpcID = pluginUsageRpcId(target.providerId)
   if (!rpcID) return null
+  if (target.location.workspaceID !== undefined) throw new Error("Unsupported workspace selector")
   const providerId = target.providerId.trim()
   try {
     quotaSignal.throwIfAborted()
-    const pending = connection.client.rpc.call(
-      {
-        rpcID,
-        method: PLUGIN_USAGE_RPC_METHOD,
-        input: target.modelId ? { modelId: target.modelId } : {},
-        location: { directory: target.location.directory },
-      },
-      { ...locationRequestOptions(target.location), signal: quotaSignal },
-    )
+    const url = new URL(`/api/rpc/${encodeURIComponent(rpcID)}/${PLUGIN_USAGE_RPC_METHOD}`, connection.endpoint.url)
+    url.searchParams.set("location[directory]", target.location.directory)
+    const headers = new Headers(locationRequestOptions(target.location)?.headers)
+    headers.set("content-type", "application/json")
+    const pending = connection.fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ input: target.modelId ? { modelId: target.modelId } : {} }),
+      signal: quotaSignal,
+      redirect: "error",
+    })
     pending.catch(() => {})
     const response = await awaitBounded(pending, quotaSignal)
     signal.throwIfAborted()
-    if (quotaSignal.aborted) return unavailable(target.providerId, target.modelId)
-    return parsePluginUsageOutput(response.output, {
-      requestedProviderId: target.providerId,
-      providerId,
-      modelId: target.modelId,
-    }) ?? unavailable(target.providerId, target.modelId)
+    if (quotaSignal.aborted) {
+      await response.body?.cancel().catch(() => {})
+      return unavailable(target.providerId, target.modelId)
+    }
+
+    if (response.status === 200) {
+      const json = await readBoundedJson(response, quotaSignal)
+      signal.throwIfAborted()
+      if (quotaSignal.aborted) return unavailable(target.providerId, target.modelId)
+      const body = json.ok ? asRecord(json.value) : null
+      if (!body || !("output" in body)) return unavailable(target.providerId, target.modelId)
+      return parsePluginUsageOutput(body.output, {
+        requestedProviderId: target.providerId,
+        providerId,
+        modelId: target.modelId,
+      }) ?? unavailable(target.providerId, target.modelId)
+    }
+
+    if (response.status === 400) {
+      const json = await readBoundedJson(response, quotaSignal)
+      signal.throwIfAborted()
+      const body = json.ok ? asRecord(json.value) : null
+      if (body?._tag === "RpcError") {
+        if (body.type === "rpc.unavailable" || body.type === "rpc.method_not_found") return null
+        if (typeof body.type === "string" && body.type.length > 0) return unavailable(target.providerId, target.modelId)
+      }
+      throw new Error("Plugin usage RPC rejected request")
+    }
+
+    if (response.status === 404) {
+      const json = await readBoundedJson(response, quotaSignal)
+      signal.throwIfAborted()
+      const body = json.ok ? asRecord(json.value) : null
+      if (body?._tag === "LocationNotFoundError" || body?._tag === "SessionNotFoundError") {
+        throw new Error("Plugin usage location not found")
+      }
+      return null
+    }
+
+    if (response.status === 500) {
+      const json = await readBoundedJson(response, quotaSignal)
+      signal.throwIfAborted()
+      const body = json.ok ? asRecord(json.value) : null
+      if (body?._tag === "RpcInternalError") return unavailable(target.providerId, target.modelId)
+      throw new Error("Plugin usage daemon error")
+    }
+
+    await response.body?.cancel().catch(() => {})
+    throw new Error("Plugin usage unexpected status")
   } catch (error) {
     signal.throwIfAborted()
     if (quotaSignal.aborted) return unavailable(target.providerId, target.modelId)
-    const kind = classifyPluginUsageError(error)
-    if (kind === "registered") return unavailable(target.providerId, target.modelId)
-    if (kind === "absent") return null
     throw error
   }
 }
