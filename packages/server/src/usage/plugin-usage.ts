@@ -235,7 +235,7 @@ export async function readPluginProviderUsage(
       redirect: "error",
     })
     void pending.then(
-      response => { if (abandoned) void response.body?.cancel().catch(() => {}) },
+      response => { if (abandoned || signal.aborted || quotaSignal.aborted) void response.body?.cancel().catch(() => {}) },
       () => {},
     )
     let response: Response

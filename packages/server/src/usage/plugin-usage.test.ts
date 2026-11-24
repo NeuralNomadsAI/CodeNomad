@@ -257,6 +257,37 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     assert.equal(lateCancelled, true)
   }
 
+  // Same-turn quota abort + fetch resolution also cancels the response body.
+  {
+    const outer = new AbortController()
+    const quota = new AbortController()
+    let release!: () => void
+    let sameTurnCancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      cancel() { sameTurnCancelled = true },
+    })
+    const hanging = new Promise<Response>(resolve => {
+      release = () => resolve(new Response(stream, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }))
+    })
+    const pending = readPluginProviderUsage(
+      makeConnection(() => hanging),
+      { providerId: "agy-agent", location: { directory: "/repo" } },
+      outer.signal,
+      quota.signal,
+    )
+    quota.abort()
+    release()
+    const timedOut = await pending
+    await new Promise(resolve => setImmediate(resolve))
+    assert.ok(timedOut)
+    assert.equal(timedOut.supported, true)
+    assert.equal(timedOut.ok, false)
+    assert.equal(sameTurnCancelled, true)
+  }
+
   // Already-aborted quota signal rejects even if fetch would return a valid response.
   {
     const outer = new AbortController()
