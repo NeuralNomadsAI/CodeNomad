@@ -66,6 +66,41 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   createEffect(() => { if (!remoteRecentProjectsUsable()) setConnectingRecent(undefined) })
   let rootRef: HTMLDivElement | undefined
   let recentListRef: HTMLDivElement | undefined
+  let releaseBrowseHeight: (() => void) | undefined
+  onCleanup(() => releaseBrowseHeight?.())
+
+  function holdBrowseHeight(event: PointerEvent & { currentTarget: HTMLElement }) {
+    if (!event.isPrimary || event.button !== 0 || !(event.target instanceof Element)
+      || !event.target.closest(".browse-menu-footer button[type=submit]:enabled")) return
+    const panel = event.currentTarget
+    const grid = panel.parentElement
+    if (!grid || !matchMedia("(max-width: 639px)").matches) return
+    releaseBrowseHeight?.()
+    // Keep native hit testing stable while async rows change either stacked panel.
+    grid.style.setProperty("--folder-home-pressed-browse-height", `${panel.getBoundingClientRect().height}px`)
+    const listeners = new AbortController()
+    const options = { capture: true, signal: listeners.signal }
+    let clickDeadline: number | undefined
+    const release = releaseBrowseHeight = () => {
+      window.clearTimeout(clickDeadline)
+      listeners.abort()
+      grid.style.removeProperty("--folder-home-pressed-browse-height")
+      releaseBrowseHeight = undefined
+    }
+    const finish = (end: PointerEvent) => {
+      if (end.pointerId !== event.pointerId) return
+      if (end.type === "pointercancel" || event.pointerType === "mouse") return release()
+      // Touch hit-tests the synthesized click after pointerup. A non-clicking release still unpins.
+      window.addEventListener("click", click => {
+        if (click.isTrusted && click.detail > 0 && (!(click instanceof PointerEvent) || click.pointerId === event.pointerId)) release()
+      }, options)
+      clickDeadline = window.setTimeout(release, 400)
+    }
+    window.addEventListener("pointerup", finish, options)
+    window.addEventListener("pointercancel", finish, options)
+    window.addEventListener("blur", release, { signal: listeners.signal })
+  }
+
   createEffect(on(() => props.active === true, (active) => {
     if (!active) return
     const focus = captureRequestFocus()
@@ -402,7 +437,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </div>
 
           <div class="folder-home-main flex-1 gap-4">
-            <section class="folder-dashboard-servers panel window-shell flex flex-col min-w-0" aria-label={t("folderSelection.browseMenu.title")}>
+            <section class="folder-dashboard-servers panel window-shell flex flex-col min-w-0" aria-label={t("folderSelection.browseMenu.title")} onPointerDown={holdBrowseHeight}>
               <header class="panel-header !px-4 !py-3"><h2 class="panel-title text-base">{t("folderSelection.browseMenu.title")}</h2><EntryCount count={browseEntryCount()} /></header>
               <BrowseMenu initialServer={props.initialServer} isLoading={isLoading()} active={props.active !== false} onSourceChange={setRemoteSource} onBrowseLocal={() => void handleBrowse()}
                 onOpenSidecar={id => props.onOpenSidecar?.(id)} onJoined={props.onJoined} onRemoteOpened={props.onRemoteOpened} />
