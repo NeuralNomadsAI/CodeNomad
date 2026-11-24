@@ -165,10 +165,18 @@ pub struct Tree {
     pub(super) removable: bool,
     layout: Physical,
     identity: Option<String>,
+    /// When a sibling worktree's projected subfolder is a symlink into the same checkout,
+    /// stores `(link_path, resolved_target)` so cached lookups re-verify the link target.
+    projected_link: Option<(PathBuf, PathBuf)>,
 }
 impl Tree {
     pub fn registered(&self) -> &Path {
         &self.layout.root
+    }
+    fn link_live(&self) -> bool {
+        self.projected_link
+            .as_ref()
+            .is_none_or(|(link, target)| dunce::canonicalize(link).ok().as_ref() == Some(target))
     }
     pub(super) fn public(&self) -> Value {
         let label = self.branch.clone().unwrap_or_else(|| {
@@ -193,7 +201,11 @@ impl Tree {
         row
     }
     fn owns_path(&self, dir: &Path) -> bool {
-        self.path == dir && !self.nested_missing && self.layout.live() && identity(dir).ok() == self.identity
+        self.path == dir
+            && !self.nested_missing
+            && self.layout.live()
+            && self.link_live()
+            && identity(dir).ok() == self.identity
     }
     /// `dir` (physical, possibly not yet existing) lies in this live checkout's project folder.
     /// Only `subagent-depth` (`ownership`) admits such subfolders, as the reference does.
@@ -201,6 +213,7 @@ impl Tree {
         dir.starts_with(&self.path)
             && !self.nested_missing
             && self.layout.live()
+            && self.link_live()
             && identity(&self.path).ok() == self.identity
     }
     pub(super) fn contains_media(&self, dir: &Path) -> bool {
@@ -213,6 +226,7 @@ impl Tree {
         };
         within
             && self.layout.live()
+            && self.link_live()
             && if self.nested_missing {
                 std::fs::symlink_metadata(&self.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
             } else {
@@ -434,40 +448,52 @@ async fn catalogue_in_at(
         }
         let opened = root == local.root;
         let projected = if tail.as_os_str().is_empty() { root.clone() } else { root.join(tail) };
-        let (check, id) = {
+        let (check, tree_path, id, projected_link) = {
             let root = root.clone();
             let projected = projected.clone();
             let scope = app.scope.clone();
-            match tokio::task::spawn_blocking(move || -> Result<Option<(Physical, Option<String>)>, Error> {
-                if !check.live() {
-                    return Ok(None);
-                }
-                let id = match dunce::canonicalize(&projected) {
-                    Ok(real) if real == projected && real.is_dir() => match identity(&projected) {
-                        Ok(value) => Some(value),
-                        Err(_) if !opened && !root.starts_with(&scope) => None,
-                        Err(error) => return Err(error),
-                    },
-                    // TS admits sibling worktrees whose projected subfolder is a symlink to another
-                    // directory inside the same checkout (`worktree-directory.ts:226-278`).
-                    Ok(real)
-                        if !opened
-                            && ((real == projected && real.is_file())
-                                || (real.starts_with(&root) && real.is_dir())
-                                || !root.starts_with(&scope)) =>
-                    {
-                        None
+            match tokio::task::spawn_blocking(
+                move || -> Result<Option<(Physical, PathBuf, Option<String>, Option<(PathBuf, PathBuf)>)>, Error> {
+                    if !check.live() {
+                        return Ok(None);
                     }
-                    Ok(_) if !opened => return Ok(None),
-                    Ok(_) => return Err(conflict("Projected worktree directory is not physically owned")),
-                    Err(_) => None,
-                };
-                Ok(Some((check, id)))
-            })
+                    let (tree_path, id, projected_link) = match dunce::canonicalize(&projected) {
+                        Ok(real) if real == projected && real.is_dir() => match identity(&projected) {
+                            Ok(value) => (projected, Some(value), None),
+                            Err(_) if !opened && !crate::files::paths::under(&scope, &root) => (projected, None, None),
+                            Err(error) => return Err(error),
+                        },
+                        // TS resolves a sibling worktree's symlinked projected subfolder and admits it
+                        // when its physical target stays inside the same checkout (`worktree-directory.ts:248-278`).
+                        Ok(real)
+                            if !opened
+                                && real.starts_with(&root)
+                                && real.is_dir()
+                                && crate::files::paths::under(&scope, &real) =>
+                        {
+                            match identity(&real) {
+                                Ok(value) => (real.clone(), Some(value), Some((projected, real))),
+                                Err(_) => return Ok(None),
+                            }
+                        }
+                        Ok(real)
+                            if !opened
+                                && ((real == projected && real.is_file())
+                                    || !crate::files::paths::under(&scope, &root)) =>
+                        {
+                            (projected, None, None)
+                        }
+                        Ok(_) if !opened => return Ok(None),
+                        Ok(_) => return Err(conflict("Projected worktree directory is not physically owned")),
+                        Err(_) => (projected, None, None),
+                    };
+                    Ok(Some((check, tree_path, id, projected_link)))
+                },
+            )
             .await
             .map_err(|_| native_error())??
             {
-                Some(pair) => pair,
+                Some(tuple) => tuple,
                 None => continue,
             }
         };
@@ -482,7 +508,7 @@ async fn catalogue_in_at(
         let slug = if opened { "root".into() } else { format!("worktree-{}", &digest[..20]) };
         let field = |prefix: &str| meta.split('\0').find_map(|s| s.strip_prefix(prefix)).map(str::to_owned);
         checked.push(Tree {
-            path: projected,
+            path: tree_path,
             service,
             slug,
             identity: id.clone(),
@@ -490,6 +516,7 @@ async fn catalogue_in_at(
             service_root: service_root.into(),
             removable: !opened && check.admin != check.common,
             layout: check,
+            projected_link,
             branch: field("branch refs/heads/"),
             head: field("HEAD ").filter(|s| s.bytes().any(|b| b != b'0')),
             locked: meta.split('\0').any(|s| s == "locked" || s.starts_with("locked ")),

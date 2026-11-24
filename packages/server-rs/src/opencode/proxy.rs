@@ -297,8 +297,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         return Err(error(Status::BAD_REQUEST, "Location does not belong to workspace"));
     }
     let requested = requested_dirs.first().cloned();
-    static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
-    let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
     let workspace_closed = || async {
         loop {
             let notified = app.workspace_closed.notified();
@@ -307,20 +305,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             }
             notified.await;
         }
-    };
-    let defer_slot = if defer_media.is_some() {
-        let slot = tokio::select! {
-            biased;
-            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-            _ = workspace_closed() => return Err(not_found()),
-            permit = tokio::time::timeout(super::PROXY_IDLE, DEFER_SLOTS.acquire()) => {
-                permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
-            }
-        };
-        Some(slot)
-    } else {
-        None
     };
     let resolve_media_path = |raw: &str| crate::worktrees::ownership::resolve_media_path(&app.scope, raw);
     let allow_subfolder = send_input || message_list;
@@ -821,15 +805,32 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         return Err(upstream_error());
     }
     if let Some(session) = defer_media {
-        let slot = defer_slot.ok_or_else(interrupted)?;
+        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+        let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
         let list_deadline = tokio::time::Instant::now() + super::PROXY_IDLE;
+        // Acquire the projection slot right before upstream dispatch so admission checks
+        // and `session.get` never occupy slots while waiting or after principal revocation.
+        let slot = tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+            _ = workspace_closed() => return Err(not_found()),
+            permit = tokio::time::timeout_at(list_deadline, DEFER_SLOTS.acquire()) => {
+                permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+            }
+        };
         let mut response = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
             _ = workspace_closed() => return Err(not_found()),
-            sent = tokio::time::timeout_at(list_deadline, upstream.send()) => {
-                sent.map_err(|_| interrupted())?.map_err(|_| upstream_error())?
+            sent = tokio::time::timeout_at(list_deadline, upstream.send()) => match sent {
+                Ok(Ok(response)) => response,
+                Ok(Err(_)) => {
+                    app.native.invalidate(&endpoint);
+                    return Err(upstream_error());
+                }
+                Err(_) => return Err(interrupted()),
             }
         };
         if response.status().is_success() && is_json_content_type(response.headers()) {
@@ -878,6 +879,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 }
             }
             let (payload, changed) = stream.finish().map_err(|_| interrupted())?;
+            let mem = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                _ = workspace_closed() => return Err(not_found()),
+                permit = tokio::time::timeout_at(list_deadline, crate::shared::reserve_response_memory(payload.len())) => {
+                    permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+                }
+            };
             drop(slot);
             // Matches TS `http-server.ts:1671-1677` & `proxy.ts:80-94`: once the page is received,
             // deliver the projected JSON without an extra native round-trip, keeping liveness guards.
@@ -933,7 +943,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 .header(header::CONTENT_LENGTH, length);
             return builder
                 .extension(NativeBody)
-                .body(crate::shared::permit_body(payload, None, abort))
+                .body(crate::shared::permit_body(payload, Some(mem), abort))
                 .map_err(|_| upstream_error());
         }
         drop(slot);

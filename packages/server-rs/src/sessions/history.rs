@@ -427,14 +427,13 @@ fn parse_and_validate_history(
     Ok(ValidatedHistory { output, raw_range, body, user_files_marker })
 }
 
-fn finalize_history_response(
+fn finalize_history_payload(
     mut validated: ValidatedHistory,
     id: &str,
     session: &str,
     reference: bool,
     defer: bool,
-    abort: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
-) -> Result<Response, Response> {
+) -> Result<Bytes, Response> {
     if reference && validated.output["status"] == "window" {
         if let Some(marker) = validated.user_files_marker.take()
             && let Some(root) = validated.output.as_object_mut()
@@ -460,19 +459,7 @@ fn finalize_history_response(
     } else {
         validated.body.slice(validated.raw_range)
     };
-    let length = axum::http::HeaderValue::from(payload.len());
-    let response_body = match abort {
-        Some(abort) => crate::shared::permit_body(payload, None, abort),
-        None => axum::body::Body::from(payload),
-    };
-    Ok((
-        [
-            (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/json")),
-            (header::CONTENT_LENGTH, length),
-        ],
-        response_body,
-    )
-        .into_response())
+    Ok(payload)
 }
 
 pub async fn handle(
@@ -596,43 +583,76 @@ pub async fn handle(
                 Recheck::Conflict => return blocked("conflict"),
                 Recheck::Unavailable => return blocked("unavailable"),
             }
-            let abort = defer.then(|| {
-                crate::shared::stream_abort(
+            let projected = if defer && body_len > 32 * 1024 {
+                let (id, session) = (id.clone(), session.to_owned());
+                match tokio::task::spawn_blocking(move || {
+                    (finalize_history_payload(validated, &id, &session, reference, defer), slot)
+                })
+                .await
+                {
+                    Ok((result, slot)) => (result, slot),
+                    Err(_) => return blocked("unavailable"),
+                }
+            } else {
+                (finalize_history_payload(validated, &id, session, reference, defer), slot)
+            };
+            let (payload, slot) = match projected {
+                (Ok(payload), slot) => (payload, slot),
+                (Err(invalid_response), _) => return invalid_response,
+            };
+            let mem = if defer {
+                let workspace_closed = async {
+                    loop {
+                        let notified = app.workspace_closed.notified();
+                        if !placement.operation_current_fast(&app, &id) {
+                            return;
+                        }
+                        notified.await;
+                    }
+                };
+                let permit = tokio::select! {
+                    biased;
+                    _ = workspace_closed => return blocked("unavailable"),
+                    permit = crate::shared::reserve_response_memory(payload.len()) => match permit {
+                        Ok(permit) => permit,
+                        Err(_) => return blocked("unavailable"),
+                    }
+                };
+                Some(permit)
+            } else {
+                None
+            };
+            drop(slot);
+            if !placement.operation_current(&app, &id).await {
+                return blocked("unavailable");
+            }
+            if !placement.live(&app, &id).await {
+                return blocked("conflict");
+            }
+            if principal.live().is_err() {
+                return crate::auth::unauthorized().into_response();
+            }
+            let length = axum::http::HeaderValue::from(payload.len());
+            let response_body = if defer {
+                let abort = crate::shared::stream_abort(
                     app.clone(),
                     id.clone(),
                     placement.workspace.clone(),
                     placement.endpoint.clone(),
                     principal.0.clone(),
-                )
-            });
-            let projected = if defer && body_len > 32 * 1024 {
-                let (id, session) = (id.clone(), session.to_owned());
-                match tokio::task::spawn_blocking(move || {
-                    let result = finalize_history_response(validated, &id, &session, reference, defer, abort);
-                    drop(slot);
-                    result
-                })
-                .await
-                {
-                    Ok(result) => result,
-                    Err(_) => return blocked("unavailable"),
-                }
+                );
+                crate::shared::permit_body(payload, mem, abort)
             } else {
-                let result = finalize_history_response(validated, &id, session, reference, defer, abort);
-                drop(slot);
-                result
+                axum::body::Body::from(payload)
             };
-            let response = match projected {
-                Ok(response) => response,
-                Err(invalid_response) => return invalid_response,
-            };
-            if defer && !placement.operation_current(&app, &id).await {
-                return blocked("unavailable");
-            }
-            if principal.live().is_err() {
-                return crate::auth::unauthorized().into_response();
-            }
-            response
+            (
+                [
+                    (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/json")),
+                    (header::CONTENT_LENGTH, length),
+                ],
+                response_body,
+            )
+                .into_response()
         };
         if defer {
             tokio::select! {

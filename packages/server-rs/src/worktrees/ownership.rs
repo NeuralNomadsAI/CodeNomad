@@ -267,6 +267,23 @@ async fn proof_live_async(proof: DirectoryProof, path: PathBuf) -> Option<Direct
     tokio::task::spawn_blocking(move || proof.live(&path).then_some(proof)).await.ok()?
 }
 
+async fn catalogue_proof_live_async(
+    catalogue: std::sync::Arc<super::inventory::Catalogue>,
+    path: PathBuf,
+    external: bool,
+    scope: Option<PathBuf>,
+) -> Option<DirectoryProof> {
+    tokio::task::spawn_blocking(move || {
+        catalogue_proof(&catalogue, &path, external, true).filter(|proof| {
+            scope.as_ref().is_none_or(|scope| {
+                proof.tree.as_ref().is_none_or(|tree| crate::files::paths::under(scope, tree.registered()))
+            }) && proof.live(&path)
+        })
+    })
+    .await
+    .ok()?
+}
+
 pub(crate) async fn media_directory(
     app: &App,
     workspace: &Workspace,
@@ -337,10 +354,8 @@ pub(crate) async fn media_directory(
             if !current() {
                 return Err(native_error());
             }
-            let proof = match catalogue_proof(&catalogue, path, external, true) {
-                Some(proof) => proof_live_async(proof, path.to_path_buf()).await,
-                None => None,
-            };
+            let proof =
+                catalogue_proof_live_async(std::sync::Arc::new(catalogue), path.to_path_buf(), external, None).await;
             if !current() {
                 return Err(native_error());
             }
@@ -355,10 +370,8 @@ pub(crate) async fn media_directory(
     // a cold read and a single refresh on a miss (TS `worktree-directory.ts:37-47`).
     let cached = app.linked_events.lock().unwrap().cached(workspace.id, endpoint);
     if let Some(cached) = cached
-        && let Some(proof) = catalogue_proof(&cached, path, external, true).filter(|proof| {
-            proof.tree.as_ref().is_none_or(|tree| crate::files::paths::under(&app.scope, tree.registered()))
-        })
-        && let Some(live) = proof_live_async(proof, path.to_path_buf()).await
+        && let Some(live) =
+            catalogue_proof_live_async(cached, path.to_path_buf(), external, Some(app.scope.clone())).await
     {
         if !current() {
             return Err(native_error());
@@ -374,10 +387,8 @@ pub(crate) async fn media_directory(
         if !current() {
             return Err(native_error());
         }
-        let proof = match catalogue_proof(&catalogue, path, external, true) {
-            Some(proof) => proof_live_async(proof, path.to_path_buf()).await,
-            None => None,
-        };
+        let proof =
+            catalogue_proof_live_async(std::sync::Arc::new(catalogue), path.to_path_buf(), external, None).await;
         if !current() {
             return Err(native_error());
         }

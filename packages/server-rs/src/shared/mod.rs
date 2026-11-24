@@ -114,9 +114,24 @@ pub fn stream_abort(
     })
 }
 
+const RESPONSE_CHUNK: usize = 64 * 1024;
+const RESPONSE_MEM_UNITS: usize = 4096;
+
+/// Global byte budget (256 MiB in 64 KiB units) bounding prepared buffered responses
+/// currently streaming downstream (`session-media`, deferred `window`, deferred `message.list`).
+static RESPONSE_MEM: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(RESPONSE_MEM_UNITS)));
+
+pub async fn reserve_response_memory(
+    bytes: usize,
+) -> Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::AcquireError> {
+    let units = bytes.div_ceil(RESPONSE_CHUNK).clamp(1, RESPONSE_MEM_UNITS) as u32;
+    RESPONSE_MEM.clone().acquire_many_owned(units).await
+}
+
 pub fn permit_body(
     mut bytes: axum::body::Bytes,
-    mut slot: Option<tokio::sync::SemaphorePermit<'static>>,
+    mut mem: Option<tokio::sync::OwnedSemaphorePermit>,
     mut abort: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
 ) -> axum::body::Body {
     let mut done = false;
@@ -126,7 +141,7 @@ pub fn permit_body(
         }
         if std::future::Future::poll(abort.as_mut(), cx).is_ready() {
             done = true;
-            drop(slot.take());
+            drop(mem.take());
             bytes.clear();
             return std::task::Poll::Ready(Some(Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
@@ -135,10 +150,10 @@ pub fn permit_body(
         }
         if bytes.is_empty() {
             done = true;
-            drop(slot.take());
+            drop(mem.take());
             return std::task::Poll::Ready(None);
         }
-        let chunk = bytes.split_to(bytes.len().min(64 * 1024));
+        let chunk = bytes.split_to(bytes.len().min(RESPONSE_CHUNK));
         std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(chunk)))
     }))
 }
