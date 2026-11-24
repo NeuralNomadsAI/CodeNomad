@@ -216,23 +216,47 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         println!("{local_url}");
     }
     let done = shutdown.clone();
-    let served = shared::serve_local(listener, local, done, || {
+    let shutdown_at = Arc::new(std::sync::OnceLock::new());
+    let mark_shutdown = shutdown_at.clone();
+    let served = shared::serve_local(listener, local, done, move || {
+        let _ = mark_shutdown.set(tokio::time::Instant::now());
         // Event streams end, as `closeSseClients` does, so the drain can finish.
         state.events.shutdown.cancel();
     })
     .await;
     shutdown.cancel();
-    let remote = match remote {
-        Some(task) => task.await.map_err(|e| e.to_string()).and_then(|r| r.map_err(|e| e.to_string())),
-        None => Ok(()),
-    };
+    // Share one 25 s graceful-drain deadline across local HTTP, HTTPS, and the automation bridge
+    // so sequential waits never stack past the desktop host's 30 s stop window.
+    let drain_deadline = *shutdown_at.get_or_init(tokio::time::Instant::now) + std::time::Duration::from_secs(25);
+    let (remote, bridge_ok) = tokio::join!(
+        async {
+            match remote {
+                Some(mut task) => match tokio::time::timeout_at(drain_deadline, &mut task).await {
+                    Ok(joined) => joined.map_err(|e| e.to_string()).and_then(|r| r.map_err(|e| e.to_string())),
+                    Err(_) => {
+                        task.abort();
+                        Err("remote server shutdown drain timed out".into())
+                    }
+                },
+                None => Ok(()),
+            }
+        },
+        async {
+            match bridge {
+                Some(mut task) => match tokio::time::timeout_at(drain_deadline, &mut task).await {
+                    Ok(Ok(())) => true,
+                    Ok(Err(_)) => false,
+                    Err(_) => {
+                        task.abort();
+                        false
+                    }
+                },
+                None => true,
+            }
+        }
+    );
     // Drain local, remote, and automation bridge HTTP listeners before tearing down plugin leases
-    // (TS `index.ts:753-767`, `shutdown.ts:130-137`), keeping bridge drain under the 25 s ceiling.
-    if let Some(mut task) = bridge
-        && tokio::time::timeout(std::time::Duration::from_secs(25), &mut task).await.is_err()
-    {
-        task.abort();
-    }
+    // (TS `index.ts:753-767`, `shutdown.ts:130-137`).
     plugins_stop.cancel();
     if let Some(task) = plugins {
         let _ = task.await;
@@ -241,7 +265,10 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     if !launch.serve {
         served?;
         remote?;
+        if !bridge_ok {
+            return Err("automation bridge shutdown drain timed out".into());
+        }
         return Ok(true);
     }
-    Ok(served.is_ok() && remote.is_ok())
+    Ok(served.is_ok() && remote.is_ok() && bridge_ok)
 }

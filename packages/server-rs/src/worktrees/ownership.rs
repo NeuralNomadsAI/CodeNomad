@@ -406,21 +406,9 @@ pub(crate) async fn media_directory(
         }
         return Err(native_error());
     }
-    // History windows and `message.list` reuse a valid warm inventory before falling back to
-    // a cold read and a single refresh on a miss (TS `worktree-directory.ts:37-47`).
-    let cached = app.linked_events.lock().unwrap().cached(workspace.id, endpoint);
-    if let Some(cached) = cached
-        && let Some(live) =
-            catalogue_proof_live_async(cached, path.to_path_buf(), external, Some(app.scope.clone())).await
-    {
-        if !current() {
-            return Err(native_error());
-        }
-        return Ok(Some(live));
-    }
+    // Keep HTTP request ownership strictly separate from the SSE `linked_events` cache
+    // (TS `manager.ts:467-504`): always load through the HTTP request inventory with refresh.
     let timeout = std::time::Duration::from_secs(12);
-    // Cold request inventory refreshes before listing, matching TS `manager.ts:467-468`
-    // and `native-worktrees.ts:86-95`.
     let mut refresh = true;
     let mut refreshed = false;
     for _ in 0..4 {

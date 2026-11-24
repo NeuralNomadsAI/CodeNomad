@@ -137,7 +137,7 @@ impl Placement {
                     session,
                     Duration::from_secs(15),
                     true,
-                    2 * 1024 * 1024,
+                    16 * 1024 * 1024,
                 )
                 .await?
             };
@@ -259,7 +259,7 @@ impl Placement {
                 session,
                 Duration::from_secs(15),
                 false,
-                2 * 1024 * 1024,
+                16 * 1024 * 1024,
             )
             .await?
         };
@@ -603,7 +603,7 @@ pub async fn handle(
         };
         static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
         let work = async {
-            let slot = if defer {
+            let slot = if action == "window" {
                 let workspace_closed = async {
                     loop {
                         let notified = app.workspace_closed.notified();
@@ -667,28 +667,6 @@ pub async fn handle(
                 }
             }
             let body_len = body.len();
-            let slot = if slot.is_none() && body_len > 32 * 1024 {
-                let workspace_closed = async {
-                    loop {
-                        let notified = app.workspace_closed.notified();
-                        if !placement.operation_current_fast(&app, &id) {
-                            return;
-                        }
-                        notified.await;
-                    }
-                };
-                let permit = tokio::select! {
-                    biased;
-                    _ = workspace_closed => return blocked("unavailable"),
-                    permit = DEFER_SLOTS.acquire() => match permit {
-                        Ok(permit) => permit,
-                        Err(_) => return blocked("unavailable"),
-                    }
-                };
-                Some(permit)
-            } else {
-                slot
-            };
             let (validated, slot) = if body_len > 32 * 1024 {
                 let action_owned = action.clone();
                 match tokio::task::spawn_blocking(move || {

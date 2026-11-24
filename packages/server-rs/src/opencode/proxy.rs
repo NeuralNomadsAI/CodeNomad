@@ -262,7 +262,22 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
             _ = workspace_closed() => return Err(not_found()),
-            acquired = app.native.acquire(deadline) => acquired.map_err(|_| upstream_error())?,
+            acquired = app.native.acquire(deadline) => match acquired {
+                Ok(endpoint) => endpoint,
+                Err(ref refusal @ super::admission::Refusal::Unsupported { ref actual, reason }) => {
+                    return Err((
+                        Status::UPGRADE_REQUIRED,
+                        Json(json!({
+                            "error": "opencode_update_required",
+                            "message": refusal.to_string(),
+                            "actualVersion": actual,
+                            "minimumVersion": super::admission::MINIMUM_VERSION,
+                            "reason": reason,
+                        })),
+                    ));
+                }
+                Err(_) => return Err(upstream_error()),
+            },
         };
         tokio::select! {
             biased;
@@ -389,7 +404,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         let actual = if let Some(session) = session {
             Some(if message_list {
-                static LIST_ADMISSION_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
+                static LIST_ADMISSION_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
                 let _admission_slot = LIST_ADMISSION_SLOTS.acquire().await.map_err(|_| upstream_error())?;
                 super::session_record_list_at(&app, &endpoint, session).await?
             } else {
@@ -1396,11 +1411,23 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         {
             return Err(upstream_error());
         }
+        let ws_closed_headers = async {
+            loop {
+                let notified = app.workspace_closed.notified();
+                if !app.workspace(&id).is_ok_and(|current| current.id == workspace.id && current.path == workspace.path)
+                {
+                    return;
+                }
+                notified.await;
+            }
+        };
         // Undici's default headers deadline for the TypeScript runtime transport.
         // Do not cap the total lifetime of a streaming native response.
         let response = tokio::select! {
+            biased;
             _ = principal.0.cancelled(), if !dispatched_mutation => return Err(crate::auth::unauthorized()),
             _ = app.native.wait_retired(&endpoint), if !dispatched_mutation => return Err(upstream_error()),
+            _ = ws_closed_headers, if !dispatched_mutation => return Err(not_found()),
             response = tokio::time::timeout(super::PROXY_IDLE, upstream.send()) => match response {
                 Ok(Ok(response)) => response,
                 Ok(Err(_)) => {

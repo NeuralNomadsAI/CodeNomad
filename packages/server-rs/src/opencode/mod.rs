@@ -349,9 +349,9 @@ pub async fn session_record_opaque_at(
 }
 
 /// Variant for `GET /api/session/:id/message` admission checks: accepts opaque session IDs with
-/// the 30 s budget while keeping the standard 2 MiB session-record cap (16 MiB is `session-media` only).
+/// the 30 s budget and uniform 16 MiB session-record cap matching history/media reads.
 pub async fn session_record_list_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
-    session_record_opaque_at(app, endpoint, id, Duration::from_secs(30), true, 2 * 1024 * 1024).await
+    session_record_opaque_at(app, endpoint, id, Duration::from_secs(30), true, 16 * 1024 * 1024).await
 }
 
 /// Variant for opaque media/history-media session IDs (TS `session-media-contract.ts`).

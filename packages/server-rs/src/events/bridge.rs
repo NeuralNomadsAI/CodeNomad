@@ -210,6 +210,7 @@ pub async fn bridge(app: Shared) {
             }
         };
         crate::extensions::lifecycle::prepare(&app, &endpoint).await;
+        let mut local_backpressure = false;
         let response = app.native.get("/api/event").header("accept", "text/event-stream").send().await;
         if let Ok(response) = response
             && response.status().is_success()
@@ -229,7 +230,10 @@ pub async fn bridge(app: Shared) {
             loop {
                 let next = tokio::select! {
                     biased;
-                    _ = lanes.failed.cancelled() => break,
+                    _ = lanes.failed.cancelled() => {
+                        local_backpressure = true;
+                        break;
+                    }
                     _ = app.native.wait_retired(&endpoint) => break,
                     _ = app.opened.notified(), if connected => {
                         lanes.receipts.schedule();
@@ -290,22 +294,31 @@ pub async fn bridge(app: Shared) {
                 }
                 if bytes > SDK_FRAME_UNITS && wire.encode_utf16().count() > SDK_FRAME_UNITS {
                     drop(wire);
-                    let Some(files) = crate::sessions::user_files::projected_inbox_files(&event) else { break };
+                    let Some(files) = crate::sessions::user_files::projected_inbox_files(&event) else {
+                        local_backpressure = true;
+                        break;
+                    };
                     event["data"]["item"]["payload"]["files"] = files;
                     let projected = event.to_string();
                     bytes = projected.len();
                     if bytes > SDK_FRAME_UNITS && projected.encode_utf16().count() > SDK_FRAME_UNITS {
+                        local_backpressure = true;
                         break;
                     }
                 }
                 let job = Job { bytes, event, received, endpoint: endpoint.clone() };
                 if !lanes.enqueue(&app, &routes, lane(&job.event), job) {
+                    local_backpressure = true;
                     break;
                 }
             }
             lanes.failed.cancel();
         }
-        app.native.invalidate(&endpoint);
+        // Only invalidate the shared daemon connection on transport disconnect/timeout, not on
+        // local SSE lane backpressure (TS `instance-events.ts:150-157`, `opencode-service.ts:306-325`).
+        if !local_backpressure {
+            app.native.invalidate(&endpoint);
+        }
         eprintln!("Shared OpenCode event stream disconnected: Shared OpenCode event stream ended");
         status(&app, "error", Some("Shared OpenCode event stream ended"));
         tokio::time::sleep(Duration::from_secs(1)).await;
