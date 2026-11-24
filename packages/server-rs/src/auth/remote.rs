@@ -88,7 +88,17 @@ fn browser_metadata(h: &HeaderMap) -> bool {
 pub(super) fn cors(mut response: Response, origin: Option<HeaderValue>) -> Response {
     let raw = response.extensions().get::<crate::opencode::NativeBody>().is_some();
     let h = response.headers_mut();
-    h.entry(header::VARY).or_insert(HeaderValue::from_static("Origin"));
+    match h.get(header::VARY).and_then(|v| v.to_str().ok()) {
+        None => {
+            h.insert(header::VARY, HeaderValue::from_static("Origin"));
+        }
+        Some(existing) if existing.split(',').any(|part| part.trim().eq_ignore_ascii_case("origin")) => {}
+        Some(existing) => {
+            if let Ok(merged) = HeaderValue::from_str(&format!("{existing}, Origin")) {
+                h.insert(header::VARY, merged);
+            }
+        }
+    }
     if let Some(origin) = origin {
         h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
         h.insert(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));

@@ -78,24 +78,38 @@ impl MessageListStream {
     }
 
     fn push_out(&mut self, byte: u8) -> Result<(), ()> {
-        if self.out.len() >= OUTPUT_LIMIT {
+        let total = self.out.len().saturating_add(self.item.len());
+        if total >= OUTPUT_LIMIT {
             return Err(());
+        }
+        if self.out.len() == self.out.capacity() && self.out.len() >= 1024 * 1024 {
+            let step = (OUTPUT_LIMIT - total).min(4 * 1024 * 1024).max(1);
+            self.out.reserve_exact(step);
         }
         self.out.push(byte);
         Ok(())
     }
 
     fn extend_out(&mut self, bytes: &[u8]) -> Result<(), ()> {
-        if self.out.len().saturating_add(bytes.len()) > OUTPUT_LIMIT {
+        let total = self.out.len().saturating_add(self.item.len()).saturating_add(bytes.len());
+        if total > OUTPUT_LIMIT {
             return Err(());
+        }
+        if self.out.len() + bytes.len() > self.out.capacity() && self.out.len() + bytes.len() >= 1024 * 1024 {
+            self.out.reserve_exact(bytes.len());
         }
         self.out.extend_from_slice(bytes);
         Ok(())
     }
 
     fn push_item(&mut self, byte: u8) -> Result<(), ()> {
-        if self.item.len() >= ITEM_LIMIT {
+        let total = self.out.len().saturating_add(self.item.len());
+        if self.item.len() >= ITEM_LIMIT || total >= OUTPUT_LIMIT {
             return Err(());
+        }
+        if self.item.len() == self.item.capacity() && self.item.len() >= 1024 * 1024 {
+            let rem = (ITEM_LIMIT - self.item.len()).min(OUTPUT_LIMIT - total);
+            self.item.reserve_exact(rem.min(4 * 1024 * 1024).max(1));
         }
         self.item.push(byte);
         Ok(())

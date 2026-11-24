@@ -130,7 +130,7 @@ async fn prepare_inner(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) 
         }
         state.features.clone()
     };
-    connection_at(app, Some(endpoint), &features).await;
+    connection_at(app, Some(endpoint), &features, None).await;
     let mut state = STATE.lock().unwrap();
     if state.active && app.native.current(endpoint) && state.current.is_some() {
         state.prepared = Some(endpoint.clone());
@@ -193,15 +193,29 @@ fn status(app: &App, state: &State) {
     let _ = crate::auth::tls::write_private(&app.data.join("plugin-provision.json"), doc.to_string().as_bytes());
 }
 
-async fn connection(app: &Shared, features: &[&'static str]) {
-    connection_at(app, None, features).await;
-}
-
-async fn connection_at(app: &Shared, endpoint: Option<&Arc<crate::opencode::Endpoint>>, features: &[&'static str]) {
+async fn connection_at(
+    app: &Shared,
+    endpoint: Option<&Arc<crate::opencode::Endpoint>>,
+    features: &[&'static str],
+    stop: Option<&CancellationToken>,
+) {
     STATE.lock().unwrap().connections += 1;
-    let discovered = match endpoint {
-        Some(endpoint) => provision::discovery_at(app, endpoint).await,
-        None => provision::discovery(app).await,
+    let discovered = {
+        let discover = async {
+            match endpoint {
+                Some(endpoint) => provision::discovery_at(app, endpoint).await,
+                None => provision::discovery(app).await,
+            }
+        };
+        if let Some(stop) = stop {
+            tokio::select! {
+                biased;
+                _ = stop.cancelled() => Err("Plugin lifecycle stopping".into()),
+                res = discover => res,
+            }
+        } else {
+            discover.await
+        }
     };
     let outcome = match discovered {
         Err(e) => Err(e),
@@ -237,7 +251,10 @@ async fn connection_at(app: &Shared, endpoint: Option<&Arc<crate::opencode::Endp
                         Ok(done) => {
                             let registered = {
                                 let mut state = STATE.lock().unwrap();
-                                if !state.active || endpoint.is_some_and(|ep| !app.native.current(ep)) {
+                                if !state.active
+                                    || stop.is_some_and(CancellationToken::is_cancelled)
+                                    || endpoint.is_some_and(|ep| !app.native.current(ep))
+                                {
                                     Err(done)
                                 } else {
                                     let readiness = done
@@ -343,10 +360,9 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
         // A discovered daemon is first provisioned when its event stream connects.
         if let Some(endpoint) = app.native.endpoint() {
             let _serial = SERIAL.lock().await;
-            let attempt = connection(&app, &features);
-            tokio::select! { _ = stop.cancelled() => {}, _ = attempt => {} }
+            connection_at(&app, Some(&endpoint), &features, Some(&stop)).await;
             let mut state = STATE.lock().unwrap();
-            if state.current.is_some() {
+            if state.current.is_some() && !stop.is_cancelled() && app.native.current(&endpoint) {
                 state.prepared = Some(endpoint);
             }
         }
@@ -357,7 +373,7 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
                 _ = CONNECTED.notified() => {
                     let _serial = SERIAL.lock().await;
                     let endpoint = app.native.endpoint();
-                    connection_at(&app, endpoint.as_ref(), &features).await;
+                    connection_at(&app, endpoint.as_ref(), &features, Some(&stop)).await;
                     if let Some(endpoint) = endpoint
                         && app.native.current(&endpoint)
                     {

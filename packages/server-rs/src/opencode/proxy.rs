@@ -486,20 +486,36 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         Some(record) if message_list && input_checkout.is_some() && record["location"].get("workspaceID").is_none() => {
             None
         }
-        Some(record) => match crate::worktrees::placement(&app, &workspace, &record["location"]).await {
-            Ok(slug) => Some(slug),
-            Err(elsewhere) => {
-                if input_checkout.is_some() && record["location"].get("workspaceID").is_none() {
-                    None
-                } else {
-                    let mut body = json!({"error":"Session does not belong to workspace"});
-                    if elsewhere {
-                        body["reason"] = json!(SESSION_LOCATED_ELSEWHERE);
+        Some(record) => {
+            let placement = if message_list {
+                tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    _ = workspace_closed() => return Err(not_found()),
+                    res = tokio::time::timeout_at(
+                        list_deadline,
+                        crate::worktrees::placement(&app, &workspace, &record["location"]),
+                    ) => res.map_err(|_| upstream_error())?,
+                }
+            } else {
+                crate::worktrees::placement(&app, &workspace, &record["location"]).await
+            };
+            match placement {
+                Ok(slug) => Some(slug),
+                Err(elsewhere) => {
+                    if input_checkout.is_some() && record["location"].get("workspaceID").is_none() {
+                        None
+                    } else {
+                        let mut body = json!({"error":"Session does not belong to workspace"});
+                        if elsewhere {
+                            body["reason"] = json!(SESSION_LOCATED_ELSEWHERE);
+                        }
+                        return Err((Status::FORBIDDEN, Json(body)));
                     }
-                    return Err((Status::FORBIDDEN, Json(body)));
                 }
             }
-        },
+        }
         None => None,
     };
     if (allow_subfolder && input_checkout.is_none())
@@ -976,6 +992,30 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 let Some(chunk) = chunk else {
                     break;
                 };
+                let pre_needed = crate::shared::response_memory_units(
+                    crate::shared::ResponsePool::List,
+                    stream.retained_bytes().saturating_add(chunk.len()),
+                );
+                if pre_needed > held_units {
+                    let extra = tokio::select! {
+                        biased;
+                        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                        _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                        _ = workspace_closed() => return Err(not_found()),
+                        permit = tokio::time::timeout_at(
+                            list_deadline,
+                            crate::shared::acquire_response_units(
+                                crate::shared::ResponsePool::List,
+                                pre_needed - held_units,
+                            ),
+                        ) => permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
+                    };
+                    match &mut mem {
+                        Some(existing) => existing.merge(extra),
+                        None => mem = Some(extra),
+                    }
+                    held_units = pre_needed;
+                }
                 let mut pos = 0;
                 while let Some(pending) = stream.feed(&chunk, &mut pos).map_err(|_| interrupted())? {
                     let needed = crate::shared::response_memory_units(
@@ -1006,7 +1046,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     let (ws, ses) = (ws.to_owned(), ses.to_owned());
                     let held = slot.take().ok_or_else(interrupted)?;
                     let raw = pending.bytes;
-                    let (projected, changed, returned) = tokio::select! {
+                    let delimiter = pending.delimiter;
+                    let moved_stream = stream;
+                    let (returned_stream, commit_res, returned) = tokio::select! {
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
@@ -1014,13 +1056,16 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         res = tokio::time::timeout_at(
                             list_deadline,
                             tokio::task::spawn_blocking(move || {
+                                let mut s = moved_stream;
                                 let (out, changed) = crate::sessions::media_stream::project_item(&ws, &ses, raw);
-                                (out, changed, held)
+                                let commit_res = s.commit_item(out, changed, delimiter);
+                                (s, commit_res, held)
                             }),
                         ) => res.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
                     };
+                    stream = returned_stream;
                     slot = Some(returned);
-                    stream.commit_item(projected, changed, pending.delimiter).map_err(|_| interrupted())?;
+                    commit_res.map_err(|_| interrupted())?;
                 }
                 let needed =
                     crate::shared::response_memory_units(crate::shared::ResponsePool::List, stream.retained_bytes());

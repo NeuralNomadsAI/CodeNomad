@@ -259,7 +259,7 @@ impl Placement {
         {
             return Err(changed());
         }
-        let cur_anchor = if self.strict_media {
+        let cur_anchor = {
             let path = self.path.clone();
             tokio::task::spawn_blocking(move || {
                 crate::worktrees::ownership::directory_anchor(&path).ok().flatten().map(std::path::PathBuf::from)
@@ -268,8 +268,6 @@ impl Placement {
             .ok()
             .flatten()
             .ok_or_else(changed)?
-        } else {
-            self.anchor.clone()
         };
         let current = crate::worktrees::ownership::media_directory(
             app,
@@ -304,7 +302,6 @@ impl Placement {
         let anchor = self.anchor.clone();
         let physical = self.physical.clone();
         let checkout = self.checkout.clone();
-        let strict_media = self.strict_media;
         let ok = tokio::task::spawn_blocking(move || {
             let workspace_ok = workspace_physical
                 .as_ref()
@@ -321,11 +318,10 @@ impl Placement {
             if cur_anchor == anchor.as_path() {
                 directory_identity(&anchor).is_ok_and(|current| current == physical)
             } else {
-                // TS `session-media.ts:61-76` + `worktree-directory.ts:166-193`: if only a
-                // session's subfolder disappears while its checkout stays intact, ownership
-                // resolves through the existing ancestor inside the same live checkout.
-                strict_media
-                    && anchor.starts_with(cur_anchor)
+                // TS `session-navigation.ts:64-87`, `session-media.ts:61-76`, and
+                // `worktree-directory.ts:166-193`: if only a session's subfolder disappears while
+                // its checkout stays intact, ownership resolves through the existing ancestor.
+                anchor.starts_with(cur_anchor)
                     && std::fs::symlink_metadata(&path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
             }
         })

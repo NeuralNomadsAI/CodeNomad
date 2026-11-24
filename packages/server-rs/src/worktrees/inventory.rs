@@ -569,15 +569,11 @@ async fn catalogue_in_at(
                                 .max_by_key(|repo_root| repo_root.as_os_str().len())
                             {
                                 match identity(&real) {
-                                    Ok(value) => {
-                                        let same_worktree = *target_root == root;
-                                        let own_id = same_worktree.then(|| value.clone());
-                                        (
-                                            projected.clone(),
-                                            own_id,
-                                            Some((projected, real, target_root.clone(), value)),
-                                        )
-                                    }
+                                    Ok(value) => (
+                                        projected.clone(),
+                                        None,
+                                        Some((projected, real, target_root.clone(), value)),
+                                    ),
                                     Err(_) => return Ok(None),
                                 }
                             } else if !root.starts_with(&scope) {
