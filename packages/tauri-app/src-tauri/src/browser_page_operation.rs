@@ -21,6 +21,8 @@ pub(super) enum Operation {
     Viewport,
     ReleaseHandles,
     Checkpoint,
+    /// The document's title and whether its tab can go back or forward.
+    History,
     Resolve {
         node: u64,
     },
@@ -105,7 +107,8 @@ pub(super) fn parse(value: Value) -> Result<Operation, String> {
         Operation::Tree
         | Operation::Viewport
         | Operation::ReleaseHandles
-        | Operation::Checkpoint => keys(&value, &["op"], &["op"])?,
+        | Operation::Checkpoint
+        | Operation::History => keys(&value, &["op"], &["op"])?,
         Operation::Resolve { node }
         | Operation::Geometry { node }
         | Operation::ScrollIntoView { node }
@@ -289,6 +292,7 @@ impl Operation {
             }
             Self::Geometry { node } => ("DOM.getContentQuads", json!({"backendNodeId":node})),
             Self::Viewport => ("Page.getLayoutMetrics", json!({})),
+            Self::History => ("Page.getNavigationHistory", json!({})),
             Self::HitTest { x, y } => (
                 "DOM.getNodeForLocation",
                 json!({"x":*x as i64,"y":*y as i64,"includeUserAgentShadowDOM":false,"ignorePointerEventsNone":false}),
@@ -353,6 +357,20 @@ impl Operation {
                 result
             }
             Self::HitTest { .. } => optional("node", raw.get("backendNodeId")),
+            Self::History => {
+                let entries = raw["entries"].as_array().map(Vec::as_slice).unwrap_or_default();
+                let index = raw["currentIndex"].as_i64().unwrap_or(-1);
+                let title = usize::try_from(index)
+                    .ok()
+                    .and_then(|index| entries.get(index))
+                    .and_then(|entry| entry["title"].as_str())
+                    .unwrap_or("");
+                json!({
+                    "title": title.chars().take(2_048).collect::<String>(),
+                    "canGoBack": index > 0,
+                    "canGoForward": index >= 0 && (index as usize) + 1 < entries.len(),
+                })
+            }
             _ => raw,
         }
     }

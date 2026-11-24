@@ -7,7 +7,7 @@ export type { PageChannel, PageSession } from "./protocol"
 
 interface Target { ref: string; backendNodeId: number }
 export type PageAction =
-  | Target & { kind: "click"; button?: MouseButton }
+  | Target & { kind: "click"; button?: MouseButton; noFilePicker?: true }
   | Target & { kind: "type"; text: string; clear: boolean }
   | Target & { kind: "select"; values: string[]; byValue?: true }
   | Target & { kind: "hover" }
@@ -20,7 +20,7 @@ export interface PageActionResult { value?: string; selected?: string[]; focused
 export function bindRefs(action: RefAction, resolve: (ref: string) => number): PageAction {
   const target = (ref: string): Target => ({ ref, backendNodeId: resolve(ref) })
   switch (action.action) {
-    case "click": return { kind: "click", ...target(action.ref), ...(action.button ? { button: action.button } : {}) }
+    case "click": return { kind: "click", ...target(action.ref), ...(action.button ? { button: action.button } : {}), ...(action.noFilePicker ? { noFilePicker: true as const } : {}) }
     case "type": return { kind: "type", ...target(action.ref), text: action.text, clear: action.clear }
     case "select": return { kind: "select", ...target(action.ref), values: action.values, ...(action.byValue ? { byValue: true as const } : {}) }
     case "hover": return { kind: "hover", ...target(action.ref) }
@@ -88,8 +88,10 @@ export async function performAction(session: PageSession, action: PageAction): P
 async function pointerTarget(session: PageSession, { ref, backendNodeId }: Target): Promise<InputTarget | undefined> {
   if (session.guardInput) return { ref, handle: await resolveElement(session, ref, backendNodeId) }
 }
-async function click(session: PageSession, action: Target & { button?: MouseButton }): Promise<PageActionResult> {
+async function click(session: PageSession, action: Target & { button?: MouseButton; noFilePicker?: true }): Promise<PageActionResult> {
   const element = await resolveElement(session, action.ref, action.backendNodeId)
+  if (action.noFilePicker && await callOn(session, action.ref, element, "file-input", []) === true)
+    throw new Error(`${action.ref} opens a native file picker, which agent actions cannot use`)
   const selected = await callOn(session, action.ref, element, "option-click", [])
   if (Array.isArray(selected)) return { selected: selected.map(String) }
   const point = await aim(session, action.ref, action.backendNodeId)

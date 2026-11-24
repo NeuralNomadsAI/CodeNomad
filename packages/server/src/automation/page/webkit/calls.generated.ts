@@ -120,6 +120,9 @@ export const readCalls = {
     if (!picked.includes(option)) picked.push(option);
   }
   return apply(select, picked, options); },
+"file-input": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const label = element instanceof HTMLLabelElement ? element : element.closest && element.closest("label");
+  const control = element instanceof HTMLInputElement ? element : label && label.control;
+  return control instanceof HTMLInputElement && control.type === "file"; },
 "focus": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); if (element.matches(":disabled")) throw new Error("codenomad:disabled");
   if (element instanceof HTMLElement || element instanceof SVGElement) element.focus();
   if (element.getRootNode().activeElement !== element) throw new Error("codenomad:unfocusable");

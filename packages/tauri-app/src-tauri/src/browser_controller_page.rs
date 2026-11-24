@@ -389,7 +389,18 @@ impl BrowserController {
                 );
             }
             #[cfg(windows)]
-            self.release_page(&lease);
+            {
+                self.release_page(&lease);
+                // The released lease's end finds nothing to clear: the person's own file pickers return now.
+                if let Some(webview) = app.get_webview(&lease.registration.webview_label) {
+                    let _ = cdp(
+                        &webview,
+                        "Page.setInterceptFileChooserDialog",
+                        json!({ "enabled": false }),
+                        Instant::now() + Duration::from_secs(2),
+                    );
+                }
+            }
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             if lease.held.lock().is_ok_and(|held| held.is_empty()) {
                 self.release_page(&lease);

@@ -3,7 +3,8 @@ import { keyChord } from "./keys"
 /** Page actions as tools receive them, with elements as refs from the latest inspection. Parsing is
  * idempotent, so the same flat command crosses the bridge and is validated again by the backend. */
 export type RefAction =
-  | { action: "click"; ref: string; button?: "left" | "right" }
+  /** `noFilePicker` refuses a file input or its label, whose native picker must not open for an agent. */
+  | { action: "click"; ref: string; button?: "left" | "right"; noFilePicker?: true }
   | { action: "type"; ref: string; text: string; clear: boolean }
   /** `byValue` matches option values only, as OpenCode's browser contract requires. */
   | { action: "select"; ref: string; values: string[]; byValue?: true }

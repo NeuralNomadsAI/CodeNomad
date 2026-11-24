@@ -21,7 +21,7 @@ export function parsePageOperation(raw: unknown, allowApplication = false): Page
   try { if (new TextEncoder().encode(JSON.stringify(value)).length > 256 * 1024) fail() } catch { fail() }
   if (!Object.hasOwn(value, "op") || typeof value.op !== "string") fail()
   switch (value.op) {
-    case "tree": case "viewport": case "release-handles": case "checkpoint": keys(value, ["op"]); break
+    case "tree": case "viewport": case "release-handles": case "checkpoint": case "history": keys(value, ["op"]); break
     case "resolve": case "geometry": case "scroll-into-view":
       keys(value, ["op", "node"], ["node"])
       if (!integer(value.node, 1, Number.MAX_SAFE_INTEGER)) fail()

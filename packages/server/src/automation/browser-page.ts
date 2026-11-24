@@ -20,6 +20,8 @@ export class BrowserPage {
   private readonly tables = new Map<string, RefTable>()
   private readonly refNamespace = BigInt(`0x${randomBytes(8).toString("hex")}`).toString().padStart(20, "0")
   private sequence = 0
+  /** Fixed-prefix refs stay unique across tables, including one recreated after eviction. */
+  private readonly refCounter = { next: 0 }
   private pending = 0
   private closed = false
 
@@ -86,7 +88,13 @@ export class BrowserPage {
       const driver = nativeDriver(target, operation => request("browser.page.send", { generation, operation }), checkpoint)
       const page: PageSession = { driver, markAutomation: false, checkpoint }
       const refs = this.table(sessionID)
-      if (action.action === "location") result = { url }
+      if (action.action === "location") {
+        // WebKit previews report no history: their tab keeps the defaults.
+        const history = target.driver === "cdp"
+          ? await this.native.request<Record<string, unknown>>("browser.page.send", { sessionID, operationID, generation, operation: { op: "history" } }, { deadline }).catch(() => ({}))
+          : {}
+        result = { ...history, url }
+      }
       else if (action.action === "snapshot") {
         const rootBackendNodeId = action.ref ? refs.resolve(action.ref, generation) : undefined
         const snapshot = await snapshotPage(page, () => refs.issuer(generation), { rootBackendNodeId, query: action.query, refLength: refs.refLength })
@@ -106,7 +114,8 @@ export class BrowserPage {
 
   private table(sessionID: string): RefTable {
     let table = this.tables.get(sessionID)
-    if (!table) table = new RefTable("take a new snapshot", this.refPrefix ?? `b${this.refNamespace}${++this.sequence}e`)
+    if (!table) table = this.refPrefix ? new RefTable("take a new snapshot", this.refPrefix, undefined, this.refCounter)
+      : new RefTable("take a new snapshot", `b${this.refNamespace}${++this.sequence}e`)
     this.tables.delete(sessionID)
     this.tables.set(sessionID, table)
     if (this.tables.size > MAX_SESSIONS) this.tables.delete(this.tables.keys().next().value!)

@@ -39,6 +39,13 @@ export async function executeCdpOperation(channel: PageChannel, raw: PageOperati
     case "insert-text": return channel.send("Input.insertText", { text: operation.text })
     case "release-handles": return channel.send("Runtime.releaseObjectGroup", { objectGroup: OBJECT_GROUP })
     case "checkpoint": return {}
+    case "history": {
+      const result = await channel.send("Page.getNavigationHistory")
+      const entries = Array.isArray(result.entries) ? result.entries as Array<{ title?: unknown }> : []
+      const index = typeof result.currentIndex === "number" ? result.currentIndex : -1
+      const title = entries[index]?.title
+      return { title: typeof title === "string" ? title.slice(0, 2_048) : "", canGoBack: index > 0, canGoForward: index >= 0 && index < entries.length - 1 }
+    }
   }
 }
 export function cdpDriver(channel: PageChannel, checkpoint: () => Promise<void>, mark = false) {

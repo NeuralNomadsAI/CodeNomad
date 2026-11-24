@@ -7,7 +7,7 @@
 <div class="row"><div id="source" role="button" aria-label="Drag source">Drag source</div><div id="target" role="button" aria-label="Drop target">Drop target</div><output id="dragged">Drag idle</output></div>
 <div id="scroller" role="region" aria-label="Scroll box"><div>Scrollable content</div></div><output id="scrolled">Scroll idle</output>
 <button id="oauth">OAuth popup</button><output id="oauthState">OAuth idle</output>
-<a id="download" href="/download" download>Download fixture</a><button id="dialog">Native dialog</button><output id="dialogState">Dialog idle</output>
+<label>Upload<input id="upload" type="file"></label><a id="download" href="/download" download>Download fixture</a><button id="dialog">Native dialog</button><output id="dialogState">Dialog idle</output>
 <script>
 let count=0,drag=false;
 increment.onclick=()=>document.querySelector('#count').textContent='Count '+ ++count;

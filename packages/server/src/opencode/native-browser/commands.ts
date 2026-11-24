@@ -63,6 +63,10 @@ export class PreviewTab {
   private url = "about:blank"
   /** The target whose address `url` holds: a failed read is retried on the next refresh. */
   private urlTarget: string | undefined
+  private title = ""
+  private canGoBack = false
+  private canGoForward = false
+  private queue: Promise<void> = Promise.resolve()
   private loading = false
   private generation = 0
 
@@ -84,6 +88,11 @@ export class PreviewTab {
     if (this.urlTarget === probed.target) return
     const location = await this.host.page({ action: "location" }, probed.target, deadline, signal).catch(() => undefined)
     this.noteURL(probed.target, location?.url)
+    if (location && this.target === probed.target) {
+      this.title = typeof location.title === "string" ? location.title.slice(0, 2_048) : ""
+      this.canGoBack = location.canGoBack === true
+      this.canGoForward = location.canGoForward === true
+    }
   }
 
   private noteURL(target: string, url: unknown): void {
@@ -92,7 +101,24 @@ export class PreviewTab {
     this.urlTarget = target
   }
 
+  /** Commands run one at a time: a check reads, then clicks, and another command must not act in between. */
   async run(action: Action, generation: number | undefined, signal: AbortSignal): Promise<BrowserOutcome> {
+    if (action.type === "tabs.list") return this.execute(action, generation, signal)
+    const previous = this.queue
+    let release!: () => void
+    this.queue = new Promise<void>(resolve => { release = resolve })
+    try {
+      await previous
+      if (signal.aborted) return failure("operation_failed", "The browser action was cancelled.")
+      return await this.execute(action, generation, signal)
+    } finally {
+      // The page may have changed its history or title: the next refresh reads them again.
+      this.urlTarget = undefined
+      release()
+    }
+  }
+
+  private async execute(action: Action, generation: number | undefined, signal: AbortSignal): Promise<BrowserOutcome> {
     const deadline = Date.now() + 55_000
     const refused = unhonored(action)
     if (refused) return unsupported(refused)
@@ -137,7 +163,8 @@ export class PreviewTab {
         return this.success({ tab: this.tab(), content: text, truncated })
       }
       // A left click only: native context menus are unavailable to agents, as in OpenCode's browser.
-      case "click": return act({ action: "click", ref: ref(action.ref) })
+      // File inputs are refused before input; Electron and WebView2 also intercept pickers a page opens itself.
+      case "click": return act({ action: "click", ref: ref(action.ref), noFilePicker: true })
       case "hover": return act({ action: "hover", ref: ref(action.ref) })
       case "drag": return act({ action: "drag", ref: ref(action.from), to: ref(action.to) })
       case "fill": return act({ action: "type", ref: ref(action.ref), text: String(action.text), clear: true })
@@ -247,7 +274,8 @@ export class PreviewTab {
   }
 
   private tab(): BrowserTab {
-    return { id: this.id, url: this.url.slice(0, 16_384), title: "", loading: this.loading, canGoBack: false, canGoForward: false, generation: this.generation }
+    return { id: this.id, url: this.url.slice(0, 16_384), title: this.title, loading: this.loading,
+      canGoBack: this.canGoBack, canGoForward: this.canGoForward, generation: this.generation }
   }
 
   private success(value: unknown, files: { id: string; name: string; mime: string; data: string }[] = []): BrowserOutcome {

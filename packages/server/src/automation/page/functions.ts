@@ -100,6 +100,9 @@ export const ELEMENT_FUNCTIONS = {
     if (!picked.includes(option)) picked.push(option);
   }
   return apply(select, picked, options);`,
+  "file-input": `const label = element instanceof HTMLLabelElement ? element : element.closest && element.closest("label");
+  const control = element instanceof HTMLInputElement ? element : label && label.control;
+  return control instanceof HTMLInputElement && control.type === "file";`,
   focus: `if (element.matches(":disabled")) throw new Error("codenomad:disabled");
   if (element instanceof HTMLElement || element instanceof SVGElement) element.focus();
   if (element.getRootNode().activeElement !== element) throw new Error("codenomad:unfocusable");
@@ -184,7 +187,7 @@ export const GLOBAL_FUNCTIONS = {
 } as const
 export type PageFunctionId = keyof typeof ELEMENT_FUNCTIONS | keyof typeof GLOBAL_FUNCTIONS
 export const FUNCTION_ARGS: Record<PageFunctionId, readonly string[]> = {
-  "option-click": [], "programmatic-click": [], select: ["strings"], "select-values": ["strings"], focus: [], describe: [], field: [], prepare: ["boolean"],
+  "option-click": [], "programmatic-click": [], select: ["strings"], "select-values": ["strings"], "file-input": [], focus: [], describe: [], field: [], prepare: ["boolean"],
   "set-value": ["string", "boolean"], "delete-selection": [], "read-value": [], receives: ["handle"], "receives-wheel": ["handle"], contains: ["string"],
   "active-element": [], "document-root": [], "input-acceptance": [], "mark-input": [], "unmark-input": [],
 }

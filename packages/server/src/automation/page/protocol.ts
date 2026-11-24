@@ -26,6 +26,8 @@ export type PageOperation =
   | { op: "wheel"; event: WheelInput }
   | { op: "keyboard"; event: KeyboardInput }
   | { op: "insert-text"; text: string }
+  /** The document's title and whether its tab can go back or forward (`{ title, canGoBack, canGoForward }`). */
+  | { op: "history" }
 
 /** One semantic page; drivers own protocol/native adaptation, never arbitrary evaluation. */
 export interface PageDriver {

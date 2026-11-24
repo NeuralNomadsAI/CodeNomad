@@ -5,7 +5,7 @@ import { checkState, keyRefusal, PreviewTab, type PreviewHost } from "./commands
 function fixture() {
   const calls: Record<string, unknown>[] = []
   const state = { target: undefined as string | undefined, document: 0, checked: false, locked: false, loading: 0, locationFailures: 0,
-    shot: "iVBORw0KGgo=", onPage: undefined as undefined | (() => void) }
+    shot: "iVBORw0KGgo=", onPage: undefined as undefined | ((action: string) => void) }
   const host: PreviewHost = {
     probe: async () => {
       if (!state.target) return undefined
@@ -18,11 +18,12 @@ function fixture() {
     reload: async () => { state.target = `doc-${++state.document}`; return { url: "http://127.0.0.1/next" } },
     screenshot: async () => ({ image: { mime: "image/png", data: state.shot } }),
     page: async (action, at) => {
-      calls.push({ ...action, at })
-      state.onPage?.()
+      // Address reads follow every command; the tests look at what acted on the page.
+      if (action.action !== "location") calls.push({ ...action, at })
+      state.onPage?.(action.action)
       if (action.action === "location") {
         if (state.locationFailures-- > 0) throw new Error("Native request timed out: browser.page.begin")
-        return { url: "http://127.0.0.1/page" }
+        return { url: "http://127.0.0.1/page", title: "Fixture page", canGoBack: state.document > 1, canGoForward: false }
       }
       if (action.action === "snapshot") {
         if (action.ref === "e2") return { url: "", snapshot: `- checkbox "Keep this checked" [e2] ${state.checked ? "checked" : "unchecked"}`, collapsed: false }
@@ -48,7 +49,7 @@ test("one preview tab: absent until opened, then a stable ID whose generation fo
   const generation = opened.result.value.generation
   const clicked = await tab.run({ type: "click", tabID: tab.id, ref: "@e1" }, generation, signal) as any
   assert.equal(clicked.type, "success")
-  assert.deepEqual(calls.at(-1), { action: "click", ref: "e1", at: "doc-1" })
+  assert.deepEqual(calls.at(-1), { action: "click", ref: "e1", noFilePicker: true, at: "doc-1" })
   await tab.run({ type: "navigate", tabID: tab.id, url: "http://127.0.0.1/next" }, generation, signal)
   assert.equal((await tab.run({ type: "hover", tabID: tab.id, ref: "e1" }, generation, signal) as any).code, "document_changed",
     "a command selected for the previous document is refused")
@@ -58,7 +59,7 @@ test("every step of one command stays on the document it started on", async () =
   const { tab, calls, state } = fixture()
   await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
   // A concurrent command refreshes the tab onto another document between the two scroll steps.
-  state.onPage = () => { state.onPage = undefined; state.target = `doc-${++state.document}`; void tab.run({ type: "tabs.list" }, undefined, signal) }
+  state.onPage = action => { if (action !== "scroll") return; state.onPage = undefined; state.target = `doc-${++state.document}`; void tab.run({ type: "tabs.list" }, undefined, signal) }
   calls.length = 0
   await tab.run({ type: "scroll", tabID: tab.id, deltaY: 100, deltaX: 50 }, undefined, signal)
   assert.deepEqual(calls.filter(call => call.action === "scroll").map(call => call.at), ["doc-1", "doc-1"])
@@ -194,4 +195,22 @@ test("checked state comes from the attributes after the ref only", () => {
   assert.equal(checkState('- checkbox "Terms" [e5] value="checked"', "e5"), undefined)
   assert.equal(checkState('- checkbox "Mixed" [e5] checked=mixed', "e5"), "checked=mixed")
   assert.equal(checkState('- button "checked" [e1]', "e1"), undefined)
+})
+
+test("commands run one at a time, so two concurrent checks set the box once", async () => {
+  const { tab, calls, state } = fixture()
+  await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
+  calls.length = 0
+  const outcomes = await Promise.all([1, 2].map(() => tab.run({ type: "check", tabID: tab.id, ref: "e2", checked: true }, undefined, signal)))
+  assert.deepEqual(outcomes.map(outcome => outcome.type), ["success", "success"])
+  assert.equal(calls.filter(call => call.action === "click").length, 1)
+  assert.equal(state.checked, true)
+})
+
+test("the tab reports the document's title and history", async () => {
+  const { tab } = fixture()
+  await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
+  await tab.run({ type: "navigate", tabID: tab.id, url: "http://127.0.0.1/next" }, undefined, signal)
+  const [listed] = (await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value.tabs
+  assert.deepEqual([listed.title, listed.canGoBack, listed.canGoForward], ["Fixture page", true, false])
 })
