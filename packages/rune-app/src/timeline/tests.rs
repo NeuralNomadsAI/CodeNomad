@@ -1011,7 +1011,9 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
             &rune::KeyEvent {
                 key: rune::Key::Command('f'),
                 mods: rune::Mods {
-                    ctrl: true,
+                    ctrl: !cfg!(target_os = "macos"),
+                    cmd: true,
+                    logo: cfg!(target_os = "macos"),
                     ..Default::default()
                 },
             },
@@ -1298,7 +1300,9 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
             &rune::KeyEvent {
                 key: rune::Key::Command('f'),
                 mods: rune::Mods {
-                    ctrl: true,
+                    ctrl: !cfg!(target_os = "macos"),
+                    cmd: true,
+                    logo: cfg!(target_os = "macos"),
                     ..Default::default()
                 },
             },
@@ -1663,7 +1667,9 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
             &rune::KeyEvent {
                 key: rune::Key::Command('f'),
                 mods: rune::Mods {
-                    ctrl: true,
+                    ctrl: !cfg!(target_os = "macos"),
+                    cmd: true,
+                    logo: cfg!(target_os = "macos"),
                     ..Default::default()
                 },
             },
@@ -4070,9 +4076,9 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
     rt.update(|s, tx| navigation::select(s, "tp-0:User:0:false", tx));
     rt.frame(0.016);
     rt.poll = Some(crate::poll);
-    for _ in 0..2 {
-        rt.frame(0.016);
-    }
+    rt.frame(0.016);
+    let glide_wake_origin = rt.clock;
+    rt.frame(0.016);
     let mid_tap = owner(&mut rt.state).scroll.get().at.offset[1];
     assert!(
         owner(&mut rt.state).scroll.get().rail_glide == Some(0.0) && mid_tap > 80.0,
@@ -4111,9 +4117,14 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
     let stalled_after_tap = owner(&mut rt.state).scroll.get().at.offset[1];
     let stall_wake = rt.wake_deadline().expect("50ms watchdog wake scheduled");
     let stall_dt = stall_wake - rt.clock;
+    let watchdog_cadence = stall_wake - glide_wake_origin;
     assert!(
-        !rt.animating && stalled_after_tap > 80.0 && stall_dt > 0.0 && stall_dt <= 0.06,
-        "zero-drag tap must stall mid-flight (!animating) and schedule the ~50ms watchdog wake (not 500ms long-press): animating={}, offset={stalled_after_tap}, dt={stall_dt}",
+        !rt.animating
+            && stalled_after_tap > 80.0
+            && stall_dt > 0.0
+            && stall_dt <= 0.06
+            && (watchdog_cadence - 0.050).abs() <= 0.005,
+        "zero-drag tap must stall mid-flight (!animating) on the exact 50ms watchdog schedule (not 1ms or 500ms long-press): animating={}, offset={stalled_after_tap}, dt={stall_dt}, cadence={watchdog_cadence}",
         rt.animating
     );
     // Advance strictly via the ~50ms watchdog wakes until the watchdog itself restarts the glide.
@@ -4149,7 +4160,7 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
             && restarted
             && !owner(&mut rt.state).jump.is_browsing()
             && after_tap_recovery <= 1.0,
-        "zero-drag touch tap mid-glide must recover via 50ms watchdog wakes and finish revealing tp-0: wakes={watchdog_wakes}, restarted={restarted}, mid={mid_tap}, stalled={stalled_after_tap}, after={after_tap_recovery}"
+        "zero-drag touch tap mid-glide must recover via 50ms watchdog wakes and finish revealing tp-0: wakes={watchdog_wakes}, cadence={watchdog_cadence}, restarted={restarted}, mid={mid_tap}, stalled={stalled_after_tap}, after={after_tap_recovery}"
     );
 
     // Distant jump in flight: a vertical wheel burst starting on the rail must be claimed by
@@ -4209,7 +4220,9 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
             &rune::KeyEvent {
                 key: rune::Key::Command('f'),
                 mods: rune::Mods {
-                    ctrl: true,
+                    ctrl: !cfg!(target_os = "macos"),
+                    cmd: true,
+                    logo: cfg!(target_os = "macos"),
                     ..Default::default()
                 },
             },
@@ -4312,7 +4325,9 @@ fn disabling_timeline_while_search_open_cancels_rail_jump_and_clears_retry_banne
             &rune::KeyEvent {
                 key: rune::Key::Command('f'),
                 mods: rune::Mods {
-                    ctrl: true,
+                    ctrl: !cfg!(target_os = "macos"),
+                    cmd: true,
+                    logo: cfg!(target_os = "macos"),
                     ..Default::default()
                 },
             },
@@ -4596,7 +4611,9 @@ fn disabling_timeline_while_search_open_cancels_rail_jump_and_clears_retry_banne
             &rune::KeyEvent {
                 key: rune::Key::Command('f'),
                 mods: rune::Mods {
-                    ctrl: true,
+                    ctrl: !cfg!(target_os = "macos"),
+                    cmd: true,
+                    logo: cfg!(target_os = "macos"),
                     ..Default::default()
                 },
             },
@@ -4811,7 +4828,9 @@ fn disabling_timeline_while_search_open_cancels_rail_jump_and_clears_retry_banne
             &rune::KeyEvent {
                 key: rune::Key::Command('f'),
                 mods: rune::Mods {
-                    ctrl: true,
+                    ctrl: !cfg!(target_os = "macos"),
+                    cmd: true,
+                    logo: cfg!(target_os = "macos"),
                     ..Default::default()
                 },
             },
@@ -4883,7 +4902,9 @@ fn disabling_timeline_while_search_open_cancels_rail_jump_and_clears_retry_banne
             &rune::KeyEvent {
                 key: rune::Key::Command('f'),
                 mods: rune::Mods {
-                    ctrl: true,
+                    ctrl: !cfg!(target_os = "macos"),
+                    cmd: true,
+                    logo: cfg!(target_os = "macos"),
                     ..Default::default()
                 },
             },
@@ -5124,7 +5145,7 @@ fn toggling_rail_at_fixed_width_keeps_inner_passage_anchored() {
         before_rel.abs() <= 4.0,
         "precondition: fragment-long-msg:1 aligned near top of history before toggling rail: before={before:?}, hist={hist_before:?}"
     );
-    // Hide the rail at fixed window width (800px): history widens by 40px and fragment 0 reflows shorter,
+    // Hide the rail at fixed window width (500px): history widens by 40px and fragment 0 reflows shorter,
     // yet keep_passage must hold fragment 1 at its reading offset.
     crate::settings::fixture_transcript(&mut rt.state, json!({ "showMessageTimeline": false }));
     for _ in 0..10 {
@@ -5151,7 +5172,7 @@ fn toggling_rail_at_fixed_width_keeps_inner_passage_anchored() {
         frag0_before[3],
         frag0_after_hide[3]
     );
-    // Show the rail again at fixed window width (800px): history narrows by 40px and fragment 0 reflows taller,
+    // Show the rail again at fixed window width (500px): history narrows by 40px and fragment 0 reflows taller,
     // yet keep_passage must keep fragment 1 anchored.
     crate::settings::fixture_transcript(&mut rt.state, json!({ "showMessageTimeline": true }));
     for _ in 0..10 {
@@ -5179,6 +5200,25 @@ fn toggling_rail_at_fixed_width_keeps_inner_passage_anchored() {
         frag0_after_show[3]
     );
 
+    // Lock a landed rail marker and keep fragment 1 at the top before narrowing across 420px:
+    // on_layout_tx must re-anchor with tx.instant() so fragment 1 stays anchored on the very first
+    // unmounted frame AND the locked marker is NOT mistakenly unlocked by gesture().
+    rt.update(|s, tx| navigation::select(s, "head:User:0:false", tx));
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_key_to("long-msg/fragment-long-msg:1", 0.0);
+    });
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    assert!(
+        owner(&mut rt.state).jump.is_locked()
+            && owner(&mut rt.state).jump.active.as_deref() == Some("head:User:0:false"),
+        "precondition: landed rail marker must be locked before narrowing across 420px"
+    );
     // Narrowing across the 420px threshold hides the rail inside on_layout_tx: Frame 1 measures
     // 419px and enqueues Action::Layout; Frame 2 executes on_layout_tx (unmounting the rail BEFORE
     // timeline::poll sees 419px) and must keep fragment 1 anchored on that very first unmounted frame.
@@ -5197,12 +5237,16 @@ fn toggling_rail_at_fixed_width_keeps_inner_passage_anchored() {
         .expect("second block presented after narrowing")
         .0;
     let after_narrow_rel = after_narrow[1] - hist_narrow[1];
+    // Step one more frame so navigation::poll -> gesture() observes the on_layout_tx scroll_key_to.
+    rt.frame(0.016);
     assert!(
         frag0_narrow[3] > frag0_after_show[3] + 10.0
-            && (after_narrow_rel - before_rel).abs() <= 2.0,
-        "narrowing across 420px must keep inner passage anchored on the very first frame the rail unmounts: frag0_h={}->{}, rel={before_rel}->{after_narrow_rel}",
+            && (after_narrow_rel - before_rel).abs() <= 2.0
+            && owner(&mut rt.state).jump.is_locked(),
+        "narrowing across 420px must keep inner passage anchored on the very first unmounted frame without unlocking a landed marker: frag0_h={}->{}, rel={before_rel}->{after_narrow_rel}, locked={}",
         frag0_after_show[3],
-        frag0_narrow[3]
+        frag0_narrow[3],
+        owner(&mut rt.state).jump.is_locked()
     );
 }
 
@@ -5338,21 +5382,38 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
         "control: without input_waiting, rail arrival snaps fragment-long-msg:1 back to rel=0: rel={}",
         frag1_ctrl[1] - hist_ctrl[1]
     );
-    // Reset to rail-absent state, align fragment-long-msg:1 at top, then repeat with
-    // input_waiting=true (as Rune's native/web hosts set when wheel input is queued):
-    // timeline::poll must skip keep_passage so the user's upward wheel moves history (~60px).
+    // Expire Rune's 100 ms unphased wheel burst window, reset to rail-absent state, re-verify
+    // fragment-long-msg:1 alignment at top, then repeat with input_waiting=true (as Rune's
+    // native/web hosts set when wheel input is queued): timeline::poll must skip keep_passage so
+    // the user's upward wheel moves history (~60px).
     rt.poll = Some(crate::poll);
-    rt.update(|s, _| {
+    for _ in 0..8 {
+        rt.frame(0.02);
+    }
+    rt.update(|s, tx| {
         let t = owner(s);
         t.markers.clear();
         t.has_raw_markers = false;
         t.changed = false;
         t.refresh = false;
+        tx.instant();
+        tx.scroll_key_to("long-msg/fragment-long-msg:1", 0.0);
     });
-    rt.frame(0.016);
+    for _ in 0..3 {
+        rt.frame(0.016);
+    }
     assert!(rt.presented("timeline").is_none());
     let hist_rect = rt.presented("history").expect("history presented").0;
+    let frag1_before_2 = rt
+        .presented("fragment-long-msg:1")
+        .expect("fragment 1 presented before guarded arrival")
+        .0;
     let offset_before = owner(&mut rt.state).scroll.get().viewport.offset[1];
+    assert!(
+        offset_before > 100.0 && (frag1_before_2[1] - hist_rect[1]).abs() <= 2.0,
+        "precondition: fragment-long-msg:1 re-aligned at top after 160ms wheel gap: offset={offset_before}, rel={}",
+        frag1_before_2[1] - hist_rect[1]
+    );
     rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
     rt.update(|s, _| {
         owner(s).changed = true;
@@ -5377,6 +5438,69 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
             && (offset_before - offset_after) >= 30.0
             && rel_after >= 40.0,
         "rail arrival with queued transcript wheel (input_waiting=true) must not overwrite user scroll with keep_passage: shown={}, offset={offset_before}->{offset_after}, rel_after={rel_after}",
+        rt.presented("timeline").is_some()
+    );
+
+    // Also verify on_layout_tx threshold crossing honors poll_input_waiting: narrowing 500 -> 419px
+    // on the same frame a wheel notch is queued must skip keep_passage so the user's wheel moves
+    // history upward instead of snapping fragment-long-msg:1 back to rel=0.
+    rt.poll = Some(crate::poll);
+    for _ in 0..8 {
+        rt.frame(0.02);
+    }
+    rt.set_viewport((500.0, 320.0), 1.0);
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_key_to("long-msg/fragment-long-msg:1", 0.0);
+    });
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    assert!(rt.presented("timeline").is_some());
+    // Frame 1 measures 419px and enqueues Action::Layout(419).
+    rt.set_viewport((419.0, 320.0), 1.0);
+    rt.frame(0.016);
+    assert!(rt.presented("timeline").is_some());
+    let hist_pre_narrow = rt.presented("history").expect("history presented").0;
+    // Frame 2 drains poll (setting poll_input_waiting=true), then Action::Layout(419) and wheel.
+    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
+    rt.wheel_xy(
+        hist_pre_narrow[0] + hist_pre_narrow[2] / 2.0,
+        hist_pre_narrow[1] + hist_pre_narrow[3] / 2.0,
+        0.0,
+        60.0,
+    );
+    rt.frame(0.016);
+    let hist_post_narrow = rt.presented("history").expect("history presented").0;
+    let frag1_post_narrow = rt
+        .presented("fragment-long-msg:1")
+        .expect("fragment 1 presented after narrow with wheel")
+        .0;
+    let rel_post_narrow = frag1_post_narrow[1] - hist_post_narrow[1];
+    assert!(
+        !super::demanded(&rt.state) && !owner(&mut rt.state).rail_shown && rel_post_narrow >= 35.0,
+        "on_layout_tx rail removal with queued transcript wheel must skip keep_passage: demanded={}, rail_shown={}, rel_post_narrow={rel_post_narrow}",
+        super::demanded(&rt.state),
+        owner(&mut rt.state).rail_shown
+    );
+    // Once the exit transition and subsequent poll settle, timeline must be unmounted and
+    // timeline::poll must NOT belatedly snap fragment 1 back to rel=0.
+    rt.poll = Some(crate::poll);
+    for _ in 0..20 {
+        rt.frame(0.016);
+    }
+    let hist_settled = rt.presented("history").expect("history presented").0;
+    let frag1_settled = rt
+        .presented("fragment-long-msg:1")
+        .expect("fragment 1 presented after settle")
+        .0;
+    let rel_settled = frag1_settled[1] - hist_settled[1];
+    assert!(
+        rt.presented("timeline").is_none() && rel_settled >= 35.0,
+        "subsequent poll after guarded on_layout_tx rail removal must keep timeline unmounted without snapping back: shown={}, rel_settled={rel_settled}",
         rt.presented("timeline").is_some()
     );
 }

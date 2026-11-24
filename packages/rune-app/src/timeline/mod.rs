@@ -87,6 +87,7 @@ pub(crate) struct Timeline {
     running: bool,
     visible: bool,
     rail_shown: bool,
+    poll_input_waiting: bool,
     live: bool,
     width: f32,
     markers: Vec<Marker>,
@@ -360,6 +361,7 @@ pub(super) fn poll_with_input(s: &mut State, tx: &mut rune::Tx, input_waiting: b
 }
 
 fn poll_inner(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
+    owner(s).poll_input_waiting = input_waiting;
     let mut changed = sync_outline_mutation(s);
     if !demanded(s) {
         let on_conversation = conversation_shown(s);

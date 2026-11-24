@@ -699,15 +699,13 @@ mod tests {
             "same-frame momentum-chained follow-up must accumulate on pending jump instead of being overwritten: {:?}",
             scroll.get().2
         );
-        // Once the chained gesture ends and the 50 ms momentum window expires, a distinct new
-        // gesture must release ownership and scroll natively.
+        // Ending the chained momentum gesture releases ownership so a subsequent gesture scrolls natively.
         rt.wheel_event(
             WheelEvent::new(0.0, 0.0)
                 .at(20.0, 60.0)
                 .phase(GesturePhase::Ended),
         );
         rt.frame(0.016);
-        rt.frame(0.06);
         rt.wheel_event(
             WheelEvent::new(0.0, 0.0)
                 .at(20.0, 60.0)
@@ -723,7 +721,7 @@ mod tests {
             (scroll.get().2.offset[1] - 105.0).abs() <= 1.0
                 && !scroll.get().1.is_owned()
                 && !scroll.get().3,
-            "distinct gesture after MOMENTUM_GAP must release ownership and scroll natively: {:?}",
+            "subsequent gesture after momentum Ended must release ownership and scroll natively: {:?}",
             scroll.get().2
         );
     }

@@ -347,7 +347,11 @@ pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
                     && (super::owner(s).has_raw_markers || !super::owner(s).markers.is_empty());
                 if shown != was_shown {
                     super::owner(s).rail_shown = shown;
-                    if !tx.input_waiting() && super::owner(s).jump.align.is_none() {
+                    if !super::owner(s).poll_input_waiting
+                        && super::owner(s).scroll.get().wheel_last_rail.is_none()
+                        && super::owner(s).jump.align.is_none()
+                    {
+                        tx.instant();
                         crate::chat::reading::keep_passage(s, tx);
                     }
                 }
