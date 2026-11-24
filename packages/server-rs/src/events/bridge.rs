@@ -343,14 +343,9 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                 }
                 // Integration events can contain backend-only data and need the TS sanitizer.
                 if kind.starts_with("worktree.") || kind == "server.connected" {
-                    if kind == "worktree.updated"
-                        && let Some(project) =
-                            event["data"]["projectID"].as_str().filter(|p| crate::opencode::valid_id(p))
-                    {
-                        crate::worktrees::linked::invalidate_project(&app, project);
-                    } else {
-                        crate::worktrees::linked::invalidate(&app);
-                    }
+                    // Match TS `instance-events.ts:170-173` & `manager.ts:506-511`: any worktree
+                    // event invalidates every workspace's cached worktree inventory.
+                    crate::worktrees::linked::invalidate(&app);
                     lanes.receipts.schedule();
                 }
                 if kind == "session.deleted"
@@ -428,103 +423,131 @@ async fn route(
             routes.learn(generation, session, dir);
         }
     }
-    let candidates = {
-        let store = app.inner.lock().unwrap();
-        store
-            .workspaces
-            .iter()
-            .filter(|workspace| {
-                let native_dir = workspace.location["directory"].as_str().unwrap_or_default();
-                directory.as_deref().map_or_else(
-                    || GLOBAL.split(' ').any(|g| g == kind) || kind == "session.deleted",
-                    |dir| dir == native_dir || Path::new(dir).starts_with(&app.scope) || receipt_event,
-                ) && event["location"].get("workspaceID").is_none()
-            })
-            .cloned()
-            .collect::<Vec<_>>()
-    };
     let session_id = event["data"]["sessionID"].as_str();
     let session_id = session_id.filter(|s| *s != "global" && crate::opencode::valid_id(s)).map(str::to_owned);
     let mut recipients = Vec::new();
     let mut inbox_proofs = HashMap::new();
-    if kind == "session.moved"
-        && let Some(sid) = session_id.as_deref()
-        && let Some(destination) = event["data"]["location"]["directory"]
-            .as_str()
-            .filter(|_| event["data"]["location"].get("workspaceID").is_none())
-            .map(str::to_owned)
-    {
-        // Like native location subscriptions, a move reaches the
-        // source owner, earlier recipients and the destination owner.
-        let all = app.inner.lock().unwrap().workspaces.clone();
-        for workspace in all {
-            let source = match directory.as_deref() {
-                Some(dir) if event["location"].get("workspaceID").is_none() => {
-                    crate::worktrees::owns_event(app, &workspace, dir).await
-                }
-                _ => false,
-            };
-            let owns_destination = crate::worktrees::owns_event(app, &workspace, &destination).await;
-            let mut held = routes.held.lock().unwrap();
-            if owns_destination {
-                held.remember(sid, workspace.id);
+    let mut settled_rev = None;
+    // Match TS `instance-events.ts:293-328`: retry ownership resolution if `worktree.updated`
+    // invalidates inventories mid-check, and never publish an event using a stale revision.
+    for _ in 0..4 {
+        let rev = crate::worktrees::inventory_revision(app);
+        recipients.clear();
+        inbox_proofs.clear();
+        if kind == "session.moved"
+            && let Some(sid) = session_id.as_deref()
+            && let Some(destination) = event["data"]["location"]["directory"]
+                .as_str()
+                .filter(|_| event["data"]["location"].get("workspaceID").is_none())
+                .map(str::to_owned)
+        {
+            // Like native location subscriptions, a move reaches the
+            // source owner, earlier recipients and the destination owner.
+            let all = app.inner.lock().unwrap().workspaces.clone();
+            let mut moved = Vec::with_capacity(all.len());
+            for workspace in all {
+                let source = match directory.as_deref() {
+                    Some(dir) if event["location"].get("workspaceID").is_none() => {
+                        crate::worktrees::owns_event(app, &workspace, dir).await
+                    }
+                    _ => false,
+                };
+                let owns_destination = crate::worktrees::owns_event(app, &workspace, &destination).await;
+                moved.push((workspace, source, owns_destination));
             }
-            if held.has(sid, workspace.id) || source || owns_destination {
-                if !owns_destination {
-                    held.forget(sid, workspace.id);
+            if crate::worktrees::inventory_revision(app) != rev {
+                continue;
+            }
+            let mut held = routes.held.lock().unwrap();
+            for (workspace, source, owns_destination) in moved {
+                if owns_destination {
+                    held.remember(sid, workspace.id);
+                }
+                if held.has(sid, workspace.id) || source || owns_destination {
+                    if !owns_destination {
+                        held.forget(sid, workspace.id);
+                    }
+                    recipients.push(workspace);
+                }
+            }
+        } else {
+            let candidates = {
+                let store = app.inner.lock().unwrap();
+                store
+                    .workspaces
+                    .iter()
+                    .filter(|workspace| {
+                        let native_dir = workspace.location["directory"].as_str().unwrap_or_default();
+                        directory.as_deref().map_or_else(
+                            || GLOBAL.split(' ').any(|g| g == kind) || kind == "session.deleted",
+                            |dir| dir == native_dir || Path::new(dir).starts_with(&app.scope) || receipt_event,
+                        ) && event["location"].get("workspaceID").is_none()
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            for workspace in candidates {
+                if let Some(dir) = directory.as_deref() {
+                    if inbox {
+                        let Some(physical) = crate::files::paths::canonical(&app.scope, dir) else { continue };
+                        let Ok(identity) = crate::files::host_identity(&physical) else { continue };
+                        let Some(proof) =
+                            crate::worktrees::ownership::capture_directory(app, &workspace, &physical).await
+                        else {
+                            continue;
+                        };
+                        inbox_proofs.insert(workspace.id, (physical, identity, proof));
+                    } else if !crate::worktrees::owns_event(app, &workspace, dir).await
+                        && !(receipt_event
+                            && crate::worktrees::ownership::owns_loaded(app, &workspace, &endpoint, dir).await)
+                    {
+                        continue;
+                    }
                 }
                 recipients.push(workspace);
             }
+            if crate::worktrees::inventory_revision(app) != rev {
+                continue;
+            }
+            if let Some(sid) = session_id.as_deref() {
+                let mut held = routes.held.lock().unwrap();
+                for workspace in &recipients {
+                    if kind == "session.deleted" || kind == "session.moved" {
+                        held.forget(sid, workspace.id);
+                    } else {
+                        held.remember(sid, workspace.id);
+                    }
+                }
+            }
         }
-    } else {
-        for workspace in candidates {
-            if let Some(dir) = directory.as_deref() {
-                if inbox {
-                    let Some(physical) = crate::files::paths::canonical(&app.scope, dir) else { continue };
-                    let Ok(identity) = crate::files::host_identity(&physical) else { continue };
-                    let Some(proof) = crate::worktrees::ownership::capture_directory(app, &workspace, &physical).await
-                    else {
-                        continue;
-                    };
-                    inbox_proofs.insert(workspace.id, (physical, identity, proof));
-                } else if !crate::worktrees::owns_event(app, &workspace, dir).await
-                    && !(receipt_event
-                        && crate::worktrees::ownership::owns_loaded(app, &workspace, &endpoint, dir).await)
+        settled_rev = Some(rev);
+        break;
+    }
+    if let Some(rev) = settled_rev {
+        for workspace in &recipients {
+            if crate::worktrees::inventory_revision(app) != rev {
+                break;
+            }
+            let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":event});
+            if inbox {
+                let Some((physical, identity, proof)) = inbox_proofs.get(&workspace.id) else { continue };
+                if !directory
+                    .as_deref()
+                    .is_some_and(|dir| crate::files::paths::canonical(&app.scope, dir).as_ref() == Some(physical))
+                    || !crate::sessions::permission_mode::workspace_current(app, workspace)
+                    || crate::files::host_identity(physical).ok().as_ref() != Some(identity)
+                    || !proof.live(physical)
+                    || !app.native.current(&endpoint)
                 {
                     continue;
                 }
-            }
-            recipients.push(workspace);
-        }
-        if let Some(sid) = session_id.as_deref() {
-            let mut held = routes.held.lock().unwrap();
-            for workspace in &recipients {
-                if kind == "session.deleted" || kind == "session.moved" {
-                    held.forget(sid, workspace.id);
-                } else {
-                    held.remember(sid, workspace.id);
-                }
-            }
-        }
-    }
-    for workspace in &recipients {
-        let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":event});
-        if inbox {
-            let Some((physical, identity, proof)) = inbox_proofs.get(&workspace.id) else { continue };
-            if !directory
-                .as_deref()
-                .is_some_and(|dir| crate::files::paths::canonical(&app.scope, dir).as_ref() == Some(physical))
-                || !crate::sessions::permission_mode::workspace_current(app, workspace)
-                || crate::files::host_identity(physical).ok().as_ref() != Some(identity)
-                || !proof.live(physical)
-                || !app.native.current(&endpoint)
-            {
+            } else if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
                 continue;
             }
-        } else if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
-            continue;
+            app.emit(envelope);
         }
-        app.emit(envelope);
+    } else {
+        recipients.clear();
     }
     let sid = session_id.as_deref().or(event["data"]["session"]["id"].as_str()).or(event["data"]["id"].as_str());
     let (took, count, sid) = (routed.elapsed().as_millis(), recipients.len(), sid.unwrap_or("-"));

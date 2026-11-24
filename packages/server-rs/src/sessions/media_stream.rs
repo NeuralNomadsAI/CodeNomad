@@ -1615,24 +1615,43 @@ pub(crate) fn extract_tool_media(
 /// `,` outside string literals) in O(1) memory, preventing dense numeric arrays from amplifying
 /// multi-MiB HTTP bodies into hundreds of MiB of `serde_json::Value` heap allocations.
 pub(crate) fn json_node_count_within(bytes: &[u8], limit: usize) -> bool {
+    json_bounds_within(bytes, limit, usize::MAX)
+}
+
+/// Checks both structural node count and maximum raw string token length in O(1) memory so
+/// `serde_json::from_str::<Value>` cannot expand a single multi-MiB escaped string into a
+/// multi-MiB scratch buffer + owned `String` above the caller's memory reservation.
+pub(crate) fn json_bounds_within(bytes: &[u8], node_limit: usize, max_string_bytes: usize) -> bool {
     let mut count = 0usize;
     let mut in_string = false;
     let mut escaped = false;
+    let mut string_len = 0usize;
     for &b in bytes {
         if in_string {
             if escaped {
                 escaped = false;
+                string_len += 1;
             } else if b == b'\\' {
                 escaped = true;
+                string_len += 1;
             } else if b == b'"' {
                 in_string = false;
+                string_len = 0;
+            } else {
+                string_len += 1;
+            }
+            if in_string && string_len > max_string_bytes {
+                return false;
             }
         } else {
             match b {
-                b'"' => in_string = true,
+                b'"' => {
+                    in_string = true;
+                    string_len = 0;
+                }
                 b'{' | b'[' | b',' => {
                     count += 1;
-                    if count > limit {
+                    if count > node_limit {
                         return false;
                     }
                 }

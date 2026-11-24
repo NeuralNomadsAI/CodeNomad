@@ -3,7 +3,7 @@ mod cache;
 use super::linked::{conflict, git, missing, native, native_error, physical};
 use crate::{App, Error, Workspace, files};
 use axum::http::Method;
-pub use cache::{EventCache, event_catalogue, forget, invalidate, invalidate_project};
+pub use cache::{EventCache, event_catalogue, forget, invalidate};
 pub(super) use cache::{history_catalogue, receipt_catalogue, revision};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -623,7 +623,11 @@ async fn catalogue_in_at(
         .text();
     let include_snapshot = effective_config
         .split('\0')
-        .any(|entry| entry.split_once('\n').is_some_and(|(k, _)| k == "include.path"))
+        .any(|entry| {
+            entry
+                .split_once('\n')
+                .is_some_and(|(k, _)| k == "include.path" || (k.starts_with("includeif.") && k.ends_with(".path")))
+        })
         .then_some(effective_config);
     let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
     let project = project.as_str();

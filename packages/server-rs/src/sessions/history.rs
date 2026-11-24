@@ -401,11 +401,9 @@ impl Placement {
     async fn ready(&self, app: &Shared, id: &str, session: &str) -> Result<&str, Recheck> {
         let directory = self.source["location"]["directory"].as_str().ok_or(Recheck::Unavailable)?;
         // Share a single 5 s readiness budget across plugin catalogue activation and presence
-        // challenge, matching TS `desktop-plugin-lifecycle.ts:135-154`.
+        // challenge, matching TS `desktop-plugin-lifecycle.ts:135-154`. Provisioning already ran
+        // once on connection acquisition (`Placement::capture`); do not re-provision here.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        // Provision bundled plugins for this exact captured endpoint before checking the catalogue
-        // and presence lease under the same deadline (TS `opencode-service.ts:148-166`).
-        let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(app, &self.endpoint)).await;
         let still_valid =
             || self.operation_current_fast(app, id) && self.displays.iter().all(|display| display.load(Relaxed));
         let url = self.endpoint.url.join("/api/plugin").map_err(|_| Recheck::Unavailable)?;
@@ -481,7 +479,6 @@ pub(super) async fn prepare(
     if !still_valid() {
         return None;
     }
-    let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(app, endpoint)).await;
     let url = endpoint.url.join("/api/plugin").ok()?;
     crate::sessions::pending::await_plugin_with(
         crate::sessions::pending::SESSION_PRUNING_PLUGIN,
@@ -802,11 +799,13 @@ fn process_history_payload(
     let raw_bytes = raw.get().as_bytes();
     let offset = raw_bytes.as_ptr() as usize - body.as_ptr() as usize;
     let raw_range = offset..offset + raw_bytes.len();
-    // `outline` / `outlinePreview` schemas are strict flat lists (max 16,384 / 12 entries, no
-    // passthrough metadata), so 400,000 nodes comfortably exceeds any valid response while blocking
-    // dense numeric arrays from amplifying memory.
+    // `outline` / `outlinePreview` schemas are strict flat lists (max 16,384 / 12 entries, max
+    // string 4096 UTF-16 units = <= 24,576 raw JSON bytes when fully escaped, no passthrough
+    // metadata). Capping both node count and per-string raw length keeps `serde_json`'s unescape
+    // scratch buffer <= 64 KiB and total peak RAM well within the 56 MiB History reservation.
     const MAX_OUTLINE_NODES: usize = 400_000;
-    if !crate::sessions::media_stream::json_node_count_within(raw_bytes, MAX_OUTLINE_NODES) {
+    const MAX_OUTLINE_STRING_BYTES: usize = 64 * 1024;
+    if !crate::sessions::media_stream::json_bounds_within(raw_bytes, MAX_OUTLINE_NODES, MAX_OUTLINE_STRING_BYTES) {
         return Err(blocked("unavailable"));
     }
     let Ok(output) = serde_json::from_str::<Value>(raw.get()) else { return Err(blocked("unavailable")) };

@@ -13,7 +13,7 @@ pub struct EventEntry {
     at: Instant,
     value: Option<Arc<Catalogue>>,
     endpoint: Arc<crate::opencode::Endpoint>,
-    loading: Option<(Uuid, InventoryRead)>,
+    loading: Option<(Uuid, u64, InventoryRead)>,
 }
 type InventoryRead = Shared<BoxFuture<'static, Option<Arc<Catalogue>>>>;
 pub type EventCache = std::sync::Mutex<InventoryCache>;
@@ -51,6 +51,7 @@ impl InventoryCache {
             .clone()
     }
 
+    #[cfg(test)]
     fn invalidate_project(&mut self, project: &str) {
         self.serial += 1;
         self.changed.insert(project.into(), self.serial);
@@ -61,6 +62,29 @@ impl InventoryCache {
             if entry.value.as_ref().is_some_and(|v| v.project == project) {
                 entry.value = None;
             }
+        }
+    }
+
+    pub(in crate::worktrees) fn store_if_current(
+        &mut self,
+        id: Uuid,
+        refresh: bool,
+        endpoint: &Arc<crate::opencode::Endpoint>,
+        revision: u64,
+        value: Arc<Catalogue>,
+    ) {
+        if self.serial != revision {
+            return;
+        }
+        let key = (id, refresh);
+        if self.entries.len() >= EVENT_ENTRIES * 2 {
+            self.entries.retain(|_, e| e.loading.is_some() || e.at.elapsed() < EVENT_STALE_LIMIT);
+        }
+        if self.entries.len() < EVENT_ENTRIES * 2 || self.entries.contains_key(&key) {
+            self.entries.insert(
+                key,
+                EventEntry { at: Instant::now(), value: Some(value), endpoint: endpoint.clone(), loading: None },
+            );
         }
     }
 }
@@ -93,14 +117,6 @@ pub fn invalidate(app: &App) {
 }
 pub(in crate::worktrees) fn revision(app: &App) -> u64 {
     app.linked_events.lock().unwrap().stamp()
-}
-pub fn invalidate_project(app: &App, project: &str) {
-    let mut cache = app.linked_events.lock().unwrap();
-    if cache.changed.len() >= 1024 && !cache.changed.contains_key(project) {
-        drop(cache);
-        return invalidate(app);
-    }
-    cache.invalidate_project(project);
 }
 pub fn forget(app: &App, id: Uuid) {
     drop_entries(app, Some(id))
@@ -164,7 +180,13 @@ async fn cached_catalogue(
         let loading = cache
             .entries
             .get(&key)
-            .and_then(|entry| entry.loading.as_ref().map(|(_, read)| read.clone()))
+            .and_then(|entry| {
+                entry
+                    .loading
+                    .as_ref()
+                    .filter(|(_, flight_epoch, _)| *flight_epoch == epoch)
+                    .map(|(_, _, read)| read.clone())
+            })
             .unwrap_or_else(|| {
                 let (done, receive) = tokio::sync::oneshot::channel();
                 let loading = async move { receive.await.ok().flatten() }.boxed().shared();
@@ -176,7 +198,7 @@ async fn cached_catalogue(
                         endpoint: endpoint.clone(),
                         loading: None,
                     });
-                    entry.loading = Some((flight, loading.clone()));
+                    entry.loading = Some((flight, epoch, loading.clone()));
                 }
                 let (app, w, endpoint) = (app.clone(), w.clone(), endpoint.clone());
                 tokio::spawn(async move {
@@ -196,8 +218,11 @@ async fn cached_catalogue(
                     };
                     crate::bench::trace_elapsed("registered-catalogue", started);
                     let mut cache = app.linked_events.lock().unwrap();
-                    let owns_flight =
-                        cache.entries.get(&key).and_then(|e| e.loading.as_ref()).is_some_and(|(id, _)| *id == flight);
+                    let owns_flight = cache
+                        .entries
+                        .get(&key)
+                        .and_then(|e| e.loading.as_ref())
+                        .is_some_and(|(id, _, _)| *id == flight);
                     if !cache.valid(epoch, result.as_ref().map(|c| c.project.as_str()))
                         || !app.native.current(&endpoint)
                         || admitted && !owns_flight

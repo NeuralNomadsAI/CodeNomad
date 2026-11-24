@@ -101,6 +101,7 @@ pub(super) async fn handle(
     let root = display(&workspace.path);
     let run = async {
         let Ok(endpoint) = app.native.acquire(deadline).await else { return Ok(blocked()) };
+        let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(&app, &endpoint)).await;
         let endpoint_retire = endpoint.clone();
         let scope = Scope { app: &app, workspace, endpoint, root, deadline, inventory: Mutex::new(None) };
         let work = async {

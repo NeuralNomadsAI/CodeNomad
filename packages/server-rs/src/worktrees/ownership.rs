@@ -712,27 +712,47 @@ pub(crate) async fn media_directory(
         }
         return Err(native_error());
     }
-    // Keep HTTP request ownership strictly separate from the SSE `linked_events` cache
-    // (TS `manager.ts:467-504`): read the native worktree list first (`refresh = false`)
-    // so a failing `worktree.refresh` cannot block an already-registered checkout, and
-    // trigger one `refresh = true` only on a miss.
+    // Match TS `worktree-inventory.ts:30-42` & `http-server.ts:1394-1408`: reuse a valid,
+    // non-invalidated 10-second inventory snapshot before calling `worktree.list` so transient
+    // `worktree.list` outages do not break reads while the cache is valid; on a miss, read
+    // `refresh = false` first and trigger one `refresh = true` only if the path is still absent.
     let timeout = std::time::Duration::from_secs(12);
+    let mut tried_cache = false;
     let mut refresh = false;
     let mut refreshed = false;
     for _ in 0..4 {
         let revision = inventory::revision(app);
-        let catalogue = inventory::catalogue_at(app, workspace, refresh, Some(endpoint), timeout).await?;
+        if !tried_cache && !refresh {
+            tried_cache = true;
+            let cached = app.linked_events.lock().unwrap().cached(workspace.id, endpoint);
+            if let Some(catalogue) = cached {
+                let proof = catalogue_proof_live_async(catalogue, path.to_path_buf(), external, None).await;
+                if !current() {
+                    return Err(native_error());
+                }
+                if inventory::revision(app) != revision {
+                    tried_cache = false;
+                    continue;
+                }
+                if proof.is_some() {
+                    return Ok(proof);
+                }
+            }
+        }
+        let catalogue =
+            std::sync::Arc::new(inventory::catalogue_at(app, workspace, refresh, Some(endpoint), timeout).await?);
         if !current() {
             return Err(native_error());
         }
         let proof =
-            catalogue_proof_live_async(std::sync::Arc::new(catalogue), path.to_path_buf(), external, None).await;
+            catalogue_proof_live_async(std::sync::Arc::clone(&catalogue), path.to_path_buf(), external, None).await;
         if !current() {
             return Err(native_error());
         }
         if inventory::revision(app) != revision {
             continue;
         }
+        app.linked_events.lock().unwrap().store_if_current(workspace.id, refresh, endpoint, revision, catalogue);
         refreshed |= refresh;
         if proof.is_some() || refreshed {
             return Ok(proof);

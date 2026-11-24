@@ -1,7 +1,6 @@
 //! Linked worktrees: creation, removal with session evacuation and session placement.
 pub use super::inventory::{
-    Catalogue, EventCache, Tree, catalogue, event_catalogue, forget, invalidate, invalidate_project, readable_checkout,
-    scope,
+    Catalogue, EventCache, Tree, catalogue, event_catalogue, forget, invalidate, readable_checkout, scope,
 };
 use crate::{App, Error, Shared, Workspace, error, files, git, opencode::proxy};
 use axum::{
@@ -246,33 +245,61 @@ pub async fn create(
         // Best-effort: match TS `git-worktrees.ts:163-165` & `worktree-map.ts:6-21`, which ensure
         // `.codenomad/worktrees/` is listed in the effective `info/exclude` (creating `info/` if
         // absent) without failing worktree creation if the exclude file cannot be updated.
+        // Run off the Tokio executor with `O_NONBLOCK` + `fstat` regular-file check on Unix so a
+        // racing FIFO at `info/exclude` can never block any worker or the async runtime.
         if let Ok(exclude_raw) =
             git(&catalogue.main, &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]).await
         {
             let exclude_path = PathBuf::from(exclude_raw.trim());
-            if let Some(info_dir_path) = exclude_path.parent() {
+            let _ = tokio::task::spawn_blocking(move || {
+                let Some(info_dir_path) = exclude_path.parent() else { return };
                 let _ = std::fs::create_dir_all(info_dir_path);
-                if let Ok(info_canon) = dunce::canonicalize(info_dir_path)
-                    && info_canon == info_dir_path
-                    && let Ok(info) = cap_std::fs::Dir::open_ambient_dir(&info_canon, cap_std::ambient_authority())
-                    && let Some(exclude_name) = exclude_path.file_name().and_then(|n| n.to_str())
-                    && !info.symlink_metadata(exclude_name).is_ok_and(|m| !m.is_file() || m.is_symlink())
+                let Ok(info_canon) = dunce::canonicalize(info_dir_path) else { return };
+                if info_canon != info_dir_path {
+                    return;
+                }
+                let Ok(info) = cap_std::fs::Dir::open_ambient_dir(&info_canon, cap_std::ambient_authority()) else {
+                    return;
+                };
+                let Some(exclude_name) = exclude_path.file_name().and_then(|n| n.to_str()) else { return };
+                if info.symlink_metadata(exclude_name).is_ok_and(|m| !m.is_file() || m.is_symlink()) {
+                    return;
+                }
+                let mut options = cap_std::fs::OpenOptions::new();
+                options.read(true).append(true).create(true);
+                #[cfg(unix)]
                 {
-                    let mut options = cap_std::fs::OpenOptions::new();
-                    options.read(true).append(true).create(true);
-                    if let Ok(mut excludes) = info.open_with(exclude_name, &options) {
-                        let mut contents = Vec::new();
-                        if (&mut excludes).take(64 * 1024 + 1).read_to_end(&mut contents).is_ok()
-                            && contents.len() <= 64 * 1024
-                        {
-                            let text = String::from_utf8_lossy(&contents);
-                            if !text.lines().any(|line| line == ".codenomad/worktrees/") {
-                                let _ = excludes.write_all(b"\n# codenomad\n.codenomad/worktrees/\n");
-                            }
-                        }
+                    use cap_std::fs::OpenOptionsExt;
+                    #[cfg(any(
+                        target_os = "macos",
+                        target_os = "freebsd",
+                        target_os = "openbsd",
+                        target_os = "netbsd"
+                    ))]
+                    const O_NONBLOCK: i32 = 0x0004;
+                    #[cfg(not(any(
+                        target_os = "macos",
+                        target_os = "freebsd",
+                        target_os = "openbsd",
+                        target_os = "netbsd"
+                    )))]
+                    const O_NONBLOCK: i32 = 0x0800;
+                    options.custom_flags(O_NONBLOCK);
+                }
+                let Ok(mut excludes) = info.open_with(exclude_name, &options) else { return };
+                if !excludes.metadata().is_ok_and(|m| m.is_file()) {
+                    return;
+                }
+                let mut contents = Vec::new();
+                if (&mut excludes).take(64 * 1024 + 1).read_to_end(&mut contents).is_ok() && contents.len() <= 64 * 1024
+                {
+                    let text = String::from_utf8_lossy(&contents);
+                    if !text.lines().any(|line| line == ".codenomad/worktrees/") {
+                        let _ = excludes.write_all(b"\n# codenomad\n.codenomad/worktrees/\n");
                     }
                 }
-            }
+            })
+            .await;
         }
     }
     let name = branch.replace('/', "-");

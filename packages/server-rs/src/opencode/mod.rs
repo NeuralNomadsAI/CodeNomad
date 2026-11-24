@@ -443,6 +443,19 @@ async fn session_record_segment_at(
     if response.status() == Status::BAD_REQUEST {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
+    if response.status() != Status::OK {
+        return Err(upstream_error());
+    }
+    if compact {
+        let is_json =
+            response.headers().get(axum::http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|ct| {
+                let essence = ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+                essence == "application/json" || essence.ends_with("+json")
+            });
+        if !is_json {
+            return Err(upstream_error());
+        }
+    }
     static SESSION_PARSE_SLOTS: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
         std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4)));
     let parse_permit = if max_bytes > 2 * 1024 * 1024 {

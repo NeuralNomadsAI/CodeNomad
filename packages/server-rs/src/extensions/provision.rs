@@ -226,7 +226,7 @@ pub fn install(
     paths: &Paths,
     lease_content: &str,
 ) -> io::Result<Installed> {
-    install_checked(feature, bundle, provider, paths, lease_content, || true)
+    install_checked(feature, bundle, provider, paths, lease_content, || true, &mut Vec::new())
 }
 
 pub fn install_checked(
@@ -236,6 +236,7 @@ pub fn install_checked(
     paths: &Paths,
     lease_content: &str,
     still_current: impl Fn() -> bool,
+    stranded: &mut Vec<Installed>,
 ) -> io::Result<Installed> {
     let fail = |m: String| io::Error::other(m);
     if !still_current() {
@@ -313,7 +314,11 @@ pub fn install_checked(
         Ok(())
     })();
     if let Err(e) = published {
-        let _ = fs::remove_file(&lease);
+        if let Err(rem) = fs::remove_file(&lease)
+            && rem.kind() != io::ErrorKind::NotFound
+        {
+            stranded.push(Installed { feature, sha256: hash, provider: provider_hash, entry, lease });
+        }
         return Err(e);
     }
     Ok(Installed { feature, sha256: hash, provider: provider_hash, entry, lease })

@@ -286,14 +286,23 @@ async fn connection_at(
                             let mut done = Vec::new();
                             for (feature, lease) in chosen.into_iter().zip(&written) {
                                 let result = provision::payloads(feature).and_then(|(b, p)| {
-                                    provision::install_checked(feature, &b, p.as_deref(), &target, lease, still_current)
+                                    provision::install_checked(
+                                        feature,
+                                        &b,
+                                        p.as_deref(),
+                                        &target,
+                                        lease,
+                                        still_current,
+                                        &mut done,
+                                    )
                                 });
                                 match result {
                                     Ok(i) => done.push(i),
-                                    // A failed attempt relinquishes only its own new leases; record
-                                    // any lease that fails immediate removal so shutdown retries it.
+                                    // A failed attempt relinquishes only its own new leases
+                                    // (including any lease whose immediate rollback failed);
+                                    // record leftovers so shutdown retries their removal.
                                     Err(e) => {
-                                        if provision::dispose_checked(&done).is_err() {
+                                        if !done.is_empty() && provision::dispose_checked(&done).is_err() {
                                             STATE.lock().unwrap().stranded.push(done);
                                         }
                                         return Err(format!(
@@ -649,8 +658,8 @@ pub fn start(
     })))
 }
 
-/// Ensures bundled plugins are provisioned for this exact captured endpoint, then runs a
-/// fresh presence challenge against that endpoint's installation under the same deadline.
+/// Runs a fresh presence challenge against the lease already bound to this exact captured
+/// endpoint under the caller's deadline, without re-provisioning (TS `desktop-plugin-lifecycle.ts:147-154`).
 pub async fn ready_at(
     app: &Shared,
     endpoint: &Arc<crate::opencode::Endpoint>,
@@ -664,9 +673,6 @@ pub async fn ready_at(
     if !still_valid() {
         return Err("Operation is no longer valid".into());
     }
-    tokio::time::timeout_at(deadline, prepare(app, endpoint))
-        .await
-        .map_err(|_| "Provisioning timed out for captured connection".to_owned())?;
     let owner = {
         let state = STATE.lock().unwrap();
         if !state.active {

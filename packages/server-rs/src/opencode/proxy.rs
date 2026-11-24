@@ -1185,6 +1185,43 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return Err(upstream_error());
         }
         principal.live()?;
+        // Recheck local checkout ownership after waiting for `DEFER_SLOTS` so a worktree removed
+        // or replaced while queued cannot dispatch an upstream list request.
+        let slot = if let (Some(proof), Some((resolved, _, _)), Some(raw_dir)) =
+            (&input_checkout, &initial_identity, native_directory)
+        {
+            let scope = app.scope.clone();
+            let raw_dir = raw_dir.to_owned();
+            let resolved = resolved.clone();
+            let proof = proof.clone();
+            let (live, returned_slot) = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = workspace_closed() => return Err(not_found()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                res = tokio::time::timeout(
+                    super::PROXY_IDLE,
+                    tokio::task::spawn_blocking(move || {
+                        let live = crate::worktrees::ownership::resolve_media_path(&scope, &raw_dir)
+                            .map(|(p, _)| p)
+                            .as_ref()
+                            == Some(&resolved)
+                            && proof.live(&resolved);
+                        (live, slot)
+                    }),
+                ) => res.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
+            };
+            if !live {
+                return Err(foreign());
+            }
+            if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
+            {
+                return Err(upstream_error());
+            }
+            returned_slot
+        } else {
+            slot
+        };
         // Once dispatched, TS (`proxy.ts:37-115`, `http-server.ts:261-273`) binds `message.list`
         // only to client disconnect (principal revocation) and OpenCode connection retirement.
         let mut response = tokio::select! {
@@ -1347,18 +1384,43 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     large_slot = returned_large;
                     mem = returned_mem;
                     commit_res.map_err(|_| interrupted())?;
-                    let after_units = crate::shared::response_memory_units(
-                        crate::shared::ResponsePool::List,
-                        stream.retained_bytes(),
-                    );
-                    if held_units > after_units
-                        && let Some(existing) = &mut mem
-                    {
-                        let _ = existing.split((held_units - after_units) as usize);
-                        held_units = after_units;
+                    // Before resuming `stream.feed` on the remainder of the current chunk, keep
+                    // permits >= `retained_bytes + remaining_chunk` (never shrink mid-chunk).
+                    let rem_bytes = stream
+                        .retained_bytes()
+                        .saturating_add(chunk.len().saturating_sub(pos))
+                        .min(crate::sessions::media_stream::OUTPUT_LIMIT);
+                    let rem_needed = crate::shared::response_memory_units(crate::shared::ResponsePool::List, rem_bytes);
+                    if rem_needed > fair_units && large_slot.is_none() {
+                        let timeout = step_timeout().ok_or_else(interrupted)?;
+                        large_slot = Some(tokio::select! {
+                            biased;
+                            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                            permit = tokio::time::timeout(timeout, large_defer_slot().acquire_owned()) => {
+                                permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+                            }
+                        });
                     }
-                    if held_units <= fair_units {
-                        large_slot = None;
+                    if rem_needed > held_units {
+                        let timeout = step_timeout().ok_or_else(interrupted)?;
+                        let extra = tokio::select! {
+                            biased;
+                            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                            permit = tokio::time::timeout(
+                                timeout,
+                                crate::shared::acquire_response_units(
+                                    crate::shared::ResponsePool::List,
+                                    rem_needed - held_units,
+                                ),
+                            ) => permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
+                        };
+                        match &mut mem {
+                            Some(existing) => existing.merge(extra),
+                            None => mem = Some(extra),
+                        }
+                        held_units = rem_needed;
                     }
                 }
                 let retained = stream.retained_bytes();
@@ -1396,6 +1458,16 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         None => mem = Some(extra),
                     }
                     held_units = needed;
+                } else if held_units > needed {
+                    if needed == 0 {
+                        mem = None;
+                    } else if let Some(existing) = &mut mem {
+                        let _ = existing.split((held_units - needed) as usize);
+                    }
+                    held_units = needed;
+                }
+                if held_units <= fair_units {
+                    large_slot = None;
                 }
             }
             let (payload, payload_len, backing_len, _changed) = if stream.needs_blocking_finish() {
