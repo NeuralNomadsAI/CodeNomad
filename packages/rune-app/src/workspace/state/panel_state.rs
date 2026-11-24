@@ -224,11 +224,14 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
         .is_none_or(codenomad_client::Receiver::is_closed);
     if active_detached {
         for event in events {
-            crate::git::event(s, event);
+            if s.git.owner.is_some() {
+                crate::git::event(s, event);
+                delivered = true;
+            }
             if let Some(files) = &mut s.files {
                 files.event(event.clone());
+                delivered = true;
             }
-            delivered = true;
         }
     }
     if let Some(ui) = &mut s.workspace {
@@ -245,6 +248,35 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
         }
     }
     delivered
+}
+
+pub(crate) fn set_detached_online(s: &mut State, online: bool) -> bool {
+    let mut changed = false;
+    let active_detached = s
+        .incoming
+        .as_ref()
+        .is_none_or(codenomad_client::Receiver::is_closed);
+    if active_detached {
+        if s.git.owner.is_some() {
+            crate::git::online(s, online);
+            changed = true;
+        }
+        if let Some(files) = &mut s.files {
+            files.online(online);
+            changed = true;
+        }
+    }
+    if let Some(ui) = &mut s.workspace {
+        for (index, entry) in ui.entries.iter_mut().enumerate() {
+            if index == ui.active {
+                continue;
+            }
+            if let Some(cache) = entry.cache.as_mut() {
+                changed |= cache.set_detached_online(online);
+            }
+        }
+    }
+    changed
 }
 
 pub fn restore_files_mode(s: &mut State) {

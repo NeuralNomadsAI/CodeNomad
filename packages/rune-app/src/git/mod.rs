@@ -11,14 +11,16 @@ mod view;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use binding::poll_notices;
 pub(crate) use binding::{
-    Binding, PlacementHold, can_place, close_preview, connected, connected_placed, detach_session,
-    diff_preferences, event, files_checkout, has_preview, hold_placement, is_composing, mode,
-    online, overlay_open, placeable, placement, placement_hold, placement_unconfirmed, poll,
-    project_opened, release_placement, session_directory, set_diff_preferences, set_mode, show,
+    Binding, PlacementHold, SessionDirectory, can_place, close_preview, connected,
+    connected_placed, detach_session, diff_preferences, event, files_checkout, has_preview,
+    hold_placement, is_composing, mode, online, overlay_open, placeable, placement, placement_hold,
+    placement_unconfirmed, poll, project_opened, release_placement, session_directory,
+    set_diff_preferences, set_mode, show,
 };
 #[cfg(test)]
 pub(crate) use binding::{
-    fixture_commit_draft, fixture_commit_preedit, fixture_open_picker, fixture_worktrees,
+    fixture_commit_draft, fixture_commit_preedit, fixture_online, fixture_open_picker,
+    fixture_worktrees,
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};

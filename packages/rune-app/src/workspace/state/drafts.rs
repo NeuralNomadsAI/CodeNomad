@@ -11,6 +11,7 @@ const MAX_WINDOW_DEVICE_FILES: usize = super::super::MAX_DRAFTS * MAX_FILES;
 pub(super) struct LiveDraft {
     text: Option<String>,
     parts: Option<(Draft, bool)>,
+    command_unconfirmed: Option<(String, String)>,
 }
 
 impl Ui {
@@ -120,12 +121,16 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
         if owns_draft {
             let too_long = oversized(text);
             let has_device_parts = s.composer.draft.inline_usage().0 != 0;
-            if too_long || has_device_parts {
+            let has_command = s.composer.command_unconfirmed.is_some();
+            if too_long || has_device_parts || has_command {
                 let live = item.live_drafts.entry(key.into()).or_default();
                 live.text = too_long.then(|| text.clone());
-                let mut draft = s.composer.draft.clone();
-                draft.literal_spans = crate::composer::literal::ranges(&s.draft).collect();
-                live.parts = Some((draft, s.composer.attachments_missing));
+                live.parts = (too_long || has_device_parts).then(|| {
+                    let mut draft = s.composer.draft.clone();
+                    draft.literal_spans = crate::composer::literal::ranges(&s.draft).collect();
+                    (draft, s.composer.attachments_missing)
+                });
+                live.command_unconfirmed = s.composer.command_unconfirmed.clone();
             } else {
                 item.live_drafts.remove(key);
             }
@@ -185,6 +190,10 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
     };
     saved.active_session_id = Some(backend.session.clone());
     let live = item.live_drafts.get(&backend.session);
+    if !same_session && let Some(slash) = live.and_then(|draft| draft.command_unconfirmed.as_ref())
+    {
+        s.composer.command_unconfirmed = Some(slash.clone());
+    }
     if !same_session && let Some((draft, missing)) = live.and_then(|draft| draft.parts.as_ref()) {
         s.composer.draft = draft.clone();
         s.composer.attachments_missing = *missing;

@@ -28,7 +28,7 @@ pub(crate) use state::{
 pub(crate) use state::{active_workspace, poll_cached_notifications};
 pub(crate) use state::{
     deliver_detached_events, mission_event, mission_panel, mission_supported, missions_composing,
-    right_panel_tab, set_right_panel_tab, suspend_missions,
+    right_panel_tab, set_detached_online, set_right_panel_tab, suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;

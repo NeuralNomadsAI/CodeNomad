@@ -287,8 +287,11 @@ impl CatalogueWatch {
         std::mem::take(&mut *self.signals.pending.lock().unwrap())
     }
 
-    pub fn take_workspace_events(&self) -> VecDeque<WorkspaceEvent> {
-        std::mem::take(&mut *self.signals.workspace_events.lock().unwrap())
+    pub fn take_workspace_events(&self) -> (u64, VecDeque<WorkspaceEvent>) {
+        (
+            self.signals.generation.load(SeqCst),
+            std::mem::take(&mut *self.signals.workspace_events.lock().unwrap()),
+        )
     }
 
     pub fn take_attention(&self) -> (u64, VecDeque<AttentionHint>) {
@@ -364,7 +367,8 @@ mod tests {
             "workspaceId": "proj-1",
             "changes": [{"directory": "/repo", "path": "new.txt"}]
         }));
-        let events = watch.take_workspace_events();
+        let (generation, events) = watch.take_workspace_events();
+        assert_eq!(generation, 0);
         assert_eq!(events.len(), 1);
         assert!(matches!(
             &events[0],
@@ -374,6 +378,12 @@ mod tests {
                     && changes[0].directory == "/repo"
                     && changes[0].path == "new.txt"
         ));
+        watch.signals.reconnected();
+        assert_eq!(watch.take_workspace_events().0, 1);
+        watch.signals.disconnected();
+        assert_eq!(watch.take_workspace_events().0, 2);
+        watch.signals.reconnected();
+        assert_eq!(watch.take_workspace_events().0, 3);
     }
 
     #[test]

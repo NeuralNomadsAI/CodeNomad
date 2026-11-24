@@ -59,6 +59,22 @@ impl Cache {
         delivered
     }
 
+    pub(super) fn set_detached_online(&mut self, online: bool) -> bool {
+        if self.has_conversation_stream() {
+            return false;
+        }
+        let mut changed = false;
+        if let Some(git) = &mut self.git.owner {
+            git.online(online);
+            changed = true;
+        }
+        if let Some(files) = &mut self.files {
+            files.online(online);
+            changed = true;
+        }
+        changed
+    }
+
     pub(super) fn history_weight(&self) -> (usize, usize) {
         (
             self.messages.len(),

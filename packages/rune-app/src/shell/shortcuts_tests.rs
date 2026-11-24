@@ -332,15 +332,9 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
         files.document.changed(scope);
     }
 
-    // Unconfirmed slash command blocks close-session AND session switching AND tab closing.
+    // Unconfirmed slash command does NOT trap closing/switching, and its anti-replay lock survives reopen.
     rt.state.composer.command_unconfirmed = Some(("compact".into(), String::new()));
-    send_key(&mut rt, Key::Command('w'), primary_mods(true));
-    assert!(!rt.state.screen.is_launcher());
-    assert_eq!(workspace::active_session(&rt.state), Some("session"));
-    assert!(!crate::launcher::can_change_session(&rt.state));
-    send_key(&mut rt, Key::Command('w'), primary_mods(false));
-    assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 1);
-    rt.state.composer.command_unconfirmed = None;
+    assert!(crate::launcher::can_change_session(&rt.state));
 
     // Streaming blocks close-session.
     rt.state.phase = Phase::Streaming;
@@ -348,7 +342,7 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
     assert!(!rt.state.screen.is_launcher());
     assert_eq!(workspace::active_session(&rt.state), Some("session"));
 
-    // Ready closes the active session while preserving Files tree expansion, Git commit draft, and session draft.
+    // Ready closes the active session while preserving Files tree expansion, Git commit draft, session draft, and unconfirmed command lock.
     rt.state.phase = Phase::Ready;
     send_key(&mut rt, Key::Command('w'), primary_mods(true));
     assert!(rt.state.screen.is_launcher());
@@ -371,6 +365,12 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
     assert_eq!(
         saved.drafts.get("session").map(String::as_str),
         Some("unsent draft")
+    );
+    let restored = workspace::bound(&mut rt.state, &backend);
+    assert_eq!(restored, "unsent draft");
+    assert_eq!(
+        rt.state.composer.command_unconfirmed,
+        Some(("compact".into(), String::new()))
     );
 }
 
@@ -835,30 +835,11 @@ fn session_new_in_linked_worktree_sends_directory_query_and_verifies_placement()
         };
         workspace::bound(&mut s, &bound);
         crate::git::connected_placed(&mut s, &bound, "wt-linked");
-        crate::git::fixture_worktrees(
-            &mut s,
-            codenomad_client::git::Worktrees {
-                repository: codenomad_client::git::Repository::Git,
-                trees: vec![
-                    codenomad_client::git::Worktree {
-                        slug: "root".into(),
-                        directory: "/repo".into(),
-                        service_directory: None,
-                        branch: Some("main".into()),
-                        head: None,
-                        missing: false,
-                    },
-                    codenomad_client::git::Worktree {
-                        slug: "wt-linked".into(),
-                        directory: "/repo-linked".into(),
-                        service_directory: None,
-                        branch: Some("feat".into()),
-                        head: None,
-                        missing: false,
-                    },
-                ],
-            },
-        );
+        // Without preloaded Git inventory, linked session-new resolves the slug via /worktrees instead of falling back to root.
+        assert!(matches!(
+            crate::git::session_directory(&s),
+            crate::git::SessionDirectory::ResolveSlug(ref slug) if slug == "wt-linked"
+        ));
         let mut rt = project_runtime(s);
 
         send_key(&mut rt, Key::Command('n'), primary_mods(true));
@@ -866,12 +847,13 @@ fn session_new_in_linked_worktree_sends_directory_query_and_verifies_placement()
 
         let mut saw_create = false;
         let mut saw_bind = false;
-        let mut saw_worktrees = false;
-        while !(saw_create && saw_bind && saw_worktrees) {
+        let mut worktree_reads = 0usize;
+        while !(saw_create && saw_bind && worktree_reads >= 2) {
             let req = http.accept().await;
             if req.header.starts_with(
                 "POST /workspaces/proj-1/instance/api/session?directory=%2Frepo-linked ",
             ) {
+                assert!(worktree_reads >= 1);
                 saw_create = true;
                 req.reply(
                     200,
@@ -892,12 +874,12 @@ fn session_new_in_linked_worktree_sends_directory_query_and_verifies_placement()
                 .header
                 .starts_with("GET /api/workspaces/proj-1/worktrees ")
             {
-                saw_worktrees = true;
+                worktree_reads += 1;
                 req.reply(
                     200,
                     json!({"worktrees":[
-                        {"slug":"root","directory":"/repo","isRoot":true,"missing":false},
-                        {"slug":"wt-linked","directory":"/repo-linked","isRoot":false,"missing":false}
+                        {"slug":"root","directory":"/repo","isRoot":true,"nestedFolderMissing":false},
+                        {"slug":"wt-linked","directory":"/repo-alias","serviceDirectory":"/repo-linked","isRoot":false,"nestedFolderMissing":false}
                     ]}),
                 )
                 .await;
@@ -915,5 +897,72 @@ fn session_new_in_linked_worktree_sends_directory_query_and_verifies_placement()
         }
         settle(&mut rt);
         assert_eq!(workspace::active_session(&rt.state), Some("new-linked"));
+
+        // Loaded inventory prefers serviceDirectory directly without an extra lookup.
+        crate::git::fixture_worktrees(
+            &mut rt.state,
+            codenomad_client::git::Worktrees {
+                repository: codenomad_client::git::Repository::Git,
+                trees: vec![codenomad_client::git::Worktree {
+                    slug: "wt-linked".into(),
+                    directory: "/repo-alias".into(),
+                    service_directory: Some("/repo-linked".into()),
+                    branch: Some("feat".into()),
+                    head: None,
+                    missing: false,
+                }],
+            },
+        );
+        assert!(matches!(
+            crate::git::session_directory(&rt.state),
+            crate::git::SessionDirectory::Known(ref dir) if dir == "/repo-linked"
+        ));
     });
+}
+
+#[test]
+fn detached_files_and_git_invalidate_after_stream_reconnect() {
+    let mut s = workspace_state(2);
+    let backend = Backend {
+        workspace: "header-windows".into(),
+        session: "session".into(),
+        ..Backend::unauthenticated("http://127.0.0.1:9/").unwrap()
+    };
+    if let Some(l) = s.screen.launcher_mut() {
+        l.connection = Some(Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
+    workspace::bound(&mut s, &backend);
+    crate::files::bind(&mut s, &backend);
+    let files = s.files.as_mut().unwrap();
+    files.online(true);
+    files.activate(true);
+    files.show(true);
+    let initial = files.tree.take_refresh();
+    assert_eq!(initial.len(), 1);
+    for read in initial {
+        assert!(files.tree.complete(read, Ok(vec![]), Ok));
+    }
+    assert!(files.tree.take_refresh().is_empty());
+    crate::git::connected(&mut s, &backend);
+    let mut rt = project_runtime(s);
+
+    // Close active session so Files and Git run in detached mode, then move it to a cached background tab.
+    send_key(&mut rt, Key::Command('w'), primary_mods(true));
+    assert!(rt.state.screen.is_launcher());
+    assert_eq!(crate::git::fixture_online(&rt.state), Some(true));
+    rt.state.screen.launcher_mut().unwrap().pending = false;
+    send_key(&mut rt, Key::Command(']'), primary_mods(false));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+
+    assert!(workspace::set_detached_online(&mut rt.state, false));
+    assert!(workspace::set_detached_online(&mut rt.state, true));
+
+    // Switch back to tab 0: detached Files tree was invalidated and Git is back online.
+    send_key(&mut rt, Key::Command('['), primary_mods(false));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+    assert_eq!(crate::git::fixture_online(&rt.state), Some(true));
+    let files = rt.state.files.as_mut().unwrap();
+    files.show(true);
+    files.activate(true);
+    assert!(!files.tree.take_refresh().is_empty());
 }

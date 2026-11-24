@@ -57,23 +57,40 @@ pub(crate) fn overlay_open(s: &State) -> bool {
     })
 }
 
-pub(crate) fn session_directory(s: &State) -> Option<String> {
+pub(crate) enum SessionDirectory {
+    Root,
+    Known(String),
+    ResolveSlug(String),
+}
+
+pub(crate) fn session_directory(s: &State) -> SessionDirectory {
     if s.screen.is_launcher() {
-        return None;
+        return SessionDirectory::Root;
     }
-    let owner = s.git.owner.as_ref()?;
+    let Some(owner) = s.git.owner.as_ref() else {
+        return SessionDirectory::Root;
+    };
+    if owner.session_slug == "root" {
+        return SessionDirectory::Root;
+    }
     owner
         .inventory
-        .as_ref()?
-        .trees
-        .iter()
-        .find(|tree| tree.slug == owner.session_slug && !tree.missing)
-        .map(|tree| {
-            tree.service_directory
-                .as_ref()
-                .unwrap_or(&tree.directory)
-                .clone()
+        .as_ref()
+        .and_then(|list| {
+            list.trees
+                .iter()
+                .find(|tree| tree.slug == owner.session_slug && !tree.missing)
+                .map(|tree| {
+                    tree.service_directory
+                        .as_ref()
+                        .unwrap_or(&tree.directory)
+                        .clone()
+                })
         })
+        .map_or_else(
+            || SessionDirectory::ResolveSlug(owner.session_slug.clone()),
+            SessionDirectory::Known,
+        )
 }
 
 pub(crate) fn is_composing(s: &State) -> bool {
@@ -113,6 +130,11 @@ pub(crate) fn fixture_worktrees(s: &mut State, inventory: codenomad_client::git:
     if let Some(ui) = s.git.owner.as_mut() {
         ui.inventory = Some(inventory);
     }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_online(s: &State) -> Option<bool> {
+    s.git.owner.as_ref().map(|ui| ui.online)
 }
 
 pub(crate) fn set_diff_preferences(s: &mut State, preference: DiffPreferences) {
@@ -166,27 +188,32 @@ fn connect(s: &mut State, backend: &Backend, placement: Option<&str>) {
 }
 
 pub(crate) fn detach_session(s: &mut State) {
+    let stream_online = s
+        .screen
+        .launcher()
+        .is_some_and(crate::launcher::Launcher::workspace_stream_online);
     let backend = s.screen.launcher().and_then(|launcher| {
         let mut backend = launcher.connection.clone()?;
         backend.workspace.clone_from(&launcher.project.as_ref()?.id);
         backend.session.clear();
         Some(backend)
     });
+    let is_online = backend.is_some() && stream_online;
     if let Some(files) = &mut s.files {
         files.detach_session();
-        files.online(backend.is_some());
+        files.online(is_online);
     } else if let Some(backend) = &backend {
         crate::files::bind(s, backend);
         if let Some(files) = &mut s.files {
-            files.online(true);
+            files.online(is_online);
         }
     }
     if let Some(owner) = &mut s.git.owner {
         owner.detach_session();
-        owner.online(backend.is_some());
+        owner.online(is_online);
     } else if let Some(backend) = &backend {
         connected(s, backend);
-        online(s, true);
+        online(s, is_online);
         crate::workspace::restore_files_mode(s);
     }
 }

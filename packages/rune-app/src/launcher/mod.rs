@@ -51,6 +51,7 @@ pub struct Launcher {
     pub(crate) authentication_required: bool,
     pub(crate) catalogue_watch: Option<codenomad_client::stream::CatalogueWatch>,
     pub(crate) catalogue_generation: u64,
+    pub(crate) workspace_stream_generation: u64,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
     pub project: Option<Project>,
@@ -95,6 +96,11 @@ impl Launcher {
     }
     pub fn blocks_prompt(&self) -> bool {
         self.pending && !self.listing
+    }
+    pub(crate) fn workspace_stream_online(&self) -> bool {
+        self.catalogue_watch.is_none()
+            || self.workspace_stream_generation == 0
+            || self.workspace_stream_generation % 2 == 1
     }
     pub fn local_connection(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
@@ -147,6 +153,7 @@ impl Launcher {
             authentication_required: false,
             catalogue_watch: None,
             catalogue_generation: 0,
+            workspace_stream_generation: 0,
             server_id: None,
             projects: vec![],
             project: None,
@@ -194,13 +201,29 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let browser_changed = cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s));
     let blocked = !can_change_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
-    let workspace_events: Vec<_> = s
-        .screen
-        .launcher()
-        .and_then(|l| l.catalogue_watch.as_ref())
-        .map(|watch| watch.take_workspace_events().into_iter().collect())
-        .unwrap_or_default();
-    let relayed = crate::workspace::deliver_detached_events(s, &workspace_events);
+    let stream_update = s.screen.launcher_mut().and_then(|l| {
+        let (generation, events) = l.catalogue_watch.as_ref()?.take_workspace_events();
+        let previous = l.workspace_stream_generation;
+        l.workspace_stream_generation = generation;
+        Some((previous, generation, events))
+    });
+    let mut relayed = false;
+    if let Some((previous, generation, events)) = stream_update {
+        if generation != previous {
+            if generation > 0 && generation % 2 == 0 {
+                relayed |= crate::workspace::set_detached_online(s, false);
+            } else if generation % 2 == 1 {
+                if previous > 0 && previous % 2 == 1 {
+                    relayed |= crate::workspace::set_detached_online(s, false);
+                }
+                relayed |= crate::workspace::set_detached_online(s, true);
+            }
+        }
+        if !events.is_empty() {
+            let events: Vec<_> = events.into_iter().collect();
+            relayed |= crate::workspace::deliver_detached_events(s, &events);
+        }
+    }
     let Some(l) = s.screen.launcher_mut() else {
         return relayed;
     };
@@ -226,6 +249,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         Ok(Reply::Connected(b, projects, server_id)) => {
             let reauthenticated = std::mem::take(&mut l.authentication_required);
             l.catalogue_watch = None;
+            l.workspace_stream_generation = 0;
             l.connection = Some(b);
             l.server_id = Some(server_id);
             l.projects = projects;

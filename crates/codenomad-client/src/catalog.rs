@@ -306,6 +306,40 @@ impl Backend {
         }
         Ok(directories)
     }
+    pub async fn worktree_directory(&self, project: &Project, slug: &str) -> Result<String> {
+        let data = read_json(
+            self.client
+                .get(format!(
+                    "{}api/workspaces/{}/worktrees",
+                    self.base, project.id
+                ))
+                .send()
+                .await?
+                .error_for_status()?,
+        )
+        .await?;
+        let trees = data["worktrees"]
+            .as_array()
+            .filter(|trees| trees.len() <= 128)
+            .ok_or("invalid worktree inventory")?;
+        for tree in trees {
+            if tree["slug"].as_str() != Some(slug) {
+                continue;
+            }
+            if tree["nestedFolderMissing"].as_bool() == Some(true)
+                || tree["missing"].as_bool() == Some(true)
+            {
+                return Err("missing worktree directory".into());
+            }
+            let directory = tree["serviceDirectory"]
+                .as_str()
+                .or_else(|| tree["directory"].as_str())
+                .filter(|d| crate::server_path::absolute(d))
+                .ok_or("invalid worktree directory")?;
+            return Ok(directory.into());
+        }
+        Err("unknown worktree".into())
+    }
     pub async fn search_sessions(&self, project: &Project, query: &str) -> Result<Vec<Session>> {
         use std::collections::HashSet;
         if query.is_empty() || query.len() > 4096 {

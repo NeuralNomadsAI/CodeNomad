@@ -155,7 +155,7 @@ pub fn create_blank(s: &mut State) {
         return;
     }
     let dismiss = s.shell.floating_sessions();
-    let directory = crate::git::session_directory(s);
+    let target = crate::git::session_directory(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
@@ -165,9 +165,15 @@ pub fn create_blank(s: &mut State) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
-    let directory = directory.unwrap_or_else(|| p.path.clone());
     // A create request is never automatically retried. Refresh reconciles a lost response.
     l.job("rune.create_error", async move {
+        let directory = match target {
+            crate::git::SessionDirectory::Root => p.path.clone(),
+            crate::git::SessionDirectory::Known(directory) => directory,
+            crate::git::SessionDirectory::ResolveSlug(slug) => {
+                b.worktree_directory(&p, &slug).await?
+            }
+        };
         let session = b.create_untitled_session(&p, &directory).await?;
         let (backend, _, slug) = b.bind_created_session(&p, &session.id, &directory).await?;
         Ok(Reply::Created(

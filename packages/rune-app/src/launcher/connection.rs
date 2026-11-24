@@ -7,6 +7,7 @@ pub(super) fn watch_catalogue(l: &mut Launcher) {
         let (watch, task) =
             codenomad_client::stream::CatalogueWatch::new(backend.clone(), l.wake.clone());
         l.catalogue_watch = Some(watch);
+        l.workspace_stream_generation = 0;
         crate::platform::spawn(task);
     }
 }

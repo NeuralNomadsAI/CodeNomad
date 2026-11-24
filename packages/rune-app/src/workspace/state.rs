@@ -23,7 +23,7 @@ pub use panel_state::{
 };
 pub(crate) use panel_state::{
     deliver_detached_events, mission_event, mission_panel, mission_supported, missions_composing,
-    right_panel_tab, set_right_panel_tab, suspend_missions,
+    right_panel_tab, set_detached_online, set_right_panel_tab, suspend_missions,
 };
 pub use polling::{poll, status};
 pub use strip::strip;
