@@ -22,6 +22,7 @@ pub fn decode_native(e: &Value) -> Option<Event> {
             role: "assistant".into(),
             completed: false,
             body: String::new(),
+            usage: None,
             parts: vec![],
         })),
         "session.text.started" | "session.text.delta" | "session.text.ended" => Some(Event::Text(

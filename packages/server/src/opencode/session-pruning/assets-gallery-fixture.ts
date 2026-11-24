@@ -22,8 +22,10 @@ export const signal = () => new AbortController().signal
 
 export type Fixture = ReturnType<typeof openFixture>
 /** A writable in-memory copy, with an instrumented connection recording every message JSON it loads. */
-export function openFixture(kind: "plain" | "blob") {
+export function openFixture(kind: "plain" | "blob", tool = "experimental_image_generate") {
   const data = source[kind], session = native(data.session)
+  // The recorded history used OpenCode's earlier image tool name; `tool` replays it under another.
+  const named = (json: unknown) => JSON.stringify(native(json)).replaceAll('"experimental_image_generate"', JSON.stringify(tool))
   const raw = new DatabaseSync(":memory:")
   raw.exec(`CREATE TABLE session_v2(id TEXT PRIMARY KEY,project_id TEXT,workspace_id TEXT,parent_id TEXT,directory TEXT,title TEXT,metadata TEXT,
       revert TEXT,agent TEXT,time_created INTEGER,time_updated INTEGER,time_archived INTEGER);
@@ -34,7 +36,7 @@ export function openFixture(kind: "plain" | "blob") {
   raw.prepare("INSERT INTO session_v2 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(session.id, session.project_id, session.workspace_id, session.parent_id,
     storageDirectory(session.directory), session.title, session.metadata, session.revert, session.agent, session.time_created, session.time_updated, session.time_archived)
   const add = raw.prepare("INSERT INTO session_message VALUES (?,?,?,?,?,?,?)")
-  for (const [id, type, seq, created, updated, json] of data.messages) add.run(id, session.id, type, seq, created, updated, JSON.stringify(native(json)))
+  for (const [id, type, seq, created, updated, json] of data.messages) add.run(id, session.id, type, seq, created, updated, named(json))
   for (const [hash, mime, base64] of data.blobs) raw.prepare("INSERT INTO blob VALUES (?,?,?)").run(hash, mime, Buffer.from(base64, "base64"))
   for (const [sessionID, messageID, hash] of data.refs) raw.prepare("INSERT INTO blob_ref VALUES (?,?,?)").run(sessionID, messageID, hash)
   const loads: Array<{ args: unknown[]; bytes: number }> = []
@@ -60,7 +62,7 @@ export function openFixture(kind: "plain" | "blob") {
   const readPart = (value: any) => value.content.findIndex((part: any) => part.name === "read")
   const fileOf = (value: any) => value.content[readPart(value)].state.content[1]
   const readTarget = (seq = A_READ): AssetTarget => { const value = json(seq); return { messageID: row(seq).id, part: readPart(value), index: 1, digest: sha(fileOf(value).uri) } }
-  const call = (seq = A_CALL) => json(seq).content.find((part: any) => part.name === "experimental_image_generate")
+  const call = (seq = A_CALL) => json(seq).content.find((part: any) => part.name === tool)
   /** A copy of icon-a's notice for another job, optionally padded past the 64 KiB decode limit. */
   const noticeFor = (seq: number, job: string, time: number, padding = 0) => {
     const notice = json(A_NOTICE); notice.metadata.jobID = job

@@ -171,12 +171,16 @@ pub(super) fn preview_button(
         disabled,
         Some(active),
         run(s, move |s, _| {
-            if s.git
+            let was_open = crate::git::has_preview(s);
+            let opened = s
+                .git
                 .owner
                 .as_mut()
-                .is_some_and(|ui| ui.toggle_preview(target.clone()))
-                && let Some(files) = &mut s.files
-            {
+                .is_some_and(|ui| ui.toggle_preview(target.clone()));
+            if opened || was_open != crate::git::has_preview(s) {
+                s.notifications.supersede_navigation();
+            }
+            if opened && let Some(files) = &mut s.files {
                 files.close_reader();
             }
         }),

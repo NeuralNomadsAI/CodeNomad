@@ -34,6 +34,8 @@
 
 Implementation:
 
+- Rust holds a shared deletion permit for each mutation's physical checkouts, including a file's resolved write target. A deletion blocks and drains only the checkouts it needs, then revalidates the session families before evacuation. A dispatched native mutation keeps its permit through the response body; a disconnected observer leaves a bounded 60-second drain.
+
 - Rust root-session mutations verify the opened folder's native project, physical
   checkout, common Git directory and current filesystem identity through a bounded
   point read. Sibling checkout enumeration belongs to the worktree inventory and
@@ -63,11 +65,13 @@ Implementation:
 - The UI follows creation with the verified family transaction, using the
   returned identifier rather than guessing it from the branch name.
 - Native worktree events invalidate ownership and UI state. Opening the selector also
-  discovers external Git changes. Native session moves refresh the catalogue before
-  list reconciliation. When a move's destination does not exactly match the
-  opened folder or a listed worktree, consult a fresh inventory, then use a
-  workspace-scoped session read for any remaining miss. The proxy resolves aliases such as symlinks
-  and junctions. Move and restore placement reads return a registered worktree slug only
+  discovers external Git changes. An in-scope move with a held display root
+  adds that root directly when absent, preserving native parent links and
+  the list cursor. A missing root still needs inventory reconciliation. When a
+  move's destination does not exactly match the opened folder or a listed worktree,
+  consult a fresh inventory, then use a workspace-scoped session read for any
+  remaining miss. The proxy resolves aliases such as symlinks and junctions.
+  Move and restore placement reads return a registered worktree slug only
   when the ownership resolver matches its exact list directory. Live admission
   and catalogue filtering use that slug against the workspace inventory, as does
   the worktree selector for its current option. Execution keeps the native

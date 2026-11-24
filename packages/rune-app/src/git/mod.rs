@@ -8,14 +8,33 @@ mod preview;
 mod refresh;
 mod request;
 mod view;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use binding::poll_notices;
 pub(crate) use binding::{
     Binding, PlacementHold, can_place, close_preview, connected, connected_placed,
-    diff_preferences, event, files_checkout, has_preview, hold_placement, mode, online, placeable,
-    placement, placement_hold, placement_unconfirmed, poll, project_opened, release_placement,
-    set_diff_preferences, set_mode, show,
+    diff_preferences, event, file_link_scope, files_checkout, has_preview, hold_placement, mode,
+    online, placeable, placement, placement_hold, placement_unconfirmed, poll, project_opened,
+    release_placement, set_diff_preferences, set_mode, show,
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};
+
+pub(crate) fn history_worktree<'a>(s: &'a crate::State, slug: &str) -> Option<&'a str> {
+    let inventory = s.git.owner.as_ref()?.inventory.as_ref()?;
+    if inventory.repository != Repository::Git {
+        return None;
+    }
+    let tree = inventory
+        .trees
+        .iter()
+        .find(|tree| tree.slug == slug && !tree.missing)?;
+    Some(
+        tree.label
+            .as_deref()
+            .or(tree.branch.as_deref())
+            .unwrap_or(&tree.slug),
+    )
+}
 
 use crate::platform::{collation::Collation, reads::Reads};
 use changes::{Changes, Id};
@@ -131,6 +150,7 @@ pub(crate) struct Ui {
     reconcile_revision: Option<u64>,
     pending_row_focus: Option<(Vec<Id>, usize)>,
     mutation_message: Option<(bool, String)>,
+    mutation_notice: Option<(bool, String)>,
     invalidated_files: bool,
     init_sessions: Option<Sessions>,
     collation: Option<Collation>,
@@ -180,6 +200,7 @@ impl Ui {
             reconcile_revision: None,
             pending_row_focus: None,
             mutation_message: None,
+            mutation_notice: None,
             invalidated_files: false,
             init_sessions: None,
             collation: Collation::try_default().ok(),
@@ -207,10 +228,16 @@ impl Ui {
             self.invalidate_index();
         }
         if self.backend.session != backend.session
+            || self.backend.session_directory != backend.session_directory
             || placement.is_some_and(|slug| self.session_slug != slug)
         {
             self.backend.session.clone_from(&backend.session);
-            self.session_slug = placement.unwrap_or("root").into();
+            self.backend
+                .session_directory
+                .clone_from(&backend.session_directory);
+            if let Some(slug) = placement {
+                self.session_slug = slug.into();
+            }
             self.close_preview();
             if self.slug != self.session_slug {
                 self.slug.clone_from(&self.session_slug);

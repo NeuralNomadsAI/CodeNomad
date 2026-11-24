@@ -38,7 +38,15 @@ fn providers_refresh_the_captured_location_and_revoke_a_stopped_project() {
         rt.frame(0.0);
         click(&mut rt, "settings-providers");
         tick(&mut rt);
-        read_snapshot(&listener, "First account").await;
+        let first = request(&listener).await;
+        let (meta, session) = if first.first.starts_with("GET /api/meta ") {
+            (first, request(&listener).await)
+        } else {
+            (request(&listener).await, first)
+        };
+        assert!(meta.first.starts_with("GET /api/meta "));
+        meta.reply(200, json!({"capabilities":[]})).await;
+        reply_snapshot(&listener, session, "First account").await;
         wait_until(|| {
             tick(&mut rt);
             rt.accessibility_json()

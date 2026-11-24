@@ -1,7 +1,6 @@
 // Private runtime with project discovery: real nested General subagents under the depth editor's
 // project writes. A deterministic provider makes every conversation launch one General subagent.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { createServer } from "node:http"
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
@@ -10,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
 import { parse } from "jsonc-parser"
 import { fixtureEnvironment, fixtureParent } from "./native-product-fixture.mjs"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 import { PluginControls } from "../packages/server/src/opencode/plugin-controls.ts"
 import { SubagentDepthSettings } from "../packages/server/src/opencode/subagent-depth-settings.ts"
 
@@ -30,7 +29,7 @@ const provider = createServer(async (request, response) => {
     // Launch one General subagent when offered the tool; conclude once its launch is acknowledged (a tool
     // message) or the child reports in a later `<subagent>` message.
     const last = body.messages?.at(-1)
-    const concluded = last?.role === "tool" || JSON.stringify(last?.content ?? "").includes("<subagent")
+    const concluded = last?.role === "tool" || /<subagent|<background-result/.test(JSON.stringify(last?.content ?? ""))
     const answer = !body.stream || concluded || !tools.includes("subagent") ? "DONE"
       : { name: "subagent", arguments: JSON.stringify({ agent: "general", description: "Nest", prompt: "Nest once more" }) }
     if (!body.stream) {

@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify"
 import { z } from "zod"
-import { isProjectedInbox, projectInboxUserFiles, USER_FILES_REFERENCE } from "../../opencode/user-file-reference"
+import { isProjectedInbox, projectInboxUserFiles, USER_FILES_REFERENCE } from "../../opencode/session-pruning/user-file-reference"
 import { EventBus } from "../../events/bus"
 import { WorkspaceEventPayload } from "../../api-types"
 import type { ClientConnectionManager } from "../../clients/connection-manager"

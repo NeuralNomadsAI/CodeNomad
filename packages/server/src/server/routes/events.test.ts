@@ -5,7 +5,7 @@ import Fastify from "fastify"
 import type { EventBus } from "../../events/bus"
 import type { Logger } from "../../logger"
 import { registerEventRoutes } from "./events"
-import { userFileDigest } from "../../opencode/user-file-reference"
+import { userFileDigest } from "../../opencode/session-pruning/user-file-reference"
 
 const logger = { debug() {}, trace() {}, isLevelEnabled() { return false } } as unknown as Logger
 

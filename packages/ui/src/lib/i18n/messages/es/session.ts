@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.filter.includeSubsessions": "Subsesiones",
   "session.pruning.maintenance_required": "Espera a que termine la operación actual y vuelve a intentar la limpieza.",
   "session.pruning.unavailable": "Vuelve a abrir CodeNomad e inténtalo de nuevo.",
+  "session.messageActions.serverUnavailable": "Este servidor no admite esta acción.",
   "session.pruning.conflict": "Recarga el mensaje y vuelve a seleccionar el contenido.",
   "session.pruning.not_deletable": "Solo se pueden quitar las herramientas y los razonamientos terminados de esta sesión.",
   "session.pruning.unsupported_storage": "El complemento de limpieza no pudo validar el almacenamiento de esta sesión. Se rechazó la limpieza.",

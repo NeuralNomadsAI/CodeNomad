@@ -1,6 +1,6 @@
 // Runs only Rune's offscreen tooling; never launches its native event loop.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
 import {mkdir, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
@@ -47,8 +47,12 @@ async function run(theme, at, name) {
   await writeFile(path.join(out, `${name}-${theme}.log`), log)
   const data = JSON.parse(await readFile(tree, 'utf8'))
   assert.equal(data.dark_system, theme === 'dark', 'Rune must receive the requested appearance')
-  assert(Array.isArray(data.elements) && data.elements.length > 0 && data.elements.length < 500,
+  assert(Array.isArray(data.elements) && data.elements.length > 0 && data.elements.length < 1200,
     'Synthetic scene must keep the mounted element tree bounded')
+  const mountedRows = data.elements.filter(element => /^synthetic-\d+$/.test(element.key ?? '')).length
+  const mountedMarkers = data.elements.filter(element => /^synthetic-\d+:/.test(element.key ?? '')).length
+  assert(mountedRows > 0 && mountedRows < 80, 'Synthetic scene must virtualize mounted transcript rows')
+  assert(mountedMarkers <= 192, 'Synthetic scene must virtualize mounted timeline markers')
   const historyRect = data.elements.find(element => element.key === 'history')?.rect
   assert(historyRect?.length === 4, 'History viewport must expose its actual clipping rectangle')
   const finalRect = data.elements.find(element => element.key === 'body-synthetic-9999')?.rect

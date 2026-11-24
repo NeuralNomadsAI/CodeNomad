@@ -163,12 +163,6 @@ fn failed_todo_shows_the_native_reason_before_its_list() {
     state.messages.push(row.into());
     let mut rt = Runtime::new(state, crate::view, (960.0, 760.0), Env::new(false, 1.0));
     rt.frame(0.0);
-    let (x, y) = rt.find("toggle-tool-step:4:todo").unwrap();
-    rt.pointer_down(x, y);
-    rt.pointer_up(x, y);
-    for _ in 0..12 {
-        rt.frame(1.0 / 60.0);
-    }
     let tree = rt.accessibility_json().to_string();
     assert!(
         tree.find("Native plan failure").unwrap() < tree.find("Pending after failure").unwrap()

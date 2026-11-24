@@ -1,9 +1,26 @@
+use super::{Tool, string};
 use crate::{State, screen, strings::t};
 use rune::{El, col, text};
 use rune_theme_codenomad::{
     Space, TextRole,
     layout::{self, Layout},
 };
+
+pub(super) fn pattern(tool: &Tool) -> &str {
+    string(&tool.input, &["pattern"]).trim()
+}
+
+pub(super) fn web_title(tool: &Tool, title: &mut String) {
+    for value in [
+        string(&tool.input, &["query"]),
+        string(&tool.metadata, &["provider"]),
+    ] {
+        if !value.is_empty() {
+            title.push_str(" · ");
+            title.extend(value.chars().take(100));
+        }
+    }
+}
 
 struct ResultCard<'a> {
     title: &'a str,
@@ -80,7 +97,7 @@ pub(super) fn view(s: &State, output: &str) -> Option<El> {
                         result.title,
                         false,
                         screen::action_tx(&s.input_scope, move |_, tx| {
-                            let _ = tx.open_url(&result.url);
+                            super::super::links::open_external(&result.url, tx);
                         }),
                     ))
                     .child(text(label).text_role(TextRole::Label))

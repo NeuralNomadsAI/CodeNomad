@@ -3,6 +3,138 @@ use rune::{Env, Runtime};
 use serde_json::Value;
 
 #[test]
+fn unsupported_advanced_switch_is_disabled_with_keyboard_help() {
+    fn find_switch(tree: &Value) -> Option<&Value> {
+        if tree["role"] == "switch" && tree["name"] == "Hold long assistant replies" {
+            return Some(tree);
+        }
+        tree["children"].as_array()?.iter().find_map(find_switch)
+    }
+
+    let state = Window {
+        section: Section::Advanced,
+        ..Window::default()
+    };
+    let mut prefs = state.shared.borrow_mut();
+    prefs.fixture();
+    prefs.fixture_locale("en");
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    drop(prefs);
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    let switch = find_switch(&tree).unwrap();
+    assert!(
+        switch["states"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::from("disabled"))
+    );
+    rt.update(|_, tx| tx.focus("advanced-help-holdLongAssistantReplies", true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text(" ".into()),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(rt.state.advanced_help == Some(crate::settings::advanced::Toggle::LongReplies));
+}
+
+#[test]
+fn keyboard_shortcuts_records_the_focused_save_binding() {
+    let state = Window {
+        section: Section::Shortcuts,
+        ..Window::default()
+    };
+    state.shared.borrow_mut().fixture();
+    state.shared.borrow_mut().backend =
+        Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.02);
+    let click_edit = |rt: &mut Runtime<Window>| {
+        let (x, y) = rt.find("settings-file-save-edit").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.02);
+        assert!(rt.state.recording_shortcut);
+    };
+    click_edit(&mut rt);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Escape,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    assert!(!rt.state.shared.borrow().file_save_pending());
+    click_edit(&mut rt);
+    rt.window_focus(false);
+    rt.frame(0.02);
+    rt.window_focus(true);
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    click_edit(&mut rt);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Function(8),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    assert!(rt.state.shared.borrow().file_save_pending());
+}
+
+#[test]
+fn stats_tab_mounts_without_opening_a_project() {
+    let state = Window::default();
+    state.shared.borrow_mut().fixture();
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let (x, y) = rt.find("settings-stats").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.state.section == Section::Stats);
+    let tree = rt.accessibility_json().to_string();
+    let expected = crate::strings::with_locale(
+        rt.state
+            .shared
+            .borrow()
+            .locale()
+            .unwrap_or_else(crate::strings::locale),
+        || t("settings.usage.noProject"),
+    );
+    assert!(tree.contains(expected), "{tree}");
+    assert!(rt.find("stats-refresh").is_none());
+    assert!(rt.find("stats-period").is_none());
+}
+
+#[test]
+fn notifications_tab_mounts_the_routing_table_and_the_focused_switch() {
+    let state =
+        Window::default().with_notification_permission(notification_settings::Permission::Granted);
+    {
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture();
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    assert!(node(&rt.accessibility_json(), "updates-system").is_none());
+    let (x, y) = rt.find("settings-notifications").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    let tree = rt.accessibility_json();
+    let system = node(&tree, "updates-system").unwrap();
+    assert_eq!(system["role"], "check-box");
+    assert!(system["states"].to_string().contains("\"checked\""));
+    assert_eq!(
+        node(&tree, "notifications-allow-focused").unwrap()["role"],
+        "switch"
+    );
+}
+
+#[test]
 fn contrast_control_changes_only_the_contrast_choice() {
     let state = Window::default();
     state.shared.borrow_mut().fixture();
@@ -361,5 +493,277 @@ fn settings_language_picker_opens_with_enter() {
             .unwrap()
             .to_string()
             .contains("Français")
+    );
+}
+
+#[test]
+fn conversation_preferences_show_the_tokens_choice_on_a_new_profile() {
+    let state = Window::default();
+    state.shared.borrow_mut().fixture();
+    let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    runtime.frame(0.0);
+    let (x, y) = runtime.find("settings-conversation").unwrap();
+    runtime.pointer_down(x, y);
+    runtime.pointer_up(x, y);
+    for _ in 0..8 {
+        runtime.frame(0.02);
+    }
+    let tree = runtime.accessibility_json();
+    let row = node(&tree, "usage-visibility-trigger").unwrap().to_string();
+    assert!(row.contains("Tokens") && row.contains("Hidden"), "{row}");
+}
+
+#[test]
+fn pending_permissions_keep_tab_focus_and_refuse_new_selections() {
+    const KEY: &str = "new-conversation-permissions-trigger";
+    let state = Window::default();
+    let mut prefs = state.shared.borrow_mut();
+    prefs.fixture_locale("en");
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    drop(prefs);
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    rt.update(|_, tx| tx.focus(KEY, true));
+    rt.frame(0.02);
+    let focused = |rt: &Runtime<Window>| {
+        let a11y = rt.accessibility_json();
+        node(&a11y, KEY).unwrap()["states"]
+            .to_string()
+            .contains("focused")
+    };
+    assert!(focused(&rt));
+    rt.update(|s, _| {
+        s.shared
+            .borrow_mut()
+            .set_new_conversation_permissions("supervised")
+    });
+    rt.frame(0.02);
+    assert!(focused(&rt));
+    let trigger = rt
+        .elements()
+        .into_iter()
+        .find(|entry| entry.key.as_deref() == Some(KEY))
+        .unwrap();
+    assert!(trigger.focusable);
+
+    let press = |rt: &mut Runtime<Window>, key| {
+        rt.key(rune::KeyEvent {
+            key,
+            mods: Default::default(),
+        });
+        rt.frame(0.02);
+    };
+    press(&mut rt, rune::Key::Tab);
+    assert!(!focused(&rt));
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Tab,
+        mods: rune::Mods {
+            shift: true,
+            ..Default::default()
+        },
+    });
+    rt.frame(0.02);
+    assert!(
+        focused(&rt),
+        "Tab navigation still includes the pending control"
+    );
+    press(&mut rt, rune::Key::Enter);
+    let (x, y) = rt.find(KEY).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(node(&rt.accessibility_json(), "listbox").is_none());
+    assert_eq!(
+        rt.state.shared.borrow().new_conversation_permissions(),
+        "autonomous"
+    );
+}
+
+#[test]
+fn native_preferences_close_requires_discard_consent_from_both_paths() {
+    let shared = Rc::new(RefCell::new(Preferences::default()));
+    shared.borrow_mut().fixture_locale("en");
+    let request = Rc::new(CloseRequest::default());
+    let mut state = Window::new(shared.clone(), Rc::new(Cell::new(false)))
+        .with_close_request(request.clone(), None);
+    state.memory_editor.fixture_dirty();
+    let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    // This is the same request the main-window Settings button enqueues.
+    request.requested.set(true);
+    runtime.update(|s, tx| {
+        spec().poll.unwrap()(s, 0.0, tx);
+    });
+    runtime.frame(0.02);
+    assert!(runtime.state.confirm_close);
+    assert!(runtime.find("file-decision-cancel").is_some());
+    let (x, y) = runtime.find("file-decision-cancel").unwrap();
+    runtime.pointer_down(x, y);
+    runtime.pointer_up(x, y);
+    runtime.frame(0.02);
+    assert!(!runtime.state.confirm_close && runtime.state.memory_editor.has_unsaved());
+    // Rune calls its OS close hook after hiding; the draft is held until the parent reopens.
+    assert!(runtime.state.retain_editor_on_native_close());
+    let editor = request.reopen.borrow_mut().take().unwrap();
+    let restored =
+        Window::new(shared, Rc::new(Cell::new(false))).with_close_request(request, Some(editor));
+    assert!(restored.confirm_close && restored.memory_editor.has_unsaved());
+    let mut runtime = Runtime::new(restored, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    runtime.frame(0.02);
+    let (x, y) = runtime.find("file-decision-confirm").unwrap();
+    runtime.pointer_down(x, y);
+    runtime.pointer_up(x, y);
+    runtime.frame(0.02);
+    assert!(!runtime.state.memory_editor.has_unsaved());
+}
+
+#[test]
+fn general_behavior_renders_six_checkboxes_natively_and_hides_keep_awake_on_web() {
+    let state = Window::default();
+    {
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture_locale("en");
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    let expected = [
+        (
+            "behavior-showMessageTimeline",
+            "Show the message timeline",
+            true,
+        ),
+        (
+            "behavior-scrollControlsInTimelineCorner",
+            "Put the first/latest message arrows under the timeline",
+            false,
+        ),
+        ("behavior-diffViewMode", "Split tool-call diffs", true),
+        (
+            "behavior-autoExpandActiveSubsessions",
+            "Automatically expand subsessions",
+            true,
+        ),
+        ("behavior-followUpBehavior", "Queue sent prompts", false),
+        (
+            "behavior-keepComputerAwake",
+            "Keep the computer awake while CodeNomad is running",
+            false,
+        ),
+    ];
+    for (key, name, checked) in expected {
+        let checkbox = node(&tree, key).unwrap_or_else(|| panic!("missing {key}"));
+        assert_eq!(checkbox["role"], "check-box");
+        assert_eq!(checkbox["name"], name);
+        let states = checkbox["states"].as_array().unwrap();
+        assert_eq!(
+            states.contains(&Value::from("checked")),
+            checked,
+            "{key}: {states:?}"
+        );
+    }
+    assert!(node(&tree, "behavior-help-autoExpandActiveSubsessions").is_some());
+    assert!(node(&tree, "behavior-help-newConversationPermissions").is_some());
+    assert!(node(&tree, "behavior-help-keepComputerAwake").is_some());
+
+    rt.update(|_, tx| tx.focus("behavior-showMessageTimeline", true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text(" ".into()),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    let tree = rt.accessibility_json();
+    let timeline = node(&tree, "behavior-showMessageTimeline").unwrap();
+    let states = timeline["states"].as_array().unwrap();
+    assert!(
+        states.contains(&Value::from("focused")),
+        "pending toggle keeps focus: {states:?}"
+    );
+    assert!(
+        states.contains(&Value::from("checked")),
+        "authoritative value stays checked until confirmed: {states:?}"
+    );
+    assert!(rt.state.shared.borrow().general_toggle_pending(
+        super::super::preferences::behavior::GeneralToggle::MessageTimeline
+    ));
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Tab,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Tab,
+        mods: rune::Mods {
+            shift: true,
+            ..Default::default()
+        },
+    });
+    rt.frame(0.02);
+    let tree = rt.accessibility_json();
+    let states = node(&tree, "behavior-showMessageTimeline").unwrap()["states"]
+        .as_array()
+        .unwrap();
+    assert!(
+        states.contains(&Value::from("focused")),
+        "Tab navigation still includes the pending checkbox: {states:?}"
+    );
+    let revision_before = rt.state.shared.borrow().revision;
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text(" ".into()),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert_eq!(
+        rt.state.shared.borrow().revision,
+        revision_before,
+        "a second press while pending must not restage the toggle"
+    );
+
+    struct WebCard {
+        shared: Rc<RefCell<Preferences>>,
+        behavior: super::super::behavior::General,
+    }
+    let shared = Rc::new(RefCell::new(Preferences::default()));
+    {
+        let mut prefs = shared.borrow_mut();
+        prefs.fixture_locale("en");
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
+    let mut web_rt = Runtime::new(
+        WebCard {
+            shared,
+            behavior: Default::default(),
+        },
+        |s, cx| {
+            let prefs = s.shared.borrow();
+            render_with(cx, &prefs, false, |_| {
+                let mut layers = Vec::new();
+                s.behavior
+                    .view(&s.shared, false, &mut layers, |s: &mut WebCard| {
+                        &mut s.behavior
+                    })
+                    .children(layers)
+            })
+        },
+        chrome::WINDOW_SIZE,
+        Env::new(false, 1.0),
+    );
+    web_rt.frame(0.0);
+    let web_tree = web_rt.accessibility_json();
+    for (key, _, _) in &expected[..5] {
+        assert!(node(&web_tree, key).is_some(), "web missing {key}");
+    }
+    assert!(node(&web_tree, "new-conversation-permissions-trigger").is_some());
+    assert!(
+        node(&web_tree, "behavior-keepComputerAwake").is_none(),
+        "keepComputerAwake must stay native-only"
+    );
+    assert!(
+        !web_tree
+            .to_string()
+            .contains("Keep the computer awake while CodeNomad is running")
     );
 }

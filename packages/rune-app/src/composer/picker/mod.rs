@@ -253,7 +253,7 @@ impl Picker {
         }
         if let Some(item) = self.entries.get(self.selected) {
             self.selection_moved = true;
-            rune_theme_codenomad::layout::announce_selection(tx, item.label());
+            rune_theme_codenomad::layout::announce_polite(tx, item.label());
         }
         true
     }

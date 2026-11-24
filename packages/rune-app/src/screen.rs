@@ -64,7 +64,7 @@ pub fn action(scope: &Rc<()>, run: impl Fn(&mut State) + 'static) -> impl Fn(&mu
     let scope = scope.clone();
     move |s| {
         if s.current_scope(&scope) {
-            run(s);
+            crate::strings::with_locale(crate::settings::app_locale(s), || run(s));
         }
     }
 }
@@ -75,7 +75,7 @@ pub fn action_tx(
     let scope = scope.clone();
     move |s, tx| {
         if s.current_scope(&scope) {
-            run(s, tx);
+            crate::strings::with_locale(crate::settings::app_locale(s), || run(s, tx));
         }
     }
 }

@@ -134,8 +134,13 @@ pub fn contract() {
             | Event::ReaderSync { .. }
             | Event::History(_)
             | Event::Older(_)
+            | Event::PageOffered { .. }
+            | Event::PageFailed(_)
+            | Event::Anchor { .. }
+            | Event::AnchorFailed(_)
             | Event::Reconnecting
             | Event::HistoryInvalidated
+            | Event::RevertChanged
             | Event::ConnectionLost
             | Event::WorkspaceMissing
             | Event::Connected(_)
@@ -144,6 +149,9 @@ pub fn contract() {
             | Event::Workspace(_)
             | Event::Preferences(_)
             | Event::Reasoning(..)
+            | Event::StepUsage(..)
+            | Event::SessionUsage(_)
+            | Event::FamilyUsage(_)
             | Event::PromptAcknowledged { .. }
             | Event::Tool(..)
             | Event::PagingFailed => {}

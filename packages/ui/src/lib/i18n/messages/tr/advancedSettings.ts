@@ -1,4 +1,6 @@
 export const advancedSettingsMessages = {
+  "advancedSettings.unavailable": "Rune bu ayarı henüz uygulamıyor.",
+  "advancedSettings.environmentVariables.maskValue": "Değeri varsayılan olarak gizle",
   "advancedSettings.title": "Gelişmiş Ayarlar",
   "advancedSettings.environmentVariables.title": "Ortam Değişkenleri",
   "advancedSettings.environmentVariables.subtitle": "Her istem veya oturum komutundan önce uygulanır",

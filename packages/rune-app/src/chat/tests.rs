@@ -45,6 +45,7 @@ fn opens_ten_thousand_rows_with_bounded_mounts_and_scrolls() {
     rt.state.incoming = Some(incoming);
     rt.poll = Some(poll);
     out.send_blocking(Event::Message(Message {
+        usage: None,
         id: "streaming-reading".into(),
         role: "assistant".into(),
         body: String::new(),
@@ -82,6 +83,7 @@ fn long_realistic_paragraph_occupies_multiple_lines_in_the_transcript() {
     let mut state = init();
     state.messages = vec![
         Message {
+            usage: None,
             completed: true,
             parts: vec![],
             id: "long-paragraph".into(),
@@ -126,6 +128,7 @@ fn multiline_input_submits_once_and_stream_preserves_unicode() {
     rt.state.incoming = Some(incoming);
     rt.poll = Some(poll);
     out.send_blocking(Event::Message(Message {
+        usage: None,
         completed: false,
         parts: vec![],
         id: "live".into(),

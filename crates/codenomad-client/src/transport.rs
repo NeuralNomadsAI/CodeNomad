@@ -8,6 +8,31 @@ pub struct DirectoryChange {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
+    StatsChanged {
+        workspace_id: String,
+        urgent: bool,
+    },
+    SessionCompacted {
+        id: String,
+    },
+    OpenCodeNotice {
+        id: String,
+        title: Option<String>,
+        body: String,
+        error: bool,
+        duration_ms: Option<u32>,
+    },
+    SessionRequest {
+        form: bool,
+        id: String,
+    },
+    SessionRequestResolved {
+        form: bool,
+        id: String,
+    },
+    SessionExecution {
+        notice: Option<String>,
+    },
     CommandsChanged,
     MentionsChanged,
     ComposerCataloguesChanged,
@@ -26,6 +51,9 @@ pub enum WorkspaceEvent {
     },
     MissionActivityChanged {
         workspace_id: String,
+    },
+    PermissionReceiptsChanged {
+        message: Option<String>,
     },
     NativeFilesystemChanged {
         workspace_id: String,
@@ -54,9 +82,18 @@ pub enum Command {
         text: String,
     },
     Older,
+    Page(HistoryEdge, Receiver<()>),
+    Anchor(crate::timeline::Jump),
     Latest,
     Retry,
     Close,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HistoryEdge {
+    Before,
+    After,
+    Oldest,
 }
 #[derive(Debug)]
 pub enum PromptOutcome {
@@ -75,6 +112,8 @@ pub enum Event {
     Workspace(WorkspaceEvent),
     Preferences(crate::settings::Owner),
     AgentHint(bool),
+    SessionUsage(crate::content::Usage),
+    FamilyUsage(crate::content::FamilyChange),
     ObservedRunning {
         running: bool,
         version: u64,
@@ -86,6 +125,18 @@ pub enum Event {
         version: u64,
     },
     Older(Page),
+    PageOffered {
+        page: Page,
+        admit: crate::timeline::Admission,
+        cancelled: Receiver<()>,
+    },
+    PageFailed(Receiver<()>),
+    Anchor {
+        ticket: u64,
+        page: Page,
+        admit: crate::timeline::Admission,
+    },
+    AnchorFailed(u64),
     Message(Message),
     PromptAcknowledged {
         attempted: String,
@@ -93,6 +144,7 @@ pub enum Event {
     },
     Text(String, crate::content::TextEvent),
     Reasoning(String, crate::content::ReasoningEvent),
+    StepUsage(String, crate::content::Usage),
     Tool(String, std::sync::Arc<crate::content::Tool>),
     Done,
     AuthenticationRequired(Authentication),
@@ -101,6 +153,7 @@ pub enum Event {
     WorkspaceMissing,
     Reconnecting,
     HistoryInvalidated,
+    RevertChanged,
     PagingFailed,
 }
 

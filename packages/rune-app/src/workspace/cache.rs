@@ -28,6 +28,12 @@ pub(super) struct Cache {
     input_scope: std::rc::Rc<()>,
 }
 impl Cache {
+    pub(super) fn observes_notifications(&self, allow_running: bool) -> bool {
+        self.agent
+            .as_ref()
+            .is_some_and(|agent| agent.online && (allow_running || !agent.running))
+    }
+
     pub(super) fn has_conversation_stream(&self) -> bool {
         self.incoming
             .as_ref()

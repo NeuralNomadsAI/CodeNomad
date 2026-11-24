@@ -1,7 +1,7 @@
 // Isolated real Rust backend + synthetic OpenCode storage/events + loopback fault proxy.
 import assert from 'node:assert/strict'
 import {createServer,request} from 'node:http'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {mkdir,writeFile} from 'node:fs/promises'
 import {randomUUID} from 'node:crypto'
 import path from 'node:path'
@@ -44,6 +44,7 @@ const native=createServer(async(req,res)=>{
     nativeStreams.add(res);res.on('close',()=>nativeStreams.delete(res));return
   }
   if(url.pathname==='/api/location')return json({data:{directory:project}})
+  if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
   if(url.pathname===`/api/session/${session}`)return json({data:record()})
   if(suspend&&url.pathname===`/api/session/${session}/permission`){
     if(recoveredPermission&&stats.nativeConnections>=2)stats.gapPermissionReads++
@@ -66,6 +67,22 @@ const native=createServer(async(req,res)=>{
       cutTransport();await new Promise(r=>setTimeout(r,250))
     }
     return json({output:snapshot})
+  }
+  if(url.pathname==='/api/rpc/codenomad.session-pruning/outlineLayout'){
+    const {input}=JSON.parse(raw);assert.equal(input.sessionID,session)
+    const entries=store.rows.map((row,seq)=>({
+      id:row.id,seq,type:row.type,
+      tools:row.content?.filter(part=>part.type==='tool').length??0,
+      reasoning:row.content?.filter(part=>part.type==='reasoning').length??0,
+      ...(row.type==='assistant'?{
+        text:row.content.filter(part=>part.type==='text').length,
+        layout:row.content.map(part=>part.type==='tool'?'X':part.type==='reasoning'?'R':'T').join(''),
+        ...(row.content.some(part=>part.type==='tool')?{toolName:row.content.find(part=>part.type==='tool').name}:{}),
+      }:{}),
+    }))
+    const through=Math.max(0,store.rows.length-1)
+    return json({output:{status:'outline',entries,total:store.rows.length,cursor:null,
+      checkpoints:store.rows.length?[{after:-1,through,digest:'a'.repeat(64),changed:true}]:[]}})
   }
   if(url.pathname==='/api/rpc/codenomad.missions/scheduleCarrierRead')return json({output:{owned:false}})
   if(url.pathname===`/api/session/${session}/environment`)return json({data:{}})

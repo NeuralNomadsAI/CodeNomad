@@ -21,6 +21,23 @@ pub fn target(base: &Path, relative: &str) -> PathBuf {
     if relative == "." { base.to_path_buf() } else { base.join(relative) }
 }
 
+/// Resolve the file or its parent before admitting a write, including a
+/// not-yet-created file behind a directory link.
+pub(super) fn write_target(mut path: PathBuf) -> Result<PathBuf, Error> {
+    for _ in 0..40 {
+        if let Ok(real) = dunce::canonicalize(&path) {
+            return Ok(real);
+        }
+        if let Ok(link) = std::fs::read_link(&path) {
+            path = path.parent().ok_or_else(unavailable)?.join(link);
+        } else {
+            let parent = dunce::canonicalize(path.parent().ok_or_else(unavailable)?).map_err(|_| unavailable())?;
+            return Ok(parent.join(path.file_name().ok_or_else(unavailable)?));
+        }
+    }
+    Err(unavailable())
+}
+
 /// Refuses a link whose target lies in this project's protected names
 /// (`.git`, reserved device names). A missing, dangling or unresolvable
 /// target (loop) passes: the access itself then fails as in the reference.

@@ -69,6 +69,7 @@ pub fn can_send(s: &State) -> bool {
         && !crate::git::placement_unconfirmed(s)
         && s.reader.as_ref().is_none_or(|reader| !reader.blocks_send())
         && s.composer.sending.is_none()
+        && !s.transcript_display.messages.pending()
         && !s.composer.picker.open()
         && !s.composer.device.busy()
         && !s.composer.picker.command_pending(&s.draft.text)
@@ -193,6 +194,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
                 id,
                 role: "user".into(),
                 body,
+                usage: None,
                 parts,
             }
             .into(),

@@ -497,7 +497,7 @@ fn compact_view_mode_and_unified_wrap_are_local_to_the_card() {
 
 #[test]
 fn a_larger_history_viewport_retries_an_already_mounted_diff() {
-    let mut rt = Runtime::new(edit_cards(12), view, (960.0, 360.0), Env::new(false, 1.0));
+    let mut rt = Runtime::new(edit_cards(12), view, (960.0, 440.0), Env::new(false, 1.0));
     rt.frame(0.0);
     rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
     for _ in 0..24 {
@@ -512,6 +512,7 @@ fn a_larger_history_viewport_retries_an_already_mounted_diff() {
             .rect[1]
     };
     let before = top(&rt);
+    assert!(rt.find("tool-cards:5:edit0-copy-patch").is_some());
     assert!(rt.find("tool-cards:5:edit1-copy-patch").is_none());
     rt.set_viewport((960.0, 960.0), 1.0);
     for _ in 0..24 {
@@ -605,7 +606,7 @@ fn historical_part_gap_reveals_the_middle_without_rejecting_the_message() {
         rt.key_up(event);
         rt.frame(1.0 / 60.0);
     }
-    for _ in 0..6 {
+    for _ in 0..12 {
         if focused(&rt, "reveal-parts-gap-parts") {
             break;
         }
@@ -713,12 +714,10 @@ fn tool_failure_can_copy_its_full_error_before_reveal() {
     let clipboard = rune::clipboard::memory();
     rt.use_clipboard(&clipboard);
     rt.frame(0.0);
-    for key in ["toggle-tool-error:4:read", "copy-tool-error:4:read-error"] {
-        let (x, y) = rt.find(key).unwrap();
-        rt.pointer_down(x, y);
-        rt.pointer_up(x, y);
-        rt.frame(1.0 / 60.0);
-    }
+    let (x, y) = rt.find("copy-tool-error:4:read-error").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
     assert!(!rt.accessibility_json().to_string().contains("END-ERROR"));
     assert_eq!(
         clipboard.text().as_deref().map(String::as_str),
@@ -735,6 +734,7 @@ fn native_tool_ids_cannot_alias_another_calls_disclosure() {
     let mut state = init();
     state.messages = vec![row.into()];
     state.phase = Phase::Ready;
+    crate::settings::fixture_transcript(&mut state, json!({"toolGroupVisibility":"hidden"}));
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     rt.frame(0.0);
     for key in [

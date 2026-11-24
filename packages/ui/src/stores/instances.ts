@@ -207,6 +207,10 @@ class InterruptionRegistry<T extends { id: string }> {
     return this.sessionCounts.get(instanceId)?.keys() ?? new Map<string, number>().keys()
   }
 
+  hasSession(instanceId: string, sessionId: string): boolean {
+    return this.sessionCounts.get(instanceId)?.has(sessionId) ?? false
+  }
+
   clear(instanceId: string, requests: readonly T[], clearPending: (sessionId: string) => void): void {
     requests.forEach(({ id }) => this.enqueuedAt.delete(id))
     for (const sessionId of this.sessionCounts.get(instanceId)?.keys() ?? []) clearPending(sessionId)
@@ -697,6 +701,13 @@ function reconcilePendingSessionIndicators(instanceId: string): void {
     new Set(permissionRegistry.sessionIds(instanceId)),
     new Set(formRegistry.sessionIds(instanceId)),
   )
+}
+
+export function getSessionPendingIndicators(instanceId: string, sessionId: string) {
+  return {
+    pendingPermission: permissionRegistry.hasSession(instanceId, sessionId),
+    pendingForm: formRegistry.hasSession(instanceId, sessionId),
+  }
 }
 
 function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName: string | undefined, backendId: BackendId, serverId?: string): Instance {
@@ -2708,6 +2719,9 @@ const publishTranscriptChunk: NonNullable<OpenCodeDataEventAdmission["publicatio
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
+  // The catalog consumes the title directly. The SDK's rename reducer instead
+  // fetches SessionInfo even for unseen transcripts, which have no use for it.
+  if (event.type === "session.renamed") return
   observePendingCompaction(instanceId, event)
   const sessionId = "sessionID" in event.data && typeof event.data.sessionID === "string"
     ? event.data.sessionID

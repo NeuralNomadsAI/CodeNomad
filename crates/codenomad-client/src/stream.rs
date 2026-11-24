@@ -16,10 +16,12 @@ mod limits;
 mod mission_events;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+mod notifications;
 mod routing;
 mod sessions;
-pub use catalogue::{CatalogueChanges, CatalogueWatch};
+pub use catalogue::{AttentionHint, CatalogueChanges, CatalogueWatch};
 pub(crate) use children::Children;
+use notifications::session_attention;
 use routing::dispatch;
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]
@@ -32,6 +34,7 @@ pub struct State {
     pub alive: AtomicBool,
     pub running: AtomicBool,
     pub upstream: AtomicBool,
+    pub(crate) history_revision: AtomicU64,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     catalogue: Option<Arc<catalogue::Signals>>,
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
@@ -91,6 +94,12 @@ impl State {
     }
     pub fn valid(&self, version: u64) -> bool {
         self.version.load(SeqCst) == version
+            && self.alive.load(SeqCst)
+            && self.upstream.load(SeqCst)
+            && !self.cancelled.load(SeqCst)
+    }
+    pub(crate) fn history_current(&self, revision: u64) -> bool {
+        self.history_revision.load(SeqCst) == revision
             && self.alive.load(SeqCst)
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)

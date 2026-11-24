@@ -140,6 +140,7 @@ enum Event {
     Mutation {
         epoch: u64,
         tree: Worktree,
+        source: Backend,
         action: Mutation,
         outcome: Result<()>,
     },
@@ -147,7 +148,7 @@ enum Event {
 
 pub(super) enum Completed {
     Read(Lane, Result<Value>),
-    Mutation(u64, Worktree, Mutation, Result<()>),
+    Mutation(u64, Worktree, Backend, Mutation, Result<()>),
 }
 
 #[derive(Default)]
@@ -271,6 +272,7 @@ impl Requests {
                 .send(Event::Mutation {
                     epoch,
                     tree,
+                    source: backend,
                     action,
                     outcome,
                 })
@@ -303,11 +305,12 @@ impl Requests {
                 Event::Mutation {
                     epoch,
                     tree,
+                    source,
                     action,
                     outcome,
                 } => {
                     self.mutation = None;
-                    return Some(Completed::Mutation(epoch, tree, action, outcome));
+                    return Some(Completed::Mutation(epoch, tree, source, action, outcome));
                 }
             }
         }

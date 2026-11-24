@@ -127,6 +127,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
       handlers: {
         projectControl(input: unknown, context: MutationContext): Promise<unknown>
         scheduleFlag(input: unknown): Promise<unknown>
+        scheduleSetting(input: unknown): Promise<unknown>
         schedulePreparationRead(input: unknown): Promise<unknown>
         scheduleList(input: unknown): Promise<unknown>
         scheduleRead(input: unknown): Promise<unknown>
@@ -261,6 +262,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
         return { json }
       }),
       scheduleFlag: async () => { throw new Error("Native Mission schedule flag graph unavailable") },
+      scheduleSetting: async () => { throw new Error("Native Mission schedule flag graph unavailable") },
       schedulePreparationRead: async () => { throw new Error("Native Mission preparation graph unavailable") },
       scheduleList: async () => { throw new Error("Native Mission schedule graph unavailable") },
       scheduleRead: async () => { throw new Error("Native Mission schedule graph unavailable") },
@@ -335,6 +337,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       projectControl: tracked(handlers.projectControl),
       scheduleFlag: tracked(handlers.scheduleFlag),
+      scheduleSetting: tracked(handlers.scheduleSetting),
       schedulePreparationRead: tracked(handlers.schedulePreparationRead),
       scheduleList: tracked(handlers.scheduleList),
       scheduleRead: tracked(handlers.scheduleRead), scheduleControl: tracked(handlers.scheduleControl),

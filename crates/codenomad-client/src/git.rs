@@ -24,6 +24,7 @@ pub enum Repository {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Worktree {
     pub slug: String,
+    pub label: Option<String>,
     pub directory: String,
     pub service_directory: Option<String>,
     pub branch: Option<String>,
@@ -283,6 +284,7 @@ impl Backend {
                 }
                 Ok(Worktree {
                     slug,
+                    label: optional(row, "label")?,
                     directory,
                     service_directory,
                     branch: optional(row, "branch")?,

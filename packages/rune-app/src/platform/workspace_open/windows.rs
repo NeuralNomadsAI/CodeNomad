@@ -4,8 +4,9 @@ use std::{
     io,
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::Weak,
+    time::Duration,
 };
 
 pub async fn open(
@@ -62,6 +63,36 @@ fn launch_path(path: &Path) -> PathBuf {
     value.strip_prefix(r"\\?\").unwrap_or(&value).into()
 }
 
+fn confirm_chooser_start(mut child: Child) -> io::Result<()> {
+    if !chooser_started(|| child.try_wait(), std::thread::sleep)? {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
+    Ok(())
+}
+
+// True when the selector already exited successfully; false when it remains open.
+fn chooser_started(
+    mut status: impl FnMut() -> io::Result<Option<ExitStatus>>,
+    mut wait: impl FnMut(Duration),
+) -> io::Result<bool> {
+    // Match the desktop hosts: report immediate failure without waiting for the chooser to close.
+    for attempt in 0..=10 {
+        if let Some(status) = status()? {
+            return if status.success() {
+                Ok(true)
+            } else {
+                Err(io::Error::other(status.to_string()))
+            };
+        }
+        if attempt < 10 {
+            wait(Duration::from_millis(25));
+        }
+    }
+    Ok(false)
+}
+
 fn launch(selected: &Path, target: Target) -> io::Result<()> {
     let folder = selected.is_dir();
     let path = launch_path(selected);
@@ -82,15 +113,15 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
         )
     };
     let literal = || path.to_string_lossy().replace('\'', "''");
-    let start = |command: &mut Command| {
+    let spawn = |command: &mut Command| {
         command
             .current_dir(cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map(drop)
     };
+    let start = |command: &mut Command| spawn(command).map(drop);
     let hidden = |command: &mut Command| {
         command
             .creation_flags(0x0800_0000)
@@ -122,7 +153,7 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
         ),
         Target::Terminal => Err(io::ErrorKind::NotADirectory.into()),
         Target::Default => {
-            let mode = windows_default_mode(&selected.to_string_lossy().replace('\\', "/"));
+            let mode = windows_default_mode(&selected.to_string_lossy());
             if folder || mode == DefaultMode::Open {
                 return start(explorer().arg(&path));
             }
@@ -132,11 +163,11 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
             {
                 return Ok(());
             }
-            start(
+            confirm_chooser_start(spawn(
                 Command::new(system.join("System32/rundll32.exe"))
                     .arg("shell32.dll,OpenAs_RunDLL")
                     .arg(&path),
-            )
+            )?)
         }
     }
 }
@@ -166,10 +197,34 @@ mod tests {
         }
         for (path, expected) in [
             ("docs/ÉTÉ.TXT", DefaultMode::Open),
+            (r"docs.txt\README", DefaultMode::Choose),
             ("script.ps1", DefaultMode::Edit),
             ("setup.exe", DefaultMode::Choose),
+            (".txt", DefaultMode::Choose),
         ] {
             assert_eq!(windows_default_mode(path), expected);
+        }
+    }
+
+    #[test]
+    fn chooser_checks_the_exit_status_at_the_startup_deadline() {
+        use std::{cell::Cell, os::windows::process::ExitStatusExt};
+        for exit in [None, Some(0), Some(7)] {
+            let elapsed = Cell::new(Duration::ZERO);
+            let started = chooser_started(
+                || {
+                    Ok(exit
+                        .filter(|_| elapsed.get() >= Duration::from_millis(250))
+                        .map(ExitStatus::from_raw))
+                },
+                |wait| elapsed.set(elapsed.get() + wait),
+            );
+            assert_eq!(elapsed.get(), Duration::from_millis(250));
+            match exit {
+                Some(7) => assert!(started.is_err()),
+                Some(0) => assert!(started.unwrap()),
+                _ => assert!(!started.unwrap()),
+            }
         }
     }
 }

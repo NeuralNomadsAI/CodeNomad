@@ -1,6 +1,6 @@
 // node scripts/test-native-schedule-provider-registration.mjs <isolated-cli> <fresh-scratch>
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
@@ -86,7 +86,7 @@ try {
       let endpoint
       for (const deadline = Date.now() + 40_000; !endpoint;) {
         assert(child.exitCode === null && Date.now() < deadline, "owned service startup deadline")
-        if (existsSync(registrationFile) && JSON.parse(readFileSync(registrationFile, "utf8")).pid === child.pid)
+        if (existsSync(registrationFile) && JSON.parse(readFileSync(registrationFile, "utf8")).pid === await fixtureChildPid(child))
           endpoint = await Service.discover({ file: registrationFile })
         if (!endpoint) await delay(100)
       }

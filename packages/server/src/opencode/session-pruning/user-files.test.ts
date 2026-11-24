@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { readNavigationWindow } from "./navigation-store"
 import { readStoredUserFile } from "./user-files"
-import { projectInboxUserFiles, USER_FILE_BYTES, userFileDigest } from "../user-file-reference"
+import { projectInboxUserFiles, USER_FILE_BYTES, userFileDigest } from "./user-file-reference"
 
 const scope = { sessionID: "ses_one", directory: "/repo", projectID: "project" }
 const signal = new AbortController().signal

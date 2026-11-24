@@ -6,7 +6,7 @@ import { messageStorage } from "./message-storage"
 import type { HistoryScope } from "./history-store"
 import { navigationWindowResultSchema, type NavigationTarget, type NavigationWindowResult } from "./navigation-contract"
 import { projectStoredUserFiles, USER_WINDOW_INPUT } from "./user-files"
-import { USER_FILES_REFERENCE } from "../user-file-reference"
+import { USER_FILES_REFERENCE } from "./user-file-contract"
 export { readSessionOutline } from "./outline-index"
 
 const PAGE_SIZE = 200

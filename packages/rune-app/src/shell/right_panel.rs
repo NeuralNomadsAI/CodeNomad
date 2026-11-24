@@ -51,6 +51,9 @@ pub fn view(s: &State, width: f32, touch: bool, floating: bool) -> El {
                 crate::git::panel(s, width, crate::files::tree(s, width, touch)).remaining()
             }
             RightPanelTab::Missions => workspace::mission_panel(s).remaining(),
-            RightPanelTab::Status => col().pad(Space::Md).child(text(connection(s))),
+            RightPanelTab::Status => col()
+                .pad(Space::Md)
+                .child(text(connection(s)))
+                .children(crate::chat::usage::session(s)),
         })
 }

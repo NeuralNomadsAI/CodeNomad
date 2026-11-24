@@ -25,7 +25,7 @@ Los archivos `.mmd` del Workspace se abren como diagramas. Usa **Mostrar código
 
 1. Abre un archivo de texto de Espacio de trabajo con su acción del ojo.
 2. Para Markdown, elige **Mostrar fuente** para editar o **Vista previa Markdown** para leer su representación.
-3. Edita y elige **Guardar**, o pulsa **Ctrl/Cmd+S** mientras el editor tenga el foco.
+3. Edita y elige **Guardar**, o pulsa **Ctrl/Cmd+S** mientras el editor tenga el foco. Cambia o borra **Guardar archivo** en [Atajos de teclado](shortcuts.md).
 
 Si la aplicación de escritorio abre una ventana de recuperación de borradores, usa **Copiar** para conservar los cambios antes de cerrarla.
 4. Si el archivo cambió externamente, revisa la confirmación de sobrescritura; elige **Cancelar** para conservar tu borrador sin sobrescribir ese cambio.
@@ -39,6 +39,8 @@ Cerrar el lector con su botón de cierre final devuelve a la conversación; el e
 Reemplazar o cerrar el lector afecta solo a la pestaña de proyecto actual. Las pestañas duplicadas pueden leer archivos distintos o mantener un archivo junto al chat, la web o el contenido de una Misión. La elección entre fuente y vista renderizada, la selección del editor y el desplazamiento se conservan al cambiar de pestaña mientras su destino y modelo sigan en memoria. El modo de Archivos se restaura por pestaña; las preferencias de diff y ajuste de línea siguen compartidas.
 
 El lector de código conserva el ajuste de línea al cambiar de archivo o pestaña de proyecto y lo restaura con el estado de la ventana.
+Al volver a abrir un archivo de código reciente en la misma pestaña de proyecto, se restauran la selección y la posición de desplazamiento.
+Al actualizar el archivo o cambiar el tamaño del lector, la primera línea de código visible permanece a la vista.
 
 ## Vistas previas de solo lectura y acotadas {#preview-limits}
 

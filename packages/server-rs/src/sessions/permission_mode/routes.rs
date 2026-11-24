@@ -60,12 +60,6 @@ async fn run(app: &App, wid: &str, id: &str, p: &Principal, request: Request) ->
     let workspace = app.workspace(wid)?;
     let endpoint = app.native.endpoint().ok_or_else(super::unavailable)?;
     let deadline = Instant::now() + Duration::from_secs(10);
-    // Native session mutations through this backend already share this lane.
-    let _mutation = if write.is_some() {
-        Some(timeout_at(deadline, app.project_mutation.lock()).await.map_err(|_| super::unavailable())?)
-    } else {
-        None
-    };
     p.live()?;
     let foreign = || error(Status::FORBIDDEN, "Conversation does not belong to workspace");
     let family = || error(Status::CONFLICT, "Conversation family unavailable");
@@ -100,6 +94,7 @@ async fn run(app: &App, wid: &str, id: &str, p: &Principal, request: Request) ->
             paths.push((path, identity));
         }
         checkouts.push(fence::identity(&owned.checkout));
+        checkouts.push(fence::session(&session_id));
         let parent = session["parentID"].as_str().map(str::to_owned);
         let root = session["parentID"].is_null() || !session["fork"].is_null();
         chain.push(session);
