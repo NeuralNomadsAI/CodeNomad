@@ -73,6 +73,10 @@ impl MessageListStream {
         Some((self.workspace_enc.as_deref()?, self.session_enc.as_deref()?))
     }
 
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.out.capacity().saturating_add(self.item.capacity())
+    }
+
     fn push_out(&mut self, byte: u8) -> Result<(), ()> {
         if self.out.len() >= OUTPUT_LIMIT {
             return Err(());

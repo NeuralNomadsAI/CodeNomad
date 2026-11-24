@@ -163,7 +163,8 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         bench::stop_on_stdin(shutdown.clone());
     }
     let bridge = automation::publish(&state, shutdown.clone()).await;
-    let plugins = extensions::lifecycle::start(&state, shutdown.clone())?;
+    let plugins_stop = CancellationToken::new();
+    let plugins = extensions::lifecycle::start(&state, plugins_stop.clone())?;
     tokio::spawn(previews::sweep(state.clone(), shutdown.clone()));
     tokio::spawn(files::watch::run(state.clone(), watch_rx, shutdown.clone()));
     let remote_url = tls.as_ref().map(|tls| tls.origin.clone());
@@ -221,13 +222,15 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     })
     .await;
     shutdown.cancel();
-    for task in [plugins, bridge].into_iter().flatten() {
-        let _ = task.await;
-    }
     let remote = match remote {
         Some(task) => task.await.map_err(|e| e.to_string()).and_then(|r| r.map_err(|e| e.to_string())),
         None => Ok(()),
     };
+    // Drain local and remote HTTP requests before tearing down plugin leases (TS `index.ts:753-767`).
+    plugins_stop.cancel();
+    for task in [plugins, bridge].into_iter().flatten() {
+        let _ = task.await;
+    }
     host::native_parent::close();
     if !launch.serve {
         served?;

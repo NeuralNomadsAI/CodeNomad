@@ -161,7 +161,7 @@ pub fn stream_abort(
     })
 }
 
-const RESPONSE_CHUNK: usize = 64 * 1024;
+pub const RESPONSE_CHUNK: usize = 64 * 1024;
 const MEDIA_MEM_UNITS: usize = 1024;
 const LIST_MEM_UNITS: usize = 4096;
 
@@ -179,16 +179,30 @@ static MEDIA_RESPONSE_MEM: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semap
 static LIST_RESPONSE_MEM: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
     std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(LIST_MEM_UNITS)));
 
+pub fn response_memory_units(pool: ResponsePool, bytes: usize) -> u32 {
+    let cap = match pool {
+        ResponsePool::Media => MEDIA_MEM_UNITS,
+        ResponsePool::List => LIST_MEM_UNITS,
+    };
+    bytes.div_ceil(RESPONSE_CHUNK).clamp(1, cap) as u32
+}
+
+pub async fn acquire_response_units(
+    pool: ResponsePool,
+    units: u32,
+) -> Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::AcquireError> {
+    let sem = match pool {
+        ResponsePool::Media => &*MEDIA_RESPONSE_MEM,
+        ResponsePool::List => &*LIST_RESPONSE_MEM,
+    };
+    sem.clone().acquire_many_owned(units).await
+}
+
 pub async fn reserve_response_memory(
     pool: ResponsePool,
     bytes: usize,
 ) -> Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::AcquireError> {
-    let (sem, cap) = match pool {
-        ResponsePool::Media => (&*MEDIA_RESPONSE_MEM, MEDIA_MEM_UNITS),
-        ResponsePool::List => (&*LIST_RESPONSE_MEM, LIST_MEM_UNITS),
-    };
-    let units = bytes.div_ceil(RESPONSE_CHUNK).clamp(1, cap) as u32;
-    sem.clone().acquire_many_owned(units).await
+    acquire_response_units(pool, response_memory_units(pool, bytes)).await
 }
 
 pub fn permit_body(
@@ -312,6 +326,50 @@ impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStallIo<T>
         }
     }
 
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_write_vectored(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        if this.poll_cancelled(cx) {
+            this.stall = None;
+            return std::task::Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "response write cancelled",
+            )));
+        }
+        match std::pin::Pin::new(&mut this.inner).poll_write_vectored(cx, bufs) {
+            std::task::Poll::Ready(result) => {
+                this.stall = None;
+                std::task::Poll::Ready(result)
+            }
+            std::task::Poll::Pending => {
+                if this.poll_cancelled(cx) {
+                    this.stall = None;
+                    return std::task::Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionAborted,
+                        "response write cancelled",
+                    )));
+                }
+                let timer = this.stall.get_or_insert_with(|| Box::pin(tokio::time::sleep(this.timeout)));
+                if std::future::Future::poll(timer.as_mut(), cx).is_ready() {
+                    this.stall = None;
+                    std::task::Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "response write stalled",
+                    )))
+                } else {
+                    std::task::Poll::Pending
+                }
+            }
+        }
+    }
+
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -396,7 +454,7 @@ pub async fn serve_local(
                         _ = &mut conn => {}
                         _ = stop.cancelled() => {
                             conn.as_mut().graceful_shutdown();
-                            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), conn).await;
+                            let _ = tokio::time::timeout(std::time::Duration::from_secs(15), conn).await;
                         }
                     }
                 });
@@ -404,7 +462,7 @@ pub async fn serve_local(
         }
     }
     let drained =
-        tokio::time::timeout(std::time::Duration::from_secs(5), async { while tasks.join_next().await.is_some() {} })
+        tokio::time::timeout(std::time::Duration::from_secs(15), async { while tasks.join_next().await.is_some() {} })
             .await;
     tasks.abort_all();
     match drained {

@@ -320,11 +320,11 @@ pub async fn session_record_with_timeout_at(
     if !valid_id(id) {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    session_record_segment_at(app, endpoint, id, timeout, true).await
+    session_record_segment_at(app, endpoint, id, timeout, true, 2 * 1024 * 1024).await
 }
 
 /// Variant for opaque media/history-media session IDs (TS `session-media-contract.ts`).
-/// Uses the full 30 s route budget rather than the 4 s control probe timeout.
+/// Uses the full 30 s route budget and 16 MiB body cap (TS `session-media-fetch.ts:29-46`).
 pub async fn session_record_media_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
     if id.is_empty()
         || id.encode_utf16().nth(256).is_some()
@@ -333,7 +333,7 @@ pub async fn session_record_media_at(app: &App, endpoint: &Endpoint, id: &str) -
     {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    session_record_segment_at(app, endpoint, id, Duration::from_secs(30), true).await
+    session_record_segment_at(app, endpoint, id, Duration::from_secs(30), true, 16 * 1024 * 1024).await
 }
 
 /// Variant for `session-media` that lets the caller classify an unexpected `data.id`
@@ -346,7 +346,7 @@ pub async fn session_record_media_raw_at(app: &App, endpoint: &Endpoint, id: &st
     {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    session_record_segment_at(app, endpoint, id, Duration::from_secs(30), false).await
+    session_record_segment_at(app, endpoint, id, Duration::from_secs(30), false, 16 * 1024 * 1024).await
 }
 
 async fn session_record_segment_at(
@@ -355,6 +355,7 @@ async fn session_record_segment_at(
     id: &str,
     timeout: Duration,
     strict_id: bool,
+    max_bytes: usize,
 ) -> Result<Value, Error> {
     let mut url = endpoint.url.clone();
     url.path_segments_mut().map_err(|_| upstream_error())?.clear().extend(["api", "session", id]);
@@ -389,7 +390,7 @@ async fn session_record_segment_at(
     if response.status() == Status::BAD_REQUEST {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    let response = read_json(response.error_for_status().map_err(|_| upstream_error())?, 2 * 1024 * 1024)
+    let response = read_json(response.error_for_status().map_err(|_| upstream_error())?, max_bytes)
         .await
         .map_err(|_| upstream_error())?;
     let response = response.get("data").unwrap_or(&response);

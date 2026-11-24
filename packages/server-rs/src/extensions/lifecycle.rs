@@ -232,26 +232,42 @@ async fn connection_at(app: &Shared, endpoint: Option<&Arc<crate::opencode::Endp
                     })
                     .await
                     .unwrap_or_else(|_| Err("Provisioning task failed".into()));
-                    installed.map(|done| {
-                        let readiness = done
-                            .iter()
-                            .find(|i| i.feature == "session-pruning")
-                            .map(|i| Arc::new(Owner::new(i.lease.clone())));
-                        for i in &done {
-                            println!("plugin-provision {} {}", i.feature, i.sha256);
+                    match installed {
+                        Err(err) => Err(err),
+                        Ok(done) => {
+                            let registered = {
+                                let mut state = STATE.lock().unwrap();
+                                if !state.active || endpoint.is_some_and(|ep| !app.native.current(ep)) {
+                                    Err(done)
+                                } else {
+                                    let readiness = done
+                                        .iter()
+                                        .find(|i| i.feature == "session-pruning")
+                                        .map(|i| Arc::new(Owner::new(i.lease.clone())));
+                                    for i in &done {
+                                        println!("plugin-provision {} {}", i.feature, i.sha256);
+                                    }
+                                    let ready = vec![false; done.len()];
+                                    state.installations.push(Installation {
+                                        paths,
+                                        features: done,
+                                        written: contents,
+                                        readiness,
+                                        ready,
+                                        since: tokio::time::Instant::now(),
+                                    });
+                                    Ok((state.installations.len() - 1, true))
+                                }
+                            };
+                            match registered {
+                                Ok(pair) => Ok(pair),
+                                Err(stale_done) => {
+                                    let _ = tokio::task::spawn_blocking(move || provision::dispose(&stale_done)).await;
+                                    Err("OpenCode connection replaced during plugin provisioning".into())
+                                }
+                            }
                         }
-                        let mut state = STATE.lock().unwrap();
-                        let ready = vec![false; done.len()];
-                        state.installations.push(Installation {
-                            paths,
-                            features: done,
-                            written: contents,
-                            readiness,
-                            ready,
-                            since: tokio::time::Instant::now(),
-                        });
-                        (state.installations.len() - 1, true)
-                    })
+                    }
                 }
             }
         }

@@ -892,7 +892,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         return Err(upstream_error());
     }
     if let Some(session) = defer_media {
-        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+        // One active projection builder at a time guarantees deadlock-free incremental
+        // reservation against the shared 256 MiB `ResponsePool::List` budget while already-built
+        // responses stream out concurrently and release permits on completion.
+        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
         let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
         // Acquire the projection slot right before upstream dispatch so admission checks
         // and `session.get` never occupy slots while waiting or after principal revocation.
@@ -950,6 +953,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     .collect();
             let mut stream = crate::sessions::media_stream::MessageListStream::new(id, session);
             let mut slot = Some(slot);
+            let mut mem: Option<tokio::sync::OwnedSemaphorePermit> = None;
+            let mut held_units: u32 = 0;
             loop {
                 let chunk = tokio::select! {
                     biased;
@@ -965,6 +970,30 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 };
                 let mut pos = 0;
                 while let Some(pending) = stream.feed(&chunk, &mut pos).map_err(|_| interrupted())? {
+                    let needed = crate::shared::response_memory_units(
+                        crate::shared::ResponsePool::List,
+                        stream.retained_bytes().saturating_add(pending.bytes.capacity()),
+                    );
+                    if needed > held_units {
+                        let extra = tokio::select! {
+                            biased;
+                            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                            _ = workspace_closed() => return Err(not_found()),
+                            permit = tokio::time::timeout_at(
+                                list_deadline,
+                                crate::shared::acquire_response_units(
+                                    crate::shared::ResponsePool::List,
+                                    needed - held_units,
+                                ),
+                            ) => permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
+                        };
+                        match &mut mem {
+                            Some(existing) => existing.merge(extra),
+                            None => mem = Some(extra),
+                        }
+                        held_units = needed;
+                    }
                     let (ws, ses) = stream.ids().ok_or_else(interrupted)?;
                     let (ws, ses) = (ws.to_owned(), ses.to_owned());
                     let held = slot.take().ok_or_else(interrupted)?;
@@ -985,20 +1014,55 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     slot = Some(returned);
                     stream.commit_item(projected, changed, pending.delimiter).map_err(|_| interrupted())?;
                 }
+                let needed =
+                    crate::shared::response_memory_units(crate::shared::ResponsePool::List, stream.retained_bytes());
+                if needed > held_units {
+                    let extra = tokio::select! {
+                        biased;
+                        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                        _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                        _ = workspace_closed() => return Err(not_found()),
+                        permit = tokio::time::timeout_at(
+                            list_deadline,
+                            crate::shared::acquire_response_units(
+                                crate::shared::ResponsePool::List,
+                                needed - held_units,
+                            ),
+                        ) => permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
+                    };
+                    match &mut mem {
+                        Some(existing) => existing.merge(extra),
+                        None => mem = Some(extra),
+                    }
+                    held_units = needed;
+                }
             }
             let (payload, changed) = stream.finish().map_err(|_| interrupted())?;
-            let mem = tokio::select! {
-                biased;
-                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                _ = workspace_closed() => return Err(not_found()),
-                permit = tokio::time::timeout_at(
-                    list_deadline,
-                    crate::shared::reserve_response_memory(crate::shared::ResponsePool::List, payload.len()),
-                ) => {
-                    permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+            let final_units = crate::shared::response_memory_units(crate::shared::ResponsePool::List, payload.len());
+            if final_units > held_units {
+                let extra = tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    _ = workspace_closed() => return Err(not_found()),
+                    permit = tokio::time::timeout_at(
+                        list_deadline,
+                        crate::shared::acquire_response_units(
+                            crate::shared::ResponsePool::List,
+                            final_units - held_units,
+                        ),
+                    ) => permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
+                };
+                match &mut mem {
+                    Some(existing) => existing.merge(extra),
+                    None => mem = Some(extra),
                 }
-            };
+            } else if held_units > final_units
+                && let Some(existing) = &mut mem
+            {
+                let _ = existing.split((held_units - final_units) as usize);
+            }
+            let mem = mem.ok_or_else(interrupted)?;
             drop(slot);
             if !app.native.current(&endpoint) {
                 return Err(upstream_error());
@@ -1215,6 +1279,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             .map_err(|_| upstream_error());
     }
     let (route, opened, directory, id) = (route.to_owned(), opened.to_owned(), directory.to_owned(), id.to_owned());
+    let list_session = message_list.then_some(session).flatten().map(str::to_owned);
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
     let dispatch = move |detached: tokio_util::sync::CancellationToken| async move {
@@ -1230,9 +1295,36 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let response = tokio::select! {
             _ = principal.0.cancelled(), if !dispatched_mutation => return Err(crate::auth::unauthorized()),
             _ = app.native.wait_retired(&endpoint), if !dispatched_mutation => return Err(upstream_error()),
-            response = tokio::time::timeout(super::PROXY_IDLE, upstream.send()) =>
-                response.map_err(|_| upstream_error())?.map_err(|_| upstream_error())?,
+            response = tokio::time::timeout(super::PROXY_IDLE, upstream.send()) => match response {
+                Ok(Ok(response)) => response,
+                Ok(Err(_)) => {
+                    app.native.invalidate(&endpoint);
+                    return Err(upstream_error());
+                }
+                Err(_) => return Err(upstream_error()),
+            },
         };
+        if let Some(list_session) = &list_session
+            && response.status().is_success()
+        {
+            // Re-verify session placement before streaming inline `message.list` bytes so a
+            // session moved out of the workspace after admission cannot have its transcript relayed.
+            let latest = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                record = tokio::time::timeout_at(list_deadline, super::session_record_media_at(&app, &endpoint, list_session)) => {
+                    record.map_err(|_| upstream_error())??
+                }
+            };
+            if actual.as_ref().is_none_or(|orig| latest["id"] != orig["id"] || latest["location"] != orig["location"]) {
+                return Err(foreign());
+            }
+            if !crate::sessions::permission_mode::workspace_current(&app, &workspace) || !app.native.current(&endpoint)
+            {
+                return Err(upstream_error());
+            }
+        }
         if response.status().is_success() {
             if let Some(receipt) = receipt {
                 if let Err(error) = receipt.confirm(&app, &workspace).await {
@@ -1357,6 +1449,16 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 notified.await;
             }
         });
+        struct InvalidateOnDrop {
+            app: Shared,
+            endpoint: std::sync::Arc<super::Endpoint>,
+        }
+        impl Drop for InvalidateOnDrop {
+            fn drop(&mut self) {
+                self.app.native.invalidate(&self.endpoint);
+            }
+        }
+        let invalidate = unauthorized.then(|| InvalidateOnDrop { app: app.clone(), endpoint: endpoint.clone() });
         let bytes = futures_util::stream::unfold(
             (
                 response.bytes_stream(),
@@ -1366,6 +1468,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 endpoint_retire,
                 dispatched_mutation,
                 unauthorized,
+                invalidate,
                 false,
             ),
             |(
@@ -1376,6 +1479,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 endpoint_retire,
                 dispatched_mutation,
                 unauthorized,
+                invalidate,
                 done,
             )| async move {
                 if done {
@@ -1386,19 +1490,49 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     _ = &mut cancelled, if !dispatched_mutation => {
                         return Some((
                             Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "upstream stream aborted")),
-                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, dispatched_mutation, unauthorized, true),
+                            (
+                                inner,
+                                cancelled,
+                                ws_closed,
+                                app_retire,
+                                endpoint_retire,
+                                dispatched_mutation,
+                                unauthorized,
+                                invalidate,
+                                true,
+                            ),
                         ));
                     }
                     _ = &mut ws_closed, if !dispatched_mutation => {
                         return Some((
                             Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "workspace closed")),
-                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, dispatched_mutation, unauthorized, true),
+                            (
+                                inner,
+                                cancelled,
+                                ws_closed,
+                                app_retire,
+                                endpoint_retire,
+                                dispatched_mutation,
+                                unauthorized,
+                                invalidate,
+                                true,
+                            ),
                         ));
                     }
                     _ = app_retire.native.wait_retired(&endpoint_retire), if !dispatched_mutation && !unauthorized => {
                         return Some((
                             Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "upstream stream aborted")),
-                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, dispatched_mutation, unauthorized, true),
+                            (
+                                inner,
+                                cancelled,
+                                ws_closed,
+                                app_retire,
+                                endpoint_retire,
+                                dispatched_mutation,
+                                unauthorized,
+                                invalidate,
+                                true,
+                            ),
                         ));
                     }
                     item = inner.next() => item,
@@ -1414,6 +1548,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                             endpoint_retire,
                             dispatched_mutation,
                             unauthorized,
+                            invalidate,
                             false,
                         ),
                     )

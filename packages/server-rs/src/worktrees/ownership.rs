@@ -353,7 +353,7 @@ pub(crate) async fn media_directory(
             return Err(native_error());
         }
         if !subfolders {
-            return Ok(None);
+            return if strict_media { Err(native_error()) } else { Ok(None) };
         }
         let root_path = workspace.path.clone();
         let Some(root_id) =

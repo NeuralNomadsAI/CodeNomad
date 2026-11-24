@@ -305,6 +305,19 @@ pub(super) async fn route(
             if !placement.operation_current(&app, &r.workspace).await {
                 return Ok(crate::shared::abort_response());
             }
+            // Decode and verify the attachment before the final `session.get` so no
+            // `spawn_blocking` yield occurs between the last `revert` check and sending bytes.
+            let (decoded, slot) = if raw_len > INLINE_LIMIT {
+                let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.to_owned());
+                tokio::task::spawn_blocking(move || {
+                    let decoded = extract_media_from_envelope(&message_id, part, index, &digest, None, &envelope);
+                    (decoded, slot)
+                })
+                .await
+                .map_err(|_| unavailable())?
+            } else {
+                (extract_media_from_envelope(&r.message, r.part, r.index, r.digest, None, &envelope), slot)
+            };
             // Reserve response-stream memory BEFORE the final `session.get` so no blocking
             // wait occurs after the last native revert/placement revalidation.
             let mem = crate::shared::reserve_response_memory(
@@ -326,32 +339,14 @@ pub(super) async fn route(
                 Err(failure) if failure.0 == Status::CONFLICT => return Err(failure),
                 Err(_) => return Err(unavailable()),
             };
-            let revert = newest["revert"]["messageID"].as_str().map(str::to_owned);
-            let (mime, mut bytes, slot) = if raw_len > INLINE_LIMIT {
-                let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.to_owned());
-                let (decoded, slot) = tokio::task::spawn_blocking(move || {
-                    let decoded =
-                        extract_media_from_envelope(&message_id, part, index, &digest, revert.as_deref(), &envelope);
-                    (decoded, slot)
-                })
-                .await
-                .map_err(|_| unavailable())?;
-                let (mime, bytes) = decoded?;
-                (mime, bytes, slot)
-            } else {
-                let (mime, bytes) =
-                    extract_media_from_envelope(&r.message, r.part, r.index, r.digest, revert.as_deref(), &envelope)?;
-                (mime, bytes, slot)
-            };
+            let revert = newest["revert"]["messageID"].as_str();
+            if revert.is_some_and(|boundary| r.message.encode_utf16().cmp(boundary.encode_utf16()).is_ge()) {
+                return Err(missing());
+            }
+            let (mime, mut bytes) = decoded?;
             bytes.shrink_to_fit();
             drop(slot);
             principal.live()?;
-            if !placement.operation_current(&app, &r.workspace).await {
-                return Ok(crate::shared::abort_response());
-            }
-            if !placement.live(&app, &r.workspace).await {
-                return Err(error(Status::CONFLICT, "Session location changed"));
-            }
             let abort = crate::shared::stream_abort(
                 app.clone(),
                 r.workspace.clone(),

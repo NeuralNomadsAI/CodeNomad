@@ -243,7 +243,8 @@ impl Placement {
         } else if self.media {
             crate::opencode::session_record_media_at(app, &self.endpoint, session).await?
         } else {
-            crate::opencode::session_record_at(app, &self.endpoint, session).await?
+            crate::opencode::session_record_with_timeout_at(app, &self.endpoint, session, Duration::from_secs(15))
+                .await?
         };
         if !self.operation_current(app, id).await {
             return Err(crate::opencode::upstream_error());
@@ -572,7 +573,7 @@ pub async fn handle(
             if !placement.operation_current(&app, &id).await {
                 return blocked("unavailable");
             }
-            let rpc_limit = 24 * 1024 * 1024 + if defer { 64 * 1024 } else { 0 };
+            let rpc_limit = 24 * 1024 * 1024 + 64 * 1024;
             let rpc_timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
             if rpc_timeout.is_zero() {
                 return blocked("unavailable");
@@ -621,8 +622,21 @@ pub async fn handle(
                     Err(invalid_response) => return invalid_response,
                 }
             };
-            // Reserve response-stream memory BEFORE final session revalidation so no blocking
-            // wait occurs after the last native check.
+            // Project and reserve response memory BEFORE final session/revert revalidation so
+            // no blocking wait or `spawn_blocking` yield occurs after the last `revert` check.
+            let (projected, slot) = if defer && body_len > 32 * 1024 {
+                let (id, session) = (id.clone(), session.to_owned());
+                match tokio::task::spawn_blocking(move || {
+                    (finalize_history_payload(validated, &id, &session, reference, defer), slot)
+                })
+                .await
+                {
+                    Ok(pair) => pair,
+                    Err(_) => return blocked("unavailable"),
+                }
+            } else {
+                (finalize_history_payload(validated, &id, session, reference, defer), slot)
+            };
             let mem = if defer {
                 let workspace_closed = async {
                     loop {
@@ -633,10 +647,11 @@ pub async fn handle(
                         notified.await;
                     }
                 };
+                let reserve_len = projected.as_ref().map_or(body_len, Bytes::len);
                 let permit = tokio::select! {
                     biased;
                     _ = workspace_closed => return blocked("unavailable"),
-                    permit = crate::shared::reserve_response_memory(crate::shared::ResponsePool::List, body_len) => {
+                    permit = crate::shared::reserve_response_memory(crate::shared::ResponsePool::List, reserve_len) => {
                         match permit {
                             Ok(permit) => permit,
                             Err(_) => return blocked("unavailable"),
@@ -652,46 +667,23 @@ pub async fn handle(
                 Recheck::Conflict => return blocked("conflict"),
                 Recheck::Unavailable => return blocked("unavailable"),
             }
-            let projected = if defer && body_len > 32 * 1024 {
-                let (id, session) = (id.clone(), session.to_owned());
-                match tokio::task::spawn_blocking(move || {
-                    (finalize_history_payload(validated, &id, &session, reference, defer), slot)
-                })
-                .await
-                {
-                    Ok((result, slot)) => (result, slot),
-                    Err(_) => return blocked("unavailable"),
-                }
-            } else {
-                (finalize_history_payload(validated, &id, session, reference, defer), slot)
-            };
-            let (payload, slot) = match projected {
-                (Ok(payload), slot) => (payload, slot),
-                (Err(invalid_response), _) => return invalid_response,
+            let payload = match projected {
+                Ok(payload) => payload,
+                Err(invalid_response) => return invalid_response,
             };
             drop(slot);
-            if !placement.operation_current(&app, &id).await {
-                return blocked("unavailable");
-            }
-            if !placement.live(&app, &id).await {
-                return blocked("conflict");
-            }
             if principal.live().is_err() {
                 return crate::auth::unauthorized().into_response();
             }
             let length = axum::http::HeaderValue::from(payload.len());
-            let response_body = if defer {
-                let abort = crate::shared::stream_abort(
-                    app.clone(),
-                    id.clone(),
-                    placement.workspace.clone(),
-                    placement.endpoint.clone(),
-                    principal.0.clone(),
-                );
-                crate::shared::permit_body(payload, mem, abort)
-            } else {
-                axum::body::Body::from(payload)
-            };
+            let abort = crate::shared::stream_abort(
+                app.clone(),
+                id.clone(),
+                placement.workspace.clone(),
+                placement.endpoint.clone(),
+                principal.0.clone(),
+            );
+            let response_body = crate::shared::permit_body(payload, mem, abort);
             let mut response = (
                 [
                     (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/json")),
@@ -700,16 +692,14 @@ pub async fn handle(
                 response_body,
             )
                 .into_response();
-            if defer {
-                let write_abort = crate::shared::stream_abort(
-                    app.clone(),
-                    id.clone(),
-                    placement.workspace.clone(),
-                    placement.endpoint.clone(),
-                    principal.0.clone(),
-                );
-                response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
-            }
+            let write_abort = crate::shared::stream_abort(
+                app.clone(),
+                id.clone(),
+                placement.workspace.clone(),
+                placement.endpoint.clone(),
+                principal.0.clone(),
+            );
+            response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
             response
         };
         if defer {

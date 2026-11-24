@@ -54,8 +54,20 @@ fn identity(path: &Path) -> Result<String, Error> {
 fn small(path: &Path) -> Result<Vec<u8>, Error> {
     use std::io::Read;
     std::fs::symlink_metadata(path).ok().filter(|m| m.is_file() && m.len() <= 4096).ok_or_else(native_error)?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = opts.open(path).map_err(|_| native_error())?;
+    let meta = file.metadata().map_err(|_| native_error())?;
+    if !meta.is_file() || meta.len() > 4096 {
+        return Err(native_error());
+    }
     let mut value = Vec::new();
-    std::fs::File::open(path).and_then(|f| f.take(4097).read_to_end(&mut value)).map_err(|_| native_error())?;
+    file.take(4097).read_to_end(&mut value).map_err(|_| native_error())?;
     if value.len() > 4096 { Err(native_error()) } else { Ok(value) }
 }
 impl Physical {
@@ -73,6 +85,11 @@ impl Physical {
                 (Some(marker), Some(backlink), Some(common_marker)) => {
                     linked_markers(&self.root, &self.admin, &self.common)
                         .is_ok_and(|[m, b, c]| &m == marker && &b == backlink && &c == common_marker)
+                }
+                (Some(marker), None, None) => {
+                    separate_marker(&self.root, &self.common).is_ok_and(|m| &m == marker)
+                        && std::fs::symlink_metadata(self.admin.join("commondir"))
+                            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
                 }
                 (None, None, None) => std::fs::symlink_metadata(self.admin.join("commondir"))
                     .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
@@ -130,6 +147,19 @@ fn linked_markers(root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 
     Ok([marker, backlink, common_marker])
 }
 
+fn separate_marker(root: &Path, common: &Path) -> Result<Vec<u8>, Error> {
+    let marker = small(&root.join(".git"))?;
+    let gitdir = std::str::from_utf8(&marker)
+        .ok()
+        .and_then(|text| text.trim_end().strip_prefix("gitdir: "))
+        .filter(|path| !path.is_empty())
+        .ok_or_else(native_error)?;
+    if dunce::canonicalize(root.join(gitdir)).ok().as_deref() != Some(common) {
+        return Err(conflict("External Git directory is unavailable"));
+    }
+    Ok(marker)
+}
+
 async fn checkout(path: &Path) -> Result<Physical, Error> {
     let text =
         git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]).await?;
@@ -143,9 +173,10 @@ async fn checkout(path: &Path) -> Result<Physical, Error> {
         }
         let (marker, backlink, common_marker) = if admin == common {
             if common != root.join(".git") {
-                return Err(conflict("External Git directory is unavailable"));
+                (Some(separate_marker(&root, &common)?), None, None)
+            } else {
+                (None, None, None)
             }
-            (None, None, None)
         } else {
             let [marker, backlink, common_marker] = linked_markers(&root, &admin, &common)?;
             (Some(marker), Some(backlink), Some(common_marker))
