@@ -516,10 +516,11 @@ impl Catalogue {
             && self.trees.iter().zip(&other.trees).all(|(a, b)| {
                 a.slug == b.slug
                     && a.path == b.path
+                    && a.layout.root == b.layout.root
                     && a.service == b.service
+                    && a.service_root == b.service_root
                     && a.branch == b.branch
                     && a.head == b.head
-                    && a.locked == b.locked
                     && a.removable == b.removable
                     && a.nested_missing == b.nested_missing
             })
