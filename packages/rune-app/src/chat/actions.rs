@@ -22,7 +22,7 @@ pub struct Display {
     pub(super) task_deliveries: RefCell<super::tools::task::DeliveryCache>,
     pub(super) tool_clock: super::tools::duration::Clock,
     pub(crate) usage_family: super::usage::family::Totals,
-    pub(super) pictures: super::media::Pictures,
+    pub(crate) pictures: super::media::Pictures,
     pub(crate) receipts: super::receipts::Receipts,
     pub(crate) messages: super::message_actions::Actions,
     focused_key: Option<String>,
