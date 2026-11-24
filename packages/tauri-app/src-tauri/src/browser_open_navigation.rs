@@ -129,6 +129,7 @@ impl BrowserController {
             };
             cdp_guarded_inner(
                 view,
+                None,
                 method,
                 params,
                 deadline,

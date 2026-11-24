@@ -25,7 +25,7 @@ function fixture() {
       if (action.action === "diagnostics") {
         if (state.diagnosticsUnavailable) throw new Error("Browser diagnostics are unavailable in WebKit previews")
         const events = state.events.slice(action.after)
-        return { epoch: state.epoch, events, next: state.events.length, dropped: 0, more: false }
+        return { epoch: state.epoch, events, next: state.events.length, lost: { messages: 0, requests: 0 }, more: false }
       }
       if (action.action === "response-body") return { body: `body of ${action.request}`, base64Encoded: false }
       if (action.action === "location") {

@@ -3,8 +3,8 @@ import test from "node:test"
 import type { DiagnosticEvent, DiagnosticRead } from "../../automation/page/diagnostic-events"
 import { PreviewDiagnostics } from "./diagnostics"
 
-const read = (events: DiagnosticEvent[], epoch = "buffer:0", next = events.length, dropped = 0): DiagnosticRead =>
-  ({ epoch, events, next, dropped, more: false })
+const read = (events: DiagnosticEvent[], epoch = "buffer:0", next = events.length, lost = { messages: 0, requests: 0 }): DiagnosticRead =>
+  ({ epoch, events, next, lost, more: false })
 const event = (method: string, params: Record<string, unknown>): DiagnosticEvent => ({ method, params })
 const request = (requestId: string, url: string, extra: Record<string, unknown> = {}) => event("Network.requestWillBeSent", {
   requestId, documentURL: "https://site.test/", timestamp: 10, wallTime: 1_700_000_000, type: "Fetch",
@@ -87,6 +87,9 @@ test("network readout: wire status, redirects, redacted headers, request bodies 
   const gone = await diagnostics.get({ id: listed.requests[0].id, includeResponseBody: true }, async () => undefined)
   assert.deepEqual(gone.responseBody, { state: "unavailable", reason: "backendUnavailable" })
   await assert.rejects(diagnostics.get({ id: "unknown" }, async () => undefined), /no longer retained/)
+  // A body read fenced by a document change is not reported as an unavailable body of the old request.
+  await assert.rejects(diagnostics.get({ id: listed.requests[0].id, includeResponseBody: true },
+    async () => { throw new Error("Browser page document changed; inspect again") }), /document changed/)
 })
 
 test("another epoch restarts the readout from its start, and host evictions count as dropped", () => {
@@ -97,10 +100,13 @@ test("another epoch restarts the readout from its start, and host evictions coun
   assert.equal(diagnostics.ingest(read([], "buffer:1", 4)), false)
   assert.equal(diagnostics.cursor, 0)
   assert.equal(diagnostics.console({}).messages.length, 0)
-  assert.equal(diagnostics.ingest(read([event("Log.entryAdded", { entry: { level: "info", text: "second", timestamp: 2 } })], "buffer:1", 6, 3)), true)
+  assert.equal(diagnostics.ingest(read([event("Log.entryAdded", { entry: { level: "info", text: "second", timestamp: 2 } })], "buffer:1", 6, { messages: 3, requests: 1 })), true)
   assert.deepEqual(diagnostics.console({}).messages.map(entry => entry.text), ["second"])
   assert.equal(diagnostics.console({}).dropped, 3)
-  assert.equal(diagnostics.list({}).dropped, 3)
+  assert.equal(diagnostics.list({}).dropped, 1, "each readout counts its own losses")
+  // The host reports the epoch's losses so far: only their growth is new.
+  diagnostics.ingest(read([], "buffer:1", 6, { messages: 4, requests: 1 }))
+  assert.deepEqual([diagnostics.console({}).dropped, diagnostics.list({}).dropped], [4, 1])
 })
 
 test("at most 500 messages are retained", () => {

@@ -59,6 +59,9 @@ pub(super) enum Operation {
     },
     ResponseBody {
         request: String,
+        /// The out-of-process frame's protocol session the request belongs to.
+        #[serde(default)]
+        session: Option<String>,
     },
 }
 fn keys(value: &Value, allowed: &[&str], required: &[&str]) -> Result<(), String> {
@@ -126,7 +129,14 @@ pub(super) fn parse(value: Value) -> Result<Operation, String> {
         Operation::Diagnostics { after } if *after > 9_007_199_254_740_991 => {
             return Err(INVALID.into())
         }
-        Operation::ResponseBody { request } if !handle(&json!(request)) || request.len() > 256 => {
+        Operation::ResponseBody { request, session }
+            if !handle(&json!(request))
+                || request.len() > 256
+                || session
+                    .as_ref()
+                    .is_some_and(|session| session.is_empty() || session.len() > 256)
+                || value.get("session").is_some_and(|session| !session.is_string()) =>
+        {
             return Err(INVALID.into())
         }
         Operation::HitTest { x, y }
@@ -293,6 +303,13 @@ pub(super) fn parse(value: Value) -> Result<Operation, String> {
 }
 
 impl Operation {
+    /// The protocol session the command goes to; `None` is the top-level document.
+    pub(super) fn session(&self) -> Option<String> {
+        match self {
+            Self::ResponseBody { session, .. } => session.clone(),
+            _ => None,
+        }
+    }
     pub(super) fn cdp(&self) -> Option<(&'static str, Value)> {
         Some(match self {
             Self::Tree => ("Accessibility.getFullAXTree", json!({})),
@@ -339,7 +356,7 @@ impl Operation {
             Self::Keyboard { event } => ("Input.dispatchKeyEvent", event.clone()),
             Self::InsertText { text } => ("Input.insertText", json!({"text":text})),
             Self::ReleaseHandles => ("Runtime.releaseObjectGroup", json!({"objectGroup":GROUP})),
-            Self::ResponseBody { request } => ("Network.getResponseBody", json!({"requestId":request})),
+            Self::ResponseBody { request, .. } => ("Network.getResponseBody", json!({"requestId":request})),
             Self::Checkpoint | Self::Diagnostics { .. } => return None,
         })
     }

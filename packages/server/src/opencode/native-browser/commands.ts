@@ -236,7 +236,7 @@ export class PreviewTab {
         return this.success({ tab: this.tab(), ...this.diagnostics.list(action as Parameters<PreviewDiagnostics["list"]>[0]) })
       case "network.get": {
         await this.pull(page)
-        const request = await this.diagnostics.get(action as Action & { id: string }, async nativeID => page({ action: "response-body", request: nativeID }))
+        const request = await this.diagnostics.get(action as Action & { id: string }, async (nativeID, session) => page({ action: "response-body", request: nativeID, ...(session ? { session } : {}) }))
         return this.success({ tab: this.tab(), ...request })
       }
       case "screenshot": {

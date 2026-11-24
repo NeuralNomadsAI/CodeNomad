@@ -78,7 +78,10 @@ export function parsePageOperation(raw: unknown, allowApplication = false): Page
     }
     case "insert-text": keys(value, ["op", "text"], ["text"]); if (typeof value.text !== "string") fail(); break
     case "diagnostics": keys(value, ["op", "after"], ["after"]); if (!integer(value.after, 0, Number.MAX_SAFE_INTEGER)) fail(); break
-    case "response-body": keys(value, ["op", "request"], ["request"]); if (!string(value.request, 256)) fail(); break
+    case "response-body":
+      keys(value, ["op", "request", "session"], ["request"])
+      if (!string(value.request, 256) || (Object.hasOwn(value, "session") && !string(value.session, 256))) fail()
+      break
     default: fail()
   }
   return value as unknown as PageOperation

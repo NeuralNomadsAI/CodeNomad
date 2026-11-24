@@ -15,6 +15,14 @@
         "maxResourceBufferSize": 1048576,
         "maxPostDataSize": 20000
       }
+    ],
+    [
+      "Target.setAutoAttach",
+      {
+        "autoAttach": true,
+        "waitForDebuggerOnStart": false,
+        "flatten": true
+      }
     ]
   ],
   "events": [
@@ -34,7 +42,17 @@
     "Network.webSocketWillSendHandshakeRequest",
     "Network.webSocketHandshakeResponseReceived",
     "Network.webSocketFrameError",
-    "Network.webSocketClosed"
+    "Network.webSocketClosed",
+    "Target.detachedFromTarget"
+  ],
+  "messageEvents": [
+    "Runtime.consoleAPICalled",
+    "Runtime.exceptionThrown",
+    "Log.entryAdded"
+  ],
+  "requestEvents": [
+    "Network.requestWillBeSent",
+    "Network.webSocketCreated"
   ],
   "maxEvents": 4000,
   "maxBytes": 8388608,

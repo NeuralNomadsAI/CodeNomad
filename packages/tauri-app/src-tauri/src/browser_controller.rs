@@ -1376,6 +1376,8 @@ impl BrowserController {
         let frame = &parameters["frame"];
         if frame["id"].as_str().is_some_and(|id| !id.is_empty()) && frame.get("parentId").is_none()
         {
+            // document.open() replaces the document without a navigation: its diagnostics restart too.
+            self.diagnostics.restart(registration_id, generation, None);
             self.invalidate_page_for_generation(registration_id, generation);
         }
     }
@@ -1791,7 +1793,7 @@ fn install_webview2_handlers(
                     // A new document's diagnostics start with its own request, as in OpenCode's browser.
                     started_controller
                         .diagnostics
-                        .clear(&started_registration_id, generation);
+                        .restart(&started_registration_id, generation, Some(navigation_id));
                     started_controller.mark_page_started(
                         &started_registration_id,
                         generation,
@@ -1995,16 +1997,33 @@ fn cdp_guarded(
     guard: impl Fn() -> Result<(), String> + Send + 'static,
     response_limit: usize,
 ) -> Result<Value, String> {
+    cdp_guarded_in(webview, None, method, params, deadline, guard, response_limit)
+}
+
+/// `session` sends the command to an out-of-process frame's protocol session.
+#[cfg(windows)]
+fn cdp_guarded_in(
+    webview: &tauri::Webview,
+    session: Option<String>,
+    method: &str,
+    params: Value,
+    deadline: Instant,
+    guard: impl Fn() -> Result<(), String> + Send + 'static,
+    response_limit: usize,
+) -> Result<Value, String> {
     let step = format!("CDP {method}");
     let deadline = deadline.min(Instant::now() + Duration::from_secs(20));
     guard()
-        .and_then(|()| cdp_guarded_inner(webview, method, params, deadline, guard, response_limit))
+        .and_then(|()| {
+            cdp_guarded_inner(webview, session, method, params, deadline, guard, response_limit)
+        })
         .map_err(|error| preview_error(&step, error))
 }
 
 #[cfg(windows)]
 fn cdp_guarded_inner(
     webview: &tauri::Webview,
+    session: Option<String>,
     method: &str,
     params: Value,
     deadline: Instant,
@@ -2012,7 +2031,11 @@ fn cdp_guarded_inner(
     response_limit: usize,
 ) -> Result<Value, String> {
     use std::sync::mpsc;
-    use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, CoTaskMemPWSTR};
+    use webview2_com::{
+        CallDevToolsProtocolMethodCompletedHandler, CoTaskMemPWSTR,
+        Microsoft::Web::WebView2::Win32::ICoreWebView2_11,
+    };
+    use windows_core::Interface;
 
     let (sender, receiver) = mpsc::sync_channel(1);
     let method = method.to_string();
@@ -2041,6 +2064,21 @@ fn cdp_guarded_inner(
                 // side effect too, not just the operation that queues this closure.
                 if let Err(error) = run_before_deadline(deadline, || {
                     guard()?;
+                    if let Some(session) = &session {
+                        let core = core
+                            .cast::<ICoreWebView2_11>()
+                            .map_err(|error| error.to_string())?;
+                        let session = CoTaskMemPWSTR::from(session.as_str());
+                        return unsafe {
+                            core.CallDevToolsProtocolMethodForSession(
+                                *session.as_ref().as_pcwstr(),
+                                *method.as_ref().as_pcwstr(),
+                                *params.as_ref().as_pcwstr(),
+                                &handler,
+                            )
+                            .map_err(|error| error.to_string())
+                        };
+                    }
                     unsafe {
                         core.CallDevToolsProtocolMethod(
                             *method.as_ref().as_pcwstr(),

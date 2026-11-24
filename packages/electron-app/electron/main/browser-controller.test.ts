@@ -10,7 +10,7 @@ interface GuestOptions {
   id: number
   owner: WebContents
   loadURL?: (url: string) => Promise<void>
-  sendCommand?: (method: string, params?: Record<string, unknown>) => Promise<unknown>
+  sendCommand?: (method: string, params?: Record<string, unknown>, session?: string) => Promise<unknown>
   insertText?: (text: string) => Promise<void>
   sendInputEvent?: (event: Electron.InputEvent) => void
   loading?: boolean
@@ -42,12 +42,12 @@ function createGuest(options: GuestOptions) {
       isAttached: () => attached,
       attach: () => { attached = true; attachCount += 1 },
       detach: () => { attached = false; detachCount += 1; guest.debugger.emit("detach", {}, "test") },
-      sendCommand: async (method: string, params?: Record<string, unknown>) => {
+      sendCommand: async (method: string, params?: Record<string, unknown>, session?: string) => {
         if (method === "DOM.getDocument") {
           assert.deepEqual(params, { depth: 1 })
           return { root: { children: [{ nodeType: 1, backendNodeId: options.documentRoot?.() ?? 42 }] } }
         }
-        return options.sendCommand?.(method, params) ?? {}
+        return options.sendCommand?.(method, params, session) ?? {}
       },
     }),
   }) as unknown as WebContents
@@ -220,9 +220,9 @@ describe("BrowserController private page channel", () => {
 
   it("keeps a watched preview's console and network events per document and serves them to page leases", async () => {
     const h = createHarness()
-    const sent: Array<[string, unknown]> = []
-    const { guest } = createGuest({ id: 5, owner: h.owner, sendCommand: async (method, params) => {
-      sent.push([method, params])
+    const sent: Array<[string, unknown, string?]> = []
+    const { guest } = createGuest({ id: 5, owner: h.owner, sendCommand: async (method, params, session) => {
+      sent.push(session ? [method, params, session] : [method, params])
       return method === "Network.getResponseBody" ? { body: "ok", base64Encoded: false } : {}
     } })
     h.add(guest, "one")
@@ -232,9 +232,13 @@ describe("BrowserController private page channel", () => {
     guest.debugger.emit("message", {}, "Network.requestWillBeSent", { requestId: "r1" }, "child-session")
     guest.debugger.emit("message", {}, "Page.frameNavigated", {})
     const first = await page(h.controller, "send", { ...lease, operation: { op: "diagnostics", after: 0 } }) as DiagnosticRead
-    assert.deepEqual(first.events, [{ method: "Runtime.consoleAPICalled", params: { type: "log" } }], "only the preview's own listed events")
-    assert.deepEqual(await page(h.controller, "send", { ...lease, operation: { op: "response-body", request: "r1" } }), { body: "ok", base64Encoded: false })
-    assert.deepEqual(sent.at(-1), ["Network.getResponseBody", { requestId: "r1" }])
+    assert.deepEqual(first.events, [{ method: "Runtime.consoleAPICalled", params: { type: "log" } },
+      { method: "Network.requestWillBeSent", params: { requestId: "r1" }, session: "child-session" }], "listed events, an out-of-process frame's with its session")
+    assert.deepEqual(await page(h.controller, "send", { ...lease, operation: { op: "response-body", request: "r1", session: "child-session" } }), { body: "ok", base64Encoded: false })
+    assert.deepEqual(sent.at(-1), ["Network.getResponseBody", { requestId: "r1" }, "child-session"])
+    guest.debugger.emit("message", {}, "Target.attachedToTarget", { sessionId: "frame-1", targetInfo: { type: "iframe", url: "https://other.test/" } })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(sent.filter(call => call[2] === "frame-1").map(call => call[0]), DIAGNOSTICS.enable.map(([method]) => method), "a frame gets the same domains")
     await page(h.controller, "end", lease)
     guest.emit("did-start-navigation", {}, "https://example.com/", true, true)
     guest.emit("did-start-navigation", {}, "https://example.com/next", false, true)
@@ -244,6 +248,25 @@ describe("BrowserController private page channel", () => {
     assert.notEqual(second.epoch, first.epoch)
   })
 
+  it("arms a new guest's diagnostics before its first load, and restarts them when the document is opened again", async () => {
+    const h = createHarness()
+    const sent: string[] = []
+    const { guest } = createGuest({ id: 6, owner: h.owner, sendCommand: async method => { sent.push(method); return {} } })
+    h.controller.guestCreated(guest)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(sent, DIAGNOSTICS.enable.map(([method]) => method), "the domains are enabled at creation")
+    guest.debugger.emit("message", {}, "Network.requestWillBeSent", { requestId: "first" })
+    h.add(guest, "one")
+    const lease = await begin(h.controller)
+    const first = await page(h.controller, "send", { ...lease, operation: { op: "diagnostics", after: 0 } }) as DiagnosticRead
+    assert.deepEqual(first.events.map(event => event.params.requestId), ["first"], "the first page's own request is kept")
+    await page(h.controller, "end", lease)
+    guest.debugger.emit("message", {}, "Page.documentOpened", { frame: { id: "main" } })
+    const next = await begin(h.controller)
+    const reopened = await page(h.controller, "send", { ...next, operation: { op: "diagnostics", after: 0 } }) as DiagnosticRead
+    assert.deepEqual(reopened.events, [])
+    assert.notEqual(reopened.epoch, first.epoch, "document.open() starts a new document's diagnostics")
+  })
   it("accepts only the fixed protocol commands and bounded object params/responses", async () => {
     const h = createHarness()
     const calls: string[] = []

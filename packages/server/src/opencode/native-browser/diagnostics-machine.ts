@@ -46,6 +46,8 @@ export type Hop = {
   readonly extension: boolean
   readonly id: string
   readonly nativeID: string
+  /** The out-of-process frame's protocol session, or undefined for the top-level document. */
+  readonly sessionID: string | undefined
   readonly url: string
   readonly method: string
   readonly resourceType: ResourceType
@@ -67,17 +69,19 @@ export type Chain = {
 }
 
 export type ChainEvent =
-  | { readonly type: "request"; readonly id: string; readonly event: RequestEvent }
+  | { readonly type: "request"; readonly id: string; readonly sessionID: string | undefined; readonly event: RequestEvent }
   | { readonly type: "request.extra"; readonly headers: Headers }
   | { readonly type: "response"; readonly event: { response: Response; hasExtraInfo?: boolean } }
   | { readonly type: "response.extra"; readonly wire: WireResponse }
-  | { readonly type: "ws.created"; readonly id: string; readonly event: { requestId: string; url: string; initiator?: { url?: string; stack?: StackTrace } }; readonly wallTime: number }
+  | { readonly type: "ws.created"; readonly id: string; readonly sessionID: string | undefined; readonly event: { requestId: string; url: string; initiator?: { url?: string; stack?: StackTrace } }; readonly wallTime: number }
   | { readonly type: "ws.request"; readonly event: { request: { headers: Headers }; timestamp: number; wallTime: number } }
   | { readonly type: "ws.response"; readonly event: { response: { headers: Headers; status: number }; timestamp: number } }
   | { readonly type: "ws.error"; readonly timestamp: number; readonly message: string }
   | { readonly type: "ws.closed"; readonly timestamp: number }
   | { readonly type: "finished"; readonly timestamp: number }
   | { readonly type: "failed"; readonly timestamp: number; readonly errorText: string }
+  /** The frame target that owns the request ID went away; it sends nothing more. */
+  | { readonly type: "detached" }
 
 const EMPTY: Chain = { hops: [], requestWire: [], responseWire: [] }
 
@@ -111,6 +115,7 @@ export function transitionChain(chain: Chain | undefined, event: ChainEvent): Ch
           || extensionSource(event.event.initiator?.url, event.event.initiator?.stack) || extensionOrigin(event.event.request.url),
         id: event.id,
         nativeID: event.event.requestId,
+        sessionID: event.sessionID,
         url: event.event.request.url.slice(0, 16_384),
         method: event.event.request.method,
         resourceType: resourceType((event.event.type ?? "other").toLowerCase()),
@@ -124,6 +129,7 @@ export function transitionChain(chain: Chain | undefined, event: ChainEvent): Ch
         extension: extensionSource(event.event.initiator?.url, event.event.initiator?.stack) || extensionOrigin(event.event.url),
         id: event.id,
         nativeID: event.event.requestId,
+        sessionID: event.sessionID,
         url: event.event.url.slice(0, 16_384),
         method: "GET",
         resourceType: "websocket",
@@ -200,6 +206,17 @@ export function transitionChain(chain: Chain | undefined, event: ChainEvent): Ch
           ? fail(latest, event.timestamp, event.errorText)
           : { ...latest, phase: { status: "completed", durationMs: elapsed(latest.phase, event.timestamp) } }),
       }
+    case "detached": {
+      if (!latest) return undefined
+      if (current.hops.every(hop => hop.wire === "none" && !open(hop)) && !current.requestWire.length && !current.responseWire.length) return chain
+      return {
+        hops: current.hops.map(hop => open(hop)
+          ? { ...hop, wire: "none", phase: { status: "failed", durationMs: 0, failure: "Frame detached before request completed" } }
+          : hop.wire === "none" ? hop : { ...hop, wire: "none" }),
+        requestWire: [],
+        responseWire: [],
+      }
+    }
   }
 }
 
@@ -255,10 +272,10 @@ function responseExtra(chain: Chain | undefined, current: Chain, wire: WireRespo
   return { ...current, hops: replaceAt(current.hops, index, responseWire(current.hops[index], wire)) }
 }
 
-function append(chain: Chain, input: Pick<Hop, "extension" | "id" | "nativeID" | "url" | "method" | "resourceType" | "timestampMs" | "request"> & { started: number | undefined }): Chain {
+function append(chain: Chain, input: Pick<Hop, "extension" | "id" | "nativeID" | "sessionID" | "url" | "method" | "resourceType" | "timestampMs" | "request"> & { started: number | undefined }): Chain {
   const headers = trimHeaders(input.request.headers)
   const created: Hop = {
-    extension: input.extension, id: input.id, nativeID: input.nativeID, url: input.url, method: input.method,
+    extension: input.extension, id: input.id, nativeID: input.nativeID, sessionID: input.sessionID, url: input.url, method: input.method,
     resourceType: input.resourceType, timestampMs: input.timestampMs, statusCode: undefined,
     request: { ...input.request, headers: headers.headers, postData: input.request.postData?.slice(0, 20_000) },
     response: undefined, headersTruncated: headers.truncated, postDataTruncated: (input.request.postData?.length ?? 0) > 20_000,

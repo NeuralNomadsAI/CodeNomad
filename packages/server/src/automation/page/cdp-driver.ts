@@ -49,7 +49,7 @@ export async function executeCdpOperation(channel: PageChannel, raw: PageOperati
     case "diagnostics":
       if (!channel.diagnostics) throw new PageDriverUnsupportedError("cdp", "diagnostics")
       return channel.diagnostics(operation.after)
-    case "response-body": return channel.send("Network.getResponseBody", { requestId: operation.request })
+    case "response-body": return channel.send("Network.getResponseBody", { requestId: operation.request }, operation.session)
   }
 }
 export function cdpDriver(channel: PageChannel, checkpoint: () => Promise<void>, mark = false) {

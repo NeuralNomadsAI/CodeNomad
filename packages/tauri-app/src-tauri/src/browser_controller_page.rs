@@ -332,8 +332,9 @@ impl BrowserController {
                 let guard_lease = lease.clone();
                 let guard_app = app.clone();
                 let guard_fence = fence.clone();
-                cdp_guarded(
+                cdp_guarded_in(
                     &webview,
+                    operation.as_ref().and_then(operations::Operation::session),
                     command,
                     params,
                     deadline.min(lease.expires),

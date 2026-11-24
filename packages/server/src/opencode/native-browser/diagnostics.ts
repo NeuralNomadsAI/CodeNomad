@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import type { DiagnosticRead } from "../../automation/page/diagnostic-events"
+import type { DiagnosticLoss, DiagnosticRead } from "../../automation/page/diagnostic-events"
 import {
   evictHop, extensionSource, MAX_RETAINED_REQUESTS, MAX_STASHED_CHAINS, networkRequest, requestBody, responseBody, transitionChain,
   type Body, type Chain, type ChainEvent, type Headers, type Hop, type NetworkRequest, type RequestEvent, type ResourceType, type StackTrace,
@@ -18,7 +18,7 @@ export interface ConsoleEntry {
 }
 type Params = Record<string, any>
 /** Reads a retained response body by its protocol request ID; undefined when the browser no longer has it. */
-export type FetchBody = (nativeID: string) => Promise<{ body?: unknown; base64Encoded?: unknown } | undefined>
+export type FetchBody = (nativeID: string, session: string | undefined) => Promise<{ body?: unknown; base64Encoded?: unknown } | undefined>
 
 export class PreviewDiagnostics {
   /** The native buffer read last, and the last sequence taken from it. */
@@ -27,16 +27,17 @@ export class PreviewDiagnostics {
   private readonly messages: ConsoleEntry[] = []
   /** Every hop by its public ID, oldest first. */
   private readonly requests = new Map<string, Hop>()
-  /** Hops per protocol request ID. */
+  /** Hops per protocol session and request ID, keyed `${session}:${requestId}`. */
   private readonly chains = new Map<string, Chain>()
   /** Request IDs that hold only queued ExtraInfo, oldest first. */
   private readonly stashed = new Set<string>()
-  /** Execution contexts of the page's own world; other worlds' console calls are not the page's. */
-  private readonly contexts = new Map<number, boolean>()
+  /** Execution contexts of the page's own world per session; other worlds' console calls are not the page's. */
+  private readonly contexts = new Map<string, boolean>()
   private readonly scope = randomUUID()
   private sequence = 0
   private droppedMessages = 0
   private droppedRequests = 0
+  private lost: DiagnosticLoss = { messages: 0, requests: 0 }
 
   /** Takes one read of the host's buffer. Another epoch means another document or buffer: it restarts from its start. */
   ingest(read: DiagnosticRead): boolean {
@@ -46,10 +47,11 @@ export class PreviewDiagnostics {
       this.epoch = read.epoch
       if (restart) return false
     }
-    // Events the host evicted before this read are lost to both readouts.
-    this.droppedMessages += read.dropped
-    this.droppedRequests += read.dropped
-    for (const event of read.events) this.apply(event.method, event.params as Params)
+    // The host counts each epoch's lost console entries and requests; only their growth is new.
+    this.droppedMessages += Math.max(0, read.lost.messages - this.lost.messages)
+    this.droppedRequests += Math.max(0, read.lost.requests - this.lost.requests)
+    this.lost = { ...read.lost }
+    for (const event of read.events) this.apply(event.method, event.params as Params, event.session)
     this.cursor = read.next
     return true
   }
@@ -73,7 +75,11 @@ export class PreviewDiagnostics {
     if (!hop || hop.extension) throw new Error("Request ID is no longer retained in this tab or belongs to another tab. Call browser.network.list({tabID}) and copy a current id into browser.network.get with the same tabID. Do not reload or resend a request just to inspect it.")
     const max = Math.min(MAX_BODY_CHARS, input.maxBodyChars ?? MAX_BODY_CHARS)
     const fetchBody = async (): Promise<Body> => {
-      const body = await fetch(hop.nativeID).catch(() => undefined)
+      const body = await fetch(hop.nativeID, hop.sessionID).catch(error => {
+        // The page changed under the read: the request belongs to the previous document.
+        if (/document changed|target is stale|no longer current/i.test(error instanceof Error ? error.message : String(error))) throw error
+        return undefined
+      })
       if (!body || typeof body.body !== "string") return { state: "unavailable", reason: "backendUnavailable" }
       const value = body.base64Encoded === true ? Buffer.from(body.body, "base64").toString("utf8") : body.body
       return value.length ? { state: "text", text: value.slice(0, max), truncated: value.length > max } : { state: "empty" }
@@ -97,6 +103,7 @@ export class PreviewDiagnostics {
     this.contexts.clear()
     this.droppedMessages = 0
     this.droppedRequests = 0
+    this.lost = { messages: 0, requests: 0 }
     this.cursor = 0
   }
 
@@ -106,19 +113,25 @@ export class PreviewDiagnostics {
     if (this.messages.length > 500) { this.messages.shift(); this.droppedMessages++ }
   }
 
-  private page(context: unknown) {
-    return typeof context !== "number" || this.contexts.get(context) !== false
+  private page(context: unknown, session: string | undefined) {
+    return typeof context !== "number" || this.contexts.get(`${session ?? ""}:${context}`) !== false
   }
 
-  private apply(method: string, event: Params): void {
+  private apply(method: string, event: Params, session: string | undefined): void {
     switch (method) {
       case "Runtime.executionContextCreated":
-        if (typeof event.context?.id === "number") this.contexts.set(event.context.id, event.context.auxData?.isDefault !== false)
+        if (typeof event.context?.id === "number") this.contexts.set(`${session ?? ""}:${event.context.id}`, event.context.auxData?.isDefault !== false)
         return
-      case "Runtime.executionContextDestroyed": this.contexts.delete(event.executionContextId); return
-      case "Runtime.executionContextsCleared": this.contexts.clear(); return
+      case "Runtime.executionContextDestroyed": this.contexts.delete(`${session ?? ""}:${event.executionContextId}`); return
+      case "Runtime.executionContextsCleared":
+        for (const key of this.contexts.keys()) if (key.startsWith(`${session ?? ""}:`)) this.contexts.delete(key)
+        return
+      // An out-of-process frame that detaches never finishes its requests.
+      case "Target.detachedFromTarget":
+        for (const key of [...this.chains.keys()]) if (key.startsWith(`${event.sessionId}:`)) this.transition(key, { type: "detached" })
+        return
       case "Runtime.consoleAPICalled": {
-        if (!this.page(event.executionContextId) || extensionSource(undefined, event.stackTrace as StackTrace | undefined)) return
+        if (!this.page(event.executionContextId, session) || extensionSource(undefined, event.stackTrace as StackTrace | undefined)) return
         const source = event.stackTrace?.callFrames?.[0]
         const type = event.type
         this.add(type === "error" || type === "assert" ? "error" : type === "warning" ? "warning" : type === "debug" ? "debug" : "info",
@@ -140,14 +153,14 @@ export class PreviewDiagnostics {
       }
       case "Runtime.exceptionThrown": {
         const error = event.exceptionDetails ?? {}
-        if ((error.executionContextId !== undefined && !this.page(error.executionContextId)) || extensionSource(error.url, error.stackTrace)) return
+        if ((error.executionContextId !== undefined && !this.page(error.executionContextId, session)) || extensionSource(error.url, error.stackTrace)) return
         this.add("error", String(error.exception?.description ?? error.text ?? ""), Number(event.timestamp) || Date.now(),
           error.url ? { url: String(error.url).slice(0, MAX_TEXT), line: error.lineNumber + 1, column: error.columnNumber + 1 } : undefined)
         return
       }
     }
-    const change = chainEvent(method, event, () => `${this.scope}:${++this.sequence}`)
-    if (change && typeof event.requestId === "string") this.transition(event.requestId, change)
+    const change = chainEvent(method, event, session, () => `${this.scope}:${++this.sequence}`)
+    if (change && typeof event.requestId === "string") this.transition(`${session ?? ""}:${event.requestId}`, change)
   }
 
   private transition(key: string, event: ChainEvent) {
@@ -169,22 +182,23 @@ export class PreviewDiagnostics {
       if (!first) break
       this.requests.delete(first.id)
       this.droppedRequests++
-      const chain = this.chains.get(first.nativeID)
+      const key = `${first.sessionID ?? ""}:${first.nativeID}`
+      const chain = this.chains.get(key)
       const rest = chain && evictHop(chain, first.id)
-      if (rest) this.chains.set(first.nativeID, rest)
-      else this.chains.delete(first.nativeID)
+      if (rest) this.chains.set(key, rest)
+      else this.chains.delete(key)
     }
   }
 }
 
-function chainEvent(method: string, event: Params, id: () => string): ChainEvent | undefined {
+function chainEvent(method: string, event: Params, sessionID: string | undefined, id: () => string): ChainEvent | undefined {
   switch (method) {
-    case "Network.requestWillBeSent": return { type: "request", id: id(), event: event as RequestEvent }
+    case "Network.requestWillBeSent": return { type: "request", id: id(), sessionID, event: event as RequestEvent }
     case "Network.requestWillBeSentExtraInfo": return { type: "request.extra", headers: (event.headers ?? {}) as Headers }
     case "Network.responseReceived": return { type: "response", event: event as Extract<ChainEvent, { type: "response" }>["event"] }
     case "Network.responseReceivedExtraInfo": return { type: "response.extra", wire: { headers: (event.headers ?? {}) as Headers, statusCode: Number(event.statusCode) } }
     // WebSockets never emit requestWillBeSent; their handshake is the whole request lifecycle.
-    case "Network.webSocketCreated": return { type: "ws.created", id: id(), event: event as Extract<ChainEvent, { type: "ws.created" }>["event"], wallTime: Date.now() / 1000 }
+    case "Network.webSocketCreated": return { type: "ws.created", id: id(), sessionID, event: event as Extract<ChainEvent, { type: "ws.created" }>["event"], wallTime: Date.now() / 1000 }
     case "Network.webSocketWillSendHandshakeRequest": return { type: "ws.request", event: event as Extract<ChainEvent, { type: "ws.request" }>["event"] }
     case "Network.webSocketHandshakeResponseReceived": return { type: "ws.response", event: event as Extract<ChainEvent, { type: "ws.response" }>["event"] }
     case "Network.webSocketFrameError": return { type: "ws.error", timestamp: event.timestamp, message: String(event.errorMessage ?? "") }

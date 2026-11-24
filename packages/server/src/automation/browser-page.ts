@@ -11,7 +11,7 @@ export type BrowserPageAction = RefAction | { action: "snapshot"; ref?: string; 
   | { action: "location" }
   /** The preview host's console and network events after a sequence number, and a retained response body. */
   | { action: "diagnostics"; after: number }
-  | { action: "response-body"; request: string }
+  | { action: "response-body"; request: string; session?: string }
 const OPERATION_MS = 25_000
 const MAX_PENDING = 32
 const MAX_SESSIONS = 128
@@ -101,7 +101,8 @@ export class BrowserPage {
       }
       else if (action.action === "diagnostics" || action.action === "response-body") {
         result = await request<Record<string, unknown>>("browser.page.send", { generation, operation: action.action === "diagnostics"
-          ? { op: "diagnostics", after: action.after } : { op: "response-body", request: action.request } })
+          ? { op: "diagnostics", after: action.after }
+          : { op: "response-body", request: action.request, ...(action.session ? { session: action.session } : {}) } })
       } else if (action.action === "snapshot") {
         const rootBackendNodeId = action.ref ? refs.resolve(action.ref, generation) : undefined
         const snapshot = await snapshotPage(page, () => refs.issuer(generation), { rootBackendNodeId, query: action.query, refLength: refs.refLength, ...(action.budget ? { budget: action.budget } : {}) })
