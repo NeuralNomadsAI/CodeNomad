@@ -302,7 +302,7 @@ fn render_body(
                 }),
             )
             .key(format!("goto-{key}"))
-            .disabled(!crate::launcher::can_change_session(s)),
+            .disabled(!crate::launcher::can_open_child_session(s)),
         );
     }
     if shared_wrap {

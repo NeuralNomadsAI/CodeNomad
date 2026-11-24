@@ -501,23 +501,25 @@ pub(crate) async fn run_with_reading(
                         }
                     }
                     kind if kind.starts_with("session.tool.") => {
-                        let fit = reader.resident.iter_mut().find(|row| row.id == id).map_or(
-                            content::ToolFit::Repair,
-                            |row| {
-                                content::apply_tool(
-                                    Arc::make_mut(row),
-                                    kind,
-                                    &native["data"],
-                                    native["created"].as_u64(),
-                                )
-                            },
-                        );
+                        let row_idx = reader.resident.iter().position(|row| row.id == id);
+                        let prior_row = row_idx.map(|i| reader.resident[i].clone());
+                        let fit = row_idx.map_or(content::ToolFit::Repair, |i| {
+                            content::apply_tool(
+                                Arc::make_mut(&mut reader.resident[i]),
+                                kind,
+                                &native["data"],
+                                native["created"].as_u64(),
+                            )
+                        });
                         match fit {
                             content::ToolFit::Applied(tool) => {
                                 if kind == "session.tool.called" {
                                     reader.execution_settlement = 0;
                                 }
                                 if history::check(&reader.resident).is_err() {
+                                    if let (Some(i), Some(prev)) = (row_idx, prior_row) {
+                                        reader.resident[i] = prev;
+                                    }
                                     if !reader.dirty {
                                         reader.dirty = true;
                                         reader.quiet = Instant::now() + Duration::from_millis(100);
@@ -540,7 +542,11 @@ pub(crate) async fn run_with_reading(
                                         .entry((id.into(), tool.id.clone()))
                                         .or_insert(0);
                                 }
-                                if history::check(&reader.resident).is_ok() {
+                                if history::check(&reader.resident).is_err() {
+                                    if let (Some(i), Some(prev)) = (row_idx, prior_row) {
+                                        reader.resident[i] = prev;
+                                    }
+                                } else {
                                     reader_event(
                                         reading,
                                         reader.generation,

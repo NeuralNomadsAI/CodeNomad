@@ -177,6 +177,20 @@ pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
     choose_destination(s, id, None, tx);
 }
 
+pub fn choose_child(s: &mut State, id: String, tx: &mut Tx) {
+    s.notifications.supersede_navigation();
+    if !s.screen.is_launcher()
+        && crate::workspace::active_session(s) == Some(id.as_str())
+        && s.phase != Phase::Failed
+    {
+        if s.shell.floating_sessions().is_some() {
+            s.shell.close_floating(tx);
+        }
+    } else {
+        choose_from_inner(s, vec![(id, None)], s.shell.floating_sessions(), None, true);
+    }
+}
+
 pub(crate) fn choose_destination(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())
@@ -195,13 +209,24 @@ fn choose_from(
     dismiss: Option<u64>,
     ticket: Option<u64>,
 ) {
+    choose_from_inner(s, candidates, dismiss, ticket, false);
+}
+fn choose_from_inner(
+    s: &mut State,
+    candidates: Vec<(String, Option<usize>)>,
+    dismiss: Option<u64>,
+    ticket: Option<u64>,
+    allow_streaming: bool,
+) {
     let recovery = candidates
         .first()
         .is_some_and(|(id, step)| step.is_none() && can_rebind(s, id));
-    if candidates.is_empty()
-        || !crate::workspace::input_ready(s)
-        || !recovery && !can_change_session(s)
-    {
+    let allowed = if allow_streaming {
+        can_open_child_session(s)
+    } else {
+        can_change_session(s)
+    };
+    if candidates.is_empty() || !crate::workspace::input_ready(s) || !recovery && !allowed {
         return;
     }
     let Some(l) = s.screen.launcher_mut() else {
@@ -235,8 +260,11 @@ fn choose_from(
     });
 }
 pub fn can_change_session(s: &State) -> bool {
-    s.phase != Phase::Streaming
-        && !s.composer.pending()
+    s.phase != Phase::Streaming && can_open_child_session(s)
+}
+
+pub fn can_open_child_session(s: &State) -> bool {
+    !s.composer.pending()
         && !s.status_permissions.settling()
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)

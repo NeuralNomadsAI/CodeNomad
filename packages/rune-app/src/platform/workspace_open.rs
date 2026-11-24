@@ -23,6 +23,7 @@ pub fn copy_path(
 ) {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        crate::chat::tools::children::note_clipboard_write();
         tx.copy(path);
         let path = path.to_owned();
         let locale = crate::strings::locale();
@@ -35,6 +36,7 @@ pub fn copy_path(
     #[cfg(target_arch = "wasm32")]
     {
         let _ = tx;
+        crate::chat::tools::children::note_clipboard_write();
         web::copy_path(path, out, wake);
     }
 }

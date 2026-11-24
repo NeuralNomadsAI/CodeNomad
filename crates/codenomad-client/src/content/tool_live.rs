@@ -269,10 +269,28 @@ pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u
             .and_then(|fields| fields.get_mut("toolCalls"))
             .and_then(Value::as_array_mut)
     {
-        // Keep progress visible even when the nested inputs cannot be retained.
-        for call in calls {
-            if let Some(fields) = call.as_object_mut() {
+        // Drop only the largest nested inputs until the progress payload fits LIVE_BYTES.
+        let mut by_size: Vec<(usize, usize)> = calls
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, call)| {
+                let input = call.as_object()?.get("input")?;
+                let (nodes, bytes) = resident_json(input);
+                Some((idx, nodes.saturating_add(bytes)))
+            })
+            .collect();
+        by_size.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut over = tool
+            .bytes
+            .saturating_add(tool.output_bytes)
+            .saturating_sub(LIVE_BYTES);
+        for (idx, size) in by_size {
+            if over == 0 {
+                break;
+            }
+            if let Some(fields) = calls[idx].as_object_mut() {
                 fields.remove("input");
+                over = over.saturating_sub(size);
             }
         }
         measure(&mut tool);
@@ -344,9 +362,38 @@ mod tests {
         assert!(
             execute_calls(&tool.metadata)
                 .iter()
-                .all(|call| call["tool"] == "write" && call.get("input").is_none())
+                .all(|call| call["tool"] == "write")
+        );
+        assert!(
+            execute_calls(&tool.metadata)
+                .iter()
+                .any(|call| call.get("input").is_none())
+        );
+        assert!(
+            execute_calls(&tool.metadata)
+                .iter()
+                .any(|call| call.get("input").is_some())
         );
         assert!(tool.bytes + tool.output_bytes <= LIVE_BYTES);
+
+        // Mixed sizes: only oversized inputs are dropped, keeping smaller call titles intact.
+        let mut mixed = row(json!({}));
+        let Fit::Applied(trimmed) = apply(
+            &mut mixed,
+            "session.tool.progress",
+            &json!({"id":"call","metadata":{"toolCalls":[
+                {"tool":"read","status":"completed","input":{"filePath":"small.rs"}},
+                {"tool":"write","status":"running","input":{"filePath":"big.txt","content":"x".repeat(LIVE_BYTES)}}
+            ]}}),
+        ) else {
+            panic!("mixed progress snapshot was lost")
+        };
+        assert_eq!(
+            trimmed.metadata["toolCalls"][0]["input"]["filePath"],
+            "small.rs"
+        );
+        assert!(trimmed.metadata["toolCalls"][1].get("input").is_none());
+        assert!(trimmed.bytes + trimmed.output_bytes <= LIVE_BYTES);
 
         let mut behind = [Arc::new(row(
             json!({"title":"HTTP title","toolCalls":calls[..1]}),

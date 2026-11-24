@@ -172,6 +172,7 @@ mod tests {
             "```mermaid\nflowchart LR\n  A[Start] --> B[Finish]\n```",
             "```mmd\nflowchart LR\n  A[Start] --> B[Finish]\n```",
             "- ```mermaid\n  flowchart LR\n    A[Start] --> B[Finish]\n  ```",
+            "10. Diagram\n\n    ```mermaid\n    flowchart LR\n      A[Start] --> B[Finish]\n    ```",
         ] {
             let mut rt = render(source, false);
             let clipboard = rune::clipboard::memory();

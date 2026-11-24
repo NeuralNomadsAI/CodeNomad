@@ -328,21 +328,34 @@ pub(crate) fn literal_breaks(source: &str) -> Cow<'_, str> {
     let options =
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     let mut last = 0;
+    let mut in_list_item = 0usize;
     let mut result = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
-        if let Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) = &event {
-            let line_start = source[..range.start].rfind('\n').map_or(0, |i| i + 1);
-            if let Some((word, replacement)) = diagram_fence(
-                info,
-                &source[line_start..range.start],
-                &source[range.clone()],
-            ) {
-                let start = range.start + word.start;
-                result.push_str(&source[last..start]);
-                result.push_str(replacement);
-                last = range.start + word.end;
+        match &event {
+            Event::Start(Tag::Item) => {
+                in_list_item += 1;
                 continue;
             }
+            Event::End(pulldown_cmark::TagEnd::Item) => {
+                in_list_item = in_list_item.saturating_sub(1);
+                continue;
+            }
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
+                let line_start = source[..range.start].rfind('\n').map_or(0, |i| i + 1);
+                if let Some((word, replacement)) = diagram_fence(
+                    info,
+                    &source[line_start..range.start],
+                    &source[range.clone()],
+                    in_list_item > 0,
+                ) {
+                    let start = range.start + word.start;
+                    result.push_str(&source[last..start]);
+                    result.push_str(replacement);
+                    last = range.start + word.end;
+                    continue;
+                }
+            }
+            _ => {}
         }
         match event {
             Event::SoftBreak => {
@@ -378,6 +391,7 @@ fn diagram_fence(
     info: &str,
     line_prefix: &str,
     block: &str,
+    in_list_item: bool,
 ) -> Option<(std::ops::Range<usize>, &'static str)> {
     let kit_word = info.split(|c: char| c.is_whitespace() || c == ',').next()?;
     if !(kit_word.eq_ignore_ascii_case("mermaid") || kit_word.eq_ignore_ascii_case("mmd")) {
@@ -393,7 +407,7 @@ fn diagram_fence(
     // Kit recognizes comma modifiers; Solid only admits a whitespace-delimited language.
     // Route both forms through the ordinary code frame, retaining Copy even for plain source.
     let replacement = if word.eq_ignore_ascii_case("mermaid") || word.eq_ignore_ascii_case("mmd") {
-        if commonmark_closed(line_prefix, block, marker, fence_len) {
+        if commonmark_closed(line_prefix, block, marker, fence_len, in_list_item) {
             "mmd"
         } else {
             "mmd-open"
@@ -417,7 +431,13 @@ fn strip_blockquotes(mut s: &str) -> &str {
     }
 }
 
-fn commonmark_closed(line_prefix: &str, block: &str, marker: char, fence_len: usize) -> bool {
+fn commonmark_closed(
+    line_prefix: &str,
+    block: &str,
+    marker: char,
+    fence_len: usize,
+    in_list_item: bool,
+) -> bool {
     let mut lines = block.lines();
     if lines.next().is_none() {
         return false;
@@ -426,9 +446,10 @@ fn commonmark_closed(line_prefix: &str, block: &str, marker: char, fence_len: us
         return false;
     };
     let prefix_after_quotes = strip_blockquotes(line_prefix);
-    let container_indent = if prefix_after_quotes
-        .bytes()
-        .any(|b| !matches!(b, b' ' | b'\t'))
+    let container_indent = if in_list_item
+        || prefix_after_quotes
+            .bytes()
+            .any(|b| !matches!(b, b' ' | b'\t'))
     {
         prefix_after_quotes.chars().count()
     } else {

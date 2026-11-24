@@ -87,6 +87,7 @@ pub fn menu(s: &mut State, point: (f32, f32), tx: &mut Tx) {
                     if a != b
                         && let Some(text) = s.draft.text.get(a..b)
                     {
+                        crate::chat::tools::children::note_clipboard_write();
                         tx.copy(text);
                         if action == Some("cut") {
                             s.draft.insert("");

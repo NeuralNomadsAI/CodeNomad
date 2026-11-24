@@ -246,6 +246,7 @@ fn copy_report<S: 'static>(
 ) {
     let (out, reply) = bounded(1);
     info.diagnostics.copy = Some(reply);
+    crate::chat::tools::children::note_clipboard_write();
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = prefs;

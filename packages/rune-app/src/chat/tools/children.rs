@@ -7,9 +7,18 @@ use codenomad_client::{Receiver, bounded, runtime};
 use std::{
     collections::{HashMap, VecDeque},
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
+
+static CLIPBOARD_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn note_clipboard_write() {
+    CLIPBOARD_EPOCH.fetch_add(1, Ordering::SeqCst);
+}
 
 pub(super) const STEP_LIMIT: usize = 200;
 const CHILD_LIMIT: usize = 4;
@@ -66,11 +75,8 @@ struct Snapshot {
 }
 
 enum ChildUpdate {
-    Loaded {
-        snapshot: Snapshot,
-        verified: bool,
-        settled: bool,
-    },
+    Loaded { snapshot: Snapshot, settled: bool },
+    Settled,
     Unverified,
     Failed,
 }
@@ -79,6 +85,7 @@ enum ReportCopy {
     Idle,
     Loading {
         key: CopyKey,
+        epoch: u64,
         lease: Option<Weak<()>>,
         _cancel: codenomad_client::Sender<()>,
         rx: Receiver<Option<String>>,
@@ -137,12 +144,20 @@ struct Watcher {
     result: Receiver<ChildUpdate>,
 }
 
+enum WatchState {
+    Active(Watcher),
+    Dormant {
+        _cancel: codenomad_client::Sender<()>,
+        wake: Receiver<bool>,
+    },
+    Pending,
+}
+
 struct Entry {
     cards: HashMap<String, Weak<()>>,
-    watcher: Option<Watcher>,
+    watch: WatchState,
     snapshot: Snapshot,
     load_error: bool,
-    verified: bool,
     settled: bool,
 }
 
@@ -161,12 +176,14 @@ impl Children {
     }
 
     pub(crate) fn cancel_copy(&mut self) {
+        note_clipboard_write();
         self.report_copy = ReportCopy::Idle;
     }
 
     pub(super) fn take_ready_copy(&mut self, key: &CopyKey) -> Option<String> {
         match &self.report_copy {
             ReportCopy::Ready { key: current, .. } if current == key => {
+                note_clipboard_write();
                 match std::mem::take(&mut self.report_copy) {
                     ReportCopy::Ready { text, .. } => Some(text),
                     _ => None,
@@ -273,29 +290,21 @@ impl Children {
         let reads = s.reads.clone();
         crate::platform::spawn(async move {
             crate::platform::reads::cancellable(&cancelled, async {
-                let Some(_slot) = reads.background(&cancelled).await else {
-                    return;
-                };
-                let body = backend
-                    .child_page(&parent)
-                    .await
-                    .ok()
-                    .flatten()
-                    .and_then(|page| {
-                        page.rows
-                            .iter()
-                            .find(|row| row.id == row_id)
-                            .and_then(|row| {
-                                row.parts
-                                    .get(part_index)
-                                    .and_then(|part| match part {
-                                        Part::SubagentReport(report) if report.child == child => {
-                                            Some(report.body.clone())
-                                        }
-                                        _ => None,
-                                    })
-                                    .or_else(|| {
-                                        row.parts.iter().rev().find_map(|part| match part {
+                let body = with_timeout(COPY_BUDGET, async {
+                    let _slot = reads.background(&cancelled).await?;
+                    backend
+                        .child_page(&parent)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|page| {
+                            page.rows
+                                .iter()
+                                .find(|row| row.id == row_id)
+                                .and_then(|row| {
+                                    row.parts
+                                        .get(part_index)
+                                        .and_then(|part| match part {
                                             Part::SubagentReport(report)
                                                 if report.child == child =>
                                             {
@@ -303,9 +312,20 @@ impl Children {
                                             }
                                             _ => None,
                                         })
-                                    })
-                            })
-                    });
+                                        .or_else(|| {
+                                            row.parts.iter().rev().find_map(|part| match part {
+                                                Part::SubagentReport(report)
+                                                    if report.child == child =>
+                                                {
+                                                    Some(report.body.clone())
+                                                }
+                                                _ => None,
+                                            })
+                                        })
+                                })
+                        })
+                })
+                .await;
                 if out.send(body).await.is_ok() {
                     wake();
                 }
@@ -322,8 +342,10 @@ impl Children {
             s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
             return;
         };
+        let epoch = CLIPBOARD_EPOCH.load(Ordering::SeqCst);
         s.transcript_display.children.report_copy = ReportCopy::Loading {
             key: copy_key,
+            epoch,
             lease,
             _cancel: cancel,
             rx,
@@ -347,8 +369,10 @@ impl Children {
         };
         let (out, rx) = bounded(1);
         let (cancel, cancelled) = bounded(1);
+        let epoch = CLIPBOARD_EPOCH.load(Ordering::SeqCst);
         s.transcript_display.children.report_copy = ReportCopy::Loading {
             key: copy_key,
+            epoch,
             lease,
             _cancel: cancel,
             rx,
@@ -358,9 +382,11 @@ impl Children {
         crate::platform::spawn(async move {
             crate::platform::reads::cancellable(&cancelled, async {
                 let expected_parent = parent.as_deref().unwrap_or(&backend.session);
-                let body =
-                    copy_child_steps_bounded(&backend, &reads, &cancelled, &child, expected_parent)
-                        .await;
+                let body = with_timeout(
+                    COPY_BUDGET,
+                    copy_child_steps_bounded(&backend, &reads, &cancelled, &child, expected_parent),
+                )
+                .await;
                 if out.send(body).await.is_ok() {
                     wake();
                 }
@@ -369,19 +395,8 @@ impl Children {
         });
     }
 
-    pub(super) fn open_child(s: &mut State, parent: Option<&str>, child: &str, tx: &mut rune::Tx) {
-        if !crate::launcher::can_change_session(s) {
-            return;
-        }
-        let ck = child_key(parent, child);
-        if s.transcript_display
-            .children
-            .entries
-            .get(&ck)
-            .is_some_and(|entry| entry.verified)
-        {
-            s.transcript_display.children.pending_nav = None;
-            crate::launcher::choose(s, child.to_owned(), tx);
+    pub(super) fn open_child(s: &mut State, parent: Option<&str>, child: &str, _tx: &mut rune::Tx) {
+        if !crate::launcher::can_open_child_session(s) {
             return;
         }
         let Some(backend) = s.transcript_display.children.backend.clone() else {
@@ -443,9 +458,9 @@ impl Children {
         if let Some(target) = nav {
             s.transcript_display.children.pending_nav = None;
             if let Some(child_id) = target
-                && crate::launcher::can_change_session(s)
+                && crate::launcher::can_open_child_session(s)
             {
-                crate::launcher::choose(s, child_id, tx);
+                crate::launcher::choose_child(s, child_id, tx);
                 changed = true;
             }
         }
@@ -454,8 +469,12 @@ impl Children {
 
     fn poll_copy(&mut self, tx: &mut rune::Tx) -> bool {
         let outcome = match &self.report_copy {
-            ReportCopy::Loading { lease, rx, .. } => {
-                if lease.as_ref().is_some_and(|w| w.strong_count() == 0) {
+            ReportCopy::Loading {
+                epoch, lease, rx, ..
+            } => {
+                if lease.as_ref().is_some_and(|w| w.strong_count() == 0)
+                    || CLIPBOARD_EPOCH.load(Ordering::SeqCst) != *epoch
+                {
                     self.report_copy = ReportCopy::Idle;
                     return false;
                 }
@@ -467,17 +486,22 @@ impl Children {
             }
             _ => return false,
         };
-        let (key, lease) = match std::mem::take(&mut self.report_copy) {
-            ReportCopy::Loading { key, lease, .. } => (key, lease),
+        let (key, epoch, lease) = match std::mem::take(&mut self.report_copy) {
+            ReportCopy::Loading {
+                key, epoch, lease, ..
+            } => (key, epoch, lease),
             _ => return false,
         };
-        if lease.as_ref().is_some_and(|w| w.strong_count() == 0) {
+        if lease.as_ref().is_some_and(|w| w.strong_count() == 0)
+            || CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch
+        {
             return false;
         }
         match outcome {
             Some(Some(text)) => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
+                    note_clipboard_write();
                     tx.copy(text);
                 }
                 #[cfg(target_arch = "wasm32")]
@@ -517,6 +541,7 @@ impl Children {
         lease: &Rc<()>,
         visible: bool,
     ) {
+        let wake = s.wake.clone();
         let ck = child_key(parent, id);
         let children = &mut s.transcript_display.children;
         let freed = children.prune();
@@ -537,45 +562,59 @@ impl Children {
             }
             return;
         }
-        if let Some(entry) = children.entries.get_mut(&ck) {
+        let needs_watch = if let Some(entry) = children.entries.get_mut(&ck) {
             entry.cards.insert(key.into(), Rc::downgrade(lease));
-            if freed {
+            Some(matches!(entry.watch, WatchState::Pending))
+        } else {
+            None
+        };
+        if let Some(needs_watch) = needs_watch {
+            if needs_watch {
+                if children.active_watchers() >= CHILD_LIMIT && !children.demote_settled(&wake) {
+                    children.enqueue_waiting(ck, key, lease);
+                } else {
+                    Self::start_entry(s, ck, key, lease);
+                }
+            } else if freed {
                 Self::promote_waiting(s);
             }
             return;
         }
-        if children.active_watchers() >= CHILD_LIMIT && !children.demote_settled() {
-            children.waiting.retain(|(_, _, w)| w.strong_count() > 0);
-            if let Some(existing) = children
-                .waiting
-                .iter_mut()
-                .find(|(wck, wkey, _)| *wck == ck && wkey == key)
-            {
-                existing.2 = Rc::downgrade(lease);
-            } else if children.waiting.len() < WAITING_LIMIT {
-                children
-                    .waiting
-                    .push_back((ck, key.into(), Rc::downgrade(lease)));
-            }
+        if children.active_watchers() >= CHILD_LIMIT && !children.demote_settled(&wake) {
+            children.enqueue_waiting(ck, key, lease);
             return;
         }
         Self::start_entry(s, ck, key, lease);
+    }
+
+    fn enqueue_waiting(&mut self, ck: ChildKey, key: &str, lease: &Rc<()>) {
+        self.waiting.retain(|(_, _, w)| w.strong_count() > 0);
+        if let Some(existing) = self
+            .waiting
+            .iter_mut()
+            .find(|(wck, wkey, _)| *wck == ck && wkey == key)
+        {
+            existing.2 = Rc::downgrade(lease);
+        } else if self.waiting.len() < WAITING_LIMIT {
+            self.waiting
+                .push_back((ck, key.into(), Rc::downgrade(lease)));
+        }
     }
 
     pub(super) fn retry(s: &mut State, parent: Option<&str>, id: &str) {
         let ck = child_key(parent, id);
         if let Some(entry) = s.transcript_display.children.entries.get_mut(&ck) {
             entry.load_error = false;
-            if let Some(watcher) = &entry.watcher {
+            if let WatchState::Active(watcher) = &entry.watch {
                 let _ = watcher.retry.try_send(());
                 return;
             }
+            entry.watch = WatchState::Pending;
             if let Some((card, lease)) = entry
                 .cards
                 .iter()
                 .find_map(|(k, w)| w.upgrade().map(|l| (k.clone(), l)))
             {
-                s.transcript_display.children.entries.remove(&ck);
                 Self::demand(s, parent, id, &card, &lease, true);
             }
         }
@@ -584,35 +623,58 @@ impl Children {
     fn active_watchers(&self) -> usize {
         self.entries
             .values()
-            .filter(|e| e.watcher.is_some())
+            .filter(|e| matches!(e.watch, WatchState::Active(_)))
             .count()
     }
 
-    fn demote_settled(&mut self) -> bool {
+    fn dormant_watch(&self, child: &str, wake: &codenomad_client::Wake) -> WatchState {
+        let Some(backend) = self.backend.as_ref() else {
+            return WatchState::Pending;
+        };
+        let Some((dirty, settlement)) = backend.watch_child(child) else {
+            return WatchState::Pending;
+        };
+        let (out, wake_rx) = bounded(1);
+        let (cancel, cancelled) = bounded(1);
+        let wake = wake.clone();
+        crate::platform::spawn(async move {
+            crate::platform::reads::cancellable(&cancelled, async {
+                if dirty.recv().await.is_ok() {
+                    let (_, _, _, _, revoked) = settlement.take();
+                    if out.send(revoked).await.is_ok() {
+                        wake();
+                    }
+                }
+            })
+            .await;
+        });
+        WatchState::Dormant {
+            _cancel: cancel,
+            wake: wake_rx,
+        }
+    }
+
+    fn demote_settled(&mut self, wake: &codenomad_client::Wake) -> bool {
         let candidate = self
             .entries
             .iter()
-            .find(|(_, e)| e.watcher.is_some() && e.settled)
+            .find(|(_, e)| matches!(e.watch, WatchState::Active(_)) && e.settled)
             .map(|(k, _)| k.clone());
         let Some(key) = candidate else {
             return false;
         };
+        // Register the dormant SSE watch before dropping the active watcher so no wake is missed.
+        let dormant = self.dormant_watch(&key.1, wake);
         if let Some(entry) = self.entries.get_mut(&key) {
-            entry.watcher = None;
+            entry.watch = dormant;
             return true;
         }
         false
     }
 
     fn promote_waiting(s: &mut State) {
+        let wake = s.wake.clone();
         loop {
-            let children = &mut s.transcript_display.children;
-            if children.waiting.is_empty() {
-                return;
-            }
-            if children.active_watchers() >= CHILD_LIMIT && !children.demote_settled() {
-                return;
-            }
             let next = loop {
                 let Some((ck, key, weak)) = s.transcript_display.children.waiting.pop_front()
                 else {
@@ -623,9 +685,24 @@ impl Children {
                 }
             };
             let (ck, key, lease) = next;
-            if let Some(entry) = s.transcript_display.children.entries.get_mut(&ck) {
-                entry.cards.insert(key, Rc::downgrade(&lease));
-            } else if !Self::start_entry(s, ck, &key, &lease) {
+            let needs_start =
+                if let Some(entry) = s.transcript_display.children.entries.get_mut(&ck) {
+                    entry.cards.insert(key.clone(), Rc::downgrade(&lease));
+                    matches!(entry.watch, WatchState::Pending)
+                } else {
+                    true
+                };
+            if !needs_start {
+                continue;
+            }
+            let children = &mut s.transcript_display.children;
+            if children.active_watchers() >= CHILD_LIMIT && !children.demote_settled(&wake) {
+                children
+                    .waiting
+                    .push_front((ck, key, Rc::downgrade(&lease)));
+                return;
+            }
+            if !Self::start_entry(s, ck, &key, &lease) {
                 break;
             }
         }
@@ -639,36 +716,43 @@ impl Children {
         let Some((dirty, settlement)) = backend.watch_child(&ck.1) else {
             return false;
         };
-        while children.entries.len() >= RETAINED_LIMIT {
-            let evict = children
-                .entries
-                .iter()
-                .find(|(_, e)| e.watcher.is_none())
-                .map(|(k, _)| k.clone());
-            let Some(evict) = evict else {
-                break;
-            };
-            children.entries.remove(&evict);
-        }
         let (out, result) = bounded(2);
         let (cancel, cancelled) = bounded(1);
         let (retry, retry_rx) = bounded(1);
         let (expected_parent, child) = ck.clone();
-        children.entries.insert(
-            ck,
-            Entry {
-                cards: HashMap::from([(key.into(), Rc::downgrade(lease))]),
-                watcher: Some(Watcher {
-                    _cancel: cancel,
-                    retry,
-                    result,
-                }),
-                snapshot: Snapshot::default(),
-                load_error: false,
-                verified: false,
-                settled: false,
-            },
-        );
+        let watcher = Watcher {
+            _cancel: cancel,
+            retry,
+            result,
+        };
+        if let Some(entry) = children.entries.get_mut(&ck) {
+            entry.cards.insert(key.into(), Rc::downgrade(lease));
+            entry.watch = WatchState::Active(watcher);
+            entry.load_error = false;
+            entry.settled = false;
+        } else {
+            while children.entries.len() >= RETAINED_LIMIT {
+                let evict = children
+                    .entries
+                    .iter()
+                    .find(|(_, e)| !matches!(e.watch, WatchState::Active(_)))
+                    .map(|(k, _)| k.clone());
+                let Some(evict) = evict else {
+                    break;
+                };
+                children.entries.remove(&evict);
+            }
+            children.entries.insert(
+                ck,
+                Entry {
+                    cards: HashMap::from([(key.into(), Rc::downgrade(lease))]),
+                    watch: WatchState::Active(watcher),
+                    snapshot: Snapshot::default(),
+                    load_error: false,
+                    settled: false,
+                },
+            );
+        }
         let wake = s.wake.clone();
         let reads = s.reads.clone();
         crate::platform::spawn(async move {
@@ -692,7 +776,10 @@ impl Children {
                         execution_owed = 0;
                         last_exec_end = None;
                         live_page = None;
-                        let _ = out.try_send(ChildUpdate::Unverified);
+                        if out.send(ChildUpdate::Unverified).await.is_err() {
+                            break;
+                        }
+                        wake();
                     } else {
                         for end in ended_calls {
                             let key = (end.message, end.call);
@@ -750,7 +837,6 @@ impl Children {
                                 if out
                                     .try_send(ChildUpdate::Loaded {
                                         snapshot: snap,
-                                        verified: true,
                                         settled: false,
                                     })
                                     .is_ok()
@@ -776,11 +862,14 @@ impl Children {
                         execution_owed = 0;
                         last_exec_end = None;
                         live_page = None;
-                        let _ = out.try_send(ChildUpdate::Unverified);
+                        if out.send(ChildUpdate::Unverified).await.is_err() {
+                            break;
+                        }
+                        wake();
                         let _ = dirty.try_recv();
                         continue;
                     }
-                    let update = match fetched {
+                    let (update, last_settled, last_running, last_failed) = match fetched {
                         Ok(Some(mut page)) => {
                             owed_calls.retain(|(msg, call), _| {
                                 !child_tool_settled(&page.rows, msg.as_deref(), call)
@@ -884,12 +973,17 @@ impl Children {
                                 && owed_calls.is_empty()
                                 && execution_owed == 0
                                 && pending_events.is_empty();
+                            let running = page.running;
                             live_page = Some(page.clone());
-                            ChildUpdate::Loaded {
-                                snapshot: snapshot_with_frozen(page, &frozen_ends),
-                                verified: true,
+                            (
+                                ChildUpdate::Loaded {
+                                    snapshot: snapshot_with_frozen(page, &frozen_ends),
+                                    settled,
+                                },
                                 settled,
-                            }
+                                running,
+                                false,
+                            )
                         }
                         Ok(None) => {
                             owed_calls.clear();
@@ -899,11 +993,15 @@ impl Children {
                             execution_owed = 0;
                             last_exec_end = None;
                             live_page = None;
-                            ChildUpdate::Loaded {
-                                snapshot: Snapshot::default(),
-                                verified: false,
-                                settled: true,
-                            }
+                            (
+                                ChildUpdate::Loaded {
+                                    snapshot: Snapshot::default(),
+                                    settled: true,
+                                },
+                                true,
+                                false,
+                                false,
+                            )
                         }
                         Err(_) => {
                             if execution_owed > 0 {
@@ -912,7 +1010,7 @@ impl Children {
                                     last_exec_end = None;
                                 }
                             }
-                            ChildUpdate::Failed
+                            (ChildUpdate::Failed, false, false, true)
                         }
                     };
                     if out.send(update).await.is_err() {
@@ -937,6 +1035,17 @@ impl Children {
                         let _ = retry_rx.try_recv();
                         continue;
                     }
+                    if !last_settled
+                        && !last_running
+                        && !last_failed
+                        && pending_events.is_empty()
+                        && live_page.is_some()
+                    {
+                        if out.send(ChildUpdate::Settled).await.is_err() {
+                            break;
+                        }
+                        wake();
+                    }
                     if !wait_wake(&dirty, &retry_rx).await {
                         break;
                     }
@@ -958,34 +1067,73 @@ impl Children {
 
     pub(crate) fn poll(&mut self) -> bool {
         let mut changed = self.prune();
-        for entry in self.entries.values_mut() {
-            let Some(watcher) = entry.watcher.as_mut() else {
-                continue;
-            };
-            while let Ok(update) = watcher.result.try_recv() {
-                match update {
-                    ChildUpdate::Loaded {
-                        snapshot: next,
-                        verified,
-                        settled,
-                    } => {
-                        changed |= entry.load_error
-                            || entry.verified != verified
-                            || entry.settled != settled
-                            || entry.snapshot != next;
-                        entry.load_error = false;
-                        entry.verified = verified;
-                        entry.settled = settled;
-                        entry.snapshot = next;
+        let mut to_requeue: Vec<(ChildKey, String, Weak<()>)> = Vec::new();
+        for (ck, entry) in self.entries.iter_mut() {
+            match &mut entry.watch {
+                WatchState::Active(watcher) => {
+                    while let Ok(update) = watcher.result.try_recv() {
+                        match update {
+                            ChildUpdate::Loaded {
+                                snapshot: next,
+                                settled,
+                            } => {
+                                changed |= entry.load_error
+                                    || entry.settled != settled
+                                    || entry.snapshot != next;
+                                entry.load_error = false;
+                                entry.settled = settled;
+                                entry.snapshot = next;
+                            }
+                            ChildUpdate::Settled => {
+                                changed |= !entry.settled;
+                                entry.settled = true;
+                            }
+                            ChildUpdate::Unverified => {
+                                changed |= entry.load_error
+                                    || entry.settled
+                                    || entry.snapshot != Snapshot::default();
+                                entry.snapshot = Snapshot::default();
+                                entry.load_error = false;
+                                entry.settled = false;
+                            }
+                            ChildUpdate::Failed => {
+                                changed |= !entry.load_error;
+                                entry.load_error = true;
+                            }
+                        }
                     }
-                    ChildUpdate::Unverified => {
-                        entry.verified = false;
+                }
+                WatchState::Dormant { wake, .. } => {
+                    let triggered = match wake.try_recv() {
+                        Ok(revoked) => Some(revoked),
+                        Err(error) if error.is_closed() => Some(false),
+                        Err(_) => None,
+                    };
+                    if let Some(revoked) = triggered {
+                        if revoked {
+                            changed |= entry.load_error || entry.snapshot != Snapshot::default();
+                            entry.snapshot = Snapshot::default();
+                            entry.load_error = false;
+                        }
                         entry.settled = false;
+                        entry.watch = WatchState::Pending;
+                        if let Some((card, lease)) =
+                            entry.cards.iter().find(|(_, w)| w.strong_count() > 0)
+                        {
+                            to_requeue.push((ck.clone(), card.clone(), lease.clone()));
+                        }
                     }
-                    ChildUpdate::Failed => {
-                        changed |= !entry.load_error;
-                        entry.load_error = true;
-                    }
+                }
+                WatchState::Pending => {}
+            }
+        }
+        if !to_requeue.is_empty() {
+            self.waiting.retain(|(_, _, w)| w.strong_count() > 0);
+            for (ck, card, lease) in to_requeue {
+                if !self.waiting.iter().any(|(wck, _, _)| *wck == ck)
+                    && self.waiting.len() < WAITING_LIMIT
+                {
+                    self.waiting.push_back((ck, card, lease));
                 }
             }
         }
@@ -1194,6 +1342,25 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
     }
 }
 
+async fn with_timeout<T>(
+    budget: Duration,
+    fut: impl std::future::Future<Output = Option<T>>,
+) -> Option<T> {
+    use std::{future::Future, task::Poll};
+    let mut fut = std::pin::pin!(fut);
+    let mut timer = std::pin::pin!(runtime::sleep(budget));
+    std::future::poll_fn(|cx| {
+        if let Poll::Ready(value) = fut.as_mut().poll(cx) {
+            return Poll::Ready(value);
+        }
+        if timer.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(None);
+        }
+        Poll::Pending
+    })
+    .await
+}
+
 async fn copy_child_steps_bounded(
     backend: &Backend,
     reads: &crate::platform::reads::Reads,
@@ -1254,17 +1421,31 @@ async fn copy_child_steps_bounded(
                 if count > 0 {
                     io::Write::write_all(&mut out, b",\n").ok()?;
                 }
+                let mut state = serde_json::json!({
+                    "status": tool.status,
+                    "input": tool.input,
+                    "output": tool.output,
+                    "error": tool.error,
+                    "metadata": tool.metadata,
+                });
+                if tool.started.is_some() || tool.ended.is_some() {
+                    let mut time = serde_json::Map::new();
+                    if let Some(start) = tool.started {
+                        time.insert("start".into(), serde_json::json!(start));
+                    }
+                    if let Some(end) = tool.ended {
+                        time.insert("end".into(), serde_json::json!(end));
+                    }
+                    state["time"] = serde_json::Value::Object(time);
+                }
                 let entry = serde_json::json!({
                     "type": "tool",
                     "id": tool.id,
-                    "name": tool.name,
-                    "state": {
-                        "status": tool.status,
-                        "input": tool.input,
-                        "output": tool.output,
-                        "error": tool.error,
-                        "metadata": tool.metadata,
-                    }
+                    "callID": tool.id,
+                    "sessionID": child,
+                    "messageID": row.id,
+                    "tool": tool.name,
+                    "state": state,
                 });
                 serde_json::to_writer_pretty(&mut out, &entry).ok()?;
                 count += 1;
@@ -1295,7 +1476,6 @@ impl Children {
         let (out, result) = bounded(1);
         out.try_send(ChildUpdate::Loaded {
             snapshot: snapshot(page),
-            verified: true,
             settled: true,
         })
         .unwrap();
@@ -1305,14 +1485,13 @@ impl Children {
             child_key(None, child),
             Entry {
                 cards: HashMap::from([("test".into(), Rc::downgrade(&lease))]),
-                watcher: Some(Watcher {
+                watch: WatchState::Active(Watcher {
                     _cancel: cancel,
                     retry,
                     result,
                 }),
                 snapshot: Snapshot::default(),
                 load_error: false,
-                verified: true,
                 settled: true,
             },
         );

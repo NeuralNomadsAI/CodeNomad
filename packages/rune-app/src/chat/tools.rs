@@ -10,7 +10,7 @@ use crate::{
 };
 
 mod apply_patch;
-pub(super) mod children;
+pub(crate) mod children;
 mod clipboard;
 mod diagnostics;
 pub(super) mod duration;

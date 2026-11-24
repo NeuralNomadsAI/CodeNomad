@@ -480,11 +480,20 @@ pub(super) fn body(
         let scroll_state = s.transcript_display.step_scroll_state(&step_key);
         let (is_detached, scroll_ratio) = scroll_state.get();
         let count = (INITIAL_STEPS + REVEAL.saturating_mul(revealed_steps)).min(STEP_LIMIT);
-        let mut start = step_count.saturating_sub(count);
+        let min_start = step_count.saturating_sub(STEP_LIMIT);
+        let mut start = step_count.saturating_sub(count).max(min_start);
         let visible_live: Vec<_> = if child_steps.is_empty() {
             Vec::new()
         } else {
             visible_steps.collect()
+        };
+        let legacy_anchor = |index: usize, step: &serde_json::Value| {
+            let id = string(step, &["id", "callID"]);
+            if id.is_empty() {
+                format!("legacy-idx:{index}")
+            } else {
+                format!("legacy-id:{id}")
+            }
         };
         if !visible_live.is_empty() {
             if revealed_steps == 0 && !is_detached {
@@ -495,12 +504,12 @@ pub(super) fn body(
                     .iter()
                     .position(|(msg, step)| format!("{msg}:{}", step.id) == anchor)
                 {
-                    start = start.min(pos);
+                    start = start.min(pos).max(min_start);
                 } else if is_detached {
                     // Prior anchor slid out of the 200-step retention cap while scrolled up:
                     // keep the oldest retained step mounted instead of snapping back to the tail.
-                    start = 0;
-                    if let Some((msg, step)) = visible_live.first() {
+                    start = min_start;
+                    if let Some((msg, step)) = visible_live.get(min_start) {
                         s.transcript_display
                             .pin_step_anchor(&step_key, format!("{msg}:{}", step.id));
                     }
@@ -508,13 +517,16 @@ pub(super) fn body(
             }
             if let Some(cid) = child_id {
                 let focused = s.transcript_display.focused_key();
-                if let Some(protected) = visible_live.iter().position(|(msg, step)| {
-                    let owner = format!("child:{cid}:{msg}");
-                    let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
-                    s.transcript_display.expanded(&child_key, false)
-                        || focused.is_some_and(|f| f.contains(&child_key))
-                }) {
-                    start = start.min(protected);
+                if let Some(protected) = visible_live.iter().enumerate().skip(min_start).find_map(
+                    |(pos, (msg, step))| {
+                        let owner = format!("child:{cid}:{msg}");
+                        let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
+                        (s.transcript_display.expanded(&child_key, false)
+                            || focused.is_some_and(|f| f.contains(&child_key)))
+                        .then_some(pos)
+                    },
+                ) {
+                    start = start.min(protected).max(min_start);
                 }
             }
             if is_detached {
@@ -527,18 +539,61 @@ pub(super) fn body(
                         .pin_step_anchor(&step_key, format!("{msg}:{}", step.id));
                 }
             }
+        } else if !legacy.is_empty() {
+            if revealed_steps == 0 && !is_detached {
+                s.transcript_display.unpin_step_anchor(&step_key);
+            }
+            if let Some(anchor) = s.transcript_display.step_anchor(&step_key) {
+                if let Some(pos) = legacy
+                    .iter()
+                    .enumerate()
+                    .skip(min_start)
+                    .find_map(|(i, step)| (legacy_anchor(i, step) == anchor).then_some(i))
+                {
+                    start = start.min(pos).max(min_start);
+                } else if is_detached {
+                    start = min_start;
+                    if let Some(step) = legacy.get(min_start) {
+                        s.transcript_display
+                            .pin_step_anchor(&step_key, legacy_anchor(min_start, step));
+                    }
+                }
+            }
+            let focused = s.transcript_display.focused_key();
+            if let Some(protected) = (min_start..legacy.len()).find(|&index| {
+                let item_key = format!("{step_key}-{index}");
+                s.transcript_display.toggled(&item_key)
+                    || focused.is_some_and(|f| f.contains(&item_key))
+            }) {
+                start = start.min(protected).max(min_start);
+            }
+            if is_detached {
+                let mounted = legacy.len().saturating_sub(start);
+                let ratio = scroll_ratio.clamp(0.0, 1.0);
+                let reading = start + ((mounted.saturating_sub(1)) as f32 * ratio).floor() as usize;
+                let reading = reading.min(legacy.len().saturating_sub(1));
+                if let Some(step) = legacy.get(reading) {
+                    s.transcript_display
+                        .pin_step_anchor(&step_key, legacy_anchor(reading, step));
+                }
+            }
         }
         let mut list = col()
             .role("list")
             .label(t("toolCall.task.sections.steps"))
             .separate(Space::Sm);
-        let min_start = step_count.saturating_sub(STEP_LIMIT);
         if start > min_start {
             let toggle = step_key.clone();
             let next_start = start.saturating_sub(REVEAL).max(min_start);
-            let next_anchor = visible_live
-                .get(next_start)
-                .map(|(msg, step)| format!("{msg}:{}", step.id));
+            let next_anchor = if !visible_live.is_empty() {
+                visible_live
+                    .get(next_start)
+                    .map(|(msg, step)| format!("{msg}:{}", step.id))
+            } else {
+                legacy
+                    .get(next_start)
+                    .map(|step| legacy_anchor(next_start, step))
+            };
             let label = catalogue::format(
                 locale(),
                 "messageBlock.hiddenParts.show",
@@ -704,7 +759,10 @@ pub(super) fn body(
                     t("toolCall.io.copyOutputAriaLabel"),
                     screen::action_tx(&s.input_scope, move |s, tx| {
                         s.transcript_display.children.cancel_copy();
-                        if let Ok(json) = serde_json::to_string_pretty(&legacy_entries) {
+                        if let Some(json) = super::format::bounded_json(
+                            &serde_json::Value::Array(legacy_entries.clone()),
+                            8 * 1024 * 1024,
+                        ) {
                             tx.copy(json);
                         }
                     }),

@@ -48,7 +48,9 @@ pub(super) fn copy(
                 };
                 match section {
                     Section::Input => {
-                        if let Ok(source) = serde_json::to_string_pretty(&tool.input) {
+                        if let Some(source) =
+                            super::format::bounded_json(&tool.input, 8 * 1024 * 1024)
+                        {
                             tx.copy(source);
                         }
                         None
@@ -76,7 +78,7 @@ pub(super) fn copy(
                             }
                         } else if let Some(value) = super::format::structured_output(tool) {
                             if let super::format::Formatted::Text(source, _) =
-                                super::format::format_unknown(value, None)
+                                super::format::format_unknown(value, Some(8 * 1024 * 1024))
                             {
                                 tx.copy(source);
                             }
