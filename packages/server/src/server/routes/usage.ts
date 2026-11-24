@@ -62,6 +62,9 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
         isOpenCodeFreeModel(params.data.providerId, modelId) ? new AbortController() : null
       const quotaTimeout = quotaController ? setTimeout(() => quotaController.abort(), 12_000) : undefined
       const quotaSignal = quotaController ? AbortSignal.any([signal, quotaController.signal]) : signal
+      // A plugin RPC runs plugin code: stop it (and its follow-up checks) once the client has gone.
+      const abortOnClose = () => { if (!reply.raw.writableFinished) controller.abort() }
+      if (!resolvedProvider && !isOpenCodeFreeModel(params.data.providerId, modelId)) reply.raw.once("close", abortOnClose)
       let consoleTimeout: ((publicationSignal: AbortSignal) => Promise<unknown>) | undefined
       try {
         return await boundedRead(async () => {
@@ -161,6 +164,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
         const missing = error && typeof error === "object" && "_tag" in error && error._tag === "SessionNotFoundError"
         return reply.code(missing ? 404 : 503).send({ error: missing ? "Session not found" : "Provider usage unavailable" })
       } finally {
+        reply.raw.off("close", abortOnClose)
         clearTimeout(quotaTimeout)
         clearTimeout(timeout)
       }

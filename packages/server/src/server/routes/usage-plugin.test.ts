@@ -304,6 +304,30 @@ test("expired plugin quota timer after RPC 404 still returns supported=false whe
   } finally { await app.close() }
 })
 
+test("a client disconnect aborts the plugin RPC without follow-up ownership checks", async () => {
+  let started!: () => void
+  const rpcStarted = new Promise<void>(resolve => { started = resolve })
+  let rpcAborted!: () => void
+  const aborted = new Promise<void>(resolve => { rpcAborted = resolve })
+  const { app, state } = harness(async (_target, _body, init) => {
+    started()
+    await new Promise<void>(resolve => init?.signal?.addEventListener("abort", () => resolve(), { once: true }))
+    rpcAborted()
+    throw init?.signal?.reason
+  })
+  try {
+    const address = await app.listen({ host: "127.0.0.1", port: 0 })
+    const client = new AbortController()
+    const request = fetch(`${address}${url}`, { signal: client.signal }).catch(() => undefined)
+    await rpcStarted
+    client.abort()
+    await request
+    await Promise.race([aborted, new Promise((_resolve, reject) => setTimeout(() => reject(new Error("RPC not aborted")), 2_000))])
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(state.nativeCalls.filter(path => path === "/api/session/session").length, 1)
+  } finally { await app.close() }
+})
+
 test("absent plugin RPC falls back to Codex usage when a custom provider alias resolves to openai", async t => {
   const expires = Date.now() + 3_600_000
   const nativeCalls: string[] = []
