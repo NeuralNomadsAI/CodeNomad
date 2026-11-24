@@ -133,7 +133,7 @@ export function MissionEditor(props: {
   const creationReady = () => defaultsReady() && (kind !== "create" || Boolean(held || recurrenceHold) || config.isUiConfigLoaded())
   const effectiveProfiles = () => freezeCompareProfiles(template(), profiles())
   const compareError = () => template() === "compare" ? compareModelError(profiles()) : undefined
-  const [selectedModel, setSelectedModel] = createSignal<Pick<UserMissionModel, "id" | "name"> | undefined>(held ? submittedMissionModel(held.requestId)
+  const [selectedModel, setSelectedModel] = createSignal<UserMissionModel | undefined>(held ? submittedMissionModel(held.requestId)
     : recurrenceHold ? submittedMissionModel(recurrenceHold.requestID) : draft?.selectedModel)
   const initialConfigurationName = () => {
     const loaded = selectedModel(), current = submittedTitle()
@@ -470,7 +470,7 @@ export function MissionEditor(props: {
       onUse={model => {
         requestId = generateUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
         const configurationTitle = missionConfigurationTitle(model.name)
-        setObjective(model.objective); setTitleOverride(configurationTitle); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
+        setObjective(model.objective); setTitleOverride(configurationTitle); setNotes(model.notes); setTemplate(model.template); setSelectedModel(model)
         setCustomProfiles(model.profiles !== undefined)
         setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
         setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
@@ -638,7 +638,8 @@ export function MissionEditor(props: {
       <Show when={kind === "create"}>
         {/* An unsent draft beside another request's hold may still be kept as a brief. */}
         <MissionBriefSave instanceId={props.instanceId} buttonClass="button-secondary" disabled={(otherUncertain() ? !creationReady() || defaultsRefreshing() : locked()) || !isActive()} active={isActive}
-          initialName={initialConfigurationName} selectedId={selectedModel()?.id}
+          initialName={initialConfigurationName} selected={selectedModel()}
+          onSaved={saved => { if (selectedModel()?.id === saved.id) setSelectedModel(saved) }}
           draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })} />
       </Show>
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>

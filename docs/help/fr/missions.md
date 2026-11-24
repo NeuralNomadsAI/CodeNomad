@@ -28,7 +28,7 @@ Les agents peuvent lire, enregistrer, remplacer ou renommer, supprimer et répar
 
 **Enregistrer la configuration**, en bas à côté d’Annuler et Créer, nomme et conserve une configuration réutilisable. Cette action ne crée ni ne démarre de Mission. Programmation et **Démarrer automatiquement** se règlent séparément. L’engrenage des Missions ouvre les Préférences et la bibliothèque ; supprimer une configuration conserve les missions et conversations existantes.
 
-Pour remplacer une configuration enregistrée, utilisez son nom et choisissez **Remplacer**. Si plusieurs portent ce nom, chargez d’abord celle à remplacer. Un nouveau nom crée une copie.
+Pour remplacer une configuration enregistrée, utilisez son nom et choisissez **Remplacer**. Si plusieurs portent ce nom, chargez d’abord celle à remplacer. Un nouveau nom crée une copie tant que la bibliothèque dispose de place.
 
 ### Objectif, Titre et Notes {#mission-instructions}
 

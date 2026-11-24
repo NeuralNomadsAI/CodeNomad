@@ -28,7 +28,7 @@ Ajanlar yapılandırmaları okuyabilir, kaydedebilir, değiştirebilir veya yeni
 
 Altta İptal ve Oluştur yanındaki **Yapılandırmayı kaydet**, yeniden kullanılabilir bir yapılandırma saklar; Görev oluşturmaz veya başlatmaz. Zamanlama ve otomatik başlatma ayrı seçilir. Dişli, Tercihler ve kitaplığı açar; yapılandırmayı silmek mevcut görevleri ve konuşmaları korur.
 
-Kayıtlı bir yapılandırmayı değiştirmek için adını kullanıp **Değiştir**’i seçin. Aynı adı taşıyan birden fazla yapılandırma varsa önce değiştirmek istediğinizi yükleyin. Yeni ad ayrı bir kopya kaydeder.
+Kayıtlı bir yapılandırmayı değiştirmek için adını kullanıp **Değiştir**’i seçin. Aynı adı taşıyan birden fazla yapılandırma varsa önce değiştirmek istediğinizi yükleyin. Kitaplıkta yer olduğu sürece yeni ad ayrı bir kopya kaydeder.
 
 ### Hedef, Başlık ve Notlar {#mission-instructions}
 

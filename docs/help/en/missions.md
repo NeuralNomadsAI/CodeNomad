@@ -30,7 +30,7 @@ Agents can read, save, replace or rename, remove and repair saved configurations
 
 **Save configuration**, in the footer beside Cancel and Create, names and saves a reusable configuration. It does not create or start a Mission. Scheduling and **Start automatically** are separate choices. The Missions gear opens Preferences, including the saved-configuration library; removing a configuration keeps existing missions and conversations.
 
-To replace a saved configuration, use its name and choose **Replace**. If several share that name, load the one you want to replace first. A new name saves a separate copy.
+To replace a saved configuration, use its name and choose **Replace**. If several share that name, load the one you want to replace first. A new name saves a separate copy while the library has room.
 
 ### Objective, Title and Notes {#mission-instructions}
 

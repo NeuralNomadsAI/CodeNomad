@@ -163,10 +163,80 @@ test("saving a configuration under the same name requires confirmation and keeps
     assert.equal(await field.inputValue(), ` ${model.name} `)
     assert.equal(fixture.writes.length, 0)
     await field.press("Enter")
-    await confirm.click()
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).and(page.locator(":focus")).waitFor()
+    await page.keyboard.press("Tab")
+    await confirm.and(page.locator(":focus")).waitFor()
+    await page.keyboard.press("Enter")
     await field.waitFor({ state: "hidden" })
+    await page.getByRole("button", { name: await text(page, "missions.create.brief.saveAs"), exact: true }).and(page.locator(":focus")).waitFor()
     assert.equal(fixture.writes.length, 1)
     assert.deepEqual(fixture.bucket().settings.missionModels, [{ ...model, objective: "Updated objective" }])
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Third objective")
+    await nameBrief(page, model.name)
+    await field.press("Enter")
+    await confirm.click()
+    await field.waitFor({ state: "hidden" })
+    assert.equal(fixture.writes.length, 2)
+    assert.deepEqual(fixture.bucket().settings.missionModels, [{ ...model, objective: "Third objective" }])
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("renaming or deleting a loaded duplicate-name configuration conflicts instead of overwriting its namesake", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const otherID = "00000000-0000-4000-8000-000000000002"
+  const first = { version: 1, id: modelID, name: "Release brief", objective: "Objective A", notes: "", template: "custom" }
+  const second = { version: 1, id: otherID, name: "Release brief", objective: "Objective B", notes: "", template: "custom" }
+  const fixture = await setup(page, { missionModels: [first, second] })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await pickBrief(page, first.id)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Edited A")
+    await nameBrief(page, first.name)
+    const field = page.getByLabel("Configuration name", { exact: true })
+    const renamed = { ...first, name: "Release brief archived" }
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionModels: [renamed, second] } })
+    await dispatchOwner(page, fixture.bucket())
+    await field.press("Enter")
+    await page.getByRole("alert").filter({ hasText: "Reload saved configurations, then try again." }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.equal(await field.inputValue(), first.name)
+    assert.deepEqual(fixture.bucket().settings.missionModels, [renamed, second])
+    assert.equal(fixture.writes.length, 0)
+    // Deleting the loaded entry leaves only its namesake; saving still conflicts instead of selecting the other ID.
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionModels: [second] } })
+    await dispatchOwner(page, fixture.bucket())
+    await page.getByRole("button", { name: "Reload saved configurations", exact: true }).click()
+    await page.getByRole("alert").waitFor({ state: "detached" })
+    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>('input[aria-label="Configuration name"]')?.disabled)
+    await field.press("Enter")
+    await page.getByRole("alert").filter({ hasText: "Reload saved configurations, then try again." }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.deepEqual(fixture.bucket().settings.missionModels, [second])
+    assert.equal(fixture.writes.length, 0)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("editing a loaded configuration elsewhere before opening Save reports a conflict instead of losing those changes", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const model = { version: 1, id: modelID, name: "Release brief", objective: "Original objective", notes: "Original notes", template: "custom" }
+  const fixture = await setup(page, { missionModels: [model] })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await pickBrief(page, modelID)
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Local objective")
+    const changed = { ...model, notes: "Notes edited elsewhere" }
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionModels: [changed] } })
+    await dispatchOwner(page, fixture.bucket())
+    await nameBrief(page, model.name)
+    const field = page.getByLabel("Configuration name", { exact: true })
+    await field.press("Enter")
+    await page.getByRole("alert").filter({ hasText: "Reload saved configurations, then try again." }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.equal(await field.inputValue(), model.name)
+    assert.deepEqual(fixture.bucket().settings.missionModels, [changed])
+    assert.equal(fixture.writes.length, 0)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })

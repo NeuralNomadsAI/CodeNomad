@@ -28,7 +28,7 @@ Los agentes pueden leer, guardar, reemplazar o renombrar, eliminar y reparar con
 
 **Guardar configuración**, abajo junto a Cancelar y Crear, conserva una configuración reutilizable sin crear ni iniciar una Misión. Programación e inicio automático se eligen aparte. El engranaje abre Preferencias y la biblioteca; eliminar una configuración conserva las misiones y conversaciones.
 
-Para sustituir una configuración guardada, usa su nombre y elige **Reemplazar**. Si varias tienen ese nombre, carga primero la que quieras sustituir. Un nombre nuevo guarda una copia.
+Para sustituir una configuración guardada, usa su nombre y elige **Reemplazar**. Si varias tienen ese nombre, carga primero la que quieras sustituir. Un nombre nuevo guarda una copia mientras haya espacio en la biblioteca.
 
 ### Objetivo, Título y Notas {#mission-instructions}
 
