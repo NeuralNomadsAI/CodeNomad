@@ -97,7 +97,12 @@ export async function runNativeFixture(script, args, { directory = path.join(os.
   const receipt = path.join(root, "child.jsonl")
   console.log(`Native fixture runner diagnostics at ${root}`)
   const child = spawn(process.execPath, [script, ...args], { env: { ...env, CODENOMAD_NATIVE_TEST_RECEIPT: receipt }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true })
-  const maxSecretLen = allSecrets.reduce((max, s) => Math.max(max, s.length, Buffer.from(`opencode:${s}`).toString("base64").length), 0)
+  const maxSecretLen = allSecrets.reduce((max, s) => Math.max(
+    max,
+    s.length,
+    Buffer.from(`opencode:${s}`).toString("base64").length,
+    Buffer.from(`codenomad:${s}`).toString("base64").length,
+  ), 0)
   const overlap = Math.max(0, maxSecretLen - 1)
   const flushers = []
   for (const [stream, name, target] of [[child.stdout, "stdout.log", process.stdout], [child.stderr, "stderr.log", process.stderr]]) {

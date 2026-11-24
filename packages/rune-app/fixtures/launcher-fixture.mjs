@@ -84,7 +84,8 @@ const manifest=web?JSON.parse(await readFile(path.join(ui,'bundle-manifest.json'
 if(web){assert.equal(manifest.generator,'scripts/rune/bundle-web.mjs');assert.equal(manifest.testSupport,false,'Connected qualification requires the default product bundle')}
 const gitCount=Number(process.env.RUNE_TEST_GIT_COUNT??0)
 const review=path.join(path.dirname(project),'review')
-const gitEnv=gitPanel||webGitImages?{...await privateEnvironment(profile),GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null'}:undefined
+const gitBaseEnv=gitPanel||webGitImages||gitCount||((webMobile&&!webAndroid)||webSearch)?await privateEnvironment(profile):undefined
+const gitEnv=gitPanel||webGitImages?gitBaseEnv:undefined
 const git=async (...args)=>(await promisify(execFile)('git',['-C',project,...args],{windowsHide:true,env:gitEnv})).stdout
 if(webGitImages)await seedGitImages(project,git)
 if(gitPanel){
@@ -98,13 +99,13 @@ if(gitPanel){
   await git('worktree','add','--quiet','-b','review',review)
   await writeFile(path.join(project,'git-panel.txt'),'git-panel edited\n')
 }
-if(gitCount)await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL'}})
+if(gitCount)await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:gitBaseEnv})
 const linked=(webMobile&&!webAndroid||webSearch)?path.join(path.dirname(project),'linked'):null
 if(linked){
   const hooks=path.join(profile,'empty-hooks')
   await mkdir(hooks)
   const git=(...args)=>promisify(execFile)('git',['-c',`core.hooksPath=${hooks}`,'-C',project,...args],{
-    windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig')},
+    windowsHide:true,env:gitBaseEnv,
   })
    await git('init','--quiet',...(webSearch?['-b','history-fixture']:[]))
   await git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','--quiet','--allow-empty','-m','synthetic')

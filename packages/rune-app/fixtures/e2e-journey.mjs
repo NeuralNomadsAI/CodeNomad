@@ -10,7 +10,7 @@ import {journeyBrowser} from './journey-browser.mjs'
 import {withJourneyHost,assertPrivateChild,credentialVariable} from './journey-host.mjs'
 import {fixtureSystemEnvironment} from './private-profile.mjs'
 import {launchFixture} from './fixture-host.mjs'
-import {redactSecrets} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedRelay,redactSecrets} from '../../../scripts/native-fixture-http.mjs'
 
 const {values}=parseArgs({options:{opencode:{type:'string'},mode:{type:'string',default:'both'}}})
 assert(values.opencode&&path.isAbsolute(values.opencode),'Pass --opencode <absolute executable>; the shared service is forbidden')
@@ -36,14 +36,16 @@ if(filtered.length)console.error(`Fixture filtered environment variables: ${JSON
 if(process.platform==='win32'||existsSync(jobExecutable))process.env.CODENOMAD_FIXTURE_JOB_EXE=jobExecutable
 await mkdir(evidence,{recursive:true})
 
-async function journeyDesktop({origin,password,project,profile,env},report){
+async function journeyDesktop({origin,rustPid,password,project,profile,env},report){
   const probe='--probe-e2e-journey'
   requireTestSupport(clientBinary,{probe,env:assertPrivateChild(env),cwd:profile,output:profile})
   const state=path.join(profile,'rune-state')
   const session=path.join(profile,'session.txt')
+  const rustRelay=await createAttestedRelay(origin,rustPid)
+  try{
   for(const phase of ['start','reopen']){
     const child=launchFixture(clientBinary,[probe],{cwd:profile,redact:[password],env:assertPrivateChild({
-      ...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:password,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'en',
+      ...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:password,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'en',
       RUNE_STATE_DIR:state,RUNE_JOURNEY_OUTPUT:report.output,RUNE_JOURNEY_PHASE:phase,RUNE_JOURNEY_SESSION_FILE:session,
     },{RUNE_PASSWORD:password})})
     let windowClosed=false
@@ -65,6 +67,7 @@ async function journeyDesktop({origin,password,project,profile,env},report){
       await child.stop()
     }
   }
+  }finally{await rustRelay.close().catch(()=>{})}
   report.sessionID=await readFile(session,'utf8')
   assert.match(report.sessionID,/^ses_[\w-]+$/)
 }

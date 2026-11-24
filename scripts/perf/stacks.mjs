@@ -63,7 +63,7 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
       const setting = await request("/api/storage/config/ui", "PATCH", { settings: { holdLongAssistantReplies: false } }, cookie)
       if (!setting.ok) throw Error(`Could not enable long-reply following (${setting.status})`)
     }
-    await run(origin, cookie.slice(cookie.indexOf("=") + 1), {password})
+    await run(origin, cookie.slice(cookie.indexOf("=") + 1), {password, backendPid, fetch: backendFetch})
     completed = true
   } finally {
     await backendFetch?.close().catch(() => {})

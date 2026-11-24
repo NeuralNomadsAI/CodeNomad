@@ -5,7 +5,7 @@ import path from "node:path"
 import { createHash } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import { fixtureChildPid, stopFixtureHandle } from "./native-fixture-guards.mjs"
-import { createAttestedFetch, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
+import { createAttestedFetch } from "./native-fixture-http.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 
 const REGISTRATION = 32 * 1024, LOGS = 256 * 1024, OUTPUT = 512 * 1024
@@ -61,16 +61,7 @@ async function runWorker(input, child, onSecrets) {
           catch { resolve(failure("collector-credentials-unavailable")) }
         }
         else if (message.checkOwner) {
-          void (async () => {
-            let ok = owned()
-            if (ok) {
-              try {
-                const port = Number(new URL(input.expected.url).port)
-                await verifyLoopbackListenerOwner(port, pid)
-              } catch { ok = false }
-            }
-            if (worker.connected) worker.send({ owned: ok }, () => {})
-          })()
+          if (worker.connected) worker.send({ owned: owned() }, () => {})
         }
         else resolve(message)
       })
@@ -128,7 +119,7 @@ const ownerCheck = () => new Promise(resolve => {
 
 async function infoProbe(input, credentials) {
   if (!await ownerCheck()) return failure("owned-child-unavailable")
-  const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 2000)
+  const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 3000)
   const targetUrl = new URL("/api/info", credentials.info.url)
   const attested = createAttestedFetch(targetUrl.origin, Number(targetUrl.port), input.expected.pid)
   let response, reader

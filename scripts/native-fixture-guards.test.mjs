@@ -225,6 +225,7 @@ test("native pagination rejects cycles instead of looping indefinitely", () => {
 
 test("private Git setup cannot commit an inherited repository or index", t => {
   const base = process.platform === "win32" ? path.join(process.env.LOCALAPPDATA, "Temp", "opencode") : os.tmpdir()
+  fs.mkdirSync(base, { recursive: true })
   const root = fs.mkdtempSync(path.join(base, "fixture-git-isolation-"))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const caller = path.join(root, "caller"), project = path.join(root, "project"), hooks = path.join(root, "hooks")

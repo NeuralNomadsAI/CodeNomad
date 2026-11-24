@@ -8,7 +8,7 @@ import { now } from "./lib.mjs"
 import { withBackend } from "./stacks.mjs"
 
 export async function withBrowser(daemon, tree, root, followLongReplies, run) {
-  return withBackend(daemon, tree, root, followLongReplies, async (url, cookie) => {
+  return withBackend(daemon, tree, root, followLongReplies, async (url, cookie, { backendPid }) => {
     const profile = privatePath(path.join(root, "browser-profile"))
     await mkdir(profile, { recursive: true })
     // Chromium puts its Linux singleton socket under TMPDIR; keep it short.
@@ -20,6 +20,7 @@ export async function withBrowser(daemon, tree, root, followLongReplies, run) {
         profile,
         env: { ...daemon.env, ...(socketDir && { TMPDIR: socketDir }) },
         origin: localOrigin,
+        targetPid: backendPid,
       })
       context = await owned.browser.newContext({
         viewport: { width: 1440, height: 1440 }, locale: "en-US", serviceWorkers: "block",

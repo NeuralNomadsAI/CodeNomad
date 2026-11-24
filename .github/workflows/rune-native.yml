@@ -102,6 +102,7 @@ jobs:
           cargo build --locked -p codenomad-rune-app --bin codenomad-rune
           cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
           node --test scripts/native-fixture-guards.test.mjs
+          node --test scripts/native-fixture-cold-diagnostics.test.mjs
           node --test packages/rune-app/fixtures/*.test.mjs
       - name: Build shared client, state and views for WebAssembly
         run: |

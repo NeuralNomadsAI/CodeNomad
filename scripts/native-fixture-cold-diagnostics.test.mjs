@@ -27,24 +27,70 @@ const outerFunction = new AsyncFunction("context", `with(context) {${driver.slic
 async function fixture(t) {
   await mkdir(path.join(os.tmpdir(), "opencode"), { recursive: true })
   const root = await mkdtemp(path.join(os.tmpdir(), "opencode", "cold-diagnostics-test-"))
-  const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { env: {}, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+  const childScript = `
+    import { createServer } from "node:http";
+    let nextId = 0;
+    const inflight = new Map();
+    const server = createServer((req, res) => {
+      const id = ++nextId;
+      inflight.set(id, { req, res });
+      res.once("close", () => inflight.delete(id));
+      process.send?.({ req: id, method: req.method, url: req.url, authorization: req.headers.authorization });
+    });
+    process.on("message", msg => {
+      if (msg?.close) { server.closeAllConnections(); server.close(() => process.exit(0)); return; }
+      const entry = inflight.get(msg?.id);
+      if (!entry) return;
+      if (msg.action === "destroy") { entry.req.socket.destroy(); inflight.delete(msg.id); return; }
+      if (msg.action === "writeHead") { entry.res.writeHead(msg.status, msg.headers); return; }
+      if (msg.action === "write") { entry.res.write(msg.body); return; }
+      if (msg.action === "end") {
+        if (msg.status !== undefined) entry.res.writeHead(msg.status, msg.headers);
+        entry.res.end(msg.body);
+        inflight.delete(msg.id);
+      }
+    });
+    server.listen(0, "127.0.0.1", () => process.send?.({ ready: server.address().port }));
+  `
+  const child = spawn(process.execPath, ["--input-type=module", "-e", childScript], { env: {}, windowsHide: true, stdio: ["ignore", "pipe", "pipe", "ipc"] })
   child.stdout.resume(); child.stderr.resume()
   const closed = new Promise(resolve => child.once("close", resolve))
   let handler, requests = [], learned = []
-  const server = createServer((request, response) => {
-    requests.push({ method: request.method, url: request.url, authorization: request.headers.authorization })
-    if (handler) return handler(request, response)
-    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ pid: child.pid, version: "2.2.3", private: password }))
+  const port = await new Promise((resolve, reject) => {
+    const onMessage = msg => { if (msg?.ready) { child.off("message", onMessage); resolve(msg.ready) } }
+    child.on("message", onMessage)
+    child.once("exit", code => reject(Error(`Cold diagnostics fixture child exited early (${code})`)))
+    child.once("error", reject)
   })
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve))
+  child.on("message", msg => {
+    if (!msg?.req) return
+    requests.push({ method: msg.method, url: msg.url, authorization: msg.authorization })
+    const send = payload => { if (child.connected) try { child.send({ id: msg.req, ...payload }) } catch {} }
+    let headStatus, headHeaders, headSent = false
+    const fakeReq = { method: msg.method, url: msg.url, headers: { authorization: msg.authorization }, socket: { destroy: () => send({ action: "destroy" }) } }
+    const fakeRes = {
+      writeHead(status, headers) { headStatus = status; headHeaders = headers; return fakeRes },
+      write(body) {
+        if (!headSent && headStatus !== undefined) { headSent = true; send({ action: "writeHead", status: headStatus, headers: headHeaders }) }
+        send({ action: "write", body: String(body ?? "") })
+        return true
+      },
+      end(body) {
+        send({ action: "end", ...(headSent ? {} : { status: headStatus, headers: headHeaders }), body: body === undefined ? undefined : String(body) })
+        return fakeRes
+      },
+    }
+    if (handler) return void Promise.resolve(handler(fakeReq, fakeRes)).catch(() => send({ action: "destroy" }))
+    fakeRes.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ pid: child.pid, version: "2.2.3", private: password }))
+  })
   t.after(async () => {
-    server.closeAllConnections(); await new Promise(resolve => server.close(resolve))
+    if (child.connected) try { child.send({ close: true }) } catch {}
     if (child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, closed)
     await closed
     assert(child.exitCode !== null || child.signalCode !== null, `Owned fixture child ${child.pid} exited and closed`)
     await rm(root, { recursive: true, force: true })
   })
-  const expected = { id: "owned-cold", pid: child.pid, url: `http://127.0.0.1:${server.address().port}`, version: "2.2.3" }
+  const expected = { id: "owned-cold", pid: child.pid, url: `http://127.0.0.1:${port}`, version: "2.2.3" }
   const registrationFile = path.join(root, "xdg-state", "opencode", "service.json"), databaseFile = path.join(root, "fixture.db")
   await mkdir(path.dirname(registrationFile), { recursive: true })
   const register = async (patch = {}) => writeFile(registrationFile, JSON.stringify({ ...expected, password, ...patch }))
@@ -164,6 +210,20 @@ test("a genuinely refused loopback port records only a safe transport category",
   assert(Date.now() - start < 5000)
   assert(!JSON.stringify(result).includes("ECONNREFUSED"))
   assert(!JSON.stringify(result).includes(f.expected.url))
+})
+
+test("foreign loopback listener owned by another PID is refused before sending credentials", async t => {
+  const f = await fixture(t)
+  let foreignRequests = 0
+  const foreign = createServer((_req, res) => { foreignRequests++; res.writeHead(200).end("{}") })
+  t.after(() => { foreign.closeAllConnections(); return new Promise(resolve => foreign.close(resolve)) })
+  await new Promise(resolve => foreign.listen(0, "127.0.0.1", resolve))
+  f.expected.url = `http://127.0.0.1:${foreign.address().port}`
+  await f.register()
+  const result = await f.collect()
+  assert.deepEqual(result.evidence.http, { error: "http-transport-unavailable" })
+  assert.equal(foreignRequests, 0)
+  assert.equal(f.requests.length, 0)
 })
 
 test("collector stdout and stderr use native zero-retention discard, with IPC-only results", async () => {

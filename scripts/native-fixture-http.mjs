@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {execFile} from 'node:child_process'
-import {existsSync,realpathSync} from 'node:fs'
+import {createHash} from 'node:crypto'
+import {existsSync,readFileSync,realpathSync} from 'node:fs'
 import {readdir,readFile,readlink} from 'node:fs/promises'
 import {Agent as HttpAgent,createServer,request as httpRequest} from 'node:http'
 import {createRequire} from 'node:module'
@@ -13,9 +14,6 @@ const execFileAsync=promisify(execFile)
 const repoRoot=path.resolve(fileURLToPath(new URL('..',import.meta.url)))
 const repoRootReal=realpathSync(repoRoot)
 const worktreesDir=path.dirname(repoRootReal)
-const commonRepoRoot=path.basename(worktreesDir)==='worktrees'&&path.basename(path.dirname(worktreesDir))==='.codenomad'
-  ? path.resolve(worktreesDir,'../..')
-  : repoRootReal
 const worktreeNodeModules=path.join(repoRoot,'node_modules')
 
 function isWithin(root,target){
@@ -28,10 +26,24 @@ function packageNameOf(specifier){
   return specifier.startsWith('@')?parts.slice(0,2).join('/'):parts[0]
 }
 
+function sameLockfile(dirA,dirB){
+  const lockA=path.join(dirA,'package-lock.json'),lockB=path.join(dirB,'package-lock.json')
+  if(!existsSync(lockA)||!existsSync(lockB))return false
+  const hash=file=>createHash('sha256').update(readFileSync(file)).digest('hex')
+  return hash(lockA)===hash(lockB)
+}
+
 export function resolveWorktreePackage(specifier,nodeModulesDir=worktreeNodeModules){
   assert(existsSync(nodeModulesDir),'Worktree node_modules is required; parent checkout dependencies are forbidden')
   const rootReal=realpathSync(nodeModulesDir)
-  assert(isWithin(commonRepoRoot,rootReal)||isWithin(path.resolve(nodeModulesDir,'..'),rootReal),
+  const inWorktree=isWithin(repoRootReal,rootReal)
+  const inLockMatchedSibling=nodeModulesDir===worktreeNodeModules
+    && path.basename(worktreesDir)==='worktrees'
+    && path.basename(path.dirname(worktreesDir))==='.codenomad'
+    && path.basename(rootReal)==='node_modules'
+    && path.dirname(path.dirname(rootReal))===worktreesDir
+    && sameLockfile(repoRootReal,path.dirname(rootReal))
+  assert(inWorktree||inLockMatchedSibling,
     `node_modules resolved outside repository boundary: ${rootReal}`)
   const pkg=packageNameOf(specifier)
   const pkgDir=path.join(nodeModulesDir,...pkg.split('/'))
@@ -350,6 +362,12 @@ export async function createAttestedRelay(targetOrigin,pid,onRequest){
     if(!url)return
     if(onRequest&&onRequest(req,res,url)===false)return
     const upstream=httpRequest(url,{agent,method:req.method,headers:{...req.headers,host:url.host}},response=>{
+      if(response.statusCode>=300&&response.statusCode<400){
+        response.destroy()
+        if(!res.headersSent)res.writeHead(502)
+        res.end('Upstream redirect forbidden in attested relay')
+        return
+      }
       res.writeHead(response.statusCode,response.headers)
       response.pipe(res)
     })

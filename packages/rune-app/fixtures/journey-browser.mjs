@@ -20,6 +20,7 @@ export async function journeyBrowser(host, web, report, executablePath){
     storageState=await http.storageState()
   }finally{await http.dispose()}
   const rustFetch=rustPid?createAttestedFetch(origin,Number(new URL(origin).port),rustPid):null
+  const cookieHeader=(storageState?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
   const owned=await launchOwnedChromium({executablePath,profile,env:assertPrivateChild(env),origin,targetPid:rustPid})
   const {browser}=owned
   report.chromiumPID=owned.pid
@@ -27,7 +28,7 @@ export async function journeyBrowser(host, web, report, executablePath){
     const context=await browser.newContext({...mobileContext(browser),storageState,serviceWorkers:'block',colorScheme:'light'})
     const refused=[], errors=[]
     report.refused=refused
-    const reads=await guardJourney(context,{origin,project,web,refused,attestedFetch:rustFetch})
+    const reads=await guardJourney(context,{origin,project,web,refused,attestedFetch:rustFetch,cookieHeader})
     const page=await context.newPage()
     await traceJourneyTouch(page,[
       labels['instanceShell.rightPanel.tabs.files'],labels['instanceShell.rightPanel.tabs.status'],

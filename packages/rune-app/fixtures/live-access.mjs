@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {execFile} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
 import {existsSync} from 'node:fs'
-import {copyFile, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, unlink, writeFile} from 'node:fs/promises'
+import {copyFile, link, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile} from 'node:fs/promises'
 import {createServer} from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -241,33 +241,66 @@ async function removeExecutable(file){
 }
 
 export async function acquireProfileLock(lease){
-  const writeOwner=async fh=>{
-    await fh.writeFile(JSON.stringify({pid:process.pid})+'\n')
-    return fh
+  const tmp=`${lease}.tmp-${randomUUID()}`
+  const payload=JSON.stringify({pid:process.pid,nonce:randomUUID()})+'\n'
+  const linkFresh=async()=>{
+    await writeFile(tmp,payload,{flag:'wx'})
+    try{
+      await link(tmp,lease)
+      return await open(lease,'r+')
+    }finally{
+      await unlink(tmp).catch(()=>{})
+    }
   }
   try{
-    return await writeOwner(await open(lease,'wx'))
+    return await linkFresh()
   }catch(error){
     if(error.code!=='EEXIST')throw error
-    let stale=false
+    const reclaim=`${lease}.reclaim`
+    let reclaimLock
     try{
-      const raw=JSON.parse(await readFile(lease,'utf8'))
-      if(Number.isSafeInteger(raw?.pid)&&raw.pid>0&&raw.pid!==process.pid){
-        try{process.kill(raw.pid,0)}catch(probe){if(probe.code==='ESRCH')stale=true}
+      reclaimLock=await open(reclaim,'wx')
+    }catch(reclaimErr){
+      if(reclaimErr.code!=='EEXIST')throw reclaimErr
+      // Recover an abandoned reclaim marker only if older than 10s.
+      const info=await stat(reclaim).catch(()=>null)
+      if(!info||Date.now()-info.mtimeMs<10_000)throw error
+      await unlink(reclaim).catch(()=>{})
+      reclaimLock=await open(reclaim,'wx').catch(()=>{throw error})
+    }
+    try{
+      let stale=false
+      const text=await readFile(lease,'utf8').catch(readErr=>{if(readErr.code==='ENOENT')return null;throw readErr})
+      if(text===null){
+        return await linkFresh()
       }
-    }catch{}
-    if(!stale)throw error
-    // Atomically claim the stale lock via rename so concurrent reclaimers cannot unlink a fresh lock.
-    const claimed=`${lease}.stale-${randomUUID()}`
-    try{await rename(lease,claimed)}catch(renameErr){if(renameErr.code==='ENOENT')throw error;throw renameErr}
-    try{await unlink(claimed)}catch(unlinkErr){if(unlinkErr.code!=='ENOENT')throw unlinkErr}
-    return await writeOwner(await open(lease,'wx'))
+      if(!text.trim()){
+        const info=await stat(lease).catch(()=>null)
+        if(info&&Date.now()-info.mtimeMs>=2_000)stale=true
+      }else{
+        try{
+          const raw=JSON.parse(text)
+          if(Number.isSafeInteger(raw?.pid)&&raw.pid>0&&raw.pid!==process.pid){
+            try{process.kill(raw.pid,0)}catch(probe){if(probe.code==='ESRCH')stale=true}
+          }
+        }catch{
+          const info=await stat(lease).catch(()=>null)
+          if(info&&Date.now()-info.mtimeMs>=2_000)stale=true
+        }
+      }
+      if(!stale)throw error
+      await unlink(lease).catch(unlinkErr=>{if(unlinkErr.code!=='ENOENT')throw unlinkErr})
+      return await linkFresh()
+    }finally{
+      await reclaimLock.close().catch(()=>{})
+      await unlink(reclaim).catch(()=>{})
+    }
   }
 }
 
 async function purgeCrashResidues(profile){
   for(const name of await readdir(profile)){
-    if(!/^(?:native-(?:runtime|config)-[0-9a-f-]+|opencode-[0-9a-f-]+(?:\.exe)?|running\.lock\.stale-[0-9a-f-]+)$/i.test(name))continue
+    if(!/^(?:native-(?:runtime|config)-[0-9a-f-]+|opencode-[0-9a-f-]+(?:\.exe)?|running\.lock\.(?:stale|tmp)-[0-9a-f-]+)$/i.test(name))continue
     const target=path.join(profile,name)
     const stat=await lstat(target)
     if(stat.isSymbolicLink())continue

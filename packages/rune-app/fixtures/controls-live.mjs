@@ -5,7 +5,7 @@ import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
 import {requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
-import {createAttestedFetch} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedRelay} from '../../../scripts/native-fixture-http.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
 await withNative(async native=>{
@@ -20,11 +20,12 @@ assert(session?.id&&session.location.directory===project)
 assert.deepEqual(session.permissions,permissions,'session must enforce deny-all before launching Rune')
 const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'fixture-controls-live',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile}
 const server=launchFixture(serverBinary,[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,'fixture-controls-live']})
-let client,result=1,observer,stream,watch,watchError=null,events=[],cleaned=false,rustFetch
+let client,result=1,observer,stream,watch,watchError=null,events=[],cleaned=false,rustFetch,rustRelay
 try{
   const origin=await server.ready(rustOrigin)
   const rustPid=await server.pid()
   rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
+  rustRelay=await createAttestedRelay(origin,rustPid)
   const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'fixture-controls-live'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const response=await rustFetch(`${origin}/api/workspaces`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({path:project}),signal:AbortSignal.timeout(15000)})
@@ -43,7 +44,7 @@ try{
       const value=JSON.parse(raw);if(value.type==='instance.event'&&value.event?.data?.sessionID===session.id)events.push(value.event.type)
     }
   }})().catch(error=>{if(!observer.signal.aborted)watchError??=error})
-  client=launchFixture(clientBinary,['--probe-real-controls'],{cwd:profile,env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-controls-live',RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_TEST_MODEL:JSON.stringify(target),RUNE_LOCALE:'fr'},redact:[native.password,'fixture-controls-live']})
+  client=launchFixture(clientBinary,['--probe-real-controls'],{cwd:profile,env:{...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:'fixture-controls-live',RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_TEST_MODEL:JSON.stringify(target),RUNE_LOCALE:'fr'},redact:[native.password,'fixture-controls-live']})
   result=await Promise.race([client.closed,delay(120000,124,{ref:false})])
   if(result===124)await client.stop()
   process.stdout.write(client.output())
@@ -66,7 +67,7 @@ try{
   if(fresh.time?.busy>(fresh.time?.idle??0))await native.read(`/api/session/${session.id}/interrupt`,{method:'POST',body:'{"resume":false}'})
   await native.read(`/api/session/${session.id}`,{method:'DELETE'});cleaned=true
   }finally{
-  try{await rustFetch?.close()}finally{await server.stop()}
+  try{await Promise.allSettled([rustFetch?.close(),rustRelay?.close()])}finally{await server.stop()}
   await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,events,session:session.id,project,cleaned},null,2));await writeFile(path.join(profile,'rust.log'),server.output())
   }
 }

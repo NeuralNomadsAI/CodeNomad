@@ -177,11 +177,59 @@ test('verifyLoopbackConnectionPeer rejects live foreign and dead PIDs, and attes
   releaseAgent()
   await assert.rejects(agentReq,/closed|Attested|hang up/i)
 
-  // Attested relay forwards traffic to the owned loopback target and closes cleanly.
-  const relay=await createAttestedRelay(srv.origin,process.pid)
+  // Attested relay forwards traffic to the owned loopback target, refuses 3xx redirects, and closes cleanly.
+  let relayMode='ok'
+  const relayTargetSrv=await listen(t,(_req,res)=>{
+    if(relayMode==='redirect'){res.writeHead(302,{location:'http://127.0.0.1:4096/secret'});res.end();return}
+    res.writeHead(200);res.end('ok')
+  })
+  const relay=await createAttestedRelay(relayTargetSrv.origin,process.pid)
   try{
     const res=await fixtureFetch(new URL('/hello',relay.origin),{signal:AbortSignal.timeout(5000)})
     assert.equal(res.status,200)
     assert.equal(await res.text(),'ok')
+    relayMode='redirect'
+    const redirected=await fixtureFetch(new URL('/redirect',relay.origin),{signal:AbortSignal.timeout(5000)})
+    assert.equal(redirected.status,502)
   }finally{await relay.close()}
+})
+
+test('resolveWorktreePackage refuses parent or external node_modules',{timeout:15000},async t=>{
+  const {mkdtemp,mkdir,rm,writeFile}=await import('node:fs/promises')
+  const os=await import('node:os')
+  const path=await import('node:path')
+  const {resolveWorktreePackage}=await import('../../../scripts/native-fixture-http.mjs')
+  const external=await mkdtemp(path.join(os.tmpdir(),'codenomad-ext-nm-'))
+  t.after(()=>rm(external,{recursive:true,force:true}))
+  const extNm=path.join(external,'node_modules')
+  await mkdir(path.join(extNm,'fake-pkg'),{recursive:true})
+  await writeFile(path.join(extNm,'fake-pkg','package.json'),JSON.stringify({name:'fake-pkg',main:'index.js'}))
+  await writeFile(path.join(extNm,'fake-pkg','index.js'),'module.exports={}')
+  assert.throws(()=>resolveWorktreePackage('fake-pkg',extNm),/outside repository boundary/)
+})
+
+test('acquireProfileLock serializes concurrent stale recovery and reclaims aged empty locks',{timeout:15000},async t=>{
+  const {mkdtemp,rm,unlink,utimes,writeFile}=await import('node:fs/promises')
+  const os=await import('node:os')
+  const path=await import('node:path')
+  const {acquireProfileLock}=await import('./live-access.mjs')
+  const dir=await mkdtemp(path.join(os.tmpdir(),'codenomad-lock-test-'))
+  t.after(()=>rm(dir,{recursive:true,force:true}))
+  const lockPath=path.join(dir,'running.lock')
+  // Stale lock owned by a dead process: two concurrent contenders must produce exactly one winner.
+  await writeFile(lockPath,JSON.stringify({pid:999999999,startedAt:Date.now()-60_000}))
+  const results=await Promise.allSettled([acquireProfileLock(lockPath),acquireProfileLock(lockPath)])
+  const winners=results.filter(r=>r.status==='fulfilled')
+  const losers=results.filter(r=>r.status==='rejected')
+  assert.equal(winners.length,1,'exactly one concurrent contender may reclaim a stale lock')
+  assert.equal(losers.length,1,'second contender must fail while the reclaimed lock is held')
+  await winners[0].value.close()
+  await unlink(lockPath)
+  // Aged empty lock (crash between file creation and write): must be reclaimed once older than 2s.
+  await writeFile(lockPath,'')
+  const old=new Date(Date.now()-5000)
+  await utimes(lockPath,old,old)
+  const reclaimed=await acquireProfileLock(lockPath)
+  await reclaimed.close()
+  await unlink(lockPath)
 })

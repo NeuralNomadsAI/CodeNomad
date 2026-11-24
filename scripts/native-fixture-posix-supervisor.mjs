@@ -1,8 +1,11 @@
 // POSIX fallback supervisor when the Rust fixture job binary is not built in JS-only CI jobs.
-import { spawn } from "node:child_process"
+import { execFileSync, spawn } from "node:child_process"
 
 const parentPid = Number(process.env.CODENOMAD_FIXTURE_PARENT_PID || 0)
 delete process.env.CODENOMAD_FIXTURE_PARENT_PID
+const rawGrace = Number(process.env.CODENOMAD_FIXTURE_GRACE_MS || 0)
+const graceBudgetMs = Number.isFinite(rawGrace) && rawGrace >= 50 && rawGrace <= 2000 ? rawGrace : 800
+const childEnv = { ...process.env, CODENOMAD_FIXTURE_GRACE_MS: String(Math.max(50, Math.floor(graceBudgetMs / 4))) }
 const rawArgs = process.argv.slice(2)
 const sameGroup = rawArgs[0] === "--same-group"
 const [command, ...args] = sameGroup ? rawArgs.slice(1) : rawArgs
@@ -11,17 +14,36 @@ if (!command) {
   process.exit(1)
 }
 
-const child = spawn(command, args, { detached: !sameGroup, stdio: "inherit", env: process.env })
+const child = spawn(command, args, { detached: !sameGroup, stdio: "inherit", env: childEnv })
 let terminating = false
 let childExited = false
+
+function sameGroupPeers() {
+  const peers = new Set()
+  if (!childExited && child.pid) {
+    try { process.kill(child.pid, 0); peers.add(child.pid) } catch (error) { if (error.code === "EPERM") peers.add(child.pid) }
+  }
+  try {
+    const out = execFileSync("ps", ["-ax", "-o", "pid=,pgid="], { encoding: "utf8", timeout: 1000 })
+    for (const line of out.split(/\r?\n/)) {
+      const parts = line.trim().split(/\s+/)
+      if (parts.length < 2) continue
+      const pid = Number(parts[0]), pgid = Number(parts[1])
+      if (pgid === process.pid && pid !== process.pid && Number.isSafeInteger(pid) && pid > 0) peers.add(pid)
+    }
+  } catch {}
+  return [...peers]
+}
 
 function signalFamily(signal) {
   if (!child.pid) return
   if (sameGroup) {
-    try { process.kill(child.pid, signal) } catch {}
-    // In a PTY session, this supervisor is the process group leader; avoid killing self on SIGKILL.
     if (signal === "SIGTERM") {
       try { process.kill(-process.pid, "SIGTERM") } catch {}
+    } else {
+      for (const pid of sameGroupPeers()) {
+        try { process.kill(pid, signal) } catch {}
+      }
     }
     return
   }
@@ -30,33 +52,27 @@ function signalFamily(signal) {
 
 function familyAlive() {
   if (!child.pid) return false
-  if (sameGroup) {
-    if (childExited) return false
-    try { process.kill(child.pid, 0); return true } catch (error) { return error.code === "EPERM" }
-  }
+  if (sameGroup) return sameGroupPeers().length > 0
   try { process.kill(-child.pid, 0); return true } catch (error) { return error.code === "EPERM" }
 }
 
-function shutdown(code, graceMs = 150) {
+function shutdown(code, graceMs = graceBudgetMs) {
   if (terminating) return
   terminating = true
   clearInterval(watch)
   signalFamily("SIGTERM")
-  const graceUntil = Date.now() + graceMs
   const deadline = Date.now() + 5000
+  const graceUntil = Math.min(Date.now() + graceMs, deadline)
   let escalated = false
   const wait = setInterval(() => {
     const alive = familyAlive()
     if (!alive) {
       clearInterval(wait)
-      if (sameGroup) {
-        // Ensure any remaining same-group descendants in the PTY session receive SIGKILL as we exit.
-        try { process.kill(-process.pid, "SIGKILL") } catch {}
-      }
       process.exit(code)
     }
     if (Date.now() >= deadline) {
       clearInterval(wait)
+      signalFamily("SIGKILL")
       process.exit(1)
     }
     if (!escalated && Date.now() >= graceUntil) {

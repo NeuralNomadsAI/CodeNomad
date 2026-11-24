@@ -6,7 +6,7 @@ import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
 import {args,requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
-import {fixtureFetch} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedRelay} from '../../../scripts/native-fixture-http.mjs'
 import {prepareRealHistory} from './real-history-prepare.mjs'
 import {seedRealHistory} from './real-history-seed.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
@@ -25,20 +25,23 @@ const suffix=path.basename(profile).slice(-8),longTitle=`Rune · reprise réelle
 await native.read(`/api/session/${fork.id}`,{method:'PATCH',body:JSON.stringify({title:longTitle,permissions:deny})})
 const verified=(await native.read(`/api/session/${fork.id}`)).data;assert.deepEqual(verified.permissions,deny)
 const copied=await native.read(`/api/session/${fork.id}/message?limit=200`);assert.equal(copied.data.length,200);assert(copied.cursor?.next)
-const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'interactive-rune-owned-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
+const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'interactive-rune-owned-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
 const server=launchFixture(serverBinary,[directory,path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,'interactive-rune-owned-backend']})
-let child,observer,stream,watchTask,guardTask,stopped=false,newID,guardError=null
+let child,observer,stream,watchTask,guardTask,rustFetch,rustRelay,stopped=false,newID,guardError=null
 const guarded=new Set([source.id,fork.id])
 const stats={sourceID:source.id,longID:fork.id,longTitle,newTitle,sourceRowsInPage:first.data.length,sourceHasOlder:true,longCopiedRowsInPage:copied.data.length,newID:null,turns:[],tools:0}
 const save=()=>writeFile(path.join(profile,'proof.json'),JSON.stringify(stats,null,2))
 try{
   const origin=await server.ready(rustOrigin)
-  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'interactive-rune-owned-backend'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200)
+  const rustPid=await server.pid()
+  rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
+  rustRelay=await createAttestedRelay(origin,rustPid)
+  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'interactive-rune-owned-backend'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
-  const call=(route,init={})=>fixtureFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
+  const call=(route,init={})=>rustFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
   observer=new AbortController()
   const openTimer=setTimeout(()=>observer.abort(Error('SSE open timed out')),15000)
-  try{stream=await fixtureFetch(`${origin}/api/events?clientId=rune-interactive-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal})}
+  try{stream=await rustFetch(`${origin}/api/events?clientId=rune-interactive-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal})}
   finally{clearTimeout(openTimer)}
   assert.equal(stream.status,200)
   const fragments=new Map()
@@ -80,7 +83,7 @@ try{
     }
   })()
   await save();await writeFile(path.join(profile,'session.json'),JSON.stringify({profile,directory,sourceID:source.id,longID:fork.id,longTitle,newTitle}))
-  child=launchFixture(clientBinary,[],{cwd:profile,redact:[native.password,'interactive-rune-owned-backend'],env:{...native.runtimeEnv,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
+  child=launchFixture(clientBinary,[],{cwd:profile,redact:[native.password,'interactive-rune-owned-backend'],env:{...native.runtimeEnv,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
   let stderrBuffer=''
   child.child.stderr.on('data',d=>{
     stderrBuffer+=d
@@ -100,7 +103,7 @@ try{
 }finally{
   stopped=true;observer?.abort();void stream?.body?.cancel?.().catch(()=>{})
   await Promise.race([Promise.allSettled([watchTask,guardTask].filter(Boolean)),delay(2000,undefined,{ref:false})])
-  try{await child?.stop()}finally{await server.stop()}
+  try{await child?.stop()}finally{await Promise.allSettled([rustFetch?.close(),rustRelay?.close(),server.stop()])}
   await save();await writeFile(path.join(profile,'rust.log'),server.output())
 }
 },{denyAllTools:true})

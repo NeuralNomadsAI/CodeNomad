@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {spawnFixtureChild,stopFixtureChild} from '../native-fixture-guards.mjs'
-import {fixtureFetch,redactSecrets,resolveLocalExecutable,withoutFixtureProxy} from '../native-fixture-http.mjs'
+import {createAttestedRelay,redactSecrets,resolveLocalExecutable,withoutFixtureProxy} from '../native-fixture-http.mjs'
 import {registerFixtureChild} from '../../packages/rune-app/fixtures/fixture-host.mjs'
 import {MARKER, now, sleep} from './lib.mjs'
 import {withBackend} from './stacks.mjs'
@@ -34,21 +34,23 @@ export async function withRune(binary, rustBinary, daemon, session, root, run) {
   assert.equal((await daemon.call('GET','/api/info')).pid,daemon.pid,'Rune workload must use the owned benchmark daemon')
   assert(daemon.pruning,'Rune benchmark requires explicitly provisioned pruning capability')
   await daemon.pruning.window(session)
-  return withBackend(daemon, undefined, root, false, async (origin, cookie, {password}) => {
-    const opened = await fixtureFetch(`${origin}/api/workspaces`, {method: 'POST', headers: {'content-type': 'application/json', cookie: `codenomad_session=${cookie}`},
+  return withBackend(daemon, undefined, root, false, async (origin, cookie, {password, backendPid, fetch: backendFetch}) => {
+    const opened = await backendFetch(`${origin}/api/workspaces`, {method: 'POST', headers: {'content-type': 'application/json', cookie: `codenomad_session=${cookie}`},
       body: JSON.stringify({path: daemon.project}), signal: AbortSignal.timeout(30_000)})
     assert(opened.ok, `Rune benchmark workspace failed (${opened.status})`)
     const workspace = await opened.json()
     assert(typeof workspace.id === 'string' && workspace.id.length > 0, 'Missing private workspace identity')
-    const history=await fixtureFetch(`${origin}/api/workspaces/${workspace.id}/session-history/window`,{method:'POST',
+    const history=await backendFetch(`${origin}/api/workspaces/${workspace.id}/session-history/window`,{method:'POST',
       headers:{'content-type':'application/json',cookie:`codenomad_session=${cookie}`},body:JSON.stringify({sessionID:session,target:{kind:'latest'}}),signal:AbortSignal.timeout(20_000)})
     const historyBody=await history.json()
     await writeFile(path.join(root,'history-capability.json'),JSON.stringify({nativeWindowProven:true,httpStatus:history.status,
       status:historyBody.status??'invalid',reason:historyBody.reason,messages:Array.isArray(historyBody.messages)?historyBody.messages.length:undefined},null,2))
     assert(history.ok&&historyBody.status==='window','Rust history capability unavailable; inspect history-capability.json and native pruning-proof.json')
+    const rustRelay = await createAttestedRelay(origin, backendPid)
+    try {
     const group = process.platform !== 'win32'
     const child = spawnFixtureChild(binary, ['--probe-latency','--tree',path.join(root,'unexpected-product-tree.json'),'--at','0'], {cwd: root, detached: group, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
-      env: withoutFixtureProxy({...daemon.env, RUNE_BACKEND: `${origin}/`, RUNE_WORKSPACE: workspace.id, RUNE_SESSION: session, RUNE_PASSWORD: password, RUNE_LOCALE: 'en'})})
+      env: withoutFixtureProxy({...daemon.env, RUNE_BACKEND: `${rustRelay.origin}/`, RUNE_WORKSPACE: workspace.id, RUNE_SESSION: session, RUNE_PASSWORD: password, RUNE_LOCALE: 'en'})})
     const startedBy = new Date()
     const pending = new Map()
     let serial = 0, buffer = '', stderr = '', failure
@@ -124,6 +126,9 @@ export async function withRune(binary, rustBinary, daemon, session, root, run) {
         await writeFile(path.join(root, 'rune-probe.log'), redactSecrets(stderr, [password, daemon.password]))
       }
       if(completed)assert(graceful,'Rune latency probe must acknowledge stop and exit 0')
+    }
+    } finally {
+      await rustRelay.close().catch(() => {})
     }
   }, {rustBinary})
 }

@@ -110,6 +110,26 @@ impl ParentWatch {
     }
 }
 
+#[cfg(unix)]
+fn reap_children() {
+    // Reap any orphaned grandchildren reparented to this supervisor so zombies cannot block family_is_empty.
+    loop {
+        let rc = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
+        if rc <= 0 {
+            break;
+        }
+    }
+}
+
+#[cfg(unix)]
+fn grace_budget_ms() -> u64 {
+    std::env::var("CODENOMAD_FIXTURE_GRACE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&ms| ms >= 50 && ms <= 2000)
+        .unwrap_or(800)
+}
+
 fn run() -> io::Result<i32> {
     #[cfg(unix)]
     install_signal_handlers();
@@ -126,12 +146,19 @@ fn run() -> io::Result<i32> {
         .next()
         .ok_or_else(|| io::Error::other("Expected a fixture executable and its arguments"))?;
     let mut command = Command::new(program);
+    #[cfg(unix)]
+    let grace_ms = grace_budget_ms();
     command
         .args(args)
         .env_remove("CODENOMAD_FIXTURE_PARENT_PID")
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    #[cfg(unix)]
+    command.env(
+        "CODENOMAD_FIXTURE_GRACE_MS",
+        (grace_ms / 4).max(50).to_string(),
+    );
     let mut child = if inherit_console {
         OwnedProcess::spawn_inherited_console(&mut command, |pid| {
             eprintln!("CODENOMAD_FIXTURE_PID={pid}")
@@ -154,13 +181,16 @@ fn run() -> io::Result<i32> {
         sleep(pause);
     };
     if status.is_none() || !child.family_is_empty()? {
+        let total_deadline = Instant::now() + Duration::from_secs(5);
         #[cfg(unix)]
         {
-            // Give nested fixture supervisors enough time to stop their own subgroups before SIGKILL.
+            // Nested supervisors receive a strictly shorter grace window so inner groups escalate before outer SIGKILL.
             child.request_terminate()?;
-            let grace = Instant::now() + Duration::from_millis(800);
-            while Instant::now() < grace {
+            let grace_until =
+                (Instant::now() + Duration::from_millis(grace_ms)).min(total_deadline);
+            while Instant::now() < grace_until {
                 let _ = child.try_wait();
+                reap_children();
                 if child.family_is_empty()? {
                     break;
                 }
@@ -170,13 +200,14 @@ fn run() -> io::Result<i32> {
         if !child.family_is_empty()? {
             child.terminate()?;
         }
-        let deadline = Instant::now() + Duration::from_secs(5);
         while !child.family_is_empty()? {
             let _ = child.try_wait();
+            #[cfg(unix)]
+            reap_children();
             if child.family_is_empty()? {
                 break;
             }
-            if Instant::now() >= deadline {
+            if Instant::now() >= total_deadline {
                 return Err(io::Error::other("Fixture job did not finish terminating"));
             }
             sleep(pause);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {bundleAssetPaths,fulfillWorkspaceCreation,workspacePolicy} from '../../../scripts/rune/web-workspace-policy.mjs'
 import {commit,filename,prompt,title} from './journey-host.mjs'
 
-export async function guardJourney(context,{origin,project,web,refused,attestedFetch}){
+export async function guardJourney(context,{origin,project,web,refused,attestedFetch,cookieHeader}){
   let session, preview
   const fetchOwned=async(route,timeout)=>{
     if(!attestedFetch){
@@ -14,9 +14,10 @@ export async function guardJourney(context,{origin,project,web,refused,attestedF
       return {status:response.status(),headers:response.headers(),ok:response.ok(),bytes,fulfill:()=>route.fulfill({response})}
     }
     const req=route.request()
-    const headers={...req.headers()}
+    const headers={...(await req.allHeaders())}
     delete headers['host']
     delete headers['content-length']
+    if(cookieHeader&&!headers['cookie'])headers['cookie']=cookieHeader
     const response=await attestedFetch(req.url(),{
       method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(timeout),
     })
@@ -57,7 +58,16 @@ export async function guardJourney(context,{origin,project,web,refused,attestedF
     try{
       if(await policy.request(req)){
         if(req.method()==='POST'&&url.pathname==='/api/workspaces'){
-          await fulfillWorkspaceCreation(route,policy)
+          if(attestedFetch){
+            const response=await fetchOwned(route,30000)
+            if(response.ok){
+              assert(response.bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
+              policy.admit(req.postDataJSON(),JSON.parse(response.bytes.toString('utf8')),req.url())
+            }
+            await response.fulfill()
+          }else{
+            await fulfillWorkspaceCreation(route,policy)
+          }
           return
         }
         if(req.method()==='POST'&&/^\/workspaces\/[^/]+\/instance\/api\/session$/.test(url.pathname)){
