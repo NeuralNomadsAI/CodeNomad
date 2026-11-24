@@ -14,7 +14,7 @@ fn cursor_hash(cursor: &str) -> u64 {
 
 impl Launcher {
     pub(super) fn apply_directory_refresh(&mut self, page: Sessions, selected: Option<&str>) {
-        if !self.creation_uncertain_linked {
+        if self.creation_uncertain_linked.is_none() {
             self.creation_uncertain = false;
         }
         self.listed_sessions = page.rows.iter().map(|row| row.id.clone()).collect();
@@ -43,7 +43,7 @@ impl Launcher {
     ) {
         if authoritative {
             self.creation_uncertain = false;
-            self.creation_uncertain_linked = false;
+            self.creation_uncertain_linked = None;
         }
         let complete = page.next.is_none() && authoritative;
         let listed: HashSet<_> = page.rows.iter().map(|row| row.id.clone()).collect();
@@ -82,7 +82,7 @@ impl Launcher {
             );
         } else {
             self.consumed_cursors.clear();
-            if !self.creation_uncertain_linked {
+            if self.creation_uncertain_linked.is_none() {
                 self.creation_uncertain = false;
             }
             if let Some(old) = self
@@ -196,7 +196,7 @@ pub fn create_blank(s: &mut State) {
         let linked = !codenomad_client::same_server_path(&p.path, &directory);
         let session = match b.create_untitled_session(&p, &directory).await {
             Ok(session) => session,
-            Err(_) if linked => return Ok(Reply::CreateUncertainLinked),
+            Err(_) if linked => return Ok(Reply::CreateUncertainLinked(directory)),
             Err(error) => return Err(error),
         };
         match b.bind_created_session(&p, &session.id, &directory).await {
@@ -220,7 +220,7 @@ pub fn create(s: &mut State, _: &mut Tx) {
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
-    if l.creation_uncertain || l.title.text.trim().is_empty() {
+    if l.pending || l.creation_uncertain || l.title.text.trim().is_empty() {
         return;
     }
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
@@ -431,6 +431,7 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
             crate::git::online(s, true);
         }
     }
+    crate::workspace::schedule_catalogue_refresh(s);
     tx.instant();
     true
 }

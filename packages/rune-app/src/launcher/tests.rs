@@ -641,7 +641,7 @@ fn failed_session_selection_reply_cannot_hide_authentication_required() {
 fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory() {
     let mut launcher = Launcher::fixture();
     launcher.creation_uncertain = true;
-    launcher.creation_uncertain_linked = true;
+    launcher.creation_uncertain_linked = Some("/wt-a".into());
     launcher.apply_directory_refresh(
         Sessions {
             rows: vec![row("root")],
@@ -650,7 +650,7 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
         None,
     );
     assert!(launcher.creation_uncertain);
-    assert!(launcher.creation_uncertain_linked);
+    assert!(launcher.creation_uncertain_linked.is_some());
     launcher.apply_listing(
         Sessions {
             rows: vec![row("root")],
@@ -660,7 +660,7 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
         None,
     );
     assert!(launcher.creation_uncertain);
-    assert!(launcher.creation_uncertain_linked);
+    assert!(launcher.creation_uncertain_linked.is_some());
     launcher.apply_passive_listing(
         Sessions {
             rows: vec![row("root"), row("linked-new")],
@@ -670,7 +670,7 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
         true,
     );
     assert!(!launcher.creation_uncertain);
-    assert!(!launcher.creation_uncertain_linked);
+    assert!(launcher.creation_uncertain_linked.is_none());
 }
 
 #[test]
@@ -771,16 +771,18 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
     );
     assert!(rt.state.screen.launcher().unwrap().pending);
 
-    // Refused tab switch while pending does not invalidate Reply::Created's navigation ticket.
+    // Refused tab switch and refused named create while pending do not invalidate navigation tickets.
     let ticket = rt.state.notifications.navigation_ticket();
     let (created_out, created_in) = bounded(1);
     {
         let l = rt.state.screen.launcher_mut().unwrap();
+        l.title = TextEdit::new("Blocked title");
         l.result = Some(created_in);
         l.pending = true;
     }
     rt.update(|s, tx| {
         crate::workspace::select_index(s, 0, tx);
+        create(s, tx);
     });
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
     assert_eq!(rt.state.notifications.navigation_ticket(), ticket);
@@ -813,5 +815,79 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
     rt.update(|s, tx| {
         crate::workspace::select_index(s, 0, tx);
     });
+    assert!(rt.state.files.as_ref().unwrap().stopped);
+
+    // Clicking cached tab B while authentication_required stays on Screen::Launcher (never empty view).
+    rt.state
+        .screen
+        .launcher_mut()
+        .unwrap()
+        .authentication_required = true;
+    rt.update(|s, tx| {
+        crate::workspace::select_index(s, 1, tx);
+    });
+    assert!(rt.state.screen.is_launcher());
+    assert!(rt.state.screen.launcher().unwrap().authentication_required);
+
+    // A workspace.stopped observed while Reply::Opened is in flight stops the opened project
+    // instead of inserting it into opened_after.
+    let (opened_out, opened_in) = bounded(1);
+    let (_reconcile_tx, reconcile_rx) = bounded(1);
+    let project_c = Project {
+        id: "proj-c".into(),
+        path: "/repo-c".into(),
+    };
+    let opening_c = rt
+        .state
+        .screen
+        .launcher()
+        .unwrap()
+        .openings
+        .begin(
+            rt.state
+                .screen
+                .launcher()
+                .unwrap()
+                .connection
+                .clone()
+                .unwrap(),
+            "tab-c",
+        )
+        .unwrap()
+        .fixture_opening(project_c.clone());
+    {
+        let l = rt.state.screen.launcher_mut().unwrap();
+        l.authentication_required = false;
+        l.detached_reconcile = Some((1, HashSet::new(), reconcile_rx));
+        l.stopped_during_pending.insert(project_c.id.clone());
+        l.result = Some(opened_in);
+        l.pending = true;
+    }
+    assert!(
+        opened_out
+            .try_send(Ok(Reply::Opened(
+                opening_c,
+                Sessions {
+                    rows: vec![],
+                    next: None
+                },
+                Restored::Empty,
+            )))
+            .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(
+        !rt.state
+            .screen
+            .launcher()
+            .unwrap()
+            .detached_reconcile
+            .as_ref()
+            .unwrap()
+            .1
+            .contains("proj-c")
+    );
     assert!(rt.state.files.as_ref().unwrap().stopped);
 }

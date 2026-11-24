@@ -688,6 +688,15 @@ fn changing_session_closes_preview_and_resets_manually_selected_worktree() {
     assert!(ui.bind(&backend));
     assert!(!ui.has_preview());
     assert_eq!(ui.tree().unwrap().slug, "root");
+
+    // Switching to another session (including session-new) preserves a non-empty commit draft
+    // in a manually selected checkout instead of resetting Changes.
+    ui.select_tree("other".into());
+    ui.changes.draft = rune::edit::TextEdit::new("wip commit");
+    backend.session = "newer-session".into();
+    assert!(ui.bind(&backend));
+    assert_eq!(ui.tree().unwrap().slug, "other");
+    assert_eq!(ui.changes.draft.text, "wip commit");
 }
 
 #[test]

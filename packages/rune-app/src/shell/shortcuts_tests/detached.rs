@@ -959,6 +959,27 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
 
         // Opening search then closing the session closes search so Escape does not hit an invisible search overlay.
         crate::workspace::bound(&mut rt.state, &bound);
+        // Trimmed sidebar filter matches sessions even with leading/trailing spaces.
+        if let Some(l) = rt.state.screen.launcher_mut() {
+            l.sessions = vec![
+                Session {
+                    id: "s1".into(),
+                    title: "Alpha".into(),
+                },
+                Session {
+                    id: "s2".into(),
+                    title: "Beta".into(),
+                },
+            ];
+            l.show_search = true;
+            l.search = TextEdit::new(" Alpha ");
+            assert_eq!(
+                crate::shell::sidebar::visible_session_ids(l),
+                vec!["s1".to_string()]
+            );
+            l.show_search = false;
+            l.search = TextEdit::new("");
+        }
         send_key(&mut rt, Key::Command('f'), primary_mods(false));
         assert!(crate::timeline::search::is_open(&rt.state));
         settings::fixture_shortcuts(&rt.state, json!({}));

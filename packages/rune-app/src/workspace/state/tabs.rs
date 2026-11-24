@@ -35,7 +35,7 @@ fn stash(s: &mut State) {
             entry.sessions = std::mem::take(&mut l.sessions);
             entry.listed_sessions = std::mem::take(&mut l.listed_sessions);
             entry.creation_uncertain = l.creation_uncertain;
-            entry.creation_uncertain_linked = l.creation_uncertain_linked;
+            entry.creation_uncertain_linked = l.creation_uncertain_linked.take();
             entry.rebind_after_send = l.rebind_after_send.take();
             entry.next = l.next.take();
             entry.linked = std::mem::take(&mut l.linked);
@@ -83,7 +83,13 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
         s.renew_scope();
         if s.screen
             .launcher()
-            .is_some_and(|l| l.rebind_after_send.is_some() && !l.authentication_required)
+            .is_some_and(|l| l.authentication_required)
+        {
+            s.show_launcher();
+        } else if s
+            .screen
+            .launcher()
+            .is_some_and(|l| l.rebind_after_send.is_some())
         {
             s.show_chat();
         }

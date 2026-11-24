@@ -96,22 +96,25 @@ fn resolve_def(
     index: usize,
     platform: KeyPlatform,
 ) -> Vec<Chord> {
-    if let Some(rules) =
-        overrides.filter(|rules| rules.len() <= 8 && rules.iter().all(is_valid_rule))
-    {
-        return rules
-            .iter()
-            .filter_map(decode)
-            .filter(|chord| !is_region_cycle(chord, platform))
-            .collect();
-    }
-    def["defaults"][index]
-        .as_array()
-        .into_iter()
-        .flatten()
+    let mut chords = Vec::new();
+    let source = overrides.filter(|rules| rules.len() <= 8 && rules.iter().all(is_valid_rule));
+    let iter: &[Value] = match source {
+        Some(rules) => rules,
+        None => def["defaults"][index].as_array().map_or(&[], Vec::as_slice),
+    };
+    for chord in iter
+        .iter()
         .filter_map(decode)
         .filter(|chord| !is_region_cycle(chord, platform))
-        .collect()
+    {
+        if !chords
+            .iter()
+            .any(|existing: &Chord| existing.same_keys(&chord, platform))
+        {
+            chords.push(chord);
+        }
+    }
+    chords
 }
 
 pub(super) fn resolve(prefs: &Preferences, id: &str) -> Vec<Chord> {
@@ -271,7 +274,7 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
     invalid.fixture_shortcuts(serde_json::json!({
         "close-session": [{"key": "Dead"}],
         "close-instance": [{"key": utf16_41}],
-        "instance-prev": [{"key": "F8"}, {"key": "A+B"}],
+        "instance-prev": [{"key": "F8"}, {"key": "f8"}, {"key": "A+B"}],
         "instance-next": [{"key": "BrowserBack"}],
         "session-prev": [{"key": utf16_40}],
         "new-instance": [],

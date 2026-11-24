@@ -51,7 +51,7 @@ pub(super) struct Entry {
     sessions: Vec<Session>,
     listed_sessions: HashSet<String>,
     creation_uncertain: bool,
-    creation_uncertain_linked: bool,
+    creation_uncertain_linked: Option<String>,
     rebind_after_send: Option<String>,
     next: Option<String>,
     linked: crate::launcher::linked::Linked,
@@ -260,7 +260,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         sessions: Vec::new(),
         listed_sessions: HashSet::new(),
         creation_uncertain: false,
-        creation_uncertain_linked: false,
+        creation_uncertain_linked: None,
         rebind_after_send: None,
         next: None,
         linked: Default::default(),
@@ -505,9 +505,19 @@ pub fn schedule_catalogue(s: &mut State) {
         || cfg!(not(target_arch = "wasm32"))
             && s.screen
                 .launcher()
-                .is_some_and(|l| l.creation_uncertain_linked);
+                .is_some_and(|l| l.creation_uncertain_linked.is_some());
     if allow && let Some(ui) = &mut s.workspace {
         ui.entries[ui.active].catalogue.schedule(ui.clock);
+    }
+}
+
+pub fn schedule_catalogue_refresh(s: &mut State) {
+    if let Some(ui) = &mut s.workspace {
+        ui.entries[ui.active].catalogue.schedule_urgent(ui.clock);
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(l) = s.screen.launcher_mut() {
+        l.linked.mark_reload();
     }
 }
 pub fn has_conversation_stream(s: &State) -> bool {

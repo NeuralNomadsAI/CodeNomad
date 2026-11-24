@@ -9,12 +9,18 @@ use rune::Tx;
 #[derive(Default)]
 pub(super) struct Refresh {
     due: Option<f64>,
+    urgent: bool,
     request: Option<(u64, Receiver<Option<(Sessions, bool)>>)>,
 }
 
 impl Refresh {
     pub(super) fn schedule(&mut self, now: f64) {
         self.due.get_or_insert(now + 0.1);
+    }
+
+    pub(super) fn schedule_urgent(&mut self, now: f64) {
+        self.urgent = true;
+        self.schedule(now);
     }
 
     pub(super) fn pause(&mut self, now: f64) {
@@ -28,7 +34,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let visible = s.shell.visible(0)
         || s.screen
             .launcher()
-            .is_some_and(|l| l.creation_uncertain_linked);
+            .is_some_and(|l| l.creation_uncertain_linked.is_some());
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
@@ -63,7 +69,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         refresh.pause(now);
     }
-    if !visible
+    if (!visible && !refresh.urgent)
         || l.pending
         || entry.project.as_ref().map(|p| &p.id) != l.project.as_ref().map(|p| &p.id)
     {
@@ -77,6 +83,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         .and_then(|(_, rx)| rx.try_recv().ok())
     {
         refresh.request = None;
+        refresh.urgent = false;
         if refresh.due.is_none()
             && let Some((page, authoritative)) = result
         {

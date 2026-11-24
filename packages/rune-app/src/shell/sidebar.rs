@@ -51,7 +51,7 @@ fn visible_indices(l: &launcher::Launcher) -> (bool, Vec<usize>) {
     let remote_search = cfg!(target_arch = "wasm32") && searching;
     let (first, linked) = session_rows(l, remote_search);
     let filter = if l.show_search {
-        l.search.text.to_lowercase()
+        l.search.text.trim().to_lowercase()
     } else {
         String::new()
     };

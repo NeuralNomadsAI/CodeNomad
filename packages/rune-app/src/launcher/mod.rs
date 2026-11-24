@@ -64,9 +64,10 @@ pub struct Launcher {
     listing: bool,
     pub error: Option<&'static str>,
     pub creation_uncertain: bool,
-    pub creation_uncertain_linked: bool,
+    pub creation_uncertain_linked: Option<String>,
     pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
+    stopped_during_pending: HashSet<String>,
     detached_reconcile: Option<(u64, HashSet<String>, Receiver<Option<Vec<Project>>>)>,
     failed_detached_workspaces: HashSet<String>,
     pub(crate) rebind_after_send: Option<String>,
@@ -82,7 +83,7 @@ enum Reply {
     Created(Backend, String, String, String, Option<u64>, Option<u64>),
     CreatedUnbound(Session, String),
     CreatePrecheckFailed,
-    CreateUncertainLinked,
+    CreateUncertainLinked(String),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
     #[cfg(target_arch = "wasm32")]
     Reopened(crate::workspace::opening::Opening, Backend, String, String),
@@ -183,9 +184,10 @@ impl Launcher {
             listing: false,
             error: None,
             creation_uncertain: false,
-            creation_uncertain_linked: false,
+            creation_uncertain_linked: None,
             openings: Default::default(),
             result: None,
+            stopped_during_pending: HashSet::new(),
             detached_reconcile: None,
             failed_detached_workspaces: HashSet::new(),
             rebind_after_send: None,
@@ -204,6 +206,7 @@ impl Launcher {
             return;
         }
         self.pending = true;
+        self.stopped_during_pending.clear();
         self.catalogue_generation = self.catalogue_generation.wrapping_add(1);
         self.error = None;
         let (out, input) = bounded(1);
@@ -312,6 +315,20 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         if !stopped.is_empty() {
+            if let Some(l) = s.screen.launcher_mut() {
+                for event in &stopped {
+                    if let codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id } =
+                        event
+                    {
+                        if l.pending {
+                            l.stopped_during_pending.insert(workspace_id.clone());
+                        }
+                        if let Some((_, opened_after, _)) = &mut l.detached_reconcile {
+                            opened_after.remove(workspace_id);
+                        }
+                    }
+                }
+            }
             relayed |= crate::workspace::deliver_detached_events(s, &stopped);
         }
         #[cfg(target_arch = "wasm32")]
@@ -458,6 +475,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.result = None;
     l.pending = false;
     l.listing = false;
+    let stopped_during_pending = std::mem::take(&mut l.stopped_during_pending);
     if l.selection_ticket
         .take()
         .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
@@ -538,10 +556,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             set_project(l, Some(project.clone()));
             l.linked = Default::default();
             l.creation_uncertain = false;
-            l.creation_uncertain_linked = false;
+            l.creation_uncertain_linked = None;
             l.rebind_after_send = None;
             l.failed_detached_workspaces.remove(&project.id);
-            if let Some((_, opened_after, _)) = &mut l.detached_reconcile {
+            let stopped_in_flight = stopped_during_pending.contains(&project.id);
+            if !stopped_in_flight && let Some((_, opened_after, _)) = &mut l.detached_reconcile {
                 opened_after.insert(project.id.clone());
             }
             connection::watch_catalogue(l);
@@ -564,6 +583,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     crate::workspace::restore_files_mode(s);
                 }
             }
+            if stopped_in_flight {
+                crate::workspace::deliver_detached_events(
+                    s,
+                    &[codenomad_client::transport::WorkspaceEvent::Stopped {
+                        workspace_id: project.id,
+                    }],
+                );
+            }
             #[cfg(target_arch = "wasm32")]
             linked::load(s);
         }
@@ -575,7 +602,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     l.check_omitted_visits();
                 }
             } else if cfg!(target_os = "windows")
-                || l.creation_uncertain_linked && cfg!(not(target_arch = "wasm32"))
+                || l.creation_uncertain_linked.is_some() && cfg!(not(target_arch = "wasm32"))
             {
                 l.apply_directory_refresh(rows, selected.as_deref());
                 crate::workspace::schedule_catalogue(s);
@@ -634,10 +661,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 true,
             );
         }
-        Ok(Reply::CreateUncertainLinked) => {
+        Ok(Reply::CreateUncertainLinked(directory)) => {
             l.creation_uncertain = true;
-            l.creation_uncertain_linked = true;
-            l.linked.reset();
+            l.creation_uncertain_linked = Some(directory);
+            l.linked.mark_reload();
             l.error = Some("rune.create_error");
             crate::shell::notifications::emit_outcome(
                 s,
@@ -694,10 +721,20 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if !l.authentication_required {
                 let id = opening.project.id.clone();
                 l.failed_detached_workspaces.remove(&id);
-                if let Some((_, opened_after, _)) = &mut l.detached_reconcile {
-                    opened_after.insert(id);
+                let stopped_in_flight = stopped_during_pending.contains(&id);
+                if !stopped_in_flight && let Some((_, opened_after, _)) = &mut l.detached_reconcile
+                {
+                    opened_after.insert(id.clone());
                 }
-                reopen::apply(s, opening, backend, title, &slug)
+                reopen::apply(s, opening, backend, title, &slug);
+                if stopped_in_flight {
+                    crate::workspace::deliver_detached_events(
+                        s,
+                        &[codenomad_client::transport::WorkspaceEvent::Stopped {
+                            workspace_id: id,
+                        }],
+                    );
+                }
             }
         }
         Ok(Reply::Placed(backend, title, slug, confirmed, attempted)) => {
