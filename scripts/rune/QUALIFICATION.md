@@ -62,6 +62,8 @@ La recherche utilise le même banc Rust, via `node packages/rune-app/fixtures/la
 
 `node packages/rune-app/fixtures/launcher-fixture.mjs --web-outline-restore` vérifie en Chromium un rechargement réel avec le repère restauré avant la réponse du broker, la réutilisation de la plage inchangée et le retour à une lecture à froid quand le cache est corrompu. Les deux rechargements conservent le brouillon.
 
+`node packages/rune-app/fixtures/transcript-images-browser.mjs <bundle-test-support> <sortie>` vérifie les pièces jointes et l’agrandissement au clavier, une image d’outil AVIF animée, une référence authentifiée, et deux chargements externes avec et sans CORS. Le fichier `animated-32.avif.b64` contient deux images de `ffmpeg -f lavfi -i testsrc2=size=32x32:rate=2 -frames:v 2 -c:v libaom-av1 animated.avif`.
+
 Le banc Code Mode vérifie quatre écritures de 70 Kio, la relecture après une trame hors borne et l’actualisation du fil enfant sur la connexion d’origine :
 
 ```powershell

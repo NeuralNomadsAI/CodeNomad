@@ -49,6 +49,8 @@ Son elecciones de ejecución para los envíos posteriores, no modificaciones de 
 
 ## Borradores y adjuntos {#drafts-attachments}
 
+En Rune, pasa el puntero por una imagen adjunta para verla o elige **Ampliar imagen**.
+
 1. Escribe en la conversación seleccionada. Cambiar de conversación conserva su borrador en lugar de enviarlo.
 2. Elige **Adjuntar archivo…** en el menú **Más acciones** del editor, o arrastra o pega, para archivos de este dispositivo; o escribe `@` para seleccionar archivos del proyecto, agentes o habilidades.
 3. Revisa las etiquetas de adjuntos y quita lo que no quieras incluir en el próximo envío.

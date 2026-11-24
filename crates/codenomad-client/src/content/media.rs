@@ -6,6 +6,8 @@ use crate::{
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::Value;
 use std::sync::Arc;
+mod deferred;
+pub use deferred::DeferredPicture;
 pub(super) const ROW_IMAGE_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -20,6 +22,7 @@ pub enum PictureSource {
     Inline(Arc<str>),
     Http(Arc<str>),
     Attachment(super::Reference),
+    Deferred(DeferredPicture),
     Unavailable,
 }
 
@@ -64,6 +67,7 @@ impl PictureSource {
         match self {
             Self::Inline(value) | Self::Http(value) => value.len(),
             Self::Attachment(reference) => reference.message.len() + reference.sha256.len(),
+            Self::Deferred(reference) => reference.path().len(),
             Self::Unavailable => 0,
         }
     }
@@ -94,6 +98,11 @@ impl PictureSource {
                     .attachment_bytes(reference)
                     .await?
             }
+            Self::Deferred(reference) => Arc::new(
+                reference
+                    .read(backend.ok_or("image connection unavailable")?, mime)
+                    .await?,
+            ),
             Self::Unavailable => return Err("transcript image source unavailable".into()),
         };
         if !passive_raster(&bytes, mime) {
@@ -109,6 +118,7 @@ impl std::fmt::Debug for PictureSource {
             Self::Inline(_) => "InlineImage",
             Self::Http(_) => "HttpImage",
             Self::Attachment(_) => "AttachmentImage",
+            Self::Deferred(_) => "DeferredImage",
             Self::Unavailable => "UnavailableImage",
         })
     }
@@ -126,13 +136,7 @@ pub(super) fn is_image(mime: &str) -> bool {
 }
 
 fn passive_raster(bytes: &[u8], claimed: &str) -> bool {
-    raster_type(bytes, claimed)
-        && images::can_decode(bytes)
-        && imagesize::blob_size(bytes).ok().is_some_and(|size| {
-            size.width > 0
-                && size.height > 0
-                && size.width.saturating_mul(size.height) <= 8 * 1024 * 1024
-        })
+    raster_type(bytes, claimed) && images::transcript_raster(bytes)
 }
 
 fn raster_type(bytes: &[u8], claimed: &str) -> bool {
@@ -154,7 +158,12 @@ fn raster_type(bytes: &[u8], claimed: &str) -> bool {
         || (matches!(kind, Ico) && claimed.eq_ignore_ascii_case("image/vnd.microsoft.icon"))
 }
 
-pub(super) fn tool_pictures(state: &Value, bytes: &mut usize) -> Vec<Picture> {
+pub(super) fn tool_pictures(
+    state: &Value,
+    message: &str,
+    part: usize,
+    bytes: &mut usize,
+) -> Vec<Picture> {
     if state["status"] != "completed" {
         return Vec::new();
     }
@@ -162,10 +171,14 @@ pub(super) fn tool_pictures(state: &Value, bytes: &mut usize) -> Vec<Picture> {
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|item| {
+        .enumerate()
+        .filter_map(|(index, item)| {
             let mime = item["mime"].as_str().filter(|mime| is_image(mime))?;
             let uri = item["uri"].as_str().filter(|_| item["type"] == "file")?;
-            let source = PictureSource::uri(mime, uri).fit(bytes);
+            let source = DeferredPicture::parse(uri, message, part, index)
+                .map(PictureSource::Deferred)
+                .unwrap_or_else(|| PictureSource::uri(mime, uri))
+                .fit(bytes);
             Some(Picture {
                 name: item["name"]
                     .as_str()
@@ -195,7 +208,7 @@ fn media_requires_a_passive_signature_and_matching_mime() {
         {"type":"text","text":"visible log"}
     ]});
     let mut bytes = ROW_IMAGE_BYTES;
-    let pictures = tool_pictures(&response, &mut bytes);
+    let pictures = tool_pictures(&response, "message", 0, &mut bytes);
     assert_eq!(pictures.len(), 3);
     assert!(
         pictures[..2]
@@ -212,9 +225,12 @@ fn all_fitting_tool_images_are_retained() {
     let items = (0..16).map(|index| json!({
         "type":"file","uri":format!("https://example.invalid/{index}.png"),"mime":"image/png"
     })).collect::<Vec<_>>();
-    let pictures = tool_pictures(&json!({"status":"completed","content":items}), &mut {
-        ROW_IMAGE_BYTES
-    });
+    let pictures = tool_pictures(
+        &json!({"status":"completed","content":items}),
+        "message",
+        0,
+        &mut { ROW_IMAGE_BYTES },
+    );
     assert_eq!(pictures.len(), 16);
     assert!(
         pictures

@@ -49,6 +49,8 @@ These are execution choices for subsequent sends, not edits to earlier responses
 
 ## Drafts and attachments {#drafts-attachments}
 
+In Rune, hover over an image attachment to preview it, or use **Enlarge image** to open it at a larger size.
+
 1. Compose in the selected conversation. Switching conversations retains its draft rather than sending it.
 2. Choose **Attach file…** in the composer's **More actions** menu, or drop or paste, for files from this device; or type `@` to select project files, agents or skills.
 3. Review the attachment chips and remove anything not intended for the next send.
