@@ -174,7 +174,7 @@ pub(super) async fn route(
         if app.workspace(&r.workspace).is_err() {
             return Err(missing());
         }
-        let placement = Placement::capture_with_media(&app, &r.workspace, &r.session, false, true, false)
+        let placement = Placement::capture_with_media(&app, &r.workspace, &r.session, true, false)
             .await
             .map_err(|failure| if failure.0 == Status::FORBIDDEN { failure } else { unavailable() })?;
         if !placement.operation_current(&app, &r.workspace) {
@@ -246,9 +246,19 @@ pub(super) async fn route(
         )
             .into_response())
     };
+    let closed = async {
+        loop {
+            let notified = app.workspace_closed.notified();
+            if app.workspace(&reference.workspace).is_err() {
+                return;
+            }
+            notified.await;
+        }
+    };
     tokio::select! {
         biased;
         _ = principal.0.cancelled() => Err(crate::auth::unauthorized()),
+        _ = closed => Err(unavailable()),
         result = tokio::time::timeout(Duration::from_secs(30), request) => result.unwrap_or_else(|_| Err(unavailable())),
     }
 }

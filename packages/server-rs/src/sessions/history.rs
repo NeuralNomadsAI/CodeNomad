@@ -38,14 +38,13 @@ pub(super) struct Placement {
 
 impl Placement {
     pub(super) async fn capture(app: &App, id: &str, session: &str, references: bool) -> Result<Self, Error> {
-        Self::capture_with_media(app, id, session, references, false, references).await
+        Self::capture_with_media(app, id, session, false, references).await
     }
 
     pub(super) async fn capture_with_media(
         app: &App,
         id: &str,
         session: &str,
-        references: bool,
         media: bool,
         fenced: bool,
     ) -> Result<Self, Error> {
@@ -88,44 +87,22 @@ impl Placement {
             .as_str()
             .filter(|d| crate::files::paths::local_absolute(d))
             .ok_or_else(unavailable)?;
-        if (references || media) && !crate::files::paths::under(&app.scope, std::path::Path::new(directory)) {
+        if !crate::files::paths::under(&app.scope, std::path::Path::new(directory)) {
             return Err(forbidden());
         }
-        let path = if media {
-            crate::worktrees::ownership::resolve_directory(directory).ok_or_else(unavailable)?
-        } else {
-            dunce::canonicalize(directory).map_err(|_| unavailable())?
-        };
-        let anchor = if media {
-            directory_anchor(&path).map_err(|_| unavailable())?.ok_or_else(forbidden)?.to_owned()
-        } else {
-            path.clone()
-        };
+        let path = crate::worktrees::ownership::resolve_exact_directory(directory).ok_or_else(unavailable)?;
+        let anchor = directory_anchor(&path).map_err(|_| unavailable())?.ok_or_else(forbidden)?.to_owned();
         let physical = same_file::Handle::from_path(&anchor).map_err(|_| unavailable())?;
-        let checkout = if references || media {
-            if fenced && path != workspace.path {
-                displays.push(display(&path));
-            }
-            let proof = if media {
-                let proof = crate::worktrees::ownership::media_directory(app, &workspace, &endpoint, &path, &anchor)
-                    .await
-                    .map_err(|_| crate::opencode::upstream_error())?;
-                if !current(&displays) {
-                    return Err(crate::opencode::upstream_error());
-                }
-                proof
-            } else {
-                crate::worktrees::ownership::capture_directory(app, &workspace, &path).await
-            };
-            Some(proof.ok_or_else(forbidden)?)
-        } else {
-            match crate::worktrees::placement(app, &workspace, location).await {
-                Ok(_) => {}
-                Err(true) => return Err(forbidden()),
-                Err(false) => return Err(unavailable()),
-            }
-            None
-        };
+        if fenced && path != workspace.path {
+            displays.push(display(&path));
+        }
+        let proof = crate::worktrees::ownership::media_directory(app, &workspace, &endpoint, &path, &anchor)
+            .await
+            .map_err(|_| crate::opencode::upstream_error())?;
+        if media && !current(&displays) {
+            return Err(crate::opencode::upstream_error());
+        }
+        let checkout = Some(proof.ok_or_else(forbidden)?);
         Ok(Self { workspace, endpoint, source, path, anchor, physical, workspace_physical, checkout, displays, media })
     }
     async fn current(&self, app: &App, id: &str, session: &str) -> bool {
@@ -182,16 +159,10 @@ impl Placement {
         self.operation_current(app, id)
             && self.source["location"]["directory"]
                 .as_str()
-                .and_then(|directory| {
-                    if self.media {
-                        crate::worktrees::ownership::resolve_directory(directory)
-                    } else {
-                        dunce::canonicalize(directory).ok()
-                    }
-                })
+                .and_then(crate::worktrees::ownership::resolve_exact_directory)
                 .as_ref()
                 == Some(&self.path)
-            && (!self.media || directory_anchor(&self.path) == Ok(Some(self.anchor.as_path())))
+            && directory_anchor(&self.path) == Ok(Some(self.anchor.as_path()))
             && same_file::Handle::from_path(&self.anchor).is_ok_and(|physical| physical == self.physical)
             && self.checkout.as_ref().is_none_or(|checkout| checkout.live(&self.path))
             && self.displays.iter().all(|display| display.load(Relaxed))
@@ -373,12 +344,11 @@ pub async fn handle(
     let input = input.filter(|i| crate::sessions::contracts::valid(schema, i)).ok_or_else(invalid)?;
     let session = input["sessionID"].as_str().ok_or_else(invalid)?;
     let request = async {
-        let placement =
-            match Placement::capture_with_media(&app, &id, session, reference, defer, reference || defer).await {
-                Ok(placement) => placement,
-                Err((Status::FORBIDDEN, body)) => return (Status::FORBIDDEN, body).into_response(),
-                Err(_) => return blocked("unavailable"),
-            };
+        let placement = match Placement::capture_with_media(&app, &id, session, defer, reference || defer).await {
+            Ok(placement) => placement,
+            Err((Status::FORBIDDEN, body)) => return (Status::FORBIDDEN, body).into_response(),
+            Err(_) => return blocked("unavailable"),
+        };
         if !placement.current(&app, &id, session).await {
             return blocked("conflict");
         }
@@ -413,10 +383,10 @@ pub async fn handle(
                 (status, body) = fallback;
             }
         }
+        let _slot = slot;
         let response = if defer && body.len() > 32 * 1024 {
             let (action, id, session) = (action.clone(), id.clone(), session.to_owned());
             match tokio::task::spawn_blocking(move || {
-                let _slot = slot;
                 project_history_response(status, body, &action, &id, &session, reference, defer)
             })
             .await
@@ -425,9 +395,7 @@ pub async fn handle(
                 Err(_) => return blocked("unavailable"),
             }
         } else {
-            let response = project_history_response(status, body, &action, &id, session, reference, defer);
-            drop(slot);
-            response
+            project_history_response(status, body, &action, &id, session, reference, defer)
         };
         if !placement.current(&app, &id, session).await {
             return blocked("conflict");

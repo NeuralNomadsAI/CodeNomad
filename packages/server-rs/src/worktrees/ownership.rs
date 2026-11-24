@@ -231,15 +231,25 @@ impl HistoryInventory {
 /// `resolveDirectoryPath`: the real path, or the real nearest ancestor joined with the
 /// missing components; `None` when an existing entry cannot be resolved.
 pub fn resolve_directory(directory: &str) -> Option<PathBuf> {
+    resolve_directory_inner(directory, true)
+}
+
+/// Exact variant for native session locations where trailing spaces are significant on POSIX.
+pub fn resolve_exact_directory(directory: &str) -> Option<PathBuf> {
+    resolve_directory_inner(directory, false)
+}
+
+fn resolve_directory_inner(directory: &str, trim: bool) -> Option<PathBuf> {
     let trimmed = crate::shared::js_trim(directory);
     if trimmed.is_empty() {
         return None;
     }
+    let raw = if trim { trimmed } else { directory };
     let style = crate::files::node_path::Style::host();
-    let absolute = if style.is_absolute(&trimmed) {
-        style.normalize(&trimmed)
+    let absolute = if style.is_absolute(raw) {
+        style.normalize(raw)
     } else {
-        style.join(&std::env::current_dir().ok()?.to_string_lossy(), &trimmed)
+        style.join(&std::env::current_dir().ok()?.to_string_lossy(), raw)
     };
     let mut current = PathBuf::from(absolute);
     let mut missing: Vec<std::ffi::OsString> = Vec::new();

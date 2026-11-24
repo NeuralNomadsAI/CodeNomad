@@ -454,10 +454,13 @@ pub(crate) async fn catalogue_at(
         let opened = root == local.root;
         let projected = if tail.as_os_str().is_empty() { root.clone() } else { root.join(tail) };
         let id = if let Ok(real) = dunce::canonicalize(&projected) {
-            if real != projected || !real.is_dir() {
+            if !real.is_dir() && !opened && !tail.as_os_str().is_empty() {
+                None
+            } else if real != projected || !real.is_dir() {
                 return Err(conflict("Projected worktree directory is not physically owned"));
+            } else {
+                Some(identity(&projected)?)
             }
-            Some(identity(&projected)?)
         } else {
             None
         };

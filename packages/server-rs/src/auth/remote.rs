@@ -112,15 +112,18 @@ fn route_path(uri: &axum::http::Uri) -> Option<String> {
         return None;
     }
     let mut output = String::new();
+    let media_route = path.starts_with("/api/workspaces/") && path[1..].split('/').nth(3) == Some("session-media");
     for (index, segment) in path[1..].split('/').enumerate() {
         let decoded = percent_encoding::percent_decode_str(segment).decode_utf8().ok()?;
         // The instance storage route accepts encoded physical paths as its
         // final key, and rechecks them against an open workspace.
         let storage = index == 3 && path.starts_with("/api/storage/instances/");
+        let media_id = media_route && matches!(index, 4 | 5);
         if decoded == "."
             || decoded == ".."
             || decoded.contains(['\0', ';', '#', '?'])
-            || (!storage && decoded.contains(['/', '\\', '%']))
+            || (!storage && decoded.contains(['/', '\\']))
+            || (!storage && !media_id && decoded.contains('%'))
         {
             return None;
         }

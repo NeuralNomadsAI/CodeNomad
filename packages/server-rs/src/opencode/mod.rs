@@ -224,13 +224,19 @@ pub async fn session_record(app: &App, id: &str) -> Result<Value, Error> {
 }
 
 pub async fn session_record_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
-    if !valid_id(id) {
+    if id.is_empty()
+        || id.len() > 514
+        || matches!(id, "." | "..")
+        || id.bytes().any(|b| b.is_ascii_control() || matches!(b, b'/' | b'\\' | b'?' | b'#'))
+    {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
+    let mut url = endpoint.url.clone();
+    url.path_segments_mut().map_err(|_| upstream_error())?.clear().extend(["api", "session", id]);
     let response = app
         .native
         .client
-        .get(endpoint.url.join(&format!("/api/session/{id}")).map_err(|_| upstream_error())?)
+        .get(url)
         .basic_auth("opencode", Some(&endpoint.password))
         .timeout(Duration::from_secs(4))
         .send()

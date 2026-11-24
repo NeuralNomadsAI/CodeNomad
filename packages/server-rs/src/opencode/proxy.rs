@@ -276,7 +276,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             if !crate::files::paths::under(&app.scope, std::path::Path::new(&normalized)) {
                 return None;
             }
-            let resolved = crate::worktrees::ownership::resolve_directory(raw).filter(|p| p.starts_with(&app.scope))?;
+            let resolved =
+                crate::worktrees::ownership::resolve_exact_directory(raw).filter(|p| p.starts_with(&app.scope))?;
             let mut cur = resolved.as_path();
             let anchor = loop {
                 match std::fs::symlink_metadata(cur) {
@@ -297,7 +298,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let initial_identity = allow_subfolder.then(&identity_now).flatten();
     let input_checkout = match &initial_identity {
         Some((resolved, anchor, _)) if message_list => {
-            crate::worktrees::ownership::media_directory(&app, &endpoint, &workspace, resolved, anchor)
+            crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor)
                 .await
                 .ok()
                 .flatten()
@@ -676,7 +677,32 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         recheck_input().await?;
     }
-    let response = upstream.send().await.map_err(|_| upstream_error())?;
+    static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+    let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
+    let defer_guard = if defer_media.is_some() {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let slot = tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            permit = tokio::time::timeout_at(deadline, DEFER_SLOTS.acquire()) => {
+                permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+            }
+        };
+        Some((deadline, slot))
+    } else {
+        None
+    };
+    let response = if let Some((deadline, _)) = &defer_guard {
+        tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            sent = tokio::time::timeout_at(*deadline, upstream.send()) => {
+                sent.map_err(|_| interrupted())?.map_err(|_| upstream_error())?
+            }
+        }
+    } else {
+        upstream.send().await.map_err(|_| upstream_error())?
+    };
     if response.status().is_success() {
         if let Some(receipt) = receipt {
             if let Err(error) = receipt.confirm(&app, &workspace).await {
@@ -766,22 +792,14 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         && response.status().is_success()
         && is_json_content_type(response.headers())
     {
-        static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+        let (deadline, _slot) = defer_guard.ok_or_else(interrupted)?;
         let status = response.status();
         let headers: Vec<(&'static str, axum::http::HeaderValue)> =
             ["content-type", "cache-control", "etag", "last-modified"]
                 .into_iter()
                 .filter_map(|name| response.headers().get(name).cloned().map(|value| (name, value)))
                 .collect();
-        let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        let slot = tokio::select! {
-            biased;
-            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            permit = tokio::time::timeout_at(deadline, SLOTS.acquire()) => {
-                permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
-            }
-        };
+        // Deliberate safety cap (128 MiB) so an oversized native page cannot OOM the server.
         let bytes = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
@@ -796,22 +814,14 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 rewritten = tokio::time::timeout_at(
                     deadline,
-                    tokio::task::spawn_blocking(move || {
-                        let _slot = slot;
-                        defer_message_list(&id, &session, bytes)
-                    }),
+                    tokio::task::spawn_blocking(move || defer_message_list(&id, &session, bytes)),
                 ) => {
                     rewritten.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                 }
             }
         } else {
-            drop(slot);
             (Body::from(bytes), false)
         };
-        if !app.native.current(&endpoint) {
-            return Err(upstream_error());
-        }
-        app.workspace(id)?;
         let fresh = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
@@ -819,7 +829,24 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 record.map_err(|_| interrupted())??
             }
         };
-        if !actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
+        let (resolved, anchor, _) = initial_identity.as_ref().ok_or_else(foreign)?;
+        let admitted = input_checkout.as_ref().ok_or_else(foreign)?;
+        let current_checkout = tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            proof = tokio::time::timeout_at(
+                deadline,
+                crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor),
+            ) => {
+                proof.map_err(|_| interrupted())?.map_err(|_| upstream_error())?
+            }
+        };
+        if !app.native.current(&endpoint) {
+            return Err(upstream_error());
+        }
+        app.workspace(id)?;
+        if !current_checkout.as_ref().is_some_and(|proof| admitted.same_checkout(proof))
+            || !actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
             || fresh["location"]["directory"] != directory
             || !input_location_live()
         {
