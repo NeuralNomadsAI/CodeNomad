@@ -27,16 +27,16 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("POST",r"^/api/workspaces/[^/]+/(?:worktrees|sessions/[^/]+/worktree)$"),
     ("DELETE",r"^/api/workspaces/[^/]+/worktrees/[^/]+$"),
     ("GET",r"^/workspaces/[^/]+/instance/api/vcs/status$"),
-    ("GET",r"^/api/(?:missions/playbooks|workspaces/[^/]+/missions(?:/msn_[a-z0-9]+(?:/(?:content|tasks|admission))?)?)$"),
+    ("GET",r"^/api/(?:missions/playbooks|workspaces/[^/]+/missions(?:/[^/]+(?:/(?:content|tasks|admission))?)?)$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/creation/[A-Za-z0-9_-]+$"),
     ("GET POST",r"^/api/workspaces/[^/]+/missions/recurrence$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/recurrence/[^/]+/(?:current|run-now/status|passages/[^/]+|current/[^/]+/content)$"),
     ("POST",r"^/api/workspaces/[^/]+/missions/recurrence/[^/]+/(?:control(?:/status)?|run-now|current/[^/]+/page)$"),
-    ("GET POST",r"^/api/workspaces/[^/]+/missions/(?:scheduled|msn_[a-z0-9]+/schedule)$"),
+    ("GET POST",r"^/api/workspaces/[^/]+/missions/(?:scheduled|[^/]+/schedule)$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/scheduled/(?:capabilities|requests/[a-zA-Z0-9_-]+)$"),
-    ("GET POST",r"^/api/workspaces/[^/]+/missions/msn_[a-z0-9]+/schedule-settings$"),
-    ("POST",r"^/api/workspaces/[^/]+/missions(?:/panel-page|/msn_[a-z0-9]+/(?:control|recover))?$"),
-    ("PATCH DELETE",r"^/api/workspaces/[^/]+/missions/msn_[a-z0-9]+$"),
+    ("GET POST",r"^/api/workspaces/[^/]+/missions/[^/]+/schedule-settings$"),
+    ("POST",r"^/api/workspaces/[^/]+/missions(?:/panel-page|/[^/]+/(?:control|recover))?$"),
+    ("PATCH DELETE",r"^/api/workspaces/[^/]+/missions/[^/]+$"),
     ("GET PUT DELETE",r"^/api/storage/instances/[^/]+$"),
     ("PATCH",r"^/api/storage/(?:state/ui|config/[^/]+)$"),
     ("GET",r"^/api/(?:remote-control/status|config-files|opencode/update)$"),
@@ -342,18 +342,18 @@ mod tests {
     use super::CATALOG;
 
     fn allowed(method: &str, path: &str) -> bool {
-        CATALOG
-            .iter()
-            .any(|(methods, pat)| methods.split(' ').any(|m| m == method) && pat.is_match(path))
+        CATALOG.iter().any(|(methods, pat)| methods.split(' ').any(|m| m == method) && pat.is_match(path))
     }
 
     #[test]
     fn remote_catalog_admits_mission_recover_delete_and_reconciliation() {
-        assert!(allowed("POST", "/api/workspaces/ws1/missions/msn_abc123/recover"));
-        assert!(allowed("DELETE", "/api/workspaces/ws1/missions/msn_abc123"));
-        assert!(allowed("PATCH", "/api/workspaces/ws1/missions/msn_abc123"));
-        assert!(allowed("GET", "/api/workspaces/ws1/missions/msn_abc123"));
-        assert!(allowed("GET", "/api/workspaces/ws1/missions/msn_abc123/admission"));
-        assert!(!allowed("DELETE", "/api/workspaces/ws1/missions/msn_abc123/recover"));
+        for id in ["msn_abc123", "msn_TieB-1", "alpha", "old"] {
+            assert!(allowed("POST", &format!("/api/workspaces/ws1/missions/{id}/recover")));
+            assert!(allowed("DELETE", &format!("/api/workspaces/ws1/missions/{id}")));
+            assert!(allowed("PATCH", &format!("/api/workspaces/ws1/missions/{id}")));
+            assert!(allowed("GET", &format!("/api/workspaces/ws1/missions/{id}")));
+            assert!(allowed("GET", &format!("/api/workspaces/ws1/missions/{id}/admission")));
+            assert!(!allowed("DELETE", &format!("/api/workspaces/ws1/missions/{id}/recover")));
+        }
     }
 }

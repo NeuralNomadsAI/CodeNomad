@@ -1,21 +1,25 @@
 use super::lifecycle::{MissionKey, Source};
 use crate::platform;
 use codenomad_client::{
-    Receiver, Wake,
+    Receiver, Sender, Wake,
     backend::Backend,
     bounded,
     missions::{Cleanup, DeletionOutcome, DeletionRequest, LifecycleTarget, ReconciliationOutcome},
+    runtime::until_closed,
 };
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
 };
 
 const CAPACITY: usize = 64;
 const DOCUMENT_CLEANUP_CAP: usize = 2_000;
+const PHASE_PREFLIGHT: u8 = 0;
+const PHASE_CANCELLED: u8 = 1;
+const PHASE_DISPATCHED: u8 = 2;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct WorkspaceScope {
@@ -101,11 +105,19 @@ pub(super) struct DeleteIntent {
     request: DeletionRequest,
     pub(super) flight: Option<Receiver<DeleteResult>>,
     flight_live: Option<Arc<AtomicBool>>,
+    flight_cancel: Option<Receiver<()>>,
+    flight_phase: Option<Arc<AtomicU8>>,
     pub(super) error: Option<&'static str>,
     document_cleanup: bool,
     deletion_id: Option<String>,
     created_at_bits: Option<u64>,
     retired: bool,
+}
+
+impl DeleteIntent {
+    pub(super) fn request_id(&self) -> &str {
+        &self.request.request_id
+    }
 }
 
 enum CleanupRetryResult {
@@ -133,8 +145,19 @@ struct CleanupRetry {
     key: CleanupKey,
     view_live: Arc<AtomicBool>,
     row_live: Arc<AtomicBool>,
+    cancel: Option<Receiver<()>>,
+    phase: Arc<AtomicU8>,
     flight: Receiver<CleanupRetryResult>,
     retired: bool,
+}
+
+impl CleanupRetry {
+    fn is_live_or_dispatched(&self) -> bool {
+        !self.retired
+            && (self.phase.load(Ordering::Acquire) == PHASE_DISPATCHED
+                || (self.view_live.load(Ordering::Acquire)
+                    && self.row_live.load(Ordering::Acquire)))
+    }
 }
 
 #[derive(Default)]
@@ -208,17 +231,40 @@ impl CleanupOwner {
             .deletes
             .get(&(source.workspace_scope(), source.mission.clone()))
             .filter(|intent| intent.target == source.target && !intent.retired)?;
-        if intent.flight.is_some() {
+        let busy = intent.flight.is_some()
+            && intent.flight_phase.as_ref().is_none_or(|phase| {
+                phase.load(Ordering::Acquire) == PHASE_DISPATCHED
+                    || intent
+                        .flight_live
+                        .as_ref()
+                        .is_none_or(|flag| flag.load(Ordering::Acquire))
+            });
+        if busy {
             Some(DeleteState::Busy)
         } else {
             intent.error.map(DeleteState::Failed)
         }
     }
 
+    pub fn delete_request_id(&self, source: &Source) -> Option<String> {
+        let intent = self
+            .deletes
+            .get(&(source.workspace_scope(), source.mission.clone()))
+            .filter(|intent| intent.target == source.target && !intent.retired)?;
+        (intent.flight.is_none() && intent.error.is_some())
+            .then(|| intent.request.request_id.clone())
+    }
+
+    pub fn has_delete_intents_in_scope(&self, scope: &WorkspaceScope) -> bool {
+        self.deletes
+            .values()
+            .any(|intent| !intent.retired && &intent.scope == scope)
+    }
+
     pub fn has_active_cleanup_retry(&self, scope: &WorkspaceScope, mission_id: &str) -> bool {
-        self.retries
-            .get(scope)
-            .is_some_and(|retry| !retry.retired && retry.key.mission_id == mission_id)
+        self.retries.get(scope).is_some_and(|retry| {
+            retry.is_live_or_dispatched() && retry.key.mission_id == mission_id
+        })
     }
 
     pub fn has_active_delete_flight(&self, scope: &WorkspaceScope, mission_id: &str) -> bool {
@@ -227,7 +273,77 @@ impl CleanupOwner {
                 && &intent.scope == scope
                 && intent.target.mission == mission_id
                 && intent.flight.is_some()
+                && intent.flight_phase.as_ref().is_none_or(|phase| {
+                    phase.load(Ordering::Acquire) == PHASE_DISPATCHED
+                        || intent
+                            .flight_live
+                            .as_ref()
+                            .is_none_or(|flag| flag.load(Ordering::Acquire))
+                })
         })
+    }
+
+    fn release_revoked_preflights(&mut self) -> bool {
+        let mut released = false;
+        self.retries.retain(|_, retry| {
+            let revoked = retry.retired
+                || !retry.view_live.load(Ordering::Acquire)
+                || !retry.row_live.load(Ordering::Acquire);
+            if !revoked {
+                return true;
+            }
+            if retry
+                .phase
+                .compare_exchange(
+                    PHASE_PREFLIGHT,
+                    PHASE_CANCELLED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                if let Some(cancel) = retry.cancel.take() {
+                    cancel.close();
+                }
+                released = true;
+                return false;
+            }
+            // Already dispatched DELETE: close cancel so any post-409 GET aborts immediately,
+            // while keeping the entry until the DELETE flight reports its receipt.
+            if let Some(cancel) = retry.cancel.take() {
+                cancel.close();
+            }
+            true
+        });
+        for intent in self.deletes.values_mut() {
+            let revoked = intent.retired
+                || intent
+                    .flight_live
+                    .as_ref()
+                    .is_some_and(|flag| !flag.load(Ordering::Acquire));
+            if !revoked {
+                continue;
+            }
+            if let Some(phase) = intent.flight_phase.as_ref()
+                && phase
+                    .compare_exchange(
+                        PHASE_PREFLIGHT,
+                        PHASE_CANCELLED,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+            {
+                if let Some(cancel) = intent.flight_cancel.take() {
+                    cancel.close();
+                }
+                intent.flight = None;
+                intent.flight_live = None;
+                intent.flight_phase = None;
+                released = true;
+            }
+        }
+        released
     }
 
     pub fn delete_active(&self, source: &Source) -> bool {
@@ -275,6 +391,8 @@ impl CleanupOwner {
                 request: request.clone(),
                 flight: Some(inbox),
                 flight_live: None,
+                flight_cancel: None,
+                flight_phase: None,
                 error: None,
                 document_cleanup: false,
                 deletion_id: None,
@@ -283,7 +401,10 @@ impl CleanupOwner {
             },
         );
         platform::spawn(async move {
-            let result = run_delete(backend, target, request, false, false, None, None, None).await;
+            let result = run_delete(
+                backend, target, request, false, false, None, None, None, None, None,
+            )
+            .await;
             if out.send(result).await.is_ok() {
                 wake();
             }
@@ -293,10 +414,12 @@ impl CleanupOwner {
     pub fn retry_delete(
         &mut self,
         source: &Source,
+        expected_request_id: &str,
         live: Arc<AtomicBool>,
         backend: Backend,
         wake: Wake,
     ) {
+        self.release_revoked_preflights();
         let scope = source.workspace_scope();
         if self.has_active_cleanup_retry(&scope, &source.target.mission) {
             return;
@@ -304,7 +427,11 @@ impl CleanupOwner {
         let Some(intent) = self.deletes.get_mut(&(scope, source.mission.clone())) else {
             return;
         };
-        if intent.target != source.target || intent.flight.is_some() || intent.retired {
+        if intent.target != source.target
+            || intent.request.request_id != expected_request_id
+            || intent.flight.is_some()
+            || intent.retired
+        {
             return;
         }
         Self::dispatch_retry_delete(intent, live, backend, wake);
@@ -314,17 +441,23 @@ impl CleanupOwner {
         &mut self,
         scope: &WorkspaceScope,
         mission: &MissionKey,
+        expected_request_id: &str,
         live: Arc<AtomicBool>,
         backend: Backend,
         wake: Wake,
     ) {
+        self.release_revoked_preflights();
         if self.has_active_cleanup_retry(scope, &mission.id) {
             return;
         }
         let Some(intent) = self.deletes.get_mut(&(scope.clone(), mission.clone())) else {
             return;
         };
-        if &intent.scope != scope || intent.flight.is_some() || intent.retired {
+        if &intent.scope != scope
+            || intent.request.request_id != expected_request_id
+            || intent.flight.is_some()
+            || intent.retired
+        {
             return;
         }
         Self::dispatch_retry_delete(intent, live, backend, wake);
@@ -337,6 +470,8 @@ impl CleanupOwner {
         wake: Wake,
     ) {
         let (out, inbox) = bounded(1);
+        let (cancel_tx, cancel_rx) = bounded(1);
+        let phase = Arc::new(AtomicU8::new(PHASE_PREFLIGHT));
         let target = intent.target.clone();
         let request = intent.request.clone();
         let document_cleanup = intent.document_cleanup;
@@ -344,6 +479,8 @@ impl CleanupOwner {
         let expected_created_at = intent.created_at_bits;
         intent.flight = Some(inbox);
         intent.flight_live = Some(live.clone());
+        intent.flight_cancel = Some(cancel_rx);
+        intent.flight_phase = Some(phase.clone());
         platform::spawn(async move {
             let result = run_delete(
                 backend,
@@ -354,6 +491,8 @@ impl CleanupOwner {
                 expected_deletion_id,
                 expected_created_at,
                 Some(live),
+                Some(cancel_tx),
+                Some(phase),
             )
             .await;
             if out.send(result).await.is_ok() {
@@ -362,24 +501,31 @@ impl CleanupOwner {
         });
     }
 
-    pub fn cancel_delete(&mut self, source: &Source) {
+    pub fn cancel_delete(&mut self, source: &Source, expected_request_id: &str) {
+        self.release_revoked_preflights();
         let key = (source.workspace_scope(), source.mission.clone());
-        if self
-            .deletes
-            .get(&key)
-            .is_some_and(|intent| intent.target == source.target && intent.flight.is_none())
-        {
+        if self.deletes.get(&key).is_some_and(|intent| {
+            intent.target == source.target
+                && intent.request.request_id == expected_request_id
+                && intent.flight.is_none()
+        }) {
             self.deletes.remove(&key);
         }
     }
 
-    pub fn cancel_delete_in_scope(&mut self, scope: &WorkspaceScope, mission: &MissionKey) {
+    pub fn cancel_delete_in_scope(
+        &mut self,
+        scope: &WorkspaceScope,
+        mission: &MissionKey,
+        expected_request_id: &str,
+    ) {
+        self.release_revoked_preflights();
         let key = (scope.clone(), mission.clone());
-        if self
-            .deletes
-            .get(&key)
-            .is_some_and(|intent| &intent.scope == scope && intent.flight.is_none())
-        {
+        if self.deletes.get(&key).is_some_and(|intent| {
+            &intent.scope == scope
+                && intent.request.request_id == expected_request_id
+                && intent.flight.is_none()
+        }) {
             self.deletes.remove(&key);
         }
     }
@@ -399,6 +545,9 @@ impl CleanupOwner {
         if let Some(retry) = self.retries.get_mut(scope) {
             retry.retired = true;
         }
+        self.release_revoked_preflights();
+        self.deletes
+            .retain(|(intent_scope, _), intent| intent_scope != scope || intent.flight.is_some());
         self.retry_errors.remove(scope);
         self.document_cleanups.retain(|key| &key.scope != scope);
         self.document_cleanup_order
@@ -483,13 +632,52 @@ impl CleanupOwner {
     }
 
     pub fn cleanup_busy(&self, scope: &WorkspaceScope) -> bool {
-        self.retries.get(scope).is_some_and(|retry| !retry.retired)
+        self.retries
+            .get(scope)
+            .is_some_and(CleanupRetry::is_live_or_dispatched)
     }
 
     pub fn cleanup_retrying(&self, key: &CleanupKey) -> bool {
         self.retries
             .get(&key.scope)
-            .is_some_and(|retry| !retry.retired && &retry.key == key)
+            .is_some_and(|retry| retry.is_live_or_dispatched() && &retry.key == key)
+    }
+
+    pub fn active_cleanup_retry_key(&self, scope: &WorkspaceScope) -> Option<CleanupKey> {
+        self.retries
+            .get(scope)
+            .filter(|retry| retry.is_live_or_dispatched())
+            .map(|retry| retry.key.clone())
+    }
+
+    pub fn active_delete_mission_ids(&self, scope: &WorkspaceScope) -> HashSet<String> {
+        self.deletes
+            .values()
+            .filter(|intent| {
+                !intent.retired
+                    && &intent.scope == scope
+                    && intent.flight.is_some()
+                    && intent.flight_phase.as_ref().is_none_or(|phase| {
+                        phase.load(Ordering::Acquire) == PHASE_DISPATCHED
+                            || intent
+                                .flight_live
+                                .as_ref()
+                                .is_none_or(|flag| flag.load(Ordering::Acquire))
+                    })
+            })
+            .map(|intent| intent.target.mission.clone())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub fn current_delete_request_id(
+        &self,
+        scope: &WorkspaceScope,
+        mission: &MissionKey,
+    ) -> Option<String> {
+        self.deletes
+            .get(&(scope.clone(), mission.clone()))
+            .map(|intent| intent.request.request_id.clone())
     }
 
     pub fn cleanup_error(&self, scope: &WorkspaceScope) -> Option<&'static str> {
@@ -505,6 +693,7 @@ impl CleanupOwner {
         backend: Backend,
         wake: Wake,
     ) {
+        self.release_revoked_preflights();
         if !cleanup.is_pending()
             || self.retries.contains_key(&scope)
             || self.retries.len() >= CAPACITY
@@ -519,12 +708,16 @@ impl CleanupOwner {
             || self.has_document_cleanup_intent(&scope, &cleanup);
         let project = scope.project.clone();
         let (out, inbox) = bounded(1);
+        let (cancel_tx, cancel_rx) = bounded(1);
+        let phase = Arc::new(AtomicU8::new(PHASE_PREFLIGHT));
         self.retries.insert(
             scope,
             CleanupRetry {
                 key,
                 view_live: view_live.clone(),
                 row_live: row_live.clone(),
+                cancel: Some(cancel_rx),
+                phase: phase.clone(),
                 flight: inbox,
                 retired: false,
             },
@@ -537,6 +730,8 @@ impl CleanupOwner {
                 require_document_settled,
                 view_live,
                 row_live,
+                cancel_tx,
+                phase,
             )
             .await;
             if out.send(result).await.is_ok() {
@@ -565,6 +760,7 @@ impl CleanupOwner {
 
     pub fn poll_deletes(&mut self) -> CleanupPolled {
         let mut polled = CleanupPolled::default();
+        polled.changed |= self.release_revoked_preflights();
         let mut learned_doc_cleanups = Vec::new();
         self.deletes.retain(|(_, mission), intent| {
             let Some(result) = intent
@@ -576,6 +772,8 @@ impl CleanupOwner {
             };
             intent.flight = None;
             let flight_live = intent.flight_live.take();
+            intent.flight_cancel = None;
+            intent.flight_phase = None;
             polled.changed = true;
             if intent.retired {
                 return false;
@@ -762,6 +960,7 @@ impl CleanupOwner {
 
     pub fn poll_retries(&mut self) -> CleanupPolled {
         let mut polled = CleanupPolled::default();
+        polled.changed |= self.release_revoked_preflights();
         let mut finished_retries = Vec::new();
         for (scope, retry) in &self.retries {
             if let Ok(result) = retry.flight.try_recv() {
@@ -994,6 +1193,8 @@ async fn run_delete(
     mut expected_deletion_id: Option<String>,
     mut expected_created_at: Option<u64>,
     live: Option<Arc<AtomicBool>>,
+    cancel: Option<Sender<()>>,
+    phase: Option<Arc<AtomicU8>>,
 ) -> DeleteResult {
     let still_live = || {
         live.as_ref()
@@ -1001,10 +1202,30 @@ async fn run_delete(
     };
     let mut tombstoned = false;
     if reconcile_first {
-        let snapshot = match backend
-            .read_mission_reconciliation(&target.project, &target.mission)
+        let preflight = if let Some(cancel) = cancel.as_ref() {
+            match until_closed(
+                cancel,
+                backend.read_mission_reconciliation(&target.project, &target.mission),
+            )
             .await
-        {
+            {
+                Some(result) => result,
+                None => {
+                    return DeleteResult::Cancelled {
+                        dispatched: false,
+                        document_cleanup: require_document_settled,
+                        deletion_id: expected_deletion_id,
+                        created_at_bits: expected_created_at,
+                        tombstoned,
+                    };
+                }
+            }
+        } else {
+            backend
+                .read_mission_reconciliation(&target.project, &target.mission)
+                .await
+        };
+        let snapshot = match preflight {
             Ok(ReconciliationOutcome::Snapshot(snapshot)) => snapshot,
             Ok(ReconciliationOutcome::AuthenticationRequired) => {
                 return DeleteResult::AuthExpired {
@@ -1171,7 +1392,17 @@ async fn run_delete(
                 }
             };
         }
-        if !still_live() {
+        if !still_live()
+            || phase.as_ref().is_some_and(|p| {
+                p.compare_exchange(
+                    PHASE_PREFLIGHT,
+                    PHASE_DISPATCHED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+            })
+        {
             return DeleteResult::Cancelled {
                 dispatched: false,
                 document_cleanup: require_document_settled,
@@ -1300,12 +1531,22 @@ async fn run_cleanup_retry(
     mut require_document_settled: bool,
     view_live: Arc<AtomicBool>,
     row_live: Arc<AtomicBool>,
+    cancel: Sender<()>,
+    phase: Arc<AtomicU8>,
 ) -> CleanupRetryResult {
     let still_live = || view_live.load(Ordering::Acquire) && row_live.load(Ordering::Acquire);
-    let snapshot = match backend
-        .read_mission_reconciliation(&project, &saved.mission_id)
-        .await
-    {
+    let Some(preflight) = until_closed(
+        &cancel,
+        backend.read_mission_reconciliation(&project, &saved.mission_id),
+    )
+    .await
+    else {
+        return CleanupRetryResult::Cancelled {
+            mutated: false,
+            document_cleanup: require_document_settled,
+        };
+    };
+    let snapshot = match preflight {
         Ok(ReconciliationOutcome::Snapshot(snapshot)) => snapshot,
         Ok(ReconciliationOutcome::AuthenticationRequired) => {
             return CleanupRetryResult::AuthExpired {
@@ -1408,7 +1649,16 @@ async fn run_cleanup_retry(
             }
         };
     }
-    if !still_live() {
+    if !still_live()
+        || phase
+            .compare_exchange(
+                PHASE_PREFLIGHT,
+                PHASE_DISPATCHED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+    {
         return CleanupRetryResult::Cancelled {
             mutated: false,
             document_cleanup: require_document_settled,
@@ -1455,10 +1705,18 @@ async fn run_cleanup_retry(
         };
     }
     if conflict_409 {
-        match backend
-            .read_mission_reconciliation(&project, &saved.mission_id)
-            .await
-        {
+        let Some(post_409) = until_closed(
+            &cancel,
+            backend.read_mission_reconciliation(&project, &saved.mission_id),
+        )
+        .await
+        else {
+            return CleanupRetryResult::Cancelled {
+                mutated: false,
+                document_cleanup: require_document_settled,
+            };
+        };
+        match post_409 {
             Ok(ReconciliationOutcome::Snapshot(after)) => {
                 if !still_live() {
                     return CleanupRetryResult::Cancelled {

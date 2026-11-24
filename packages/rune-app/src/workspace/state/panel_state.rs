@@ -203,6 +203,7 @@ fn orphaned_delete(
     occurrence: String,
     scope: missions::WorkspaceScope,
     mission: missions::MissionKey,
+    request_id: String,
     retry: bool,
 ) {
     if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
@@ -216,7 +217,13 @@ fn orphaned_delete(
         return;
     }
     if let Some(panel) = &mut entry.missions {
-        panel.act_orphaned_delete(&mut ui.mission_lifecycle, &scope, &mission, retry);
+        panel.act_orphaned_delete(
+            &mut ui.mission_lifecycle,
+            &scope,
+            &mission,
+            &request_id,
+            retry,
+        );
     }
 }
 
@@ -333,8 +340,13 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
     }
     // Propagate passively observed documentPending: true into active delete intents BEFORE
     // polling delete completions so a same-poll bare {deleted: true} cannot drop the intent.
-    for entry in &ui.entries {
-        if let Some(panel) = &entry.missions {
+    // Skip idle/parked tabs when neither cleanups nor active delete intents need observation.
+    for entry in &mut ui.entries {
+        if let Some(panel) = &mut entry.missions
+            && let Some(scope) = panel.cleanup_scope()
+            && (panel.take_cleanups_dirty()
+                || ui.mission_lifecycle.has_delete_intents_in_scope(&scope))
+        {
             panel.observe_cleanups(&mut ui.mission_lifecycle);
         }
     }

@@ -415,7 +415,8 @@ fn symmetric_mutation_guards_block_competing_lifecycle_recovery_and_delete_gestu
         );
         let stop_post = http.accept().await;
         assert!(stop_post.header.contains("/missions/mission/control "));
-        panel.control("occ", &mut owner, &src, Gesture::RetryDelete);
+        let req_id = owner.cleanup.delete_request_id(&src).unwrap();
+        panel.control("occ", &mut owner, &src, Gesture::RetryDelete(req_id));
         http.quiet().await;
         stop_post.reply(503, json!({})).await;
     });

@@ -117,7 +117,10 @@ fn mission_delete_freezes_intent_reconciles_lost_ack_and_reuses_exact_request_on
         );
 
         // Retry reconciles first, then reuses the exact frozen requestId and option.
-        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake.clone());
+        {
+            let req = owner.delete_request_id(&src).unwrap_or_default();
+            owner.retry_delete(&src, &req, live_flag(), http.backend.clone(), wake.clone());
+        }
         assert_eq!(owner.delete_state(&src), Some(DeleteState::Busy));
         let pre_retry = http.accept().await;
         assert!(pre_retry.header.starts_with("GET /api/workspaces/"));
@@ -201,7 +204,10 @@ fn hiding_view_during_reconciliation_cancels_both_retry_paths_before_sending_del
         owner.poll();
 
         let live = live_flag();
-        owner.retry_delete(&src, live.clone(), http.backend.clone(), wake.clone());
+        {
+            let req = owner.delete_request_id(&src).unwrap_or_default();
+            owner.retry_delete(&src, &req, live.clone(), http.backend.clone(), wake.clone());
+        }
         let held_get = http.accept().await;
         assert!(held_get.header.starts_with("GET /api/workspaces/"));
         // Hide the view while GET reconciliation is still in flight.
@@ -299,7 +305,10 @@ fn retry_delete_stops_without_sending_when_reconciliation_shows_revision_conflic
         );
 
         // Retry sees mission revision advanced to 8 -> reports revisionConflict without DELETE.
-        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake.clone());
+        {
+            let req = owner.delete_request_id(&src).unwrap_or_default();
+            owner.retry_delete(&src, &req, live_flag(), http.backend.clone(), wake.clone());
+        }
         let rec2 = http.accept().await;
         assert!(rec2.header.starts_with("GET /api/workspaces/"));
         rec2.reply(
@@ -322,7 +331,10 @@ fn retry_delete_stops_without_sending_when_reconciliation_shows_revision_conflic
         http.quiet().await;
 
         // If reconciliation instead shows the saved intent settled, retry completes without DELETE.
-        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake.clone());
+        {
+            let req = owner.delete_request_id(&src).unwrap_or_default();
+            owner.retry_delete(&src, &req, live_flag(), http.backend.clone(), wake.clone());
+        }
         let rec3 = http.accept().await;
         rec3.reply(
             200,
@@ -364,6 +376,8 @@ fn cleanup_retry_reconciles_before_delete_settles_409_and_retires_matching_delet
                 request: DeletionRequest::from_cleanup(&row).unwrap(),
                 flight: None,
                 flight_live: None,
+                flight_cancel: None,
+                flight_phase: None,
                 error: Some("missions.cleanup.documentPending"),
                 document_cleanup: true,
                 deletion_id: None,
@@ -486,6 +500,8 @@ fn cleanup_view_keeps_tombstoned_delete_reachable_and_fences_stale_scope_retry()
             request: DeletionRequest::new(7, false).unwrap(),
             flight: None,
             flight_live: None,
+            flight_cancel: None,
+            flight_phase: None,
             error: Some("missions.cleanup.error.unconfirmed"),
             document_cleanup: false,
             deletion_id: None,
@@ -499,12 +515,14 @@ fn cleanup_view_keeps_tombstoned_delete_reachable_and_fences_stale_scope_retry()
         (panel, owner),
         |(panel, owner), _| {
             crate::strings::with_locale("en", || {
-                cleanup_view::<(Panel, CleanupOwner)>(
-                    panel,
-                    owner,
-                    "occ",
-                    |_, _, _, _| {},
-                    |_, _, _, _, _| {},
+                rune_theme_codenomad::git_panel::scroll().child(
+                    cleanup_view::<(Panel, CleanupOwner)>(
+                        panel,
+                        owner,
+                        "occ",
+                        |_, _, _, _| {},
+                        |_, _, _, _, _, _| {},
+                    ),
                 )
             })
         },
@@ -547,6 +565,8 @@ fn cleanup_view_keeps_tombstoned_delete_reachable_and_fences_stale_scope_retry()
                 key,
                 view_live: live_flag(),
                 row_live: live_flag(),
+                cancel: None,
+                phase: Arc::new(AtomicU8::new(PHASE_DISPATCHED)),
                 flight: inbox,
                 retired: false,
             },
@@ -616,8 +636,10 @@ fn selected_delete_retry_cancels_when_user_switches_mission_during_reconciliatio
         owner.poll();
 
         // Start retry fenced with panel.selection_live, then switch selection to B while GET is held.
+        let req_a = owner.delete_request_id(&src_a).unwrap_or_default();
         owner.retry_delete(
             &src_a,
+            &req_a,
             panel.selection_live.clone(),
             http.backend.clone(),
             wake,
@@ -676,14 +698,15 @@ fn delete_intent_stays_isolated_to_its_origin_workspace_scope() {
         wait(done.recv()).await.unwrap();
         owner.poll();
 
+        let req_a = owner.delete_request_id(&src_a).unwrap();
         assert!(owner.delete_state(&src_a).is_some());
         assert_eq!(owner.delete_state(&src_b), None);
-        owner.cancel_delete(&src_b);
+        owner.cancel_delete(&src_b, &req_a);
         assert!(
             owner.delete_state(&src_a).is_some(),
             "workspace B cannot cancel workspace A's delete intent"
         );
-        owner.retry_delete(&src_b, live_flag(), http_b.backend.clone(), wake);
+        owner.retry_delete(&src_b, &req_a, live_flag(), http_b.backend.clone(), wake);
         http_b.quiet().await;
         http_a.quiet().await;
     });
@@ -707,6 +730,8 @@ fn orphaned_delete_and_cleanup_row_retries_exclude_each_other_and_row_settlement
                 request: DeletionRequest::from_cleanup(&row).unwrap(),
                 flight: None,
                 flight_live: None,
+                flight_cancel: None,
+                flight_phase: None,
                 error: Some("missions.cleanup.documentPending"),
                 document_cleanup: true,
                 deletion_id: None,
@@ -719,6 +744,7 @@ fn orphaned_delete_and_cleanup_row_retries_exclude_each_other_and_row_settlement
         owner.retry_delete_in_scope(
             &sc,
             &old_src.mission,
+            &row.request_id,
             live_flag(),
             http.backend.clone(),
             wake.clone(),
@@ -780,6 +806,7 @@ fn orphaned_delete_and_cleanup_row_retries_exclude_each_other_and_row_settlement
         owner.retry_delete_in_scope(
             &sc,
             &old_src.mission,
+            &row.request_id,
             live_flag(),
             http.backend.clone(),
             wake,
@@ -819,6 +846,8 @@ fn closing_workspaces_retires_failed_delete_intents_and_bounds_cleanup_errors() 
                 request: DeletionRequest::new(1, false).unwrap(),
                 flight: None,
                 flight_live: None,
+                flight_cancel: None,
+                flight_phase: None,
                 error: Some("missions.cleanup.error.unconfirmed"),
                 document_cleanup: false,
                 deletion_id: None,
@@ -862,6 +891,8 @@ fn closing_workspaces_retires_failed_delete_intents_and_bounds_cleanup_errors() 
                 key: CleanupKey::new(sc, &cleanup_row(0, true)),
                 view_live: live_flag(),
                 row_live: live_flag(),
+                cancel: None,
+                phase: Arc::new(AtomicU8::new(PHASE_DISPATCHED)),
                 flight: inbox,
                 retired: false,
             },
@@ -897,6 +928,8 @@ fn sse_loss_and_view_revocation_abort_retry_before_and_after_delete() {
                 request: DeletionRequest::new(7, false).unwrap(),
                 flight: None,
                 flight_live: None,
+                flight_cancel: None,
+                flight_phase: None,
                 error: Some("missions.cleanup.error.unconfirmed"),
                 document_cleanup: false,
                 deletion_id: None,
@@ -904,8 +937,10 @@ fn sse_loss_and_view_revocation_abort_retry_before_and_after_delete() {
                 retired: false,
             },
         );
+        let req = owner.delete_request_id(&src).unwrap_or_default();
         owner.retry_delete(
             &src,
+            &req,
             panel.selection_live.clone(),
             http.backend.clone(),
             wake.clone(),
@@ -1141,7 +1176,10 @@ fn delete_intent_persists_document_cleanup_requirement_across_retries() {
         );
 
         // Retry gets a row with pending:0 but omitted documentPending -> must stay unconfirmed.
-        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake);
+        {
+            let req = owner.delete_request_id(&src).unwrap_or_default();
+            owner.retry_delete(&src, &req, live_flag(), http.backend.clone(), wake);
+        }
         let rec2 = http.accept().await;
         rec2.reply(
             200,
@@ -1506,7 +1544,10 @@ fn delete_intent_pins_observed_deletion_id_across_retry_and_passive_retirement()
 
         // Explicit retry observing a contradictory deletionID "del-b" on preflight GET must
         // stop before sending a second DELETE and keep the pinned "del-a" intent unconfirmed.
-        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake);
+        {
+            let req = owner.delete_request_id(&src).unwrap_or_default();
+            owner.retry_delete(&src, &req, live_flag(), http.backend.clone(), wake);
+        }
         let pre_get = http.accept().await;
         pre_get
             .reply(
@@ -1635,7 +1676,7 @@ fn cleanup_retry_revokes_on_created_at_change() {
         );
         panel.view_live = live_flag();
         panel.cleanup_view_live = live_flag();
-        let row1 = cleanup_row(1, false);
+        let row1 = cleanup_row(1, true);
         assert!(panel.accept_cleanups_for_test(vec![row1.clone()]));
         panel.cleanup_view_live = live_flag();
         let view_token = panel.cleanup_view_live.clone();
@@ -1643,7 +1684,13 @@ fn cleanup_retry_revokes_on_created_at_change() {
 
         let mut row2 = cleanup_row(1, false);
         row2.created_at = 2.0;
-        assert!(panel.accept_cleanups_for_test(vec![row2]));
+        assert!(
+            !panel.accept_cleanups_for_test(vec![row2]),
+            "contradictory createdAt for the same mission/deletion must be rejected"
+        );
+        assert_eq!(panel.cleanups.len(), 1);
+        assert_eq!(panel.cleanups[0].created_at, 1.0);
+        assert_eq!(panel.cleanups[0].document_pending, Some(true));
         assert!(
             !view_token.load(Ordering::Acquire),
             "createdAt change must revoke cleanup_view_live"
@@ -1672,6 +1719,8 @@ fn revoked_get_only_settlement_preserves_delete_intent_and_cleanup_tokens_cap_at
                 },
                 flight: None,
                 flight_live: None,
+                flight_cancel: None,
+                flight_phase: None,
                 error: Some("missions.cleanup.error.pending"),
                 document_cleanup: false,
                 deletion_id: Some("del-1".into()),
@@ -1695,6 +1744,8 @@ fn revoked_get_only_settlement_preserves_delete_intent_and_cleanup_tokens_cap_at
                 key: CleanupKey::new(sc.clone(), &cleanup_row(1, false)),
                 view_live,
                 row_live,
+                cancel: None,
+                phase: Arc::new(AtomicU8::new(PHASE_PREFLIGHT)),
                 flight: inbox,
                 retired: false,
             },
@@ -1774,6 +1825,8 @@ fn offline_panel_disables_cleanup_and_orphaned_delete_retry_buttons() {
                 request: DeletionRequest::new(3, false).unwrap(),
                 flight: None,
                 flight_live: None,
+                flight_cancel: None,
+                flight_phase: None,
                 error: Some("missions.cleanup.error.unconfirmed"),
                 document_cleanup: false,
                 deletion_id: None,
@@ -1787,13 +1840,16 @@ fn offline_panel_disables_cleanup_and_orphaned_delete_retry_buttons() {
             (panel, owner),
             |(panel, owner), _| {
                 crate::strings::with_locale("en", || {
-                    cleanup_view::<(Panel, CleanupOwner)>(
+                    rune_theme_codenomad::git_panel::scroll().child(cleanup_view::<(
+                        Panel,
+                        CleanupOwner,
+                    )>(
                         panel,
                         owner,
                         "occ",
                         |_, _, _, _| {},
-                        |_, _, _, _, _| {},
-                    )
+                        |_, _, _, _, _, _| {},
+                    ))
                 })
             },
             (420.0, 640.0),
@@ -1851,7 +1907,10 @@ fn pinned_tombstone_refuses_delete_when_reconciliation_returns_live_mission() {
 
         // Retry reconciliation returns a live Mission at the original revision with no cleanups.
         // Because del-a was already pinned, we must NOT dispatch DELETE against the live Mission.
-        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake);
+        {
+            let req = owner.delete_request_id(&src).unwrap_or_default();
+            owner.retry_delete(&src, &req, live_flag(), http.backend.clone(), wake);
+        }
         let pre_get = http.accept().await;
         pre_get
             .reply(
@@ -1932,7 +1991,10 @@ fn ambiguous_cleanup_rows_never_settle_or_authorize_delete() {
             vec![settled_row.clone(), pending_row.clone()],
             vec![pending_row, settled_row],
         ] {
-            owner.retry_delete(&src, live_flag(), http.backend.clone(), wake.clone());
+            {
+                let req = owner.delete_request_id(&src).unwrap_or_default();
+                owner.retry_delete(&src, &req, live_flag(), http.backend.clone(), wake.clone());
+            }
             let pre_get = http.accept().await;
             pre_get
                 .reply(
@@ -1993,7 +2055,10 @@ fn revoked_delete_retry_view_never_publishes_readonly_settlement() {
 
         // Hold retry GET, let it return a settled row, then revoke view before poll().
         let live = live_flag();
-        owner.retry_delete(&src, live.clone(), http.backend.clone(), wake);
+        {
+            let req = owner.delete_request_id(&src).unwrap_or_default();
+            owner.retry_delete(&src, &req, live.clone(), http.backend.clone(), wake);
+        }
         let pre_get = http.accept().await;
         pre_get
             .reply(
@@ -2233,13 +2298,16 @@ fn cleanup_directory_failure_revokes_retry_fence_and_disables_retry() {
             (panel, lifecycle.cleanup),
             |(panel, owner), _| {
                 crate::strings::with_locale("en", || {
-                    cleanup_view::<(Panel, CleanupOwner)>(
+                    rune_theme_codenomad::git_panel::scroll().child(cleanup_view::<(
+                        Panel,
+                        CleanupOwner,
+                    )>(
                         panel,
                         owner,
                         "occ",
                         |_, _, _, _| {},
-                        |_, _, _, _, _| {},
-                    )
+                        |_, _, _, _, _, _| {},
+                    ))
                 })
             },
             (420.0, 640.0),
@@ -2291,7 +2359,10 @@ fn revoked_delete_retry_never_publishes_readonly_failure() {
 
         // Queue a revision-conflict failure from a retry GET, hide panel before poll().
         let live = live_flag();
-        owner.retry_delete(&src, live.clone(), http.backend.clone(), wake);
+        {
+            let req = owner.delete_request_id(&src).unwrap_or_default();
+            owner.retry_delete(&src, &req, live.clone(), http.backend.clone(), wake);
+        }
         let pre_get = http.accept().await;
         pre_get
             .reply(
@@ -2426,6 +2497,7 @@ fn document_pending_cache_retains_65_rows_across_empty_gap_and_isolates_created_
         different_lifetime.created_at = 2.0;
         different_lifetime.document_pending = Some(false);
         assert!(panel.accept_cleanups_for_test(vec![different_lifetime]));
+        assert!(panel.accept_cleanups_for_test(vec![]));
         // Returning all 65 original rows with pending: 0 and documentPending omitted must keep
         // EVERY single one of the 65 rows pending!
         let omitted: Vec<Cleanup> = rows
@@ -2667,12 +2739,17 @@ fn cleanup_retry_rejects_settlement_when_document_pending_learned_during_preflig
         assert!(held_get.header.starts_with("GET /api/workspaces/"));
 
         // While preflight GET is held, the directory learns documentPending: true for the same row.
+        let retry_view_token = panel.cleanup_view_live.clone();
         initial.document_pending = Some(true);
         assert!(panel.accept_cleanups_for_test(vec![initial]));
         panel.observe_cleanups(&mut lifecycle);
         assert!(
-            !panel.cleanup_view_live.load(Ordering::Acquire) || lifecycle.cleanup.cleanup_busy(&sc),
+            !retry_view_token.load(Ordering::Acquire),
             "pending set change with documentPending: true must revoke the stale retry view"
+        );
+        assert!(
+            !lifecycle.cleanup.cleanup_busy(&sc),
+            "revoked preflight must immediately stop reporting busy"
         );
 
         // Preflight GET now replies with pending: 0 and omitted documentPending.
@@ -2827,7 +2904,10 @@ fn document_pending_observed_during_delete_flight_blocks_bare_retry_settlement()
         );
 
         // Retry against an empty preflight and a bare {deleted: true}: frozen intent must stay.
-        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake);
+        {
+            let req = owner.delete_request_id(&src).unwrap_or_default();
+            owner.retry_delete(&src, &req, live_flag(), http.backend.clone(), wake);
+        }
         let pre = http.accept().await;
         pre.reply(
             200,
@@ -2916,7 +2996,10 @@ fn pinned_deletion_id_does_not_hide_ambiguous_wire_matches() {
         );
 
         // Retry preflight returning settled A + conflicting B must neither DELETE nor retire.
-        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake);
+        {
+            let req = owner.delete_request_id(&src).unwrap_or_default();
+            owner.retry_delete(&src, &req, live_flag(), http.backend.clone(), wake);
+        }
         let pre = http.accept().await;
         pre.reply(
             200,
@@ -3257,6 +3340,188 @@ fn cleanup_retry_blocks_settlement_after_direct_delete_learned_document_pending(
             "cleanup retry must not publish settlement without explicit documentPending: false after direct delete learned true"
         );
         assert!(owner.delete_state(&src).is_some());
+    });
+}
+
+#[test]
+fn stale_retry_and_cancel_callbacks_cannot_act_on_a_replacement_delete_intent() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-stale-cb");
+        let mut owner = CleanupOwner::default();
+
+        // Intent A (deleteManagedSessions: false) fails and is cancelled.
+        owner.start_delete(
+            &src,
+            "Intent A".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let del_a = http.accept().await;
+        let req_a = del_a.body["requestId"].as_str().unwrap().to_owned();
+        del_a.reply(503, json!({"code": "cleanup-pending"})).await;
+        let rec_a = http.accept().await;
+        rec_a.reply(503, json!({})).await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+        assert_eq!(
+            owner.delete_request_id(&src).as_deref(),
+            Some(req_a.as_str())
+        );
+        owner.cancel_delete(&src, &req_a);
+        assert_eq!(owner.delete_state(&src), None);
+
+        // Intent B (deleteManagedSessions: true) for the same mission becomes unconfirmed.
+        owner.start_delete(
+            &src,
+            "Intent B".into(),
+            7,
+            true,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let del_b = http.accept().await;
+        let req_b = del_b.body["requestId"].as_str().unwrap().to_owned();
+        assert_ne!(req_a, req_b);
+        del_b.reply(503, json!({"code": "cleanup-pending"})).await;
+        let rec_b = http.accept().await;
+        rec_b.reply(503, json!({})).await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+
+        // Stale Retry and Cancel callbacks carrying Intent A's request_id must be ignored.
+        owner.retry_delete(
+            &src,
+            &req_a,
+            live_flag(),
+            http.backend.clone(),
+            wake.clone(),
+        );
+        owner.retry_delete_in_scope(
+            &src.workspace_scope(),
+            &src.mission,
+            &req_a,
+            live_flag(),
+            http.backend.clone(),
+            wake,
+        );
+        owner.cancel_delete(&src, &req_a);
+        owner.cancel_delete_in_scope(&src.workspace_scope(), &src.mission, &req_a);
+        http.quiet().await;
+        assert_eq!(
+            owner.delete_request_id(&src).as_deref(),
+            Some(req_b.as_str()),
+            "intent B must remain intact and un-replayed against stale intent A callbacks"
+        );
+    });
+}
+
+#[test]
+fn hiding_view_during_hung_cleanup_preflight_frees_workspace_retry_slot_immediately() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let sc = scope();
+        let mut owner = CleanupOwner::default();
+        let row1 = cleanup_row(1, false);
+        let mut row2 = cleanup_row(1, false);
+        row2.mission_id = "other".into();
+        row2.deletion_id = "del-2".into();
+
+        // Start retry on row 1 and keep its preflight GET stalled (never replied to).
+        let view1 = live_flag();
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row1,
+            view1.clone(),
+            live_flag(),
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let _hung_get = http.accept().await;
+        assert!(owner.cleanup_busy(&sc));
+
+        // Hide the pane -> revoking view1 must immediately free the workspace retry slot.
+        view1.store(false, Ordering::Release);
+        assert!(
+            !owner.cleanup_busy(&sc),
+            "revoked preflight must immediately stop reporting the workspace retry slot as busy"
+        );
+
+        // Reopen and retry row 2 immediately while row 1's server socket is still stalled.
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row2,
+            live_flag(),
+            live_flag(),
+            http.backend.clone(),
+            wake,
+        );
+        let row2_get = http.accept().await;
+        assert!(
+            row2_get.header.contains("/missions/other "),
+            "second cleanup retry must dispatch immediately without waiting for hung preflight"
+        );
+        row2_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "cleanups": [{
+                        "missionID": "other", "deletionID": "del-2", "requestID": "req-1",
+                        "expectedRevision": 3, "deleteManagedSessions": false,
+                        "objective": "Other", "createdAt": 1, "removed": 1, "retained": 0,
+                        "pending": 0, "reasons": [], "documentPending": false
+                    }]
+                }),
+            )
+            .await;
+    });
+}
+
+#[test]
+fn confirmed_deleted_mission_stays_filtered_across_stale_summaries_refresh() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        panel.seed_summary_for_test("msn-gone");
+        panel.seed_summary_for_test("msn-keep");
+        panel.forget_deleted_mission("msn-gone");
+        assert!(!panel.has_summary_for_test("msn-gone"));
+
+        // A stale cached directory refresh still containing msn-gone must NOT resurrect it.
+        let make_sum = |id: &str| codenomad_client::missions::Summary {
+            id: id.into(),
+            title: Some(id.into()),
+            objective: id.into(),
+            status: codenomad_client::missions::Status::Active,
+            run_state: None,
+            coordinator_session_id: "ses_c".into(),
+            actor_count: 1,
+            updated_at: 1.0,
+            revision: 7,
+            finish_sequence: None,
+            task_count: None,
+        };
+        assert!(panel.accept_summaries_for_test(vec![make_sum("msn-gone"), make_sum("msn-keep")]));
+        assert!(
+            !panel.has_summary_for_test("msn-gone"),
+            "stale summaries refresh must not resurrect a confirmed deleted mission"
+        );
+        assert!(panel.has_summary_for_test("msn-keep"));
+
+        // Once the server catches up with a full-coverage page omitting msn-gone, tombstone clears.
+        assert!(panel.accept_summaries_for_test(vec![make_sum("msn-keep")]));
+        assert!(!panel.has_summary_for_test("msn-gone"));
     });
 }
 

@@ -61,8 +61,8 @@ pub(crate) enum Gesture {
     ConfirmStop(bool),
     RecoverCoordinator(u64),
     DeleteMission(u64, bool),
-    RetryDelete,
-    CancelDelete,
+    RetryDelete(String),
+    CancelDelete(String),
     ReadField(codenomad_client::missions::ControlPart, u64),
     ReceiptDetails(String, u64, Option<usize>),
 }
@@ -143,6 +143,7 @@ impl Panel {
         owner: &mut Lifecycle,
         scope: &WorkspaceScope,
         mission: &MissionKey,
+        request_id: &str,
         retry: bool,
     ) {
         if self.cleanup_scope().as_ref() != Some(scope) {
@@ -155,12 +156,15 @@ impl Panel {
             owner.cleanup.retry_delete_in_scope(
                 scope,
                 mission,
+                request_id,
                 self.view_live.clone(),
                 self.backend.clone(),
                 self.wake.clone(),
             );
         } else {
-            owner.cleanup.cancel_delete_in_scope(scope, mission);
+            owner
+                .cleanup
+                .cancel_delete_in_scope(scope, mission, request_id);
         }
     }
 
@@ -317,17 +321,20 @@ impl Panel {
                 );
                 None
             }
-            Gesture::RetryDelete if self.online() && !owner.busy(source) && !recovery_busy => {
+            Gesture::RetryDelete(request_id)
+                if self.online() && !owner.busy(source) && !recovery_busy =>
+            {
                 owner.cleanup.retry_delete(
                     source,
+                    &request_id,
                     self.selection_live.clone(),
                     self.backend.clone(),
                     self.wake.clone(),
                 );
                 None
             }
-            Gesture::CancelDelete => {
-                owner.cleanup.cancel_delete(source);
+            Gesture::CancelDelete(request_id) => {
+                owner.cleanup.cancel_delete(source, &request_id);
                 None
             }
             _ => None,
@@ -505,6 +512,10 @@ impl Lifecycle {
         self.cleanup.cleanup_error(scope)
     }
 
+    pub(crate) fn has_delete_intents_in_scope(&self, scope: &WorkspaceScope) -> bool {
+        self.cleanup.has_delete_intents_in_scope(scope)
+    }
+
     #[cfg(test)]
     pub(crate) fn has_delete_intent_for_test(
         &self,
@@ -533,9 +544,13 @@ impl Lifecycle {
             server: scope.server.clone(),
             id: mission_id.into(),
         };
+        let Some(request_id) = self.cleanup.current_delete_request_id(scope, &key) else {
+            return;
+        };
         self.cleanup.retry_delete_in_scope(
             scope,
             &key,
+            &request_id,
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             backend,
             wake,

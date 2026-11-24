@@ -49,24 +49,197 @@ enum ValueMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StrEscape {
+    None,
+    Backslash,
+    Unicode { digits: u8, value: u16 },
+    NeedLowBackslash,
+    NeedLowU,
+    NeedLowHex { digits: u8, value: u16 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StringScanner {
+    escape: StrEscape,
+    utf8_need: u8,
+    utf8_min_next: u8,
+    utf8_max_next: u8,
+}
+
+impl StringScanner {
+    const fn new() -> Self {
+        Self {
+            escape: StrEscape::None,
+            utf8_need: 0,
+            utf8_min_next: 0x80,
+            utf8_max_next: 0xBF,
+        }
+    }
+
+    /// Feeds one byte of a JSON string body (after the opening `"`).
+    /// Returns `Ok(true)` if `b` is the closing unescaped `"`, `Ok(false)` otherwise.
+    fn step(&mut self, b: u8) -> Result<bool> {
+        if self.utf8_need > 0 {
+            if b < self.utf8_min_next || b > self.utf8_max_next {
+                return Err("invalid UTF-8 sequence in JSON string".into());
+            }
+            self.utf8_need -= 1;
+            self.utf8_min_next = 0x80;
+            self.utf8_max_next = 0xBF;
+            return Ok(false);
+        }
+        match self.escape {
+            StrEscape::None => {
+                if b < 0x20 {
+                    return Err("unescaped control character in JSON string".into());
+                }
+                if b == b'"' {
+                    return Ok(true);
+                }
+                if b == b'\\' {
+                    self.escape = StrEscape::Backslash;
+                    return Ok(false);
+                }
+                if b >= 0x80 {
+                    self.start_utf8(b)?;
+                }
+                Ok(false)
+            }
+            StrEscape::Backslash => match b {
+                b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => {
+                    self.escape = StrEscape::None;
+                    Ok(false)
+                }
+                b'u' => {
+                    self.escape = StrEscape::Unicode {
+                        digits: 0,
+                        value: 0,
+                    };
+                    Ok(false)
+                }
+                _ => Err("invalid JSON escape sequence".into()),
+            },
+            StrEscape::Unicode { digits, value } => {
+                let hex = hex_nibble(b)?;
+                let next_val = (value << 4) | u16::from(hex);
+                if digits + 1 < 4 {
+                    self.escape = StrEscape::Unicode {
+                        digits: digits + 1,
+                        value: next_val,
+                    };
+                } else if (0xD800..=0xDBFF).contains(&next_val) {
+                    self.escape = StrEscape::NeedLowBackslash;
+                } else if (0xDC00..=0xDFFF).contains(&next_val) {
+                    return Err("unpaired low surrogate in JSON string".into());
+                } else {
+                    self.escape = StrEscape::None;
+                }
+                Ok(false)
+            }
+            StrEscape::NeedLowBackslash => {
+                if b == b'\\' {
+                    self.escape = StrEscape::NeedLowU;
+                    Ok(false)
+                } else {
+                    Err("unpaired high surrogate in JSON string".into())
+                }
+            }
+            StrEscape::NeedLowU => {
+                if b == b'u' {
+                    self.escape = StrEscape::NeedLowHex {
+                        digits: 0,
+                        value: 0,
+                    };
+                    Ok(false)
+                } else {
+                    Err("unpaired high surrogate in JSON string".into())
+                }
+            }
+            StrEscape::NeedLowHex { digits, value } => {
+                let hex = hex_nibble(b)?;
+                let next_val = (value << 4) | u16::from(hex);
+                if digits + 1 < 4 {
+                    self.escape = StrEscape::NeedLowHex {
+                        digits: digits + 1,
+                        value: next_val,
+                    };
+                } else if (0xDC00..=0xDFFF).contains(&next_val) {
+                    self.escape = StrEscape::None;
+                } else {
+                    return Err("invalid low surrogate in JSON string".into());
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    fn start_utf8(&mut self, b: u8) -> Result<()> {
+        match b {
+            0xC2..=0xDF => {
+                self.utf8_need = 1;
+                self.utf8_min_next = 0x80;
+                self.utf8_max_next = 0xBF;
+            }
+            0xE0 => {
+                self.utf8_need = 2;
+                self.utf8_min_next = 0xA0;
+                self.utf8_max_next = 0xBF;
+            }
+            0xE1..=0xEC | 0xEE..=0xEF => {
+                self.utf8_need = 2;
+                self.utf8_min_next = 0x80;
+                self.utf8_max_next = 0xBF;
+            }
+            0xED => {
+                self.utf8_need = 2;
+                self.utf8_min_next = 0x80;
+                self.utf8_max_next = 0x9F;
+            }
+            0xF0 => {
+                self.utf8_need = 3;
+                self.utf8_min_next = 0x90;
+                self.utf8_max_next = 0xBF;
+            }
+            0xF1..=0xF3 => {
+                self.utf8_need = 3;
+                self.utf8_min_next = 0x80;
+                self.utf8_max_next = 0xBF;
+            }
+            0xF4 => {
+                self.utf8_need = 3;
+                self.utf8_min_next = 0x80;
+                self.utf8_max_next = 0x8F;
+            }
+            _ => return Err("invalid UTF-8 lead byte in JSON string".into()),
+        }
+        Ok(())
+    }
+}
+
+fn hex_nibble(b: u8) -> Result<u8> {
+    match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'a'..=b'f' => Ok(b - b'a' + 10),
+        b'A'..=b'F' => Ok(b - b'A' + 10),
+        _ => Err("invalid unicode escape hex digit in JSON string".into()),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
     ExpectRootOpen,
     ObjectStart,
     ObjectAfterComma,
-    ReadKey {
-        escaped: bool,
-    },
+    ReadKey,
     ExpectColon,
     ExpectValue,
     MissionValueStart,
     ValueString {
         mode: ValueMode,
-        escaped: bool,
     },
     ValueComposite {
         mode: ValueMode,
         in_string: bool,
-        escaped: bool,
         in_primitive: bool,
     },
     ValuePrimitive {
@@ -94,6 +267,7 @@ struct FilterParser<'a> {
     current_key: Option<String>,
     current_buf: Vec<u8>,
     prim_buf: Vec<u8>,
+    string_scanner: StringScanner,
     composite_stack: Vec<CompositeExpect>,
     root_fields: Vec<(String, Vec<u8>)>,
     mission: MissionField,
@@ -113,6 +287,7 @@ impl<'a> FilterParser<'a> {
             current_key: None,
             current_buf: Vec::new(),
             prim_buf: Vec::new(),
+            string_scanner: StringScanner::new(),
             composite_stack: Vec::new(),
             root_fields: Vec::new(),
             mission: MissionField::Absent,
@@ -157,10 +332,7 @@ impl<'a> FilterParser<'a> {
                         return Err("expected object key after ','".into());
                     }
                 }
-                State::ReadKey { escaped } => {
-                    if b < 0x20 {
-                        return Err("unescaped control character in JSON key".into());
-                    }
+                State::ReadKey => {
                     if !self.key_overflow {
                         if self.key_raw.len() < MAX_KEY_BYTES {
                             self.key_raw.push(b);
@@ -168,11 +340,7 @@ impl<'a> FilterParser<'a> {
                             self.key_overflow = true;
                         }
                     }
-                    if escaped {
-                        self.state = State::ReadKey { escaped: false };
-                    } else if b == b'\\' {
-                        self.state = State::ReadKey { escaped: true };
-                    } else if b == b'"' {
+                    if self.string_scanner.step(b)? {
                         self.current_key = if self.key_overflow {
                             None
                         } else {
@@ -236,22 +404,9 @@ impl<'a> FilterParser<'a> {
                         i += 1;
                     }
                 }
-                State::ValueString { mode, escaped } => {
-                    if b < 0x20 {
-                        return Err("unescaped control character in JSON string".into());
-                    }
+                State::ValueString { mode } => {
                     self.capture_byte(mode, b)?;
-                    if escaped {
-                        self.state = State::ValueString {
-                            mode,
-                            escaped: false,
-                        };
-                    } else if b == b'\\' {
-                        self.state = State::ValueString {
-                            mode,
-                            escaped: true,
-                        };
-                    } else if b == b'"' {
+                    if self.string_scanner.step(b)? {
                         self.finish_value(mode)?;
                     }
                     i += 1;
@@ -259,10 +414,9 @@ impl<'a> FilterParser<'a> {
                 State::ValueComposite {
                     mode,
                     in_string,
-                    escaped,
                     in_primitive,
                 } => {
-                    let advance = self.step_composite(mode, in_string, escaped, in_primitive, b)?;
+                    let advance = self.step_composite(mode, in_string, in_primitive, b)?;
                     if advance {
                         i += 1;
                     }
@@ -308,42 +462,24 @@ impl<'a> FilterParser<'a> {
         self.key_raw.clear();
         self.key_raw.push(b'"');
         self.key_overflow = false;
-        self.state = State::ReadKey { escaped: false };
+        self.string_scanner = StringScanner::new();
+        self.state = State::ReadKey;
     }
 
     fn step_composite(
         &mut self,
         mode: ValueMode,
         in_string: bool,
-        escaped: bool,
         in_primitive: bool,
         b: u8,
     ) -> Result<bool> {
         if in_string {
-            if b < 0x20 {
-                return Err("unescaped control character in JSON string".into());
-            }
             self.capture_byte(mode, b)?;
-            if escaped {
-                self.state = State::ValueComposite {
-                    mode,
-                    in_string: true,
-                    escaped: false,
-                    in_primitive: false,
-                };
-            } else if b == b'\\' {
-                self.state = State::ValueComposite {
-                    mode,
-                    in_string: true,
-                    escaped: true,
-                    in_primitive: false,
-                };
-            } else if b == b'"' {
+            if self.string_scanner.step(b)? {
                 self.advance_composite_after_value();
                 self.state = State::ValueComposite {
                     mode,
                     in_string: false,
-                    escaped: false,
                     in_primitive: false,
                 };
             }
@@ -357,7 +493,6 @@ impl<'a> FilterParser<'a> {
                 self.state = State::ValueComposite {
                     mode,
                     in_string: false,
-                    escaped: false,
                     in_primitive: false,
                 };
                 return Ok(false);
@@ -409,10 +544,10 @@ impl<'a> FilterParser<'a> {
                 }
                 if b == b'"' {
                     self.capture_byte(mode, b)?;
+                    self.string_scanner = StringScanner::new();
                     self.state = State::ValueComposite {
                         mode,
                         in_string: true,
-                        escaped: false,
                         in_primitive: false,
                     };
                     return Ok(true);
@@ -422,10 +557,10 @@ impl<'a> FilterParser<'a> {
             CompositeExpect::ObjectKeyAfterComma => {
                 if b == b'"' {
                     self.capture_byte(mode, b)?;
+                    self.string_scanner = StringScanner::new();
                     self.state = State::ValueComposite {
                         mode,
                         in_string: true,
-                        escaped: false,
                         in_primitive: false,
                     };
                     Ok(true)
@@ -465,10 +600,10 @@ impl<'a> FilterParser<'a> {
         match b {
             b'"' => {
                 self.capture_byte(mode, b)?;
+                self.string_scanner = StringScanner::new();
                 self.state = State::ValueComposite {
                     mode,
                     in_string: true,
-                    escaped: false,
                     in_primitive: false,
                 };
             }
@@ -493,7 +628,6 @@ impl<'a> FilterParser<'a> {
                 self.state = State::ValueComposite {
                     mode,
                     in_string: false,
-                    escaped: false,
                     in_primitive: true,
                 };
             }
@@ -534,10 +668,8 @@ impl<'a> FilterParser<'a> {
         match first {
             b'"' => {
                 self.capture_byte(mode, first)?;
-                self.state = State::ValueString {
-                    mode,
-                    escaped: false,
-                };
+                self.string_scanner = StringScanner::new();
+                self.state = State::ValueString { mode };
             }
             b'{' => {
                 self.capture_byte(mode, first)?;
@@ -545,7 +677,6 @@ impl<'a> FilterParser<'a> {
                 self.state = State::ValueComposite {
                     mode,
                     in_string: false,
-                    escaped: false,
                     in_primitive: false,
                 };
             }
@@ -555,7 +686,6 @@ impl<'a> FilterParser<'a> {
                 self.state = State::ValueComposite {
                     mode,
                     in_string: false,
-                    escaped: false,
                     in_primitive: false,
                 };
             }
@@ -803,5 +933,44 @@ mod tests {
             .unwrap();
         let arr_val: Value = serde_json::from_slice(&arr.finish().unwrap()).unwrap();
         assert_eq!(arr_val["mission"], json!([]));
+    }
+
+    #[test]
+    fn rejects_invalid_escapes_surrogates_and_utf8_in_skipped_strings_and_long_keys() {
+        let long_bad_key = format!(
+            r#"{{"{}":"\u0041","admitted":true}}"#,
+            "k".repeat(140) + r"\q"
+        );
+        let bad_utf8: &[u8] = b"{\"admitted\":true,\"ignored\":\"\xFF\"}";
+        let overlong_utf8: &[u8] = b"{\"admitted\":true,\"ignored\":\"\xC0\xAF\"}";
+        for bad in [
+            br#"{"admitted":true,"ignored":"\x"}"#.as_slice(),
+            br#"{"admitted":true,"ignored":"\u123"}"#.as_slice(),
+            br#"{"admitted":true,"ignored":"\u123G"}"#.as_slice(),
+            br#"{"admitted":true,"ignored":"\uD800"}"#.as_slice(),
+            br#"{"admitted":true,"ignored":"\uD800a"}"#.as_slice(),
+            br#"{"admitted":true,"ignored":"\uDC00"}"#.as_slice(),
+            br#"{"admitted":true,"tasks":[{"note":"\q"}]}"#.as_slice(),
+            long_bad_key.as_bytes(),
+            bad_utf8,
+            overlong_utf8,
+        ] {
+            let mut p = FilterParser::new(&["admitted"], &["id"], 4096);
+            assert!(
+                p.feed(bad).and_then(|()| p.finish()).is_err(),
+                "expected malformed string/key to fail: {:?}",
+                bad
+            );
+        }
+
+        // Valid surrogate pair and multibyte UTF-8 in skipped fields must succeed.
+        let mut good = FilterParser::new(&["admitted"], &[], 4096);
+        good.feed(
+            "{\"admitted\":true,\"tasks\":[{\"note\":\"\\uD83E\\uDD80 🦀 \\\"ok\\\"\"}]}"
+                .as_bytes(),
+        )
+        .unwrap();
+        let val: Value = serde_json::from_slice(&good.finish().unwrap()).unwrap();
+        assert_eq!(val, json!({"admitted": true}));
     }
 }

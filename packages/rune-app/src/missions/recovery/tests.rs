@@ -425,10 +425,18 @@ fn recovery_guard_prevents_duplicate_admission_refreshes_on_refusal_and_allows_r
         assert_eq!(polled.refreshed_scopes, vec![src.workspace_scope()]);
         assert!(guard.admitted(&key));
 
-        // Once admitted, the same revision cannot replay.
+        // Once admitted, neither the requested nor the reopened admitted revision can replay.
+        assert!(guard.admitted(&RecoveryKey::coordinator(&src, 8)));
         guard.start(
             &src,
             7,
+            RecoveryTarget::Coordinator,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        guard.start(
+            &src,
+            8,
             RecoveryTarget::Coordinator,
             http.backend.clone(),
             wake,

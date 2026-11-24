@@ -41,6 +41,7 @@ struct Lane {
     failed: Option<Read>,
     owed: bool,
     seen: HashSet<(String, Option<String>)>,
+    prefix_len: usize,
 }
 
 struct Completion {
@@ -85,6 +86,13 @@ pub(crate) struct Panel {
     remembered_document_order: VecDeque<CleanupIdentity>,
     settled_cleanups: HashMap<CleanupIdentity, Cleanup>,
     settled_cleanup_order: VecDeque<CleanupIdentity>,
+    deleted_missions: HashSet<String>,
+    deleted_missions_order: VecDeque<String>,
+    cleanup_meta: HashMap<(String, String), (String, u64, bool, u64)>,
+    pending_cleanup_set: HashSet<(String, String, String, u64, bool, u64, Option<bool>)>,
+    cleanups_dirty: bool,
+    cleanups_gen: u64,
+    cleanups_rc: std::cell::RefCell<Option<(u64, std::rc::Rc<Vec<Cleanup>>)>>,
     #[cfg(test)]
     pub(super) doc_cache_lookups: usize,
     supported: Option<bool>,
@@ -103,6 +111,7 @@ pub(crate) struct Panel {
 
 const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
 const CLEANUP_DISPLAY_CAP: usize = 2_000;
+const DELETED_MISSIONS_CAP: usize = 256;
 
 impl Panel {
     pub(crate) fn new(backend: Backend, project: Option<String>, reads: Reads, wake: Wake) -> Self {
@@ -129,6 +138,13 @@ impl Panel {
             remembered_document_order: VecDeque::new(),
             settled_cleanups: HashMap::new(),
             settled_cleanup_order: VecDeque::new(),
+            deleted_missions: HashSet::new(),
+            deleted_missions_order: VecDeque::new(),
+            cleanup_meta: HashMap::new(),
+            pending_cleanup_set: HashSet::new(),
+            cleanups_dirty: false,
+            cleanups_gen: 0,
+            cleanups_rc: std::cell::RefCell::new(None),
             #[cfg(test)]
             doc_cache_lookups: 0,
             supported: None,
@@ -191,6 +207,69 @@ impl Panel {
         self.settled_cleanups.clone_from(&old.settled_cleanups);
         self.settled_cleanup_order
             .clone_from(&old.settled_cleanup_order);
+        self.deleted_missions.clone_from(&old.deleted_missions);
+        self.deleted_missions_order
+            .clone_from(&old.deleted_missions_order);
+    }
+
+    pub(crate) fn take_cleanups_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.cleanups_dirty)
+    }
+
+    pub(super) fn has_pending_cleanups(&self) -> bool {
+        if !self.pending_cleanup_set.is_empty() {
+            return true;
+        }
+        self.cleanup_meta.is_empty() && self.cleanups.iter().any(Cleanup::is_pending)
+    }
+
+    pub(super) fn cleanups_rc(&self) -> std::rc::Rc<Vec<Cleanup>> {
+        let mut cache = self.cleanups_rc.borrow_mut();
+        if let Some((cached_gen, rc)) = cache.as_ref()
+            && *cached_gen == self.cleanups_gen
+            && rc.len() == self.cleanups.len()
+        {
+            return std::rc::Rc::clone(rc);
+        }
+        let rc = std::rc::Rc::new(self.cleanups.clone());
+        *cache = Some((self.cleanups_gen, std::rc::Rc::clone(&rc)));
+        rc
+    }
+
+    fn rebuild_cleanup_indices(&mut self) {
+        self.cleanup_meta.clear();
+        self.pending_cleanup_set.clear();
+        for row in &self.cleanups {
+            self.cleanup_meta.insert(
+                (row.mission_id.clone(), row.deletion_id.clone()),
+                (
+                    row.request_id.clone(),
+                    row.expected_revision,
+                    row.delete_managed_sessions,
+                    row.created_at.to_bits(),
+                ),
+            );
+            if row.is_pending() {
+                self.pending_cleanup_set.insert(pending_cleanup_tuple(row));
+            }
+        }
+        self.cleanups_dirty = true;
+        self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
+    }
+
+    fn remember_deleted_mission(&mut self, mission_id: &str) {
+        if self.deleted_missions.contains(mission_id) {
+            return;
+        }
+        while self.deleted_missions.len() >= DELETED_MISSIONS_CAP {
+            let Some(evict) = self.deleted_missions_order.pop_front() else {
+                break;
+            };
+            self.deleted_missions.remove(&evict);
+        }
+        let owned = mission_id.to_owned();
+        self.deleted_missions_order.push_back(owned.clone());
+        self.deleted_missions.insert(owned);
     }
 
     fn remember_settled_cleanup(&mut self, receipt: Cleanup) {
@@ -322,7 +401,19 @@ impl Panel {
 
     pub(super) fn forget_deleted_mission(&mut self, mission_id: &str) {
         self.cancel_lane(Kind::Summaries);
-        self.summaries.retain(|row| row.id != mission_id);
+        self.remember_deleted_mission(mission_id);
+        let lane = &mut self.lanes[Kind::Summaries as usize];
+        let mut removed_in_prefix = 0usize;
+        let mut idx = 0usize;
+        self.summaries.retain(|row| {
+            let keep = row.id != mission_id;
+            if !keep && idx < lane.prefix_len {
+                removed_in_prefix += 1;
+            }
+            idx += 1;
+            keep
+        });
+        lane.prefix_len = lane.prefix_len.saturating_sub(removed_in_prefix);
         if self.selected.as_deref() == Some(mission_id) {
             self.selection_live.store(false, Ordering::Release);
             if self.visible && self.online {
@@ -357,13 +448,39 @@ impl Panel {
                 }
             }
         }
-        let before = pending_cleanup_keys(&self.cleanups);
+        let mut pending_changed = false;
+        let row_id = (receipt.mission_id.clone(), receipt.deletion_id.clone());
+        let new_meta = (
+            receipt.request_id.clone(),
+            receipt.expected_revision,
+            receipt.delete_managed_sessions,
+            receipt.created_at.to_bits(),
+        );
         if let Some(existing) = self.cleanups.iter_mut().find(|row| {
             row.mission_id == receipt.mission_id && row.deletion_id == receipt.deletion_id
         }) {
+            if existing.is_pending() {
+                let old_tuple = pending_cleanup_tuple(existing);
+                if self.pending_cleanup_set.remove(&old_tuple) {
+                    pending_changed = true;
+                }
+            }
             *existing = receipt.clone();
+            if existing.is_pending() {
+                let new_tuple = pending_cleanup_tuple(existing);
+                self.pending_cleanup_set.insert(new_tuple);
+                pending_changed = true;
+            }
+            self.cleanup_meta.insert(row_id, new_meta);
         } else {
             self.cleanups.insert(0, receipt.clone());
+            self.lanes[Kind::Cleanups as usize].prefix_len = 0;
+            self.cleanup_meta.insert(row_id, new_meta);
+            if receipt.is_pending() {
+                self.pending_cleanup_set
+                    .insert(pending_cleanup_tuple(&receipt));
+                pending_changed = true;
+            }
             let lane_seen = &mut self.lanes[Kind::Cleanups as usize].seen;
             // Cap only off-page adopted rows without evicting the newly inserted receipt (index 0)
             // or any directory-loaded / pending rows.
@@ -382,9 +499,20 @@ impl Panel {
                 else {
                     break;
                 };
-                self.cleanups.remove(rel + 1);
+                let evicted = self.cleanups.remove(rel + 1);
+                self.cleanup_meta
+                    .remove(&(evicted.mission_id.clone(), evicted.deletion_id.clone()));
+                if evicted.is_pending()
+                    && self
+                        .pending_cleanup_set
+                        .remove(&pending_cleanup_tuple(&evicted))
+                {
+                    pending_changed = true;
+                }
             }
         }
+        self.cleanups_dirty = true;
+        self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
         if !receipt.is_pending() {
             self.remember_settled_cleanup(receipt.clone());
             if let Some(token) = self
@@ -394,17 +522,29 @@ impl Panel {
                 token.store(false, Ordering::Release);
             }
         }
-        if pending_cleanup_keys(&self.cleanups) != before {
+        if pending_changed {
             self.renew_cleanup_view();
         }
     }
 
     pub(super) fn mark_cleanup_document_pending(&mut self, key: &CleanupIdentity) {
         self.remember_document_pending(key.clone());
+        let mut updated = false;
         for row in &mut self.cleanups {
             if cleanup_identity(row) == *key && row.document_pending.is_none() {
+                if row.is_pending() {
+                    self.pending_cleanup_set.remove(&pending_cleanup_tuple(row));
+                }
                 row.document_pending = Some(true);
+                if row.is_pending() {
+                    self.pending_cleanup_set.insert(pending_cleanup_tuple(row));
+                }
+                updated = true;
             }
+        }
+        if updated {
+            self.cleanups_dirty = true;
+            self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
         }
     }
 
@@ -455,13 +595,12 @@ impl Panel {
 
     fn sync_cleanup_tokens(&mut self, covered: bool) {
         self.cleanup_tokens.retain(|(m, d), token| {
-            let matching = self
-                .cleanups
-                .iter()
-                .find(|row| row.mission_id == *m && row.deletion_id == *d);
-            let keep = match matching {
-                Some(row) => row.is_pending(),
-                None => !covered,
+            let keep = if self.cleanup_meta.contains_key(&(m.clone(), d.clone())) {
+                self.pending_cleanup_set
+                    .iter()
+                    .any(|(del, mid, _, _, _, _, _)| mid == m && del == d)
+            } else {
+                !covered
             };
             if !keep {
                 token.store(false, Ordering::Release);
@@ -835,9 +974,11 @@ impl Panel {
         {
             return false;
         }
-        let lane = &mut self.lanes[kind as usize];
+        if kind == Kind::Cleanups && self.cleanup_meta.is_empty() && !self.cleanups.is_empty() {
+            self.rebuild_cleanup_indices();
+        }
         if read == Read::More
-            && lane.window.as_ref().is_none_or(|w| {
+            && self.lanes[kind as usize].window.as_ref().is_none_or(|w| {
                 page.window.order != w.order
                     || page.window.offset != w.end
                     || page.window.total != w.total
@@ -846,7 +987,7 @@ impl Panel {
             return false;
         }
         if read == Read::Refresh
-            && lane.window.as_ref().is_some_and(|w| {
+            && self.lanes[kind as usize].window.as_ref().is_some_and(|w| {
                 w.order == page.window.order
                     && w.total == page.window.total
                     && w.end > page.window.end
@@ -857,10 +998,24 @@ impl Panel {
         let mut selection_cleared = false;
         match (kind, page.rows) {
             (Kind::Summaries, DirectoryRows::Summaries(rows)) => {
-                if !merge(&mut self.summaries, lane, read, &page.window, rows, |row| {
-                    (row.id.clone(), None)
-                }) {
+                let lane = &mut self.lanes[kind as usize];
+                if !merge_filtered(
+                    &mut self.summaries,
+                    lane,
+                    read,
+                    &page.window,
+                    rows,
+                    |row| (row.id.clone(), None),
+                    |row| !self.deleted_missions.contains(&row.id),
+                ) {
                     return false;
+                }
+                if page.window.end == page.window.total && !self.deleted_missions.is_empty() {
+                    let seen = &lane.seen;
+                    self.deleted_missions
+                        .retain(|id| seen.contains(&(id.clone(), None)));
+                    self.deleted_missions_order
+                        .retain(|id| self.deleted_missions.contains(id));
                 }
                 // A page that does not cover the directory cannot prove a selection is gone.
                 if page.window.end == page.window.total
@@ -878,12 +1033,6 @@ impl Panel {
                 }
             }
             (Kind::Cleanups, DirectoryRows::Cleanups(mut rows)) => {
-                let current_doc_pending: HashSet<CleanupIdentity> = self
-                    .cleanups
-                    .iter()
-                    .filter(|old| old.document_pending == Some(true))
-                    .map(cleanup_identity)
-                    .collect();
                 for row in &mut rows {
                     let id = cleanup_identity(row);
                     if row.is_pending()
@@ -893,53 +1042,80 @@ impl Panel {
                         continue;
                     }
                     if row.document_pending.is_none()
-                        && (self.remembered_document_pending.contains(&id)
-                            || current_doc_pending.contains(&id))
+                        && self.remembered_document_pending.contains(&id)
                     {
                         row.document_pending = Some(true);
                     }
                 }
-                let before_pending = pending_cleanup_keys(&self.cleanups);
-                let mut existing_meta: HashMap<(&str, &str), (&str, u64, bool)> =
-                    HashMap::with_capacity(self.cleanups.len());
-                for old in &self.cleanups {
-                    existing_meta.insert(
-                        (old.mission_id.as_str(), old.deletion_id.as_str()),
-                        (
-                            old.request_id.as_str(),
-                            old.expected_revision,
-                            old.delete_managed_sessions,
-                        ),
-                    );
-                }
                 let contradictory = rows.iter().any(|row| {
-                    existing_meta
-                        .get(&(row.mission_id.as_str(), row.deletion_id.as_str()))
-                        .is_some_and(|&(req, rev, del_ses)| {
-                            req != row.request_id
-                                || rev != row.expected_revision
-                                || del_ses != row.delete_managed_sessions
+                    self.cleanup_meta
+                        .get(&(row.mission_id.clone(), row.deletion_id.clone()))
+                        .is_some_and(|(req, rev, del_ses, created_at_bits)| {
+                            req != &row.request_id
+                                || *rev != row.expected_revision
+                                || *del_ses != row.delete_managed_sessions
+                                || *created_at_bits != row.created_at.to_bits()
                         })
                 });
-                drop(existing_meta);
-                if contradictory
-                    || !merge(&mut self.cleanups, lane, read, &page.window, rows, |row| {
-                        (row.mission_id.clone(), Some(row.deletion_id.clone()))
+                let doc_updates: Vec<(CleanupIdentity, Option<bool>)> = rows
+                    .iter()
+                    .map(|row| (cleanup_identity(row), row.document_pending))
+                    .collect();
+                let incoming_meta: Vec<((String, String), (String, u64, bool, u64))> = rows
+                    .iter()
+                    .map(|row| {
+                        (
+                            (row.mission_id.clone(), row.deletion_id.clone()),
+                            (
+                                row.request_id.clone(),
+                                row.expected_revision,
+                                row.delete_managed_sessions,
+                                row.created_at.to_bits(),
+                            ),
+                        )
                     })
-                {
+                    .collect();
+                let incoming_pending: Vec<_> = rows
+                    .iter()
+                    .filter(|row| row.is_pending())
+                    .map(pending_cleanup_tuple)
+                    .collect();
+                if contradictory {
+                    self.cleanup_view_live.store(false, Ordering::Release);
+                    self.revoke_all_cleanup_tokens();
+                    return false;
+                }
+                let lane = &mut self.lanes[kind as usize];
+                let had_tail = self.cleanups.len() > lane.prefix_len;
+                if !merge(&mut self.cleanups, lane, read, &page.window, rows, |row| {
+                    (row.mission_id.clone(), Some(row.deletion_id.clone()))
+                }) {
                     return false;
                 }
                 let covered = page.window.end == page.window.total;
                 self.project = Some(page.project_id);
                 lane.window = Some(page.window);
-                let doc_updates: Vec<(CleanupIdentity, Option<bool>)> = self
-                    .cleanups
-                    .iter()
-                    .map(|row| (cleanup_identity(row), row.document_pending))
-                    .collect();
+                let pending_changed = if read == Read::Refresh || (covered && had_tail) {
+                    let before = std::mem::take(&mut self.pending_cleanup_set);
+                    self.rebuild_cleanup_indices();
+                    before != self.pending_cleanup_set
+                } else {
+                    for (k, meta) in incoming_meta {
+                        self.cleanup_meta.insert(k, meta);
+                    }
+                    let mut changed_pending = false;
+                    for tuple in incoming_pending {
+                        if self.pending_cleanup_set.insert(tuple) {
+                            changed_pending = true;
+                        }
+                    }
+                    self.cleanups_dirty = true;
+                    self.cleanups_gen = self.cleanups_gen.wrapping_add(1);
+                    changed_pending
+                };
                 self.remember_document_pending_batch(&doc_updates);
                 self.sync_cleanup_tokens(covered);
-                if pending_cleanup_keys(&self.cleanups) != before_pending {
+                if pending_changed {
                     self.renew_cleanup_view();
                 }
                 return true;
@@ -947,7 +1123,7 @@ impl Panel {
             _ => return false,
         }
         self.project = Some(page.project_id);
-        lane.window = Some(page.window);
+        self.lanes[kind as usize].window = Some(page.window);
         if selection_cleared {
             self.renew_cleanup_view();
         }
@@ -1053,6 +1229,26 @@ impl Panel {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn accept_summaries_for_test(&mut self, rows: Vec<Summary>) -> bool {
+        let len = rows.len() as u64;
+        self.accept(
+            Kind::Summaries,
+            Read::Refresh,
+            DirectoryPage {
+                project_id: self.project.clone().unwrap_or_else(|| "project".into()),
+                finish_high_water: None,
+                window: Window {
+                    order: "test-order".into(),
+                    offset: 0,
+                    end: len,
+                    total: len,
+                },
+                rows: DirectoryRows::Summaries(rows),
+            },
+        )
+    }
+
     pub(super) fn shown_rows(&self) -> impl Iterator<Item = &Summary> {
         let filter = self.filter.text.trim().to_lowercase();
         self.summaries.iter().filter(move |row| {
@@ -1070,26 +1266,16 @@ pub(super) fn title(row: &Summary) -> &str {
         .unwrap_or(&row.objective)
 }
 
-fn pending_cleanup_keys(
-    cleanups: &[Cleanup],
-) -> Vec<(String, String, String, u64, bool, u64, Option<bool>)> {
-    let mut keys: Vec<_> = cleanups
-        .iter()
-        .filter(|row| row.is_pending())
-        .map(|row| {
-            (
-                row.deletion_id.clone(),
-                row.mission_id.clone(),
-                row.request_id.clone(),
-                row.expected_revision,
-                row.delete_managed_sessions,
-                row.created_at.to_bits(),
-                row.document_pending,
-            )
-        })
-        .collect();
-    keys.sort();
-    keys
+fn pending_cleanup_tuple(row: &Cleanup) -> (String, String, String, u64, bool, u64, Option<bool>) {
+    (
+        row.deletion_id.clone(),
+        row.mission_id.clone(),
+        row.request_id.clone(),
+        row.expected_revision,
+        row.delete_managed_sessions,
+        row.created_at.to_bits(),
+        row.document_pending,
+    )
 }
 
 impl Drop for Panel {
@@ -1106,26 +1292,59 @@ fn merge<T>(
     rows: Vec<T>,
     key: impl Fn(&T) -> (String, Option<String>),
 ) -> bool {
+    merge_filtered(display, lane, read, window, rows, key, |_| true)
+}
+
+fn merge_filtered<T>(
+    display: &mut Vec<T>,
+    lane: &mut Lane,
+    read: Read,
+    window: &Window,
+    rows: Vec<T>,
+    key: impl Fn(&T) -> (String, Option<String>),
+    keep: impl Fn(&T) -> bool,
+) -> bool {
     if read == Read::Refresh {
         lane.seen.clear();
+        lane.prefix_len = 0;
     } else if rows.iter().any(|row| lane.seen.contains(&key(row))) {
         return false;
+    }
+    let incoming_keys: Vec<(String, Option<String>)> = rows.iter().map(&key).collect();
+    let kept: Vec<T> = rows.into_iter().filter(&keep).collect();
+    if read == Read::More && lane.prefix_len > 0 && lane.prefix_len <= display.len() {
+        // Fast path: display[..lane.prefix_len] is already the contiguous current-order prefix.
+        let tail = display.split_off(lane.prefix_len);
+        lane.seen.extend(incoming_keys);
+        display.extend(kept);
+        lane.prefix_len = display.len();
+        if window.end != window.total && !tail.is_empty() {
+            display.extend(
+                tail.into_iter()
+                    .filter(|row| keep(row) && !lane.seen.contains(&key(row))),
+            );
+        }
+        return true;
     }
     // Current-order rows stay a contiguous prefix; keep unvisited rows (including adopted
     // off-page receipts and previous-order tail rows) after it and deduplicate on arrival.
     let previous = std::mem::take(display);
-    let mut prefix_rows = Vec::with_capacity(lane.seen.len());
+    let mut prefix_rows = Vec::with_capacity(lane.seen.len().min(previous.len()));
     let mut tail_rows = Vec::new();
     for row in previous {
+        if !keep(&row) {
+            continue;
+        }
         if lane.seen.contains(&key(&row)) {
             prefix_rows.push(row);
         } else {
             tail_rows.push(row);
         }
     }
-    lane.seen.extend(rows.iter().map(&key));
+    lane.seen.extend(incoming_keys);
     display.extend(prefix_rows);
-    display.extend(rows);
+    display.extend(kept);
+    lane.prefix_len = display.len();
     if window.end != window.total {
         display.extend(
             tail_rows

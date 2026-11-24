@@ -146,7 +146,7 @@ pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El, c
 #[cfg(test)]
 fn default_cleanups<S: 'static>(ui: &Panel) -> El {
     let owner = super::cleanup::CleanupOwner::default();
-    super::cleanup_view::cleanup_view::<S>(ui, &owner, "", |_, _, _, _| {}, |_, _, _, _, _| {})
+    super::cleanup_view::cleanup_view::<S>(ui, &owner, "", |_, _, _, _| {}, |_, _, _, _, _, _| {})
 }
 
 fn page_footer<S: 'static>(ui: &Panel, owner: Scoped<S>, kind: Kind) -> El {

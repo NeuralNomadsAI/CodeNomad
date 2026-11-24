@@ -238,6 +238,9 @@ pub(crate) fn controls<S: 'static>(
             ));
         }
         Some(DeleteState::Failed(key)) => {
+            let Some(request_id) = owner.cleanup.delete_request_id(&source) else {
+                return view;
+            };
             let retry_disabled = !panel.online()
                 || owner.busy(&source)
                 || recovery_busy
@@ -246,14 +249,20 @@ pub(crate) fn controls<S: 'static>(
                     .has_active_cleanup_retry(&source.workspace_scope(), &source.target.mission);
             let retry_origin = source.clone();
             let cancel_origin = source.clone();
+            let retry_req = request_id.clone();
+            let cancel_req = request_id;
+            let retry_live = panel.selection_live.clone();
+            let cancel_live = panel.selection_live.clone();
             view = view.child(theme::note(t(key), "alert")).child(
                 layout::action_row()
                     .role("group")
                     .label(t("missions.control.delete"))
                     .child(
                         layout::button_tx(t("missions.control.retry"), false, move |s, tx| {
-                            if !retry_disabled {
-                                act(s, &retry_origin, Gesture::RetryDelete);
+                            if !retry_disabled
+                                && retry_live.load(std::sync::atomic::Ordering::Acquire)
+                            {
+                                act(s, &retry_origin, Gesture::RetryDelete(retry_req.clone()));
                                 tx.instant();
                             }
                         })
@@ -263,8 +272,10 @@ pub(crate) fn controls<S: 'static>(
                     )
                     .child(
                         layout::button_tx(t("missions.control.cancel"), false, move |s, tx| {
-                            act(s, &cancel_origin, Gesture::CancelDelete);
-                            tx.instant();
+                            if cancel_live.load(std::sync::atomic::Ordering::Acquire) {
+                                act(s, &cancel_origin, Gesture::CancelDelete(cancel_req.clone()));
+                                tx.instant();
+                            }
                         })
                         .key("mission-delete-cancel"),
                     ),

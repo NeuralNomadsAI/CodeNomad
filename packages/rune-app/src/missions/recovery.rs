@@ -280,7 +280,16 @@ impl Recovery {
                     let err_scope = RecoveryErrorScope::from_key(&key);
                     self.errors.remove(&err_scope);
                     self.seq = self.seq.wrapping_add(1);
+                    let admitted_rev_key = (revision != key.revision).then(|| RecoveryKey {
+                        revision,
+                        ..key.clone()
+                    });
                     self.attempts.insert(key, Attempt::Admitted(self.seq));
+                    if let Some(admitted_key) = admitted_rev_key {
+                        self.seq = self.seq.wrapping_add(1);
+                        self.attempts
+                            .insert(admitted_key, Attempt::Admitted(self.seq));
+                    }
                     polled.admitted.push((mission, target, revision));
                 }
                 RecoveryOutcome::Refused(error) => {

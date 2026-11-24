@@ -21,7 +21,10 @@ pub(crate) fn retry_connection(s: &mut State, tx: &mut Tx) {
             return;
         }
         if s.screen.is_launcher() && s.commands.is_none() {
-            if s.screen.launcher().is_some_and(|l| l.connection.is_some()) {
+            if s.screen
+                .launcher()
+                .is_some_and(|l| l.connection.is_some() && !l.authentication_required)
+            {
                 launcher::list(s, false);
             } else {
                 launcher::connect(s, tx);

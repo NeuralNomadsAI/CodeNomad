@@ -32,8 +32,8 @@ fn digest(s: &str) -> bool {
     s.len() == 43 && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
 }
 /// The owned Location's active plugin (reference `readMissionPlugin` preamble).
-pub(crate) struct Opened<'a> {
-    pub slot: tokio::sync::SemaphorePermit<'a>,
+pub(crate) struct Opened {
+    pub slot: tokio::sync::OwnedSemaphorePermit,
     pub workspace: crate::Workspace,
     pub dir: String,
     pub project: String,
@@ -42,7 +42,7 @@ pub(crate) struct Opened<'a> {
     pub initial: Option<String>,
     pub display: Arc<std::sync::atomic::AtomicBool>,
 }
-pub(crate) async fn open<'a>(app: &'a crate::App, id: &str) -> Result<Opened<'a>, Response> {
+pub(crate) async fn open(app: &crate::App, id: &str) -> Result<Opened, Response> {
     if !app.mission_reads {
         return Err(unavailable(Status::OK, "host-unavailable"));
     }
@@ -57,7 +57,7 @@ pub(crate) async fn open<'a>(app: &'a crate::App, id: &str) -> Result<Opened<'a>
         return Err(unavailable(Status::OK, "workspace-unavailable"));
     }
     let display = fence::capture_display(&fence::identity(&workspace.path));
-    let slot = app.mission_read_slot.acquire().await.unwrap();
+    let slot = app.mission_read_slot.clone().acquire_owned().await.unwrap();
     let Some(endpoint) = app.native.endpoint() else {
         return Err(unavailable(Status::OK, "workspace-unavailable"));
     };
@@ -120,14 +120,34 @@ async fn native_read(
     opencode::read_json(response, max).await
 }
 
+pub(super) fn stream_bytes_with_permit(bytes: Vec<u8>, slot: tokio::sync::OwnedSemaphorePermit) -> Response {
+    use axum::http::{HeaderValue, header};
+    let len = bytes.len();
+    let data = axum::body::Bytes::from(bytes);
+    let stream = futures_util::stream::unfold((data, 0usize, slot), |(data, offset, slot)| async move {
+        if offset >= data.len() {
+            drop(slot);
+            return None;
+        }
+        let end = (offset + 64 * 1024).min(data.len());
+        let chunk = data.slice(offset..end);
+        Some((Ok::<_, std::convert::Infallible>(chunk), (data, end, slot)))
+    });
+    let mut response = axum::body::Body::from_stream(stream).into_response();
+    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    if let Ok(value) = HeaderValue::from_str(&len.to_string()) {
+        response.headers_mut().insert(header::CONTENT_LENGTH, value);
+    }
+    response
+}
+
 async fn read(app: Shared, id: String, method: &'static str, input: Value, max: usize) -> Response {
-    let Opened { slot: _slot, workspace, dir, project, canonical, initial, endpoint, display } =
-        match open(&app, &id).await {
-            Ok(opened) => opened,
-            Err(refused) => return refused,
-        };
+    let Opened { slot, workspace, dir, project, canonical, initial, endpoint, display } = match open(&app, &id).await {
+        Ok(opened) => opened,
+        Err(refused) => return refused,
+    };
     let args = if method == "snapshot" { json!({}) } else { input.clone() };
-    let Ok(output) = native_read(
+    let Ok(mut output) = native_read(
         &app,
         &endpoint,
         Method::POST,
@@ -152,9 +172,10 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
     {
         return unavailable(Status::CONFLICT, "workspace-unavailable");
     }
-    let Some(result) = output.get("output") else {
+    let Some(mut result) = output.as_object_mut().and_then(|o| o.remove("output")) else {
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     };
+    drop(output);
     if method == "panelPage" && result["available"] == false {
         if result.as_object().is_some_and(|o| o.len() == 2)
             && matches!(
@@ -170,7 +191,7 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
                 )
             )
         {
-            return Json(result.clone()).into_response();
+            return Json(result).into_response();
         }
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     }
@@ -180,30 +201,52 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
             && map["projectCanonical"].as_str().is_some_and(|p| fence::normalize(p) == fence::normalize(&canonical))
     };
     let owned = match method {
-        "panelPage" => panel_scope(&input, result),
+        "panelPage" => panel_scope(&input, &result),
         "mission" => result.get("mission").is_none_or(|map| map["id"] == input["missionID"] && owned_map(map)),
         "tasks" | "content" => result["missionID"] == input["missionID"],
         "list" | "snapshot" => result["missions"].as_array().is_some_and(|maps| maps.iter().all(owned_map)),
         _ => false,
     };
-    if !scope || !owned || serde_json::to_vec(result).map_or(true, |b| b.len() > max) {
+    if !scope || !owned {
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     }
-    if method == "snapshot" {
-        return Json(admission_projection(result, &input["missionID"])).into_response();
+    let raw_limit = if method == "snapshot" {
+        result = admission_projection_owned(result, &input["missionID"]);
+        max + 32
+    } else {
+        result["available"] = json!(true);
+        max + 32
+    };
+    let Ok(bytes) = serde_json::to_vec(&result) else {
+        return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
+    };
+    drop(result);
+    if bytes.len() > raw_limit {
+        return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     }
-    let mut response = result.clone();
-    response["available"] = json!(true);
-    Json(response).into_response()
+    stream_bytes_with_permit(bytes, slot)
 }
 
-fn admission_projection(snapshot: &Value, mission: &Value) -> Value {
-    let cleanups: Vec<&Value> =
-        snapshot["cleanups"].as_array().into_iter().flatten().filter(|c| &c["missionID"] == mission).collect();
+fn admission_projection_owned(mut snapshot: Value, mission: &Value) -> Value {
+    let cleanups: Vec<Value> = snapshot
+        .get_mut("cleanups")
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take)
+        .into_iter()
+        .flatten()
+        .filter(|c| &c["missionID"] == mission)
+        .collect();
     let mut result = json!({"available":true,"version":snapshot["version"],"projectID":snapshot["projectID"],
         "generatedAt":snapshot["generatedAt"],"cleanups":cleanups});
-    if let Some(map) = snapshot["missions"].as_array().into_iter().flatten().find(|m| &m["id"] == mission) {
-        result["mission"] = map.clone();
+    if let Some(map) = snapshot
+        .get_mut("missions")
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take)
+        .into_iter()
+        .flatten()
+        .find(|m| &m["id"] == mission)
+    {
+        result["mission"] = map;
     }
     for flag in ["cleanupUnavailable", "controlUnavailable", "notificationUnavailable"] {
         if snapshot[flag] == true {
@@ -211,6 +254,11 @@ fn admission_projection(snapshot: &Value, mission: &Value) -> Value {
         }
     }
     result
+}
+
+#[cfg(test)]
+fn admission_projection(snapshot: &Value, mission: &Value) -> Value {
+    admission_projection_owned(snapshot.clone(), mission)
 }
 fn panel_scope(input: &Value, result: &Value) -> bool {
     let mission = if input["source"] == "tasks" { input["task"].get("missionID") } else { input.get("missionID") };
@@ -386,5 +434,25 @@ mod tests {
             })
         );
         assert!(admission_projection(&snapshot, &json!("msn_missing")).get("mission").is_none());
+    }
+
+    #[tokio::test]
+    async fn stream_bytes_with_permit_holds_semaphore_until_body_drains() {
+        use futures_util::StreamExt;
+        let sem = Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = sem.clone().acquire_owned().await.unwrap();
+        let payload = vec![b'x'; 128 * 1024 + 17];
+        let response = stream_bytes_with_permit(payload.clone(), permit);
+        assert!(sem.clone().try_acquire_owned().is_err(), "permit must remain held before body drains");
+        let mut stream = response.into_body().into_data_stream();
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first.len(), 64 * 1024);
+        assert!(sem.clone().try_acquire_owned().is_err(), "permit must remain held while chunks remain");
+        let mut collected = first.to_vec();
+        while let Some(chunk) = stream.next().await {
+            collected.extend_from_slice(&chunk.unwrap());
+        }
+        assert_eq!(collected, payload);
+        assert!(sem.clone().try_acquire_owned().is_ok(), "permit must release once body finishes");
     }
 }

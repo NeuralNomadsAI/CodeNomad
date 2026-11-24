@@ -285,7 +285,7 @@ pub async fn control(
     Path((wid, mid)): Path<(String, String)>,
     Extension(p): Extension<crate::auth::Principal>,
     Json(raw): Json<Value>,
-) -> Result<Json<Value>, Error> {
+) -> Result<axum::response::Response, Error> {
     let invalid = "Invalid mission control request";
     let q: Control = mutation_body(raw, invalid)?;
     let (mid, request) = mutation_ids(&mid, &q.request_id, q.expected_revision, invalid)?;
@@ -321,7 +321,7 @@ pub async fn recover(
     Path((wid, mid)): Path<(String, String)>,
     Extension(p): Extension<crate::auth::Principal>,
     Json(raw): Json<Value>,
-) -> Result<Json<Value>, Error> {
+) -> Result<axum::response::Response, Error> {
     let invalid = "Invalid mission recovery request";
     let q: Recover = mutation_body(raw, invalid)?;
     let (mid, _) = mutation_ids(&mid, "recover", q.expected_revision, invalid)?;
@@ -353,7 +353,7 @@ pub async fn update(
     Path((wid, mid)): Path<(String, String)>,
     Extension(p): Extension<crate::auth::Principal>,
     Json(raw): Json<Value>,
-) -> Result<Json<Value>, Error> {
+) -> Result<axum::response::Response, Error> {
     let invalid = "Invalid mission update request";
     let q: Update = mutation_body(raw, invalid)?;
     let (mid, request) = mutation_ids(&mid, &q.request_id, q.expected_revision, invalid)?;
@@ -382,7 +382,7 @@ pub async fn delete(
     Path((wid, mid)): Path<(String, String)>,
     Extension(p): Extension<crate::auth::Principal>,
     Json(raw): Json<Value>,
-) -> Result<Json<Value>, Error> {
+) -> Result<axum::response::Response, Error> {
     let invalid = "Invalid mission deletion request";
     let q: Delete = mutation_body(raw, invalid)?;
     let (mid, request) = mutation_ids(&mid, &q.request_id, q.expected_revision, invalid)?;
@@ -418,14 +418,14 @@ async fn mutate(
     p: crate::auth::Principal,
     method: &'static str,
     input: Value,
-) -> Result<Json<Value>, Error> {
+) -> Result<axum::response::Response, Error> {
     if app.mission_bridge.is_none() {
         return Err(plugin_unavailable());
     }
     let lifetime = p.0.child_token();
     let _disconnect = lifetime.clone().drop_guard();
     tokio::spawn(async move {
-        let _slot = app.mission_control_slot.acquire().await.map_err(|_| plugin_unavailable())?;
+        let slot = app.mission_control_slot.clone().acquire_owned().await.map_err(|_| plugin_unavailable())?;
         p.live()?;
         let workspace = app.workspace(&wid).map_err(|_| error(Status::NOT_FOUND, "Workspace unavailable"))?;
         let scope = Scope::open(&app, workspace, None)
@@ -440,14 +440,17 @@ async fn mutate(
         if lifetime.is_cancelled() {
             return Err(plugin_unavailable());
         }
-        let (status, body) = scope
+        let (status, mut body) = scope
             .call(&app, method, &input, 85, rpc_response_limit(method))
             .await
             .map_err(|_| plugin_unavailable())?;
         if !status.is_success() {
             return Err(creation_admission::rejection(&body).unwrap_or_else(plugin_unavailable));
         }
-        let result = &body["output"];
+        let Some(result) = body.as_object_mut().and_then(|o| o.remove("output")) else {
+            return Err(plugin_unavailable());
+        };
+        drop(body);
         if !scope.current(&app)
             || match method {
                 "delete" => result["deleted"] != true,
@@ -460,7 +463,9 @@ async fn mutate(
         {
             return Err(plugin_unavailable());
         }
-        Ok(Json(result.clone()))
+        let bytes = serde_json::to_vec(&result).map_err(|_| plugin_unavailable())?;
+        drop(result);
+        Ok(super::reads::stream_bytes_with_permit(bytes, slot))
     })
     .await
     .map_err(|_| plugin_unavailable())?
