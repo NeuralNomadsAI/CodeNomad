@@ -243,43 +243,33 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         }
     );
     // Drain local, remote, and automation bridge HTTP listeners before tearing down plugin leases
-    // and removing the bridge registration (TS `index.ts:753-767`, `shutdown.ts:130-147`). Bound
-    // cleanup to 4 s so shutdown always emits its status line inside the desktop host's 30 s stop
-    // window (`tests/serve.rs:113`).
+    // and removing the bridge registration (TS `index.ts:753-767`, `shutdown.ts:130-147`). Each
+    // internal lifecycle shutdown step has its own bounded timeout so awaiting completion never
+    // abandons lease disposal prematurely.
     plugins_stop.cancel();
     let (plugins_ok, bridge_removed_ok) = tokio::join!(
         async {
             match plugins {
-                Some(mut task) => match tokio::time::timeout(std::time::Duration::from_secs(4), &mut task).await {
-                    Ok(Ok(Ok(()))) => true,
-                    Ok(_) => false,
-                    Err(_) => {
-                        task.abort();
-                        false
-                    }
-                },
+                Some(task) => matches!(task.await, Ok(Ok(()))),
                 None => true,
             }
         },
         async {
             match bridge_record {
-                Some(mut record) => match tokio::time::timeout(
-                    std::time::Duration::from_secs(4),
-                    tokio::task::spawn_blocking(move || {
-                        let res = record.remove();
-                        (res, record)
-                    }),
-                )
+                Some(mut record) => match tokio::task::spawn_blocking(move || {
+                    let res = record.remove();
+                    (res, record)
+                })
                 .await
                 {
-                    Ok(Ok((Ok(()), _record))) => true,
-                    Ok(Ok((Err(_), mut record))) => {
+                    Ok((Ok(()), _record)) => true,
+                    Ok((Err(_), mut record)) => {
                         // One more cleanup retry after plugin teardown settles, matching TS
                         // `shutdown.ts:85-103` where the cleanup callback stays reusable.
                         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                         matches!(tokio::task::spawn_blocking(move || record.remove()).await, Ok(Ok(())))
                     }
-                    _ => false,
+                    Err(_) => false,
                 },
                 None => true,
             }

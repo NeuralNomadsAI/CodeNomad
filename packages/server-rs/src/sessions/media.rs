@@ -158,10 +158,9 @@ pub(crate) fn defer(workspace: &str, session: &str, messages: &mut Value) -> boo
 
 fn is_json_content_type(headers: &axum::http::HeaderMap) -> bool {
     headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|ct| {
-        let rest = ct.as_bytes();
-        rest.len() >= 16
-            && rest[..16].eq_ignore_ascii_case(b"application/json")
-            && rest[16..].trim_ascii_start().first().is_none_or(|&b| b == b';')
+        let essence = ct.split(';').next().unwrap_or("").trim();
+        essence.eq_ignore_ascii_case("application/json")
+            || essence.len() > 5 && essence[essence.len() - 5..].eq_ignore_ascii_case("+json")
     })
 }
 

@@ -391,6 +391,12 @@ fn resolve_media_step(
                                             _ => return Ok(None),
                                         }
                                     }
+                                    match std::fs::symlink_metadata(&next) {
+                                        Ok(m) if !m.file_type().is_symlink() && std::fs::read_link(&next).is_err() => {}
+                                        Ok(_) => return Ok(None),
+                                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                                        Err(_) => return Err(()),
+                                    }
                                     let real_root = match dunce::canonicalize(&next) {
                                         Ok(r) => r,
                                         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -529,6 +535,14 @@ pub(crate) fn resolve_media_path_checked(scope: &Path, raw: &str) -> Result<Opti
         }
     }
     if !scope_comps.is_empty() {
+        // Reject a configured `scope` root replaced by a symlink/junction BEFORE `canonicalize`
+        // so we never perform filesystem I/O against an external target volume.
+        match std::fs::symlink_metadata(&cur) {
+            Ok(m) if !m.file_type().is_symlink() && std::fs::read_link(&cur).is_err() => {}
+            Ok(_) => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(()),
+        }
         let real_root = match dunce::canonicalize(&cur) {
             Ok(r) => r,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),

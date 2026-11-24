@@ -863,7 +863,10 @@ impl MessageListStream {
         Ok(())
     }
 
-    pub(crate) fn finish(mut self) -> Result<(std::collections::VecDeque<axum::body::Bytes>, usize, bool), ()> {
+    /// Returns `(chunks_with_backing_release, payload_len, total_backing_len, changed)`.
+    pub(crate) fn finish(
+        mut self,
+    ) -> Result<(std::collections::VecDeque<(axum::body::Bytes, usize)>, usize, usize, bool), ()> {
         if self.bom_len > 0 {
             let prefix = self.bom_buf;
             let len = self.bom_len as usize;
@@ -885,44 +888,61 @@ impl MessageListStream {
         }
         if self.syntax.is_valid_eof() {
             drop(self.undo);
-            return Ok((self.segments, self.segments_bytes, self.changed || self.had_bom));
+            let chunks = self.segments.into_iter().map(|seg| {
+                let len = seg.len();
+                (seg, len)
+            });
+            return Ok((chunks.collect(), self.segments_bytes, self.segments_bytes, self.changed || self.had_bom));
         }
         if self.undo_overflow {
             // Never emit partially rewritten invalid JSON when rollback originals were evicted.
             return Err(());
         }
-        // Invalid JSON anywhere in the document: restore all deferred URIs verbatim. Copy kept
-        // prefix/suffix slices of modified segments into independent `Vec<u8>` allocations so the
-        // patched segment (and its replaced `/api/workspaces/...` URLs) is dropped immediately and
-        // `Bytes::len()` matches actual retained heap memory for `ResponsePool::List` accounting.
+        // Invalid JSON anywhere in the document: restore all deferred URIs verbatim with ZERO
+        // extra heap copies using `Bytes::slice`, attributing each patched segment's full backing
+        // size (`seg.len()`) ONLY to its final slice so `permit_body_chunks` holds permits until
+        // the backing allocation is actually dropped (matching TS `proxy.ts:91`).
         let mut by_idx: std::collections::HashMap<usize, Vec<UndoPatch>> = self.undo.into_iter().collect();
         let mut restored = std::collections::VecDeque::with_capacity(self.segments.len() + by_idx.len() * 2);
-        let mut total_bytes = 0usize;
+        let mut payload_len = 0usize;
+        let mut backing_len = 0usize;
         for (idx, seg) in self.segments.into_iter().enumerate() {
             if let Some(patches) = by_idx.remove(&idx) {
+                let seg_backing = seg.len();
+                let mut last_seg_slice_pos: Option<usize> = None;
                 let mut cursor = 0usize;
                 for patch in patches {
                     if patch.range.start > cursor {
-                        let prefix = axum::body::Bytes::from(seg[cursor..patch.range.start].to_vec());
-                        total_bytes += prefix.len();
-                        restored.push_back(prefix);
+                        let prefix = seg.slice(cursor..patch.range.start);
+                        payload_len += prefix.len();
+                        last_seg_slice_pos = Some(restored.len());
+                        restored.push_back((prefix, 0));
                     }
                     let orig = axum::body::Bytes::from(patch.original);
-                    total_bytes += orig.len();
-                    restored.push_back(orig);
+                    let orig_len = orig.len();
+                    payload_len += orig_len;
+                    backing_len += orig_len;
+                    restored.push_back((orig, orig_len));
                     cursor = patch.range.end;
                 }
                 if cursor < seg.len() {
-                    let suffix = axum::body::Bytes::from(seg[cursor..].to_vec());
-                    total_bytes += suffix.len();
-                    restored.push_back(suffix);
+                    let suffix = seg.slice(cursor..);
+                    payload_len += suffix.len();
+                    last_seg_slice_pos = Some(restored.len());
+                    restored.push_back((suffix, 0));
+                }
+                if let Some(pos) = last_seg_slice_pos {
+                    restored[pos].1 = seg_backing;
+                    backing_len += seg_backing;
                 }
             } else {
-                total_bytes += seg.len();
-                restored.push_back(seg);
+                let len = seg.len();
+                payload_len += len;
+                backing_len += len;
+                restored.push_back((seg, len));
             }
         }
-        Ok((restored, total_bytes, self.had_bom))
+        Ok((restored, payload_len, backing_len, self.had_bom))
     }
 }
 
@@ -1109,6 +1129,10 @@ pub(super) fn for_each_json_object_field<'a>(raw: &'a str, mut visit: impl FnMut
             && let Some(decoded) = parse_string(key_tok)
         {
             visit(&decoded, val_tok);
+        } else {
+            // Surface oversized keys via a NUL sentinel so strict-schema validators reject
+            // unknown >64-byte keys instead of skipping them.
+            visit("\0", val_tok);
         }
         i = val_end;
         while i < bytes.len() && bytes[i].is_ascii_whitespace() {
@@ -1472,6 +1496,7 @@ pub(crate) fn extract_tool_media(
     part_index: usize,
     item_index: usize,
 ) -> Result<Option<ExtractedToolMedia>, ()> {
+    let raw = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(raw);
     let text = std::str::from_utf8(raw).map_err(|_| ())?;
     let mut syntax = JsonSyntax::new();
     syntax.feed(raw);
@@ -1694,12 +1719,15 @@ mod tests {
                 stream.commit_item(out, undo, pending.delimiter).unwrap();
             }
         }
-        let (segments, total, changed) = stream.finish().unwrap();
+        let (segments, total, backing, changed) = stream.finish().unwrap();
         let mut flat = Vec::with_capacity(total);
-        for seg in segments {
+        let mut released = 0usize;
+        for (seg, release) in segments {
             flat.extend_from_slice(&seg);
+            released += release;
         }
         assert_eq!(flat.len(), total);
+        assert_eq!(released, backing);
         (axum::body::Bytes::from(flat), changed)
     }
 

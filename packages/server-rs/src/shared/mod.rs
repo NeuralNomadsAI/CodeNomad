@@ -179,9 +179,9 @@ pub fn bounded_stream_abort(
     })
 }
 
-/// Stream abort bound to principal revocation, daemon retirement, server shutdown grace (5 s),
-/// and an optional total lifetime (without cancelling on workspace close once a proxied request
-/// has been dispatched, matching TS `proxy.ts:37-115`).
+/// Stream abort bound to principal revocation, daemon retirement, and an optional total lifetime
+/// (without cancelling on workspace close or server shutdown once a proxied request has been
+/// dispatched, matching TS `proxy.ts:37-115` and `http-server.ts:261-273`).
 pub fn proxy_stream_abort(
     app: crate::Shared,
     endpoint: std::sync::Arc<crate::opencode::Endpoint>,
@@ -189,25 +189,18 @@ pub fn proxy_stream_abort(
     max_duration: Option<std::time::Duration>,
 ) -> AbortFuture {
     let deadline = max_duration.map(|d| tokio::time::Instant::now() + d);
-    let shutdown = app.events.shutdown.clone();
-    let shutdown_grace = async move {
-        shutdown.cancelled().await;
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    };
     Box::pin(async move {
         match deadline {
             Some(at) => tokio::select! {
                 biased;
                 _ = principal.cancelled() => {}
                 _ = app.native.wait_retired(&endpoint) => {}
-                _ = shutdown_grace => {}
                 _ = tokio::time::sleep_until(at) => {}
             },
             None => tokio::select! {
                 biased;
                 _ = principal.cancelled() => {}
                 _ = app.native.wait_retired(&endpoint) => {}
-                _ = shutdown_grace => {}
             },
         }
     })
@@ -272,7 +265,8 @@ pub fn permit_body(
 ) -> axum::body::Body {
     let mut chunks = std::collections::VecDeque::with_capacity(1);
     if !bytes.is_empty() {
-        chunks.push_back(bytes);
+        let len = bytes.len();
+        chunks.push_back((bytes, len));
     }
     permit_body_chunks(chunks, mem, abort)
 }
@@ -288,15 +282,16 @@ impl AsRef<[u8]> for HeldChunk {
     }
 }
 
+/// Streams `(bytes, release_backing_bytes)` segments while holding `ResponsePool` permits.
+/// Each entry specifies how many bytes of backing heap allocation are freed when that segment is
+/// popped (`0` for non-final slices of a shared `Bytes`, full backing size on the final slice),
+/// ensuring zero-copy rollback slices never release permits before their backing buffer drops.
 pub fn permit_body_chunks(
-    mut chunks: std::collections::VecDeque<axum::body::Bytes>,
+    mut chunks: std::collections::VecDeque<(axum::body::Bytes, usize)>,
     mut mem: Option<tokio::sync::OwnedSemaphorePermit>,
     mut abort: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
 ) -> axum::body::Body {
-    // Track each `Bytes` segment's original allocation size: `Bytes::advance` only moves a view
-    // cursor and does not free the backing buffer until `chunks.pop_front()` drops the segment.
-    let mut seg_sizes: std::collections::VecDeque<usize> = chunks.iter().map(axum::body::Bytes::len).collect();
-    let mut remaining_backing: usize = seg_sizes.iter().sum();
+    let mut remaining_backing: usize = chunks.iter().map(|(_, backing)| *backing).sum();
     let mut done = false;
     axum::body::Body::from_stream(futures_util::stream::poll_fn(move |cx| {
         if done {
@@ -306,19 +301,17 @@ pub fn permit_body_chunks(
             done = true;
             drop(mem.take());
             chunks.clear();
-            seg_sizes.clear();
             return std::task::Poll::Ready(Some(Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 "response stream aborted",
             ))));
         }
-        while chunks.front().is_some_and(axum::body::Bytes::is_empty) {
-            chunks.pop_front();
-            if let Some(dropped) = seg_sizes.pop_front() {
+        while chunks.front().is_some_and(|(bytes, _)| bytes.is_empty()) {
+            if let Some((_, dropped)) = chunks.pop_front() {
                 remaining_backing = remaining_backing.saturating_sub(dropped);
             }
         }
-        let Some(front) = chunks.front_mut() else {
+        let Some((front, _)) = chunks.front_mut() else {
             done = true;
             drop(mem.take());
             return std::task::Poll::Ready(None);
@@ -328,11 +321,10 @@ pub fn permit_body_chunks(
         let take = front.len().min(RESPONSE_CHUNK);
         let slice = front[..take].to_vec();
         bytes::Buf::advance(front, take);
-        if front.is_empty() {
-            chunks.pop_front();
-            if let Some(dropped) = seg_sizes.pop_front() {
-                remaining_backing = remaining_backing.saturating_sub(dropped);
-            }
+        if front.is_empty()
+            && let Some((_, dropped)) = chunks.pop_front()
+        {
+            remaining_backing = remaining_backing.saturating_sub(dropped);
         }
         let keep_units = if remaining_backing == 0 { 0 } else { remaining_backing.div_ceil(RESPONSE_CHUNK) };
         let chunk_permit = if keep_units == 0 {

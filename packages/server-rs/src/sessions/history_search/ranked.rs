@@ -83,6 +83,28 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
     let Some(limit) = input["limit"].as_u64() else { return Ok(blocked()) };
     input["limit"] = json!(40);
     let mut capped = selected.len() < directories.len();
+    // Capture deletion-fence display watches for ALL selected worktrees BEFORE the first RPC
+    // (TS `session-history-ranked.ts:62`) so a delete-and-recreate ABA on a disjoint worktree
+    // during an earlier RPC invalidates the page even when unqueried targets are skipped below.
+    let selected_fences: Vec<Arc<AtomicBool>> = tokio::task::spawn_blocking({
+        let app_scope = scope.app.scope.clone();
+        let dirs: Vec<String> = selected.to_vec();
+        move || {
+            dirs.into_iter()
+                .map(|dir| {
+                    let target = worktrees::ownership::resolve_media_path(&app_scope, &dir)
+                        .map(|(_, anchor)| anchor)
+                        .unwrap_or_else(|| PathBuf::from(&dir));
+                    display(&target)
+                })
+                .collect()
+        }
+    })
+    .await
+    .unwrap_or_default();
+    if selected_fences.len() != selected.len() || selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.current() {
+        return Ok(blocked());
+    }
     let mut fences = Vec::with_capacity(selected.len());
     let mut exclusions = Vec::new();
     let mut pages = Vec::new();
@@ -94,6 +116,9 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
         if token.is_some() {
             let Some(page) = prior.pages.iter().find(|page| page.index == index) else { continue };
             request["cursor"] = json!(page.page);
+        }
+        if selected_fences.iter().any(|f| !f.load(Relaxed)) {
+            return Ok(blocked());
         }
         let owned = scope.own(directory).await;
         if !scope.current() {
@@ -154,7 +179,7 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
     if approved.len() != sessions.len() {
         add_exclusion(&mut exclusions, "foreign_directory");
     }
-    if !scope.owned_current(&root).await {
+    if selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.owned_current(&root).await {
         return Ok(blocked());
     }
     for fence in &fences {

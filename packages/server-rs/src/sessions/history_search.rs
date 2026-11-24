@@ -138,19 +138,32 @@ struct Owned {
     directory: String,
     path: PathBuf,
     anchor: PathBuf,
-    identity: same_file::Handle,
+    identity: Arc<same_file::Handle>,
     proof: DirectoryProof,
     fence: Arc<AtomicBool>,
     inventory_rev: u64,
 }
 impl Owned {
-    fn current_local(&self, scope: &Scope<'_>) -> bool {
-        self.fence.load(Relaxed)
-            && scope.current()
-            && worktrees::ownership::resolve_media_path(&scope.app.scope, &self.directory)
-                .is_some_and(|(path, anchor)| path == self.path && anchor == self.anchor)
-            && same_file::Handle::from_path(&self.anchor).is_ok_and(|identity| identity == self.identity)
-            && self.proof.history_live(&scope.workspace.path, &self.path)
+    async fn current_local(&self, scope: &Scope<'_>) -> bool {
+        if !self.fence.load(Relaxed) || !scope.current() {
+            return false;
+        }
+        let app_scope = scope.app.scope.clone();
+        let workspace_path = scope.workspace.path.clone();
+        let directory = self.directory.clone();
+        let expected_path = self.path.clone();
+        let expected_anchor = self.anchor.clone();
+        let expected_id = Arc::clone(&self.identity);
+        let proof = self.proof.clone();
+        let ok = tokio::task::spawn_blocking(move || {
+            worktrees::ownership::resolve_media_path(&app_scope, &directory)
+                .is_some_and(|(path, anchor)| path == expected_path && anchor == expected_anchor)
+                && same_file::Handle::from_path(&expected_anchor).is_ok_and(|identity| identity == *expected_id)
+                && proof.history_live(&workspace_path, &expected_path)
+        })
+        .await
+        .unwrap_or(false);
+        ok && self.fence.load(Relaxed) && scope.current()
     }
 }
 impl Scope<'_> {
@@ -163,7 +176,7 @@ impl Scope<'_> {
         self.deadline.saturating_duration_since(Instant::now())
     }
     async fn owned_current(&self, owned: &Owned) -> bool {
-        if !owned.current_local(self) {
+        if !owned.current_local(self).await {
             return false;
         }
         if worktrees::inventory_revision(self.app) == owned.inventory_rev {
@@ -172,13 +185,22 @@ impl Scope<'_> {
         self.own(&owned.directory).await.is_some()
     }
     async fn own(&self, directory: &str) -> Option<Owned> {
-        let (path, anchor) = worktrees::ownership::resolve_media_path(&self.app.scope, directory)?;
-        let identity = same_file::Handle::from_path(&anchor).ok()?;
+        let app_scope = self.app.scope.clone();
+        let dir_owned = directory.to_owned();
+        let (path, anchor, identity) = tokio::task::spawn_blocking(move || {
+            let (path, anchor) = worktrees::ownership::resolve_media_path(&app_scope, &dir_owned)?;
+            let identity = Arc::new(same_file::Handle::from_path(&anchor).ok()?);
+            Some((path, anchor, identity))
+        })
+        .await
+        .ok()??;
         let fence = display(&anchor);
         let (inventory_rev, inventory) = self.inventory().await?;
-        let proof = inventory.prove(&self.workspace.path, &path)?;
+        let ws_path = self.workspace.path.clone();
+        let path_for_prove = path.clone();
+        let proof = tokio::task::spawn_blocking(move || inventory.prove(&ws_path, &path_for_prove)).await.ok()??;
         let owned = Owned { directory: directory.into(), path, anchor, identity, proof, fence, inventory_rev };
-        owned.current_local(self).then_some(owned)
+        owned.current_local(self).await.then_some(owned)
     }
     async fn inventory(&self) -> Option<(u64, Arc<HistoryInventory>)> {
         let mut guard = self.inventory.lock().await;

@@ -534,9 +534,12 @@ pub fn start(
             (owners, leases, snapshot)
         };
         let _ = tokio::time::timeout(Duration::from_secs(1), write_status(snapshot)).await;
-        for owner in owners.into_iter().flatten() {
+        // Close all presence owners concurrently so multiple namespaces never exceed shutdown
+        // budgets sequentially before lease disposal begins (TS `desktop-plugin-lifecycle.ts:169`).
+        let _ = futures_util::future::join_all(owners.into_iter().flatten().map(|owner| async move {
             let _ = tokio::time::timeout(Duration::from_secs(1), owner.close()).await;
-        }
+        }))
+        .await;
         // Hold `LEASE_IO` across disposal so a late `sync_leases` worker can never recreate a
         // deleted lease after shutdown cleanup; retry once after 250 ms (TS `shutdown.ts:135-146`).
         let disposed = tokio::task::spawn_blocking(move || -> Result<(), String> {

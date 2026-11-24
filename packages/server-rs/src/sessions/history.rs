@@ -514,190 +514,227 @@ fn detach_or_slice(body: Bytes, raw_range: std::ops::Range<usize>) -> Bytes {
     }
 }
 
-/// Validates and optionally defers a `window` RPC output without building a `serde_json::Value`
-/// tree over `messages[*]` tool payloads, so valid windows with millions of numeric samples in
-/// free tool metadata never amplify memory or trip a node cap.
+/// Validates and optionally defers a `window` RPC output in-place inside `body: Vec<u8>` without
+/// building a `serde_json::Value` tree over `messages[*]` tool payloads or allocating a second
+/// 24 MiB copy, so valid windows with millions of numeric samples never amplify memory or trip a
+/// node cap.
 fn process_window_payload(
     status: Status,
-    body: Bytes,
-    raw_str: &str,
-    raw_range: std::ops::Range<usize>,
+    mut body: Vec<u8>,
     id: &str,
     session: &str,
     reference: bool,
     defer: bool,
 ) -> Result<Bytes, Response> {
     use super::media_stream;
-    if !status.is_success() || !media_stream::validate_json_syntax(raw_str.as_bytes()) {
-        return Err(blocked("unavailable"));
-    }
-    let mut envelope_map = serde_json::Map::new();
-    let mut messages_raw: Option<&str> = None;
-    let mut envelope_ok = true;
-    if media_stream::for_each_json_object_field(raw_str, |k, v| {
-        if !envelope_ok {
-            return;
-        }
-        if k == "messages" {
-            messages_raw = Some(v);
-        } else if !media_stream::json_node_count_within(v.as_bytes(), 1024) {
-            envelope_ok = false;
-        } else if let Ok(val) = serde_json::from_str::<Value>(v) {
-            envelope_map.insert(k.to_owned(), val);
-        } else {
-            envelope_ok = false;
-        }
-    })
-    .is_none()
-        || !envelope_ok
-    {
-        return Err(blocked("unavailable"));
-    }
-    if envelope_map.get("status").and_then(Value::as_str) != Some("window") {
-        if messages_raw.is_some() {
-            envelope_map.insert("messages".into(), Value::Null);
-        }
-        if !crate::sessions::contracts::valid(
-            crate::sessions::contracts::get("window", true),
-            &Value::Object(envelope_map),
-        ) {
+    let (raw_range, patches) = {
+        let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return Err(blocked("unavailable")) };
+        let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
+        let raw_str = raw.get();
+        let raw_bytes = raw_str.as_bytes();
+        let offset = raw_bytes.as_ptr() as usize - body.as_ptr() as usize;
+        let raw_range = offset..offset + raw_bytes.len();
+        if !status.is_success() || !media_stream::validate_json_syntax(raw_bytes) {
             return Err(blocked("unavailable"));
         }
-        return Ok(detach_or_slice(body, raw_range));
-    }
-    let user_files_marker = envelope_map.remove("userFiles");
-    if user_files_marker.as_ref().is_some_and(|v| v.as_str() != Some(user_files::REFERENCE))
-        || (reference && user_files_marker.is_none())
-    {
-        return Err(blocked("unavailable"));
-    }
-    let Some(messages_str) = messages_raw else {
-        return Err(blocked("unavailable"));
-    };
-    let can_defer = defer && media::valid_id(id) && media::valid_id(session);
-    let (ws_enc, ses_enc) =
-        if can_defer { (media::encode(id), media::encode(session)) } else { (String::new(), String::new()) };
-    let raw_base = raw_str.as_ptr() as usize;
-    let mut check_messages: Vec<Value> = Vec::new();
-    let mut patches: Vec<(usize, usize, String)> = Vec::new();
-    let mut messages_ok = true;
-    let mut count = 0usize;
-    if media_stream::for_each_json_array_item(messages_str, 201, |_, msg_str| {
-        if !messages_ok {
-            return;
-        }
-        count += 1;
-        if count > 200 {
-            messages_ok = false;
-            return;
-        }
-        let (mut id_tok, mut type_tok, mut time_tok, mut files_tok) = (None, None, None, None);
-        if media_stream::for_each_json_object_field(msg_str, |k, v| match k {
-            "id" => id_tok = Some(v),
-            "type" => type_tok = Some(v),
-            "time" => time_tok = Some(v),
-            "files" => files_tok = Some(v),
-            _ => {}
-        })
-        .is_none()
-        {
-            messages_ok = false;
-            return;
-        }
-        let (Some(id_tok), Some(type_tok), Some(time_tok)) = (id_tok, type_tok, time_tok) else {
-            messages_ok = false;
-            return;
-        };
-        if id_tok.len() > 2048 || type_tok.len() > 128 {
-            messages_ok = false;
-            return;
-        }
-        let (Ok(id_val), Ok(type_val)) =
-            (serde_json::from_str::<Value>(id_tok), serde_json::from_str::<Value>(type_tok))
-        else {
-            messages_ok = false;
-            return;
-        };
-        let mut created_tok = None;
-        if media_stream::for_each_json_object_field(time_tok, |k, v| {
-            if k == "created" {
-                created_tok = Some(v);
+        let mut envelope_map = serde_json::Map::new();
+        let mut messages_raw: Option<&str> = None;
+        let mut envelope_ok = true;
+        if media_stream::for_each_json_object_field(raw_str, |k, v| {
+            if !envelope_ok {
+                return;
+            }
+            if k == "\0" {
+                envelope_ok = false;
+            } else if k == "messages" {
+                messages_raw = Some(v);
+            } else if !media_stream::json_node_count_within(v.as_bytes(), 1024) {
+                envelope_ok = false;
+            } else if let Ok(val) = serde_json::from_str::<Value>(v) {
+                envelope_map.insert(k.to_owned(), val);
+            } else {
+                envelope_ok = false;
             }
         })
         .is_none()
+            || !envelope_ok
         {
-            messages_ok = false;
-            return;
+            return Err(blocked("unavailable"));
         }
-        let Some(created_tok) = created_tok.filter(|t| t.len() <= 64) else {
-            messages_ok = false;
-            return;
-        };
-        let Ok(created_val) = serde_json::from_str::<Value>(created_tok) else {
-            messages_ok = false;
-            return;
-        };
-        if reference
-            && type_val.as_str() == Some("user")
-            && let Some(files_tok) = files_tok
-        {
-            if !media_stream::json_node_count_within(files_tok.as_bytes(), 4096) {
-                messages_ok = false;
-                return;
+        if envelope_map.get("status").and_then(Value::as_str) != Some("window") {
+            if messages_raw.is_some() {
+                envelope_map.insert("messages".into(), Value::Null);
             }
-            let Ok(Value::Array(files)) = serde_json::from_str::<Value>(files_tok) else {
-                messages_ok = false;
-                return;
-            };
-            if files.len() > user_files::FILE_COUNT || !files.iter().all(user_files::reference) {
-                messages_ok = false;
-                return;
-            }
-        }
-        check_messages.push(json!({"id": id_val, "type": type_val, "time": {"created": created_val}}));
-        if can_defer && type_val.as_str() == Some("assistant") {
-            let msg_offset = msg_str.as_ptr() as usize - raw_base;
-            if let Some(item_patches) = media_stream::collect_item_patches(&ws_enc, &ses_enc, msg_str) {
-                for (start, end, replacement) in item_patches {
-                    patches.push((msg_offset + start, msg_offset + end, replacement));
-                }
-            }
-        }
-    })
-    .is_none()
-        || !messages_ok
-    {
-        return Err(blocked("unavailable"));
-    }
-    envelope_map.insert("messages".into(), Value::Array(check_messages));
-    if !crate::sessions::contracts::valid(crate::sessions::contracts::get("window", true), &Value::Object(envelope_map))
-    {
-        return Err(blocked("unavailable"));
-    }
-    if !patches.is_empty() {
-        patches.sort_unstable_by_key(|(start, _, _)| *start);
-        let raw_bytes = raw_str.as_bytes();
-        let mut out = Vec::with_capacity(raw_bytes.len());
-        let mut cursor = 0usize;
-        for (start, end, replacement) in patches {
-            if start < cursor || end > raw_bytes.len() {
+            if !crate::sessions::contracts::valid(
+                crate::sessions::contracts::get("window", true),
+                &Value::Object(envelope_map),
+            ) {
                 return Err(blocked("unavailable"));
             }
-            out.extend_from_slice(&raw_bytes[cursor..start]);
-            out.extend_from_slice(replacement.as_bytes());
-            cursor = end;
+            (raw_range, Vec::new())
+        } else {
+            let user_files_marker = envelope_map.remove("userFiles");
+            if user_files_marker.as_ref().is_some_and(|v| v.as_str() != Some(user_files::REFERENCE))
+                || (reference && user_files_marker.is_none())
+            {
+                return Err(blocked("unavailable"));
+            }
+            let Some(messages_str) = messages_raw else {
+                return Err(blocked("unavailable"));
+            };
+            let can_defer = defer && media::valid_id(id) && media::valid_id(session);
+            let (ws_enc, ses_enc) =
+                if can_defer { (media::encode(id), media::encode(session)) } else { (String::new(), String::new()) };
+            let raw_base = raw_str.as_ptr() as usize;
+            let mut check_messages: Vec<Value> = Vec::new();
+            let mut patches: Vec<(usize, usize, String)> = Vec::new();
+            let mut messages_ok = true;
+            let mut count = 0usize;
+            if media_stream::for_each_json_array_item(messages_str, 201, |_, msg_str| {
+                if !messages_ok {
+                    return;
+                }
+                count += 1;
+                if count > 200 {
+                    messages_ok = false;
+                    return;
+                }
+                let (mut id_tok, mut type_tok, mut time_tok, mut files_tok) = (None, None, None, None);
+                if media_stream::for_each_json_object_field(msg_str, |k, v| match k {
+                    "id" => id_tok = Some(v),
+                    "type" => type_tok = Some(v),
+                    "time" => time_tok = Some(v),
+                    "files" => files_tok = Some(v),
+                    _ => {}
+                })
+                .is_none()
+                {
+                    messages_ok = false;
+                    return;
+                }
+                let (Some(id_tok), Some(type_tok), Some(time_tok)) = (id_tok, type_tok, time_tok) else {
+                    messages_ok = false;
+                    return;
+                };
+                if id_tok.len() > 2048 || type_tok.len() > 128 {
+                    messages_ok = false;
+                    return;
+                }
+                let (Ok(id_val), Ok(type_val)) =
+                    (serde_json::from_str::<Value>(id_tok), serde_json::from_str::<Value>(type_tok))
+                else {
+                    messages_ok = false;
+                    return;
+                };
+                let mut created_tok = None;
+                if media_stream::for_each_json_object_field(time_tok, |k, v| {
+                    if k == "created" {
+                        created_tok = Some(v);
+                    }
+                })
+                .is_none()
+                {
+                    messages_ok = false;
+                    return;
+                }
+                let Some(created_tok) = created_tok.filter(|t| t.len() <= 64) else {
+                    messages_ok = false;
+                    return;
+                };
+                let Ok(created_val) = serde_json::from_str::<Value>(created_tok) else {
+                    messages_ok = false;
+                    return;
+                };
+                if reference
+                    && type_val.as_str() == Some("user")
+                    && let Some(files_tok) = files_tok
+                {
+                    if !media_stream::json_node_count_within(files_tok.as_bytes(), 4096) {
+                        messages_ok = false;
+                        return;
+                    }
+                    let Ok(Value::Array(files)) = serde_json::from_str::<Value>(files_tok) else {
+                        messages_ok = false;
+                        return;
+                    };
+                    if files.len() > user_files::FILE_COUNT || !files.iter().all(user_files::reference) {
+                        messages_ok = false;
+                        return;
+                    }
+                }
+                check_messages.push(json!({"id": id_val, "type": type_val, "time": {"created": created_val}}));
+                if can_defer && type_val.as_str() == Some("assistant") {
+                    let msg_offset = msg_str.as_ptr() as usize - raw_base;
+                    if let Some(item_patches) = media_stream::collect_item_patches(&ws_enc, &ses_enc, msg_str) {
+                        for (start, end, replacement) in item_patches {
+                            patches.push((msg_offset + start, msg_offset + end, replacement));
+                        }
+                    }
+                }
+            })
+            .is_none()
+                || !messages_ok
+            {
+                return Err(blocked("unavailable"));
+            }
+            envelope_map.insert("messages".into(), Value::Array(check_messages));
+            if !crate::sessions::contracts::valid(
+                crate::sessions::contracts::get("window", true),
+                &Value::Object(envelope_map),
+            ) {
+                return Err(blocked("unavailable"));
+            }
+            (raw_range, patches)
         }
-        out.extend_from_slice(&raw_bytes[cursor..]);
-        if reference && out.len() > 24 * 1024 * 1024 {
+    };
+    if !patches.is_empty() {
+        let mut patches = patches;
+        patches.sort_unstable_by_key(|(start, _, _)| *start);
+        // Splice all deferred image URIs in-place inside `body` with ZERO second buffer
+        // allocation: every deferred URI (`<= 4096` bytes) is strictly shorter than the `> 32 KiB`
+        // data URI it replaces.
+        let base = raw_range.start;
+        let raw_end = raw_range.end;
+        let mut read_pos = base;
+        let mut write_pos = 0usize;
+        for (rel_start, rel_end, replacement) in patches {
+            let start = base + rel_start;
+            let end = base + rel_end;
+            let rep = replacement.as_bytes();
+            if start < read_pos || end > raw_end || rep.len() > end - start {
+                return Err(blocked("unavailable"));
+            }
+            let prefix_len = start - read_pos;
+            if write_pos != read_pos && prefix_len > 0 {
+                body.copy_within(read_pos..start, write_pos);
+            }
+            write_pos += prefix_len;
+            body[write_pos..write_pos + rep.len()].copy_from_slice(rep);
+            write_pos += rep.len();
+            read_pos = end;
+        }
+        let tail_len = raw_end - read_pos;
+        if write_pos != read_pos && tail_len > 0 {
+            body.copy_within(read_pos..raw_end, write_pos);
+        }
+        write_pos += tail_len;
+        if reference && write_pos > 24 * 1024 * 1024 {
             return Err(blocked("unsupported_storage"));
         }
-        out.shrink_to_fit();
-        return Ok(out.into());
+        body.truncate(write_pos);
+        body.shrink_to_fit();
+        return Ok(body.into());
     }
-    if reference && raw_str.len() > 24 * 1024 * 1024 {
+    let raw_len = raw_range.len();
+    if reference && raw_len > 24 * 1024 * 1024 {
         return Err(blocked("unsupported_storage"));
     }
-    Ok(detach_or_slice(body, raw_range))
+    if raw_range.start > 0 {
+        body.copy_within(raw_range, 0);
+    }
+    body.truncate(raw_len);
+    body.shrink_to_fit();
+    Ok(body.into())
 }
 
 fn process_history_payload(
@@ -710,15 +747,15 @@ fn process_history_payload(
     defer: bool,
 ) -> Result<Bytes, Response> {
     body.shrink_to_fit();
+    if action == "window" {
+        return process_window_payload(status, body, id, session, reference, defer);
+    }
     let body: Bytes = body.into();
     let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return Err(blocked("unavailable")) };
     let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
     let raw_bytes = raw.get().as_bytes();
     let offset = raw_bytes.as_ptr() as usize - body.as_ptr() as usize;
     let raw_range = offset..offset + raw_bytes.len();
-    if action == "window" {
-        return process_window_payload(status, body.clone(), raw.get(), raw_range, id, session, reference, defer);
-    }
     // `outline` / `outlinePreview` schemas are strict flat lists (max 16,384 / 12 entries, no
     // passthrough metadata), so 400,000 nodes comfortably exceeds any valid response while blocking
     // dense numeric arrays from amplifying memory.
@@ -983,14 +1020,10 @@ pub async fn handle(
             response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
             response
         };
-        if defer {
-            tokio::select! {
-                biased;
-                _ = app.native.wait_retired(&placement.endpoint) => blocked("unavailable"),
-                response = work => response,
-            }
-        } else {
-            work.await
+        tokio::select! {
+            biased;
+            _ = app.native.wait_retired(&placement.endpoint) => blocked("unavailable"),
+            response = work => response,
         }
     };
     tokio::select! {
@@ -1046,84 +1079,94 @@ pub async fn attachment(
         let placement = Placement::capture(&app, &id, &session, true)
             .await
             .map_err(|e| if e.0 == Status::FORBIDDEN { e } else { missing() })?;
-        if !placement.operation_current(&app, &id).await {
-            return Err(missing());
-        }
-        if !placement.live(&app, &id).await {
-            return Err(error(Status::CONFLICT, "Session location changed"));
-        }
-        let directory = match placement.ready(&app, &id, &session).await {
-            Ok(directory) => directory,
-            Err(Recheck::Conflict) => return Err(error(Status::CONFLICT, "Session location changed")),
-            Err(_) => return Err(missing()),
+        let after_capture = async {
+            if !placement.operation_current(&app, &id).await {
+                return Err(missing());
+            }
+            if !placement.live(&app, &id).await {
+                return Err(error(Status::CONFLICT, "Session location changed"));
+            }
+            let directory = match placement.ready(&app, &id, &session).await {
+                Ok(directory) => directory,
+                Err(Recheck::Conflict) => return Err(error(Status::CONFLICT, "Session location changed")),
+                Err(_) => return Err(missing()),
+            };
+            let mut input = json!({"sessionID":session,"messageID":message,"fileIndex":index,"sha256":sha});
+            let (status, body) =
+                rpc(&app, &placement.endpoint, directory, "sessionAttachment", &input).await.map_err(|_| missing())?;
+            if !status.is_success() {
+                return Err(missing());
+            }
+            let output: Value = serde_json::from_slice(&body).map_err(|_| missing())?;
+            let output = &output["output"];
+            if !valid_attachment_output(output) {
+                return Err(missing());
+            }
+            match placement.current(&app, &id, &session).await {
+                Recheck::Current => {}
+                Recheck::Conflict => return Err(error(Status::CONFLICT, "Session location changed")),
+                Recheck::Unavailable => return Err(missing()),
+            }
+            if output["status"] == "too_large" {
+                return Err(error(Status::PAYLOAD_TOO_LARGE, "Attachment exceeds the size limit"));
+            }
+            if output["status"] != "file" {
+                return Err(missing());
+            }
+            let bytes = user_files::inline(&output["data"])
+                .filter(|bytes| user_files::digest(bytes) == sha)
+                .ok_or_else(missing)?;
+            input["confirm"] = true.into();
+            let (status, reply) =
+                rpc(&app, &placement.endpoint, directory, "sessionAttachment", &input).await.map_err(|_| missing())?;
+            let reply: Value = serde_json::from_slice(&reply).map_err(|_| missing())?;
+            if !status.is_success()
+                || !valid_attachment_output(&reply["output"])
+                || reply["output"]["status"] != "current"
+            {
+                return Err(missing());
+            }
+            if !placement.operation_current(&app, &id).await {
+                return Err(missing());
+            }
+            if !placement.live(&app, &id).await {
+                return Err(error(Status::CONFLICT, "Session location changed"));
+            }
+            principal.live()?;
+            let length = axum::http::HeaderValue::from(bytes.len());
+            let abort = crate::shared::stream_abort(
+                app.clone(),
+                id.clone(),
+                placement.workspace.clone(),
+                placement.endpoint.clone(),
+                principal.0.clone(),
+            );
+            let write_abort = crate::shared::stream_abort(
+                app.clone(),
+                id.clone(),
+                placement.workspace.clone(),
+                placement.endpoint.clone(),
+                principal.0.clone(),
+            );
+            let mut response = (
+                [
+                    (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/octet-stream")),
+                    (header::CONTENT_LENGTH, length),
+                    (header::CACHE_CONTROL, axum::http::HeaderValue::from_static("private, no-store")),
+                    (header::CONTENT_DISPOSITION, axum::http::HeaderValue::from_static("attachment")),
+                    (header::X_CONTENT_TYPE_OPTIONS, axum::http::HeaderValue::from_static("nosniff")),
+                ],
+                crate::shared::permit_body(bytes.into(), None, abort),
+            )
+                .into_response();
+            response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
+            Ok(response)
         };
-        let mut input = json!({"sessionID":session,"messageID":message,"fileIndex":index,"sha256":sha});
-        let (status, body) =
-            rpc(&app, &placement.endpoint, directory, "sessionAttachment", &input).await.map_err(|_| missing())?;
-        if !status.is_success() {
-            return Err(missing());
+        tokio::select! {
+            biased;
+            _ = app.native.wait_retired(&placement.endpoint) => Err(missing()),
+            result = after_capture => result,
         }
-        let output: Value = serde_json::from_slice(&body).map_err(|_| missing())?;
-        let output = &output["output"];
-        if !valid_attachment_output(output) {
-            return Err(missing());
-        }
-        match placement.current(&app, &id, &session).await {
-            Recheck::Current => {}
-            Recheck::Conflict => return Err(error(Status::CONFLICT, "Session location changed")),
-            Recheck::Unavailable => return Err(missing()),
-        }
-        if output["status"] == "too_large" {
-            return Err(error(Status::PAYLOAD_TOO_LARGE, "Attachment exceeds the size limit"));
-        }
-        if output["status"] != "file" {
-            return Err(missing());
-        }
-        let bytes =
-            user_files::inline(&output["data"]).filter(|bytes| user_files::digest(bytes) == sha).ok_or_else(missing)?;
-        input["confirm"] = true.into();
-        let (status, reply) =
-            rpc(&app, &placement.endpoint, directory, "sessionAttachment", &input).await.map_err(|_| missing())?;
-        let reply: Value = serde_json::from_slice(&reply).map_err(|_| missing())?;
-        if !status.is_success() || !valid_attachment_output(&reply["output"]) || reply["output"]["status"] != "current"
-        {
-            return Err(missing());
-        }
-        if !placement.operation_current(&app, &id).await {
-            return Err(missing());
-        }
-        if !placement.live(&app, &id).await {
-            return Err(error(Status::CONFLICT, "Session location changed"));
-        }
-        principal.live()?;
-        let length = axum::http::HeaderValue::from(bytes.len());
-        let abort = crate::shared::stream_abort(
-            app.clone(),
-            id.clone(),
-            placement.workspace.clone(),
-            placement.endpoint.clone(),
-            principal.0.clone(),
-        );
-        let write_abort = crate::shared::stream_abort(
-            app.clone(),
-            id.clone(),
-            placement.workspace.clone(),
-            placement.endpoint.clone(),
-            principal.0.clone(),
-        );
-        let mut response = (
-            [
-                (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/octet-stream")),
-                (header::CONTENT_LENGTH, length),
-                (header::CACHE_CONTROL, axum::http::HeaderValue::from_static("private, no-store")),
-                (header::CONTENT_DISPOSITION, axum::http::HeaderValue::from_static("attachment")),
-                (header::X_CONTENT_TYPE_OPTIONS, axum::http::HeaderValue::from_static("nosniff")),
-            ],
-            crate::shared::permit_body(bytes.into(), None, abort),
-        )
-            .into_response();
-        response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
-        Ok(response)
     };
     tokio::select! {
         biased;
