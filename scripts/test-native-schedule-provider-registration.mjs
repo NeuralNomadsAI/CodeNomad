@@ -1,6 +1,7 @@
 // node scripts/test-native-schedule-provider-registration.mjs <isolated-cli> <fresh-scratch>
 import assert from "node:assert/strict"
 import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
@@ -82,16 +83,41 @@ try {
     const child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", "0"], { cwd: project, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
     const closed = new Promise(resolve => child.once("exit", resolve))
     child.stdout.resume(); child.stderr.resume()
+    let attestedFetch
     try {
+      const pid = await fixtureChildPid(child)
+      assert(Number.isSafeInteger(pid) && pid > 0, "Expected owned service PID")
       let endpoint
-      for (const deadline = Date.now() + 40_000; !endpoint;) {
+      const deadline = Date.now() + 40_000
+      while (!endpoint) {
         assert(child.exitCode === null && Date.now() < deadline, "owned service startup deadline")
-        if (existsSync(registrationFile) && JSON.parse(readFileSync(registrationFile, "utf8")).pid === await fixtureChildPid(child))
-          endpoint = await Service.discover({ file: registrationFile })
+        if (existsSync(registrationFile)) {
+          try {
+            const raw = JSON.parse(readFileSync(registrationFile, "utf8"))
+            if (raw.pid === pid && typeof raw.url === "string") {
+              const auth = raw.auth ?? (raw.password ? { type: "basic", username: raw.username ?? "opencode", password: raw.password } : undefined)
+              endpoint = { url: raw.url, auth }
+            }
+          } catch {}
+        }
         if (!endpoint) await delay(100)
       }
-      assert.notEqual(new URL(endpoint.url).port, "28894")
-      const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) }), info = await client.server.info()
+      const origin = new URL(endpoint.url).origin
+      const port = Number(new URL(endpoint.url).port)
+      assert.notEqual(String(port), "28894")
+      while (Date.now() < deadline) {
+        assert(child.exitCode === null, "owned service exited before listening")
+        try { await verifyLoopbackListenerOwner(port, pid); break } catch { await delay(100) }
+      }
+      await verifyLoopbackListenerOwner(port, pid)
+      attestedFetch = createAttestedFetch(origin, port, pid)
+      const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint), fetch: attestedFetch })
+      let info
+      while (!info) {
+        assert(child.exitCode === null && Date.now() < deadline, "owned service ready deadline")
+        try { info = await client.server.info() } catch { await delay(100) }
+      }
+      assert.equal(info.pid, pid)
       const qa = client.rpc(rpc), options = { location: { directory: project }, signal: AbortSignal.timeout(20_000) }
       const inspected = await qa.inspect({}, options)
       writeFileSync(path.join(directory, "catalog.json"), JSON.stringify(inspected, null, 2))
@@ -126,6 +152,7 @@ try {
         defaultUnchanged: true, carrierCreated: !!created.session, sessionID: created.session?.id, outcome, compactionIDs,
         technicalHooksFixture: mode === "healthy", remoteHTTP: requests.length })
     } finally {
+      await attestedFetch?.close().catch(() => {})
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
       await closed
     }

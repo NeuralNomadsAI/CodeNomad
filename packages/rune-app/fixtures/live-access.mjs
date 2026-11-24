@@ -498,8 +498,10 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
         try{
           const {preparePruning}=await import('../../../scripts/perf/pruning.mjs')
           plugin=await preparePruning(profile,config,runtimeEnv,{
-            onBuilderSpawn({supervisorPid,childPid,closed}){
-              if(supervisorPid){trackedSupervisorPid=supervisorPid;void lock.setSupervisorPid(supervisorPid)}
+            async onBuilderSpawn({supervisorPid,childPid,closed}){
+              assert(Number.isSafeInteger(supervisorPid)&&supervisorPid>0,'Builder supervisor PID unavailable')
+              trackedSupervisorPid=supervisorPid
+              await lock.setSupervisorPid(supervisorPid)
               void Promise.resolve(childPid).then(pid=>{
                 if(pruningActive&&Number.isSafeInteger(pid)&&pid>0){trackedDaemonPid=pid;void lock.setDaemonPid(pid)}
               },()=>{})
@@ -513,8 +515,16 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
         }finally{pruningActive=false}
       }
       checkActive()
-      daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env,redact:[password]})
-      if(daemon.child.pid){trackedSupervisorPid=daemon.child.pid;await lock.setSupervisorPid(daemon.child.pid)}
+      daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env,redact:[password],gate:true})
+      try{
+        assert(Number.isSafeInteger(daemon.child.pid)&&daemon.child.pid>0,'Daemon supervisor PID unavailable')
+        trackedSupervisorPid=daemon.child.pid
+        await lock.setSupervisorPid(daemon.child.pid)
+      }catch(error){
+        daemon.abortGate()
+        throw error
+      }
+      daemon.releaseGate()
       const origin=await daemon.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)?.[1])
       checkActive()
       const pid=await Promise.race([

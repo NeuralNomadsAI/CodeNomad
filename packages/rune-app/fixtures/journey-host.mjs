@@ -124,6 +124,7 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
       nativeRelay.allowClientPid(server.pid(),server.closed)
       const origin=await server.ready(rustOrigin)
       const rustPid=await server.pid()
+      assert(Number.isSafeInteger(rustPid)&&rustPid>0,'Owned Rust server PID unavailable')
       await run({profile,project,origin,rustPid,password,env})
     }finally{untrackSignalCleanup()}
     report.stage='verify-model-and-git'

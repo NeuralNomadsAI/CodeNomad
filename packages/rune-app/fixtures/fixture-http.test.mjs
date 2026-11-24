@@ -389,3 +389,12 @@ test('acquireProfileLock enforces cross-process SQLite exclusion and live daemon
   await reclaimed.close()
   await unlink(lockPath)
 })
+
+test('originGuardProxy and signInFixture refuse missing target PID without unattested fallback',async()=>{
+  const {originGuardProxy}=await import('../../../scripts/native-fixture-http.mjs')
+  const {signInFixture}=await import('./fixture-host.mjs')
+  await assert.rejects(originGuardProxy('http://127.0.0.1:1',undefined),/target PID/i)
+  await assert.rejects(originGuardProxy('http://127.0.0.1:1',0),/target PID/i)
+  await assert.rejects(signInFixture('http://127.0.0.1:1','secret',undefined),/target PID/i)
+  await assert.rejects(signInFixture('http://127.0.0.1:1','secret',null),/target PID/i)
+})

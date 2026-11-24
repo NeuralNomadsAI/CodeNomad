@@ -39,22 +39,40 @@ export function spawnFixtureChild(command, args, options) {
   if (graceCandidates.length && !env.CODENOMAD_FIXTURE_GRACE_MS) {
     env.CODENOMAD_FIXTURE_GRACE_MS = String(Math.min(...graceCandidates))
   }
-  const { detached: _detached, graceMs: _graceMs, stdio: rawStdio, ...restOptions } = options ?? {}
+  const { detached: _detached, graceMs: _graceMs, gate = false, stdio: rawStdio, ...restOptions } = options ?? {}
   const usePrivatePidFd = process.platform !== "win32"
   let stdio = rawStdio
-  if (usePrivatePidFd) {
+  if (gate || usePrivatePidFd) {
     const baseStdio = Array.isArray(rawStdio)
-      ? [rawStdio[0] ?? "pipe", rawStdio[1] ?? "pipe", rawStdio[2] ?? "pipe"]
+      ? [gate ? "pipe" : (rawStdio[0] ?? "pipe"), rawStdio[1] ?? "pipe", rawStdio[2] ?? "pipe"]
       : typeof rawStdio === "string"
-        ? [rawStdio, rawStdio, rawStdio]
+        ? [gate ? "pipe" : rawStdio, rawStdio, rawStdio]
         : ["pipe", "pipe", "pipe"]
-    stdio = [...baseStdio, "pipe"]
-    env.CODENOMAD_FIXTURE_PID_FD = "3"
+    stdio = usePrivatePidFd ? [...baseStdio, "pipe"] : baseStdio
+    if (usePrivatePidFd) env.CODENOMAD_FIXTURE_PID_FD = "3"
   }
+  const supervisorFlags = gate ? ["--gate-stdin"] : []
   const supervisor = exe
-    ? [exe, [command, ...args]]
-    : [process.execPath, [fileURLToPath(new URL("./native-fixture-posix-supervisor.mjs", import.meta.url)), command, ...args]]
+    ? [exe, [...supervisorFlags, command, ...args]]
+    : [process.execPath, [fileURLToPath(new URL("./native-fixture-posix-supervisor.mjs", import.meta.url)), ...supervisorFlags, command, ...args]]
   const child = spawn(supervisor[0], supervisor[1], { ...restOptions, stdio, detached: false, env, windowsHide: true })
+  if (gate) {
+    child.stdin?.on("error", () => {})
+    let released = false
+    child.releaseGate = () => {
+      if (released) return
+      released = true
+      if (child.stdin && !child.stdin.destroyed) {
+        child.stdin.write("G")
+        child.stdin.end()
+      }
+    }
+    child.abortGate = () => {
+      if (released) return
+      released = true
+      if (child.stdin && !child.stdin.destroyed) child.stdin.end()
+    }
+  }
   const pidStream = usePrivatePidFd ? child.stdio[3] : child.stderr
   if (!pidStream) {
     jobs.set(child, Promise.resolve(undefined))

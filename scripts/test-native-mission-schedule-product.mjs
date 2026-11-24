@@ -12,7 +12,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
 import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
-import { createAttestedFetch, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
+import { createAttestedFetch, createAttestedRelay, RELAY_PLACEHOLDER_PASSWORD, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
 import { collectColdFailure } from "./native-fixture-cold-diagnostics.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
@@ -251,7 +251,7 @@ async function journey(kind) {
     client = undefined; endpoint = undefined
     if (!cold) await connect()
   }
-  let attestedFetch
+  let attestedFetch, managerRelay, managerEndpoint
   const connect = async signal => {
     // Registration can precede HTTP readiness. Read registration locally and attest OS socket ownership
     // before sending Basic auth or calling /api/info.
@@ -273,18 +273,25 @@ async function journey(kind) {
       try { await verifyLoopbackListenerOwner(port, pid); return true } catch { return false }
     }, 40000)
     await attestedFetch?.close().catch(() => {})
+    await managerRelay?.close().catch(() => {})
     attestedFetch = createAttestedFetch(origin, port, pid)
-    client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint), fetch: attestedFetch })
+    const headers = Service.headers(endpoint)
+    client = OpenCode.make({ baseUrl: endpoint.url, headers, fetch: attestedFetch })
     if (endpoint.auth?.password) { secrets.add(endpoint.auth.password); secrets.add(Buffer.from(`${endpoint.auth.username}:${endpoint.auth.password}`).toString("base64")) }
     const info = await until(async () => {
       signal?.throwIfAborted()
       try { return await client.server.info({ signal }) } catch { return false }
     }, 40000)
     assert.equal(info.version, cliVersion); assert.equal(info.pid, pid)
+    managerRelay = await createAttestedRelay(origin, pid, { requireClientAttestation: true, injectAuthorization: headers.Authorization })
+    managerRelay.allowClientPid(process.pid)
+    managerEndpoint = { url: managerRelay.origin, auth: { type: "basic", username: endpoint.auth?.username ?? "opencode", password: RELAY_PLACEHOLDER_PASSWORD } }
     if (endpoint.auth?.password) credentialsChild = child
-    rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
+    rememberRuntime(managerEndpoint, { version: info.version, pid: info.pid, discovery: "info" })
   }
   const stop = async () => {
+    await managerRelay?.close().catch(() => {})
+    managerRelay = undefined; managerEndpoint = undefined
     await attestedFetch?.close().catch(() => {})
     attestedFetch = undefined
     const owned = children.find(entry => entry.child === child)
@@ -299,6 +306,7 @@ async function journey(kind) {
     getSessionFromHeaders: headers => headers.cookie === cookie ? human : null, getSessionFromRequest: request => request.headers.cookie === cookie ? human : null }
   secrets.add(cookie); secrets.add(human.sessionId)
   const closeBackend = async () => {
+    await managerRelay?.close().catch(() => {}); managerRelay = undefined; managerEndpoint = undefined
     await attestedFetch?.close().catch(() => {}); attestedFetch = undefined
     await plugin?.stop(); plugin = undefined
     await removeBridge?.(); removeBridge = undefined
@@ -453,7 +461,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     await launch()
     manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(), settings,
       binaryResolver: { resolveDefault: () => ({ path: cli, label: "Owned scheduled product fixture" }) },
-      hostServiceLifecycleFactory: () => ({ discover: async () => endpoint, ensure: async () => endpoint }) })
+      hostServiceLifecycleFactory: () => ({ discover: async () => managerEndpoint, ensure: async () => managerEndpoint }) })
     workspace = (await manager.create(project)).workspace
     const connection = await manager.getSharedServiceConnection(workspace.id), paths = await resolveDesktopPluginPaths(connection, { kind: "host", platform: process.platform, binary: cli })
     assert(path.relative(root, paths.config) && !path.relative(root, paths.config).startsWith(".."))

@@ -439,7 +439,9 @@ async function stopServer(){
 }
 async function signIn(origin){
   await http?.dispose()
-  http=await signInFixture(origin,'fixture-backend')
+  const serverPid=await host.pid()
+  assert(Number.isSafeInteger(serverPid)&&serverPid>0,'Owned fixture server PID unavailable')
+  http=await signInFixture(origin,'fixture-backend',serverPid)
 }
 async function restartWeb(previous,uiOrigin){
   const {serverId}=await (await previous.get('/api/meta')).json()

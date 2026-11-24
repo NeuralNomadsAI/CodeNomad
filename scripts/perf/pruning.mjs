@@ -65,8 +65,9 @@ export async function preparePruning(root, config, buildEnv, { onBuilderSpawn } 
   `
   const group = process.platform !== 'win32'
   const isolatedBuildEnv = withoutFixtureProxy({ ...(buildEnv ?? fixtureSystemEnvironment()), ESBUILD_BINARY_PATH: esbuildBinaryPath })
+  const gated = typeof onBuilderSpawn === 'function'
   const builder = spawnFixtureChild(process.execPath, ['--input-type=module', '-e', buildScript, esbuildUrl, pluginBuildUrl, entryPoint, outfile, repoRootReal, nodeModulesReal], {
-    cwd: root, env: isolatedBuildEnv, detached: group, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root, env: isolatedBuildEnv, detached: group, gate: gated, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   })
   const startedBy = new Date()
   let buildStderr = ''
@@ -76,9 +77,18 @@ export async function preparePruning(root, config, buildEnv, { onBuilderSpawn } 
     builder.once('close', code => resolve(code))
     builder.once('error', () => resolve(1))
   })
-  onBuilderSpawn?.({ supervisorPid: builder.pid, childPid: fixtureChildPid(builder), closed: buildClosed })
   const untrackBuilder = registerFixtureChild(() => stopFixtureChild(builder, buildClosed, 1000, 2000, { group, startedBy }))
   void buildClosed.finally(untrackBuilder)
+  if (gated) {
+    try {
+      await onBuilderSpawn({ supervisorPid: builder.pid, childPid: fixtureChildPid(builder), closed: buildClosed })
+    } catch (error) {
+      builder.abortGate?.()
+      await stopFixtureChild(builder, buildClosed, 1000, 2000, { group, startedBy }).catch(() => {})
+      throw error
+    }
+    builder.releaseGate?.()
+  }
   const buildCode = await Promise.race([
     buildClosed,
     new Promise(resolve => setTimeout(() => resolve(124), 60_000).unref()),

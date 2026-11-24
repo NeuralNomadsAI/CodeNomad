@@ -11,6 +11,7 @@ import {traceJourneyTouch} from './journey-touch-trace.mjs'
 
 export async function journeyBrowser(host, web, report, executablePath){
   const {origin,rustPid,password,profile,project,env}=host
+  assert(Number.isSafeInteger(rustPid)&&rustPid>0,'Owned Rust server PID required')
   const labels=JSON.parse(await readFile(new URL('../../../crates/rune-theme-codenomad/assets/catalogues/en.json',import.meta.url),'utf8'))
   const manifest=JSON.parse(await readFile(path.join(web,'bundle-manifest.json'),'utf8'))
   assert.equal(manifest.testSupport,false,'Use a product WASM artifact')
@@ -19,7 +20,7 @@ export async function journeyBrowser(host, web, report, executablePath){
   try{
     storageState=await http.storageState()
   }finally{await http.dispose()}
-  const rustFetch=rustPid?createAttestedFetch(origin,Number(new URL(origin).port),rustPid):null
+  const rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
   const cookieHeader=(storageState?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
   const owned=await launchOwnedChromium({executablePath,profile,env:assertPrivateChild(env),origin,targetPid:rustPid})
   const {browser}=owned

@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict'
 import {setTimeout as delay} from 'node:timers/promises'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {createAttestedFetch,createStreamRedactor,redactSecrets,resolveWorktreePackage,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
-
-const {request}=await import(resolveWorktreePackage('playwright'))
+import {createAttestedFetch,createStreamRedactor,redactSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 
 const activeChildren=new Set()
 const signalAborts=new Set()
@@ -59,11 +57,12 @@ export async function until(check,label,ms=20000){
   throw Error(`Timed out: ${label}`)
 }
 
-export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000,redact=[]}){
+export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000,redact=[],gate=false}){
   assert(env,'An explicit fixture environment is required')
   assert(!cleaningSignals,'Fixture shutting down')
+  assert(!(gate&&shutdown),'Fixture gate cannot be combined with stdin shutdown')
   const group=process.platform!=='win32'
-  const child=spawnFixtureChild(binary,args,{cwd,env:withoutFixtureProxy(env),detached:group,graceMs,windowsHide:true,stdio:[shutdown?'pipe':'ignore','pipe','pipe']})
+  const child=spawnFixtureChild(binary,args,{cwd,env:withoutFixtureProxy(env),detached:group,graceMs,gate,windowsHide:true,stdio:[shutdown||gate?'pipe':'ignore','pipe','pipe']})
   const startedBy=new Date()
   let output='',stdout='',error,stopping
   const sanitize=text=>redactSecrets(text,redact)
@@ -94,7 +93,7 @@ export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000,redact=
   child.stdin?.on('error',()=>{})
   const currentStdout=()=>stdout+outRedactor.peek()
   const currentOutput=()=>output+outRedactor.peek()+errRedactor.peek()
-  return {child,pid:()=>fixtureChildPid(child),closed,redact:sanitize,output:currentOutput,stdout:currentStdout,ready:(match,ms)=>until(()=>{
+  return {child,pid:()=>fixtureChildPid(child),releaseGate:()=>child.releaseGate?.(),abortGate:()=>child.abortGate?.(),closed,redact:sanitize,output:currentOutput,stdout:currentStdout,ready:(match,ms)=>until(()=>{
     if(error)throw error
     assert(child.exitCode===null&&child.signalCode===null,`Fixture child exited: ${currentOutput().slice(-2000)}`)
     return match(currentStdout())
@@ -107,30 +106,55 @@ export const rustOrigin=stdout=>stdout.match(/^(http:\/\/127\.0\.0\.1:\d+)\r?\n/
 
 export async function signInFixture(origin,password,targetPid){
   assert.match(origin,/^http:\/\/127\.0\.0\.1:\d+$/)
-  if(targetPid){
-    const port=Number(new URL(origin).port)
-    const attested=createAttestedFetch(origin,port,targetPid)
-    try{
-      const unauth=await attested(`${origin}/api/workspaces`,{signal:AbortSignal.timeout(15000)})
-      assert.equal(unauth.status,401,'Workspace inventory requires authentication')
-      const login=await attested(`${origin}/api/auth/login`,{
-        method:'POST',headers:{'content-type':'application/json'},
-        body:JSON.stringify({username:'codenomad',password}),signal:AbortSignal.timeout(15000),
-      })
-      assert.equal(login.status,200)
-      const setCookie=login.headers.get('set-cookie')
-      assert(setCookie,'Expected authenticated session cookie')
-      const [pair]=setCookie.split(';')
-      const eq=pair.indexOf('=')
-      assert(eq>0,'Expected valid cookie pair')
-      const state={cookies:[{name:pair.slice(0,eq).trim(),value:pair.slice(eq+1).trim(),domain:'127.0.0.1',path:'/',expires:-1,httpOnly:true,secure:false,sameSite:'Lax'}],origins:[]}
-      return {storageState:async()=>state,dispose:async()=>{}}
-    }finally{await attested.close()}
-  }
-  const http=await request.newContext({baseURL:origin,timeout:15000})
+  assert(Number.isSafeInteger(targetPid)&&targetPid>0,'Attested target PID is required for signInFixture')
+  const port=Number(new URL(origin).port)
+  const attested=createAttestedFetch(origin,port,targetPid)
   try{
-    assert.equal((await http.get('/api/workspaces',{maxRedirects:0})).status(),401,'Workspace inventory requires authentication')
-    assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password},maxRedirects:0})).status(),200)
-    return http
-  }catch(error){await http.dispose();throw error}
+    const unauth=await attested(`${origin}/api/workspaces`,{signal:AbortSignal.timeout(15000)})
+    assert.equal(unauth.status,401,'Workspace inventory requires authentication')
+    const login=await attested(`${origin}/api/auth/login`,{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({username:'codenomad',password}),signal:AbortSignal.timeout(15000),
+    })
+    assert.equal(login.status,200)
+    const setCookie=login.headers.get('set-cookie')
+    assert(setCookie,'Expected authenticated session cookie')
+    const [pair]=setCookie.split(';')
+    const eq=pair.indexOf('=')
+    assert(eq>0,'Expected valid cookie pair')
+    const cookieName=pair.slice(0,eq).trim()
+    const cookieValue=pair.slice(eq+1).trim()
+    const cookieHeader=`${cookieName}=${cookieValue}`
+    const state={cookies:[{name:cookieName,value:cookieValue,domain:'127.0.0.1',path:'/',expires:-1,httpOnly:true,secure:false,sameSite:'Lax'}],origins:[]}
+    const call=async(method,pathname,options={})=>{
+      const url=new URL(pathname,origin).href
+      const headers=new Headers(options.headers??{})
+      headers.set('cookie',cookieHeader)
+      let body
+      if(options.data!==undefined){
+        headers.set('content-type','application/json')
+        body=JSON.stringify(options.data)
+      }
+      const res=await attested(url,{method,headers,body,signal:AbortSignal.timeout(options.timeout??15000)})
+      return {
+        status:()=>res.status,
+        ok:()=>res.ok,
+        headers:()=>Object.fromEntries(res.headers.entries()),
+        text:()=>res.text(),
+        json:()=>res.json(),
+        body:async()=>Buffer.from(await res.arrayBuffer()),
+      }
+    }
+    return {
+      get:(pathname,options)=>call('GET',pathname,options),
+      post:(pathname,options)=>call('POST',pathname,options),
+      put:(pathname,options)=>call('PUT',pathname,options),
+      delete:(pathname,options)=>call('DELETE',pathname,options),
+      storageState:async()=>state,
+      dispose:async()=>{await attested.close()},
+    }
+  }catch(error){
+    await attested.close().catch(()=>{})
+    throw error
+  }
 }

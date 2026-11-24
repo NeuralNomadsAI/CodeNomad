@@ -173,7 +173,7 @@ try{
     finally{clearTimeout(timeout)}
     if(client.error)throw client.error
     assert.equal(client.child.exitCode,0,`Rune ${stage} failed; inspect rune-${stage}.log`)
-    const receipts=logs[client.name].split(/\r?\n/).flatMap(line=>{try{return [JSON.parse(line)]}catch{return []}})
+    const receipts=stdouts[client.name].split(/\r?\n/).flatMap(line=>{try{return [JSON.parse(line)]}catch{return []}})
       .filter(value=>value.type==='native-store-stage')
     assert.equal(receipts.length,1);assert.equal(receipts[0].stage,stage);stages.push(receipts[0])
     assert.deepEqual(await inventory(),[],'Each Rune boot releases its owned logical records')

@@ -18,7 +18,7 @@ import Fastify from "fastify"
 import pino from "pino"
 import { OpenCode } from "@opencode/client"
 import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
-import { createAttestedFetch, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
+import { createAttestedFetch, createAttestedRelay, RELAY_PLACEHOLDER_PASSWORD, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 
 const source = process.argv[2], journeys = process.argv[3] ?? "ABCD"
 assert.ok(source && path.isAbsolute(source), "Explicit existing CLI required")
@@ -127,9 +127,11 @@ async function waitForMissions() {
     return missions?.state.status === "active"
   })
 }
-let attestedFetch
+let attestedFetch, managerRelay, managerEndpoint
 async function start() {
   output = ""
+  await managerRelay?.close().catch(() => {})
+  managerRelay = undefined; managerEndpoint = undefined
   await attestedFetch?.close().catch(() => {})
   attestedFetch = undefined
   child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { env, cwd: root, windowsHide: true })
@@ -145,7 +147,10 @@ async function start() {
   const authHeader = `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`
   const info = await (await attestedFetch(`${endpoint.url}/api/info`, { headers: { authorization: authHeader }, signal: AbortSignal.timeout(15_000) })).json()
   assert.equal(info.pid, pid)
-  rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
+  managerRelay = await createAttestedRelay(endpoint.url, pid, { requireClientAttestation: true, injectAuthorization: authHeader })
+  managerRelay.allowClientPid(process.pid)
+  managerEndpoint = { url: managerRelay.origin, auth: { type: "basic", username: "opencode", password: RELAY_PLACEHOLDER_PASSWORD } }
+  rememberRuntime(managerEndpoint, { version: info.version, pid: info.pid, discovery: "info" })
   // Fixture-owned read-only observer bound to this exact service; independent of the backend.
   client = OpenCode.make({ baseUrl: endpoint.url, headers: { Authorization: authHeader }, fetch: attestedFetch })
   evidence.serviceStarts ??= []; evidence.serviceStarts.push({ pid: info.pid, version: info.version })
@@ -154,6 +159,8 @@ async function start() {
 async function stop() {
   const pid = await fixtureChildPid(child)
   assert.equal((await client.server.info()).pid, pid, "Exact owned PID before stop")
+  await managerRelay?.close().catch(() => {})
+  managerRelay = undefined; managerEndpoint = undefined
   await attestedFetch?.close().catch(() => {})
   attestedFetch = undefined
   await stopFixtureChild(child, closed, 1_000, 10_000)
@@ -171,7 +178,7 @@ const auth = { isAuthEnabled: () => true, isLoopbackRequest: () => true, getCook
 async function openBackend() {
   manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(), settings,
     binaryResolver: { resolveDefault: () => ({ path: cli, label: "Isolated recurring" }) },
-    hostServiceLifecycleFactory: () => ({ discover: async () => endpoint, ensure: async () => endpoint }) })
+    hostServiceLifecycleFactory: () => ({ discover: async () => managerEndpoint, ensure: async () => managerEndpoint }) })
   workspace = (await manager.create(project)).workspace
   const connection = await manager.getSharedServiceConnection(workspace.id)
   const paths = await resolveDesktopPluginPaths(connection, { kind: "host", platform: process.platform, binary: cli })
@@ -197,6 +204,7 @@ async function closeBackend() {
   await removeBridge?.(); removeBridge = undefined
   await bridge?.close(); bridge = undefined
   await manager?.shutdown(); manager = undefined // Drops connections only; never stops the owned service.
+  await managerRelay?.close().catch(() => {}); managerRelay = undefined; managerEndpoint = undefined
 }
 const location = { directory: project }
 const rpc = () => client.rpc(CODENOMAD_MISSIONS_RPC)

@@ -305,7 +305,7 @@ function pidAlive(pid){
 
 const psSystemBin=()=>['/bin/ps','/usr/bin/ps'].find(candidate=>existsSync(candidate))
 
-async function parentPidOf(pid){
+async function processIdentityOf(pid){
   if(!Number.isSafeInteger(pid)||pid<=0)return null
   if(process.platform==='linux'){
     try{
@@ -314,7 +314,9 @@ async function parentPidOf(pid){
       if(closeParen<0)return null
       const fields=statText.slice(closeParen+2).trim().split(/\s+/)
       const ppid=Number(fields[1])
-      return Number.isSafeInteger(ppid)&&ppid>0?ppid:null
+      const startId=fields[19]
+      if(!Number.isSafeInteger(ppid)||ppid<=0||!startId)return null
+      return {ppid,startId}
     }catch{return null}
   }
   if(process.platform==='win32'){
@@ -322,30 +324,40 @@ async function parentPidOf(pid){
     const powershell=path.win32.join(systemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe')
     if(!existsSync(powershell)||lstatSync(powershell).isSymbolicLink())return null
     try{
-      const {stdout}=await execFileAsync(powershell,['-NoProfile','-NonInteractive','-Command',`(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').ParentProcessId`],{timeout:5000,windowsHide:true})
-      const ppid=Number(stdout.trim())
-      return Number.isSafeInteger(ppid)&&ppid>0?ppid:null
+      const {stdout}=await execFileAsync(powershell,['-NoProfile','-NonInteractive','-Command',`$p=Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}'; if($p){"$($p.ParentProcessId)|$($p.CreationDate.ToUniversalTime().Ticks)"}`],{timeout:5000,windowsHide:true})
+      const [rawPpid,startId]=stdout.trim().split('|')
+      const ppid=Number(rawPpid)
+      if(!Number.isSafeInteger(ppid)||ppid<=0||!startId)return null
+      return {ppid,startId}
     }catch{return null}
   }
   const psBin=psSystemBin()
   if(!psBin)return null
   try{
-    const {stdout}=await execFileAsync(psBin,['-o','ppid=','-p',String(pid)],{timeout:5000})
-    const ppid=Number(stdout.trim())
-    return Number.isSafeInteger(ppid)&&ppid>0?ppid:null
+    const {stdout}=await execFileAsync(psBin,['-o','ppid=,lstart=','-p',String(pid)],{timeout:5000})
+    const trimmed=stdout.trim()
+    const match=/^(\d+)\s+(.+)$/.exec(trimmed)
+    if(!match)return null
+    const ppid=Number(match[1])
+    const startId=match[2].trim()
+    if(!Number.isSafeInteger(ppid)||ppid<=0||!startId)return null
+    return {ppid,startId}
   }catch{return null}
 }
 
 async function isPidInOwnedTree(peerPid,rootPid){
-  if(peerPid===rootPid)return true
-  let current=peerPid
-  for(let depth=0;depth<8&&current>1;depth++){
-    const ppid=await parentPidOf(current)
-    if(!ppid||ppid===current)return false
-    if(ppid===rootPid)return true
-    current=ppid
+  const peerInfo=await processIdentityOf(peerPid)
+  if(!peerInfo)return null
+  if(peerPid===rootPid)return peerInfo.startId
+  let current=peerInfo.ppid
+  if(current===rootPid)return peerInfo.startId
+  for(let depth=1;depth<8&&current>1;depth++){
+    const info=await processIdentityOf(current)
+    if(!info||info.ppid===current)return null
+    if(info.ppid===rootPid)return peerInfo.startId
+    current=info.ppid
   }
-  return false
+  return null
 }
 
 async function resolveLoopbackPeerPid(localPort,remotePort){
@@ -392,8 +404,9 @@ async function resolveLoopbackPeerPid(localPort,remotePort){
 
 export async function originGuardProxy(localOrigin,targetPid,options={}){
   const {requireClientAttestation=false,allowDescendants=false,allowedClientPids=[]}=options
+  if(!Number.isSafeInteger(targetPid)||targetPid<=0)throw Error('Attested origin guard target PID required')
   const base=new URL(localOrigin)
-  const agent=targetPid?createAttestedHttpAgent(Number(base.port),targetPid):fixtureHttpAgent
+  const agent=createAttestedHttpAgent(Number(base.port),targetPid)
   let proxyPort=0
   const clientGate=createClientPidGate(()=>proxyPort,verifyLoopbackConnectionPeer,{allowDescendants})
   for(const clientPid of allowedClientPids)clientGate.allow(clientPid)
@@ -448,7 +461,7 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
       clientGate.close()
       for(const socket of [...detachedSockets]){try{socket.destroy()}catch{}}
       detachedSockets.clear()
-      if(targetPid)agent.destroy()
+      agent.destroy()
       server.closeAllConnections()
       return new Promise(resolve=>server.close(resolve))
     },
@@ -586,22 +599,66 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
   const pendingPids=new Set()
   const attestedSockets=new WeakMap()
   const socketsByPid=new Map()
-  const attestedDescendants=new Map()
+  const descendantEntries=new Map()
+  let sweepTimer=null,sweeping=false
   const isAllowed=pid=>allowedTokens.has(pid)&&allowedTokens.get(pid).size>0&&pidAlive(pid)
-  const trackSocket=(pid,socket)=>{
-    let set=socketsByPid.get(pid)
-    if(!set){set=new Set();socketsByPid.set(pid,set)}
+  const stopSweepIfIdle=()=>{
+    if(sweepTimer&&descendantEntries.size===0){clearInterval(sweepTimer);sweepTimer=null}
+  }
+  const destroyDescendant=peerPid=>{
+    const entry=descendantEntries.get(peerPid)
+    if(!entry)return
+    descendantEntries.delete(peerPid)
+    for(const socket of [...entry.sockets]){try{socket.destroy()}catch{}}
+    stopSweepIfIdle()
+  }
+  const ensureSweep=()=>{
+    if(!allowDescendants||sweepTimer||descendantEntries.size===0)return
+    sweepTimer=setInterval(()=>{
+      if(sweeping||descendantEntries.size===0)return
+      sweeping=true
+      void (async()=>{
+        try{
+          for(const [peerPid,entry] of [...descendantEntries.entries()]){
+            if(!isAllowed(entry.rootPid)||!pidAlive(peerPid)){destroyDescendant(peerPid);continue}
+            const info=await processIdentityOf(peerPid).catch(()=>null)
+            if(!info||info.startId!==entry.startId)destroyDescendant(peerPid)
+          }
+        }finally{sweeping=false;stopSweepIfIdle()}
+      })()
+    },500)
+    sweepTimer.unref?.()
+  }
+  const trackSocket=(rootPid,peerPid,startId,socket)=>{
+    let set=socketsByPid.get(rootPid)
+    if(!set){set=new Set();socketsByPid.set(rootPid,set)}
     set.add(socket)
+    let descEntry=null
+    if(allowDescendants&&peerPid!==rootPid){
+      descEntry=descendantEntries.get(peerPid)
+      if(descEntry&&descEntry.startId!==startId){destroyDescendant(peerPid);descEntry=null}
+      if(!descEntry){descEntry={rootPid,startId,sockets:new Set()};descendantEntries.set(peerPid,descEntry)}
+      descEntry.sockets.add(socket)
+      ensureSweep()
+    }
     socket.once('close',()=>{
-      const current=socketsByPid.get(pid)
-      if(current){current.delete(socket);if(current.size===0)socketsByPid.delete(pid)}
+      const current=socketsByPid.get(rootPid)
+      if(current){current.delete(socket);if(current.size===0)socketsByPid.delete(rootPid)}
+      if(descEntry){
+        descEntry.sockets.delete(socket)
+        if(descEntry.sockets.size===0){descendantEntries.delete(peerPid);stopSweepIfIdle()}
+      }
     })
   }
   const destroyPidSockets=pid=>{
     const set=socketsByPid.get(pid)
-    if(!set)return
-    socketsByPid.delete(pid)
-    for(const socket of [...set]){try{socket.destroy()}catch{}}
+    if(set){
+      socketsByPid.delete(pid)
+      for(const socket of [...set]){try{socket.destroy()}catch{}}
+    }
+    for(const [peerPid,entry] of [...descendantEntries.entries()]){
+      if(entry.rootPid===pid)destroyDescendant(peerPid)
+    }
   }
   const allow=(pidOrPromise,exitPromise)=>{
     const token=Symbol('relay-client')
@@ -615,7 +672,6 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
           tokens.delete(token)
           if(tokens.size===0){
             allowedTokens.delete(resolvedPid)
-            attestedDescendants.delete(resolvedPid)
             destroyPidSockets(resolvedPid)
           }
         }
@@ -637,8 +693,11 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
     if(socket.destroyed)return false
     const known=attestedSockets.get(socket)
     if(known!==undefined){
-      if(isAllowed(known.rootPid)&&pidAlive(known.peerPid))return true
-      destroyPidSockets(known.rootPid)
+      const descValid=!allowDescendants||known.peerPid===known.rootPid
+        ||descendantEntries.get(known.peerPid)?.startId===known.startId
+      if(isAllowed(known.rootPid)&&pidAlive(known.peerPid)&&descValid)return true
+      if(known.peerPid!==known.rootPid)destroyDescendant(known.peerPid)
+      else destroyPidSockets(known.rootPid)
       socket.destroy()
       return false
     }
@@ -654,13 +713,10 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
         const peerPid=await resolveLoopbackPeerPid(localPort,remotePort).catch(()=>null)
         if(peerPid&&pidAlive(peerPid)){
           for(const rootPid of candidates){
-            let verifiedSet=attestedDescendants.get(rootPid)
-            const matched=peerPid===rootPid||verifiedSet?.has(peerPid)||await isPidInOwnedTree(peerPid,rootPid)
-            if(matched&&isAllowed(rootPid)&&!socket.destroyed){
-              if(!verifiedSet){verifiedSet=new Set();attestedDescendants.set(rootPid,verifiedSet)}
-              verifiedSet.add(peerPid)
-              attestedSockets.set(socket,{rootPid,peerPid})
-              trackSocket(rootPid,socket)
+            const startId=await isPidInOwnedTree(peerPid,rootPid)
+            if(startId&&isAllowed(rootPid)&&!socket.destroyed){
+              attestedSockets.set(socket,{rootPid,peerPid,startId})
+              trackSocket(rootPid,peerPid,startId,socket)
               return true
             }
           }
@@ -670,8 +726,8 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
           const matchedPid=await Promise.any(candidates.map(clientPid=>
             verifyPeer(localPort,remotePort,clientPid).then(()=>clientPid)))
           if(socket.destroyed||!isAllowed(matchedPid))return false
-          attestedSockets.set(socket,{rootPid:matchedPid,peerPid:matchedPid})
-          trackSocket(matchedPid,socket)
+          attestedSockets.set(socket,{rootPid:matchedPid,peerPid:matchedPid,startId:null})
+          trackSocket(matchedPid,matchedPid,null,socket)
           return true
         }catch{}
       }
@@ -680,11 +736,12 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
     return false
   }
   const close=()=>{
+    if(sweepTimer){clearInterval(sweepTimer);sweepTimer=null}
     for(const pid of [...allowedTokens.keys()]){
       allowedTokens.delete(pid)
-      attestedDescendants.delete(pid)
       destroyPidSockets(pid)
     }
+    for(const peerPid of [...descendantEntries.keys()])destroyDescendant(peerPid)
   }
   return {allow,verify,close}
 }

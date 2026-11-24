@@ -1,6 +1,7 @@
 // Native terminal-order/claim qualification; private standalone runtime, never discovery.
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import { createServer } from "node:http"
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -24,7 +25,7 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
   /^(SystemRoot|WINDIR|ComSpec|PATHEXT|OS|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|PATH)$/i.test(key)))
 Object.assign(env, { HOME: root, USERPROFILE: root, APPDATA: root, LOCALAPPDATA: root, ProgramData: path.join(root, "program-data"),
   OPENCODE_TEST_HOME: root, OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "native.db"),
-  OPENCODE_SERVER_PASSWORD: "terminal-fixture-only", OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1",
+  OPENCODE_SERVER_PASSWORD: randomUUID(), OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1",
   OPENCODE_DISABLE_FFF: "1", DO_NOT_TRACK: "1", TEMP: path.join(root, "tmp"), TMP: path.join(root, "tmp") })
 for (const name of ["DATA", "CONFIG", "STATE", "CACHE"]) env[`XDG_${name}_HOME`] = path.join(root, `xdg-${name.toLowerCase()}`)
 env.XDG_RUNTIME_DIR = path.join(root, "runtime")

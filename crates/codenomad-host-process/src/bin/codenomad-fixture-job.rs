@@ -219,10 +219,14 @@ fn run() -> io::Result<i32> {
     }
     let mut args = std::env::args_os().skip(1).peekable();
     let mut inherit_console = false;
+    let mut gate_stdin = false;
     let mut pid_file: Option<PathBuf> = None;
     while let Some(arg) = args.peek() {
         if arg == "--inherit-console" {
             inherit_console = true;
+            args.next();
+        } else if arg == "--gate-stdin" {
+            gate_stdin = true;
             args.next();
         } else if arg == "--pid-file" {
             args.next();
@@ -232,6 +236,14 @@ fn run() -> io::Result<i32> {
             pid_file = Some(PathBuf::from(path));
         } else {
             break;
+        }
+    }
+    if gate_stdin {
+        use std::io::Read;
+        let mut token = [0u8; 1];
+        let mut stdin = io::stdin().lock();
+        if stdin.read(&mut token).unwrap_or(0) != 1 || token[0] != b'G' {
+            return Ok(1);
         }
     }
     let program = args
@@ -244,7 +256,11 @@ fn run() -> io::Result<i32> {
         .args(args)
         .env_remove("CODENOMAD_FIXTURE_PARENT_PID")
         .env_remove("CODENOMAD_FIXTURE_PID_FD")
-        .stdin(Stdio::inherit())
+        .stdin(if gate_stdin {
+            Stdio::null()
+        } else {
+            Stdio::inherit()
+        })
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
     #[cfg(unix)]
