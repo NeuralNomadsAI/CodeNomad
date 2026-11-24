@@ -30,8 +30,17 @@ pub fn message_id() -> crate::history::Result<String> {
     Ok(id)
 }
 
-pub(crate) fn encode(input: &Prompt) -> crate::history::Result<Vec<u8>> {
-    encode_limited(input, MAX_BODY_BYTES)
+#[derive(Debug)]
+pub(crate) struct EncodeError(String);
+impl std::fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for EncodeError {}
+
+pub(crate) fn encode(input: &Prompt) -> Result<Vec<u8>, EncodeError> {
+    encode_limited(input, MAX_BODY_BYTES).map_err(|error| EncodeError(error.to_string()))
 }
 
 fn encode_limited(input: &Prompt, limit: usize) -> crate::history::Result<Vec<u8>> {

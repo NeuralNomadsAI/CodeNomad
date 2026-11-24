@@ -46,7 +46,7 @@ pub(super) async fn slash(
     true
 }
 
-pub(super) async fn prompt(
+pub(crate) async fn prompt(
     backend: &Backend,
     out: &Sender<Event>,
     wake: &Wake,
@@ -67,7 +67,10 @@ pub(super) async fn prompt(
                 }
                 PromptOutcome::Rejected
             }
-            Err(error) if error.downcast_ref() == Some(&crate::prompt::PromptError::Rejected) => {
+            Err(error)
+                if error.downcast_ref() == Some(&crate::prompt::PromptError::Rejected)
+                    || error.is::<crate::prompt::EncodeError>() =>
+            {
                 PromptOutcome::Rejected
             }
             Err(_) => PromptOutcome::Unconfirmed,

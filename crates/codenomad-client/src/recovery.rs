@@ -2,7 +2,7 @@
 mod authentication;
 pub mod demand;
 mod reader;
-mod receipts;
+pub(crate) mod receipts;
 mod transport;
 
 pub use reader::ReadingLane;

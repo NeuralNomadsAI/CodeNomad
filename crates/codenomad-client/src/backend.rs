@@ -128,8 +128,7 @@ impl Backend {
         &self,
         input: &crate::prompt::Prompt,
     ) -> Result<crate::prompt::Acknowledgement> {
-        let body =
-            crate::prompt::encode(input).map_err(|_| crate::prompt::PromptError::Rejected)?;
+        let body = crate::prompt::encode(input)?;
         let response = self
             .client
             .post(format!(

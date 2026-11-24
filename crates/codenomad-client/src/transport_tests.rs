@@ -495,10 +495,28 @@ fn prompt_connection_refused_and_oversized_body_are_rejected_not_unconfirmed() {
             })
             .await
             .unwrap_err();
-        assert_eq!(
-            oversized.downcast_ref::<crate::prompt::PromptError>(),
-            Some(&crate::prompt::PromptError::Rejected)
-        );
+        assert!(oversized.is::<crate::prompt::EncodeError>());
+        assert!(oversized.to_string().contains("request body"));
+        let (out, _events) = bounded(4);
+        let wire = Arc::new(crate::stream::State::default());
+        let outcome = crate::recovery::receipts::prompt(
+            &backend,
+            &out,
+            &Arc::new(|| {}),
+            &wire,
+            true,
+            "msg_00000000000000000000000000000003",
+            &crate::prompt::Prompt {
+                id: Some("msg_00000000000000000000000000000003".into()),
+                text: "x".repeat(crate::prompt::MAX_BODY_BYTES + 1),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(matches!(
+            outcome,
+            Some(crate::transport::PromptOutcome::Rejected)
+        ));
     });
 }
 
