@@ -306,6 +306,14 @@ pub(super) async fn route(
             if !placement.operation_current(&app, &r.workspace).await {
                 return Ok(crate::shared::abort_response());
             }
+            // Reserve response-stream memory BEFORE the final `session.get` so no blocking
+            // wait occurs after the last native revert/placement revalidation.
+            let mem = crate::shared::reserve_response_memory(raw_len.min(6 * 1024 * 1024))
+                .await
+                .map_err(|_| unavailable())?;
+            if !placement.operation_current(&app, &r.workspace).await {
+                return Ok(crate::shared::abort_response());
+            }
             // 3 native GETs: session1, message, session2; check only `latest.revert` so a
             // cancelled staged undo still serves the visible image.
             let newest = match placement.latest(&app, &r.workspace, &r.session).await {
@@ -333,15 +341,8 @@ pub(super) async fn route(
                     extract_media_from_envelope(&r.message, r.part, r.index, r.digest, revert.as_deref(), &envelope)?;
                 (mime, bytes, slot)
             };
-            principal.live()?;
-            if !placement.operation_current(&app, &r.workspace).await {
-                return Ok(crate::shared::abort_response());
-            }
-            if !placement.live(&app, &r.workspace).await {
-                return Err(error(Status::CONFLICT, "Session location changed"));
-            }
-            let mem = crate::shared::reserve_response_memory(bytes.len()).await.map_err(|_| unavailable())?;
             drop(slot);
+            principal.live()?;
             if !placement.operation_current(&app, &r.workspace).await {
                 return Ok(crate::shared::abort_response());
             }

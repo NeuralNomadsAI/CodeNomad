@@ -258,7 +258,8 @@ pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, Pa
     if !crate::files::paths::under(scope, Path::new(&normalized)) {
         return None;
     }
-    let resolved = resolve_exact_directory(raw).filter(|p| crate::files::paths::under(scope, p))?;
+    // Canonical paths use exact `starts_with` to match cold `inventory.rs` on case-sensitive NTFS volumes.
+    let resolved = resolve_exact_directory(raw).filter(|p| p.starts_with(scope))?;
     let anchor = directory_anchor(&resolved).ok()??.to_path_buf();
     Some((resolved, anchor))
 }
@@ -275,9 +276,10 @@ async fn catalogue_proof_live_async(
 ) -> Option<DirectoryProof> {
     tokio::task::spawn_blocking(move || {
         catalogue_proof(&catalogue, &path, external, true).filter(|proof| {
-            scope.as_ref().is_none_or(|scope| {
-                proof.tree.as_ref().is_none_or(|tree| crate::files::paths::under(scope, tree.registered()))
-            }) && proof.live(&path)
+            scope
+                .as_ref()
+                .is_none_or(|scope| proof.tree.as_ref().is_none_or(|tree| tree.registered().starts_with(scope)))
+                && proof.live(&path)
         })
     })
     .await
@@ -297,7 +299,7 @@ pub(crate) async fn media_directory(
     if !current() {
         return Err(native_error());
     }
-    if !crate::files::paths::under(&app.scope, path) {
+    if !path.starts_with(&app.scope) {
         return Ok(None);
     }
     let external = !path.starts_with(&workspace.path);

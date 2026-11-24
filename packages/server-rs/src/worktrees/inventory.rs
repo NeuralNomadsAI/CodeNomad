@@ -318,10 +318,18 @@ async fn root_at(
     .await?;
     let project = here["project"]["id"].as_str().filter(|p| crate::opencode::valid_id(p)).ok_or_else(native_error)?;
     let local = checkout(&w.path).await?;
-    let main_path = here["project"]["canonical"].as_str().and_then(physical).ok_or_else(native_error)?;
+    let main_raw = here["project"]["canonical"].as_str().map(str::to_owned).ok_or_else(native_error)?;
+    let here_dir_raw = here["directory"].as_str().map(str::to_owned);
+    let project_dir_raw = here["project"]["directory"].as_str().map(str::to_owned);
+    let (main_path, here_dir, project_dir) = tokio::task::spawn_blocking(move || {
+        (physical(&main_raw), here_dir_raw.as_deref().and_then(physical), project_dir_raw.as_deref().and_then(physical))
+    })
+    .await
+    .map_err(|_| native_error())?;
+    let main_path = main_path.ok_or_else(native_error)?;
     let main = if main_path == local.root { local.clone() } else { checkout(&main_path).await? };
-    if here["directory"].as_str().and_then(physical).as_ref() != Some(&w.path)
-        || here["project"]["directory"].as_str().and_then(physical).as_ref() != Some(&local.root)
+    if here_dir.as_ref() != Some(&w.path)
+        || project_dir.as_ref() != Some(&local.root)
         || main.root != main_path
         || main.admin != main.common
         || main.common != local.common
@@ -403,21 +411,36 @@ async fn catalogue_in_at(
     )
     .await?;
     let entries = entries.as_array().ok_or_else(native_error)?;
+    let service_roots: Vec<String> = entries
+        .iter()
+        .map(|entry| entry["directory"].as_str().map(str::to_owned).ok_or_else(native_error))
+        .collect::<Result<Vec<_>, _>>()?;
     let annotations =
         crate::git::run(&main.root, &["worktree", "list", "--porcelain", "-z"], 4 << 20).await?.ok()?.text();
-    let snapshot: HashMap<_, _> = annotations
-        .split("\0\0")
-        .filter_map(|s| Some((physical(s.split('\0').next()?.strip_prefix("worktree ")?)?, s)))
-        .collect();
-    let mut seen = HashSet::new();
-    let mut checked = Vec::new();
-    for entry in entries {
-        let service_root = entry["directory"].as_str().ok_or_else(native_error)?;
-        let Some(root) = physical(service_root) else { continue };
-        if scoped && !root.starts_with(&app.scope) || !seen.insert(root.clone()) {
-            continue;
+    let scope_for_resolve = app.scope.clone();
+    let candidates = tokio::task::spawn_blocking(move || {
+        let snapshot: HashMap<PathBuf, String> = annotations
+            .split("\0\0")
+            .filter_map(|s| Some((physical(s.split('\0').next()?.strip_prefix("worktree ")?)?, s.to_owned())))
+            .collect();
+        let mut seen = HashSet::new();
+        let mut resolved = Vec::new();
+        for service_root in service_roots {
+            let Some(root) = physical(&service_root) else { continue };
+            if scoped && !root.starts_with(&scope_for_resolve) || !seen.insert(root.clone()) {
+                continue;
+            }
+            let Some(meta) = snapshot.get(&root).cloned() else { continue };
+            resolved.push((service_root, root, meta));
         }
-        let Some(meta) = snapshot.get(&root) else { continue };
+        resolved
+    })
+    .await
+    .map_err(|_| native_error())?;
+    let mut checked = Vec::new();
+    for (service_root, root, meta) in candidates {
+        let service_root = service_root.as_str();
+        let meta = meta.as_str();
         let check = if root == local.root {
             local.clone()
         } else if root == main.root {
@@ -460,27 +483,18 @@ async fn catalogue_in_at(
                     let (tree_path, id, projected_link) = match dunce::canonicalize(&projected) {
                         Ok(real) if real == projected && real.is_dir() => match identity(&projected) {
                             Ok(value) => (projected, Some(value), None),
-                            Err(_) if !opened && !crate::files::paths::under(&scope, &root) => (projected, None, None),
+                            Err(_) if !opened && !root.starts_with(&scope) => (projected, None, None),
                             Err(error) => return Err(error),
                         },
                         // TS resolves a sibling worktree's symlinked projected subfolder and admits it
                         // when its physical target stays inside the same checkout (`worktree-directory.ts:248-278`).
-                        Ok(real)
-                            if !opened
-                                && real.starts_with(&root)
-                                && real.is_dir()
-                                && crate::files::paths::under(&scope, &real) =>
-                        {
+                        Ok(real) if !opened && real.starts_with(&root) && real.is_dir() && real.starts_with(&scope) => {
                             match identity(&real) {
                                 Ok(value) => (real.clone(), Some(value), Some((projected, real))),
                                 Err(_) => return Ok(None),
                             }
                         }
-                        Ok(real)
-                            if !opened
-                                && ((real == projected && real.is_file())
-                                    || !crate::files::paths::under(&scope, &root)) =>
-                        {
+                        Ok(real) if !opened && ((real == projected && real.is_file()) || !root.starts_with(&scope)) => {
                             (projected, None, None)
                         }
                         Ok(_) if !opened => return Ok(None),

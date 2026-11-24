@@ -82,11 +82,10 @@ impl Placement {
         if fenced {
             displays.push(display(&workspace.path));
         }
-        let endpoint = if media {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let endpoint = {
+            let timeout = if media { Duration::from_secs(30) } else { Duration::from_secs(10) };
+            let deadline = tokio::time::Instant::now() + timeout;
             app.native.acquire(deadline).await.map_err(|_| crate::opencode::upstream_error())?
-        } else {
-            app.native.endpoint().ok_or_else(crate::opencode::upstream_error)?
         };
         let capture = async {
             let current_fast = |displays: &[Arc<AtomicBool>]| {
@@ -195,6 +194,7 @@ impl Placement {
     fn operation_current_fast(&self, app: &App, id: &str) -> bool {
         app.native.current(&self.endpoint)
             && app.workspace(id).is_ok_and(|w| w.id == self.workspace.id && w.path == self.workspace.path)
+            && self.displays.iter().all(|display| display.load(Relaxed))
     }
 
     pub(super) async fn operation_current(&self, app: &App, id: &str) -> bool {
@@ -405,10 +405,15 @@ fn parse_and_validate_history(
     let offset = raw_bytes.as_ptr() as usize - body.as_ptr() as usize;
     let raw_range = offset..offset + raw_bytes.len();
     let Ok(mut output) = serde_json::from_str::<Value>(raw.get()) else { return Err(blocked("unavailable")) };
-    // Temporarily strip `userFiles` so base contract validation runs before session revalidation,
-    // matching TS `session-navigation.ts:86-91` (schema parse -> revalidate -> user-files check).
+    // Temporarily strip valid `userFiles` so base contract validation runs before session revalidation,
+    // while still rejecting a present-but-invalid `userFiles` value before revalidation
+    // (TS `navigation-contract.ts:77-83`, `session-navigation.ts:85-91`).
     let user_files_marker = if reference && output["status"] == "window" {
-        output.as_object_mut().and_then(|root| root.remove("userFiles"))
+        let marker = output.as_object_mut().and_then(|root| root.remove("userFiles"));
+        if marker.as_ref().is_some_and(|v| v.as_str() != Some(user_files::REFERENCE)) {
+            return Err(blocked("unavailable"));
+        }
+        marker
     } else {
         None
     };
@@ -490,7 +495,8 @@ pub async fn handle(
     let session = input["sessionID"].as_str().ok_or_else(invalid)?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let request = async {
-        let placement = match Placement::capture_with_media(&app, &id, session, defer, reference || defer).await {
+        // Always capture deletion fences for history navigation (TS `session-navigation.ts:48-55`).
+        let placement = match Placement::capture_with_media(&app, &id, session, defer, true).await {
             Ok(placement) => placement,
             Err((Status::FORBIDDEN, body)) => return (Status::FORBIDDEN, body).into_response(),
             Err(_) => return blocked("unavailable"),
@@ -578,6 +584,30 @@ pub async fn handle(
                     Err(invalid_response) => return invalid_response,
                 }
             };
+            // Reserve response-stream memory BEFORE final session revalidation so no blocking
+            // wait occurs after the last native check.
+            let mem = if defer {
+                let workspace_closed = async {
+                    loop {
+                        let notified = app.workspace_closed.notified();
+                        if !placement.operation_current_fast(&app, &id) {
+                            return;
+                        }
+                        notified.await;
+                    }
+                };
+                let permit = tokio::select! {
+                    biased;
+                    _ = workspace_closed => return blocked("unavailable"),
+                    permit = crate::shared::reserve_response_memory(body_len) => match permit {
+                        Ok(permit) => permit,
+                        Err(_) => return blocked("unavailable"),
+                    }
+                };
+                Some(permit)
+            } else {
+                None
+            };
             match placement.current(&app, &id, session).await {
                 Recheck::Current => {}
                 Recheck::Conflict => return blocked("conflict"),
@@ -599,28 +629,6 @@ pub async fn handle(
             let (payload, slot) = match projected {
                 (Ok(payload), slot) => (payload, slot),
                 (Err(invalid_response), _) => return invalid_response,
-            };
-            let mem = if defer {
-                let workspace_closed = async {
-                    loop {
-                        let notified = app.workspace_closed.notified();
-                        if !placement.operation_current_fast(&app, &id) {
-                            return;
-                        }
-                        notified.await;
-                    }
-                };
-                let permit = tokio::select! {
-                    biased;
-                    _ = workspace_closed => return blocked("unavailable"),
-                    permit = crate::shared::reserve_response_memory(payload.len()) => match permit {
-                        Ok(permit) => permit,
-                        Err(_) => return blocked("unavailable"),
-                    }
-                };
-                Some(permit)
-            } else {
-                None
             };
             drop(slot);
             if !placement.operation_current(&app, &id).await {

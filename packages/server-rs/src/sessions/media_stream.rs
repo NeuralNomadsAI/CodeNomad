@@ -5,7 +5,7 @@
 //! without failing before image URIs are replaced by `/api/workspaces/.../session-media/...`.
 use std::collections::BTreeMap;
 
-use serde_json::value::{RawValue, to_raw_value};
+use serde_json::value::RawValue;
 
 use super::media;
 
@@ -291,23 +291,27 @@ fn parse_string(raw: &RawValue) -> Option<String> {
     serde_json::from_str::<String>(raw.get()).ok()
 }
 
-enum RawRef<'a> {
-    Borrowed(&'a RawValue),
-    Owned(Box<RawValue>),
+enum JsonNode<'a> {
+    Raw(&'a RawValue),
+    Str(String),
+    Array(Vec<JsonNode<'a>>),
+    Object(BTreeMap<String, JsonNode<'a>>),
 }
 
-impl serde::Serialize for RawRef<'_> {
+impl serde::Serialize for JsonNode<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
-            Self::Borrowed(raw) => raw.serialize(serializer),
-            Self::Owned(raw) => raw.serialize(serializer),
+            Self::Raw(raw) => raw.serialize(serializer),
+            Self::Str(s) => s.serialize(serializer),
+            Self::Array(items) => items.serialize(serializer),
+            Self::Object(map) => map.serialize(serializer),
         }
     }
 }
 
 /// Projects a single message JSON item by borrowing `&RawValue` slices directly from `raw`
-/// (zero-copy for untouched or nested subtrees) and only allocating the short replacement URI
-/// strings and modified containers, keeping peak memory near 1x the raw message size.
+/// and building only the modified JSON tree spine (`JsonNode`), performing a single final
+/// serialization with zero intermediate re-encoding buffers.
 pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>) -> (Vec<u8>, bool) {
     if !may_contain_image_uri(&raw) {
         return (raw, false);
@@ -327,10 +331,10 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>)
         }
         let raw_parts = serde_json::from_str::<Vec<&RawValue>>(content_raw.get()).ok()?;
         let id_enc = media::encode(&id_raw);
-        let mut parts: Vec<RawRef<'_>> = raw_parts.into_iter().map(RawRef::Borrowed).collect();
+        let mut parts: Vec<JsonNode<'_>> = raw_parts.into_iter().map(JsonNode::Raw).collect();
         let mut changed = false;
-        for (part_idx, part_ref) in parts.iter_mut().take(100_001).enumerate() {
-            let RawRef::Borrowed(part_raw) = *part_ref else {
+        for (part_idx, part_node) in parts.iter_mut().take(100_001).enumerate() {
+            let JsonNode::Raw(part_raw) = *part_node else {
                 continue;
             };
             if !may_contain_image_uri(part_raw.get().as_bytes()) {
@@ -360,10 +364,10 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>)
             let Ok(raw_items) = serde_json::from_str::<Vec<&RawValue>>(items_raw.get()) else {
                 continue;
             };
-            let mut items: Vec<RawRef<'_>> = raw_items.into_iter().map(RawRef::Borrowed).collect();
+            let mut items: Vec<JsonNode<'_>> = raw_items.into_iter().map(JsonNode::Raw).collect();
             let mut part_changed = false;
-            for (item_idx, item_ref) in items.iter_mut().take(100_001).enumerate() {
-                let RawRef::Borrowed(item_raw) = *item_ref else {
+            for (item_idx, item_node) in items.iter_mut().take(100_001).enumerate() {
+                let JsonNode::Raw(item_raw) = *item_node else {
                     continue;
                 };
                 if item_raw.get().len() <= INLINE_THRESHOLD || !may_contain_image_uri(item_raw.get().as_bytes()) {
@@ -389,40 +393,32 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>)
                 };
                 if let Some(reference) =
                     media::defer_uri(workspace_enc, session_enc, &id_enc, part_idx, item_idx, &file_type, &mime, &uri)
-                    && let Ok(encoded_uri) = to_raw_value(&reference)
                 {
                     drop(uri);
-                    let mut file_fields: BTreeMap<String, RawRef<'_>> =
-                        raw_file_fields.into_iter().map(|(k, v)| (k, RawRef::Borrowed(v))).collect();
-                    file_fields.insert("uri".into(), RawRef::Owned(encoded_uri));
-                    if let Ok(encoded_file) = to_raw_value(&file_fields) {
-                        *item_ref = RawRef::Owned(encoded_file);
-                        part_changed = true;
-                    }
+                    let mut file_fields: BTreeMap<String, JsonNode<'_>> =
+                        raw_file_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v))).collect();
+                    file_fields.insert("uri".into(), JsonNode::Str(reference));
+                    *item_node = JsonNode::Object(file_fields);
+                    part_changed = true;
                 }
             }
-            if part_changed && let Ok(encoded_items) = to_raw_value(&items) {
-                let mut state_fields: BTreeMap<String, RawRef<'_>> =
-                    raw_state_fields.into_iter().map(|(k, v)| (k, RawRef::Borrowed(v))).collect();
-                state_fields.insert("content".into(), RawRef::Owned(encoded_items));
-                if let Ok(encoded_state) = to_raw_value(&state_fields) {
-                    let mut part_fields: BTreeMap<String, RawRef<'_>> =
-                        raw_part_fields.into_iter().map(|(k, v)| (k, RawRef::Borrowed(v))).collect();
-                    part_fields.insert("state".into(), RawRef::Owned(encoded_state));
-                    if let Ok(encoded_part) = to_raw_value(&part_fields) {
-                        *part_ref = RawRef::Owned(encoded_part);
-                        changed = true;
-                    }
-                }
+            if part_changed {
+                let mut state_fields: BTreeMap<String, JsonNode<'_>> =
+                    raw_state_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v))).collect();
+                state_fields.insert("content".into(), JsonNode::Array(items));
+                let mut part_fields: BTreeMap<String, JsonNode<'_>> =
+                    raw_part_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v))).collect();
+                part_fields.insert("state".into(), JsonNode::Object(state_fields));
+                *part_node = JsonNode::Object(part_fields);
+                changed = true;
             }
         }
         if !changed {
             return None;
         }
-        let encoded_parts = to_raw_value(&parts).ok()?;
-        let mut fields: BTreeMap<String, RawRef<'_>> =
-            raw_fields.into_iter().map(|(k, v)| (k, RawRef::Borrowed(v))).collect();
-        fields.insert("content".into(), RawRef::Owned(encoded_parts));
+        let mut fields: BTreeMap<String, JsonNode<'_>> =
+            raw_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v))).collect();
+        fields.insert("content".into(), JsonNode::Array(parts));
         serde_json::to_vec(&fields).ok()
     })();
     match projected {

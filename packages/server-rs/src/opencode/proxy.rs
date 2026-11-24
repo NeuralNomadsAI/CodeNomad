@@ -240,7 +240,18 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         None
     };
     let opened = workspace.location["directory"].as_str().ok_or_else(upstream_error)?;
-    let endpoint = app.native.endpoint().ok_or_else(upstream_error)?;
+    let session_path = route.strip_prefix("/api/session/").or_else(|| route.strip_prefix("/api/experimental/session/"));
+    let session = session_path.and_then(|path| path.split('/').next()).filter(|v| !matches!(*v, "active" | "global"));
+    let message_list = head.method == Method::GET
+        && session.is_some_and(|s| {
+            route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
+        });
+    let endpoint = if message_list {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        app.native.acquire(deadline).await.map_err(|_| upstream_error())?
+    } else {
+        app.native.endpoint().ok_or_else(upstream_error)?
+    };
     if dunce::canonicalize(opened).ok().as_ref() != Some(&workspace.path) {
         return Err(foreign());
     }
@@ -255,12 +266,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     let mut target = endpoint.url.clone();
     target.set_query(head.uri.query());
-    let session_path = route.strip_prefix("/api/session/").or_else(|| route.strip_prefix("/api/experimental/session/"));
-    let session = session_path.and_then(|path| path.split('/').next()).filter(|v| !matches!(*v, "active" | "global"));
-    let message_list = head.method == Method::GET
-        && session.is_some_and(|s| {
-            route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
-        });
     let defer_media =
         (message_list && crate::sessions::media::wants_deferred(&head.headers)).then_some(session).flatten();
     // Validate `x-codenomad-location` shape and query selectors before any session lookup
@@ -447,8 +452,35 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         return Err(foreign());
     }
     target.path_segments_mut().map_err(|_| invalid())?.clear().extend(route.trim_start_matches('/').split('/'));
-    target.set_query(head.uri.query());
-    if head.headers.contains_key("x-opencode-directory") || head.headers.contains_key("x-opencode-workspace") {
+    if message_list && !verified_media_dirs.is_empty() {
+        let pairs: Vec<(String, String)> = target
+            .query_pairs()
+            .map(|(k, v)| {
+                let translated = if matches!(k.as_ref(), "directory" | "location[directory]") {
+                    verified_media_dirs
+                        .iter()
+                        .find(|(raw, _)| raw == v.as_ref())
+                        .map(|(_, resolved)| {
+                            if *resolved == workspace.path {
+                                opened.to_owned()
+                            } else {
+                                resolved.to_string_lossy().into_owned()
+                            }
+                        })
+                        .unwrap_or_else(|| v.into_owned())
+                } else {
+                    v.into_owned()
+                };
+                (k.into_owned(), translated)
+            })
+            .collect();
+        target.query_pairs_mut().clear().extend_pairs(pairs);
+    } else {
+        target.set_query(head.uri.query());
+    }
+    if !message_list
+        && (head.headers.contains_key("x-opencode-directory") || head.headers.contains_key("x-opencode-workspace"))
+    {
         return Err(foreign());
     }
     if let Some(context) = parsed_location_context {
@@ -947,7 +979,36 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 .map_err(|_| upstream_error());
         }
         drop(slot);
-        let unauthorized = response.status() == Status::UNAUTHORIZED;
+        let status = response.status();
+        if status.is_redirection() {
+            return Err(upstream_error());
+        }
+        let unauthorized = status == Status::UNAUTHORIZED;
+        if !status.is_success()
+            && !response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|ct| ct.contains("application/json"))
+        {
+            drop(response);
+            if unauthorized {
+                app.native.invalidate(&endpoint);
+            }
+            let version = if endpoint.version.is_empty() { "v2" } else { endpoint.version.as_str() };
+            return Ok((
+                status,
+                Json(json!({
+                    "_tag": "OpenCodeContractError",
+                    "message": format!("OpenCode {version}: GET {route} returned HTTP {}", status.as_u16()),
+                    "status": status.as_u16(),
+                    "profile": "v2",
+                    "method": "GET",
+                    "path": route,
+                })),
+            )
+                .into_response());
+        }
         struct InvalidateOnDrop {
             app: Shared,
             endpoint: std::sync::Arc<super::Endpoint>,
