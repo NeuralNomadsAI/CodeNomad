@@ -1372,6 +1372,21 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   }
   let authorizedSessionDirectory: string | undefined
   let authorizedSession: Awaited<ReturnType<OpenCodeClient["session"]["get"]>> | undefined
+  const isPromptOrCommandPost = request.method === "POST"
+    && /^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathname)
+  let boundSessionDirectory: string | undefined
+  const matchesBoundSessionDirectory = async (nativeDirectory: string, boundDirectory: string): Promise<boolean> => {
+    if (nativeDirectory === boundDirectory) return true
+    if (workspaceManager.getServiceDirectoryForPath) {
+      const translatedBound = await wait(workspaceManager.getServiceDirectoryForPath(workspaceId, boundDirectory))
+      if (translatedBound && translatedBound === nativeDirectory) return true
+    }
+    const [realNative, realBound] = await Promise.all([
+      fs.promises.realpath(nativeDirectory).catch(() => undefined),
+      fs.promises.realpath(boundDirectory).catch(() => undefined),
+    ])
+    return Boolean(realNative && realBound && realNative === realBound)
+  }
   const targetSessionId = sessionId && !isGlobalFormAction(pathname, request.method) ? sessionId
     : ordinarySessionMutation && typeof suppliedSessionId === "string" && suppliedSessionId ? suppliedSessionId : undefined
   if (targetSessionId) {
@@ -1387,6 +1402,10 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         // Parent-chain hydration must distinguish a missing session from a
         // transport/authorization failure. Retain only the native public shape.
         reply.code(404).send({ _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
+        return
+      }
+      if (isPromptOrCommandPost && !isSessionNotFoundError(error) && !signal.aborted) {
+        reply.code(502).send({ error: "opencode_unavailable_before_send" })
         return
       }
       if (!isSessionNotFoundError(error)) throw error
@@ -1419,37 +1438,18 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     authorizedSessionDirectory = session?.location.directory
     authorizedSession = session
     const sessionDirectoryHeader = request.headers["x-codenomad-session-directory"]
-    if (
-      session
-      && request.method === "POST"
-      && /^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathname)
-      && sessionDirectoryHeader !== undefined
-    ) {
+    if (session && isPromptOrCommandPost && sessionDirectoryHeader !== undefined) {
       if (typeof sessionDirectoryHeader !== "string" || sessionDirectoryHeader.length > 16_384) {
         reply.code(400).send({ error: "Invalid session directory header" })
         return
       }
-      let boundDirectory: string
       try {
-        boundDirectory = decodeURIComponent(sessionDirectoryHeader)
+        boundSessionDirectory = decodeURIComponent(sessionDirectoryHeader)
       } catch {
         reply.code(400).send({ error: "Invalid session directory header" })
         return
       }
-      const nativeDirectory = session.location.directory
-      let matchesNative = nativeDirectory === boundDirectory
-      if (!matchesNative && workspaceManager.getServiceDirectoryForPath) {
-        const translatedBound = await wait(workspaceManager.getServiceDirectoryForPath(workspaceId, boundDirectory))
-        if (translatedBound && translatedBound === nativeDirectory) matchesNative = true
-      }
-      if (!matchesNative) {
-        const [realNative, realBound] = await Promise.all([
-          fs.promises.realpath(nativeDirectory).catch(() => undefined),
-          fs.promises.realpath(boundDirectory).catch(() => undefined),
-        ])
-        if (realNative && realBound && realNative === realBound) matchesNative = true
-      }
-      if (!matchesNative) {
+      if (!await matchesBoundSessionDirectory(session.location.directory, boundSessionDirectory)) {
         reply.code(403).send({ error: "Location does not belong to workspace" })
         return
       }
@@ -1522,6 +1522,13 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         if (error instanceof MissionScheduleInputError) {
           releaseMutation?.()
           return reply.code(error.statusCode).send({ error: error.message })
+        }
+        if (isPromptOrCommandPost && !signal.aborted) {
+          releaseMutation?.()
+          if (isSessionNotFoundError(error) && sessionId) {
+            return reply.code(404).send({ _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
+          }
+          return reply.code(502).send({ error: "opencode_unavailable_before_send" })
         }
         throw error
       }
@@ -1686,6 +1693,36 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           signal.throwIfAborted()
           releaseMutation?.()
           return reply.code(503).send({ error: "Conversation permissions unavailable" })
+        }
+      }
+      if (isPromptOrCommandPost && sessionId && authorizedSession) {
+        let fresh: Awaited<ReturnType<OpenCodeClient["session"]["get"]>>
+        try {
+          const client = await clientForRequest()
+          fresh = await wait(client.session.get({ sessionID: sessionId }, { signal }))
+        } catch (error) {
+          if (signal.aborted) throw error
+          releaseMutation?.()
+          if (isInvalidRequestError(error)) {
+            return reply.code(400).send({ error: "Invalid session ID" })
+          }
+          if (isSessionNotFoundError(error)) {
+            return reply.code(404).send({ _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
+          }
+          return reply.code(502).send({ error: "opencode_unavailable_before_send" })
+        }
+        signal.throwIfAborted()
+        connection?.assertCurrent()
+        const client = await clientForRequest()
+        const stillOwned = workspaceManager.get(workspaceId) === workspace
+          && fresh.id === authorizedSession.id
+          && sameLocation(readLocationRef(fresh.location), readLocationRef(authorizedSession.location))
+          && await wait(workspaceManager.ownsLocation(workspaceId, fresh.location, client, { signal }))
+          && (boundSessionDirectory === undefined
+            || await matchesBoundSessionDirectory(fresh.location.directory, boundSessionDirectory))
+        if (!stillOwned) {
+          releaseMutation?.()
+          return reply.code(403).send({ error: "Location does not belong to workspace" })
         }
       }
     }

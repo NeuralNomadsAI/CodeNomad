@@ -177,6 +177,8 @@ pub(crate) async fn run_with_reading(
                     wire.close_placement();
                     wire.cancelled.store(true, SeqCst);
                     ReadingLane::invalidate_connection(reading);
+                    close_and_reject_queued(&pending_commands, &rx, &forward_done, &out, &wake)
+                        .await;
                     publish(&out, &wake, Event::Failed).await;
                     return Ok(());
                 }

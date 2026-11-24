@@ -96,11 +96,7 @@ pub(crate) fn admit_page(
     accepted.then_some(edge)
 }
 
-pub(in crate::chat) fn install_page(
-    s: &mut State,
-    page: crate::history::Page,
-    edge: Option<HistoryEdge>,
-) {
+pub(crate) fn install_page(s: &mut State, page: crate::history::Page, edge: Option<HistoryEdge>) {
     if !page.rows.is_empty() {
         let bookmark = match edge {
             Some(HistoryEdge::Oldest) => page.rows.first(),
@@ -122,6 +118,7 @@ pub(in crate::chat) fn install_page(
                 reader.pending_scroll = true;
             }
         }
+        s.composer.clear_optimistic(None);
         s.messages = page.rows;
         crate::composer::reconcile(s);
     }
@@ -144,6 +141,7 @@ pub(crate) fn install_anchor(s: &mut State, page: crate::history::Page) {
         reader.pending_scroll = false;
         reader.install(s.history_detached);
     }
+    s.composer.clear_optimistic(None);
     s.messages = page.rows;
     crate::composer::reconcile(s);
 }

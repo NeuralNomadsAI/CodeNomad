@@ -311,7 +311,7 @@ pub(crate) fn retry(s: &mut State, tx: &mut Tx) {
 mod tests;
 
 mod pages;
-pub(super) use pages::install_page;
+pub(crate) use pages::install_page;
 pub(crate) use pages::{
     admit_page, announce_paging, cancel_page, install_anchor, older, oldest, request_page,
     set_timeline_position,

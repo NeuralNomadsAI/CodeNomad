@@ -12,10 +12,10 @@ impl Reader {
         let Lane {
             backend,
             reading,
-            rx,
             wire,
             out,
             wake,
+            ..
         } = *lane;
         let failed = || {
             cancel
@@ -33,6 +33,7 @@ impl Reader {
                 && (!self.dirty || self.historical)
                 && wire.upstream.load(SeqCst)
         }) {
+            let revision = wire.history_revision.load(SeqCst);
             let stamp = wire.version.load(SeqCst);
             let Some(page) = crate::timeline::until_cancelled(
                 cancel,
@@ -41,13 +42,14 @@ impl Reader {
                     reading,
                     self.generation,
                     wire,
+                    Fence::History(revision),
                     backend.page(target.clone()),
                 ),
             )
             .await
             else {
                 if self.active_reader
-                    && !wire.valid(stamp)
+                    && !wire.history_current(revision)
                     && !wire.placement_closed()
                     && !cancel.is_some_and(Receiver::is_closed)
                 {
@@ -58,23 +60,34 @@ impl Reader {
                 return Ok(Turn::Next);
             };
             match page {
-                Ok(page) if wire.valid(stamp) && rx.is_empty() => {
+                Ok(page) if wire.history_current(revision) => {
                     if advances(&page, edge, &target)
                         && history::edge_page(&page, &self.resident, edge).is_ok()
                     {
-                        if !crate::timeline::page_offer(cancel, &page, wire, stamp, async |event| {
-                            reader_event(reading, self.generation, out, wake, event).await
-                        })
+                        if !crate::timeline::page_offer(
+                            cancel,
+                            &page,
+                            wire,
+                            revision,
+                            async |event| {
+                                reader_event(reading, self.generation, out, wake, event).await
+                            },
+                        )
                         .await
                         {
                             return Ok(Turn::Next);
                         }
                         if !page.rows.is_empty() {
                             self.historical = page.newer.is_some();
+                            self.fence = stamp;
                             self.resident = page.rows.clone();
                             self.first = self.resident.first().map(|r| r.id.clone());
                             self.known = self.resident.iter().map(|r| r.id.clone()).collect();
                             self.owed.retain(|(id, _)| self.known.contains(id));
+                            if !self.historical && !wire.valid(stamp) {
+                                self.dirty = true;
+                                self.quiet = Instant::now();
+                            }
                         }
                         self.older = page.older.clone();
                         self.newer = page.newer.clone();
@@ -149,7 +162,10 @@ impl Reader {
             self.owed.retain(|(id, _)| self.known.contains(id));
             self.anchored = None;
             self.parked = false;
-            self.dirty = false;
+            self.dirty = !self.historical && !wire.valid(stamp);
+            if self.dirty {
+                self.quiet = Instant::now();
+            }
         }
     }
 }

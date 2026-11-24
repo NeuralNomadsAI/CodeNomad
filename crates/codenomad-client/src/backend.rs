@@ -150,13 +150,13 @@ impl Backend {
         Ok(())
     }
     pub async fn authentication_status(&self) -> Result<bool> {
-        let response = self
+        let request = self
             .client
             .get(format!("{}api/auth/status", self.base))
-            .timeout(std::time::Duration::from_secs(5))
-            .send()
-            .await?
-            .error_for_status()?;
+            .timeout(std::time::Duration::from_secs(5));
+        #[cfg(target_arch = "wasm32")]
+        let request = request.fetch_cache_no_store();
+        let response = request.send().await?.error_for_status()?;
         read_json_limited(response, 4096).await?["authenticated"]
             .as_bool()
             .ok_or_else(|| "Invalid authentication status".into())

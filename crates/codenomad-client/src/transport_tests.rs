@@ -345,13 +345,26 @@ fn prompt_during_stream_gap(with_reading: bool) {
                 delivery: with_reading.then_some(crate::prompt::Delivery::Queue),
                 ..Default::default()
             })).await.unwrap();
-            let (socket, _) = listener.accept().await.unwrap();
-            let mut prompt = BufReader::new(socket);
-            let mut header = String::new();
-            prompt.read_line(&mut header).await.unwrap();
-            assert!(header.starts_with("POST /workspaces/workspace/instance/api/session/session/prompt "));
+            let mut reconnected_sse = None;
+            let mut prompt = loop {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut reader = BufReader::new(socket);
+                let mut header = String::new();
+                assert!(reader.read_line(&mut header).await.unwrap() > 0);
+                if !with_reading && header.starts_with("GET /api/events?") && reconnected_sse.is_none() {
+                    loop {
+                        let mut line = String::new();
+                        assert!(reader.read_line(&mut line).await.unwrap() > 0);
+                        if line == "\r\n" { break; }
+                    }
+                    reconnected_sse = Some(reader);
+                    continue;
+                }
+                assert!(header.starts_with("POST /workspaces/workspace/instance/api/session/session/prompt "));
+                break reader;
+            };
             loop {
-                header.clear();
+                let mut header = String::new();
                 assert!(prompt.read_line(&mut header).await.unwrap() > 0);
                 if header == "\r\n" { break; }
             }
@@ -373,17 +386,23 @@ fn prompt_during_stream_gap(with_reading: bool) {
                 attempted, outcome: crate::transport::PromptOutcome::Confirmed(confirmed)
             } if attempted == id && confirmed == id));
             if !with_reading {
-                // Re-establish SSE after the prompt and verify no Reconnecting regression or replay.
-                let (socket, _) = listener.accept().await.unwrap();
-                let mut reconnected = BufReader::new(socket);
-                let mut first = String::new();
-                assert!(reconnected.read_line(&mut first).await.unwrap() > 0);
-                assert!(first.starts_with("GET /api/events?"));
-                loop {
-                    let mut line = String::new();
-                    assert!(reconnected.read_line(&mut line).await.unwrap() > 0);
-                    if line == "\r\n" { break; }
-                }
+                // Re-establish SSE after the prompt (or complete the one already accepted) and verify no Reconnecting regression or replay.
+                let mut reconnected = match reconnected_sse {
+                    Some(stream) => stream,
+                    None => {
+                        let (socket, _) = listener.accept().await.unwrap();
+                        let mut reader = BufReader::new(socket);
+                        let mut first = String::new();
+                        assert!(reader.read_line(&mut first).await.unwrap() > 0);
+                        assert!(first.starts_with("GET /api/events?"));
+                        loop {
+                            let mut line = String::new();
+                            assert!(reader.read_line(&mut line).await.unwrap() > 0);
+                            if line == "\r\n" { break; }
+                        }
+                        reader
+                    }
+                };
                 reconnected.get_mut().write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"connected\"}\n\n"
                 ).await.unwrap();
@@ -1490,5 +1509,141 @@ fn revoked_reading_lane_rejects_queued_prompt_without_http_post() {
         })
         .await
         .expect("revoked reading lane must deliver Rejected without HTTP POST");
+    });
+}
+
+#[test]
+fn workspace_stopped_rejects_queued_prompt_without_http_post() {
+    use crate::transport::{Command, Event, PromptOutcome, WorkspaceEvent};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let mut backend = Backend::unauthenticated(&format!("http://{address}/")).unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let (out, events) = bounded(1);
+            let (commands, input) = bounded(2);
+            let task = tokio::spawn(crate::transport::run_backend(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+            ));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
+
+            // Park transport on a full display channel, enqueue workspace.stopped ahead of
+            // Command::Prompt, and confirm SSE ingested workspace.stopped via a /pong barrier.
+            stream
+                .get_mut()
+                .write_all(
+                    b"data: {\"type\":\"workspace.worktreesChanged\",\"workspaceId\":\"workspace\"}\n\n\
+                      data: {\"type\":\"workspace.worktreesChanged\",\"workspaceId\":\"workspace\"}\n\n\
+                      data: {\"type\":\"workspace.stopped\",\"workspaceId\":\"workspace\"}\n\n\
+                      event: codenomad.client.ping\ndata: {}\n\n",
+                )
+                .await
+                .unwrap();
+            loop {
+                let (req_socket, _) = listener.accept().await.unwrap();
+                let mut req = BufReader::new(req_socket);
+                let mut first_line = String::new();
+                assert!(req.read_line(&mut first_line).await.unwrap() > 0);
+                let mut content_len = 0usize;
+                loop {
+                    let mut line = String::new();
+                    assert!(req.read_line(&mut line).await.unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(rest) = line
+                        .strip_prefix("content-length:")
+                        .or_else(|| line.strip_prefix("Content-Length:"))
+                    {
+                        content_len = rest.trim().parse().unwrap_or(0);
+                    }
+                }
+                if content_len > 0 {
+                    let mut discard = vec![0; content_len];
+                    tokio::io::AsyncReadExt::read_exact(&mut req, &mut discard)
+                        .await
+                        .unwrap();
+                }
+                assert!(
+                    !first_line.contains("/prompt"),
+                    "unexpected prompt before /pong barrier: {first_line}"
+                );
+                if first_line.starts_with("POST /api/client-connections/pong ") {
+                    req.get_mut()
+                        .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                        .await
+                        .unwrap();
+                    break;
+                }
+                req.get_mut()
+                    .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+            let id = "msg_00000000000000000000000000000012";
+            commands
+                .send(Command::Prompt(crate::prompt::Prompt {
+                    id: Some(id.into()),
+                    text: "after workspace stop".into(),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
+            let mut saw_stopped = false;
+            let mut saw_rejected = false;
+            while let Ok(event) = events.recv().await {
+                match event {
+                    Event::Workspace(WorkspaceEvent::Stopped { workspace_id })
+                        if workspace_id == "workspace" =>
+                    {
+                        saw_stopped = true;
+                    }
+                    Event::PromptAcknowledged { attempted, outcome } if attempted == id => {
+                        assert!(
+                            matches!(outcome, PromptOutcome::Rejected),
+                            "workspace.stopped must reject queued prompt without POST"
+                        );
+                        saw_rejected = true;
+                    }
+                    _ => {}
+                }
+            }
+            assert!(saw_stopped);
+            assert!(
+                saw_rejected,
+                "a prompt queued behind workspace.stopped must receive an explicit Rejected receipt"
+            );
+            drop(stream);
+            task.await.unwrap().unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                    .await
+                    .is_err(),
+                "no HTTP POST may be sent once workspace.stopped arrives"
+            );
+        })
+        .await
+        .expect("workspace.stopped must reject queued prompts without HTTP POST");
     });
 }

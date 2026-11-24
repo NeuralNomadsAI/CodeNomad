@@ -95,16 +95,16 @@ pub fn window_inline_usage_without_history(
 }
 
 pub fn attachment_draft_admissible(s: &State) -> bool {
-    let Some(ui) = &s.workspace else { return true };
-    let Some(id) = super::active_session(s) else {
-        return false;
-    };
     let mut seen = std::collections::HashSet::new();
     let (files, mut bytes) = window_inline_usage_without_history(s, &mut seen);
     bytes = bytes.saturating_add(s.prompt_history.unique_inline_bytes(&mut seen));
     if files > MAX_WINDOW_DEVICE_FILES || bytes > MAX_WINDOW_DEVICE_BYTES {
         return false;
     }
+    let Some(ui) = &s.workspace else { return true };
+    let Some(id) = super::active_session(s) else {
+        return false;
+    };
     let Some(Tab::Workspace(active)) = ui.entries.get(ui.active).map(|entry| &entry.saved) else {
         return false;
     };

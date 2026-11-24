@@ -36,10 +36,6 @@ impl Owner {
     pub(crate) fn unconfirmed_state(&self) -> Option<&PendingSend> {
         self.unconfirmed.as_ref()
     }
-    #[cfg(test)]
-    pub(crate) fn sending_state(&self) -> Option<&PendingSend> {
-        self.sending.as_ref()
-    }
     pub(crate) fn add_unique_inline_usage(
         &self,
         seen: &mut std::collections::HashSet<usize>,
@@ -97,6 +93,7 @@ impl Owner {
         };
         self.send_error = false;
         self.announce_send_error = false;
+        self.announce_unconfirmed = false;
         if let Some(recall) = &mut self.recall {
             if !send.edited && recall.matches_draft(&send.edit, &send.draft) {
                 recall.clear_draft();
@@ -136,7 +133,6 @@ pub(crate) struct PendingSend {
     slash: Option<CommandAttempt>,
     edited: bool,
     recallable: bool,
-    restored_to_draft: bool,
 }
 impl PendingSend {
     pub(crate) fn locked(id: String) -> Self {
@@ -148,7 +144,6 @@ impl PendingSend {
             slash: None,
             edited: true,
             recallable: false,
-            restored_to_draft: false,
         }
     }
     pub(crate) fn id(&self) -> &str {
@@ -161,32 +156,6 @@ impl PendingSend {
     pub(crate) fn inline_usage(&self) -> (usize, usize) {
         self.draft.inline_usage()
     }
-    #[cfg(test)]
-    pub(crate) fn unique_inline_usage(&self, active_draft: &Draft) -> (usize, usize) {
-        if !self.restored_to_draft {
-            return self.draft.inline_usage();
-        }
-        let mut matched = vec![false; active_draft.attachments.len()];
-        self.draft
-            .attachments
-            .iter()
-            .fold((0, 0), |(count, total), item| match item {
-                crate::composer::draft::Attachment::Device { bytes, .. } => {
-                    if let Some(pos) = active_draft
-                        .attachments
-                        .iter()
-                        .enumerate()
-                        .find_map(|(i, active)| (!matched[i] && active == item).then_some(i))
-                    {
-                        matched[pos] = true;
-                        (count, total)
-                    } else {
-                        (count + 1, total + bytes.len())
-                    }
-                }
-                _ => (count, total),
-            })
-    }
     pub(crate) fn matches_restored_draft(&self, text: Option<&str>, draft: Option<&Draft>) -> bool {
         !self.edited
             && text.is_none_or(|t| t == self.edit.text)
@@ -194,7 +163,6 @@ impl PendingSend {
     }
     pub(crate) fn clear_retained(&mut self) {
         self.edited = true;
-        self.restored_to_draft = false;
         self.edit = TextEdit::default();
         self.draft = Draft::default();
     }
@@ -305,7 +273,6 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
                 slash: Some(slash),
                 edited: s.composer.recall.is_some(),
                 recallable,
-                restored_to_draft: false,
             });
             s.draft.clear();
             s.composer
@@ -354,7 +321,6 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         slash: None,
         edited: s.composer.recall.is_some(),
         recallable,
-        restored_to_draft: false,
     });
     s.draft.clear();
     super::recall::restore(s);
@@ -456,7 +422,6 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         if may_restore && s.composer.draft.attachments.is_empty() {
             super::recall::replace_edit(s, send.edit.clone());
             s.composer.draft = send.draft.clone();
-            send.restored_to_draft = true;
         } else {
             send.clear_retained();
         }
@@ -637,9 +602,12 @@ mod tests {
             panic!("expected prompt")
         };
         let id = prompt.id.unwrap();
-        let row = rt.state.messages.pop().unwrap();
+        let row = rt.state.messages[0].clone();
         acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
         assert_eq!(rt.state.draft.text, "attempt");
+        assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
+        // Retaining the local optimistic row must NOT self-confirm the unconfirmed attempt.
+        reconcile(&mut rt.state);
         assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
         rt.state.draft = TextEdit::new("new draft");
         rt.state.messages.push(
@@ -652,9 +620,20 @@ mod tests {
         reconcile(&mut rt.state);
         rt.update(|s, tx| send(s, tx, false));
         assert!(receiver.try_recv().is_err());
-        rt.state.messages.push(row);
-        reconcile(&mut rt.state);
+        // Installing an authoritative native page clears optimistic_id and releases the lock.
+        crate::chat::reader::install_page(
+            &mut rt.state,
+            crate::history::Page {
+                rows: vec![row],
+                older: None,
+                newer: None,
+                running: false,
+                user_file_references: false,
+            },
+            None,
+        );
         assert!(rt.state.composer.unconfirmed.is_none());
+        assert!(!rt.state.composer.announce_unconfirmed);
         assert_eq!(rt.state.draft.text, "new draft");
     }
 
@@ -698,16 +677,13 @@ mod tests {
         acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
         assert!(rt.state.composer.announce_unconfirmed);
         assert!(rt.state.composer.restored);
+        let mut seen = std::collections::HashSet::new();
         assert_eq!(
-            rt.state
-                .composer
-                .unconfirmed_state()
-                .unwrap()
-                .unique_inline_usage(&rt.state.composer.draft),
-            (0, 0),
-            "restored shared attachment bytes must not be double-counted against the window budget"
+            rt.state.composer.add_unique_inline_usage(&mut seen, true),
+            (1, 4096),
+            "restored shared Arc attachment bytes must be counted once across draft and unconfirmed lock"
         );
-        // Adding another device attachment to the restored draft still must not double-count the restored copy.
+        // Adding a second distinct device attachment counts both unique Arc allocations once.
         let mut with_extra = rt.state.composer.draft.clone();
         with_extra.attachments.push(Attachment::Device {
             name: "extra.png".into(),
@@ -715,15 +691,16 @@ mod tests {
             bytes: std::sync::Arc::from(vec![9u8; 2048]),
             token: None,
         });
+        let saved_draft = std::mem::replace(&mut rt.state.composer.draft, with_extra);
+        let mut seen_with_extra = std::collections::HashSet::new();
         assert_eq!(
             rt.state
                 .composer
-                .unconfirmed_state()
-                .unwrap()
-                .unique_inline_usage(&with_extra),
-            (0, 0),
-            "adding a new file to a restored draft must not double-count restored bytes"
+                .add_unique_inline_usage(&mut seen_with_extra, true),
+            (2, 4096 + 2048),
+            "adding a new file to a restored draft must not double-count restored Arc bytes"
         );
+        rt.state.composer.draft = saved_draft;
         workspace::capture(&mut rt.state);
         workspace::bound(&mut rt.state, &second);
         assert!(rt.state.composer.unconfirmed_id().is_none());
@@ -819,19 +796,51 @@ mod tests {
         };
         let id = prompt.id.unwrap();
         // Keep the optimistic row in Tab A: Unconfirmed must NOT self-confirm on its own local echo.
+        let native_row = rt
+            .state
+            .messages
+            .iter()
+            .find(|row| row.id == id)
+            .unwrap()
+            .clone();
         acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
         assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
         assert_eq!(rt.state.draft.text, "tab A attempt");
+        assert!(rt.state.composer.announce_unconfirmed);
         assert!(!can_send(&rt.state));
+        // Origin Tab A browses Recall while holding the restored unconfirmed draft and an error flag.
+        rt.state.composer.send_error = true;
+        rt.state.composer.announce_send_error = true;
+        rt.update(|s, tx| {
+            assert!(crate::composer::recall::step(s, true, true, tx));
+        });
+        assert!(rt.state.composer.recall.is_some());
         // Switching to already-open sibling Tab B must block sending while Tab A is still open.
         rt.update(|s, tx| workspace::select(s, &tab_b, tx));
         assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
         assert!(!can_send(&rt.state));
-        // Native sync in Tab A clears the optimistic marker, reconciles and clears the lock globally.
-        rt.update(|s, tx| workspace::select(s, &tab_a, tx));
-        rt.state.composer.clear_optimistic(None);
-        reconcile(&mut rt.state);
+        // Native sync in sibling Tab B reconciles globally, clearing Tab A's Recall saved draft and error flags.
+        crate::chat::reader::install_page(
+            &mut rt.state,
+            crate::history::Page {
+                rows: vec![native_row],
+                older: None,
+                newer: None,
+                running: false,
+                user_file_references: false,
+            },
+            None,
+        );
         assert!(rt.state.composer.unconfirmed_id().is_none());
+        assert!(!rt.state.composer.announce_unconfirmed);
+        assert_eq!(rt.state.draft.text, "tab B draft");
+        // Returning to Tab A must show cleared lock, cleared errors, and cleared Recall saved draft.
+        rt.update(|s, tx| workspace::select(s, &tab_a, tx));
+        assert!(rt.state.composer.unconfirmed_id().is_none());
+        assert!(!rt.state.composer.send_error);
+        assert!(!rt.state.composer.announce_send_error);
+        assert!(!rt.state.composer.announce_unconfirmed);
+        crate::composer::recall::restore(&mut rt.state);
         assert!(rt.state.draft.text.is_empty());
         // Closing sibling Tab B afterwards must not reintroduce the reconciled lock.
         rt.update(|s, tx| workspace::close(s, &tab_b, tx));
@@ -839,6 +848,41 @@ mod tests {
         assert!(!workspace::has_unconfirmed(&rt.state));
         rt.state.draft = TextEdit::new("next");
         assert!(can_send(&rt.state));
+    }
+
+    #[test]
+    fn direct_mode_enforces_window_device_attachment_budget_with_prompt_history() {
+        let mut s = crate::init();
+        assert!(s.workspace.is_none());
+        // Record 60 MiB of distinct inline device files in direct-mode prompt_history.
+        for index in 0..12 {
+            s.draft = TextEdit::new(format!("history-{index}"));
+            s.composer.draft.attachments.clear();
+            s.composer.draft.attachments.push(Attachment::Device {
+                name: format!("h-{index}.bin"),
+                mime: "application/octet-stream".into(),
+                bytes: std::sync::Arc::from(vec![index as u8; 5 * 1024 * 1024]),
+                token: None,
+            });
+            assert!(crate::composer::recall::record(
+                &mut s,
+                format!("history-{index}"),
+                false
+            ));
+        }
+        s.draft.clear();
+        s.composer.draft.attachments.clear();
+        // Adding a new 5 MiB distinct device file pushes total to 65 MiB (> 64 MiB budget).
+        s.composer.draft.attachments.push(Attachment::Device {
+            name: "over-limit.bin".into(),
+            mime: "application/octet-stream".into(),
+            bytes: std::sync::Arc::from(vec![99u8; 5 * 1024 * 1024]),
+            token: None,
+        });
+        assert!(
+            !workspace::attachment_draft_admissible(&s),
+            "direct mode must enforce the 64 MiB window device attachment budget including prompt_history"
+        );
     }
 
     #[test]

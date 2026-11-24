@@ -158,7 +158,15 @@ impl Reader {
                     backend.restore(self.first.as_deref()).await
                 }
             };
-            let Some(snapshot) = read_page(backend, reading, self.generation, wire, snapshot).await
+            let Some(snapshot) = read_page(
+                backend,
+                reading,
+                self.generation,
+                wire,
+                Fence::Live(stamp),
+                snapshot,
+            )
+            .await
             else {
                 return Ok(Turn::Next);
             };
@@ -308,11 +316,27 @@ enum PageFailure {
     Read(history::Error),
 }
 
+#[derive(Clone, Copy)]
+enum Fence {
+    Live(u64),
+    History(u64),
+}
+
+impl Fence {
+    fn valid(self, wire: &stream::State) -> bool {
+        match self {
+            Self::Live(stamp) => wire.valid(stamp),
+            Self::History(revision) => wire.history_current(revision),
+        }
+    }
+}
+
 async fn read_page(
     backend: &Backend,
     reading: Option<&ReadingLane>,
     generation: u64,
     wire: &stream::State,
+    fence: Fence,
     page: impl std::future::Future<Output = history::Result<history::Page>>,
 ) -> Option<Result<history::Page, PageFailure>> {
     let page = async {
@@ -341,10 +365,9 @@ async fn read_page(
             None => Some(page.await),
         }
     };
-    let stamp = wire.version.load(SeqCst);
     let result = futures_lite::future::race(content, async {
         futures_lite::future::race(wire.placement_changed(), async {
-            while wire.valid(stamp) {
+            while fence.valid(wire) {
                 crate::runtime::sleep(Duration::from_millis(25)).await;
             }
         })

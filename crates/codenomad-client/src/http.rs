@@ -110,7 +110,21 @@ pub async fn pairing_required() -> Result<Option<bool>> {
     })
 }
 
+#[derive(Debug)]
+pub(crate) struct AuthenticationExpiredError;
+
+impl std::fmt::Display for AuthenticationExpiredError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("authentication expired")
+    }
+}
+
+impl std::error::Error for AuthenticationExpiredError {}
+
 pub fn authentication_expired(error: &crate::history::Error) -> bool {
+    if error.downcast_ref::<AuthenticationExpiredError>().is_some() {
+        return true;
+    }
     cfg!(not(target_arch = "wasm32"))
         && error
             .downcast_ref::<reqwest::Error>()

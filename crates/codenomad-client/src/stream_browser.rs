@@ -156,7 +156,14 @@ pub(super) async fn read(
                 b.client.children().invalidate(b, None);
                 reread(epoch, out, state).await?;
             }
-            Some(Frame::Closed) => return Err("browser event stream ended".into()),
+            Some(Frame::Closed) => {
+                if !state.cancelled.load(SeqCst)
+                    && matches!(b.authentication_status().await, Ok(false))
+                {
+                    return Err(crate::http::AuthenticationExpiredError.into());
+                }
+                return Err("browser event stream ended".into());
+            }
             None => {}
         }
     }

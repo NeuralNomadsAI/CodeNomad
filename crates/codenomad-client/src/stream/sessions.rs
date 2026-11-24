@@ -161,7 +161,13 @@ pub(super) async fn relay(
         let version = state.version.fetch_add(1, SeqCst) + 1;
         if matches!(
             native["type"].as_str(),
-            Some("session.moved" | "session.deleted" | "session.revert.committed")
+            Some(
+                "session.moved"
+                    | "session.deleted"
+                    | "session.revert.committed"
+                    | "session.revert.staged"
+                    | "session.revert.cleared"
+            )
         ) {
             state.history_revision.fetch_add(1, SeqCst);
         }
@@ -274,5 +280,67 @@ fn session_deleted_closes_placement_before_waiting_on_a_full_relay_channel() {
             }
             relay_task.await.unwrap().unwrap();
             assert!(state.placement_closed());
+        });
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() {
+    use serde_json::json;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            backend.workspace = "project".into();
+            backend.session = "session".into();
+            let (out, inbox) = crate::bounded(8);
+            let state = State::default();
+            super::opened(1, &out, &state).await.unwrap();
+            state.upstream.store(true, SeqCst);
+            let _ = inbox.try_recv();
+
+            let rev0 = state.history_revision.load(SeqCst);
+            let ver0 = state.version.load(SeqCst);
+            relay(
+                &backend,
+                1,
+                &out,
+                &state,
+                &json!({
+                    "type": "instance.event",
+                    "instanceId": "project",
+                    "event": {"type": "message.part.updated", "data": {"sessionID": "session"}}
+                }),
+            )
+            .await
+            .unwrap();
+            assert!(!state.valid(ver0));
+            assert!(
+                state.history_current(rev0),
+                "normal streaming delta must not invalidate history_revision"
+            );
+
+            for kind in ["session.revert.staged", "session.revert.cleared"] {
+                let before = state.history_revision.load(SeqCst);
+                relay(
+                    &backend,
+                    1,
+                    &out,
+                    &state,
+                    &json!({
+                        "type": "instance.event",
+                        "instanceId": "project",
+                        "event": {"type": kind, "data": {"sessionID": "session"}}
+                    }),
+                )
+                .await
+                .unwrap();
+                assert!(
+                    !state.history_current(before),
+                    "{kind} must invalidate history_revision"
+                );
+            }
         });
 }
