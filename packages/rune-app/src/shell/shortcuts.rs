@@ -203,10 +203,7 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if tx.key_repeat()
         && !matches!(
             action,
-            Action::InstancePrev
-                | Action::InstanceNext
-                | Action::SessionPrev
-                | Action::SessionNext
+            Action::InstancePrev | Action::InstanceNext | Action::SessionPrev | Action::SessionNext
         )
     {
         return true;

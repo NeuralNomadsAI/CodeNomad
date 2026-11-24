@@ -669,13 +669,13 @@ fn modals_pickers_composing_inputs_and_repeat_block_global_shortcuts() {
     settle(&mut rt);
     assert!(!rt.state.draft.is_composing());
 
-    // Key repeat never triggers global shortcuts.
+    // Key repeat never triggers non-repeatable lifecycle shortcuts.
     rt.repeat_key(KeyEvent {
-        key: Key::Command(']'),
+        key: Key::Command('n'),
         mods: primary_mods(false),
     });
     settle(&mut rt);
-    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+    assert_eq!(rt.state.workspace.as_ref().unwrap().tab_count(), 2);
 
     // Plain character remapped to a global shortcut must not steal typing in the composer.
     settings::fixture_shortcuts(&rt.state, json!({"instance-next": [{"key": "a"}]}));

@@ -317,11 +317,10 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
             .fixture_confirmation(&scope, None);
 
         // History search scope dropdown blocks global shortcuts.
-        rt.state.transcript_display.timeline.backend = Some(bound.clone());
-        crate::timeline::search::fixture_scope_open(&mut rt.state, true);
+        crate::timeline::search::fixture_scope_open(&mut rt.state, Some(bound.clone()), true);
         send_key(&mut rt, Key::Command(']'), primary_mods(false));
         assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
-        crate::timeline::search::fixture_scope_open(&mut rt.state, false);
+        crate::timeline::search::fixture_scope_open(&mut rt.state, None, false);
 
         // Multi-binding override with one unsupported key keeps the valid alternative instead of reverting to default.
         settings::fixture_shortcuts(
@@ -435,8 +434,9 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
             "unexpected query on root match: {}",
             req.header
         );
-        assert!(
-            req.body.contains(r#""directory":"D:\\Repo""#),
+        assert_eq!(
+            req.body["location"]["directory"],
+            json!(r"D:\Repo"),
             "expected canonical root path in body: {}",
             req.body
         );

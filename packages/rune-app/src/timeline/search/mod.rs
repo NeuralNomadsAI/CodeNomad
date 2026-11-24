@@ -92,10 +92,17 @@ pub(crate) fn cancel_destination(s: &mut State) {
 }
 
 #[cfg(test)]
-pub(crate) fn fixture_scope_open(s: &mut State, open: bool) {
-    let model = state(s);
-    model.open = open;
-    model.scope_open = open;
+pub(crate) fn fixture_scope_open(
+    s: &mut State,
+    backend: Option<crate::backend::Backend>,
+    open: bool,
+) {
+    let timeline = super::owner(s);
+    if backend.is_some() {
+        timeline.backend = backend;
+    }
+    timeline.search.open = open;
+    timeline.search.scope_open = open;
 }
 
 pub(crate) fn close(s: &mut State) {
