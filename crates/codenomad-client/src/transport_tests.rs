@@ -1188,9 +1188,12 @@ fn unsynced_reconnect_headers_do_not_reset_attempts_and_escalate_to_reconnecting
 
 #[test]
 fn repeated_upstream_disconnect_keeps_http_send_authority_without_reconnecting() {
+    use crate::transport::{Command, Event, PromptOutcome};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
     run(async {
         tokio::time::timeout(Duration::from_secs(5), async {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let mut backend = Backend::unauthenticated(&format!("http://{address}/")).unwrap();
             backend.workspace = "workspace".into();
@@ -1284,9 +1287,14 @@ fn repeated_upstream_disconnect_keeps_http_send_authority_without_reconnecting()
 
 #[test]
 fn revoked_reading_lane_rejects_queued_prompt_without_http_post() {
+    use crate::recovery::{ReadingLane, demand};
+    use crate::transport::{Command, Event, PromptOutcome};
+    use std::sync::atomic::Ordering::SeqCst;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
     run(async {
         tokio::time::timeout(Duration::from_secs(5), async {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let mut backend = Backend::unauthenticated(&format!("http://{address}/")).unwrap();
             backend.workspace = "workspace".into();
