@@ -64,8 +64,10 @@ pub struct Launcher {
     listing: bool,
     pub error: Option<&'static str>,
     pub creation_uncertain: bool,
+    pub creation_uncertain_linked: bool,
     pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
+    detached_reconcile: Option<(u64, Receiver<Option<Vec<Project>>>)>,
     selection_ticket: Option<u64>,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
@@ -78,6 +80,7 @@ enum Reply {
     Created(Backend, String, String, String, Option<u64>),
     CreatedUnbound(Session, String),
     CreatePrecheckFailed,
+    CreateUncertainLinked,
     Selected(Vec<String>, Option<Selection>, Option<u64>),
     #[cfg(target_arch = "wasm32")]
     Reopened(crate::workspace::opening::Opening, Backend, String, String),
@@ -100,9 +103,10 @@ impl Launcher {
         self.pending && !self.listing
     }
     pub(crate) fn workspace_stream_online(&self) -> bool {
-        self.catalogue_watch.is_none()
-            || self.workspace_stream_generation == 0
-            || self.workspace_stream_generation % 2 == 1
+        self.detached_reconcile.is_none()
+            && (self.catalogue_watch.is_none()
+                || self.workspace_stream_generation == 0
+                || self.workspace_stream_generation % 2 == 1)
     }
     pub fn local_connection(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
@@ -168,8 +172,10 @@ impl Launcher {
             listing: false,
             error: None,
             creation_uncertain: false,
+            creation_uncertain_linked: false,
             openings: Default::default(),
             result: None,
+            detached_reconcile: None,
             selection_ticket: None,
             boot,
             host: None,
@@ -205,14 +211,22 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let stream_update = s.screen.launcher_mut().and_then(|l| {
         let watch = l.catalogue_watch.as_ref()?;
         let unauthorized = watch.take_authentication_required();
+        let disconnected = watch.take_disconnect();
         let (generation, overflow, events) = watch.take_workspace_events();
         let previous = l.workspace_stream_generation;
         l.workspace_stream_generation = generation;
         let expired = unauthorized.then(|| l.connection.clone()).flatten();
-        Some((previous, generation, overflow, events, expired))
+        Some((
+            previous,
+            generation,
+            overflow,
+            disconnected,
+            events,
+            expired,
+        ))
     });
     let mut relayed = false;
-    if let Some((previous, generation, overflow, events, expired)) = stream_update {
+    if let Some((previous, generation, overflow, disconnected, events, expired)) = stream_update {
         let mut stopped = Vec::new();
         let mut other = Vec::new();
         for event in events {
@@ -228,18 +242,44 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         if !stopped.is_empty() {
             relayed |= crate::workspace::deliver_detached_events(s, &stopped);
         }
+        #[cfg(target_arch = "wasm32")]
+        if disconnected {
+            crate::platform::pairing::observe(s);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = disconnected;
+        let mut start_reconcile = None;
         if generation != previous {
             if generation > 0 && generation % 2 == 0 {
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.detached_reconcile = None;
+                }
                 relayed |= crate::workspace::set_detached_online(s, false);
-                #[cfg(target_arch = "wasm32")]
-                crate::platform::pairing::observe(s);
             } else if generation % 2 == 1 {
                 relayed |= crate::workspace::set_detached_online(s, false);
-                relayed |= crate::workspace::set_detached_online(s, true);
+                if previous == 0 && generation == 1 && !overflow {
+                    relayed |= crate::workspace::set_detached_online(s, true);
+                } else if crate::workspace::has_detached_panels(s) {
+                    start_reconcile = Some(generation);
+                }
             }
-        } else if overflow {
+        } else if overflow && generation % 2 == 1 {
             relayed |= crate::workspace::set_detached_online(s, false);
-            relayed |= crate::workspace::set_detached_online(s, true);
+            if crate::workspace::has_detached_panels(s) {
+                start_reconcile = Some(generation);
+            }
+        }
+        if let Some(reconcile_generation) = start_reconcile
+            && let Some(l) = s.screen.launcher_mut()
+            && let Some(backend) = l.connection.clone()
+        {
+            let (out, input) = bounded(1);
+            l.detached_reconcile = Some((reconcile_generation, input));
+            let wake = l.wake.clone();
+            crate::platform::spawn(async move {
+                let _ = out.send(backend.projects().await.ok()).await;
+                wake();
+            });
         }
         if !other.is_empty() {
             relayed |= crate::workspace::deliver_detached_events(s, &other);
@@ -247,6 +287,20 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         if let Some(expired) = expired {
             relayed |= crate::settings::authentication_required(s, &expired);
         }
+    }
+    let reconciled = s.screen.launcher_mut().and_then(|l| {
+        let (reconcile_generation, rx) = l.detached_reconcile.as_ref()?;
+        let result = rx.try_recv().ok()?;
+        let current = l.workspace_stream_generation;
+        let reconcile_generation = *reconcile_generation;
+        l.detached_reconcile = None;
+        (reconcile_generation == current)
+            .then_some(result)
+            .flatten()
+    });
+    if let Some(projects) = reconciled {
+        let live: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+        relayed |= crate::workspace::reconcile_detached_online(s, &live);
     }
     let blocked = !can_change_session(s)
         || s.screen
@@ -278,6 +332,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             let reauthenticated = std::mem::take(&mut l.authentication_required);
             l.catalogue_watch = None;
             l.workspace_stream_generation = 0;
+            l.detached_reconcile = None;
             l.connection = Some(b);
             l.server_id = Some(server_id);
             l.projects = projects;
@@ -403,6 +458,18 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 true,
             );
         }
+        Ok(Reply::CreateUncertainLinked) => {
+            l.creation_uncertain = true;
+            l.creation_uncertain_linked = true;
+            l.error = Some("rune.create_error");
+            crate::shell::notifications::emit_outcome(
+                s,
+                crate::shell::notifications::Category::Sessions,
+                None,
+                crate::strings::t("rune.create_error"),
+                true,
+            );
+        }
         Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
             if let Some(pages) = &mut l.linked.pages {
@@ -424,9 +491,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 tx.instant();
                 return true;
             }
+            let auth_required = l.authentication_required;
             if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
-                !blocked
-                    || s.phase == Phase::Failed && selected.as_deref() == Some(b.session.as_str())
+                !auth_required
+                    && (!blocked
+                        || s.phase == Phase::Failed
+                            && selected.as_deref() == Some(b.session.as_str()))
             }) {
                 l.show_title = false;
                 dismiss_origin_panel(s, dismiss, tx);

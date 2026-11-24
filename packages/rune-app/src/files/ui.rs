@@ -51,6 +51,10 @@ pub struct Ui {
     pub stopped: bool,
 }
 impl Ui {
+    pub(crate) fn workspace_id(&self) -> &str {
+        &self.backend.workspace
+    }
+
     pub(crate) fn uses_connection(&self, backend: &Backend) -> bool {
         self.backend.client.same_connection(&backend.client)
     }

@@ -147,13 +147,16 @@ fn reserved_shell_key(event: &KeyEvent) -> bool {
     no_command_mod && event.key == Key::Function(6)
 }
 
-pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
-    if authentication_required(s)
+pub(super) fn global_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
+    authentication_required(s)
         || overlay_open(s)
         || any_editor_composing(s)
         || reserved_shell_key(event)
         || field_key_blocked(s, event, tx)
-    {
+}
+
+pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    if global_blocked(s, event, tx) {
         return false;
     }
     let browse_home = can_browse_home(s, tx);

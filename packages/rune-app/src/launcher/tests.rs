@@ -473,3 +473,73 @@ fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
         assert!(rt.state.screen.launcher().unwrap().pending);
     });
 }
+
+#[test]
+fn failed_session_selection_reply_cannot_hide_authentication_required() {
+    let mut s = crate::init();
+    crate::gallery::shell::fixture(&mut s);
+    let mut ui = crate::workspace::Ui::new();
+    ui.fixture_ready();
+    s.workspace = Some(ui);
+    let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    let project = Project {
+        id: "proj-1".into(),
+        path: "/repo".into(),
+    };
+    crate::workspace::opened(&mut s, &project);
+    let bound = Backend {
+        workspace: project.id.clone(),
+        session: "ses-1".into(),
+        ..backend.clone()
+    };
+    crate::workspace::bound(&mut s, &bound);
+    s.phase = Phase::Failed;
+    s.show_launcher();
+    let (out, input) = bounded(1);
+    {
+        let l = s.screen.launcher_mut().unwrap();
+        l.authentication_required = true;
+        l.result = Some(input);
+        l.pending = true;
+    }
+    assert!(
+        out.try_send(Ok(Reply::Selected(
+            vec![],
+            Some((bound, "Retry".into(), None, Instant::now(), "root".into())),
+            None,
+        )))
+        .is_ok()
+    );
+    let mut rt = rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(rt.state.screen.is_launcher());
+    assert!(rt.state.screen.launcher().unwrap().authentication_required);
+}
+
+#[test]
+fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory() {
+    let mut launcher = Launcher::fixture();
+    launcher.creation_uncertain = true;
+    launcher.creation_uncertain_linked = true;
+    launcher.apply_directory_refresh(
+        Sessions {
+            rows: vec![row("root")],
+            next: None,
+        },
+        None,
+    );
+    assert!(launcher.creation_uncertain);
+    assert!(launcher.creation_uncertain_linked);
+    launcher.apply_passive_listing(
+        Sessions {
+            rows: vec![row("root"), row("linked-new")],
+            next: None,
+        },
+        None,
+        true,
+    );
+    assert!(!launcher.creation_uncertain);
+    assert!(!launcher.creation_uncertain_linked);
+}

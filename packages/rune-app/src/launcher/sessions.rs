@@ -14,7 +14,9 @@ fn cursor_hash(cursor: &str) -> u64 {
 
 impl Launcher {
     pub(super) fn apply_directory_refresh(&mut self, page: Sessions, selected: Option<&str>) {
-        self.creation_uncertain = false;
+        if !self.creation_uncertain_linked {
+            self.creation_uncertain = false;
+        }
         self.listed_sessions = page.rows.iter().map(|row| row.id.clone()).collect();
         self.next = None;
         self.consumed_cursors.clear();
@@ -39,6 +41,10 @@ impl Launcher {
         selected: Option<&str>,
         authoritative: bool,
     ) {
+        if authoritative {
+            self.creation_uncertain = false;
+            self.creation_uncertain_linked = false;
+        }
         let complete = page.next.is_none() && authoritative;
         let listed: HashSet<_> = page.rows.iter().map(|row| row.id.clone()).collect();
         let published = Instant::now();
@@ -77,6 +83,7 @@ impl Launcher {
         } else {
             self.consumed_cursors.clear();
             self.creation_uncertain = false;
+            self.creation_uncertain_linked = false;
             if let Some(old) = self
                 .sessions
                 .iter()
@@ -181,7 +188,12 @@ pub fn create_blank(s: &mut State) {
                 }
             }
         };
-        let session = b.create_untitled_session(&p, &directory).await?;
+        let linked = !codenomad_client::same_server_path(&p.path, &directory);
+        let session = match b.create_untitled_session(&p, &directory).await {
+            Ok(session) => session,
+            Err(_) if linked => return Ok(Reply::CreateUncertainLinked),
+            Err(error) => return Err(error),
+        };
         match b.bind_created_session(&p, &session.id, &directory).await {
             Ok((backend, _, slug)) => Ok(Reply::Created(
                 backend,
@@ -346,7 +358,9 @@ fn clear_conversation_only(s: &mut State) {
     s.composer = Default::default();
     s.transcript_display.messages = Default::default();
     s.transcript_display.pictures.clear();
+    s.transcript_display.usage_family = Default::default();
     s.status_permissions.attach(None);
+    s.status_usage.invalidate();
     s.history_detached = false;
     s.messages.clear();
     s.chat_title.clear();

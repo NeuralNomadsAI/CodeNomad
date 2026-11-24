@@ -321,6 +321,64 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
     delivered
 }
 
+pub(crate) fn has_detached_panels(s: &State) -> bool {
+    let active = s.screen.is_launcher()
+        && s.incoming.is_none()
+        && (s.git.owner.is_some() || s.files.is_some());
+    active
+        || s.workspace.as_ref().is_some_and(|ui| {
+            ui.entries.iter().enumerate().any(|(index, entry)| {
+                index != ui.active
+                    && entry
+                        .cache
+                        .as_ref()
+                        .is_some_and(super::Cache::has_detached_panels)
+            })
+        })
+}
+
+pub(crate) fn reconcile_detached_online(
+    s: &mut State,
+    live: &std::collections::HashSet<&str>,
+) -> bool {
+    let mut changed = false;
+    if s.screen.is_launcher() && s.incoming.is_none() {
+        if let Some(workspace_id) = s
+            .git
+            .owner
+            .as_ref()
+            .map(|git| git.workspace_id().to_owned())
+        {
+            if live.contains(workspace_id.as_str()) {
+                crate::git::online(s, true);
+            } else {
+                crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+            }
+            changed = true;
+        }
+        if let Some(files) = &mut s.files {
+            let workspace_id = files.workspace_id().to_owned();
+            if live.contains(workspace_id.as_str()) {
+                files.online(true);
+            } else {
+                files.event(WorkspaceEvent::Stopped { workspace_id });
+            }
+            changed = true;
+        }
+    }
+    if let Some(ui) = &mut s.workspace {
+        for (index, entry) in ui.entries.iter_mut().enumerate() {
+            if index == ui.active {
+                continue;
+            }
+            if let Some(cache) = entry.cache.as_mut() {
+                changed |= cache.reconcile_detached_online(live);
+            }
+        }
+    }
+    changed
+}
+
 pub(crate) fn set_detached_online(s: &mut State, online: bool) -> bool {
     let mut changed = false;
     let active_detached = s.screen.is_launcher() && s.incoming.is_none();

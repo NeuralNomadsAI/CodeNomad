@@ -178,6 +178,16 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
                             .await;
                         let _ = stream.flush().await;
                     }
+                } else if header.starts_with("GET /api/workspaces ") {
+                    let body =
+                        b"[{\"id\":\"header-windows\",\"location\":{\"directory\":\"/repo\"}}]";
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                    let _ = stream.write_all(body).await;
+                    let _ = stream.shutdown().await;
                 } else {
                     let body = b"{\"data\":[]}";
                     let resp = format!(
@@ -246,10 +256,14 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
         assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
 
         // Attach the real SSE CatalogueWatch now and step through gen=1 (online), gen=2 (offline), gen=3 (reconnected).
-        let (watch, task) =
-            codenomad_client::stream::CatalogueWatch::new(root_backend, rt.state.wake.clone());
+        let (watch, task) = codenomad_client::stream::CatalogueWatch::new(
+            root_backend.clone(),
+            rt.state.wake.clone(),
+        );
         crate::platform::spawn(task);
-        rt.state.screen.launcher_mut().unwrap().catalogue_watch = Some(watch);
+        let launcher = rt.state.screen.launcher_mut().unwrap();
+        launcher.connection = Some(root_backend);
+        launcher.catalogue_watch = Some(watch);
 
         async fn wait_gen(rt: &mut Runtime<State>, target: u64) {
             for _ in 0..300 {
@@ -305,9 +319,23 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
         send_key(&mut rt, Key::Command(']'), primary_mods(false));
         let _ = allow_second_tx.send(());
         wait_gen(&mut rt, 3).await;
+        for _ in 0..300 {
+            rt.update(|s, tx| {
+                let _ = crate::launcher::poll(s, tx);
+            });
+            if rt
+                .state
+                .screen
+                .launcher()
+                .is_some_and(crate::launcher::Launcher::workspace_stream_online)
+            {
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
         rt.state.screen.launcher_mut().unwrap().pending = false;
 
-        // Switch back to tab 0: real SSE reconnect through launcher::poll invalidated detached Files and restored Git online.
+        // Switch back to tab 0: real SSE reconnect reconciled workspace existence, invalidated detached Files and restored Git online.
         send_key(&mut rt, Key::Command('['), primary_mods(false));
         assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
         assert_eq!(crate::git::fixture_online(&rt.state), Some(true));
@@ -315,6 +343,14 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
         files.show(true);
         files.activate(true);
         assert!(!files.tree.take_refresh().is_empty());
+
+        // Reconciling with a workspace omitted from the server stops detached Files/Git instead of bringing them online.
+        let empty = std::collections::HashSet::new();
+        assert!(crate::workspace::reconcile_detached_online(
+            &mut rt.state,
+            &empty
+        ));
+        assert!(rt.state.files.as_ref().unwrap().stopped);
 
         // Subsequent 401 on the detached SSE observer surfaces authentication_required on the launcher.
         let _ = drop_second_tx.send(());
@@ -837,5 +873,18 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         settle(&mut rt);
         send_key(&mut rt, Key::PageUp, Mods::default());
         assert!(!crate::timeline::search::is_open(&rt.state));
+
+        // Remapped session-search to F8 is blocked while the composer picker overlay is open.
+        settings::fixture_shortcuts(&rt.state, json!({"session-search": [{"key": "F8"}]}));
+        rt.state.draft = TextEdit::new("@");
+        rt.state
+            .composer
+            .picker
+            .changed(&rt.state.draft, &rt.state.reads, &rt.state.wake);
+        assert!(rt.state.composer.picker.open());
+        send_key(&mut rt, Key::Function(8), Mods::default());
+        assert!(!crate::timeline::search::is_open(&rt.state));
+        rt.state.composer.picker.reset();
+        rt.state.draft = TextEdit::new("");
     });
 }

@@ -22,9 +22,10 @@ pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
 };
 pub(crate) use panel_state::{
-    deliver_detached_events, mission_confirmation, mission_event, mission_observation_project,
-    mission_panel, mission_supported, missions_composing, right_panel_tab, set_detached_online,
-    set_right_panel_tab, suspend_missions,
+    deliver_detached_events, has_detached_panels, mission_confirmation, mission_event,
+    mission_observation_project, mission_panel, mission_supported, missions_composing,
+    reconcile_detached_online, right_panel_tab, set_detached_online, set_right_panel_tab,
+    suspend_missions,
 };
 pub use polling::{poll, status};
 pub use strip::strip;
@@ -49,6 +50,7 @@ pub(super) struct Entry {
     sessions: Vec<Session>,
     listed_sessions: HashSet<String>,
     creation_uncertain: bool,
+    creation_uncertain_linked: bool,
     next: Option<String>,
     linked: crate::launcher::linked::Linked,
     consumed_cursors: HashSet<u64>,
@@ -256,6 +258,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         sessions: Vec::new(),
         listed_sessions: HashSet::new(),
         creation_uncertain: false,
+        creation_uncertain_linked: false,
         next: None,
         linked: Default::default(),
         consumed_cursors: HashSet::new(),

@@ -133,10 +133,18 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
             shell::panel_title(title).role("heading"),
             shell::spacer(),
             shell::control(&PLUS, t("sessionList.actions.newSession.ariaLabel"), touch)
-                .help(crate::settings::with_shortcut_label(
+                .help(crate::settings::with_shortcut_label_excluding(
                     s,
                     t("sessionList.actions.newSession.title"),
                     "session-new",
+                    if !s.screen.is_launcher()
+                        && !crate::files::has_preview(s)
+                        && !crate::git::has_preview(s)
+                    {
+                        &["session-search"]
+                    } else {
+                        &[]
+                    },
                 ))
                 .disabled(disabled || l.creation_uncertain)
                 .on_press_tx(screen::action_tx(scope, |s, _| {

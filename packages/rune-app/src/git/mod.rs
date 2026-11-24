@@ -212,6 +212,10 @@ impl Ui {
         }
     }
 
+    pub(crate) fn workspace_id(&self) -> &str {
+        &self.backend.workspace
+    }
+
     pub(crate) fn bind(&mut self, backend: &Backend) -> bool {
         self.bind_placed(backend, None)
     }

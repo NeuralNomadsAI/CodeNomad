@@ -136,7 +136,7 @@ pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceE
         .as_str()
         .filter(|id| crate::history::valid_id(id))?;
     match value["event"]["type"].as_str()? {
-        "vcs.branch.updated" => Some(WorkspaceEvent::WorktreesChanged {
+        "vcs.branch.updated" | "worktree.updated" => Some(WorkspaceEvent::WorktreesChanged {
             workspace_id: id.into(),
         }),
         "filesystem.changed" => Some(WorkspaceEvent::NativeFilesystemChanged {

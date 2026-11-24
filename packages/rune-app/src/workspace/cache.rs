@@ -70,6 +70,39 @@ impl Cache {
         delivered
     }
 
+    pub(super) fn has_detached_panels(&self) -> bool {
+        self.is_detached() && (self.git.owner.is_some() || self.files.is_some())
+    }
+
+    pub(super) fn reconcile_detached_online(
+        &mut self,
+        live: &std::collections::HashSet<&str>,
+    ) -> bool {
+        if !self.is_detached() {
+            return false;
+        }
+        let mut changed = false;
+        if let Some(git) = &mut self.git.owner {
+            if live.contains(git.workspace_id()) {
+                git.online(true);
+            } else {
+                let workspace_id = git.workspace_id().to_owned();
+                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+            }
+            changed = true;
+        }
+        if let Some(files) = &mut self.files {
+            if live.contains(files.workspace_id()) {
+                files.online(true);
+            } else {
+                let workspace_id = files.workspace_id().to_owned();
+                files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+            }
+            changed = true;
+        }
+        changed
+    }
+
     pub(super) fn set_detached_online(&mut self, online: bool) -> bool {
         if !self.is_detached() {
             return false;

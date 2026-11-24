@@ -29,6 +29,7 @@ pub(super) struct Signals {
     workspace_events: Mutex<VecDeque<WorkspaceEvent>>,
     workspace_stopped: Mutex<HashSet<String>>,
     workspace_overflow: std::sync::atomic::AtomicBool,
+    disconnect_notice: std::sync::atomic::AtomicBool,
     authentication_required: std::sync::atomic::AtomicBool,
     wake: Wake,
     generation: std::sync::atomic::AtomicU64,
@@ -86,7 +87,8 @@ impl Signals {
                 }
             })
             .is_ok();
-        if gen_changed || ws_changed {
+        let disconnect_notified = !self.disconnect_notice.swap(true, SeqCst);
+        if gen_changed || ws_changed || disconnect_notified {
             (self.wake)();
         }
     }
@@ -272,6 +274,7 @@ impl CatalogueWatch {
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
             workspace_generation: Default::default(),
@@ -333,6 +336,10 @@ impl CatalogueWatch {
 
     pub fn take_authentication_required(&self) -> bool {
         self.signals.authentication_required.swap(false, SeqCst)
+    }
+
+    pub fn take_disconnect(&self) -> bool {
+        self.signals.disconnect_notice.swap(false, SeqCst)
     }
 
     pub fn take(&self) -> CatalogueChanges {
@@ -500,14 +507,30 @@ mod tests {
             Some(WorkspaceEvent::WorktreesChanged { workspace_id }) if workspace_id == "proj-1"
         ));
 
+        watch.signals.observe(&json!({
+            "type": "instance.event",
+            "instanceId": "proj-1",
+            "event": {"type": "worktree.updated"}
+        }));
+        let (_, _, events) = watch.take_workspace_events();
+        assert!(matches!(
+            events.front(),
+            Some(WorkspaceEvent::WorktreesChanged { workspace_id }) if workspace_id == "proj-1"
+        ));
+
         let (failed_watch, _) = CatalogueWatch::new(
             Backend::unauthenticated("http://127.0.0.1:9/").unwrap(),
             Arc::new(|| {}),
         );
         failed_watch.signals.disconnected();
+        assert!(failed_watch.take_disconnect());
         assert_eq!(failed_watch.take_workspace_events().0, 2);
         assert_eq!(failed_watch.take_attention().0, 0);
         assert_eq!(failed_watch.take_provider_changes().2, 0);
+        // Subsequent disconnects while still offline still raise disconnect_notice for Web pairing checks.
+        failed_watch.signals.disconnected();
+        assert!(failed_watch.take_disconnect());
+        assert_eq!(failed_watch.take_workspace_events().0, 2);
         failed_watch.signals.reconnected();
         assert_eq!(failed_watch.take_workspace_events().0, 3);
         assert_eq!(failed_watch.take_attention().0, 1);
@@ -527,6 +550,7 @@ mod tests {
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: 3.into(),
             workspace_generation: 3.into(),
@@ -563,6 +587,7 @@ mod tests {
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
             workspace_generation: Default::default(),
@@ -594,6 +619,7 @@ mod tests {
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
             workspace_generation: Default::default(),
