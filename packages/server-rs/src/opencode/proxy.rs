@@ -1072,20 +1072,45 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
     }
     let mut upstream = app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password));
-    if !is_hop_by_hop_connection_token(&head.headers, "accept") {
+    if message_list {
+        // Forward all sanitized request headers (including Accept, conditionals, Range, If-Range)
+        // matching TS `sanitizeInstanceProxyRequestHeaders` (`http-server.ts:1836-1858`).
+        for (name, value) in &head.headers {
+            let lower = name.as_str();
+            let blocked = matches!(
+                lower,
+                "authorization"
+                    | "connection"
+                    | "cookie"
+                    | "forwarded"
+                    | "host"
+                    | "keep-alive"
+                    | "proxy-authenticate"
+                    | "proxy-authorization"
+                    | "proxy-connection"
+                    | "set-cookie"
+                    | "te"
+                    | "trailer"
+                    | "transfer-encoding"
+                    | "upgrade"
+                    | "content-length"
+                    | "x-forwarded-for"
+                    | "x-forwarded-host"
+                    | "x-forwarded-port"
+                    | "x-forwarded-proto"
+                    | "x-codenomad-location"
+                    | "x-codenomad-human-answer"
+                    | "x-codenomad-media"
+                    | "x-codenomad-session-placement"
+            ) || lower.starts_with("x-opencode-")
+                || is_hop_by_hop_connection_token(&head.headers, lower);
+            if !blocked {
+                upstream = upstream.header(name, value);
+            }
+        }
+    } else if !is_hop_by_hop_connection_token(&head.headers, "accept") {
         for accept in head.headers.get_all(header::ACCEPT) {
             upstream = upstream.header(header::ACCEPT, accept);
-        }
-    }
-    if message_list {
-        for conditional in
-            [header::IF_NONE_MATCH, header::IF_MODIFIED_SINCE, header::IF_MATCH, header::IF_UNMODIFIED_SINCE]
-        {
-            if !is_hop_by_hop_connection_token(&head.headers, conditional.as_str()) {
-                for value in head.headers.get_all(&conditional) {
-                    upstream = upstream.header(&conditional, value);
-                }
-            }
         }
     }
     if let Some(input) = &input {
@@ -1107,7 +1132,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         // streams waiting on `LARGE_DEFER_SLOT` hold at most `3 * 32 = 96 MiB`, leaving the full
         // `160 MiB` guaranteed for the single `LARGE_DEFER_SLOT` holder (`96 + 160 = 256 MiB`).
         static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
-        static LARGE_DEFER_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+        static LARGE_DEFER_SLOT: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+            std::sync::OnceLock::new();
+        let large_defer_slot = || {
+            std::sync::Arc::clone(LARGE_DEFER_SLOT.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1))))
+        };
         const FAIR_LIST_SHARE: usize = 32 * 1024 * 1024;
         let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
         if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
@@ -1149,7 +1178,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     .collect();
             let mut stream = crate::sessions::media_stream::MessageListStream::new(id, session);
             let mut slot = Some(slot);
-            let mut large_slot: Option<tokio::sync::SemaphorePermit<'static>> = None;
+            let mut large_slot: Option<tokio::sync::OwnedSemaphorePermit> = None;
             let mut mem: Option<tokio::sync::OwnedSemaphorePermit> = None;
             let mut held_units: u32 = 0;
             let fair_units = crate::shared::response_memory_units(crate::shared::ResponsePool::List, FAIR_LIST_SHARE);
@@ -1190,7 +1219,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        permit = tokio::time::timeout(timeout, LARGE_DEFER_SLOT.acquire()) => {
+                        permit = tokio::time::timeout(timeout, large_defer_slot().acquire_owned()) => {
                             permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                         }
                     });
@@ -1232,7 +1261,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                             biased;
                             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                            permit = tokio::time::timeout(timeout, LARGE_DEFER_SLOT.acquire()) => {
+                            permit = tokio::time::timeout(timeout, large_defer_slot().acquire_owned()) => {
                                 permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                             }
                         });
@@ -1309,7 +1338,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        permit = tokio::time::timeout(timeout, LARGE_DEFER_SLOT.acquire()) => {
+                        permit = tokio::time::timeout(timeout, large_defer_slot().acquire_owned()) => {
                             permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                         }
                     });
@@ -1370,7 +1399,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    permit = tokio::time::timeout(timeout, LARGE_DEFER_SLOT.acquire()) => {
+                    permit = tokio::time::timeout(timeout, large_defer_slot().acquire_owned()) => {
                         permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                     }
                 });
@@ -1403,7 +1432,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             } else if mem.is_none() {
                 return Err(interrupted());
             }
-            drop(large_slot);
+            // Keep `large_slot` attached to the draining response until its backing drops to or
+            // below `FAIR_LIST_SHARE` (32 MiB) so at most one request (building OR draining) ever
+            // holds >32 MiB of `ResponsePool::List`.
+            let drain_large = if final_units > fair_units {
+                large_slot.take().map(|p| (p, FAIR_LIST_SHARE))
+            } else {
+                drop(large_slot);
+                None
+            };
             drop(slot);
             if !app.native.current(&endpoint) {
                 return Err(upstream_error());
@@ -1433,7 +1470,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return builder
                 .extension(NativeBody)
                 .extension(crate::shared::CancelWrite::new(write_abort))
-                .body(crate::shared::permit_body_chunks(payload, mem, abort))
+                .body(crate::shared::permit_body_chunks(payload, mem, drain_large, abort))
                 .map_err(|_| upstream_error());
         }
         let status = response.status();
@@ -1531,7 +1568,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             ))
         };
         return builder
-            .header(header::VARY, "x-codenomad-media")
             .extension(NativeBody)
             .extension(cancel_write)
             .body(Body::from_stream(bytes))
@@ -1698,7 +1734,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let status = response.status();
         let unauthorized = status == Status::UNAUTHORIZED;
         let builder = relayed(&response);
-        let builder = if message_list { builder.header(header::VARY, "x-codenomad-media") } else { builder };
         let builder = if dispatched_mutation {
             builder
         } else if unauthorized {

@@ -268,12 +268,13 @@ pub fn permit_body(
         let len = bytes.len();
         chunks.push_back((bytes, len));
     }
-    permit_body_chunks(chunks, mem, abort)
+    permit_body_chunks(chunks, mem, None, abort)
 }
 
 struct HeldChunk {
     bytes: Vec<u8>,
     _mem: Option<tokio::sync::OwnedSemaphorePermit>,
+    _guard: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl AsRef<[u8]> for HeldChunk {
@@ -282,16 +283,21 @@ impl AsRef<[u8]> for HeldChunk {
     }
 }
 
-/// Streams `(bytes, release_backing_bytes)` segments while holding `ResponsePool` permits.
-/// Each entry specifies how many bytes of backing heap allocation are freed when that segment is
-/// popped (`0` for non-final slices of a shared `Bytes`, full backing size on the final slice),
-/// ensuring zero-copy rollback slices never release permits before their backing buffer drops.
+/// Streams `(bytes, release_backing_bytes)` segments while holding `ResponsePool` permits and an
+/// optional `(large_guard, threshold_bytes)` permit released once remaining backing drops to or
+/// below `threshold_bytes`. Each entry specifies how many bytes of backing heap allocation are
+/// freed when that segment is popped (`0` for non-final slices of a shared `Bytes`, full backing
+/// size on the final slice).
 pub fn permit_body_chunks(
     mut chunks: std::collections::VecDeque<(axum::body::Bytes, usize)>,
     mut mem: Option<tokio::sync::OwnedSemaphorePermit>,
+    mut extra_guard: Option<(tokio::sync::OwnedSemaphorePermit, usize)>,
     mut abort: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
 ) -> axum::body::Body {
     let mut remaining_backing: usize = chunks.iter().map(|(_, backing)| *backing).sum();
+    if extra_guard.as_ref().is_some_and(|(_, threshold)| remaining_backing <= *threshold) {
+        drop(extra_guard.take());
+    }
     let mut done = false;
     axum::body::Body::from_stream(futures_util::stream::poll_fn(move |cx| {
         if done {
@@ -300,6 +306,7 @@ pub fn permit_body_chunks(
         if std::future::Future::poll(abort.as_mut(), cx).is_ready() {
             done = true;
             drop(mem.take());
+            drop(extra_guard.take());
             chunks.clear();
             return std::task::Poll::Ready(Some(Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
@@ -314,6 +321,7 @@ pub fn permit_body_chunks(
         let Some((front, _)) = chunks.front_mut() else {
             done = true;
             drop(mem.take());
+            drop(extra_guard.take());
             return std::task::Poll::Ready(None);
         };
         // Copy out at most `RESPONSE_CHUNK` (64 KiB) and split permit units only once a backing
@@ -335,7 +343,12 @@ pub fn permit_body_chunks(
         } else {
             None
         };
-        let chunk = axum::body::Bytes::from_owner(HeldChunk { bytes: slice, _mem: chunk_permit });
+        let chunk_guard = if extra_guard.as_ref().is_some_and(|(_, threshold)| remaining_backing <= *threshold) {
+            extra_guard.take().map(|(permit, _)| permit)
+        } else {
+            None
+        };
+        let chunk = axum::body::Bytes::from_owner(HeldChunk { bytes: slice, _mem: chunk_permit, _guard: chunk_guard });
         std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(chunk)))
     }))
 }

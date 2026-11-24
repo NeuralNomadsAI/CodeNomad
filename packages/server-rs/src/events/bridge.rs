@@ -350,15 +350,15 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                 }
                 if bytes > SDK_FRAME_UNITS && wire.encode_utf16().count() > SDK_FRAME_UNITS {
                     drop(wire);
+                    // Matches TS `native-event-stream.ts:30-38`: an oversized upstream SSE event
+                    // fails the stream and invalidates the shared connection (`keep_connection = false`).
                     let Some(files) = crate::sessions::user_files::projected_inbox_files(&event) else {
-                        keep_connection = true;
                         break;
                     };
                     event["data"]["item"]["payload"]["files"] = files;
                     let projected = event.to_string();
                     bytes = projected.len();
                     if bytes > SDK_FRAME_UNITS && projected.encode_utf16().count() > SDK_FRAME_UNITS {
-                        keep_connection = true;
                         break;
                     }
                 }

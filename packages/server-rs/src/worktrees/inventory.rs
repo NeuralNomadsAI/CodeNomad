@@ -38,8 +38,8 @@ fn meta_stamp(meta: &std::fs::Metadata) -> Option<MetaStamp> {
 #[derive(Clone, Debug, PartialEq)]
 struct ConfigStamp {
     entry: MetaStamp,
-    handle: Option<Arc<same_file::Handle>>,
-    target: Option<(PathBuf, MetaStamp, Arc<same_file::Handle>)>,
+    identity: Option<String>,
+    target: Option<(PathBuf, MetaStamp, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -59,7 +59,7 @@ fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => Some(Some(ConfigStamp {
             entry: meta_stamp(&meta)?,
-            handle: Some(Arc::new(same_file::Handle::from_path(path).ok()?)),
+            identity: Some(files::host_identity(path).ok()?),
             target: None,
         })),
         Ok(meta) if meta.file_type().is_symlink() => {
@@ -69,8 +69,8 @@ fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
             if !target_meta.is_file() {
                 return None;
             }
-            let handle = Arc::new(same_file::Handle::from_path(&real).ok()?);
-            Some(Some(ConfigStamp { entry, handle: None, target: Some((real, meta_stamp(&target_meta)?, handle)) }))
+            let id = files::host_identity(&real).ok()?;
+            Some(Some(ConfigStamp { entry, identity: None, target: Some((real, meta_stamp(&target_meta)?, id)) }))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(None),
         _ => None,
@@ -306,6 +306,16 @@ impl Tree {
             self.contains_live(&self.path)
         }
     }
+    /// Relative folder path to verify in the starting commit (`git-worktrees.ts:149-154`):
+    /// uses the symlinked source folder's prefix within its checkout when `projected_link` is set.
+    pub fn source_relative(&self, workspace_path: &Path, root_registered: &Path) -> Option<PathBuf> {
+        if let Some(link) = &self.projected_link {
+            let (_, target, target_layout, _) = link.as_ref();
+            target.strip_prefix(&target_layout.root).ok().map(Path::to_path_buf)
+        } else {
+            workspace_path.strip_prefix(root_registered).ok().map(Path::to_path_buf)
+        }
+    }
     fn owns_path(&self, dir: &Path) -> bool {
         self.path == dir
             && !self.nested_missing
@@ -503,6 +513,15 @@ async fn catalogue_in_at(
     timeout: std::time::Duration,
 ) -> Result<Catalogue, Error> {
     let Root { project, local, main } = root_at(app, w, scoped, endpoint, timeout).await?;
+    // Snapshot effective Git config with `--includes` when `include.path` is present so mid-scan
+    // edits inside included config files are detected before publication (TS `git-worktrees.ts:104-135`).
+    let effective_config = crate::git::run(&local.root, &["config", "--null", "--list", "--includes"], 4 << 20)
+        .await
+        .ok()
+        .and_then(|out| out.ok().ok())
+        .map(|out| out.text());
+    let include_snapshot = effective_config
+        .filter(|cfg| cfg.split('\0').any(|entry| entry.split_once('\n').is_some_and(|(k, _)| k == "include.path")));
     let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
     let project = project.as_str();
     let tail = w.path.strip_prefix(&local.root).map_err(|_| native_error())?;
@@ -692,6 +711,17 @@ async fn catalogue_in_at(
     }
     // Re-verify every checkout's Git layout and config stamps right before publication
     // (TS `git-worktrees.ts:128-135`) so a mid-inventory config change cannot publish stale data.
+    if let Some(expected_config) = include_snapshot {
+        let current_config = crate::git::run(&local.root, &["config", "--null", "--list", "--includes"], 4 << 20)
+            .await
+            .map_err(|_| native_error())?
+            .ok()
+            .map_err(|_| native_error())?
+            .text();
+        if current_config != expected_config {
+            return Err(native_error());
+        }
+    }
     let layouts: Vec<Physical> = std::iter::once(local)
         .chain(std::iter::once(main.clone()))
         .chain(checked.iter().map(|t| t.layout.clone()))

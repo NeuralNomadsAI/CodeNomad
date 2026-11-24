@@ -317,21 +317,20 @@ impl Placement {
         let anchor = self.anchor.clone();
         let physical = self.physical.clone();
         let checkout = self.checkout.clone();
-        let ok = tokio::task::spawn_blocking(move || {
+        let (ok, reprove_anchor) = tokio::task::spawn_blocking(move || {
             let workspace_ok = workspace_physical
                 .as_ref()
                 .is_none_or(|expected| directory_identity(&workspace_path).is_ok_and(|current| &current == expected));
             if !workspace_ok
                 || crate::worktrees::ownership::resolve_media_path(&scope, &raw_dir).map(|(p, _)| p).as_ref()
                     != Some(&path)
-                || !checkout.live(&path)
             {
-                return false;
+                return (false, None);
             }
             let Ok(Some(cur_anchor)) = crate::worktrees::ownership::directory_anchor(&path) else {
-                return false;
+                return (false, None);
             };
-            if cur_anchor == anchor.as_path() {
+            let anchor_ok = if cur_anchor == anchor.as_path() {
                 directory_identity(&anchor).is_ok_and(|current| current == physical)
             } else if cur_anchor.starts_with(&anchor) {
                 // Missing subfolder created in place during the read while the original anchor
@@ -344,11 +343,42 @@ impl Placement {
                 // its checkout stays intact, ownership resolves through the existing ancestor.
                 anchor.starts_with(cur_anchor)
                     && std::fs::symlink_metadata(&path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            };
+            if !anchor_ok {
+                return (false, None);
+            }
+            if checkout.live(&path) {
+                (true, None)
+            } else {
+                // A benign Git config edit (e.g. `user.name`) invalidates the cached config stamp
+                // without changing ownership; fall back to a fresh ownership recheck (TS
+                // `session-navigation.ts:64-96`).
+                (false, Some(cur_anchor.to_path_buf()))
             }
         })
         .await
-        .unwrap_or(false);
-        ok && self.operation_current_fast(app, id) && self.displays.iter().all(|display| display.load(Relaxed))
+        .unwrap_or((false, None));
+        let owned_ok = if ok {
+            true
+        } else if let Some(cur_anchor) = reprove_anchor
+            && self.operation_current_fast(app, id)
+        {
+            crate::worktrees::ownership::media_directory(
+                app,
+                &self.workspace,
+                &self.endpoint,
+                &self.path,
+                &cur_anchor,
+                self.strict_media,
+            )
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+        } else {
+            false
+        };
+        owned_ok && self.operation_current_fast(app, id) && self.displays.iter().all(|display| display.load(Relaxed))
     }
 
     async fn ready(&self, app: &Shared, id: &str, session: &str) -> Result<&str, Recheck> {
@@ -548,7 +578,7 @@ fn process_window_payload(
                 envelope_ok = false;
             } else if k == "messages" {
                 messages_raw = Some(v);
-            } else if !media_stream::json_node_count_within(v.as_bytes(), 1024) {
+            } else if envelope_map.len() >= 32 || !media_stream::json_node_count_within(v.as_bytes(), 1024) {
                 envelope_ok = false;
             } else if let Ok(val) = serde_json::from_str::<Value>(v) {
                 envelope_map.insert(k.to_owned(), val);
@@ -1075,17 +1105,17 @@ pub async fn attachment(
 ) -> Result<Response, Error> {
     let missing = || error(Status::NOT_FOUND, "Attachment not found");
     let invalid = || error(Status::BAD_REQUEST, "Invalid attachment reference");
-    let index_syntax = index.parse::<usize>().ok().filter(|n| n.to_string() == index);
+    let canonical_decimal =
+        !index.is_empty() && (index == "0" || (!index.starts_with('0') && index.bytes().all(|b| b.is_ascii_digit())));
     if [session.as_str(), message.as_str()].iter().any(|id| id.len() > 256 || !crate::opencode::valid_id(id))
-        || index_syntax.is_none()
+        || !canonical_decimal
         || !user_files::valid_digest(&sha)
     {
         return Err(invalid());
     }
-    let index = index_syntax.unwrap();
-    if index >= user_files::FILE_COUNT {
+    let Some(index) = index.parse::<usize>().ok().filter(|&n| n < user_files::FILE_COUNT) else {
         return Err(error(Status::BAD_REQUEST, "Invalid history navigation request"));
-    }
+    };
     let request = async {
         let placement = Placement::capture(&app, &id, &session, true)
             .await

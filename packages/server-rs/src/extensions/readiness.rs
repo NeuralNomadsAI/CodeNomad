@@ -224,7 +224,16 @@ impl Owner {
                 if artifact::directory_identity(&folder) == created {
                     match fs::remove_dir(&folder) {
                         Ok(()) => Ok(()),
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::NotFound
+                                    | std::io::ErrorKind::DirectoryNotEmpty
+                                    | std::io::ErrorKind::AlreadyExists
+                            ) =>
+                        {
+                            Ok(())
+                        }
                         Err(e) => Err(e.to_string()),
                     }
                 } else {

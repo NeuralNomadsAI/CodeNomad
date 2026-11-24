@@ -180,9 +180,9 @@ pub async fn create(
     if !git::sha(&rev) {
         return Err(native_error());
     }
-    let relative = w.path.strip_prefix(catalogue.get("root")?.registered()).map_err(|_| native_error())?;
+    let relative = from.source_relative(&w.path, catalogue.get("root")?.registered()).ok_or_else(native_error)?;
     if !relative.as_os_str().is_empty() {
-        let relative = host(relative)?.replace('\\', "/");
+        let relative = host(&relative)?.replace('\\', "/");
         let kind = git(from.registered(), &["cat-file", "-t", &format!("{rev}:{relative}")]).await.ok();
         if kind.as_deref().map(str::trim) != Some("tree") {
             let body = json!({"code": "nested_folder_unavailable",

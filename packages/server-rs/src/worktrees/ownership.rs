@@ -421,8 +421,13 @@ fn resolve_media_step(
                                         return Ok(None);
                                     }
                                 }
+                                if next_missing {
+                                    // A dangling symlink is never treated as a missing subfolder
+                                    // (TS `worktree-directory.ts:166-193`).
+                                    return Ok(None);
+                                }
                                 *cur = next;
-                                *missing = next_missing;
+                                *missing = false;
                                 return Ok(Some(()));
                             } else {
                                 if !cur.pop() {
@@ -435,6 +440,9 @@ fn resolve_media_step(
                                     if resolve_media_step(scope, scope_comps, cur, missing, hops_left, c)?.is_none() {
                                         return Ok(None);
                                     }
+                                }
+                                if *missing {
+                                    return Ok(None);
                                 }
                                 return Ok(Some(()));
                             }

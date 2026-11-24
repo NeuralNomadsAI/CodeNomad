@@ -132,8 +132,13 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
         }
         let output = match scope.call(&owned, "historyRanked", &request, None).await {
             Some(Call::Result(output)) => output,
-            Some(Call::Unsupported) if token.is_some() => return Ok(status("restart_required")),
             Some(Call::Unsupported) => {
+                if selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.owned_current(&root).await {
+                    return Ok(blocked());
+                }
+                if token.is_some() {
+                    return Ok(status("restart_required"));
+                }
                 connection(&scope.endpoint, true);
                 return Ok(status("unsupported"));
             }
@@ -141,6 +146,9 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
         };
         fences.push(owned);
         if output["status"] != "ranked" {
+            if selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.owned_current(&root).await {
+                return Ok(blocked());
+            }
             return Ok(Json(output).into_response());
         }
         let owners = list(&output["sessions"]);
@@ -186,6 +194,11 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
         if !scope.owned_current(fence).await {
             return Ok(blocked());
         }
+    }
+    // Re-check all selected deletion fences AFTER the final async revalidation (TS
+    // `session-history-ranked.ts:127-139`) so an unqueried worktree deleted mid-check invalidates.
+    if selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.current() {
+        return Ok(blocked());
     }
     let ids: HashSet<_> = approved.iter().filter_map(|owner| owner["sessionID"].as_str()).collect();
     hits.sort_by_key(|&(rank, index, _)| (rank, index));

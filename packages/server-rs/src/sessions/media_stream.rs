@@ -1125,13 +1125,13 @@ pub(super) fn for_each_json_object_field<'a>(raw: &'a str, mut visit: impl FnMut
         let val_tok = &raw[val_start..val_end];
         if key_tok.len() <= 16 && !key_tok.as_bytes().contains(&b'\\') {
             visit(&key_tok[1..key_tok.len() - 1], val_tok);
-        } else if key_tok.len() <= 64
+        } else if key_tok.len() <= 256
             && let Some(decoded) = parse_string(key_tok)
         {
             visit(&decoded, val_tok);
         } else {
-            // Surface oversized keys via a NUL sentinel so strict-schema validators reject
-            // unknown >64-byte keys instead of skipping them.
+            // Surface oversized keys (>256 raw bytes, well above any schema key even when fully
+            // `\uXXXX`-escaped) via a NUL sentinel so strict-schema validators reject them.
             visit("\0", val_tok);
         }
         i = val_end;

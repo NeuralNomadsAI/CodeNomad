@@ -488,24 +488,36 @@ pub fn start(
         });
         // A discovered daemon is first provisioned when its event stream connects.
         if let Some(endpoint) = app.native.endpoint() {
-            let _serial = SERIAL.lock().await;
-            connection_at(&app, Some(&endpoint), &features, Some(&stop)).await;
+            tokio::select! {
+                biased;
+                _ = stop.cancelled() => {}
+                _ = async {
+                    let _serial = SERIAL.lock().await;
+                    connection_at(&app, Some(&endpoint), &features, Some(&stop)).await;
+                } => {}
+            }
         }
         while !stop.is_cancelled() {
             tokio::select! {
+                biased;
                 _ = stop.cancelled() => break,
                 _ = CONNECTED.notified() => {
-                    let _serial = SERIAL.lock().await;
-                    let endpoint = app.native.endpoint();
-                    let already_prepared = endpoint.as_ref().is_some_and(|ep| {
-                        let state = STATE.lock().unwrap();
-                        state.current.is_some()
-                            && state.prepared.as_ref().is_some_and(|prepared| Arc::ptr_eq(prepared, ep))
-                    });
-                    if already_prepared {
-                        continue;
+                    tokio::select! {
+                        biased;
+                        _ = stop.cancelled() => break,
+                        _ = async {
+                            let _serial = SERIAL.lock().await;
+                            let endpoint = app.native.endpoint();
+                            let already_prepared = endpoint.as_ref().is_some_and(|ep| {
+                                let state = STATE.lock().unwrap();
+                                state.current.is_some()
+                                    && state.prepared.as_ref().is_some_and(|prepared| Arc::ptr_eq(prepared, ep))
+                            });
+                            if !already_prepared {
+                                connection_at(&app, endpoint.as_ref(), &features, Some(&stop)).await;
+                            }
+                        } => {}
                     }
-                    connection_at(&app, endpoint.as_ref(), &features, Some(&stop)).await;
                 }
             }
         }

@@ -31,7 +31,11 @@ pub(crate) fn encode(id: &str) -> String {
 }
 
 pub(super) fn valid_id(id: &str) -> bool {
-    !id.is_empty() && id.encode_utf16().nth(256).is_none() && !id.bytes().any(|byte| byte.is_ascii_control())
+    !id.is_empty()
+        && id != "."
+        && id != ".."
+        && id.encode_utf16().nth(256).is_none()
+        && !id.bytes().any(|byte| byte.is_ascii_control())
 }
 
 struct Reference<'a> {
@@ -355,10 +359,12 @@ pub(super) async fn route(
             if revert.is_some_and(|boundary| r.message.encode_utf16().cmp(boundary.encode_utf16()).is_ge()) {
                 return Err(missing());
             }
-            let (mime, mut bytes) = if uri_len > INLINE_LIMIT {
+            let (mime, mut bytes, mem) = if uri_len > INLINE_LIMIT {
                 let (message_id, digest) = (r.message.clone(), r.digest.to_owned());
-                let (decoded, _slot) = tokio::task::spawn_blocking(move || {
-                    (decode_media_fields(&message_id, &digest, None, fields.as_ref()), slot)
+                // Move both `slot` and `mem` into `spawn_blocking` so client cancellation never
+                // releases `ResponsePool::Media` permits while a detached worker decodes/allocates.
+                let (decoded, _slot, mem) = tokio::task::spawn_blocking(move || {
+                    (decode_media_fields(&message_id, &digest, None, fields.as_ref()), slot, mem)
                 })
                 .await
                 .map_err(|_| unavailable())?;
@@ -368,11 +374,13 @@ pub(super) async fn route(
                 if !placement.live(&app, &r.workspace).await {
                     return Err(error(Status::CONFLICT, "Session location changed"));
                 }
-                decoded?
+                let (mime, bytes) = decoded?;
+                (mime, bytes, mem)
             } else {
                 let decoded = decode_media_fields(&r.message, r.digest, None, fields.as_ref());
                 drop(slot);
-                decoded?
+                let (mime, bytes) = decoded?;
+                (mime, bytes, mem)
             };
             bytes.shrink_to_fit();
             principal.live()?;
