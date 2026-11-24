@@ -129,6 +129,7 @@ pub fn select_relative(s: &mut State, next: bool, tx: &mut Tx) {
         return;
     };
     select(s, &key, tx);
+    tx.scroll_into_view_in("project-tabs-scroll", format!("t-{key}"));
 }
 
 pub fn select_index(s: &mut State, index: usize, tx: &mut Tx) {
@@ -141,6 +142,7 @@ pub fn select_index(s: &mut State, index: usize, tx: &mut Tx) {
         return;
     };
     select(s, &key, tx);
+    tx.scroll_into_view_in("project-tabs-scroll", format!("t-{key}"));
 }
 
 pub(super) fn select_destination(s: &mut State, id: &str, tx: &mut Tx) {

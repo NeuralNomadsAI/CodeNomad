@@ -213,6 +213,40 @@ pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
     }
 }
 
+pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) -> bool {
+    if events.is_empty() {
+        return false;
+    }
+    let mut delivered = false;
+    let active_detached = s
+        .incoming
+        .as_ref()
+        .is_none_or(codenomad_client::Receiver::is_closed);
+    if active_detached {
+        for event in events {
+            crate::git::event(s, event);
+            if let Some(files) = &mut s.files {
+                files.event(event.clone());
+            }
+            delivered = true;
+        }
+    }
+    if let Some(ui) = &mut s.workspace {
+        for (index, entry) in ui.entries.iter_mut().enumerate() {
+            if index == ui.active {
+                continue;
+            }
+            let Some(cache) = entry.cache.as_mut() else {
+                continue;
+            };
+            for event in events {
+                delivered |= cache.deliver_detached_event(event);
+            }
+        }
+    }
+    delivered
+}
+
 pub fn restore_files_mode(s: &mut State) {
     if let Some(mode) = s
         .workspace

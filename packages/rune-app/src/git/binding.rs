@@ -68,7 +68,12 @@ pub(crate) fn session_directory(s: &State) -> Option<String> {
         .trees
         .iter()
         .find(|tree| tree.slug == owner.session_slug && !tree.missing)
-        .map(|tree| tree.directory.clone())
+        .map(|tree| {
+            tree.service_directory
+                .as_ref()
+                .unwrap_or(&tree.directory)
+                .clone()
+        })
 }
 
 pub(crate) fn is_composing(s: &State) -> bool {
@@ -100,6 +105,13 @@ pub(crate) fn fixture_commit_draft(s: &mut State, text: Option<&str>) -> Option<
 pub(crate) fn fixture_open_picker(s: &mut State) {
     if let Some(ui) = s.git.owner.as_mut() {
         ui.picker = true;
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_worktrees(s: &mut State, inventory: codenomad_client::git::Worktrees) {
+    if let Some(ui) = s.git.owner.as_mut() {
+        ui.inventory = Some(inventory);
     }
 }
 
@@ -162,9 +174,7 @@ pub(crate) fn detach_session(s: &mut State) {
     });
     if let Some(files) = &mut s.files {
         files.detach_session();
-        if backend.is_none() {
-            files.online(false);
-        }
+        files.online(backend.is_some());
     } else if let Some(backend) = &backend {
         crate::files::bind(s, backend);
         if let Some(files) = &mut s.files {
@@ -173,9 +183,7 @@ pub(crate) fn detach_session(s: &mut State) {
     }
     if let Some(owner) = &mut s.git.owner {
         owner.detach_session();
-        if backend.is_none() {
-            owner.online(false);
-        }
+        owner.online(backend.is_some());
     } else if let Some(backend) = &backend {
         connected(s, backend);
         online(s, true);

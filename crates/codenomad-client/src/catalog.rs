@@ -356,12 +356,15 @@ impl Backend {
         project: &Project,
         directory: &str,
     ) -> Result<Session> {
+        let mut request = self.client.post(format!(
+            "{}workspaces/{}/instance/api/session",
+            self.base, project.id
+        ));
+        if !crate::server_path::same(&project.path, directory) {
+            request = request.query(&[("directory", directory)]);
+        }
         let data = read_json(
-            self.client
-                .post(format!(
-                    "{}workspaces/{}/instance/api/session",
-                    self.base, project.id
-                ))
+            request
                 .json(&json!({"location":{"directory":directory}}))
                 .send()
                 .await?

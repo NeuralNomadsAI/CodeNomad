@@ -27,8 +27,8 @@ pub(crate) use state::{
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::{active_workspace, poll_cached_notifications};
 pub(crate) use state::{
-    mission_event, mission_panel, mission_supported, missions_composing, right_panel_tab,
-    set_right_panel_tab, suspend_missions,
+    deliver_detached_events, mission_event, mission_panel, mission_supported, missions_composing,
+    right_panel_tab, set_right_panel_tab, suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;

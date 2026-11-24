@@ -129,10 +129,16 @@ enum Action {
     CloseSession,
 }
 
+fn reserved_shell_key(event: &KeyEvent) -> bool {
+    let no_command_mod = !event.mods.ctrl && !event.mods.cmd && !event.mods.alt && !event.mods.logo;
+    no_command_mod && event.key == Key::Function(6)
+}
+
 pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if authentication_required(s)
         || overlay_open(s)
         || any_editor_composing(s)
+        || reserved_shell_key(event)
         || field_key_blocked(s, event, tx)
     {
         return false;

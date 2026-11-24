@@ -806,4 +806,114 @@ fn hidden_git_picker_does_not_block_global_shortcuts() {
     assert!(!crate::git::overlay_open(&rt.state));
     send_key(&mut rt, Key::Command(']'), primary_mods(false));
     assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+
+    // A saved bare F6 override must never hijack Rune's region focus cycling even with no focus.
+    settings::fixture_shortcuts(&rt.state, json!({"instance-next": [{"key": "f6"}]}));
+    send_key(&mut rt, Key::Function(6), Mods::default());
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn session_new_in_linked_worktree_sends_directory_query_and_verifies_placement() {
+    use crate::files::test_http::Http as Fixture;
+    crate::platform::block_on(async {
+        let http = Fixture::new().await;
+        let mut s = workspace_state(1);
+        let project = Project {
+            id: "proj-1".into(),
+            path: "/repo".into(),
+        };
+        let l = s.screen.launcher_mut().unwrap();
+        l.connection = Some(http.backend.clone());
+        l.project = Some(project.clone());
+        workspace::opened(&mut s, &project);
+        let bound = Backend {
+            workspace: "proj-1".into(),
+            session: "s-linked".into(),
+            ..http.backend.clone()
+        };
+        workspace::bound(&mut s, &bound);
+        crate::git::connected_placed(&mut s, &bound, "wt-linked");
+        crate::git::fixture_worktrees(
+            &mut s,
+            codenomad_client::git::Worktrees {
+                repository: codenomad_client::git::Repository::Git,
+                trees: vec![
+                    codenomad_client::git::Worktree {
+                        slug: "root".into(),
+                        directory: "/repo".into(),
+                        service_directory: None,
+                        branch: Some("main".into()),
+                        head: None,
+                        missing: false,
+                    },
+                    codenomad_client::git::Worktree {
+                        slug: "wt-linked".into(),
+                        directory: "/repo-linked".into(),
+                        service_directory: None,
+                        branch: Some("feat".into()),
+                        head: None,
+                        missing: false,
+                    },
+                ],
+            },
+        );
+        let mut rt = project_runtime(s);
+
+        send_key(&mut rt, Key::Command('n'), primary_mods(true));
+        assert!(rt.state.screen.launcher().unwrap().pending);
+
+        let mut saw_create = false;
+        let mut saw_bind = false;
+        let mut saw_worktrees = false;
+        while !(saw_create && saw_bind && saw_worktrees) {
+            let req = http.accept().await;
+            if req.header.starts_with(
+                "POST /workspaces/proj-1/instance/api/session?directory=%2Frepo-linked ",
+            ) {
+                saw_create = true;
+                req.reply(
+                    200,
+                    json!({"data":{"id":"new-linked","title":"","location":{"directory":"/repo-linked"}}}),
+                )
+                .await;
+            } else if req
+                .header
+                .starts_with("GET /workspaces/proj-1/instance/api/session/new-linked ")
+            {
+                saw_bind = true;
+                req.reply(
+                    200,
+                    json!({"data":{"id":"new-linked","title":"","listWorktreeSlug":"wt-linked","location":{"directory":"/repo-linked"}}}),
+                )
+                .await;
+            } else if req
+                .header
+                .starts_with("GET /api/workspaces/proj-1/worktrees ")
+            {
+                saw_worktrees = true;
+                req.reply(
+                    200,
+                    json!({"worktrees":[
+                        {"slug":"root","directory":"/repo","isRoot":true,"missing":false},
+                        {"slug":"wt-linked","directory":"/repo-linked","isRoot":false,"missing":false}
+                    ]}),
+                )
+                .await;
+            } else {
+                req.reply(404, json!({})).await;
+            }
+        }
+        for _ in 0..300 {
+            let mut done = false;
+            rt.update(|s, tx| done = crate::launcher::poll(s, tx));
+            if done {
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        settle(&mut rt);
+        assert_eq!(workspace::active_session(&rt.state), Some("new-linked"));
+    });
 }

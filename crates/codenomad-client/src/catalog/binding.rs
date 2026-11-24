@@ -73,6 +73,16 @@ impl Backend {
             .await
     }
 
+    pub async fn bind_created_session(
+        &self,
+        project: &Project,
+        id: &str,
+        expected_directory: &str,
+    ) -> Result<(Self, Session, String)> {
+        self.bind_at_placed(project, id, Some(expected_directory), true, true, false)
+            .await
+    }
+
     pub(crate) async fn bind_root_session(&self, project: &Project, id: &str) -> Result<Session> {
         let (_, session, _) = self
             .bind_at_placed(project, id, None, false, false, true)
@@ -130,7 +140,9 @@ impl Backend {
             .as_str()
             .filter(|slug| valid_id(slug));
         let linked = !crate::server_path::same(&project.path, directory);
-        if expected.is_some_and(|d| !crate::server_path::same(d, directory)) || linked && fresh {
+        if expected.is_some_and(|d| !crate::server_path::same(d, directory))
+            || expected.is_none() && linked && fresh
+        {
             return Err("foreign session location".into());
         }
         if linked {

@@ -169,7 +169,7 @@ pub fn create_blank(s: &mut State) {
     // A create request is never automatically retried. Refresh reconciles a lost response.
     l.job("rune.create_error", async move {
         let session = b.create_untitled_session(&p, &directory).await?;
-        let (backend, _, slug) = b.bind_session_placed(&p, &session.id, true).await?;
+        let (backend, _, slug) = b.bind_created_session(&p, &session.id, &directory).await?;
         Ok(Reply::Created(
             backend,
             session.title,

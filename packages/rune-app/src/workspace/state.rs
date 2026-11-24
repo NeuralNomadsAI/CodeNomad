@@ -22,8 +22,8 @@ pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
 };
 pub(crate) use panel_state::{
-    mission_event, mission_panel, mission_supported, missions_composing, right_panel_tab,
-    set_right_panel_tab, suspend_missions,
+    deliver_detached_events, mission_event, mission_panel, mission_supported, missions_composing,
+    right_panel_tab, set_right_panel_tab, suspend_missions,
 };
 pub use polling::{poll, status};
 pub use strip::strip;

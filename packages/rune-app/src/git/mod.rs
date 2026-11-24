@@ -17,7 +17,9 @@ pub(crate) use binding::{
     project_opened, release_placement, session_directory, set_diff_preferences, set_mode, show,
 };
 #[cfg(test)]
-pub(crate) use binding::{fixture_commit_draft, fixture_commit_preedit, fixture_open_picker};
+pub(crate) use binding::{
+    fixture_commit_draft, fixture_commit_preedit, fixture_open_picker, fixture_worktrees,
+};
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};
 
@@ -269,7 +271,6 @@ impl Ui {
             if !shown {
                 self.keep_scroll();
                 self.picker = false;
-                self.open_menu = None;
             }
             self.shown = shown;
             if shown {

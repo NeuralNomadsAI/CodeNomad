@@ -40,6 +40,25 @@ impl Cache {
             .is_some_and(|incoming| !incoming.is_closed())
     }
 
+    pub(super) fn deliver_detached_event(
+        &mut self,
+        event: &codenomad_client::transport::WorkspaceEvent,
+    ) -> bool {
+        if self.has_conversation_stream() {
+            return false;
+        }
+        let mut delivered = false;
+        if let Some(git) = &mut self.git.owner {
+            git.event(event);
+            delivered = true;
+        }
+        if let Some(files) = &mut self.files {
+            files.event(event.clone());
+            delivered = true;
+        }
+        delivered
+    }
+
     pub(super) fn history_weight(&self) -> (usize, usize) {
         (
             self.messages.len(),
