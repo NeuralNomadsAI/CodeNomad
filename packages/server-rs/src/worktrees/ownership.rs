@@ -682,6 +682,22 @@ fn strict_discover_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
         }
         current = parent.to_path_buf();
     };
+    let reject_network_path = |raw: &str, path: &Path| -> Result<(), ()> {
+        if raw.starts_with("\\\\") || raw.starts_with("//") {
+            return Err(());
+        }
+        #[cfg(windows)]
+        {
+            use std::path::{Component, Prefix};
+            if let Some(Component::Prefix(prefix)) = path.components().next()
+                && matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..) | Prefix::DeviceNS(..))
+            {
+                return Err(());
+            }
+        }
+        let _ = path;
+        Ok(())
+    };
     let entry = root.join(".git");
     let git_dir = if std::fs::metadata(&entry).map_err(|_| ())?.is_dir() {
         entry
@@ -689,7 +705,9 @@ fn strict_discover_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
         let text = read_small(&entry)?;
         let target = strip_eol(&text).strip_prefix("gitdir: ").ok_or(())?;
         let p = Path::new(target);
-        if p.is_absolute() { p.to_path_buf() } else { root.join(p) }
+        let candidate = if p.is_absolute() { p.to_path_buf() } else { root.join(p) };
+        reject_network_path(target, &candidate)?;
+        candidate
     };
     let common_rel = match std::fs::symlink_metadata(git_dir.join("commondir")) {
         Err(error) if error.kind() == ErrorKind::NotFound => ".".to_owned(),
@@ -699,12 +717,14 @@ fn strict_discover_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
     let resolved_git = dunce::canonicalize(&git_dir).map_err(|_| ())?;
     let common_raw =
         if Path::new(&common_rel).is_absolute() { PathBuf::from(&common_rel) } else { git_dir.join(&common_rel) };
+    reject_network_path(&common_rel, &common_raw)?;
     let resolved_common = dunce::canonicalize(&common_raw).map_err(|_| ())?;
     if resolved_git != resolved_common {
         let backlink = read_small(&resolved_git.join("gitdir"))?;
         let backlink = strip_eol(&backlink);
         let back_path =
             if Path::new(backlink).is_absolute() { PathBuf::from(backlink) } else { resolved_git.join(backlink) };
+        reject_network_path(backlink, &back_path)?;
         let back_parent = back_path.parent().ok_or(())?;
         dunce::canonicalize(back_parent).map_err(|_| ())?;
     }

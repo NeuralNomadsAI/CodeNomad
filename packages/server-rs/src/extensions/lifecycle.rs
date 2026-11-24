@@ -111,7 +111,9 @@ pub async fn prepare(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) {
         let notified = notify.notified();
         {
             let state = STATE.lock().unwrap();
-            if !state.active || !state.preparing.as_ref().is_some_and(|(ep, _)| Arc::ptr_eq(ep, endpoint)) {
+            if !state.active
+                || !state.preparing.as_ref().is_some_and(|(ep, n)| Arc::ptr_eq(ep, endpoint) && Arc::ptr_eq(n, &notify))
+            {
                 return;
             }
         }
@@ -507,10 +509,13 @@ pub fn start(
                 }
             }
         }
-        let _ = sync_task.await;
-        // Hold `SERIAL` across shutdown cleanup so any detached `prepare()` finishes and
-        // registers its leases before we drain them, and subsequent waiters see `!state.active`.
-        let _serial = SERIAL.lock().await;
+        let mut sync_task = sync_task;
+        if tokio::time::timeout(Duration::from_secs(1), &mut sync_task).await.is_err() {
+            sync_task.abort();
+        }
+        // Hold `SERIAL` briefly across shutdown cleanup so any finishing `prepare()` registers its
+        // leases before we drain them, without blocking forever on a stalled mount.
+        let _serial = tokio::time::timeout(Duration::from_secs(2), SERIAL.lock()).await.ok();
         let (owners, leases, snapshot): (Vec<_>, Vec<_>, _) = {
             let mut state = STATE.lock().unwrap();
             state.active = false;
@@ -520,23 +525,28 @@ pub fn start(
             let (owners, leases) = installations.into_iter().map(|i| (i.readiness, i.features)).unzip();
             (owners, leases, snapshot)
         };
-        write_status(snapshot).await;
+        let _ = tokio::time::timeout(Duration::from_secs(1), write_status(snapshot)).await;
         for owner in owners.into_iter().flatten() {
-            owner.close().await;
+            let _ = tokio::time::timeout(Duration::from_secs(1), owner.close()).await;
         }
+        // Retry lease disposal once matching TS `shutdown.ts:135-146`.
         let disposed = tokio::task::spawn_blocking(move || -> Result<(), String> {
-            let mut first_err = None;
-            for features in leases {
-                if let Err(e) = provision::dispose_checked(&features)
-                    && first_err.is_none()
-                {
-                    first_err = Some(e.to_string());
+            let mut last_err = None;
+            for _ in 0..2 {
+                let mut first_err = None;
+                for features in &leases {
+                    if let Err(e) = provision::dispose_checked(features)
+                        && first_err.is_none()
+                    {
+                        first_err = Some(e.to_string());
+                    }
                 }
+                if first_err.is_none() {
+                    return Ok(());
+                }
+                last_err = first_err;
             }
-            match first_err {
-                Some(e) => Err(e),
-                None => Ok(()),
-            }
+            Err(last_err.unwrap())
         })
         .await;
         match disposed {

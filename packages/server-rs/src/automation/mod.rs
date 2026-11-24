@@ -71,8 +71,10 @@ pub async fn publish(app: &Shared, stop: CancellationToken) -> Option<tokio::tas
     let router =
         Router::new().route(PATH, post(handle)).layer(from_fn(crate::panic_guard::catch)).with_state(app.clone());
     Some(tokio::spawn(async move {
-        let _record = record;
-        crate::shared::serve_local(listener, router, stop, || {}).await
+        let served = crate::shared::serve_local(listener, router, stop, || {}).await;
+        let removed = tokio::task::spawn_blocking(move || record.remove()).await.map_err(std::io::Error::other)?;
+        served?;
+        removed
     }))
 }
 

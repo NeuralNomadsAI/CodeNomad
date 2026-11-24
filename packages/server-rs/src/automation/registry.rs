@@ -12,10 +12,37 @@ const MAX_FILES: usize = 4096;
 const MAX_BYTES: u64 = 4 * 1024;
 
 /// Removed on graceful shutdown.
-pub struct Record(PathBuf);
+pub struct Record {
+    path: PathBuf,
+    removed: bool,
+}
+impl Record {
+    /// Removes the bridge registration with one retry, propagating non-`NotFound` errors
+    /// (TS `automation-plugin.ts:189-196`, `shutdown.ts:135-146`).
+    pub fn remove(mut self) -> io::Result<()> {
+        let mut last_err = None;
+        for _ in 0..2 {
+            match fs::remove_file(&self.path) {
+                Ok(()) => {
+                    self.removed = true;
+                    return Ok(());
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    self.removed = true;
+                    return Ok(());
+                }
+                Err(e) => last_err = Some(e),
+            }
+        }
+        self.removed = true;
+        Err(last_err.unwrap())
+    }
+}
 impl Drop for Record {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
+        if !self.removed {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -26,7 +53,7 @@ pub fn publish(dir: &Path, url: &str, token: &str) -> io::Result<Record> {
     let target = dir.join(format!("{started}-{pid}-{}.json", &token[..12]));
     let body = json!({ "version": 1, "url": url, "token": token, "pid": pid, "startedAt": started });
     crate::auth::tls::write_private(&target, format!("{body}\n").as_bytes())?;
-    Ok(Record(target))
+    Ok(Record { path: target, removed: false })
 }
 
 /// `isProcessAlive`: out of range is absent, an unconfirmed probe stays alive.

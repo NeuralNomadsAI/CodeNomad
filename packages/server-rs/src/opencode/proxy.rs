@@ -347,6 +347,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let mut requested_checkout = None;
     let mut verified_media_dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
     let admission_work = async {
+        static LIST_ADMISSION_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+        let _admission_slot =
+            if message_list { Some(LIST_ADMISSION_SLOTS.acquire().await.map_err(|_| upstream_error())?) } else { None };
         for req in &requested_dirs {
             if message_list {
                 let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), req.clone()).await else {
@@ -404,8 +407,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         let actual = if let Some(session) = session {
             Some(if message_list {
-                static LIST_ADMISSION_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
-                let _admission_slot = LIST_ADMISSION_SLOTS.acquire().await.map_err(|_| upstream_error())?;
                 // Drop the full up-to-16 MiB session record before releasing the admission slot;
                 // `message.list` only inspects `id` and `location.{directory,workspaceID}`.
                 let record = super::session_record_list_at(&app, &endpoint, session).await?;
@@ -1045,7 +1046,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 while let Some(pending) = stream.feed(&chunk, &mut pos).map_err(|_| interrupted())? {
                     // Account for the transient peak inside `project_item` where `raw` and the
                     // `UndoPatch` originals coexist before `raw.truncate(); raw.shrink_to_fit()`.
-                    let peak_bytes = stream.retained_bytes().saturating_add(pending.bytes.capacity().saturating_mul(2));
+                    let item_peak = pending.bytes.capacity().saturating_mul(2);
+                    stream.evict_undo_if_needed(item_peak);
+                    let peak_bytes = stream.retained_bytes().saturating_add(item_peak);
                     if peak_bytes > crate::sessions::media_stream::OUTPUT_LIMIT {
                         return Err(interrupted());
                     }

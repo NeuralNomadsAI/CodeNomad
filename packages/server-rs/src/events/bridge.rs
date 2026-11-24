@@ -192,7 +192,9 @@ impl Lanes {
 }
 
 pub async fn bridge(app: Shared, shutdown: CancellationToken) {
-    let daemon = Uuid::new_v4().simple().to_string();
+    // Rotate the `server.connected` daemon token whenever the underlying daemon endpoint/credentials
+    // change (TS `instance-events.ts:203-210`).
+    let mut daemon_source: Option<(String, String)> = None;
     let routes = Arc::new(Routes::default());
     loop {
         if shutdown.is_cancelled() {
@@ -236,7 +238,7 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
             biased;
             _ = shutdown.cancelled() => return,
             _ = app.native.wait_retired(&endpoint) => continue,
-            _ = crate::extensions::lifecycle::prepare(&app, &endpoint) => {}
+            _ = tokio::time::timeout(Duration::from_secs(20), crate::extensions::lifecycle::prepare(&app, &endpoint)) => {}
         }
         let mut local_backpressure = false;
         let Ok(event_url) = endpoint.url.join("/api/event") else {
@@ -324,6 +326,15 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                 }
                 permissions.enqueue(&app, &endpoint, &lanes.failed, &event);
                 if kind == "server.connected" {
+                    let source_key = format!("{}\0{}", endpoint.url, endpoint.password);
+                    let daemon = match &daemon_source {
+                        Some((key, token)) if *key == source_key => token.clone(),
+                        _ => {
+                            let token = Uuid::new_v4().simple().to_string();
+                            daemon_source = Some((source_key, token.clone()));
+                            token
+                        }
+                    };
                     if !event["data"].is_object() {
                         event["data"] = json!({});
                     }

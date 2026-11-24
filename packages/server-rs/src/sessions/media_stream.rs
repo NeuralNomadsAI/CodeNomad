@@ -14,6 +14,9 @@ use super::media;
 pub(crate) const OUTPUT_LIMIT: usize = 256 * 1024 * 1024;
 /// Cap on a single raw message item before projection.
 const ITEM_LIMIT: usize = 128 * 1024 * 1024;
+/// Cap on kept original image URIs for invalid-JSON rollback so valid pages with hundreds of MiB
+/// of deferrable images still project down to a few KiB instead of hitting `OUTPUT_LIMIT`.
+const UNDO_LIMIT: usize = 64 * 1024 * 1024;
 const INLINE_THRESHOLD: usize = 32 * 1024;
 const RESERVE_STEP: usize = crate::shared::RESPONSE_CHUNK;
 const MAX_SYNTAX_DEPTH: usize = 1024;
@@ -24,6 +27,7 @@ enum State {
     ObjExpectKey,
     ObjKey { escaped: bool },
     ObjAfterKey { is_data: bool },
+    ObjAfterValue,
     SkipValue { depth: usize, in_string: bool, escaped: bool },
     DataValueStart,
     DataArrayStart,
@@ -328,6 +332,7 @@ pub(crate) struct MessageListStream {
     segments_bytes: usize,
     undo: Vec<(usize, Vec<UndoPatch>)>,
     undo_bytes: usize,
+    undo_overflow: bool,
     out: Vec<u8>,
     item: Vec<u8>,
     changed: bool,
@@ -357,6 +362,7 @@ impl MessageListStream {
             segments_bytes: 0,
             undo: Vec::new(),
             undo_bytes: 0,
+            undo_overflow: false,
             out: Vec::new(),
             item: Vec::new(),
             changed: false,
@@ -378,6 +384,15 @@ impl MessageListStream {
 
     pub(crate) fn needs_blocking_finish(&self) -> bool {
         self.retained_bytes() > INLINE_THRESHOLD
+    }
+
+    pub(crate) fn evict_undo_if_needed(&mut self, incoming_peak: usize) {
+        if !self.undo.is_empty() && self.retained_bytes().saturating_add(incoming_peak) > OUTPUT_LIMIT {
+            self.undo.clear();
+            self.undo.shrink_to_fit();
+            self.undo_bytes = 0;
+            self.undo_overflow = true;
+        }
     }
 
     fn total_len(&self) -> usize {
@@ -544,13 +559,33 @@ impl MessageListStream {
                         self.state = State::Passthrough;
                     }
                 }
+                State::ObjAfterValue => {
+                    self.push_out(b)?;
+                    *pos += 1;
+                    if b.is_ascii_whitespace() {
+                        continue;
+                    }
+                    self.state = if b == b',' { State::ObjExpectKey } else { State::Passthrough };
+                }
                 State::DataValueStart => {
                     self.push_out(b)?;
                     *pos += 1;
                     if b.is_ascii_whitespace() {
                         continue;
                     }
-                    self.state = if b == b'[' { State::DataArrayStart } else { State::Passthrough };
+                    self.state = if b == b'[' {
+                        State::DataArrayStart
+                    } else if b == b'"' {
+                        State::SkipValue { depth: 0, in_string: true, escaped: false }
+                    } else if b == b'{' {
+                        State::SkipValue { depth: 1, in_string: false, escaped: false }
+                    } else if b == b',' {
+                        State::ObjExpectKey
+                    } else if b == b'}' {
+                        State::Passthrough
+                    } else {
+                        State::SkipValue { depth: 0, in_string: false, escaped: false }
+                    };
                 }
                 State::DataArrayStart => {
                     if b.is_ascii_whitespace() {
@@ -561,7 +596,7 @@ impl MessageListStream {
                     if b == b']' {
                         self.push_out(b)?;
                         *pos += 1;
-                        self.state = State::Passthrough;
+                        self.state = State::ObjAfterValue;
                     } else {
                         self.item.clear();
                         self.state = State::DataItem { depth: 0, in_string: false, escaped: false };
@@ -576,7 +611,7 @@ impl MessageListStream {
                     if b == b']' {
                         self.push_out(b)?;
                         *pos += 1;
-                        self.state = State::Passthrough;
+                        self.state = State::ObjAfterValue;
                     } else {
                         self.item.clear();
                         self.state = State::DataItem { depth: 0, in_string: false, escaped: false };
@@ -592,7 +627,7 @@ impl MessageListStream {
                         let bytes = std::mem::take(&mut self.item);
                         self.extend_out(&bytes)?;
                         self.push_out(b)?;
-                        self.state = if b == b',' { State::DataArrayNext } else { State::Passthrough };
+                        self.state = if b == b',' { State::DataArrayNext } else { State::ObjAfterValue };
                     } else {
                         self.push_item(b)?;
                         *pos += 1;
@@ -628,18 +663,34 @@ impl MessageListStream {
         delimiter: u8,
     ) -> Result<(), ()> {
         let undo_len: usize = undo_patches.iter().map(|p| p.original.len()).sum();
-        if self.total_len().saturating_add(projected.len()).saturating_add(undo_len) > OUTPUT_LIMIT {
+        let changed = !undo_patches.is_empty();
+        // Drop the rollback log once kept original URIs would exceed `UNDO_LIMIT` or push past
+        // `OUTPUT_LIMIT`, so valid pages with hundreds of MiB of deferrable images still succeed
+        // while oversized invalid JSON fails closed in `finish()`.
+        if changed
+            && (self.undo_overflow
+                || self.undo_bytes.saturating_add(undo_len) > UNDO_LIMIT
+                || self.total_len().saturating_add(projected.len()).saturating_add(undo_len) > OUTPUT_LIMIT)
+        {
+            self.undo.clear();
+            self.undo.shrink_to_fit();
+            self.undo_bytes = 0;
+            self.undo_overflow = true;
+        }
+        if self.total_len().saturating_add(projected.len()) > OUTPUT_LIMIT {
             return Err(());
         }
-        let changed = !undo_patches.is_empty();
         self.changed |= changed;
         let seg_idx = self.push_segment(projected)?;
-        if changed && let Some(idx) = seg_idx {
+        if changed
+            && !self.undo_overflow
+            && let Some(idx) = seg_idx
+        {
             self.undo_bytes += undo_len;
             self.undo.push((idx, undo_patches));
         }
         self.push_out(delimiter)?;
-        self.state = if delimiter == b',' { State::DataArrayNext } else { State::Passthrough };
+        self.state = if delimiter == b',' { State::DataArrayNext } else { State::ObjAfterValue };
         Ok(())
     }
 
@@ -657,6 +708,10 @@ impl MessageListStream {
         if self.syntax.is_valid_eof() {
             drop(self.undo);
             return Ok((self.segments, self.segments_bytes, self.changed));
+        }
+        if self.undo_overflow {
+            // Never emit partially rewritten invalid JSON when rollback originals were evicted.
+            return Err(());
         }
         // Invalid JSON anywhere in the document: restore all deferred URIs verbatim to match
         // TS `proxy.ts:91` (`try { JSON.parse(text) } catch { return reply.send(text) }`).
@@ -1229,5 +1284,23 @@ mod tests {
                 .starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_huge/0/0/")
         );
         assert_eq!(parts[100_005], 1);
+    }
+
+    #[test]
+    fn projects_subsequent_duplicate_data_keys() {
+        let large = format!("data:image/png;base64,{}", "A".repeat(40 * 1024));
+        let item = json!({
+            "id": "msg_dup",
+            "type": "assistant",
+            "content": [{"type": "tool", "state": {"content": [{"type": "file", "mime": "image/png", "uri": large}]}}]
+        })
+        .to_string();
+        for raw in [format!("{{\"data\":[],\"data\":[{item}]}}"), format!("{{\"data\":null,\"data\":[{item}]}}")] {
+            let (out, changed) = run_stream("ws_1", "ses_1", raw.as_bytes(), 128);
+            assert!(changed);
+            let parsed: Value = serde_json::from_slice(&out).unwrap();
+            let uri = parsed["data"][0]["content"][0]["state"]["content"][0]["uri"].as_str().unwrap();
+            assert!(uri.starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_dup/0/0/"), "{uri}");
+        }
     }
 }

@@ -241,7 +241,10 @@ pub fn permit_body_chunks(
     mut mem: Option<tokio::sync::OwnedSemaphorePermit>,
     mut abort: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
 ) -> axum::body::Body {
-    let mut remaining_bytes: usize = chunks.iter().map(axum::body::Bytes::len).sum();
+    // Track each `Bytes` segment's original allocation size: `Bytes::advance` only moves a view
+    // cursor and does not free the backing buffer until `chunks.pop_front()` drops the segment.
+    let mut seg_sizes: std::collections::VecDeque<usize> = chunks.iter().map(axum::body::Bytes::len).collect();
+    let mut remaining_backing: usize = seg_sizes.iter().sum();
     let mut done = false;
     axum::body::Body::from_stream(futures_util::stream::poll_fn(move |cx| {
         if done {
@@ -251,6 +254,7 @@ pub fn permit_body_chunks(
             done = true;
             drop(mem.take());
             chunks.clear();
+            seg_sizes.clear();
             return std::task::Poll::Ready(Some(Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 "response stream aborted",
@@ -258,23 +262,27 @@ pub fn permit_body_chunks(
         }
         while chunks.front().is_some_and(axum::body::Bytes::is_empty) {
             chunks.pop_front();
+            if let Some(dropped) = seg_sizes.pop_front() {
+                remaining_backing = remaining_backing.saturating_sub(dropped);
+            }
         }
         let Some(front) = chunks.front_mut() else {
             done = true;
             drop(mem.take());
             return std::task::Poll::Ready(None);
         };
-        // Copy out at most `RESPONSE_CHUNK` (64 KiB) and split the corresponding permit units
-        // into `HeldChunk` so permits return to the pool incrementally as chunks leave Hyper's
-        // write buffer instead of staying pinned until the final byte.
+        // Copy out at most `RESPONSE_CHUNK` (64 KiB) and split permit units only once a backing
+        // `Bytes` segment is actually popped and dropped, attaching those units to `HeldChunk`.
         let take = front.len().min(RESPONSE_CHUNK);
         let slice = front[..take].to_vec();
         bytes::Buf::advance(front, take);
         if front.is_empty() {
             chunks.pop_front();
+            if let Some(dropped) = seg_sizes.pop_front() {
+                remaining_backing = remaining_backing.saturating_sub(dropped);
+            }
         }
-        remaining_bytes = remaining_bytes.saturating_sub(take);
-        let keep_units = if remaining_bytes == 0 { 0 } else { remaining_bytes.div_ceil(RESPONSE_CHUNK) };
+        let keep_units = if remaining_backing == 0 { 0 } else { remaining_backing.div_ceil(RESPONSE_CHUNK) };
         let chunk_permit = if keep_units == 0 {
             mem.take()
         } else if let Some(permit) = &mut mem {

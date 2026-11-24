@@ -256,10 +256,18 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         }
     );
     // Drain local, remote, and automation bridge HTTP listeners before tearing down plugin leases
-    // (TS `index.ts:753-767`, `shutdown.ts:130-137`).
+    // (TS `index.ts:753-767`, `shutdown.ts:130-137`). Bound cleanup to 4 s so shutdown always emits
+    // its status line inside the desktop host's 30 s hard stop window (`tests/serve.rs:113`).
     plugins_stop.cancel();
     let plugins_ok = match plugins {
-        Some(task) => matches!(task.await, Ok(Ok(()))),
+        Some(mut task) => match tokio::time::timeout(std::time::Duration::from_secs(4), &mut task).await {
+            Ok(Ok(Ok(()))) => true,
+            Ok(_) => false,
+            Err(_) => {
+                task.abort();
+                false
+            }
+        },
         None => true,
     };
     host::native_parent::close();

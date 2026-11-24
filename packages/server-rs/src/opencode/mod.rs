@@ -296,7 +296,12 @@ pub(crate) async fn read_bytes(mut response: reqwest::Response, max: usize) -> R
 }
 
 pub async fn read_json(response: reqwest::Response, max: usize) -> Result<Value, ()> {
-    serde_json::from_slice(&read_bytes(response, max).await?).map_err(|_| ())
+    let bytes = read_bytes(response, max).await?;
+    if bytes.len() > 32 * 1024 {
+        tokio::task::spawn_blocking(move || serde_json::from_slice(&bytes).map_err(|_| ())).await.map_err(|_| ())?
+    } else {
+        serde_json::from_slice(&bytes).map_err(|_| ())
+    }
 }
 
 pub fn native_rpc_absent(body: &Value, status: Status) -> bool {
@@ -407,6 +412,13 @@ async fn session_record_segment_at(
     if response.status() == Status::BAD_REQUEST {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
+    static SESSION_PARSE_SLOTS: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4)));
+    let parse_permit = if max_bytes > 2 * 1024 * 1024 {
+        Some(SESSION_PARSE_SLOTS.clone().acquire_owned().await.map_err(|_| upstream_error())?)
+    } else {
+        None
+    };
     let raw = read_bytes(response.error_for_status().map_err(|_| upstream_error())?, max_bytes)
         .await
         .map_err(|_| upstream_error())?;
@@ -420,10 +432,15 @@ async fn session_record_segment_at(
     };
     if raw.len() > 32 * 1024 {
         let expected = id.to_owned();
-        tokio::task::spawn_blocking(move || parse(raw, &expected, strict_id))
-            .await
-            .map_err(|_| upstream_error())?
-            .map_err(|_| upstream_error())
+        // Move `parse_permit` into `spawn_blocking` so cancelling the request never releases the
+        // slot while the worker still holds the raw JSON buffer or parsed tree.
+        tokio::task::spawn_blocking(move || {
+            let _permit = parse_permit;
+            parse(raw, &expected, strict_id)
+        })
+        .await
+        .map_err(|_| upstream_error())?
+        .map_err(|_| upstream_error())
     } else {
         parse(raw, id, strict_id).map_err(|_| upstream_error())
     }
