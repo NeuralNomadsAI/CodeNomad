@@ -65,6 +65,12 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= catalogue::poll(s, now, tx);
     changed || became_ready || error != previous_error
 }
+pub fn file_draft_checkpoint_failed(s: &State) -> bool {
+    s.workspace
+        .as_ref()
+        .is_some_and(|ui| ui.persistence.file_draft_error || ui.persistence.file_draft_read_error)
+}
+
 pub fn status(s: &State) -> Option<&'static str> {
     let ui = s.workspace.as_ref()?;
     if ui.persistence.read_error {

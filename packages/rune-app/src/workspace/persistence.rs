@@ -769,6 +769,7 @@ mod tests {
         assert!(!rt.state.0.file_draft_error);
         // Even after repeated Retry clicks while an actual background save of the current
         // revision is in flight, flush_file_drafts awaits that real save without rewriting.
+        let writes_before_inflight = rt.state.0.store.as_ref().unwrap().file_draft_write_count();
         rt.state
             .1
             .insert_test_file_draft("src/main.rs", "confirmed by real in-flight save");
@@ -805,6 +806,10 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
         assert_eq!(wakes.load(Ordering::SeqCst), 6);
+        assert_eq!(
+            rt.state.0.store.as_ref().unwrap().file_draft_write_count(),
+            writes_before_inflight + 1
+        );
         drop(rt);
         let loaded = crate::platform::block_on(async {
             let reopened = Store::open(root.0.join("rune")).await.unwrap();

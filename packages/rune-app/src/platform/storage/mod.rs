@@ -200,6 +200,7 @@ mod native {
 
     struct PendingFileDraft {
         state: std::sync::Arc<std::sync::atomic::AtomicU8>,
+        deadline: std::time::Instant,
         bytes: Vec<u8>,
         reply: tokio::sync::oneshot::Sender<Result<bool>>,
     }
@@ -209,6 +210,8 @@ mod native {
         running: bool,
         active: Option<std::sync::Arc<std::sync::atomic::AtomicU8>>,
         pending: Option<PendingFileDraft>,
+        #[cfg(test)]
+        writes: u64,
     }
 
     fn spawn_file_draft_worker(
@@ -230,8 +233,10 @@ mod native {
                         }
                     }
                 };
-                let current =
-                    || task.state.load(std::sync::atomic::Ordering::Acquire) == DRAFT_ACTIVE;
+                let current = || {
+                    task.state.load(std::sync::atomic::Ordering::Acquire) == DRAFT_ACTIVE
+                        && std::time::Instant::now() < task.deadline
+                };
                 let outcome = if !current() {
                     Ok(false)
                 } else {
@@ -242,17 +247,18 @@ mod native {
                             &task.bytes,
                             current,
                             |temporary, destination| {
-                                // Transition atomically from ACTIVE to PUBLISHING without holding
-                                // the queue mutex across rename so callers/timeouts never block.
-                                if task
-                                    .state
-                                    .compare_exchange(
-                                        DRAFT_ACTIVE,
-                                        DRAFT_PUBLISHING,
-                                        std::sync::atomic::Ordering::AcqRel,
-                                        std::sync::atomic::Ordering::Acquire,
-                                    )
-                                    .is_err()
+                                // Enforce the deadline and transition atomically from ACTIVE to
+                                // PUBLISHING without holding the queue mutex across rename.
+                                if std::time::Instant::now() >= task.deadline
+                                    || task
+                                        .state
+                                        .compare_exchange(
+                                            DRAFT_ACTIVE,
+                                            DRAFT_PUBLISHING,
+                                            std::sync::atomic::Ordering::AcqRel,
+                                            std::sync::atomic::Ordering::Acquire,
+                                        )
+                                        .is_err()
                                 {
                                     return Ok(false);
                                 }
@@ -263,6 +269,12 @@ mod native {
                         Err(_) => Err("state store unavailable".into()),
                     }
                 };
+                #[cfg(test)]
+                if matches!(outcome, Ok(true)) {
+                    if let Ok(mut state) = queue.lock() {
+                        state.writes += 1;
+                    }
+                }
                 let _ = task.reply.send(outcome);
             }
         });
@@ -393,6 +405,7 @@ mod native {
             let file_drafts_lock = self.file_drafts_lock.clone();
             let queue = self.file_drafts_queue.clone();
             let write_state = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(DRAFT_ACTIVE));
+            let deadline = std::time::Instant::now() + timeout;
             let admitted = match queue.lock() {
                 Ok(mut state) => {
                     if let Some(previous) = state.active.replace(write_state.clone()) {
@@ -400,6 +413,7 @@ mod native {
                     }
                     if let Some(evicted) = state.pending.replace(PendingFileDraft {
                         state: write_state.clone(),
+                        deadline,
                         bytes,
                         reply: tx,
                     }) {
@@ -431,7 +445,10 @@ mod native {
                 if start_worker {
                     spawn_file_draft_worker(files, file_drafts_lock, queue.clone());
                 }
-                match tokio::time::timeout(timeout, rx).await {
+                let remaining = deadline
+                    .checked_duration_since(std::time::Instant::now())
+                    .unwrap_or(std::time::Duration::ZERO);
+                match tokio::time::timeout(remaining, rx).await {
                     Ok(Ok(outcome)) => outcome,
                     Ok(Err(_)) => Err("state store unavailable".into()),
                     Err(elapsed) => {
@@ -489,6 +506,12 @@ mod native {
             self.file_drafts_queue
                 .lock()
                 .is_ok_and(|state| state.pending.is_some())
+        }
+        #[cfg(test)]
+        pub(crate) fn file_draft_write_count(&self) -> u64 {
+            self.file_drafts_queue
+                .lock()
+                .map_or(0, |state| state.writes)
         }
         pub async fn load_outlines(&self) -> Result<Option<Vec<u8>>> {
             let files = self.files.clone();

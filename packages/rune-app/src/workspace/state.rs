@@ -31,7 +31,7 @@ pub(crate) use panel_state::{
     right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
     suspend_missions,
 };
-pub use polling::{poll, status};
+pub use polling::{file_draft_checkpoint_failed, poll, status};
 pub use strip::strip;
 
 use super::{Snapshot, Tab, Workspace, cache::Cache, persistence::Persistence};

@@ -164,6 +164,18 @@ fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
             tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         }
         assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"newer");
+        // An already-expired deadline is rejected by the worker itself without publishing.
+        let expired = store.start_file_drafts_save_with_timeout(
+            b"already-expired".to_vec(),
+            std::time::Duration::ZERO,
+        );
+        assert!(matches!(expired.await, Ok(false) | Err(_)));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while store.file_draft_worker_running() || store.files_refcount() > 1 {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        assert_eq!(store.load_file_drafts().await.unwrap().unwrap(), b"newer");
     });
     drop(store);
     crate::platform::block_on(async {
