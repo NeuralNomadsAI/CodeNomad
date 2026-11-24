@@ -149,10 +149,9 @@ Exact request receipts remain point reads through `scheduleRead`.
 | Client HTTP/RPC | `OpenCode.make(...).rpc(definition).method(input,{location,signal})` | Acquired authenticated connection, exact native directory and cancellation; preserve uncertainty after dispatch. |
 | Automation HTTP contract | `experimental.automation.create/list/get/pause/resume/delete`, `{data:Info}`, session-filtered list, delete 204 | `opencode/native-schedule-capability.ts` recognizes the consumed request/response shapes read-only. The Location's `scheduleFlag` RPC reads native flag resolution independently. Never create probe schedules. |
 | Plugin Session facade | get/create/prompt/synthetic/interrupt/context | Prefer facade methods when they expose the required operation. Preserve exact session/message IDs and fixed profiles at admission. Use bounded point/page reads for source coverage. |
-| Session/AISDK hooks | prompt/context/title/compaction/language | Context admission requires the exact durable user message and schedule correlation. Title/compaction/language carry only local technical work. Treat metadata as correlation within service privileges. |
-| Native context message classification | Context message IDs select native carrier records | [Read bounds and authority](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds). |
+| Carrier session hooks | prompt/context/title/compaction/http.request | Owned carriers refuse prompt, context and provider HTTP; title and compaction use local results. |
 
-Missions supplies a validated timer trigger, a fixed prompt targeted at its own
+Missions supplies a validated timer trigger, a fixed Code Mode action owned by its
 technical session and an optional expiration; source conditions stay in the
 business reader. The generated Promise client unwraps the HTTP `{data:Info}`
 envelope for create/get/pause/resume and `{data:Info[]}` for list. Callers consume
@@ -193,13 +192,13 @@ checks the consumed part columns before passage admission.
 
 Before consuming private `@opencode/Automation`, qualify each actual method in its
 current RPC graph: create/list/get/pause/resume/remove/enabled. Core and HTTP create
-take a tagged timer trigger and a prompt action targeting the owned session.
+take a tagged timer trigger and a Code Mode action on the owned session.
 Core list/get/pause/remove require explicit
 flag/session/mapping checks at the caller. Bound adoption to the exact carrier.
 
-Semantic qualification covers deterministic `msg_<automationID>_<run>`, context ID
-preservation and prompt/stored-message automation metadata, native missed-slot/phase rules, durable turn ordering, local cached
-language/title/compaction, and continuation concurrent with schedule recovery.
+Semantic qualification covers Code Mode tool authorization, exact occurrence
+identity and durable preparation, native missed-slot/phase rules, local carrier
+hooks, and continuation concurrent with schedule recovery.
 Keep a pending passage uncertain while its terminal correlation or family
 coverage is incomplete. Tests of method presence and typechecks accompany these
 native checks; qualification results belong in the delivery evidence.
@@ -217,7 +216,8 @@ borrowed view and private facade expire with their exclusion and RPC Scope;
 
 Creation persists the exact slot intent, reverse ownership index and attempted
 barrier before its native effects. Adoption lists at most 16 rows for that carrier
-and requires one exact candidate; duplicate candidates are paused. The auxiliary
+and requires one exact Code Mode candidate; duplicate candidates are paused.
+Prompt rows permit Pause, Stop and Delete and must be recreated to run. The auxiliary
 is positively active before principals can arm. Pause retains native identities;
 temporal replacement retires exact old mappings before completing new coverage.
 A current auxiliary mapping is published immediately after its adoption, before
@@ -229,9 +229,8 @@ its synchronization, and retains those identities for explicit Resume.
 
 `readNativeScheduleAuxiliaryWakeBinding` performs read-only current-intent
 preflight inside a fresh receiving RPC: verified reverse ownership, current
-auxiliary descriptor, one exact native candidate and native run acknowledgement.
-The parent also verifies the exact durable user message. When an auxiliary create
-ACK was lost, the context-side claim helper may use its optional trusted
+auxiliary descriptor, one exact Code Mode candidate and the live or acknowledged
+run. When an auxiliary create ACK was lost, the caller-side claim helper may use its optional trusted
 `readAuxiliaryIntent` resolver to obtain that preflight binding from the read-only
 own-process RPC. Claim admission rereads the same complete document and current
 intent under exclusion. Ordinary principal guards remain applied. Only the exact
@@ -248,39 +247,31 @@ inside each receiving RPC Scope.
 ### Production technical runtime
 
 `registerNativeMissionScheduleRuntime(ctx, artifacts?, invocation?)` in
-`native-mission-schedule-runtime.ts` contributes the legacy local provider when
-`artifacts.provider` is present, broad exact technical ownership hooks, the
-wake/status and maintenance RPCs, native terminal hints and the scheduled business
-bridge.
+`native-mission-schedule-runtime.ts` registers exact technical ownership hooks,
+the Code Mode wake tool, wake/status/admit and maintenance RPCs, native terminal
+hints and the scheduled business bridge.
 It returns `NativeDocumentBusiness`; the bridge registration is shared once with
 the persistent plugin's routing. `native-mission-schedule-owner.ts` supplies the
 shared scoped owner/native/store factory for controls and autonomous receivers.
 
-`native-mission-schedule-wake-prepare.ts` persists the exact principal
-`wakePreparing` in the native prompt hook, under document exclusion and before
-returning to Session prompt admission. Prompt entry supplies the pre-inbox proof;
-Pause, temporal edits, wrong/currently unadopted mappings and unresolved control
-barriers refuse that admission. An exact preparation survives a pre-inbox crash
-and fences structural editing without consuming high-water or launch count.
-`native-mission-schedule-wake-context.ts` reads bounded durable user messages in
-the hook's Database/Location graph and retains recovery preparation for delivered
-originals. It sends read-only native HTTP
-preflight before claiming. `ready` includes complete fan-in coverage; a signed
-eight-second receipt freezes its cutoff. One outer deadline covers status and
-wake. An already dispatched exact identity or an unconsumed uncertain claim stays
-status-only. Native compaction hints are classified by exact referenced IDs with
-bounded SQL point reads; an absent candidate checks the next deterministic wake
-directly, including a checkpoint without a model-facing ID.
+`native-mission-schedule-code-admission.ts` persists the exact principal
+`wakePreparing` under document exclusion while its Code Mode program runs.
+Pause, temporal edits, unadopted mappings and unresolved control barriers refuse
+admission. The preparation fences structural editing without consuming high-water
+or launch count. The caller reads native HTTP preflight before claiming; `ready`
+includes complete fan-in coverage, and a signed eight-second receipt freezes its
+cutoff. One outer deadline covers status and wake. Uncertain claims preserve
+exact identity and use status reads to qualify any abandoned replay.
 
 Each wake/status receiver has its own `nativeInvocation` and full HTTP graph.
 It verifies saved registration/own process/incarnation, physical placement,
-current ownership, native schedule ACK and the exact durable original user. A
+current ownership and Code Mode occurrence proof. A
 missing auxiliary mapping is adopted from its qualified existing row. Auxiliary
 CAS and claim closure precede owner reconciliation and pending-business
 observation; another owner reconciliation applies quota/end cleanup immediately
 after that observation, including when the last pending settles. Principal
 reservation closes its technical claim with its durable high-water while business
-remains pending. Fresh auxiliary turns recover only original next principal wake
+remains pending. Fresh auxiliary wakes recover only original next principal wake
 identities, respecting every prior dispatch hold.
 
 Title/compaction remain local through paused, retiring and attempted ownership;
@@ -532,16 +523,16 @@ guards check only synchronous invocation/incarnation/exclusion identity. Native
 effect-entry authority reads the exact unified document outside SQL publication.
 
 Before creating a technical claim, require the read-only runtime `preflight`:
-exact native message and run acknowledgement first, then full principal coverage
+exact Code Mode run proof first, then full principal coverage
 at the frozen cutoff for a running principal without pending work. It preserves
 an unfinished window's cutoff and publishes no document state. Positive contiguous
 auxiliary/overlap/paused wake proof stays on the non-reserving path. Exact prepared
-wakes participate only when covered by their contiguous native messages. The
+wakes participate only with contiguous Code Mode occurrence proof. The
 transport owns prior-claim admission and the short-lived process-local receipt;
 pass its validated cutoff unchanged to `wake`, under the shared request deadline.
 
 Fan-in keeps its cutoff and overlap suppression in the document. Every principal
-needs an exact mapping, enabled flag, contiguous messages and a native firing
+needs an exact mapping, enabled flag, contiguous Code Mode run proof and a native firing
 barrier qualified for admission or suppressed observation below; coverage is
 bounded to 256 occurrences and rechecks the complete group. Source
 conditions require a qualified reader; watched inputs retain complete frozen
@@ -582,7 +573,7 @@ from that exact current intent, then calendar reconciliation proceeds independen
 Native journal/document reads share the actor lifecycle's 85-second cancellation
 budget, including each checkpoint's narrower signal, with finalizers joined before
 interruption can advance to the root. Adopted calendars require the owned fixed
-prompt and absent native `if`/`until` conditions on every Info projection.
+Code Mode program on every Info projection.
 Start/Resume require completed calendar controls. MissionControl supplies its
 existing request/operation, frozen targets and receipts under document exclusion
 followed by the project writer. Actor callbacks
@@ -617,8 +608,8 @@ authority permits control publication after the desired Pause/Stop is durable;
 initial dispatch and business effects retain their separate admission predicates.
 
 Suppressed fan-in observation accepts positively paused principals as a frozen
-future-firing barrier. Their exact mappings, native flag, acknowledged contiguous
-messages, preparing references and stable whole-group reread remain required.
+future-firing barrier. Their exact mappings, native flag, contiguous
+run proof, preparing references and stable whole-group reread remain required.
 Admission windows retain their active/future-or-done barrier. Terminal deletion
 consumes positively acknowledged current preparations and closes the corresponding
 technical claim before native removal; missing or changing proof retains the intent.
@@ -632,11 +623,9 @@ first receipt while the original remains unconfirmed.
 `native-scheduled-passage-capability.ts` qualifies each new native mutation after
 lazy effect construction and pinned-root reads. Calendar-backed policies require
 immutable runtime artifact bytes, the ready auxiliary's adopted mapping and active
-native row, its technical carrier identity, and a positive native schedule flag;
-legacy prompt auxiliaries also require the exact local provider/model contribution
-and `provider.mjs` bytes. The synchronous initial/business fence rechecks the fresh
-document's installation and runtime artifact bytes (and `provider.mjs` bytes for a
-qualified legacy prompt auxiliary). Observation authority uses the
+Code Mode row, its technical carrier identity, and a positive native Automation
+flag. The synchronous initial/business fence rechecks the fresh document's
+installation and runtime artifact bytes. Observation authority uses the
 original passage identity and whole-family terminal proof, allowing controls and
 settlement while technical artifacts are unavailable. Human Check keeps an
 unadmitted original pending when mutation qualification fails.
@@ -653,8 +642,7 @@ admits that exact original pending once, under the one-launch limit.
 The immediate configuration path performs only its guarded document CAS and
 physical-placement capture. `acquireNativeMissionServiceRegistration` supplies the
 own-process RPC registration proof independently of technical artifacts; calendar
-arming composes that proof with exact runtime byte validation (with `provider`
-retained optionally for legacy prompt rows). The business bridge derives the
+arming composes that proof with exact runtime byte validation; persisted `provider` descriptors are ignored. The business bridge derives the
 calendar requirement from the pending's frozen launch policy and includes it in the
 captured source identity. Pure immediate selection and ENV use their native
 session/profile guards even when the technical bundle file is unavailable.

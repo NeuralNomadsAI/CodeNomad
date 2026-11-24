@@ -36,7 +36,6 @@ export function parseManagedDesktopPluginEntry(feature: string, source: string, 
     assertNativePluginPath(plugin)
     for (const directory of presenceDirectories) assertNativePluginPath(directory)
   }
-  let provider: { file: string; sha256: string } | undefined
   if (arguments_.length === 2) {
     if (feature !== "missions" || !artifacts || typeof artifacts !== "object" || Array.isArray(artifacts))
       throw new Error("Invalid managed Missions artifacts")
@@ -50,10 +49,9 @@ export function parseManagedDesktopPluginEntry(feature: string, source: string, 
         || paths.basename(artifact.file) !== `${artifact.sha256}${role === "provider" ? ".provider" : ""}.mjs`
         || role === "runtime" && artifact.file !== plugin) throw new Error("Invalid managed Missions artifacts")
       if (paths === path.posix) assertNativePluginPath(artifact.file)
-      if (role === "provider") provider = { file: artifact.file, sha256: artifact.sha256 }
     }
   }
-  return { plugin, nativeDirectory, presenceDirectories: presenceDirectories as string[], provider }
+  return { plugin, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
 }
 
 // The publication build places IDs in the hashed payload. Discovery never imports executable code.

@@ -51,7 +51,7 @@ export async function dispatchNativeMissionScheduleWake(input: { wake: NativeSch
     ports.current(); signal.throwIfAborted()
     const status = await ports.transport.status(request)
     ports.current(); signal.throwIfAborted()
-    if (status.state !== "received" || status.reply.state === "applied" || !status.reply.messagePresent
+    if (status.state !== "received" || status.reply.state === "applied" || status.reply.state === "rejected" || !status.reply.messagePresent
       || !status.reply.ready || !status.reply.preflight) return status
     // The claim rechecks abandonment under the Mission exclusion before replacing it.
     const retry = status.reply.abandoned === true

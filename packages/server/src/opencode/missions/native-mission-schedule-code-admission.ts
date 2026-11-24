@@ -6,7 +6,7 @@ import type { NativeScheduleCalendarInfo } from "./native-schedule-calendar-serv
 import { missionCodeWakeRunning } from "./native-mission-automation"
 import { nativeScheduleWakeKey, type NativeScheduleTransportReply, type NativeScheduleWake } from "./native-schedule-transport-contract"
 
-/** The code-wake counterpart of prompt entry. A principal run is admitted while its
+/** A principal run is admitted while its
  * program still runs: OpenCode counts the run only after the program returns, so the
  * row's unchanged count and next due time identify it. The durable preparation then
  * proves the run once OpenCode counts it. `pending`: admitted; `applied`: consumed;
@@ -24,11 +24,12 @@ export async function admitNativeMissionScheduleCodeWake(wake: NativeScheduleWak
     const descriptor = doc.calendarOwner.slots.find(item => item.sessionID === wake.sessionID && item.scheduleID === wake.scheduleID
       && item.role === "principal" && item.creation === "adopted" && item.timeGeneration === doc.timeGeneration)
     if (!calendar || !descriptor) return reply("rejected")
-    if (calendar.highWater >= wake.run) return reply("applied")
     const row = await ports.row()
     ports.current(); locked.assertActive()
     const prepared = calendar.wakePreparing
-    if (!row?.code || row.status !== "active" || row.nextDueAt === null) return reply("rejected")
+    if (row && !row.code) throw new Error("schedule-calendar-requires-code")
+    if (row && calendar.highWater >= wake.run) return reply("applied")
+    if (!row || row.status !== "active" || row.nextDueAt === null) return reply("rejected")
     // Counted already: only its own preparation explains it.
     if (row.runCount !== wake.run - 1) return reply(row.runCount === wake.run && prepared?.run === wake.run ? "pending" : "rejected")
     // An earlier counted run waits for its own processing first.

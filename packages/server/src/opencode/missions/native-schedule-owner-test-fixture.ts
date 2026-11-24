@@ -23,8 +23,7 @@ export async function ownerFixture(t: test.TestContext, timing: import("../../mi
   t.after(() => rmSync(directory, { recursive: true, force: true }))
   const values = new Map<string, MissionJsonValue>(), sessions = new Map<string, any>(), calendars = new Map<string, NativeScheduleCalendarInfo>()
   const calls: string[] = [], blocked = new Set<string>()
-  let serial = 0, lost: boolean | "principal" | "reconciliation" = false, absentCreate = false, allowResume = false, codeRows = false,
-    legacyProviderError: string | null = null
+  let serial = 0, lost: boolean | "principal" | "reconciliation" = false, absentCreate = false, allowResume = false, codeRows = true
   const current = () => true as const, now = Date.now()
   let clock = now, auxiliaryDelay = 0
   const store = new NativeMissionDocumentStore({ get: async key => structuredClone(values.get(key)), compareAndSet: async (key, value, expected, guard) => {
@@ -33,7 +32,7 @@ export async function ownerFixture(t: test.TestContext, timing: import("../../mi
     if ((previous?.revision ?? null) !== expected) throw new Error("CAS conflict")
     values.set(key, structuredClone(value))
   } }, "project", directory)
-  const selection = { agent: "build", model: { ...NATIVE_SCHEDULE_CARRIER_MODEL } }
+  const selection = { agent: "build", model: { providerID: "fixture", id: "fixture" } }
   const configuration: MissionConfiguration = { title: "Calendar test", objective: "Bounded test", template: "custom", taskMode: "native", profileID: "profile", executionHost: "host",
     profiles: { coordinator: selection, roles: { specialist: selection } }, roots: [{ mode: "directory-only", directory }], watchedConversationIDs: [],
     launch: { timing, condition: null, ends: { maxLaunches: maximum, afterMs: null, at: null } } }
@@ -70,8 +69,7 @@ export async function ownerFixture(t: test.TestContext, timing: import("../../mi
       return structuredClone(info)
     },
     pause: async (target, id, guard) => { record("pause", target, guard); const info = calendars.get(id)!; info.status = "paused"; return structuredClone(info) },
-    resume: async (target, id, guard) => { record("resume", target, guard); const info = calendars.get(id)!; if (!info.code && legacyProviderError) throw new Error(legacyProviderError); info.status = "active"; return structuredClone(info) },
-    qualifyLegacyProvider: async guard => { guard(); calls.push("qualify-legacy"); if (legacyProviderError) throw new Error(legacyProviderError) },
+    resume: async (target, id, guard) => { record("resume", target, guard); const info = calendars.get(id)!; info.status = "active"; return structuredClone(info) },
     remove: async (target, id, guard) => { record("remove", target, guard); calendars.delete(id) },
     carrierQuiet: async (target, guard) => { record("quiet", target, guard); return !blocked.has(target.descriptor.sessionID) },
     removeCarrier: async (target, guard) => { record("remove-carrier", target, guard); if (blocked.has(target.descriptor.sessionID)) throw new Error("Carrier children/claim remain"); sessions.delete(target.descriptor.sessionID) },
@@ -81,7 +79,7 @@ export async function ownerFixture(t: test.TestContext, timing: import("../../mi
     const file = path.join(directory, name); writeFileSync(file, bytes)
     return { file, sha256: createHash("sha256").update(bytes).digest("hex") }
   }
-  const installation = { registrationFile: path.join(directory, "registration.json"), provider: artifact("provider.mjs"), runtime: artifact("runtime.mjs") }
+  const installation = { registrationFile: path.join(directory, "registration.json"), runtime: artifact("runtime.mjs") }
   const makeOwner = (store: NativeMissionDocumentStore, textEdit: Pick<NativeScheduleOwnerOptions, "prepareTextEdit" | "recordTextEdit"> = {}) => new NativeScheduleCalendarOwner({ store, native, bindings: nativeScheduleOwnerBindings(ctx, Effect.runPromise),
     installation, profileSource: { profileID: "profile", executionHost: "host", configYamlPath: path.join(directory, "config.yaml") }, current, now: () => clock, sources, ...textEdit,
     resumePending: async (_locked, document) => allowResume && document.pending ? { passageID: document.pending.id, messageID: document.pending.messageID,
@@ -94,5 +92,5 @@ export async function ownerFixture(t: test.TestContext, timing: import("../../mi
   return { owner, makeOwner, store, native, ctx, directory, values, sessions, calendars, calls, blocked, configuration, installation, read, control, current, now,
     advance: (ms: number) => { clock += ms }, delayAuxiliary: (ms: number) => { auxiliaryDelay = ms },
     loseCreateACK: (role?: "principal" | "reconciliation") => { lost = role ?? true }, loseCreateWithoutCandidate: () => { absentCreate = true }, allowPendingResume: () => { allowResume = true },
-    createCodeRows: () => { codeRows = true }, failLegacyProvider: (message: string | null = "schedule-provider-unavailable") => { legacyProviderError = message } }
+    createCodeRows: () => { codeRows = true }, createPromptRows: () => { codeRows = false } }
 }

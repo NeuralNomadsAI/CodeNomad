@@ -11,12 +11,12 @@ export const PRESENCE_READY_WAIT_MS = 5_000
 const PRESENCE_READY_POLL_MS = 100
 import { isLegacyAutomationPlugin } from "./automation-plugin"
 import { type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
-import { installDesktopPluginArtifact, readDesktopPluginFile } from "./desktop-plugin-artifact"
+import { installDesktopPluginArtifact } from "./desktop-plugin-artifact"
 import { parseManagedDesktopPluginEntry } from "./desktop-plugin-managed"
 import type { NativeScheduleCarrierInstallation } from "./missions/native-schedule-carrier-binding"
 import { ownReadiness } from "./desktop-plugin-readiness"
 
-export type DesktopMissionArtifacts = Readonly<Pick<NativeScheduleCarrierInstallation, "provider" | "runtime">>
+export type DesktopMissionArtifacts = Readonly<Pick<NativeScheduleCarrierInstallation, "runtime">>
 
 export interface DesktopPluginPaths {
   config: string
@@ -31,21 +31,11 @@ export type DesktopPluginFeature = "session-pruning" | "automation" | "missions"
 // readable during migration, but new heartbeats must leave the watched root.
 async function managedStorage(feature: DesktopPluginFeature, existing: string | undefined, marker: string, paths: DesktopPluginPaths, assertCurrent: () => void) {
   if (!existing?.startsWith(marker)) return undefined
-  const { nativeDirectory, presenceDirectories, provider } = parseManagedDesktopPluginEntry(feature, existing, paths.nativeData ? path.posix : path)!
-  if (!paths.nativeData) return { directory: nativeDirectory, nativeDirectory, presenceDirectories: presenceDirectories as string[], provider }
+  const { nativeDirectory, presenceDirectories } = parseManagedDesktopPluginEntry(feature, existing, paths.nativeData ? path.posix : path)!
+  if (!paths.nativeData) return { directory: nativeDirectory, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
   if (!paths.resolveNativePath) throw new Error("Missing managed WSL plugin path resolver")
   const resolved = await paths.resolveNativePath(nativeDirectory, assertCurrent)
-  return { directory: resolved.host, nativeDirectory, presenceDirectories: presenceDirectories as string[], provider }
-}
-
-// A build without a packaged provider keeps an installed one that is still intact,
-// so persisted prompt calendars stay qualified across the upgrade. An unreadable one
-// only leaves those calendars unqualified; the runtime still installs.
-async function retainedProvider(storage: Awaited<ReturnType<typeof managedStorage>>) {
-  if (!storage?.provider) return undefined
-  const bytes = await readDesktopPluginFile(path.join(storage.directory, `${storage.provider.sha256}.provider.mjs`), 32 * 1024 * 1024)
-    .catch(() => undefined)
-  return bytes && createHash("sha256").update(bytes).digest("hex") === storage.provider.sha256 ? bytes : undefined
+  return { directory: resolved.host, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
 }
 
 function within(directory: string, root: string): boolean {
@@ -74,10 +64,8 @@ export async function installDesktopPluginPresence(
   paths: DesktopPluginPaths,
   assertCurrent: () => void = () => {},
   leaseContent: () => string = () => "",
-  providerBundle?: Uint8Array,
 ) {
   assertCurrent()
-  if (providerBundle && feature !== "missions") throw new Error("Local carrier provider requires Missions")
   const marker = `// Managed by CodeNomad: ${feature.replaceAll("-", " ")} lifecycle v1\n`
   const hash = createHash("sha256").update(bundle).digest("hex")
   const entry = path.join(paths.config, "plugins", `codenomad-${feature}.ts`)
@@ -92,8 +80,6 @@ export async function installDesktopPluginPresence(
   }
   const storage = await managedStorage(feature, existing, marker, paths, assertCurrent)
   assertCurrent()
-  if (feature === "missions" && !providerBundle) providerBundle = await retainedProvider(storage)
-  assertCurrent()
   const retainStorage = storage && !within(storage.directory, paths.config)
   const directory = retainStorage ? storage.directory : path.join(paths.data, feature)
   const nativeDirectory = retainStorage ? storage.nativeDirectory : (paths.nativeData ? path.posix.join(paths.nativeData, feature) : directory)
@@ -104,10 +90,8 @@ export async function installDesktopPluginPresence(
     ? pathToFileURL(`${nativeDirectory}/${hash}.mjs`, { windows: false }).href
     : pathToFileURL(plugin).href
   const presenceDirectories = [...new Set([nativeLeases, ...(storage?.presenceDirectories ?? [])])]
-  const providerHash = providerBundle && createHash("sha256").update(providerBundle).digest("hex")
   const nativePlugin = paths.nativeData ? path.posix.join(nativeDirectory, `${hash}.mjs`) : plugin
   const artifacts: DesktopMissionArtifacts | undefined = feature === "missions" ? Object.freeze({
-    ...(providerHash ? { provider: Object.freeze({ file: (paths.nativeData ? path.posix : path).join(nativeDirectory, `${providerHash}.provider.mjs`), sha256: providerHash }) } : {}),
     runtime: Object.freeze({ file: nativePlugin, sha256: hash }),
   }) : undefined
   const source = `${marker}import { desktopPlugin } from ${JSON.stringify(pluginUrl)}\nexport default desktopPlugin(${JSON.stringify(presenceDirectories.length === 1 ? nativeLeases : presenceDirectories)}${artifacts ? `, ${JSON.stringify(artifacts)}` : ""})\n`
@@ -118,11 +102,7 @@ export async function installDesktopPluginPresence(
   // Immutable, content-addressed payloads keep running instances independent of upgrades.
   const assertRuntimePath = await installDesktopPluginArtifact(plugin, bundle, hash, assertCurrent)
   assertCurrent()
-  const assertProviderPath = providerBundle && providerHash
-    ? await installDesktopPluginArtifact(path.join(directory, `${providerHash}.provider.mjs`), providerBundle, providerHash, assertCurrent)
-    : undefined
-  const assertBundlePath = async () => { await assertRuntimePath(); await assertProviderPath?.() }
-  await assertBundlePath()
+  await assertRuntimePath()
   assertCurrent()
   const lease = path.join(leases, `${randomUUID()}.lease`)
   const readiness = ownReadiness(lease)
@@ -135,7 +115,7 @@ export async function installDesktopPluginPresence(
       try {
         await writeFile(temporary, source)
         assertCurrent()
-        await assertBundlePath()
+        await assertRuntimePath()
         assertCurrent()
         await rename(temporary, entry)
       } finally { await rm(temporary, { force: true }) }

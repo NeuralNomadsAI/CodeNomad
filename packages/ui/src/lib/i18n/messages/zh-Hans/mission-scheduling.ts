@@ -65,6 +65,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.succeeded": "成功轮次",
   "missions.scheduleList.since": "自 {when} 起记录",
   "missions.scheduleList.endAfter": "首次启动后 {minutes} 分钟",
+  "missions.scheduleList.recreate": "重新创建此计划后即可运行。",
   "missions.scheduleList.blocked": "执行准入被阻止",
   "missions.scheduleList.state.paused": "已暂停",
   "missions.scheduleList.state.running": "运行中",

@@ -10,7 +10,7 @@ import { dispatchNativeMissionScheduleWake, nativeMissionSchedulePriorHeld, pars
 
 type Run = <A>(effect: Effect.Effect<A, unknown>) => Promise<A>
 
-/** Caller-side wake dispatch shared by carrier context turns and code wakes: status,
+/** Caller-side wake dispatch for Code Mode: status,
  * durable claim and wake through the own-process transport. `fresh` rereads the Mission. */
 export function nativeMissionScheduleDispatcher(ctx: Plugin.Context, original: MissionDocument, ports: {
   run: Run; current(): true; signal: AbortSignal; fresh(): Promise<MissionDocument | undefined>
@@ -35,7 +35,7 @@ export function nativeMissionScheduleDispatcher(ctx: Plugin.Context, original: M
             && (item.scheduleID === null || item.scheduleID === wake.scheduleID))
           if (!owned?.verified || !doc || doc.timeGeneration !== wake.generation || !slot) return undefined
           // The positive, signed own-process preflight validated the exact row
-          // and message. Only plain current intent data crosses this boundary.
+          // and occurrence. Only plain current intent data crosses this boundary.
           return { document: doc, calendar: doc.calendars.find(item => item.sessionID === wake.sessionID) ?? { role: "reconciliation", slot: 0,
             timeGeneration: wake.generation, sessionID: wake.sessionID, scheduleID: wake.scheduleID, highWater: 0, pendingWake: null, wakePreparing: null } }
         }

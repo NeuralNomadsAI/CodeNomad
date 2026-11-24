@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { renameSync, unlinkSync, writeFileSync } from "node:fs"
+import { renameSync } from "node:fs"
 import test from "node:test"
 import { Effect } from "effect"
 import { stableToken } from "../../missions/receipt-identity"
@@ -516,160 +516,45 @@ test("a code auxiliary whose create acknowledgement was lost is identified by it
   })
 })
 
-test("active legacy prompt adoption and reconciliation require a usable provider while pause and cleanup remain available", async t => {
-  for (const mode of ["damaged-file", "missing-installation-provider", "catalog-collision"] as const) {
-    const f = await ownerFixture(t)
-    f.loseCreateACK("reconciliation")
-    let doc = await f.control("play")
-    assert.equal(doc.calendarOwner?.operation.pending, true)
-    assert.equal(doc.calendarOwner?.auxiliaryReady, false)
-    if (mode === "damaged-file") writeFileSync(f.installation.provider.file, "corrupted")
-    else if (mode === "missing-installation-provider") doc = await f.store.change(doc.id, doc.revision, f.current, value => {
-      delete value.calendarOwner!.installation.provider
-    })
-    else f.failLegacyProvider("schedule-provider-unavailable")
-    const refused = await f.owner.reconcile(doc.id)
-    assert.equal(refused.calendarOwner?.operation.pending, true, `${mode} must keep lost-ACK active prompt adoption pending`)
-    assert.equal(refused.calendarOwner?.auxiliaryReady, false)
-    assert.equal(refused.calendarOwner?.slots.find(item => item.role === "reconciliation")?.creation, "attempted")
-    const paused = await f.control("pause")
-    assert.equal(paused.state, "paused")
-    assert.equal(paused.calendarOwner?.operation.pending, false, `${mode} must still allow pausing legacy prompt calendars`)
-    const stopped = await f.control("stop")
-    assert.equal(stopped.state, "stopped")
-    assert.equal(stopped.calendarOwner?.operation.pending, false, `${mode} must still allow cleaning up legacy prompt calendars`)
-    assert.equal(f.calendars.size, 0); assert.equal(f.sessions.size, 0)
-  }
-
-  const adopted = await ownerFixture(t), armed = await adopted.control("play")
-  assert.equal(missionCalendarOwnerReady(armed), true)
-  unlinkSync(adopted.installation.provider.file)
-  const stale = await adopted.owner.reconcile(armed.id)
-  assert.equal(stale.calendarOwner?.operation.pending, true, "already-active adopted legacy prompt calendar must not reconcile clean without provider.mjs")
-  const cleaned = await adopted.control("stop")
-  assert.equal(cleaned.calendarOwner?.operation.pending, false)
-  assert.equal(adopted.calendars.size, 0)
-
-  const code = await ownerFixture(t)
-  code.createCodeRows(); code.loseCreateACK("reconciliation"); code.failLegacyProvider("schedule-provider-unavailable")
-  unlinkSync(code.installation.provider.file)
-  const pending = await code.control("play")
-  const ready = await code.owner.reconcile(pending.id)
-  assert.equal(ready.calendarOwner?.operation.pending, false)
-  assert.equal(missionCalendarOwnerReady(ready), true)
+test("Play and lost-ACK adoption refuse prompt calendars; Pause and Delete clean up without adopting", async t => {
+  const f = await ownerFixture(t)
+  f.createPromptRows(); f.loseCreateACK("reconciliation")
+  const attempted = await f.control("play"), row = [...f.calendars.values()][0]
+  const wake = { missionID: attempted.id, generation: attempted.timeGeneration, scheduleID: row.id,
+    sessionID: row.sessionID, run: 1, messageID: `msg_${row.id}_1` }
+  row.runCount = 1
+  await assert.rejects(f.owner.adoptAuxiliary(wake), /schedule-calendar-requires-code/)
+  assert.deepEqual(await f.read(), attempted)
+  const refused = await f.owner.reconcile(attempted.id)
+  assert.equal(refused.calendarOwner!.error, "schedule-calendar-requires-code")
+  assert.deepEqual(refused.calendars, [])
+  assert.equal(refused.calendarOwner!.slots[0].scheduleID, null)
+  await f.control("pause")
+  assert.equal(row.status, "paused")
+  await f.control("delete")
+  assert.equal(f.calendars.size, 0)
+  assert.equal(f.sessions.size, 0)
 })
 
-test("legacy prompt resume and lost-ACK auxiliary adoption recheck provider artifacts and legacy model at the boundary", async t => {
+test("Resume refuses a mapped prompt calendar without advancing its high-water", async t => {
   const f = await ownerFixture(t)
-  await f.control("play")
-  await f.control("pause")
-  const originalResume = f.native.resume
-  let removed = false
-  f.native.resume = async (target, id, guard) => {
-    if (!removed) { removed = true; unlinkSync(f.installation.provider.file) }
-    return originalResume(target, id, guard)
-  }
-  const resumed = await f.control("resume")
-  assert.equal(resumed.calendarOwner?.operation.pending, true)
-  assert.equal([...f.calendars.values()].every(info => info.status === "paused"), true)
+  const armed = await f.control("play"), paused = await f.control("pause")
+  const row = f.calendars.get(armed.calendars.find(item => item.role === "reconciliation")!.scheduleID)!
+  row.code = false
+  const refused = await f.control("resume")
+  assert.equal(refused.calendarOwner!.error, "schedule-calendar-requires-code")
+  assert.deepEqual(refused.calendars, paused.calendars)
+  assert.equal(row.status, "paused")
+  await f.control("pause", "pause_again")
+  await f.control("delete")
+  assert.equal(f.calendars.size, 0)
+})
 
-  const aux = await ownerFixture(t)
-  aux.loseCreateACK("reconciliation")
-  const doc = await aux.control("play")
-  const info = [...aux.calendars.values()][0]
-  info.runCount = 1
-  const originalQualify = aux.native.qualifyLegacyProvider
-  aux.native.qualifyLegacyProvider = async guard => {
-    await originalQualify(guard)
-    delete aux.sessions.get(info.sessionID).model
-  }
-  const wake = { missionID: doc.id, generation: doc.timeGeneration, sessionID: info.sessionID,
-    scheduleID: info.id, run: 1, messageID: `msg_${info.id}_1` }
-  assert.equal(await readNativeScheduleAuxiliaryWakeBinding(aux.ctx, wake, aux.native, Effect.runPromise, aux.current), undefined)
-  await assert.rejects(aux.owner.adoptAuxiliary(wake), /unqualified/)
-  assert.equal((await aux.read()).calendarOwner?.slots.find(item => item.role === "reconciliation")?.creation, "attempted")
-
-  const deletedRow = await ownerFixture(t)
-  deletedRow.loseCreateACK("reconciliation")
-  const deletedDoc = await deletedRow.control("play"), deletedInfo = [...deletedRow.calendars.values()][0]
-  deletedInfo.runCount = 1
-  const qDeleted = deletedRow.native.qualifyLegacyProvider
-  deletedRow.native.qualifyLegacyProvider = async guard => { await qDeleted(guard); deletedRow.calendars.delete(deletedInfo.id) }
-  const deletedWake = { missionID: deletedDoc.id, generation: deletedDoc.timeGeneration, sessionID: deletedInfo.sessionID,
-    scheduleID: deletedInfo.id, run: 1, messageID: `msg_${deletedInfo.id}_1` }
-  assert.equal(await readNativeScheduleAuxiliaryWakeBinding(deletedRow.ctx, deletedWake, deletedRow.native, Effect.runPromise, deletedRow.current), undefined)
-  await assert.rejects(deletedRow.owner.adoptAuxiliary(deletedWake), /unqualified/)
-  assert.equal((await deletedRow.read()).calendarOwner?.slots.find(item => item.role === "reconciliation")?.creation, "attempted")
-
-  const vanishingAdopt = await ownerFixture(t)
-  vanishingAdopt.loseCreateACK("reconciliation")
-  const vanishingDoc = await vanishingAdopt.control("play"), vanishingInfo = [...vanishingAdopt.calendars.values()][0]
-  vanishingInfo.runCount = 1
-  const origRead = vanishingAdopt.store.read.bind(vanishingAdopt.store)
-  let unlinked = false
-  const vanishingOwner = vanishingAdopt.makeOwner(new Proxy(vanishingAdopt.store, {
-    get(target, prop, receiver) {
-      if (prop === "withExclusion") return (fn: (locked: any) => Promise<any>) => target.withExclusion(locked => fn(new Proxy(locked, {
-        get(lTarget, lProp, lReceiver) {
-          if (lProp === "change") return async (id: string, rev: number, guard: () => true, update: (v: any) => void) => {
-            if (!unlinked) { unlinked = true; unlinkSync(vanishingAdopt.installation.provider.file) }
-            return lTarget.change(id, rev, guard, update)
-          }
-          return Reflect.get(lTarget, lProp, lReceiver)
-        },
-      })))
-      return Reflect.get(target, prop, receiver)
-    },
-  }))
-  const vanishingWake = { missionID: vanishingDoc.id, generation: vanishingDoc.timeGeneration, sessionID: vanishingInfo.sessionID,
-    scheduleID: vanishingInfo.id, run: 1, messageID: `msg_${vanishingInfo.id}_1` }
-  await assert.rejects(vanishingOwner.adoptAuxiliary(vanishingWake), /policy-unqualified|ENOENT|artifact/)
-  assert.equal(unlinked, true)
-  assert.equal((await origRead(vanishingDoc.id) as any).calendarOwner?.slots.find((item: any) => item.role === "reconciliation")?.creation, "attempted")
-
-  for (const drift of ["provider-removed", "row-lost"] as const) {
-    const ordinary = await ownerFixture(t)
-    ordinary.loseCreateACK("reconciliation")
-    const pending = await ordinary.control("play")
-    const auxInfo = [...ordinary.calendars.values()][0]
-    const qualify = ordinary.native.qualifyLegacyProvider
-    ordinary.native.qualifyLegacyProvider = async guard => {
-      await qualify(guard)
-      if (drift === "provider-removed") unlinkSync(ordinary.installation.provider.file)
-      else ordinary.calendars.delete(auxInfo.id)
-    }
-    const reconciled = await ordinary.owner.reconcile(pending.id)
-    assert.equal(reconciled.calendarOwner?.operation.pending, true, `${drift} must prevent ordinary lost-ACK adoption`)
-    assert.equal(reconciled.calendarOwner?.slots.find(item => item.role === "reconciliation")?.creation, "attempted")
-  }
-
-  const afterResume = await ownerFixture(t)
-  await afterResume.control("play")
-  await afterResume.control("pause")
-  const baseResume = afterResume.native.resume
-  let removedAfterResume = false
-  afterResume.native.resume = async (target, id, guard) => {
-    const result = await baseResume(target, id, guard)
-    if (!removedAfterResume && target.descriptor.role === "principal") {
-      removedAfterResume = true
-      unlinkSync(afterResume.installation.provider.file)
-    }
-    return result
-  }
-  const notReady = await afterResume.control("resume")
-  assert.equal(removedAfterResume, true)
-  assert.equal(notReady.calendarOwner?.operation.pending, true, "removing provider.mjs after final resume must block receipt commit")
-
-  const pausePrincipals = await ownerFixture(t)
-  const armedPause = await pausePrincipals.control("play")
-  const auxCal = armedPause.calendars.find(item => item.role === "reconciliation")!
-  const priCal = armedPause.calendars.find(item => item.role === "principal")!
-  pausePrincipals.calendars.get(auxCal.scheduleID)!.status = "paused"
-  await pausePrincipals.store.change(armedPause.id, armedPause.revision, pausePrincipals.current, value => {
-    missionDocumentChanges.reserve(value, { kind: "manual", requestID: "held_pending" }, pausePrincipals.now + 1, [])
-  })
-  unlinkSync(pausePrincipals.installation.provider.file)
-  const pausedWithPending = await pausePrincipals.control("pause")
-  assert.equal(pausePrincipals.calendars.get(priCal.scheduleID)!.status, "paused", "Pause must freeze principals even if retained legacy auxiliary resume fails")
-  assert.equal(pausedWithPending.calendarOwner?.operation.pending, true)
+test("persisted installations accept an ignored provider descriptor", async t => {
+  const f = await ownerFixture(t)
+  const doc = await f.control("play")
+  const provider = { file: doc.calendarOwner!.installation.runtime.file + ".missing", sha256: "a".repeat(64) }
+  await f.store.change(doc.id, doc.revision, f.current, value => { value.calendarOwner!.installation.provider = provider })
+  assert.deepEqual((await f.read()).calendarOwner!.installation.provider, provider)
+  assert.equal((await f.owner.reconcile(doc.id)).calendarOwner!.error, null)
 })

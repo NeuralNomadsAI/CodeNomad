@@ -22,7 +22,7 @@ async function fixture() {
       values.set(key, structuredClone(value))
     } }
   const store = new NativeMissionDocumentStore(storage, "project", "/owned")
-  const model: { providerID: string; id: string } = { ...NATIVE_SCHEDULE_CARRIER_MODEL }, selection = { agent: "build", model }
+  const model: { providerID: string; id: string } = { ...NATIVE_SCHEDULE_CARRIER_MODEL }, selection = { agent: "build", model: { providerID: "fixture", id: "fixture" } }
   const initial = await store.create("owned_mission", { title: "Qualification", objective: "Read only", template: "custom", taskMode: "native",
     profileID: "isolated", executionHost: "isolated", profiles: { coordinator: selection, roles: { specialist: selection } },
     roots: [{ mode: "directory-only", directory: "/owned" }], watchedConversationIDs: [],
@@ -245,7 +245,7 @@ test("ordinary entry guard refuses exact carriers and reserved metadata independ
     assert.throws(() => assertOrdinaryMissionScheduleInput(input), /ordinary-input/)
 })
 
-test("installed artifact guards fence missing or changed provider/runtime bytes independently", t => {
+test("installed artifact guards fence missing or changed runtime bytes and ignore the retained provider descriptor", t => {
   const base = process.env.CODENOMAD_SCHEDULE_TEST_SCRATCH ?? path.join(os.tmpdir(), "codenomad-schedule-carrier")
   mkdirSync(base, { recursive: true })
   const directory = mkdtempSync(path.join(base, "artifact-unit-"))
@@ -255,20 +255,10 @@ test("installed artifact guards fence missing or changed provider/runtime bytes 
     writeFileSync(file, bytes)
     return { file, bytes, artifact: { file, sha256: createHash("sha256").update(bytes).digest("hex") } }
   }
-  const provider = make("provider.mjs", "export const createLocal = () => ({})")
   const runtime = make("runtime.mjs", "export const plugin = true")
-  const installation = { registrationFile: path.join(directory, "registration.json"), provider: provider.artifact, runtime: runtime.artifact }
+  const installation = { registrationFile: path.join(directory, "registration.json"), runtime: runtime.artifact,
+    provider: { file: path.join(directory, "missing.provider.mjs"), sha256: "a".repeat(64) } }
   assert.equal(assertNativeScheduleCarrierArtifacts(installation), true)
-  assert.equal(assertNativeScheduleCarrierArtifacts(installation, { requireProvider: true }), true)
-  writeFileSync(provider.file, `${provider.bytes}\n`)
-  assert.equal(assertNativeScheduleCarrierArtifacts(installation), true)
-  assert.throws(() => assertNativeScheduleCarrierArtifacts(installation, { requireProvider: true }), /artifact/)
-  rmSync(provider.file)
-  assert.equal(assertNativeScheduleCarrierArtifacts(installation), true)
-  assert.throws(() => assertNativeScheduleCarrierArtifacts(installation, { requireProvider: true }))
-  const runtimeOnly = { registrationFile: installation.registrationFile, runtime: runtime.artifact }
-  assert.equal(assertNativeScheduleCarrierArtifacts(runtimeOnly), true)
-  assert.throws(() => assertNativeScheduleCarrierArtifacts(runtimeOnly, { requireProvider: true }), /artifact/)
   writeFileSync(runtime.file, `${runtime.bytes}\n`)
   assert.throws(() => assertNativeScheduleCarrierArtifacts(installation), /artifact/)
   rmSync(runtime.file)

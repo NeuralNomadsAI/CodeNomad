@@ -4,31 +4,30 @@ import { Context, Effect, Option, Predicate, Schema } from "effect"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import type { MissionDocument } from "../../missions/mission-document"
 import { requiresMissionCalendar } from "../../missions/launch-policy"
-import { assertNativeScheduleProviderAvailable } from "./native-schedule-provider-registration"
-import { assertNativeScheduleCarrierArtifacts, NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
-import { isAllowedScheduleCarrierModel, isLegacyScheduleCarrierModel } from "./native-schedule-carrier"
+import { assertNativeScheduleCarrierArtifacts, nativeScheduleRuntimeIdentity, NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
+import { isAllowedScheduleCarrierModel } from "./native-schedule-carrier"
 
 import { matchMissionAutomation, missionAutomationID, missionAutomationService, missionCodeWake, readMissionAutomation, type MissionAutomationReader } from "./native-mission-automation"
 const sessionTag = Context.Service<never, unknown>("@opencode/Session")
 type NativeEffect = Effect.Effect<unknown, unknown>
 
-/** Per-invocation mutation qualification. Observers need neither an installed
- * provider nor a live auxiliary. Native mutations qualify after lazy construction
+/** Per-invocation mutation qualification. Observers can read without a live auxiliary. Native mutations qualify after lazy construction
  * and pinned-root reads, immediately before their synchronous effect-entry fence. */
 export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acquireScheduledPassageCapability")(function* (
   ctx: Plugin.Context, current: () => true,
 ) {
   const schedules = yield* Effect.serviceOption(missionAutomationService), sessions = yield* Effect.serviceOption(sessionTag)
-  const qualified = new Map<string, boolean>()
+  const qualified = new Set<string>()
   const identity = (doc: MissionDocument) => {
     current()
     const owner = doc.calendarOwner
     if (!owner || !doc.pending) throw new Error("Document passage owner unavailable")
+    const installation = nativeScheduleRuntimeIdentity(owner.installation)
     if (!requiresMissionCalendar(doc.pending.configuration.launch)) {
       if (doc.calendars.length || owner.slots.length || owner.retired.length || owner.auxiliaryReady)
         throw new Error("Immediate passage technical ownership unresolved")
-      return { owner, descriptor: undefined, key: canonicalAuthority(["immediate", doc.id, doc.pending.id,
-        doc.timeGeneration, owner.installation]) }
+      return { descriptor: undefined, key: canonicalAuthority(["immediate", doc.id, doc.pending.id,
+        doc.timeGeneration, installation]) }
     }
     const auxiliary = owner?.slots.filter(item => item.role === "reconciliation")
     const descriptor = auxiliary?.length === 1 ? auxiliary[0] : undefined
@@ -37,21 +36,19 @@ export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acqui
       || descriptor.slot !== 0 || descriptor.timeGeneration !== doc.timeGeneration || !calendar
       || calendar.scheduleID !== descriptor.scheduleID || calendar.sessionID !== descriptor.sessionID
       || calendar.timeGeneration !== doc.timeGeneration || calendar.slot !== 0) throw new Error("Scheduled passage auxiliary unavailable")
-    assertNativeScheduleCarrierArtifacts(owner.installation)
-    return { owner, descriptor, key: canonicalAuthority([doc.id, doc.pending.id, doc.timeGeneration, owner.installation, descriptor,
+    assertNativeScheduleCarrierArtifacts(installation)
+    return { descriptor, key: canonicalAuthority([doc.id, doc.pending.id, doc.timeGeneration, installation, descriptor,
       calendar.scheduleID, calendar.sessionID]) }
   }
   const assertCurrent = (doc: MissionDocument): true => {
     const proof = identity(doc)
-    const requireProvider = qualified.get(proof.key)
-    if (requireProvider === undefined) throw new Error("Scheduled passage capability unqualified")
-    if (requireProvider) assertNativeScheduleCarrierArtifacts(proof.owner.installation, { requireProvider: true })
+    if (!qualified.has(proof.key)) throw new Error("Scheduled passage capability unqualified")
     return current()
   }
   const prepare = (doc: MissionDocument) => Effect.gen(function* () {
     const proof = identity(doc)
     qualified.delete(proof.key)
-    if (!proof.descriptor) { qualified.set(proof.key, false); return }
+    if (!proof.descriptor) { qualified.add(proof.key); return }
     if (Option.isNone(schedules) || Option.isNone(sessions)) throw new Error("Scheduled passage native capabilities unavailable")
     const schedule = schedules.value as MissionAutomationReader
     const session = sessions.value as { get(id: string): NativeEffect }
@@ -63,9 +60,6 @@ export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acqui
       return effect.pipe(Effect.flatMap(value => value === true ? Effect.void : Effect.fail(new Error("Scheduled passage native flag disabled"))))
     })
     const id = missionAutomationID(proof.descriptor.scheduleID!)
-    const initial = yield* schedule.get(id).pipe(Effect.flatMap(readMissionAutomation))
-    const code = missionCodeWake(initial)
-    if (!code) yield* assertNativeScheduleProviderAvailable(ctx, proof.owner.installation)
     // No joint native snapshot exists: flag, row and carrier are read together after
     // every earlier await, and qualification is recorded synchronously on the result.
     const [, info, carrier] = yield* Effect.all([
@@ -73,19 +67,19 @@ export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acqui
       Effect.suspend(() => schedule.get(id)).pipe(Effect.flatMap(readMissionAutomation)),
       Effect.suspend(() => session.get(proof.descriptor!.sessionID)).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(Session.Info)))),
     ], { concurrency: "unbounded" })
-    if (missionCodeWake(info) !== code || info.id !== id || info.status !== "active" || info.nextDueAt === undefined || !matchMissionAutomation(info, proof.descriptor,
+    if (!missionCodeWake(info)) throw new Error("schedule-calendar-requires-code")
+    if (info.id !== id || info.status !== "active" || info.nextDueAt === undefined || !matchMissionAutomation(info, proof.descriptor,
       { directory: ctx.location.directory, projectID: doc.projectID }, NATIVE_SCHEDULE_CARRIER_SIGNAL)
       || carrier.id !== proof.descriptor.sessionID || carrier.parentID
       || carrier.projectID !== doc.projectID || carrier.location.directory !== ctx.location.directory
       || carrier.location.workspaceID !== ctx.location.workspaceID
-      || !(code ? isAllowedScheduleCarrierModel(carrier.model) : isLegacyScheduleCarrierModel(carrier.model))
+      || !isAllowedScheduleCarrierModel(carrier.model)
       || canonicalAuthority(carrier.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER])
         !== canonicalAuthority({ missionID: doc.id, timeGeneration: doc.timeGeneration, role: "reconciliation", slot: 0 }))
       throw new Error("Scheduled passage auxiliary differs")
     identity(doc)
-    if (!code) assertNativeScheduleCarrierArtifacts(proof.owner.installation, { requireProvider: true })
     current()
-    qualified.set(proof.key, !code)
+    qualified.add(proof.key)
   })
   return { prepare, assertCurrent }
 })

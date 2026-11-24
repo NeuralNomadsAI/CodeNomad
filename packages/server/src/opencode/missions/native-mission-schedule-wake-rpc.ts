@@ -8,7 +8,6 @@ import { assertMissionCalendarPlacement } from "../../missions/mission-calendar-
 import { nativeInvocation } from "./native-invocation"
 import { acquireNativeMissionScheduleOwner } from "./native-mission-schedule-owner"
 import { acquireNativeScheduledPassageRuntime, type NativeScheduledPassageRuntime } from "./native-scheduled-passage-runtime"
-import { acquireNativeMissionScheduleWakeReader } from "./native-mission-schedule-wake-reader"
 import { readNativeScheduleAuxiliaryWakeBinding } from "./native-schedule-owner-bindings"
 import { assertNativeScheduleCarrierArtifacts, readNativeScheduleCarrierOwnership, readNativeScheduleCarrierBinding,
   nativeScheduleClaimKey, closeNativeScheduleCarrierClaimLocked, type NativeScheduleCarrierBinding } from "./native-schedule-carrier-binding"
@@ -17,7 +16,6 @@ import { nativeScheduleWakeKey, assertNativeScheduleWake, type NativeScheduleWak
 import { assertNativeSchedulePreflight, nativeSchedulePreflight } from "./native-mission-schedule-preflight"
 import { parseNativeMissionScheduleClaim } from "./native-mission-schedule-wake-dispatch"
 import { nativeScheduleClaimAbandoned, receivingNativeScheduleWake } from "./native-mission-schedule-wake-flight"
-import type { NativeScheduleArtifacts } from "./native-schedule-installation"
 import type { NativeScheduleCalendarOwner } from "./native-schedule-owner"
 import type { NativeScheduleCalendarService } from "./native-schedule-calendar-service"
 import { missionCodeWakeProof } from "./native-mission-automation"
@@ -35,12 +33,20 @@ export type NativeMissionScheduleWakePorts = { store: NativeMissionDocumentStore
   claim(): Promise<ReturnType<typeof parseNativeMissionScheduleClaim>>;
   close(locked: NativeMissionDocumentStore): Promise<boolean> }
 
+const nonCodeReply = (wake: NativeScheduleWake): NativeScheduleTransportReply =>
+  ({ key: nativeScheduleWakeKey(wake), state: "rejected", reason: "schedule-calendar-requires-code" })
+const refuseNonCode = (wake: NativeScheduleWake, error: unknown): NativeScheduleTransportReply => {
+  if (!(error instanceof Error) || error.message !== "schedule-calendar-requires-code") throw error
+  return nonCodeReply(wake)
+}
+
 /** Orchestration over real document/owner/passage ports. An auxiliary consumes
  * and releases its own claim before any cleanup or pending-business observation. */
 export function receiveNativeMissionScheduleWake(mode: "wake" | "status", input: Input, entry: Entry,
   ports: NativeMissionScheduleWakePorts): Promise<NativeScheduleTransportReply> {
   // Status proves abandonment only for receivers that ended; register this one first.
-  return mode === "wake" ? receivingNativeScheduleWake(input.wake, () => receive(mode, input, entry, ports)) : receive(mode, input, entry, ports)
+  const work = mode === "wake" ? receivingNativeScheduleWake(input.wake, () => receive(mode, input, entry, ports)) : receive(mode, input, entry, ports)
+  return work.catch(error => refuseNonCode(input.wake, error))
 }
 
 async function receive(mode: "wake" | "status", input: Input, entry: Entry,
@@ -103,11 +109,10 @@ async function receive(mode: "wake" | "status", input: Input, entry: Entry,
 export async function readNativeMissionScheduleWakeProof(input: {
   ctx: Plugin.Context; doc: MissionDocument; role: "principal" | "reconciliation"; wake: NativeScheduleWake;
   native: NativeScheduleCalendarService;
-  reader: { message(wake: NativeScheduleWake): Promise<MissionWake | undefined> };
   run: <A>(effect: Effect.Effect<A, unknown>) => Promise<A>;
-  current: () => true; onLegacyProvider?: () => void;
+  current: () => true;
 }): Promise<{ binding: NativeScheduleCarrierBinding; wake: MissionWake }> {
-  const { ctx, doc, role, wake: ref, native, reader, run, current, onLegacyProvider } = input
+  const { ctx, doc, role, wake: ref, native, run, current } = input
   current()
   const binding = role === "reconciliation"
     ? await readNativeScheduleAuxiliaryWakeBinding(ctx, ref, native, run, current)
@@ -117,23 +122,14 @@ export async function readNativeMissionScheduleWakeProof(input: {
   const descriptor = binding.document.calendarOwner!.slots.find(item => item.sessionID === ref.sessionID)
   if (!descriptor) throw new Error("schedule-wake-current-slot")
   const info = await native.get({ missionID: doc.id, descriptor }, ref.scheduleID, current)
-  if (info && !info.code) {
-    onLegacyProvider?.()
-    assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation, { requireProvider: true })
-    await native.qualifyLegacyProvider(current)
-  }
-  const wake = info?.code ? missionCodeWakeProof(binding.calendar, info, ref.run) : await reader.message(ref)
-  if (!info || !info.code && info.runCount < ref.run || !wake) throw new Error("schedule-wake-proof")
-  if (!info.code) {
-    const reread = await native.get({ missionID: doc.id, descriptor }, ref.scheduleID, current)
-    if (!reread || reread.code || reread.runCount < ref.run) throw new Error("schedule-wake-proof")
-  }
+  if (info && !info.code) throw new Error("schedule-calendar-requires-code")
+  const wake = info && missionCodeWakeProof(binding.calendar, info, ref.run)
+  if (!wake) throw new Error("schedule-wake-proof")
   current(); return { binding, wake }
 }
 
-/** Each receiver captures its full HTTP graph, independently of the hook that
- * initiated transport. No setup/context graph supplies private Session/Schedule. */
-export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context, _artifacts?: NativeScheduleArtifacts) {
+/** Each receiver acquires private services in its own HTTP invocation graph. */
+export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context) {
   const invocation = nativeInvocation()
   const handler = (mode: "wake" | "status" | "admit", raw: unknown) => Effect.scoped(invocation.capture(Effect.gen(function* () {
     const input = inputSchema.parse(raw); assertNativeScheduleWake(input.wake)
@@ -143,32 +139,42 @@ export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context, _artifact
     const ownership = yield* readNativeScheduleCarrierOwnership(ctx, input.wake.sessionID), doc = ownership?.document
     if (!ownership?.verified || !doc?.calendarOwner || doc.id !== input.wake.missionID || doc.timeGeneration !== input.wake.generation
       || input.registrationFile !== doc.calendarOwner.installation.registrationFile) throw new Error("schedule-wake-owner")
-    let active = true, consumed = false, requireProvider = false
+    let active = true, consumed = false
     yield* Effect.addFinalizer(() => Effect.sync(() => { active = false }))
     const current = (): true => {
       if (!active) throw new Error("schedule-wake-retired")
-      processCurrent(); assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation, { requireProvider })
+      processCurrent(); assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation)
       if (mode === "wake" && !consumed) assertNativeSchedulePreflight(input.preflight, input.wake, input.incarnation.id)
       return assertMissionCalendarPlacement(doc.calendarOwner!.placement, doc.configuration.roots)
     }
     current()
+    const { owner, native, store } = yield* acquireNativeMissionScheduleOwner(ctx, doc, run, current)
+    const descriptors = [...doc.calendarOwner.slots, ...doc.calendarOwner.retired.map(item => item.descriptor)]
     const mapped = [...doc.calendars, ...doc.synchronization?.retiredCalendars ?? []].find(item => item.sessionID === input.wake.sessionID
       && item.scheduleID === input.wake.scheduleID && item.timeGeneration === input.wake.generation)
-    if (mapped && mapped.highWater >= input.wake.run) return { key: nativeScheduleWakeKey(input.wake), state: "applied" as const }
-    const { owner, native, store } = yield* acquireNativeMissionScheduleOwner(ctx, doc, run, current)
+    if (mapped && mapped.highWater >= input.wake.run) {
+      // Consumed replays do not acquire the passage engine, but still qualify
+      // the exact native row before acknowledging a Code Mode run.
+      const descriptor = descriptors.find(item => item.sessionID === mapped.sessionID && item.scheduleID === mapped.scheduleID
+        && item.timeGeneration === mapped.timeGeneration)
+      if (!descriptor) throw new Error("schedule-wake-current-slot")
+      const row = yield* Effect.tryPromise(() => native.get({ missionID: doc.id, descriptor }, input.wake.scheduleID, current))
+      current()
+      if (!row) throw new Error("schedule-wake-proof")
+      if (!row.code) return nonCodeReply(input.wake)
+      return { key: nativeScheduleWakeKey(input.wake), state: "applied" as const }
+    }
     if (mode === "admit") {
       const descriptor = doc.calendarOwner.slots.find(item => item.sessionID === input.wake.sessionID)
       if (!descriptor) throw new Error("schedule-wake-current-slot")
       return yield* Effect.tryPromise(() => admitNativeMissionScheduleCodeWake(input.wake, { store, current,
-        row: () => native.get({ missionID: doc.id, descriptor }, input.wake.scheduleID, current) }))
+        row: () => native.get({ missionID: doc.id, descriptor }, input.wake.scheduleID, current) }).catch(error => refuseNonCode(input.wake, error)))
     }
-    const reader = yield* acquireNativeMissionScheduleWakeReader(ctx, run)
     const runtime = yield* acquireNativeScheduledPassageRuntime(ctx, run, { incarnation: input.incarnation.id })
     const controller = new AbortController()
     yield* Effect.addFinalizer(() => Effect.sync(() => controller.abort()))
     const read = () => readNativeMissionScheduleWakeProof({
-      ctx, doc, role: ownership.reference.role, wake: input.wake, native, reader, run, current,
-      onLegacyProvider: () => { requireProvider = true },
+      ctx, doc, role: ownership.reference.role, wake: input.wake, native, run, current,
     })
     return yield* Effect.tryPromise(() => receiveNativeMissionScheduleWake(mode, input, { current, signal: controller.signal, consumed: () => { consumed = true } }, { store, owner, runtime, read,
       claim: async () => parseNativeMissionScheduleClaim(await run(ctx.storage.get(nativeScheduleClaimKey(ctx, doc.id))), doc.id),

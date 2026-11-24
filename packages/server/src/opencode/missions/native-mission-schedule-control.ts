@@ -132,7 +132,7 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
     const descriptors = artifacts ?? doc.calendarOwner?.installation
     if (!descriptors) throw new Error("Mission runtime descriptor unavailable")
     const installation = { registrationFile: registration.registrationFile,
-      ...(descriptors.provider ? { provider: { ...descriptors.provider } } : {}), runtime: { ...descriptors.runtime } }
+      runtime: { ...descriptors.runtime } }
     const prepared = doc, configuration = request.configuration
     doc = yield* Effect.tryPromise(() => store.change(missionID, expectedRevision, () => { registration.assertCurrent(); return current() }, value => {
       changes.configure(value, configuration, Date.now())

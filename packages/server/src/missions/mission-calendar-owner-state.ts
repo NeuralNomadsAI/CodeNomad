@@ -33,7 +33,7 @@ export const missionCalendarOwnerSchema = z.object({ version: z.literal(1),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/), originalRequestID: z.string().min(1).max(128) }).strict()).max(16).default([]),
   slots: z.array(missionCalendarOwnerSlotSchema).max(9), retired: z.array(retired).max(9),
   auxiliaryReady: z.boolean(),
-  error: z.enum(["native-uncertain", "ambiguous-create", "wake-unresolved", "claim-held", "cleanup-pending"]).nullable(),
+  error: z.enum(["native-uncertain", "schedule-calendar-requires-code", "ambiguous-create", "wake-unresolved", "claim-held", "cleanup-pending"]).nullable(),
 }).strict().refine(owner => (!owner.operation.textEdit || owner.operation.pending && owner.operation.action === "configure")
   && new Set(owner.slots.map(item => item.sessionID)).size === owner.slots.length
   && new Set(owner.slots.map(item => `${item.role}:${item.slot}`)).size === owner.slots.length

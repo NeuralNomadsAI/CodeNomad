@@ -99,7 +99,7 @@ const summary = { ...missionDocumentSummaryWire, properties: { ...missionDocumen
       sessionID: text, scheduleID: { type: ["string", "null"] }, retiring: { type: "boolean" }, cleanupPending: { type: "boolean" } },
     required: ["role", "slot", "timeGeneration", "sessionID", "scheduleID", "retiring", "cleanupPending"], additionalProperties: false } } },
     required: ["cleanupPending", "carriers"], additionalProperties: false },
-  blockReason: { type: ["string", "null"], enum: ["deleting", "synchronizing", "failed", "ended-without-report", "unknown", "native-uncertain", "ambiguous-create", "wake-unresolved", "claim-held", "cleanup-pending", null] },
+  blockReason: { type: ["string", "null"], enum: ["deleting", "synchronizing", "failed", "ended-without-report", "unknown", "native-uncertain", "schedule-calendar-requires-code", "ambiguous-create", "wake-unresolved", "claim-held", "cleanup-pending", null] },
   oneShotAt: { type: ["integer", "null"], minimum: 0 }, slotEndsAt: { type: ["integer", "null"], minimum: 0 }, successfulCount: counter,
   checks: { type: ["object", "null"], properties: { count: counter, since: counter }, required: ["count", "since"], additionalProperties: false },
   pendingPassage: { type: ["object", "null"], properties: { id: text, missionID: text, coordinatorSessionID: text,

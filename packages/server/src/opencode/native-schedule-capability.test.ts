@@ -20,6 +20,8 @@ test("native schedule availability recognizes consumed shapes independently of v
     (value: any) => { value.components.schemas["Automation.Info"].properties.status.enum = "active" },
     (value: any) => { value.components.schemas["Automation.Info"].required = 3 },
     (value: any) => { value.components.schemas["Automation.Trigger"].anyOf.pop() },
+    (value: any) => { value.components.schemas["Automation.CreatePayload"].properties.action.anyOf[0].properties.type.enum = ["prompt"] },
+    (value: any) => { delete value.components.schemas["Automation.Info"].properties.action.anyOf[0].properties.code },
     (value: any) => { delete value.components.schemas["Automation.CreatePayload"].properties.trigger },
     (value: any) => { delete value.components.schemas["Config.InfoEncoded"].properties.experimental.properties.automations },
     (value: any) => { delete value.paths["/api/experimental/automation/{automationID}"].delete.responses["204"] },

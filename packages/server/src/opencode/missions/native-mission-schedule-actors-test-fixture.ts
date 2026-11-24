@@ -32,7 +32,7 @@ export async function actorFixture(t: test.TestContext, calendar?: Awaited<Retur
   writeFileSync(configYamlPath, "server:\n  environmentVariables:\n    ACTOR_FIXTURE: fresh\n")
   const artifact = (name: string) => { const file = path.join(directory, name); writeFileSync(file, name)
     return { file, sha256: createHash("sha256").update(name).digest("hex") } }
-  const installation = saved?.calendarOwner!.installation ?? { registrationFile, provider: artifact("provider.mjs"), runtime: artifact("runtime.mjs") }
+  const installation = saved?.calendarOwner!.installation ?? { registrationFile, runtime: artifact("runtime.mjs") }
   const values = calendar?.values ?? new Map<string, any>(), sessions = calendar?.sessions ?? new Map<string, any>()
   const active = new Set<string>(), inboxes = new Map<string, any[]>()
   const calls: Array<{ kind: string; id: string }> = [], admissions = new Map<string, any>()

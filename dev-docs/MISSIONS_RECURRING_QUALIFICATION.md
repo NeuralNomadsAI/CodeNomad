@@ -12,7 +12,6 @@ their [consumed native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integrat
 Run only against owned isolated runtimes and fresh scratch directories:
 
 ```sh
-node scripts/test-native-schedule-foundation.mjs <absolute-cli> <fresh-scratch>
 node --import tsx scripts/test-native-mission-schedule-product.mjs <absolute-cli> <fresh-scratch> --parent-ready --kinds=at,in
 node --import tsx scripts/test-native-mission-schedule-product.mjs <absolute-cli> <fresh-scratch> --parent-ready --kinds=paused-manual --controlled-settlement --existing-coordinator
 node scripts/test-missions-terminal-native.mjs <absolute-isolated-cli>
@@ -20,16 +19,10 @@ node scripts/test-missions-terminal-native.mjs <absolute-isolated-cli>
 
 The product fixture's `--parent-ready` requires the coordinator's explicit final-ready
 handoff. Its `--kinds=every --natural-every` exercises the real minimum 15-minute
-interval. Foundation cold-missing runtime/provider modes verify automatic no-client
-Location wake and original calendar identity after restart; controlled-maintenance
-checks automatic local compaction, retained phase/end and zero provider HTTP calls.
+interval. The fixture checks Code Mode rows and runtime-only installation.
 Product checks cover authenticated paused creation, activation/control receipts,
 backend closure and managed-service restart. Terminal checks require original-input
 correlation and whole-family/background-delivery quiescence before settlement.
-`--runtime-only` provisions from a package without `provider.mjs`. `--legacy-bundle <absolute plugin.mjs>`
-arms with a build that creates prompt rows, then serves them after upgrading to the current bundle;
-adding `--runtime-only` makes that upgrade package omit `provider.mjs` and requires the installed
-provider to be kept.
 The paused manual case with an existing coordinator verifies agent-authored
 self-selection, one original input per passage, and two archives in the same conversation.
 Desktop packaging and host-login gates require their own evidence.

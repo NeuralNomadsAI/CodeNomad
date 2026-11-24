@@ -14,7 +14,9 @@ Unified native schedule controls and passage admission are described in
 [Recurring Missions](MISSIONS_RECURRING.md#unified-native-schedules). Their technical
 schedule RPC and business bridge stay registered independently of desktop presence.
 The calendar owner shares project document exclusion with admission and controls;
-the execution journal retains its task, report and lifecycle contracts.
+the execution journal retains its task, report and lifecycle contracts. Native
+calendars run only through Code Mode; owned prompt rows can be paused, stopped or
+deleted and must be recreated to run.
 
 ## Activation
 

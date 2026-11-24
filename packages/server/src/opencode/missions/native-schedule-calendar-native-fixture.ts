@@ -9,20 +9,14 @@ import { MISSION_SCHEDULE_CARRIER_SESSION_PREFIX } from "../../missions/mission-
 import { nativeInvocation } from "./native-invocation"
 import { acquireNativeScheduleCalendarService } from "./native-schedule-calendar-service"
 import type { NativeScheduleCalendarTarget } from "./native-schedule-calendar-service"
-import { registerNativeScheduleProvider, assertNativeScheduleProviderAvailable } from "./native-schedule-provider-registration"
-import type { NativeScheduleArtifacts } from "./native-schedule-installation"
-import { nativeScheduleCarrierHooks } from "./native-schedule-carrier"
 
 const method = { input: { type: "object" }, output: { type: "object" } } as const
 const definition = Rpc.define({ id: "codenomad.calendar-owner-qualification", methods: { methods: method, dst: method, off: method }, events: {} })
 export default Plugin.define({ id: "codenomad.calendar-owner-qualification", effect: ctx => Effect.gen(function* () {
-  const artifacts = ctx.options as NativeScheduleArtifacts & { logFile: string }, invocation = nativeInvocation(), hooks = nativeScheduleCarrierHooks(() => false)
+  const artifacts = ctx.options as { logFile: string }, invocation = nativeInvocation()
   const trace = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.tapCause(cause => Effect.sync(() => appendFileSync(artifacts.logFile, Cause.pretty(cause) + "\n"))))
-  yield* registerNativeScheduleProvider(ctx, artifacts)
-  yield* ctx.aisdk.hook("language", event => Effect.sync(() => hooks.language(event)))
   const current = () => true as const
-  const acquire = () => acquireNativeScheduleCalendarService(ctx, "build", current, effect => invocation.check(run => run(effect)),
-    () => assertNativeScheduleProviderAvailable(ctx, artifacts))
+  const acquire = () => acquireNativeScheduleCalendarService(ctx, "build", current, effect => invocation.check(run => run(effect)))
   const target = (name: string, when: NativeScheduleCalendarTarget["descriptor"]["when"], slot = 0): NativeScheduleCalendarTarget => ({ missionID: "native_calendar",
     descriptor: { role: "principal", slot, timeGeneration: 1, sessionID: `${MISSION_SCHEDULE_CARRIER_SESSION_PREFIX}${stableToken(`${ctx.location.directory}\0${name}`, 40)}`,
       name: `cm_${name}`, when, endsAt: null, anchorAt: Date.now(), creation: "attempted", scheduleID: null, ambiguous: [] } })
