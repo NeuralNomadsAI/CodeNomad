@@ -911,6 +911,10 @@ pub async fn handle(
                         && envelope.kind.as_deref() == Some("rpc.method_not_found")
                 });
                 if fallback {
+                    // Release the first RPC buffer before reading the fallback so two ~24 MiB
+                    // bodies never coexist under a single `ResponsePool::History` reservation.
+                    body.clear();
+                    body.shrink_to_fit();
                     match placement.current(&app, &id, session).await {
                         Recheck::Current => {}
                         Recheck::Conflict => return blocked("conflict"),
@@ -977,15 +981,15 @@ pub async fn handle(
             } else {
                 mem = None;
             }
+            let payload = match projected {
+                Ok(payload) => payload,
+                Err(invalid_response) => return invalid_response,
+            };
             match placement.current(&app, &id, session).await {
                 Recheck::Current => {}
                 Recheck::Conflict => return blocked("conflict"),
                 Recheck::Unavailable => return blocked("unavailable"),
             }
-            let payload = match projected {
-                Ok(payload) => payload,
-                Err(invalid_response) => return invalid_response,
-            };
             drop(slot);
             if principal.live().is_err() {
                 return crate::auth::unauthorized().into_response();
@@ -1048,10 +1052,17 @@ fn valid_attachment_output(output: &Value) -> bool {
         }
         Some("blocked") => {
             obj.len() == 2
-                && obj
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .is_some_and(|r| matches!(r, "busy" | "conflict" | "unavailable"))
+                && obj.get("reason").and_then(Value::as_str).is_some_and(|r| {
+                    matches!(
+                        r,
+                        "busy"
+                            | "conflict"
+                            | "unavailable"
+                            | "maintenance_required"
+                            | "not_deletable"
+                            | "unsupported_storage"
+                    )
+                })
         }
         _ => false,
     }

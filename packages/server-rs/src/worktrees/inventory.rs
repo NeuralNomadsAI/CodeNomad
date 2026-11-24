@@ -12,9 +12,34 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
+struct MetaStamp {
+    modified: std::time::SystemTime,
+    len: u64,
+    #[cfg(unix)]
+    extra: (u64, u64, i64, i64),
+    #[cfg(windows)]
+    extra: (u64, u64, u32),
+}
+
+fn meta_stamp(meta: &std::fs::Metadata) -> Option<MetaStamp> {
+    #[cfg(unix)]
+    let extra = {
+        use std::os::unix::fs::MetadataExt;
+        (meta.dev(), meta.ino(), meta.ctime(), meta.ctime_nsec())
+    };
+    #[cfg(windows)]
+    let extra = {
+        use std::os::windows::fs::MetadataExt;
+        (meta.last_write_time(), meta.creation_time(), meta.file_attributes())
+    };
+    Some(MetaStamp { modified: meta.modified().ok()?, len: meta.len(), extra })
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct ConfigStamp {
-    link: (std::time::SystemTime, u64),
-    target: Option<(PathBuf, std::time::SystemTime, u64)>,
+    entry: MetaStamp,
+    handle: Option<Arc<same_file::Handle>>,
+    target: Option<(PathBuf, MetaStamp, Arc<same_file::Handle>)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -32,17 +57,20 @@ struct Physical {
 }
 fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
     match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_file() => {
-            Some(Some(ConfigStamp { link: (meta.modified().ok()?, meta.len()), target: None }))
-        }
+        Ok(meta) if meta.is_file() => Some(Some(ConfigStamp {
+            entry: meta_stamp(&meta)?,
+            handle: Some(Arc::new(same_file::Handle::from_path(path).ok()?)),
+            target: None,
+        })),
         Ok(meta) if meta.file_type().is_symlink() => {
-            let link = (meta.modified().ok()?, meta.len());
+            let entry = meta_stamp(&meta)?;
             let real = dunce::canonicalize(path).ok()?;
             let target_meta = std::fs::metadata(&real).ok()?;
             if !target_meta.is_file() {
                 return None;
             }
-            Some(Some(ConfigStamp { link, target: Some((real, target_meta.modified().ok()?, target_meta.len())) }))
+            let handle = Arc::new(same_file::Handle::from_path(&real).ok()?);
+            Some(Some(ConfigStamp { entry, handle: None, target: Some((real, meta_stamp(&target_meta)?, handle)) }))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(None),
         _ => None,
@@ -264,6 +292,19 @@ impl Tree {
     }
     pub fn direct_folder(&self) -> bool {
         !self.nested_missing && self.identity.is_some() && self.projected_link.is_none()
+    }
+    /// Worktree creation source (`native-worktrees.ts:209-218`): accepts both direct project
+    /// folders and sibling checkouts whose projected subfolder symlinks within the same repo.
+    pub fn creatable_source(&self) -> bool {
+        !self.nested_missing && (self.identity.is_some() || self.projected_link.is_some())
+    }
+    pub fn source_live(&self) -> bool {
+        if let Some(link) = &self.projected_link {
+            let (_, target, _, _) = link.as_ref();
+            self.contains_media(target)
+        } else {
+            self.contains_live(&self.path)
+        }
     }
     fn owns_path(&self, dir: &Path) -> bool {
         self.path == dir
@@ -647,6 +688,17 @@ async fn catalogue_in_at(
     }
     app.workspace(&w.id.to_string())?;
     if !checked.iter().any(|t| t.slug == "root" && !t.nested_missing) {
+        return Err(native_error());
+    }
+    // Re-verify every checkout's Git layout and config stamps right before publication
+    // (TS `git-worktrees.ts:128-135`) so a mid-inventory config change cannot publish stale data.
+    let layouts: Vec<Physical> = std::iter::once(local)
+        .chain(std::iter::once(main.clone()))
+        .chain(checked.iter().map(|t| t.layout.clone()))
+        .collect();
+    let all_live =
+        tokio::task::spawn_blocking(move || layouts.iter().all(Physical::live)).await.map_err(|_| native_error())?;
+    if !all_live {
         return Err(native_error());
     }
     checked.sort_by_key(|t| (t.slug != "root", t.branch.clone(), t.slug.clone()));

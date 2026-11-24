@@ -101,11 +101,19 @@ pub(super) async fn handle(
     let root = display(&workspace.path);
     let run = async {
         let Ok(endpoint) = app.native.acquire(deadline).await else { return Ok(blocked()) };
+        let endpoint_retire = endpoint.clone();
         let scope = Scope { app: &app, workspace, endpoint, root, deadline, inventory: Mutex::new(None) };
-        let result = if ranked {
-            ranked::run(&scope, input, token.as_deref()).await
-        } else {
-            query(&scope, input, token.as_deref()).await
+        let work = async {
+            if ranked {
+                ranked::run(&scope, input, token.as_deref()).await
+            } else {
+                query(&scope, input, token.as_deref()).await
+            }
+        };
+        let result = tokio::select! {
+            biased;
+            _ = app.native.wait_retired(&endpoint_retire) => Ok(blocked()),
+            result = work => result,
         };
         principal.live()?;
         result

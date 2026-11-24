@@ -150,14 +150,14 @@ pub async fn create(
     let catalogue = catalogue(&app, &w, true).await?;
     git::guard_config(&catalogue.main).await?;
     let from = catalogue.get(from_slug)?;
-    if !from.direct_folder() {
+    if !from.creatable_source() {
         return Err(conflict("Source worktree does not contain the workspace folder"));
     }
     let mut paths: Vec<_> = catalogue.trees.iter().map(|tree| super::fence::identity(tree.registered())).collect();
     paths.push(super::fence::identity(&catalogue.parent));
     let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A worktree is being removed"))?;
     let confirmed = self::catalogue(&app, &w, false).await?;
-    if confirmed.get(from_slug).ok() != Some(from) || !from.contains_live(&from.path) {
+    if confirmed.get(from_slug).ok() != Some(from) || !from.source_live() {
         return Err(conflict("Source worktree changed"));
     }
     git(&w.path, &["check-ref-format", "--branch", branch]).await.map_err(|_| invalid("Invalid worktree branch"))?;

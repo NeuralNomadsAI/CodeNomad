@@ -206,24 +206,45 @@ impl Owner {
     }
 
     /// Stops admission, joins pending requests, then removes our own empty folder.
-    pub async fn close(&self) {
+    pub async fn close(&self) -> Result<(), String> {
         self.closed.store(true, Ordering::SeqCst);
+        let mut drained = false;
         for _ in 0..120 {
             if self.pending.load(Ordering::SeqCst) == 0 {
+                drained = true;
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         let folder = self.folder();
         let created = *self.created.lock().unwrap();
+        let mut remove_err = None;
         if created.is_some() {
-            let _ = tokio::task::spawn_blocking(move || {
+            match tokio::task::spawn_blocking(move || -> Result<(), String> {
                 if artifact::directory_identity(&folder) == created {
-                    let _ = fs::remove_dir(&folder);
+                    match fs::remove_dir(&folder) {
+                        Ok(()) => Ok(()),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                        Err(e) => Err(e.to_string()),
+                    }
+                } else {
+                    Ok(())
                 }
             })
-            .await;
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => remove_err = Some(e),
+                Err(e) => remove_err = Some(e.to_string()),
+            }
         }
+        if let Some(err) = remove_err {
+            return Err(err);
+        }
+        if !drained {
+            return Err("Timed out waiting for pending plugin readiness requests".into());
+        }
+        Ok(())
     }
 }
 

@@ -150,10 +150,13 @@ impl Native {
         if self.inner.lifecycle.is_none() {
             return self.endpoint().ok_or_else(|| Refusal::Failed("OpenCode fixture endpoint is missing".into()));
         }
-        if let (Some(current), Some(at)) = (self.endpoint(), *self.inner.validated.lock().unwrap())
-            && at.elapsed() < RECHECK
         {
-            return Ok(current);
+            let current = self.inner.endpoint.read().unwrap();
+            if let (Some(current), Some(at)) = (current.as_ref(), *self.inner.validated.lock().unwrap())
+                && at.elapsed() < RECHECK
+            {
+                return Ok(current.clone());
+            }
         }
         let flight = {
             let mut slot = self.inner.inflight.lock().unwrap();
@@ -307,8 +310,15 @@ pub fn upstream_error() -> Error {
 pub(crate) async fn read_bytes(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>, ()> {
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
-        if body.len() + chunk.len() > max {
+        let Some(need) = body.len().checked_add(chunk.len()) else {
             return Err(());
+        };
+        if need > max {
+            return Err(());
+        }
+        if need > body.capacity() {
+            let target = (body.capacity().max(8192).saturating_mul(2)).max(need).min(max);
+            body.reserve_exact(target - body.len());
         }
         body.extend_from_slice(&chunk);
     }

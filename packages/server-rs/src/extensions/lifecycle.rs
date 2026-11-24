@@ -536,41 +536,54 @@ pub fn start(
         let _ = tokio::time::timeout(Duration::from_secs(1), write_status(snapshot)).await;
         // Close all presence owners concurrently so multiple namespaces never exceed shutdown
         // budgets sequentially before lease disposal begins (TS `desktop-plugin-lifecycle.ts:169`).
-        let _ = futures_util::future::join_all(owners.into_iter().flatten().map(|owner| async move {
-            let _ = tokio::time::timeout(Duration::from_secs(1), owner.close()).await;
+        let close_results = futures_util::future::join_all(owners.into_iter().flatten().map(|owner| async move {
+            match tokio::time::timeout(Duration::from_secs(1), owner.close()).await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(e)) => Err(e),
+                Err(_) => Err("Timed out closing plugin readiness owner during shutdown".into()),
+            }
         }))
         .await;
+        let close_err = close_results.into_iter().find_map(Result::err);
         // Hold `LEASE_IO` across disposal so a late `sync_leases` worker can never recreate a
         // deleted lease after shutdown cleanup; retry once after 250 ms (TS `shutdown.ts:135-146`).
-        let disposed = tokio::task::spawn_blocking(move || -> Result<(), String> {
-            let _io = LEASE_IO.lock().unwrap();
-            let mut last_err = None;
-            for attempt in 0..2 {
-                let mut first_err = None;
-                for features in &leases {
-                    if let Err(e) = provision::dispose_checked(features)
-                        && first_err.is_none()
-                    {
-                        first_err = Some(e.to_string());
+        // Bound the wait so a stalled background `sync_leases` I/O call cannot hang shutdown forever.
+        let disposed = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::task::spawn_blocking(move || -> Result<(), String> {
+                let _io = LEASE_IO.lock().unwrap();
+                let mut last_err = None;
+                for attempt in 0..2 {
+                    let mut first_err = None;
+                    for features in &leases {
+                        if let Err(e) = provision::dispose_checked(features)
+                            && first_err.is_none()
+                        {
+                            first_err = Some(e.to_string());
+                        }
+                    }
+                    if first_err.is_none() {
+                        return Ok(());
+                    }
+                    last_err = first_err;
+                    if attempt == 0 {
+                        std::thread::sleep(Duration::from_millis(250));
                     }
                 }
-                if first_err.is_none() {
-                    return Ok(());
-                }
-                last_err = first_err;
-                if attempt == 0 {
-                    std::thread::sleep(Duration::from_millis(250));
-                }
-            }
-            Err(last_err.unwrap())
-        })
+                Err(last_err.unwrap())
+            }),
+        )
         .await;
         drop(serial_guard);
         match disposed {
-            Ok(Ok(())) if !serial_timed_out => Ok(()),
-            Ok(Ok(())) => Err("Timed out waiting for in-flight plugin provisioning during shutdown".into()),
-            Ok(Err(e)) => Err(e),
-            Err(e) => Err(e.to_string()),
+            Ok(Ok(Ok(()))) if !serial_timed_out && close_err.is_none() => Ok(()),
+            Ok(Ok(Ok(()))) if serial_timed_out => {
+                Err("Timed out waiting for in-flight plugin provisioning during shutdown".into())
+            }
+            Ok(Ok(Ok(()))) => Err(close_err.unwrap()),
+            Ok(Ok(Err(e))) => Err(e),
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => Err("Timed out disposing plugin leases during shutdown".into()),
         }
     })))
 }

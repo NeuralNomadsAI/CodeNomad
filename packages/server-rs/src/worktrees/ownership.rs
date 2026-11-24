@@ -352,7 +352,6 @@ fn resolve_media_step(
             if !*missing {
                 match std::fs::symlink_metadata(&*cur) {
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => *missing = true,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotADirectory => return Ok(None),
                     Err(_) => return Err(()),
                     Ok(_) => {
                         // Follow symlinks/junctions hop-by-hop BEFORE `canonicalize` so a chain of
@@ -451,7 +450,6 @@ fn resolve_media_step(
                                 *cur = real;
                             }
                             Err(e) if e.kind() == std::io::ErrorKind::NotFound => *missing = true,
-                            Err(e) if e.kind() == std::io::ErrorKind::NotADirectory => return Ok(None),
                             Err(_) => return Err(()),
                         }
                     }
@@ -459,6 +457,15 @@ fn resolve_media_step(
             }
         }
         Component::ParentDir => {
+            if !*missing {
+                // Reject `file/../dir` (`ENOTDIR`): a non-directory cannot be traversed via `..`.
+                match std::fs::symlink_metadata(&*cur) {
+                    Ok(m) if m.is_dir() => {}
+                    Ok(_) => return Err(()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => *missing = true,
+                    Err(_) => return Err(()),
+                }
+            }
             if !scope_comps.is_empty() && *cur == scope {
                 return Ok(None);
             }
@@ -478,7 +485,6 @@ fn resolve_media_step(
                         *missing = false;
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::NotADirectory => return Ok(None),
                     Err(_) => return Err(()),
                 }
             }

@@ -1615,6 +1615,7 @@ pub(crate) fn json_node_count_within(bytes: &[u8], limit: usize) -> bool {
 /// only `id`, `projectID`, `location.{directory,workspaceID}`, and `revert` without allocating a
 /// `serde_json::Value` tree over ignored fields.
 pub(crate) fn extract_session_record(raw: &[u8], id: &str, strict_id: bool) -> Result<serde_json::Value, ()> {
+    let raw = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(raw);
     let text = std::str::from_utf8(raw).map_err(|_| ())?;
     let mut syntax = JsonSyntax::new();
     syntax.feed(raw);

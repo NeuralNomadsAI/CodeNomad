@@ -104,10 +104,6 @@ impl Routes {
         Self::cache(&mut self.locations.lock().unwrap(), session, dir, Instant::now());
     }
 
-    fn clear(&self) {
-        self.locations.lock().unwrap().clear();
-    }
-
     fn cache(cache: &mut HashMap<String, (Instant, String)>, session: &str, dir: &str, now: Instant) {
         if cache.len() >= SESSION_RECIPIENT_LIMIT && !cache.contains_key(session) {
             cache.retain(|_, (until, _)| *until > now);
@@ -195,15 +191,14 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
     // Rotate the `server.connected` daemon token whenever the underlying daemon endpoint/credentials
     // change (TS `instance-events.ts:203-210`).
     let mut daemon_source: Option<(String, String)> = None;
-    let routes = Arc::new(Routes::default());
     loop {
         if shutdown.is_cancelled() {
             return;
         }
-        // Clear cached session directories before every subscription so a reconnect
-        // cannot route a location-less event to a session's previous workspace
+        // Allocate a fresh route cache per SSE subscription so a late worker from an older
+        // subscription can never repopulate the new subscription with stale session locations
         // (TS `instance-events.ts:143-147`).
-        routes.clear();
+        let routes = Arc::new(Routes::default());
         while {
             let store = app.inner.lock().unwrap();
             store.workspaces.is_empty() && store.generation == 0
