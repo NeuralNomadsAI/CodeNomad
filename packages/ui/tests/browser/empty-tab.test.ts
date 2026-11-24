@@ -21,7 +21,7 @@ const profiles = ["Beta", "Alpha"].map(name => ({
   createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
 }))
 
-async function openApp(page: Page, remoteServers = profiles, recentFolders: { path: string; lastAccessed: number }[] = []) {
+async function openApp(page: Page, remoteServers = profiles, recentFolders: { path: string; lastAccessed: number }[] = [], configureRoutes?: () => Promise<void>) {
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname
     if (path === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
@@ -37,6 +37,7 @@ async function openApp(page: Page, remoteServers = profiles, recentFolders: { pa
     }
     return route.fulfill({ json: data[path] ?? {} })
   })
+  await configureRoutes?.()
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
   await page.getByRole("heading", { name: "CodeNomad", exact: true }).waitFor()
 }
@@ -182,6 +183,53 @@ test("stacked recents collapse to their empty state or one or two rows", async (
     } finally { await page.close() }
   }
 })
+
+for (const delayed of ["recents", "sidecars"] as const) {
+  test(`a stacked Browse submit survives ${delayed} arriving during the click`, async () => {
+    const page = await browser.newPage({ viewport: { width: 390, height: 850 } })
+    const arrival = Promise.withResolvers<void>()
+    const recents = Array.from({ length: 20 }, (_, i) => ({ path: `/project-${i}`, lastAccessed: 20 - i }))
+    const sidecars = Array.from({ length: 8 }, (_, i) => ({ id: `sidecar-${i}`, name: `SideCar ${i}`, status: "running", kind: "port", port: 7000 + i }))
+    let probes = 0
+    try {
+      await openApp(page, [], recents, async () => {
+        await page.route("**/api/meta", route => route.fulfill({ json: { sidecarsAllowed: true, serversUsable: true, serversManageable: true, secretEntryAllowed: true } }))
+        await page.route("**/api/storage/state/ui", async route => {
+          if (delayed === "recents") await arrival.promise
+          await route.fallback()
+        })
+        await page.route("**/api/sidecars", async route => {
+          if (delayed === "sidecars") await arrival.promise
+          await route.fulfill({ json: { sidecars } })
+        })
+        await page.route("**/api/remote-servers/probe", route => {
+          probes++
+          return route.fulfill({ status: 502, json: { error: "unreachable", code: "unreachable" } })
+        })
+      })
+      const browse = page.getByRole("region", { name: "Browse", exact: true })
+      const lastSidecar = browse.locator('[data-sidecar="sidecar-7"]')
+      const lastRecent = page.getByRole("region", { name: "Recent tabs", exact: true }).getByRole("listitem").nth(19)
+      await (delayed === "recents" ? lastSidecar : lastRecent).waitFor()
+      await browse.locator(".browse-menu-footer input").fill("https://new-server.example")
+      const submit = browse.locator(".browse-menu-footer button[type=submit]")
+      await submit.scrollIntoViewIfNeeded()
+      const { x, y, width, height } = (await submit.boundingBox())!
+      await page.mouse.move(x + width / 2, y + height / 2)
+      await page.mouse.down()
+      arrival.resolve()
+      await (delayed === "recents" ? lastRecent : lastSidecar).waitFor()
+      const hit = await submit.evaluate((button, point) => button.contains(document.elementFromPoint(point.x, point.y)), { x: x + width / 2, y: y + height / 2 })
+      await page.mouse.up()
+      assert.ok(hit, "the same pointer position still hits Submit")
+      await browse.getByRole("alert").waitFor()
+      assert.equal(probes, 1)
+    } finally {
+      arrival.resolve()
+      await page.close()
+    }
+  })
+}
 
 for (const width of [1280, 390]) {
   test(`direct HTTPS sign-in fits the Browse panel at ${width} pixels`, async () => {
