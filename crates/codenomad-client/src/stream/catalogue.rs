@@ -128,6 +128,8 @@ impl Signals {
                         let mut stopped = self.workspace_stopped.lock().unwrap();
                         if stopped.len() < 128 {
                             stopped.insert(workspace_id);
+                        } else if !stopped.contains(&workspace_id) {
+                            self.workspace_overflow.store(true, SeqCst);
                         }
                     }
                     other => {
@@ -645,5 +647,32 @@ mod tests {
             *signals.pending.lock().unwrap(),
             CatalogueChanges::All
         ));
+    }
+
+    #[test]
+    fn workspace_stopped_overflow_flags_reconciliation() {
+        let signals = Signals {
+            pending: Mutex::default(),
+            providers: Mutex::default(),
+            stopped: Mutex::default(),
+            stats: Mutex::default(),
+            attention: Mutex::default(),
+            workspace_events: Mutex::default(),
+            workspace_stopped: Mutex::default(),
+            workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            disconnect_notice: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
+            generation: Default::default(),
+            workspace_generation: Default::default(),
+            wake: Arc::new(|| {}),
+        };
+        for i in 0..128 {
+            signals.observe(&json!({"type":"workspace.stopped","workspaceId":format!("w-{i}")}));
+        }
+        assert!(!signals.workspace_overflow.load(SeqCst));
+        signals.observe(&json!({"type":"workspace.stopped","workspaceId":"w-0"}));
+        assert!(!signals.workspace_overflow.load(SeqCst));
+        signals.observe(&json!({"type":"workspace.stopped","workspaceId":"w-128"}));
+        assert!(signals.workspace_overflow.load(SeqCst));
     }
 }

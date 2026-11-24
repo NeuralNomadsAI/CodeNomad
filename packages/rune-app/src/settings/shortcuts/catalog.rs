@@ -68,10 +68,8 @@ fn is_valid_rule(rule: &Value) -> bool {
     if !obj.get("key").and_then(Value::as_str).is_some_and(|key| {
         let lower = key.to_lowercase();
         !key.is_empty()
-            && key.len() <= 40
+            && key.encode_utf16().count() <= 40
             && !key.chars().any(char::is_control)
-            && (key == " " || !key.trim().is_empty())
-            && !(key.len() > 1 && key.contains('+'))
             && !matches!(
                 lower.as_str(),
                 "control"
@@ -267,15 +265,24 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
             .active
     );
 
+    let utf16_40 = "é".repeat(40);
+    let utf16_41 = "é".repeat(41);
     let mut invalid = Preferences::default();
     invalid.fixture_shortcuts(serde_json::json!({
         "close-session": [{"key": "Dead"}],
-        "close-instance": [{"key": "Ctrl+W"}],
+        "close-instance": [{"key": utf16_41}],
+        "instance-prev": [{"key": "F8"}, {"key": "A+B"}],
         "instance-next": [{"key": "BrowserBack"}],
+        "session-prev": [{"key": utf16_40}],
         "new-instance": [],
     }));
     assert!(!resolve(&invalid, "close-session").is_empty());
     assert!(!resolve(&invalid, "close-instance").is_empty());
+    assert_eq!(
+        resolve(&invalid, "instance-prev"),
+        vec![Chord::new(rune::ChordKey::Function(8))]
+    );
     assert!(resolve(&invalid, "instance-next").is_empty());
+    assert!(resolve(&invalid, "session-prev").is_empty());
     assert!(resolve(&invalid, "new-instance").is_empty());
 }

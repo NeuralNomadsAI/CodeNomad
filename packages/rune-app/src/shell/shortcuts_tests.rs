@@ -623,6 +623,24 @@ fn tab_strip_tooltips_reflect_active_close_and_new_instance_overrides() {
 
     assert!(help_of(&rt, "project-tabs-new").contains("F8"));
     assert!(!help_of(&rt, "c-tab-0").contains('('));
+
+    // On desktop Home with new-instance disabled and close-instance mapped to browse-folder's key,
+    // the close tooltip still shows the shortcut (usable when focus is in the tab bar).
+    rt.update(|s, tx| {
+        crate::workspace::new_tab(s, tx);
+    });
+    settings::fixture_shortcuts(
+        &rt.state,
+        json!({"new-instance": [], "close-instance": [{"key": "n", "mod": true}]}),
+    );
+    rt.update(|s, _| s.revision += 1);
+    settle(&mut rt);
+    let active_key = format!("c-{}", rt.state.workspace.as_ref().unwrap().active_key());
+    assert!(
+        help_of(&rt, &active_key).contains('('),
+        "expected close shortcut on Home when new-instance is disabled: {:?}",
+        help_of(&rt, &active_key)
+    );
 }
 
 #[test]

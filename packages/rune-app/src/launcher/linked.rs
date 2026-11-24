@@ -36,7 +36,7 @@ impl Pages {
 #[derive(Default)]
 pub(crate) struct Linked {
     pub pages: Option<Pages>,
-    job: Option<(Sender<()>, Receiver<Result<(Pages, bool)>>)>,
+    job: Option<(Sender<()>, Receiver<Result<(Pages, bool, bool)>>)>,
     pub failed: bool,
 }
 impl Linked {
@@ -91,9 +91,10 @@ pub(super) fn load(s: &mut State) {
                     },
                 };
                 let mut ids = pages.rows.iter().map(|row| row.id.clone()).collect();
+                let mut io_failed = false;
                 for _ in 0..1000 {
-                    let Some(location) = pages.remaining.front() else {
-                        return Ok((pages, true));
+                    let Some(mut location) = pages.remaining.pop_front() else {
+                        return Ok((pages, true, false));
                     };
                     let Ok(page) = backend
                         .linked_session_page(
@@ -103,25 +104,25 @@ pub(super) fn load(s: &mut State) {
                         )
                         .await
                     else {
+                        pages.remaining.push_front(location);
+                        io_failed = true;
                         break;
                     };
                     if !pages.keep(page.rows, &mut ids) {
+                        pages.remaining.push_front(location);
                         break;
                     }
                     if let Some(next) = page.next {
-                        let Some(location) = pages.remaining.front_mut() else {
-                            break;
-                        };
                         if location.seen.len() >= 1000 || !location.seen.insert(next.clone()) {
+                            pages.remaining.push_front(location);
                             break;
                         }
                         location.cursor = Some(next);
-                    } else {
-                        pages.remaining.pop_front();
+                        pages.remaining.push_back(location);
                     }
                 }
                 let complete = pages.remaining.is_empty();
-                Ok((pages, complete))
+                Ok((pages, complete, io_failed))
             }
             .await;
             let _ = out.send(result).await;
@@ -152,10 +153,10 @@ pub(super) fn poll(s: &mut State) -> bool {
     };
     l.linked.job = None;
     match result {
-        Ok((pages, complete)) => {
+        Ok((pages, complete, io_failed)) => {
             l.linked.pages = Some(pages);
             l.linked.failed = !complete;
-            if complete && l.creation_uncertain_linked {
+            if !io_failed && l.creation_uncertain_linked {
                 l.creation_uncertain = false;
                 l.creation_uncertain_linked = false;
             }
@@ -185,5 +186,40 @@ mod tests {
         assert!(!pages.keep(rows, &mut HashSet::new()));
         assert_eq!(pages.rows.len(), MAX_BROWSED_SESSIONS);
         assert_eq!(pages.remaining[0].cursor.as_deref(), Some("opaque"));
+    }
+
+    #[test]
+    fn capped_error_free_refresh_clears_linked_creation_uncertain() {
+        let mut s = crate::init();
+        s.screen = crate::Screen::Launcher(crate::launcher::Launcher::fixture());
+        let (cancel, _cancelled) = bounded(1);
+        let (out, input) = bounded(1);
+        {
+            let l = s.screen.launcher_mut().unwrap();
+            l.creation_uncertain = true;
+            l.creation_uncertain_linked = true;
+            l.linked.job = Some((cancel, input));
+        }
+        let mut pages = Pages::default();
+        pages.remaining.push_back(Location {
+            directory: "/wt".into(),
+            cursor: Some("next".into()),
+            ..Default::default()
+        });
+        assert!(out.try_send(Ok((pages.clone(), false, true))).is_ok());
+        assert!(poll(&mut s));
+        let l = s.screen.launcher().unwrap();
+        assert!(l.creation_uncertain);
+        assert!(l.creation_uncertain_linked);
+
+        let (cancel, _cancelled) = bounded(1);
+        let (out, input) = bounded(1);
+        s.screen.launcher_mut().unwrap().linked.job = Some((cancel, input));
+        assert!(out.try_send(Ok((pages, false, false))).is_ok());
+        assert!(poll(&mut s));
+        let l = s.screen.launcher().unwrap();
+        assert!(!l.creation_uncertain);
+        assert!(!l.creation_uncertain_linked);
+        assert!(l.linked.failed);
     }
 }

@@ -105,6 +105,11 @@ pub(crate) fn fixture_scope_open(
     timeline.search.scope_open = open;
 }
 
+#[cfg(test)]
+pub(crate) fn fixture_blur(s: &mut State) {
+    state(s).query.focused = false;
+}
+
 pub(crate) fn close(s: &mut State) {
     clear_selection(s);
     *state(s) = Search::default();
@@ -164,7 +169,11 @@ pub(crate) fn open_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if crate::shell::shortcut_blocked(s, event, tx) {
         return false;
     }
-    if state(s).open && matches!(event.key, Key::Text(_)) && (!event.mods.alt || event.mods.ctrl) {
+    if state(s).open
+        && state(s).query.focused
+        && matches!(event.key, Key::Text(_))
+        && (!event.mods.alt || event.mods.ctrl)
+    {
         return false;
     }
     if crate::settings::match_shortcut(s, event, tx, |matches| {

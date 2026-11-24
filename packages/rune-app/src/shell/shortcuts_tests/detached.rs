@@ -594,8 +594,13 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
         rt.state.transcript_display.messages = Default::default();
 
-        // Remapping session-search to a bare letter does not swallow typing once search is open.
-        settings::fixture_shortcuts(&rt.state, json!({"session-search": [{"key": "s"}]}));
+        // Remapping session-search to a bare letter does not swallow typing while the search input
+        // is focused, but keeps priority over new-instance when focus moves outside the input.
+        settings::fixture_shortcuts(
+            &rt.state,
+            json!({"session-search": [{"key": "s"}], "new-instance": [{"key": "s"}]}),
+        );
+        let tabs_before_search = rt.state.workspace.as_ref().unwrap().tab_count();
         rt.update(|s, tx| {
             let open_ev = KeyEvent {
                 key: Key::Text("s".into()),
@@ -604,10 +609,19 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
             assert!(crate::timeline::search::open_key(s, &open_ev, tx));
             assert!(
                 !crate::timeline::search::open_key(s, &open_ev, tx),
-                "bare text key must not be swallowed once search is open"
+                "bare text key must not be swallowed while the search query is focused"
             );
+            crate::timeline::search::fixture_blur(s);
+        });
+        send_key(&mut rt, Key::Text("s".into()), Mods::default());
+        assert_eq!(
+            rt.state.workspace.as_ref().unwrap().tab_count(),
+            tabs_before_search
+        );
+        rt.update(|s, _| {
             crate::timeline::search::close(s);
         });
+        settings::fixture_shortcuts(&rt.state, json!({}));
 
         // Closing and rebinding a session in the same project preserves the Files tree expanded folders
         // and revalidates the tree across the conversation-to-detached handoff.

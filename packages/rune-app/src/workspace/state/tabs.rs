@@ -119,7 +119,15 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
     tx.instant();
 }
 pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
-    s.notifications.supersede_navigation();
+    let allowed = s.workspace.as_ref().is_some_and(|ui| {
+        ui.entries
+            .iter()
+            .position(|e| e.key == id)
+            .is_some_and(|index| ui.active == index || !busy(s))
+    });
+    if allowed {
+        s.notifications.supersede_navigation();
+    }
     select_destination(s, id, tx);
 }
 

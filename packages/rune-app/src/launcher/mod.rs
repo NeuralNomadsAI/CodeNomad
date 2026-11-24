@@ -468,6 +468,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
             let reauthenticated = std::mem::take(&mut l.authentication_required);
+            let live_ids: HashSet<String> = if reauthenticated {
+                projects.iter().map(|p| p.id.clone()).collect()
+            } else {
+                HashSet::new()
+            };
             l.catalogue_watch = None;
             l.workspace_stream_generation = 0;
             l.detached_reconcile = None;
@@ -483,28 +488,39 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             crate::workspace::connected(s);
             if reauthenticated {
                 crate::workspace::renew_connection(s);
+                let live: HashSet<&str> = live_ids.iter().map(String::as_str).collect();
+                crate::workspace::stop_unlisted_detached(s, &live);
                 if let Some(id) = selected {
-                    if s.composer.pending() && s.incoming.is_some() {
+                    if s.composer.pending() && s.incoming.is_none() {
+                        crate::composer::settle_pending(
+                            s,
+                            codenomad_client::transport::PromptOutcome::Unconfirmed,
+                        );
+                    }
+                    if (s.composer.pending() && s.incoming.is_some())
+                        || s.status_permissions.writing()
+                    {
                         if let Some(l) = s.screen.launcher_mut() {
                             l.rebind_after_send = Some(id);
                         }
                         s.phase = Phase::Failed;
                         s.show_chat();
                     } else {
-                        if s.composer.pending() {
-                            crate::composer::settle_pending(
-                                s,
-                                codenomad_client::transport::PromptOutcome::Unconfirmed,
-                            );
-                        }
                         s.incoming = None;
                         s.phase = Phase::Failed;
                         s.show_chat();
                         choose_destination(s, id, None, tx);
                     }
                 } else {
-                    crate::git::project_opened(s);
-                    crate::workspace::restore_files_mode(s);
+                    let active_live = s
+                        .screen
+                        .launcher()
+                        .and_then(|l| l.project.as_ref())
+                        .is_some_and(|p| live.contains(p.id.as_str()));
+                    if active_live {
+                        crate::git::project_opened(s);
+                        crate::workspace::restore_files_mode(s);
+                    }
                     crate::workspace::resume(s, tx);
                 }
             } else {

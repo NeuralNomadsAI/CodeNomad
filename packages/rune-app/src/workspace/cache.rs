@@ -89,6 +89,33 @@ impl Cache {
         }
     }
 
+    pub(super) fn stop_unlisted_detached(
+        &mut self,
+        live: &std::collections::HashSet<&str>,
+    ) -> bool {
+        if !self.is_detached() {
+            return false;
+        }
+        let mut changed = false;
+        if let Some(git) = &mut self.git.owner {
+            let id = git.workspace_id();
+            if !live.contains(id) {
+                let workspace_id = id.to_owned();
+                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                changed = true;
+            }
+        }
+        if let Some(files) = &mut self.files {
+            let id = files.workspace_id();
+            if !live.contains(id) {
+                let workspace_id = id.to_owned();
+                files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub(super) fn reconcile_detached_online(
         &mut self,
         opened_after: &std::collections::HashSet<String>,

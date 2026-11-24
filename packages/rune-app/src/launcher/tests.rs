@@ -672,3 +672,146 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
     assert!(!launcher.creation_uncertain);
     assert!(!launcher.creation_uncertain_linked);
 }
+
+#[test]
+fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write_rebind() {
+    let mut s = crate::init();
+    crate::gallery::shell::fixture(&mut s);
+    let mut ui = crate::workspace::Ui::new();
+    ui.fixture_ready();
+    s.workspace = Some(ui);
+    let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    let project_a = Project {
+        id: "proj-a".into(),
+        path: "/repo-a".into(),
+    };
+    let project_b = Project {
+        id: "proj-b".into(),
+        path: "/repo-b".into(),
+    };
+    let bound_a = Backend {
+        workspace: project_a.id.clone(),
+        session: String::new(),
+        ..backend.clone()
+    };
+    let bound_b = Backend {
+        workspace: project_b.id.clone(),
+        session: "ses-b".into(),
+        ..backend.clone()
+    };
+    {
+        let l = s.screen.launcher_mut().unwrap();
+        l.connection = Some(backend.clone());
+        l.project = Some(project_a.clone());
+    }
+    crate::workspace::opened(&mut s, &project_a);
+    s.show_launcher();
+    s.files = Some(crate::files::Ui::new(
+        bound_a.clone(),
+        project_a.path.clone(),
+        s.reads.clone(),
+        s.wake.clone(),
+    ));
+    crate::git::connected(&mut s, &bound_a);
+
+    let mut rt = rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+    rt.update(|s, tx| {
+        crate::workspace::new_tab(s, tx);
+        let l = s.screen.launcher_mut().unwrap();
+        l.connection = Some(backend.clone());
+        l.project = Some(project_b.clone());
+        crate::workspace::opened(s, &project_b);
+        crate::workspace::bound(s, &bound_b);
+        s.show_chat();
+    });
+
+    // While tab B has an in-flight permission write and auth expired, reauthentication
+    // stops detached tab A (not in fresh projects list) and defers tab B's rebind.
+    rt.state.status_permissions.fixture_writing(true);
+    let (out, input) = bounded(1);
+    {
+        let l = rt.state.screen.launcher_mut().unwrap();
+        l.authentication_required = true;
+        l.result = Some(input);
+        l.pending = true;
+    }
+    assert!(
+        out.try_send(Ok(Reply::Connected(
+            backend.clone(),
+            vec![project_b.clone()],
+            "srv-1".into(),
+        )))
+        .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(!rt.state.screen.is_launcher());
+    assert_eq!(
+        rt.state
+            .screen
+            .launcher()
+            .unwrap()
+            .rebind_after_send
+            .as_deref(),
+        Some("ses-b")
+    );
+    // Settling the permission write triggers the deferred rebind automatically.
+    rt.state.status_permissions.fixture_writing(false);
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(
+        rt.state
+            .screen
+            .launcher()
+            .unwrap()
+            .rebind_after_send
+            .is_none()
+    );
+    assert!(rt.state.screen.launcher().unwrap().pending);
+
+    // Refused tab switch while pending does not invalidate Reply::Created's navigation ticket.
+    let ticket = rt.state.notifications.navigation_ticket();
+    let (created_out, created_in) = bounded(1);
+    {
+        let l = rt.state.screen.launcher_mut().unwrap();
+        l.result = Some(created_in);
+        l.pending = true;
+    }
+    rt.update(|s, tx| {
+        crate::workspace::select_index(s, 0, tx);
+    });
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+    assert_eq!(rt.state.notifications.navigation_ticket(), ticket);
+    let created_backend = Backend {
+        workspace: project_b.id.clone(),
+        session: "ses-created".into(),
+        ..backend
+    };
+    assert!(
+        created_out
+            .try_send(Ok(Reply::Created(
+                created_backend,
+                "Created".into(),
+                "root".into(),
+                String::new(),
+                None,
+                Some(ticket),
+            )))
+            .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert_eq!(
+        crate::workspace::active_session(&rt.state),
+        Some("ses-created")
+    );
+
+    // Switching back to cached tab A shows its detached Files panel stayed stopped after reauth.
+    rt.update(|s, tx| {
+        crate::workspace::select_index(s, 0, tx);
+    });
+    assert!(rt.state.files.as_ref().unwrap().stopped);
+}

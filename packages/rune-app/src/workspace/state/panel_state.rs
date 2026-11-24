@@ -369,6 +369,43 @@ pub(crate) fn has_unopened_detached_panels(
         .any(|id| !opened_after.contains(id))
 }
 
+pub(crate) fn stop_unlisted_detached(
+    s: &mut State,
+    live: &std::collections::HashSet<&str>,
+) -> bool {
+    let mut changed = false;
+    if s.screen.is_launcher() && s.incoming.is_none() {
+        if let Some(workspace_id) = s
+            .git
+            .owner
+            .as_ref()
+            .map(|git| git.workspace_id().to_owned())
+            .filter(|id| !live.contains(id.as_str()))
+        {
+            crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+            changed = true;
+        }
+        if let Some(files) = &mut s.files {
+            let workspace_id = files.workspace_id().to_owned();
+            if !live.contains(workspace_id.as_str()) {
+                files.event(WorkspaceEvent::Stopped { workspace_id });
+                changed = true;
+            }
+        }
+    }
+    if let Some(ui) = &mut s.workspace {
+        for (index, entry) in ui.entries.iter_mut().enumerate() {
+            if index == ui.active {
+                continue;
+            }
+            if let Some(cache) = entry.cache.as_mut() {
+                changed |= cache.stop_unlisted_detached(live);
+            }
+        }
+    }
+    changed
+}
+
 pub(crate) fn reconcile_detached_online(
     s: &mut State,
     opened_after: &std::collections::HashSet<String>,
