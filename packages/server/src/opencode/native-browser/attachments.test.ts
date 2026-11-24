@@ -142,3 +142,72 @@ test("a reconnect to OpenCode ends the attachment made on the replaced connectio
   await until(() => attaches.length === 2, "attach on the new connection")
   assert.notEqual(attaches[1].connectionID, attaches[0].connectionID)
 })
+test("ownership is checked when a queued command's turn comes, and a failed inventory still settles the result", async t => {
+  const rpcCalls: Array<{ method: string; input: Record<string, unknown> }> = []
+  const dispatched: boolean[] = []
+  let failState = false
+  let releaseAttach: (outcome: string) => void = () => {}
+  let attached!: (connectionID: string) => void
+  const attachedReady = new Promise<string>(resolve => { attached = resolve })
+  const app = Fastify({ logger: false })
+  app.get("/openapi.json", async () => modernContractFixture)
+  app.get("/api/session/:id", async request => ({ data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } } }))
+  app.post("/api/rpc/:rpcID/:method", async (request, reply) => {
+    const { method } = request.params as { rpcID: string; method: string }
+    const input = (request.body as { input: Record<string, unknown> }).input
+    rpcCalls.push({ method, input })
+    if (method === "attach") {
+      attached(String(input.connectionID))
+      return { output: await new Promise<string>(done => { releaseAttach = done }) }
+    }
+    if (method === "command") return { output: { action: input.requestID === "pause"
+      ? { type: "wait", condition: "delay", timeoutMs: 300 } : { type: "tabs.open", url: "https://example.com/" } } }
+    if (method === "state" && failState) return reply.code(503).send({ error: "unavailable" })
+    return { output: { ok: true } }
+  })
+  const address = await app.listen({ host: "127.0.0.1", port: 0 })
+  t.after(async () => { releaseAttach("replaced"); await app.close() })
+  const endpoint = { url: address, auth: undefined }
+  rememberRuntime(endpoint, { version: "2.4.1", pid: 1234, discovery: "status" })
+  const connection = { endpoint, client: OpenCode.make({ baseUrl: address, fetch: globalThis.fetch }), fetch: globalThis.fetch,
+    assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
+  const eventBus = new EventBus()
+  let owned = true
+  const attachments = new NativeBrowserAttachments({
+    workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => owned } as never,
+    eventBus,
+    nativeParent: { available: true, browserAutomationUnavailable: false, request: async (method: string) => {
+      if (method === "browser.execute") dispatched.push(owned)
+      if (method === "browser.probe") return { available: true, target: "doc", loading: false }
+      return { url: "https://example.com/" }
+    } } as never,
+    logger: { warn: () => {}, debug: () => {}, info: () => {}, error: () => {}, trace: () => {}, isLevelEnabled: () => false } as never,
+  })
+  t.after(() => attachments.close())
+  attachments.hold("hold", "ws", "ses-1")
+  const connectionID = await attachedReady
+  const command = (requestID: string) => eventBus.publish({ type: "instance.event", instanceId: "ws",
+    event: { type: BROWSER_CONTROL_EVENT, data: { type: "command", connectionID, requestID } } } as any)
+  const results = () => rpcCalls.filter(call => call.method === "result")
+
+  // An inventory OpenCode refuses does not drop the result of an action that already ran.
+  failState = true
+  command("open-1")
+  await until(() => results().length === 1, "result despite a failed inventory")
+  assert.equal((results()[0].input.outcome as any).type, "success")
+  failState = false
+
+  // The project stops owning the session while the open waits behind a pause: it never reaches the preview,
+  // and the preview is not read for the inventory.
+  command("pause")
+  await until(() => rpcCalls.filter(call => call.method === "command").length === 2, "pause running")
+  command("open-2")
+  await until(() => rpcCalls.filter(call => call.method === "command").length === 3, "open queued")
+  owned = false
+  const states = rpcCalls.filter(call => call.method === "state").length
+  await until(() => results().some(call => call.input.requestID === "open-2"), "refused open")
+  const refused = results().find(call => call.input.requestID === "open-2")!.input.outcome as any
+  assert.match(refused.message, /owns this conversation/)
+  assert.deepEqual(dispatched, [true], "only the first open reached the preview")
+  assert.equal(rpcCalls.filter(call => call.method === "state").length - states <= 1, true, "the refused command publishes nothing")
+})

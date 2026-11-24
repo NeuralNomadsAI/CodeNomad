@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { setTimeout as sleep } from "node:timers/promises"
 import type { BrowserPageAction } from "../../automation/browser-page"
 import { keyChord } from "../../automation/page/keys"
 
@@ -101,12 +102,14 @@ export class PreviewTab {
     this.urlTarget = target
   }
 
-  /** Commands run one at a time: a check reads, then clicks, and another command must not act in between. */
-  async run(action: Action, generation: number | undefined, signal: AbortSignal): Promise<BrowserOutcome> {
+  /** Commands run one at a time: a check reads, then clicks, and another command must not act in between.
+   * `admit` runs when the command's turn comes, before it reads or acts; an outcome it returns refuses the command. */
+  async run(action: Action, generation: number | undefined, signal: AbortSignal,
+    admit: () => Promise<BrowserOutcome | undefined> = async () => undefined): Promise<BrowserOutcome> {
     if (action.type === "tabs.list") {
       // Same-document navigation keeps the target: the address, title and history are read again.
       this.urlTarget = undefined
-      return this.execute(action, generation, signal)
+      return await admit() ?? this.execute(action, generation, signal)
     }
     const previous = this.queue
     let release!: () => void
@@ -114,7 +117,7 @@ export class PreviewTab {
     try {
       await previous
       if (signal.aborted) return failure("operation_failed", "The browser action was cancelled.")
-      return await this.execute(action, generation, signal)
+      return await admit() ?? await this.execute(action, generation, signal)
     } finally {
       // The page may have changed its history or title: the next refresh reads them again.
       this.urlTarget = undefined
@@ -237,12 +240,12 @@ export class PreviewTab {
         if (!this.target) return failure("operation_failed", "This tab is no longer shown. Call browser.tabs.list({}).")
         if (!this.loading) return this.success(this.tab())
         if (Date.now() - started >= timeout) return failure("condition_unmet", "The page is still loading.")
-        await new Promise(resolve => setTimeout(resolve, LOAD_POLL_MS))
-        signal.throwIfAborted()
+        await sleep(LOAD_POLL_MS, undefined, { signal })
       }
     }
     if (action.condition === "delay") {
-      await new Promise(resolve => setTimeout(resolve, timeout))
+      // A cancelled pause releases the command queue at once.
+      await sleep(timeout, undefined, { signal })
       return this.success(this.tab())
     }
     if (action.condition !== "text" && action.condition !== "textGone") return unsupported(`wait for ${String(action.condition)}`)
@@ -270,9 +273,9 @@ export class PreviewTab {
       return failure("operation_failed", "A selected radio button cannot be unchecked; check another option in its group.")
     }
     await page({ action: "click", ref: targetRef })
-    // The page may refuse the change: only the state read back counts.
+    // The page may refuse the change or replace the control: only the checked state read back counts.
     const after = await page({ action: "snapshot", ref: targetRef })
-    if ((checkState(String(after.snapshot ?? "").split("\n", 1)[0] ?? "", targetRef) === "checked") !== wanted)
+    if (checkState(String(after.snapshot ?? "").split("\n", 1)[0] ?? "", targetRef) !== (wanted ? "checked" : "unchecked"))
       return failure("operation_failed", `${targetRef} did not stay ${wanted ? "checked" : "unchecked"}; the page kept its previous state.`)
     return this.success(this.tab())
   }

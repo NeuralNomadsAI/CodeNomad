@@ -271,17 +271,23 @@ class SessionAttachment {
     let lost = false
     try {
       const command = await this.rpc("command", { requestID }, signal) as { action: Record<string, unknown> & { type: string }; generation?: number; inspect?: boolean }
-      // Ownership is checked again for every command: a project can stop owning the session while it is shown.
-      this.owners = this.location ? await this.verifiedOwners(this.location, signal) : []
-      lost = !this.workspaceID || !this.owners.includes(this.workspaceID)
+      // Ownership is checked again when each command's turn comes: a project can stop owning the session while
+      // the command waits behind another.
+      const admit = async (): Promise<BrowserOutcome | undefined> => {
+        this.owners = this.location ? await this.verifiedOwners(this.location, signal) : []
+        lost = !this.workspaceID || !this.owners.includes(this.workspaceID)
+        return lost ? { type: "failure", code: "operation_failed", message: "No project shown on this computer owns this conversation's browser." } : undefined
+      }
       const outcome: BrowserOutcome = command.inspect
         ? { type: "failure", code: "unsupported", message: "Target inspection is unavailable in the CodeNomad browser." }
-        : lost
-          ? { type: "failure", code: "operation_failed", message: "No project shown on this computer owns this conversation's browser." }
-          : await this.tab.run(command.action, command.generation, signal)
+        : await this.tab.run(command.action, command.generation, signal, admit)
       if (connectionID !== this.connectionID) return
-      // The server reads tabs from the published inventory, so it precedes every result.
-      await this.publish(signal)
+      // The server reads tabs from the published inventory, so it precedes every result. A preview this desktop
+      // no longer owns is not read; an inventory OpenCode refuses still lets the result settle the request.
+      if (!lost) await this.publish(signal).catch(error => {
+        if (signal.aborted) throw error
+        this.warn("Browser state publication failed", error)
+      })
       await this.rpc("result", { requestID, outcome }, signal).catch(async error => {
         // A result OpenCode refuses (for example an oversized file) still settles the request.
         if (signal.aborted) throw error

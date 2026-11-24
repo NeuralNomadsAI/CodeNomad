@@ -229,3 +229,24 @@ test("tabs.list reads the address, title and history again, and text waits match
   await tab.run({ type: "wait", tabID: tab.id, condition: "text", text: "Saved", timeoutMs: 1 }, undefined, signal)
   assert.equal(calls[0].literal, true)
 })
+test("a cancelled pause releases the queue, and check fails when the control is no longer a checkbox", async () => {
+  let checked = true
+  const tab = new PreviewTab({
+    probe: async () => ({ target: "doc", loading: false }),
+    page: async (action: { action: string }) => {
+      if (action.action === "snapshot") return { url: "", snapshot: checked ? '- checkbox "Remember" [e1] checked' : '- button "Remember" [e1]' }
+      if (action.action === "click") checked = false
+      return { url: "" }
+    },
+  } as unknown as PreviewHost)
+  const tabID = tab.id
+  const replaced = await tab.run({ type: "check", tabID, ref: "e1", checked: false }, undefined, signal) as any
+  assert.equal(replaced.type, "failure", "a control that became a button is not unchecked")
+  const cancel = new AbortController()
+  const started = Date.now()
+  const paused = tab.run({ type: "wait", tabID, condition: "delay", timeoutMs: 5_000 }, undefined, cancel.signal)
+  setTimeout(() => cancel.abort(), 30)
+  assert.equal((await tab.run({ type: "snapshot", tabID }, undefined, signal)).type, "success")
+  assert.ok(Date.now() - started < 2_000, "the next command runs once the pause is cancelled")
+  assert.equal((await paused).type, "failure")
+})
