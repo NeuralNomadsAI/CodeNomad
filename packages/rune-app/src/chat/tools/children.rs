@@ -1,7 +1,7 @@
 use crate::{
     State,
     backend::Backend,
-    content::{Part, Tool},
+    content::{Part, SubagentReport, Tool},
 };
 use codenomad_client::{Receiver, bounded, runtime};
 use std::{
@@ -15,6 +15,13 @@ pub(super) const STEP_LIMIT: usize = 200;
 const CHILD_LIMIT: usize = 4;
 const STEP_BYTES: usize = 2 << 20;
 type Steps = Vec<(String, Arc<Tool>)>;
+type Reports = Vec<(String, SubagentReport)>;
+
+#[derive(Default, PartialEq)]
+struct Snapshot {
+    steps: Steps,
+    reports: Reports,
+}
 
 #[derive(Default)]
 pub(crate) struct Children {
@@ -25,8 +32,8 @@ pub(crate) struct Children {
 struct Entry {
     cards: HashMap<String, Weak<()>>,
     _cancel: codenomad_client::Sender<()>,
-    result: Receiver<Option<Steps>>,
-    steps: Steps,
+    result: Receiver<Option<Snapshot>>,
+    snapshot: Snapshot,
 }
 
 impl Children {
@@ -85,7 +92,7 @@ impl Children {
                 cards: HashMap::from([(key.into(), Rc::downgrade(lease))]),
                 _cancel: cancel,
                 result,
-                steps: Vec::new(),
+                snapshot: Snapshot::default(),
             },
         );
         let child = id.to_owned();
@@ -102,7 +109,7 @@ impl Children {
                             .child_page(&child)
                             .await
                             .ok()
-                            .map(|page| page.map_or_else(Vec::new, steps))
+                            .map(|page| page.map_or_else(Snapshot::default, snapshot))
                     };
                     if out.send(snapshot).await.is_err() {
                         break;
@@ -122,9 +129,9 @@ impl Children {
     pub(crate) fn poll(&mut self) -> bool {
         let mut changed = self.prune();
         for entry in self.entries.values_mut() {
-            if let Ok(Some(steps)) = entry.result.try_recv() {
-                changed |= entry.steps != steps;
-                entry.steps = steps;
+            if let Ok(Some(next)) = entry.result.try_recv() {
+                changed |= entry.snapshot != next;
+                entry.snapshot = next;
             }
         }
         changed
@@ -143,11 +150,17 @@ impl Children {
     pub(super) fn steps(&self, id: &str) -> &[(String, Arc<Tool>)] {
         self.entries
             .get(id)
-            .map_or(&[], |entry| entry.steps.as_slice())
+            .map_or(&[], |entry| entry.snapshot.steps.as_slice())
+    }
+
+    pub(super) fn reports(&self, id: &str) -> &[(String, SubagentReport)] {
+        self.entries
+            .get(id)
+            .map_or(&[], |entry| entry.snapshot.reports.as_slice())
     }
 }
 
-fn steps(page: crate::history::Page) -> Steps {
+fn snapshot(page: crate::history::Page) -> Snapshot {
     let mut remaining = STEP_BYTES;
     let mut tools: Steps = page
         .rows
@@ -166,7 +179,28 @@ fn steps(page: crate::history::Page) -> Steps {
         })
         .collect();
     tools.reverse();
-    tools
+    let mut report_bytes = STEP_BYTES;
+    let mut reports: Reports = page
+        .rows
+        .iter()
+        .rev()
+        .flat_map(|row| {
+            row.parts.iter().rev().filter_map(move |part| match part {
+                Part::SubagentReport(report) => Some((row, report)),
+                _ => None,
+            })
+        })
+        .take(STEP_LIMIT)
+        .map_while(|(row, report)| {
+            report_bytes = report_bytes.checked_sub(report.body.len())?;
+            Some((row.id.clone(), report.clone()))
+        })
+        .collect();
+    reports.reverse();
+    Snapshot {
+        steps: tools,
+        reports,
+    }
 }
 
 #[cfg(test)]
@@ -174,7 +208,7 @@ impl Children {
     pub(super) fn install(&mut self, child: &str, page: crate::history::Page) -> Rc<()> {
         let lease = Rc::default();
         let (out, result) = bounded(1);
-        out.try_send(Some(steps(page))).unwrap();
+        out.try_send(Some(snapshot(page))).unwrap();
         let (cancel, _) = bounded(1);
         self.entries.insert(
             child.into(),
@@ -182,7 +216,7 @@ impl Children {
                 cards: HashMap::from([("test".into(), Rc::downgrade(&lease))]),
                 _cancel: cancel,
                 result,
-                steps: Vec::new(),
+                snapshot: Snapshot::default(),
             },
         );
         lease

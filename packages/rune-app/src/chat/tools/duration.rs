@@ -18,15 +18,30 @@ struct Clip {
     parent: Option<Rc<Clip>>,
 }
 
-#[derive(Default)]
 pub(crate) struct Clock {
     visible: HashMap<String, (Weak<Cell<bool>>, Rc<DrawnRect>, Option<Rc<Clip>>)>,
     clips: RefCell<HashMap<String, Weak<DrawnRect>>>,
     active_clip: RefCell<Option<Rc<Clip>>>,
+    stack_bounds: DrawnRect,
     next: Option<f64>,
     epoch: u64,
     generation: u64,
     paused: bool,
+}
+
+impl Default for Clock {
+    fn default() -> Self {
+        Self {
+            visible: HashMap::new(),
+            clips: RefCell::new(HashMap::new()),
+            active_clip: RefCell::new(None),
+            stack_bounds: DrawnRect::new([0.0; 4]),
+            next: None,
+            epoch: 0,
+            generation: 0,
+            paused: false,
+        }
+    }
 }
 
 fn intersect(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
@@ -37,13 +52,16 @@ fn intersect(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)]
 }
 
-fn in_bounds(rect: [f32; 4], bounds: [f32; 4], mut clip: Option<&Clip>) -> bool {
+fn in_bounds(rect: [f32; 4], bounds: [f32; 4], stack: [f32; 4], mut clip: Option<&Clip>) -> bool {
     if rect[2] <= 0.0 || rect[3] <= 0.0 {
         return false;
     }
     let mut visible = rect;
     if bounds[2] > 0.0 && bounds[3] > 0.0 {
         visible = intersect(visible, bounds);
+    }
+    if stack[2] > 0.0 && stack[3] > 0.0 {
+        visible = intersect(visible, stack);
     }
     while let Some(node) = clip {
         let clip_rect = node.rect.get();
@@ -66,6 +84,10 @@ impl Clock {
 
     pub(super) fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub(in crate::chat) fn stack_bounds(&self) -> &DrawnRect {
+        &self.stack_bounds
     }
 
     pub(in crate::chat) fn clip_rect(&self, key: &str) -> Rc<DrawnRect> {
@@ -114,22 +136,24 @@ impl Clock {
     pub(crate) fn reset(&mut self) {
         self.visible.clear();
         self.clips.get_mut().clear();
+        self.stack_bounds.set([0.0; 4]);
         self.next = None;
         self.paused = false;
         self.generation = self.generation.wrapping_add(1);
     }
 
     pub(crate) fn poll(&mut self, now: f64, bounds: [f32; 4], tx: &mut Tx) -> bool {
+        self.visible
+            .retain(|_, (lease, _, _)| lease.upgrade().is_some_and(|active| active.get()));
         if self.paused {
             self.next = None;
             return false;
         }
-        self.visible
-            .retain(|_, (lease, _, _)| lease.upgrade().is_some_and(|active| active.get()));
+        let stack = self.stack_bounds.get();
         if !self
             .visible
             .values()
-            .any(|(_, rect, clip)| in_bounds(rect.get(), bounds, clip.as_deref()))
+            .any(|(_, rect, clip)| in_bounds(rect.get(), bounds, stack, clip.as_deref()))
         {
             self.next = None;
             return false;
@@ -228,6 +252,7 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
                 && in_bounds(
                     layout_drawn.get(),
                     s.tool_diff_preferences.history_bounds.get(),
+                    clock.stack_bounds.get(),
                     layout_clip.as_deref(),
                 )
             {
@@ -239,6 +264,9 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
             if s.current_scope(&scope) {
                 let bounds = s.tool_diff_preferences.history_bounds.get();
                 let clock = &mut s.transcript_display.tool_clock;
+                clock
+                    .visible
+                    .retain(|_, (lease, _, _)| lease.upgrade().is_some_and(|active| active.get()));
                 if visible {
                     let added = clock
                         .visible
@@ -255,7 +283,12 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
                         && !s.history_detached
                         && online(&s.phase)
                         && !clock.paused
-                        && in_bounds(visible_drawn.get(), bounds, visible_clip.as_deref())
+                        && in_bounds(
+                            visible_drawn.get(),
+                            bounds,
+                            clock.stack_bounds.get(),
+                            visible_clip.as_deref(),
+                        )
                     {
                         tx.wake_after(Duration::ZERO);
                     }
@@ -320,11 +353,20 @@ fn duration_captions_match_compact_live_and_localized_rules() {
     assert!(!in_bounds(
         [0.0, 95.0, 100.0, 25.0],
         [0.0, 0.0, 400.0, 100.0],
+        [0.0; 4],
         Some(&clip)
     ));
     assert!(in_bounds(
         [0.0, 95.0, 100.0, 25.0],
         [0.0, 0.0, 400.0, 120.0],
+        [0.0, 0.0, 400.0, 120.0],
+        Some(&clip)
+    ));
+    // Session-stack scroll clip rejects a header hidden above the outer viewport.
+    assert!(!in_bounds(
+        [0.0, 95.0, 100.0, 25.0],
+        [0.0, 0.0, 400.0, 120.0],
+        [0.0, 130.0, 400.0, 200.0],
         Some(&clip)
     ));
 }

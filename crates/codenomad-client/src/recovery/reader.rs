@@ -191,7 +191,8 @@ impl Reader {
                             .is_some_and(|t| t.provenance == TextProvenance::Closed)
                     });
                     self.owed_tools.retain(|(id, call)| {
-                        page.rows
+                        !page
+                            .rows
                             .iter()
                             .find(|r| &r.id == id)
                             .and_then(|r| {
@@ -201,7 +202,7 @@ impl Reader {
                                 })
                             })
                             .is_some_and(|t| {
-                                matches!(t.status.as_str(), "pending" | "streaming" | "running")
+                                !matches!(t.status.as_str(), "pending" | "streaming" | "running")
                             })
                     });
                     self.fence = stamp;

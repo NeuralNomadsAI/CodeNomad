@@ -108,6 +108,19 @@ fn prose_for(
             ..q
         });
         let active_locale = locale();
+        let search_id = prose_query
+            .filter(|q| q.active)
+            .map(|q| {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                q.terms.hash(&mut h);
+                q.ranked.hash(&mut h);
+                h.finish().max(1)
+            })
+            .unwrap_or(0);
+        let search_overrides = s
+            .transcript_display
+            .diagram_search_overrides(search_id, &group);
         let stamp = (
             version,
             steps,
@@ -117,10 +130,12 @@ fn prose_for(
             &unwrapped,
             prose_query.map(|q| (q.terms, q.ranked, q.active)),
             &diagram_sources,
+            &search_overrides,
             (!streaming).then_some(shown),
         );
         let build = || {
             let diagram_sources = diagram_sources.clone();
+            let search_overrides = search_overrides.clone();
             let search_terms = prose_query
                 .filter(|q| q.active)
                 .map(|q| (q.terms.to_vec(), q.ranked));
@@ -179,15 +194,28 @@ fn prose_for(
                             }
                             .matches(frame.source)
                         });
-                        let source_only =
-                            diagram_sources.get(&index).copied().unwrap_or(search_hit);
+                        let source_only = if search_hit {
+                            search_overrides.get(&index).copied().unwrap_or(true)
+                        } else {
+                            diagram_sources.contains(&index)
+                        };
                         return mermaid::frame(
                             frame.open || streaming,
                             source_only,
                             frame.source,
                             format!("{group}-code-{index}"),
                             screen::action(&scope, move |s| {
-                                Display::set_diagram_source(s, &group, index, !source_only)
+                                if search_hit {
+                                    Display::set_diagram_search_override(
+                                        s,
+                                        search_id,
+                                        &group,
+                                        index,
+                                        !source_only,
+                                    );
+                                } else {
+                                    Display::toggle_diagram_source(s, &group, index);
+                                }
                             }),
                             card,
                             wrap,

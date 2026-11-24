@@ -41,7 +41,8 @@ struct SessionDisplay {
     revealed: HashMap<String, usize>,
     search_revealed: VecDeque<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
-    diagram_sources: HashMap<String, BTreeMap<usize, bool>>,
+    diagram_sources: HashMap<String, BTreeSet<usize>>,
+    diagram_search: (u64, HashMap<String, BTreeMap<usize, bool>>),
     compact_diffs: (u64, HashSet<String>),
 }
 impl Display {
@@ -242,7 +243,7 @@ impl Display {
         s.revision += 1;
     }
 
-    pub(super) fn diagram_sources(&self, key: &str) -> BTreeMap<usize, bool> {
+    pub(super) fn diagram_sources(&self, key: &str) -> BTreeSet<usize> {
         self.active
             .diagram_sources
             .get(key)
@@ -250,10 +251,41 @@ impl Display {
             .unwrap_or_default()
     }
 
-    pub(super) fn set_diagram_source(s: &mut State, key: &str, index: usize, source_only: bool) {
-        s.transcript_display
-            .active
-            .diagram_sources
+    pub(super) fn toggle_diagram_source(s: &mut State, key: &str, index: usize) {
+        toggle_index(&mut s.transcript_display.active.diagram_sources, key, index);
+        s.revision += 1;
+    }
+
+    pub(super) fn diagram_search_overrides(
+        &self,
+        search_id: u64,
+        key: &str,
+    ) -> BTreeMap<usize, bool> {
+        if search_id == 0 || self.active.diagram_search.0 != search_id {
+            return BTreeMap::new();
+        }
+        self.active
+            .diagram_search
+            .1
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn set_diagram_search_override(
+        s: &mut State,
+        search_id: u64,
+        key: &str,
+        index: usize,
+        source_only: bool,
+    ) {
+        let entry = &mut s.transcript_display.active.diagram_search;
+        if entry.0 != search_id {
+            entry.0 = search_id;
+            entry.1.clear();
+        }
+        entry
+            .1
             .entry(key.into())
             .or_default()
             .insert(index, source_only);

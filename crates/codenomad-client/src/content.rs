@@ -175,6 +175,24 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
 pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]) -> Result<()> {
     for row in page.iter_mut().filter(|r| r.role == "assistant") {
         if row.completed {
+            if let Some(prior) = live.iter().find(|r| r.id == row.id)
+                && row.parts.iter().any(|p| {
+                    matches!(p, Part::Tool(t) if matches!(t.status.as_str(), "streaming" | "running"))
+                })
+            {
+                let row = std::sync::Arc::make_mut(row);
+                for part in &mut row.parts {
+                    if let Part::Tool(fetched) = part
+                        && matches!(fetched.status.as_str(), "streaming" | "running")
+                        && let Some(Part::Tool(live_tool)) = prior
+                            .parts
+                            .iter()
+                            .find(|p| matches!(p, Part::Tool(t) if t.id == fetched.id))
+                    {
+                        tool_live::merge(live_tool, fetched);
+                    }
+                }
+            }
             continue;
         }
         let Some(prior) = live.iter().find(|r| r.id == row.id) else {

@@ -41,8 +41,73 @@ fn child(tool: &Tool) -> &str {
     string(&tool.metadata, &["sessionId", "sessionID"])
 }
 
-pub(super) fn report<'a>(s: &'a State, tool: &Tool) -> Option<&'a crate::content::SubagentReport> {
+fn parent_child(message: &str) -> Option<&str> {
+    message
+        .strip_prefix("child:")
+        .and_then(|rest| rest.split_once(':'))
+        .map(|(parent, _)| parent)
+}
+
+fn deliveries<'a>(
+    s: &'a State,
+    message: &str,
+    child_id: &str,
+) -> (
+    Vec<u64>,
+    Vec<(u64, &'a str, &'a crate::content::SubagentReport)>,
+) {
     use crate::content::Part;
+    if let Some(parent) = parent_child(message) {
+        let launches = s
+            .transcript_display
+            .children
+            .steps(parent)
+            .iter()
+            .filter_map(|(_, other)| {
+                (is_task(other) && child(other) == child_id)
+                    .then_some(other.started)
+                    .flatten()
+            })
+            .collect();
+        let reports = s
+            .transcript_display
+            .children
+            .reports(parent)
+            .iter()
+            .filter_map(|(row_id, report)| {
+                (report.child == child_id).then_some((report.created, row_id.as_str(), report))
+            })
+            .collect();
+        return (launches, reports);
+    }
+    let rows = &s.messages[s.messages.len().saturating_sub(500)..];
+    let launches = rows
+        .iter()
+        .flat_map(|row| &row.parts)
+        .filter_map(|part| match part {
+            Part::Tool(other) if is_task(other) && child(other) == child_id => other.started,
+            _ => None,
+        })
+        .collect();
+    let reports = rows
+        .iter()
+        .flat_map(|row| {
+            row.parts.iter().filter_map(move |part| match part {
+                Part::SubagentReport(report) if report.child == child_id => {
+                    Some((report.created, row.id.as_str(), report))
+                }
+                _ => None,
+            })
+        })
+        .collect();
+    (launches, reports)
+}
+
+pub(super) fn report<'a>(
+    s: &'a State,
+    message: &str,
+    tool: &Tool,
+) -> Option<&'a crate::content::SubagentReport> {
     if tool.status != "completed" || tool.metadata["status"] != "running" {
         return None;
     }
@@ -51,37 +116,21 @@ pub(super) fn report<'a>(s: &'a State, tool: &Tool) -> Option<&'a crate::content
     if child_id.is_empty() {
         return None;
     }
-    let rows = &s.messages[s.messages.len().saturating_sub(500)..];
-    let mut boundaries: Vec<_> = rows
-        .iter()
-        .flat_map(|row| &row.parts)
-        .filter_map(|part| match part {
-            Part::Tool(other) if is_task(other) && child(other) == child_id => {
-                other.started.filter(|at| *at > from)
-            }
-            _ => None,
-        })
-        .collect();
+    let (launches, reports) = deliveries(s, message, child_id);
+    let mut boundaries: Vec<_> = launches.into_iter().filter(|at| *at > from).collect();
     boundaries.sort_unstable();
-    let reports = || {
-        rows.iter().flat_map(|row| {
-            row.parts.iter().filter_map(move |part| match part {
-                Part::SubagentReport(report)
-                    if report.child == child_id && report.created >= from =>
-                {
-                    Some((report.created, row.id.as_str(), report))
-                }
-                _ => None,
-            })
-        })
-    };
-    let first = reports().map(|(created, _, _)| created).min()?;
+    let first = reports
+        .iter()
+        .filter(|(created, _, _)| *created >= from)
+        .map(|(created, _, _)| *created)
+        .min()?;
     let end = boundaries
         .into_iter()
         .find(|next| *next > first)
         .unwrap_or(u64::MAX);
-    reports()
-        .filter(|(created, _, _)| *created < end)
+    reports
+        .into_iter()
+        .filter(|(created, _, _)| *created >= from && *created < end)
         .max_by_key(|(created, id, _)| (*created, *id))
         .map(|(_, _, report)| report)
 }
@@ -97,36 +146,23 @@ pub(super) fn output<'a>(
     }
 }
 
-pub(super) fn status(s: &State, tool: &Tool) -> Option<(&'static str, bool, Option<u64>)> {
+pub(super) fn status(
+    s: &State,
+    message: &str,
+    tool: &Tool,
+) -> Option<(&'static str, bool, Option<u64>)> {
     if tool.status != "completed" || tool.metadata["status"] != "running" {
         return None;
     }
-    use crate::content::Part;
     let child_id = child(tool);
-    let rows = &s.messages[s.messages.len().saturating_sub(500)..];
-    let newest = rows
-        .iter()
-        .flat_map(|row| &row.parts)
-        .filter_map(|part| match part {
-            Part::Tool(other) if is_task(other) && child(other) == child_id => other.started,
-            _ => None,
-        })
-        .max()
-        .or(tool.started);
+    let (launches, reports) = deliveries(s, message, child_id);
+    let newest = launches.into_iter().max().or(tool.started);
     let latest = newest.and_then(|from| {
-        rows.iter()
-            .flat_map(|row| {
-                row.parts.iter().filter_map(move |part| match part {
-                    Part::SubagentReport(report)
-                        if report.child == child_id && report.created >= from =>
-                    {
-                        Some((report.created, row.id.as_str(), report.state.as_str()))
-                    }
-                    _ => None,
-                })
-            })
+        reports
+            .into_iter()
+            .filter(|(created, _, _)| *created >= from)
             .max_by_key(|(created, id, _)| (*created, *id))
-            .map(|(created, _, state)| (created, state))
+            .map(|(created, _, report)| (created, report.state.as_str()))
     });
     Some(match latest {
         Some((created, "completed")) => (

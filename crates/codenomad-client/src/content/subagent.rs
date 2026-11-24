@@ -11,34 +11,23 @@ pub struct SubagentReport {
 pub(super) fn decode(native: &Value) -> Option<SubagentReport> {
     let raw = native["text"].as_str()?.trim_end();
     let (header, body) = raw.split_once('\n')?;
-    let (closing, rest) = if let Some(rest) = header.strip_prefix("<subagent ") {
+    let (closing, rest) = if let Some(rest) = header.strip_prefix("<subagent sessionID=\"") {
         ("\n</subagent>", rest)
-    } else if let Some(rest) = header.strip_prefix("<background-result ") {
+    } else if let Some(rest) =
+        header.strip_prefix("<background-result kind=\"subagent\" sessionID=\"")
+    {
         ("\n</background-result>", rest)
     } else {
         return None;
     };
-    let attrs = rest.strip_suffix('>')?;
-    let mut child = None;
-    let mut state = None;
-    let mut kind = None;
-    let mut cursor = attrs.trim();
-    while !cursor.is_empty() {
-        let (name, after_name) = cursor.split_once("=\"")?;
-        let (value, tail) = after_name.split_once('"')?;
-        match name {
-            "sessionID" => child = Some(value),
-            "state" => state = Some(value),
-            "kind" => kind = Some(value),
-            _ => {}
-        }
-        cursor = tail.trim_start();
-    }
-    if closing == "\n</background-result>" && kind != Some("subagent") {
+    let (child, tail) = rest.split_once('"')?;
+    let (state, attributes) = tail.strip_prefix(" state=\"")?.split_once('"')?;
+    if !crate::history::valid_id(child)
+        || !matches!(state, "running" | "completed" | "error" | "cancelled")
+        || !attributes.ends_with('>')
+    {
         return None;
     }
-    let child = child.filter(|id| crate::history::valid_id(id))?;
-    let state = state.filter(|s| matches!(*s, "running" | "completed" | "error" | "cancelled"))?;
     Some(SubagentReport {
         child: child.into(),
         state: state.into(),
@@ -56,7 +45,7 @@ mod tests {
     fn decodes_subagent_and_background_result_reports_with_matching_closing_tags() {
         let legacy = decode(&json!({
             "time": { "created": 100 },
-            "text": "<subagent sessionID=\"child1\" state=\"completed\" >\nDone\n</subagent>"
+            "text": "<subagent sessionID=\"child1\" state=\"completed\" description=\"Check \"foo\"\" >\nDone\n</subagent>"
         }))
         .unwrap();
         assert_eq!(legacy.child, "child1");
@@ -65,7 +54,7 @@ mod tests {
 
         let modern = decode(&json!({
             "time": { "created": 200 },
-            "text": "<background-result kind=\"subagent\" sessionID=\"child2\" state=\"error\" description=\"x\">\nFailed\n</background-result>"
+            "text": "<background-result kind=\"subagent\" sessionID=\"child2\" state=\"error\" description=\"Verify \"bar\"\">\nFailed\n</background-result>"
         }))
         .unwrap();
         assert_eq!(modern.child, "child2");

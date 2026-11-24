@@ -700,4 +700,74 @@ fn skill_search_hit_inside_mermaid_fence_reveals_source_with_match_anchor() {
         rt.find(&format!("{skill_key}-tool_output-code-0-diagram"))
             .is_some()
     );
+    // A new search matching the Mermaid fence reveals the source and anchor again.
+    rt.update(|s, _| {
+        s.transcript_display.search_highlight = Some(crate::chat::search_hit::SearchHit::new(
+            &hit,
+            "flowchart",
+            false,
+        ));
+    });
+    rt.frame(0.04);
+    assert!(rt.find("history-search-match").is_some());
+    assert!(
+        rt.find(&format!("{skill_key}-tool_output-code-0-diagram"))
+            .is_none()
+    );
+}
+
+#[test]
+fn nested_subagent_uses_parent_child_snapshot_reports_for_status_duration_and_output() {
+    let start = unix_millis().saturating_sub(20_000);
+    let parent_row = crate::history::decode_message(&json!({
+        "type":"assistant","id":"root_msg","time":{"completed":start + 500},"content":[
+            {"type":"tool","id":"outer","name":"subagent","time":{"ran":start,"completed":start + 500},
+             "state":{"status":"completed","input":{"description":"Outer"},
+                      "metadata":{"sessionID":"child_a","status":"running"}}}
+        ]
+    }))
+    .unwrap();
+    let child_page = crate::history::decode(json!({
+        "status":"window","latest":true,"messages":[
+            {"id":"c1","type":"assistant","time":{"completed":start + 1_500},"content":[
+                {"type":"tool","id":"inner","name":"subagent","time":{"ran":start + 1_000,"completed":start + 1_500},
+                 "state":{"status":"completed","input":{"description":"Inner"},
+                          "metadata":{"sessionID":"grandchild","status":"running"}}}
+            ]},
+            {"id":"c2","type":"synthetic","time":{"created":start + 8_000},
+             "text":"<background-result kind=\"subagent\" sessionID=\"grandchild\" state=\"completed\">\nNESTED_REPORT_BODY\n</background-result>"}
+        ]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    let outer_key = super::tool_key("root_msg", "outer");
+    Display::set_expanded(&mut state, &outer_key, true);
+    state.messages = vec![parent_row.into()];
+    let _lease = state
+        .transcript_display
+        .children
+        .install("child_a", child_page);
+    assert!(state.transcript_display.children.poll());
+    let inner_key = super::tool_key(&format!("{outer_key}-task-steps-child:child_a:c1"), "inner");
+    Display::set_expanded(&mut state, &inner_key, true);
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            with_locale("en", || {
+                let crate::content::Part::Tool(tool) = &s.messages[0].parts[0] else {
+                    panic!("tool part")
+                };
+                super::view(s, "root_msg", tool)
+            })
+        },
+        (960.0, 820.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.contains("NESTED_REPORT_BODY") && tree.contains("\"7s\""),
+        "{tree}"
+    );
 }

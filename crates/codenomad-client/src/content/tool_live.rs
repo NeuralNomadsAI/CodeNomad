@@ -158,7 +158,7 @@ pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u
             tool.input = Value::String(format!("{prefix}{next}"));
         }
         "session.tool.called" => {
-            if tool.status != "streaming" {
+            if tool.status != "streaming" || tool.ended.is_some() {
                 return Fit::Drop;
             }
             tool.status = "running".into();
@@ -167,6 +167,9 @@ pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u
             tool.metadata = Value::Null;
         }
         "session.tool.progress" => {
+            if tool.ended.is_some() {
+                return Fit::Drop;
+            }
             if tool.status != "running" {
                 return if tool.status == "streaming" {
                     Fit::Repair
@@ -177,7 +180,7 @@ pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u
             tool.metadata = data["metadata"].clone();
         }
         "session.tool.success" | "session.tool.failed" => {
-            if !matches!(tool.status.as_str(), "streaming" | "running") {
+            if tool.ended.is_some() || !matches!(tool.status.as_str(), "streaming" | "running") {
                 return Fit::Drop;
             }
             let Some(ended) = at.or(tool.ended) else {
@@ -540,5 +543,39 @@ mod tests {
             panic!("expected Settled on completed row")
         };
         assert_eq!(late.ended, Some(13_000));
+
+        // Late called, progress or duplicate terminal events after settlement are dropped.
+        assert!(matches!(
+            apply_at(
+                &mut done_row,
+                "session.tool.progress",
+                &json!({"id":"late","metadata":{"output":"overwrite"}}),
+                Some(14_000)
+            ),
+            Fit::Drop
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut done_row,
+                "session.tool.failed",
+                &json!({"id":"late"}),
+                Some(15_000)
+            ),
+            Fit::Drop
+        ));
+        // Completed HTTP page that still reports the tool running preserves SSE ended.
+        let mut stale_done = [Arc::new(
+            crate::history::decode_message(&json!({
+                "id":"done","type":"assistant","time":{"completed":12_000},"content":[
+                    {"type":"tool","id":"late","name":"bash","time":{"ran":10_000},"state":{"status":"running","input":{"command":"sleep 1"}}}
+                ]
+            }))
+            .unwrap(),
+        )];
+        crate::content::merge_page(&[Arc::new(done_row)], &mut stale_done).unwrap();
+        let Part::Tool(merged_late) = &stale_done[0].parts[0] else {
+            panic!("tool part")
+        };
+        assert_eq!(merged_late.ended, Some(13_000));
     }
 }

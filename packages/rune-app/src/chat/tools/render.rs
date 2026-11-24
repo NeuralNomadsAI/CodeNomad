@@ -167,8 +167,8 @@ fn render_body(
         );
     let is_task = task::is_task(tool);
     let nested = message.starts_with("child:");
-    let report = is_task.then(|| task::report(s, tool)).flatten();
-    let task_status = is_task.then(|| task::status(s, tool)).flatten();
+    let report = is_task.then(|| task::report(s, message, tool)).flatten();
+    let task_status = is_task.then(|| task::status(s, message, tool)).flatten();
     let status = task_status
         .map(|(label, _, _)| label)
         .unwrap_or(match tool.status.as_str() {
@@ -301,10 +301,23 @@ fn render_body(
             .children(media::tool(s, key, &tool.pictures))
             .children(diagnostics());
     }
-    let task_body = is_task
+    let task_body = (is_task && !probe)
         .then(|| task::body(s, key, tool, parts[0], !nested))
         .flatten();
-    let specialized_task = task_body.is_some();
+    let specialized_task = is_task && (probe || task_body.is_some());
+    if probe && is_task {
+        if let Some(q) = query
+            && let Some(claimed) = q.claimed
+            && !claimed.get()
+        {
+            let prompt = super::string(&tool.input, &["prompt"]);
+            if (!prompt.is_empty() && q.matches(prompt))
+                || (!parts[0].is_empty() && q.matches(parts[0]))
+            {
+                claimed.set(true);
+            }
+        }
+    }
     let execute_details = (tool.name == "execute")
         .then(|| execute::view(s, key, tool))
         .flatten();
