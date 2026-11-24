@@ -34,7 +34,7 @@ pub(super) async fn read_native(
     {
         return Err("expected event stream".into());
     }
-    b.client.children().invalidate(b, None, false);
+    b.client.children().invalidate_all(b);
     read_frames(b, epoch, out, state, &connection, response.bytes_stream()).await
 }
 
@@ -76,7 +76,7 @@ pub(super) async fn read_frames<B: AsRef<[u8]>>(
                     dispatch(b, epoch, out, state, connection, &kind, &data).await?;
                 }
                 Parsed::Skipped => {
-                    b.client.children().invalidate(b, None, false);
+                    b.client.children().invalidate_all(b);
                     reread(epoch, out, state).await?;
                 }
             }

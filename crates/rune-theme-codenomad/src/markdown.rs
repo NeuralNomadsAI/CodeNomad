@@ -145,29 +145,40 @@ fn prose_ranges(
                 if text.is_empty() {
                     continue;
                 }
+                let r_start = rendered.len();
+                rendered.push_str(text);
                 let src_slice = source.get(range.clone()).unwrap_or_default();
-                let start = if matches!(event, Event::Code(_)) {
+                if matches!(event, Event::Code(_)) {
                     let ticks = src_slice.bytes().take_while(|&b| b == b'`').count();
+                    let inner_start = range.start + ticks;
                     let inner = src_slice
                         .get(ticks..src_slice.len().saturating_sub(ticks))
                         .unwrap_or(src_slice);
-                    inner
-                        .find(text.as_ref())
-                        .map_or(range.start + ticks, |off| range.start + ticks + off)
+                    if let Some(off) = inner.find(text.as_ref()) {
+                        let start = inner_start + off;
+                        map.push((r_start, rendered.len(), start, start + text.len(), true));
+                    } else if let Some(runs) = map_inline_code(inner, inner_start, text.as_ref()) {
+                        for (rel_r0, rel_r1, s0, s1) in runs {
+                            let verbatim = (rel_r1 - rel_r0) == (s1 - s0)
+                                && source.get(s0..s1) == text.get(rel_r0..rel_r1);
+                            map.push((r_start + rel_r0, r_start + rel_r1, s0, s1, verbatim));
+                        }
+                    } else {
+                        map.push((r_start, rendered.len(), range.start, range.end, false));
+                    }
                 } else {
-                    range.start
-                };
-                let verbatim = source.get(start..start + text.len()) == Some(text.as_ref());
-                let (s_start, s_end) = if verbatim {
-                    (start, start + text.len())
-                } else {
-                    (range.start, range.end)
-                };
-                let r_start = rendered.len();
-                rendered.push_str(text);
-                map.push((r_start, rendered.len(), s_start, s_end, verbatim));
+                    let verbatim =
+                        source.get(range.start..range.start + text.len()) == Some(text.as_ref());
+                    let (s_start, s_end) = if verbatim {
+                        (range.start, range.start + text.len())
+                    } else {
+                        (range.start, range.end)
+                    };
+                    map.push((r_start, rendered.len(), s_start, s_end, verbatim));
+                }
             }
-            Event::SoftBreak | Event::HardBreak => rendered.push(' '),
+            Event::SoftBreak => rendered.push(' '),
+            Event::HardBreak => rendered.push('\n'),
             Event::Start(
                 Tag::Paragraph
                 | Tag::Heading { .. }
@@ -211,6 +222,63 @@ fn prose_ranges(
         out.truncate((16_384 / blocks.max(1)).clamp(1, limit));
     }
     out
+}
+
+fn map_inline_code(
+    inner: &str,
+    inner_start: usize,
+    text: &str,
+) -> Option<Vec<(usize, usize, usize, usize)>> {
+    let try_from = |mut si: usize| {
+        let ib = inner.as_bytes();
+        let tb = text.as_bytes();
+        let mut ti = 0;
+        let mut runs = Vec::new();
+        while ti < tb.len() {
+            if si >= ib.len() {
+                return None;
+            }
+            if ib[si] == tb[ti] {
+                let r0 = ti;
+                let s0 = inner_start + si;
+                while ti < tb.len() && si < ib.len() && ib[si] == tb[ti] {
+                    si += 1;
+                    ti += 1;
+                }
+                runs.push((r0, ti, s0, inner_start + si));
+            } else if tb[ti] == b' ' && ib[si] == b'\r' && ib.get(si + 1) == Some(&b'\n') {
+                runs.push((ti, ti + 1, inner_start + si, inner_start + si + 2));
+                si += 2;
+                ti += 1;
+            } else if tb[ti] == b' ' && matches!(ib[si], b'\n' | b'\r') {
+                runs.push((ti, ti + 1, inner_start + si, inner_start + si + 1));
+                si += 1;
+                ti += 1;
+            } else {
+                return None;
+            }
+        }
+        let trailing = &ib[si..];
+        if trailing.is_empty()
+            || (si > 0 && matches!(trailing, [b' '] | [b'\n'] | [b'\r'] | [b'\r', b'\n']))
+        {
+            Some(runs)
+        } else {
+            None
+        }
+    };
+    if let Some(runs) = try_from(0) {
+        return Some(runs);
+    }
+    let ib = inner.as_bytes();
+    let skip = if ib.starts_with(b"\r\n") {
+        2
+    } else if matches!(ib.first(), Some(b' ' | b'\n' | b'\r')) {
+        1
+    } else {
+        return None;
+    };
+    try_from(skip)
 }
 
 pub fn link_menu<S: 'static>(
@@ -454,4 +522,25 @@ fn prose_search_bounds_matches_and_skips_link_destinations() {
         claimed: None,
     };
     assert!(!prose_has_match(tight_list, merged_query));
+
+    let code_nl = "`alpha\nbeta`";
+    let alpha_terms = vec!["alpha".into()];
+    let alpha_query = crate::timeline::search::Query {
+        terms: &alpha_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    let spans = prose_ranges(code_nl, alpha_query, 16);
+    assert_eq!(spans, vec![vec![1..6]]);
+
+    let hard_break = "alpha  \nbeta";
+    let space_terms = vec!["alpha beta".into()];
+    let space_query = crate::timeline::search::Query {
+        terms: &space_terms,
+        ranked: false,
+        active: true,
+        claimed: None,
+    };
+    assert!(!prose_has_match(hard_break, space_query));
 }

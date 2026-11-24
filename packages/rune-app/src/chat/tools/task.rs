@@ -17,6 +17,7 @@ use rune_theme_codenomad::{
 use std::{collections::HashMap, sync::Arc};
 
 pub(super) const PANE_LIMIT: usize = 20_000;
+pub(super) const MAX_DEPTH: usize = 4;
 const INITIAL_STEPS: usize = 30;
 const REVEAL: usize = 100;
 
@@ -85,6 +86,7 @@ pub(super) struct Delivery<'a> {
     pub running: bool,
     pub ended: Option<u64>,
     pub report: Option<&'a crate::content::SubagentReport>,
+    pub report_location: Option<(&'a str, usize)>,
     pub report_truncated: bool,
 }
 
@@ -107,11 +109,11 @@ pub(super) fn detail(tool: &Tool) -> String {
     }
 }
 
-fn child(tool: &Tool) -> &str {
+pub(super) fn child(tool: &Tool) -> &str {
     string(&tool.metadata, &["sessionId", "sessionID"])
 }
 
-fn parent_child(message: &str) -> Option<&str> {
+pub(super) fn parent_child(message: &str) -> Option<&str> {
     message
         .strip_prefix("child:")
         .and_then(|rest| rest.split_once(':'))
@@ -121,15 +123,21 @@ fn parent_child(message: &str) -> Option<&str> {
 fn resolve_delivery<'a>(
     tool: &Tool,
     launches: &[u64],
-    reports: &[(u64, &'a str, &'a crate::content::SubagentReport, bool)],
+    reports: &[(
+        u64,
+        &'a str,
+        usize,
+        &'a crate::content::SubagentReport,
+        bool,
+    )],
 ) -> Delivery<'a> {
     let report = tool.started.and_then(|from| {
         let mut boundaries: Vec<_> = launches.iter().copied().filter(|at| *at > from).collect();
         boundaries.sort_unstable();
         let first = reports
             .iter()
-            .filter(|(created, _, _, _)| *created >= from)
-            .map(|(created, _, _, _)| *created)
+            .filter(|(created, _, _, _, _)| *created >= from)
+            .map(|(created, _, _, _, _)| *created)
             .min()?;
         let end = boundaries
             .into_iter()
@@ -137,17 +145,19 @@ fn resolve_delivery<'a>(
             .unwrap_or(u64::MAX);
         reports
             .iter()
-            .filter(|(created, _, _, _)| *created >= from && *created < end)
-            .max_by_key(|(created, id, _, _)| (*created, *id))
-            .map(|(_, _, report, truncated)| (*report, *truncated))
+            .filter(|(created, _, _, _, _)| *created >= from && *created < end)
+            .max_by_key(|(created, id, _, _, _)| (*created, *id))
+            .map(|(_, row_id, part_idx, report, truncated)| {
+                (*row_id, *part_idx, *report, *truncated)
+            })
     });
     let newest = launches.iter().copied().max().or(tool.started);
     let latest = newest.and_then(|from| {
         reports
             .iter()
-            .filter(|(created, _, _, _)| *created >= from)
-            .max_by_key(|(created, id, _, _)| (*created, *id))
-            .map(|(created, _, report, _)| (*created, report.state.as_str()))
+            .filter(|(created, _, _, _, _)| *created >= from)
+            .max_by_key(|(created, id, _, _, _)| (*created, *id))
+            .map(|(created, _, _, report, _)| (*created, report.state.as_str()))
     });
     let (status, running, ended) = match latest {
         Some((created, "completed")) => (
@@ -162,15 +172,18 @@ fn resolve_delivery<'a>(
         ),
         _ => ("toolCall.status.running", true, None),
     };
-    let (report, report_truncated) = match report {
-        Some((report, truncated)) => (Some(report), truncated),
-        None => (None, false),
+    let (report, report_location, report_truncated) = match report {
+        Some((row_id, part_idx, report, truncated)) => {
+            (Some(report), Some((row_id, part_idx)), truncated)
+        }
+        None => (None, None, false),
     };
     Delivery {
         status,
         running,
         ended,
         report,
+        report_location,
         report_truncated,
     }
 }
@@ -186,6 +199,7 @@ pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<D
             running: true,
             ended: None,
             report: None,
+            report_location: None,
             report_truncated: false,
         });
     }
@@ -211,6 +225,7 @@ pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<D
                 (
                     entry.report.created,
                     entry.row_id.as_str(),
+                    entry.part_index,
                     entry.report.as_ref(),
                     entry.truncated,
                 )
@@ -227,6 +242,7 @@ pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<D
             running: true,
             ended: None,
             report: None,
+            report_location: None,
             report_truncated: false,
         });
     };
@@ -238,7 +254,7 @@ pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<D
             let crate::content::Part::SubagentReport(report) = row.parts.get(part_idx)? else {
                 return None;
             };
-            Some((created, row.id.as_str(), report, false))
+            Some((created, row.id.as_str(), part_idx, report, false))
         })
         .collect();
     Some(resolve_delivery(tool, &entry.launches, &reports))
@@ -263,11 +279,14 @@ pub(super) fn body(
     tool: &Tool,
     output: &str,
     output_truncated: bool,
-    watch: bool,
+    ancestors: &[&str],
     query: Option<Query<'_>>,
 ) -> Option<El> {
     let prompt = string(&tool.input, &["prompt"]);
-    let child_id = watch.then(|| watched_child(tool)).flatten();
+    let child_id = (ancestors.len() < MAX_DEPTH)
+        .then(|| watched_child(tool))
+        .flatten()
+        .filter(|id| !ancestors.contains(id));
     let child_steps = child_id.map_or(&[][..], |id| s.transcript_display.children.steps(id));
     let visible_steps = child_steps
         .iter()
@@ -378,17 +397,17 @@ pub(super) fn body(
         }
         let pane_clip = s.transcript_display.tool_clock.clip_rect(&step_key);
         if let Some(child_id) = child_id.filter(|_| !child_steps.is_empty()) {
+            let mut next_ancestors = Vec::with_capacity(ancestors.len() + 1);
+            next_ancestors.extend_from_slice(ancestors);
+            next_ancestors.push(child_id);
             list = s.transcript_display.tool_clock.with_clip(&pane_clip, || {
                 let mut list = list;
                 for (message, step) in visible_steps.skip(start) {
                     let owner = format!("child:{child_id}:{message}");
                     let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
-                    list = list.child(
-                        col()
-                            .key(child_key.clone())
-                            .role("listitem")
-                            .child(super::render::render(s, &owner, step, &child_key)),
-                    );
+                    list = list.child(col().key(child_key.clone()).role("listitem").child(
+                        super::render::render_nested(s, &owner, step, &child_key, &next_ancestors),
+                    ));
                 }
                 list
             });
@@ -467,7 +486,7 @@ pub(super) fn body(
     Some(result)
 }
 
-fn watched_child(tool: &Tool) -> Option<&str> {
+pub(super) fn watched_child(tool: &Tool) -> Option<&str> {
     let id = child(tool);
     (matches!(tool.status.as_str(), "running" | "completed" | "error")
         && crate::history::valid_id(id))

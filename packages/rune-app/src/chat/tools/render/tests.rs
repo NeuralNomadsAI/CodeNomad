@@ -826,3 +826,70 @@ fn task_search_highlights_and_reveals_deep_prompt_matches() {
             .contains("DEEP_TASK_PROMPT_NEEDLE")
     );
 }
+
+#[test]
+fn webfetch_structured_output_execute_search_and_localized_patch_title() {
+    let wf_row = crate::history::decode_message(&json!({
+        "type":"assistant","id":"wf_msg","time":{"completed":10000},"content":[
+            {"type":"tool","id":"wf1","name":"webfetch",
+             "state":{"status":"running","input":{"url":"https://example.test"},
+                      "metadata":{"output":{"status":200,"ok":true}}}},
+            {"type":"tool","id":"ex1","name":"execute",
+             "state":{"status":"completed","input":{"code":"const x = 1;"},
+                      "metadata":{"toolCalls":[{"tool":"read","status":"completed","input":{"filePath":"EXEC_SEARCH_NEEDLE.rs"}}]}}},
+            {"type":"tool","id":"ap1","name":"apply_patch",
+             "state":{"status":"completed","metadata":{"files":[{"relativePath":"a.rs","diff":"@@ -1 +1 @@\n-a\n+b"}]}}}
+        ]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    let wf_key = super::tool_key("wf_msg", "wf1");
+    Display::set_expanded(&mut state, &wf_key, true);
+    let hit = codenomad_client::search::Hit {
+        session: "s".into(),
+        message: "wf_msg".into(),
+        role: "assistant".into(),
+        part: 1,
+        kind: codenomad_client::search::Kind::Tool,
+        excerpt: String::new(),
+    };
+    state.transcript_display.search_highlight = Some(crate::chat::search_hit::SearchHit::new(
+        &hit,
+        "EXEC_SEARCH_NEEDLE",
+        false,
+    ));
+    state.messages = vec![wf_row.into()];
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            with_locale("en", || {
+                let mut col = rune::col();
+                for part in &s.messages[0].parts {
+                    if let crate::content::Part::Tool(tool) = part {
+                        col = col.child(super::view(s, "wf_msg", tool));
+                    }
+                }
+                col
+            })
+        },
+        (960.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    rt.frame(0.0);
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.contains("\"status\": 200") || tree.contains("200"),
+        "{tree}"
+    );
+    assert!(tree.contains("EXEC_SEARCH_NEEDLE.rs"), "{tree}");
+    assert!(tree.contains("Apply patch (1 file)"), "{tree}");
+    assert!(rt.find("history-search-match").is_some());
+    let (cx, cy) = rt.find(&format!("copy-{wf_key}-output")).unwrap();
+    rt.pointer_down(cx, cy);
+    rt.pointer_up(cx, cy);
+    rt.frame(0.02);
+    assert!(clipboard.text().unwrap().contains("\"status\": 200"));
+}

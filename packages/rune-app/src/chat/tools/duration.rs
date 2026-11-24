@@ -8,7 +8,7 @@ use rune_theme_codenomad::{
 };
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::{Rc, Weak},
     time::Duration,
 };
@@ -20,10 +20,13 @@ struct Clip {
 
 pub(crate) struct Clock {
     visible: HashMap<String, (Weak<Cell<bool>>, Rc<DrawnRect>, Option<Rc<Clip>>)>,
+    offscreen: HashSet<String>,
+    shown: RefCell<HashMap<String, u64>>,
     clips: RefCell<HashMap<String, Weak<DrawnRect>>>,
     active_clip: RefCell<Option<Rc<Clip>>>,
     stack_bounds: DrawnRect,
     next: Option<f64>,
+    frozen_at: Option<u64>,
     epoch: u64,
     generation: u64,
     paused: bool,
@@ -33,10 +36,13 @@ impl Default for Clock {
     fn default() -> Self {
         Self {
             visible: HashMap::new(),
+            offscreen: HashSet::new(),
+            shown: RefCell::new(HashMap::new()),
             clips: RefCell::new(HashMap::new()),
             active_clip: RefCell::new(None),
             stack_bounds: DrawnRect::new([0.0; 4]),
             next: None,
+            frozen_at: None,
             epoch: 0,
             generation: 0,
             paused: false,
@@ -125,19 +131,26 @@ impl Clock {
     }
 
     pub(crate) fn pause(&mut self) {
-        self.paused = true;
+        if !self.paused {
+            self.paused = true;
+            self.frozen_at = Some(unix_millis());
+        }
         self.next = None;
     }
 
     pub(crate) fn resume(&mut self) {
         self.paused = false;
+        self.frozen_at = None;
     }
 
     pub(crate) fn reset(&mut self) {
         self.visible.clear();
+        self.offscreen.clear();
+        self.shown.get_mut().clear();
         self.clips.get_mut().clear();
         self.stack_bounds.set([0.0; 4]);
         self.next = None;
+        self.frozen_at = None;
         self.paused = false;
         self.generation = self.generation.wrapping_add(1);
     }
@@ -204,24 +217,68 @@ pub(super) fn tool_timing(tool: &Tool) -> Option<(u64, Option<u64>)> {
 pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, status: El) -> El {
     let entry_key = format!("{key}-duration");
     let retire = || {
-        if let Some(active) = s
-            .transcript_display
-            .tool_clock
+        let clock = &s.transcript_display.tool_clock;
+        if let Some(active) = clock
             .visible
             .get(&entry_key)
             .and_then(|(lease, _, _)| lease.upgrade())
         {
             active.set(false);
         }
+        clock.shown.borrow_mut().remove(&entry_key);
     };
     let Some((start, end)) = timing else {
         retire();
         return status;
     };
-    let label = caption(
-        end.unwrap_or_else(unix_millis).saturating_sub(start),
-        end.is_none(),
-    );
+    let clock = &s.transcript_display.tool_clock;
+    let now = end.unwrap_or_else(|| {
+        let paused = clock.paused || s.history_detached || !online(&s.phase);
+        let bounds = s.tool_diff_preferences.history_bounds.get();
+        let stack = clock.stack_bounds.get();
+        let offscreen = clock.offscreen.contains(&entry_key)
+            || clock
+                .visible
+                .get(&entry_key)
+                .is_some_and(|(_, rect, clip)| {
+                    let r = rect.get();
+                    r[2] > 0.0 && r[3] > 0.0 && !in_bounds(r, bounds, stack, clip.as_deref())
+                });
+        if paused {
+            let cached = clock
+                .frozen_at
+                .or_else(|| clock.shown.borrow().get(&entry_key).copied());
+            cached.unwrap_or_else(|| {
+                let ts = unix_millis();
+                let mut shown = clock.shown.borrow_mut();
+                if shown.len() >= 256 && !shown.contains_key(&entry_key) {
+                    shown.retain(|k, _| clock.visible.contains_key(k));
+                }
+                shown.insert(entry_key.clone(), ts);
+                ts
+            })
+        } else if offscreen {
+            let cached = clock.shown.borrow().get(&entry_key).copied();
+            cached.unwrap_or_else(|| {
+                let ts = unix_millis();
+                let mut shown = clock.shown.borrow_mut();
+                if shown.len() >= 256 && !shown.contains_key(&entry_key) {
+                    shown.retain(|k, _| clock.visible.contains_key(k));
+                }
+                shown.insert(entry_key.clone(), ts);
+                ts
+            })
+        } else {
+            let ts = unix_millis();
+            let mut shown = clock.shown.borrow_mut();
+            if shown.len() >= 256 && !shown.contains_key(&entry_key) {
+                shown.retain(|k, _| clock.visible.contains_key(k));
+            }
+            shown.insert(entry_key.clone(), ts);
+            ts
+        }
+    });
+    let label = caption(now.saturating_sub(start), end.is_none());
     let group = row()
         .separate(Space::Sm)
         .child(status)
@@ -285,6 +342,7 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
                     .visible
                     .retain(|_, (lease, _, _)| lease.upgrade().is_some_and(|active| active.get()));
                 if visible {
+                    let was_offscreen = clock.offscreen.remove(&entry_key);
                     let added = clock
                         .visible
                         .insert(
@@ -296,7 +354,7 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
                             ),
                         )
                         .is_none();
-                    if added
+                    if (added || was_offscreen)
                         && !s.history_detached
                         && online(&s.phase)
                         && !clock.paused
@@ -307,10 +365,17 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
                             visible_clip.as_deref(),
                         )
                     {
+                        if was_offscreen {
+                            clock.epoch = clock.epoch.wrapping_add(1);
+                        }
                         tx.wake_after(Duration::ZERO);
                     }
                 } else {
                     clock.visible.remove(&entry_key);
+                    if clock.offscreen.len() >= 256 {
+                        clock.offscreen.clear();
+                    }
+                    clock.offscreen.insert(entry_key.clone());
                 }
             }
             tx.live_only();

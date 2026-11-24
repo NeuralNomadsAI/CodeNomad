@@ -1,4 +1,4 @@
-use super::{Tool, apply_patch, error, output, task, todo, tool_key};
+use super::{Tool, apply_patch, children::Children, error, output, task, todo, tool_key};
 use crate::{State, content::Part, screen, strings::t};
 use rune::El;
 use rune_theme_codenomad::markdown;
@@ -28,41 +28,67 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
             "toolCall.io.copyOutputAriaLabel"
         }),
         screen::action_tx(&s.input_scope, move |s, tx| {
-            let Some(tool) = lookup(s, &message, &call) else {
-                return;
-            };
-            match section {
-                Section::Input => {
-                    if let Ok(source) = serde_json::to_string_pretty(&tool.input) {
-                        tx.copy(source);
-                    }
-                }
-                Section::Output => {
-                    if task::is_task(tool) {
-                        let delivery = task::delivery(s, &message, tool);
-                        if delivery.as_ref().is_some_and(|d| d.report_truncated) {
-                            return;
+            let async_report = {
+                let Some(tool) = lookup(s, &message, &call) else {
+                    return;
+                };
+                match section {
+                    Section::Input => {
+                        if let Ok(source) = serde_json::to_string_pretty(&tool.input) {
+                            tx.copy(source);
                         }
-                        tx.copy(task::output(tool, delivery.as_ref().and_then(|d| d.report)));
-                        return;
+                        None
                     }
-                    if tool.name == "todowrite"
-                        && let Some(source) = todo::copy(tool)
-                    {
-                        tx.copy(source);
-                        return;
+                    Section::Output => {
+                        if task::is_task(tool) {
+                            let delivery = task::delivery(s, &message, tool);
+                            if let Some(d) = delivery.as_ref().filter(|d| d.report_truncated)
+                                && let Some(parent) = task::parent_child(&message)
+                                && let Some((row_id, part_idx)) = d.report_location
+                            {
+                                Some((
+                                    parent.to_owned(),
+                                    row_id.to_owned(),
+                                    part_idx,
+                                    task::child(tool).to_owned(),
+                                ))
+                            } else {
+                                tx.copy(task::output(
+                                    tool,
+                                    delivery.as_ref().and_then(|d| d.report),
+                                ));
+                                None
+                            }
+                        } else if let Some(value) = super::format::structured_output(tool) {
+                            if let Ok(source) = serde_json::to_string_pretty(value) {
+                                tx.copy(source);
+                            }
+                            None
+                        } else if tool.name == "todowrite"
+                            && let Some(source) = todo::copy(tool)
+                        {
+                            tx.copy(source);
+                            None
+                        } else if tool.name == "apply_patch"
+                            && let Some(source) = apply_patch::copy_all(tool)
+                        {
+                            tx.copy(source);
+                            None
+                        } else {
+                            let mut parts = [""; 4];
+                            output(tool, &mut parts);
+                            tx.copy(parts.concat());
+                            None
+                        }
                     }
-                    if tool.name == "apply_patch"
-                        && let Some(source) = apply_patch::copy_all(tool)
-                    {
-                        tx.copy(source);
-                        return;
+                    Section::Error => {
+                        tx.copy(error(tool));
+                        None
                     }
-                    let mut parts = [""; 4];
-                    output(tool, &mut parts);
-                    tx.copy(parts.concat());
                 }
-                Section::Error => tx.copy(error(tool)),
+            };
+            if let Some((parent, row_id, part_idx, child)) = async_report {
+                Children::copy_report(s, &parent, &row_id, part_idx, &child);
             }
         }),
     )

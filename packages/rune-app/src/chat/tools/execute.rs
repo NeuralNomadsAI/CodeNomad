@@ -1,7 +1,8 @@
 //! Passive Code Mode transcript details.
-use super::{TOOL_LIMIT, bounded_json, input_json, window};
+use super::{bounded_json, input_json, window};
 use crate::{
     State,
+    chat::document::{self, HIGHLIGHT_LIMIT},
     content::Tool,
     screen,
     strings::{locale, t},
@@ -11,6 +12,7 @@ use rune_theme_codenomad::{
     Space, TextRole, catalogue,
     layout::{self, Layout},
     markdown,
+    timeline::search::Query,
 };
 use serde_json::Value;
 
@@ -68,7 +70,7 @@ pub(super) fn title(tool: &Tool) -> String {
     title
 }
 
-pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
+pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) -> Option<El> {
     let code = tool.input["code"]
         .as_str()
         .filter(|code| !code.trim().is_empty());
@@ -77,6 +79,8 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
     if code.is_none() && count == 0 {
         return None;
     }
+    let active = query.is_some_and(|q| q.active);
+    let limit = document::search_limit_for(s, key, query);
     let mut body = col().full_width().separate(Space::Sm);
     let wrap = !s.transcript_display.toggled(&format!("{key}-wrap"));
     if let Some(code) = code {
@@ -85,8 +89,16 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
                 s,
                 format!("{key}-execute-script"),
                 &[code],
-                TOOL_LIMIT,
-                |shown, _| markdown::code(shown, "javascript", tool.status != "running", wrap),
+                limit,
+                |shown, units| {
+                    markdown::search_code(
+                        shown,
+                        "javascript",
+                        tool.status != "running" && units <= HIGHLIGHT_LIMIT,
+                        wrap,
+                        query,
+                    )
+                },
             ),
             false,
         ));
@@ -100,7 +112,15 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
         .separate(Space::Sm);
     for (index, (name, status, input)) in calls.take(CALL_LIMIT).enumerate() {
         let call = format!("{key}-execute-call-{index}");
-        let expanded = s.transcript_display.toggled(&call);
+        let manual = s.transcript_display.toggled(&call);
+        let rendered_input = (input.is_object() && (manual || active))
+            .then(|| input_json(input, limit, active))
+            .flatten();
+        let expanded = manual
+            || active
+                && rendered_input
+                    .as_deref()
+                    .is_some_and(|text| query.is_some_and(|q| q.matches(text)));
         let name: String = name.chars().take(250).collect();
         let mut row = col().key(call.clone()).role("listitem").child(
             layout::action_row()
@@ -121,14 +141,22 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
                 .child(text(t(status)).text_role(TextRole::Label)),
         );
         if expanded && input.is_object() {
-            row = row.child(if let Some(input) = input_json(input, TOOL_LIMIT, false) {
+            row = row.child(if let Some(input) = rendered_input {
                 markdown::tool_pane(
                     window(
                         s,
                         format!("{call}-input"),
                         &[&input],
-                        TOOL_LIMIT,
-                        |shown, _| markdown::code(shown, "json", tool.status != "running", wrap),
+                        limit,
+                        |shown, units| {
+                            markdown::search_code(
+                                shown,
+                                "json",
+                                tool.status != "running" && units <= HIGHLIGHT_LIMIT,
+                                wrap,
+                                query,
+                            )
+                        },
                     ),
                     false,
                 )

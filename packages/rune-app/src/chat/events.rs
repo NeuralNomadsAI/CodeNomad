@@ -429,6 +429,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.history_error = true;
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
+                s.transcript_display.tool_clock.pause();
                 s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
                 s.transcript_display.pictures.clear();
@@ -465,6 +466,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             .as_ref()
             .is_some_and(|receiver| receiver.is_closed() && receiver.is_empty())
     {
+        s.transcript_display.tool_clock.pause();
         composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
         s.phase = Phase::Failed;
         changed = true;

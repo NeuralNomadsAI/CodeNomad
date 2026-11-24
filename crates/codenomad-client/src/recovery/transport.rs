@@ -470,6 +470,9 @@ pub(crate) async fn run_with_reading(
                         }
                     }
                     kind if kind.starts_with("session.tool.") => {
+                        if kind == "session.tool.called" {
+                            reader.execution_ended = false;
+                        }
                         let fit = reader.resident.iter_mut().find(|row| row.id == id).map_or(
                             content::ToolFit::Repair,
                             |row| {
@@ -539,6 +542,7 @@ pub(crate) async fn run_with_reading(
                     | "session.execution.failed"
                     | "session.execution.interrupted" => {
                         reader.terminal = reader.busy;
+                        reader.execution_ended = true;
                         if reading.is_some() {
                             publish(
                                 &out,

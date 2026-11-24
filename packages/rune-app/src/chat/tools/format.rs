@@ -105,7 +105,7 @@ pub(super) fn title(tool: &Tool) -> String {
     title
 }
 
-fn label(name: &str) -> String {
+pub(super) fn label(name: &str) -> String {
     let trimmed = name.trim();
     let normalized = trimmed.strip_prefix("opencode_").unwrap_or(trimmed);
     let key = match normalized {
@@ -129,6 +129,17 @@ fn label(name: &str) -> String {
 
 pub(super) fn error(tool: &Tool) -> &str {
     shell::interrupted(tool).map_or(tool.error.as_str(), |(_, notice)| notice)
+}
+
+pub(super) fn structured_output(tool: &Tool) -> Option<&Value> {
+    if tool.name != "webfetch" || tool.status == "completed" || !tool.output.is_empty() {
+        return None;
+    }
+    let value = tool.metadata.get("output")?;
+    if value.is_null() || value.is_string() || value.as_array().is_some_and(Vec::is_empty) {
+        return None;
+    }
+    Some(value)
 }
 
 pub(super) fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {

@@ -3118,7 +3118,7 @@
   "toolCall.diff.viewMode.ariaLabel": "Diff görüntüleme modu",
   "toolCall.diff.viewMode.split": "Bölünmüş",
   "toolCall.diff.viewMode.unified": "Birleşik",
-  "toolCall.duration.hours": "{count}s",
+  "toolCall.duration.hours": "{count} sa",
   "toolCall.duration.minutes": "{count}d",
   "toolCall.duration.seconds": "{count}sn",
   "toolCall.error.label": "Hata:",

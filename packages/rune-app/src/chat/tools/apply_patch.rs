@@ -100,9 +100,10 @@ pub(super) fn copy_all(tool: &Tool) -> Option<String> {
 }
 
 pub(super) fn title(tool: &Tool) -> String {
+    let name = super::format::label(&tool.name);
     let count = files(tool).len();
     if count == 0 {
-        return tool.name.clone();
+        return name;
     }
     catalogue::format(
         locale(),
@@ -111,7 +112,7 @@ pub(super) fn title(tool: &Tool) -> String {
         } else {
             "toolCall.applyPatch.title.withFileCount.other"
         },
-        &[("tool", &tool.name), ("count", &count.to_string())],
+        &[("tool", &name), ("count", &count.to_string())],
     )
 }
 

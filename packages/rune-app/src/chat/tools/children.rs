@@ -19,6 +19,7 @@ type Steps = Vec<(String, Arc<Tool>)>;
 #[derive(Clone, PartialEq)]
 pub(super) struct ChildReport {
     pub row_id: String,
+    pub part_index: usize,
     pub report: Arc<SubagentReport>,
     pub truncated: bool,
 }
@@ -35,6 +36,7 @@ struct Snapshot {
 pub(crate) struct Children {
     backend: Option<Backend>,
     entries: HashMap<String, Entry>,
+    pending_copy: Option<(codenomad_client::Sender<()>, Receiver<String>)>,
 }
 
 struct Entry {
@@ -52,13 +54,90 @@ impl Children {
 
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
+        self.pending_copy = None;
     }
 
     pub(super) fn release(&mut self, key: &str) {
+        let prefix = format!("{key}-");
         self.entries.retain(|_, entry| {
-            entry.cards.remove(key);
+            entry
+                .cards
+                .retain(|card, _| card != key && !card.starts_with(&prefix));
             !entry.cards.is_empty()
         });
+    }
+
+    pub(super) fn copy_report(
+        s: &mut State,
+        parent: &str,
+        row_id: &str,
+        part_index: usize,
+        child: &str,
+    ) {
+        let Some(backend) = s.transcript_display.children.backend.clone() else {
+            return;
+        };
+        let (out, rx) = bounded(1);
+        let (cancel, cancelled) = bounded(1);
+        s.transcript_display.children.pending_copy = Some((cancel, rx));
+        let (parent, row_id, child) = (parent.to_owned(), row_id.to_owned(), child.to_owned());
+        let wake = s.wake.clone();
+        let reads = s.reads.clone();
+        crate::platform::spawn(async move {
+            crate::platform::reads::cancellable(&cancelled, async {
+                let Some(_slot) = reads.background(&cancelled).await else {
+                    return;
+                };
+                if let Ok(Some(page)) = backend.child_page(&parent).await {
+                    let body = page
+                        .rows
+                        .iter()
+                        .find(|row| row.id == row_id)
+                        .and_then(|row| {
+                            row.parts
+                                .get(part_index)
+                                .and_then(|part| match part {
+                                    Part::SubagentReport(report) if report.child == child => {
+                                        Some(report.body.clone())
+                                    }
+                                    _ => None,
+                                })
+                                .or_else(|| {
+                                    row.parts.iter().rev().find_map(|part| match part {
+                                        Part::SubagentReport(report) if report.child == child => {
+                                            Some(report.body.clone())
+                                        }
+                                        _ => None,
+                                    })
+                                })
+                        });
+                    if let Some(body) = body
+                        && out.send(body).await.is_ok()
+                    {
+                        wake();
+                    }
+                }
+            })
+            .await;
+        });
+    }
+
+    pub(crate) fn poll_copy(&mut self, tx: &mut rune::Tx) -> bool {
+        let Some((_, rx)) = &self.pending_copy else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(text) => {
+                self.pending_copy = None;
+                tx.copy(text);
+                true
+            }
+            Err(error) if error.is_closed() => {
+                self.pending_copy = None;
+                false
+            }
+            Err(_) => false,
+        }
     }
 
     pub(super) fn lease(&self, id: &str, key: &str) -> Rc<()> {
@@ -89,7 +168,7 @@ impl Children {
         let Some(backend) = children.backend.clone() else {
             return;
         };
-        let Some((dirty, terminal)) = backend.watch_child(id) else {
+        let Some((dirty, settlement)) = backend.watch_child(id) else {
             return;
         };
         let (out, result) = bounded(1);
@@ -107,41 +186,88 @@ impl Children {
         let wake = s.wake.clone();
         let reads = s.reads.clone();
         crate::platform::spawn(async move {
-            use std::sync::atomic::Ordering::SeqCst;
             crate::platform::reads::cancellable(&cancelled, async {
-                let mut settlement_retries = 0u8;
+                let mut owed_calls: HashMap<String, u8> = HashMap::new();
+                let mut execution_owed = 0u8;
                 loop {
-                    let saw_terminal = terminal.swap(false, SeqCst);
-                    if saw_terminal {
-                        settlement_retries = 3;
+                    let (ended_calls, exec_ended) = settlement.take();
+                    for call in ended_calls {
+                        if owed_calls.len() < 64 {
+                            owed_calls.entry(call).or_insert(0);
+                        }
                     }
-                    let snapshot = {
+                    if exec_ended {
+                        execution_owed = 3;
+                    }
+                    let fetched = {
                         let Some(_slot) = reads.background(&cancelled).await else {
                             break;
                         };
-                        backend
-                            .child_page(&child)
-                            .await
-                            .ok()
-                            .map(|page| page.map_or_else(Snapshot::default, snapshot))
+                        backend.child_page(&child).await
                     };
-                    let still_running = snapshot.as_ref().is_some_and(|snap| {
-                        snap.steps
-                            .iter()
-                            .any(|(_, t)| matches!(t.status.as_str(), "streaming" | "running"))
-                    });
-                    if out.send(snapshot).await.is_err() {
+                    let snap = match fetched {
+                        Ok(Some(page)) => {
+                            owed_calls.retain(|call, _| !child_tool_settled(&page.rows, call));
+                            if execution_owed > 0 {
+                                if !page.running {
+                                    let turn_start = page
+                                        .rows
+                                        .iter()
+                                        .rposition(|r| r.role == "user")
+                                        .map_or(0, |idx| idx + 1);
+                                    for row in &page.rows[turn_start..] {
+                                        for part in &row.parts {
+                                            if let Part::Tool(tool) = part
+                                                && matches!(
+                                                    tool.status.as_str(),
+                                                    "pending" | "streaming" | "running"
+                                                )
+                                                && owed_calls.len() < 64
+                                            {
+                                                owed_calls.entry(tool.id.clone()).or_insert(0);
+                                            }
+                                        }
+                                    }
+                                    execution_owed = 0;
+                                } else {
+                                    execution_owed -= 1;
+                                }
+                            }
+                            Some(snapshot(page))
+                        }
+                        Ok(None) => {
+                            owed_calls.clear();
+                            execution_owed = 0;
+                            Some(Snapshot::default())
+                        }
+                        Err(_) => {
+                            if execution_owed > 0 {
+                                execution_owed -= 1;
+                            }
+                            None
+                        }
+                    };
+                    if out.send(snap).await.is_err() {
                         break;
                     }
                     wake();
-                    if still_running && settlement_retries > 0 {
-                        settlement_retries -= 1;
-                        let delay = Duration::from_millis(100 * u64::from(3 - settlement_retries));
+                    let mut max_attempt = 0u8;
+                    owed_calls.retain(|_, attempts| {
+                        *attempts = attempts.saturating_add(1);
+                        if *attempts <= 3 {
+                            max_attempt = max_attempt.max(*attempts);
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                    if !owed_calls.is_empty() || execution_owed > 0 {
+                        let step = max_attempt.max(1);
+                        let delay = Duration::from_millis(100 * u64::from(step));
                         runtime::sleep(delay).await;
                         let _ = dirty.try_recv();
                         continue;
                     }
-                    settlement_retries = 0;
                     if dirty.recv().await.is_err() {
                         break;
                     }
@@ -187,6 +313,16 @@ impl Children {
     }
 }
 
+fn child_tool_settled(rows: &[crate::history::Row], call: &str) -> bool {
+    rows.iter()
+        .flat_map(|row| row.parts.iter())
+        .find_map(|part| match part {
+            Part::Tool(tool) if tool.id == call => Some(tool),
+            _ => None,
+        })
+        .is_some_and(|tool| !matches!(tool.status.as_str(), "pending" | "streaming" | "running"))
+}
+
 fn snapshot(page: crate::history::Page) -> Snapshot {
     let mut remaining = STEP_BYTES;
     let mut tools: Steps = page
@@ -206,26 +342,28 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
         })
         .collect();
     tools.reverse();
-    let raw_reports: Vec<_> = page
-        .rows
-        .iter()
-        .rev()
-        .flat_map(|row| {
-            row.parts.iter().rev().filter_map(move |part| match part {
-                Part::SubagentReport(report) => Some((row, report)),
-                _ => None,
+    let raw_reports: Vec<_> =
+        page.rows
+            .iter()
+            .rev()
+            .flat_map(|row| {
+                row.parts.iter().enumerate().rev().filter_map(
+                    move |(part_index, part)| match part {
+                        Part::SubagentReport(report) => Some((row, part_index, report)),
+                        _ => None,
+                    },
+                )
             })
-        })
-        .take(STEP_LIMIT)
-        .collect();
+            .take(STEP_LIMIT)
+            .collect();
     // Shortest-first water-filling keeps short older reports intact even beside giant ones.
     let mut order: Vec<usize> = (0..raw_reports.len()).collect();
-    order.sort_by_key(|&i| raw_reports[i].1.body.len());
+    order.sort_by_key(|&i| raw_reports[i].2.body.len());
     let mut caps = vec![0usize; raw_reports.len()];
     let mut report_bytes = STEP_BYTES;
     for (pos, &idx) in order.iter().enumerate() {
         let share = report_bytes / (order.len() - pos);
-        let len = raw_reports[idx].1.body.len();
+        let len = raw_reports[idx].2.body.len();
         let take = len.min(share);
         caps[idx] = take;
         report_bytes -= take;
@@ -233,7 +371,7 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
     let mut reports: Reports = raw_reports
         .into_iter()
         .enumerate()
-        .map(|(idx, (row, report))| {
+        .map(|(idx, (row, part_index, report))| {
             let cap = caps[idx];
             let (body, truncated) = if report.body.len() <= cap {
                 (report.body.clone(), false)
@@ -243,6 +381,7 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
             };
             ChildReport {
                 row_id: row.id.clone(),
+                part_index,
                 report: Arc::new(SubagentReport {
                     child: report.child.clone(),
                     state: report.state.clone(),

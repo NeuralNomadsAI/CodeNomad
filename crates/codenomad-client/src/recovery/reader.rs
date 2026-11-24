@@ -34,6 +34,7 @@ pub(super) struct Reader {
     pub(super) owed: HashSet<(String, usize)>,
     pub(super) owed_tools: HashMap<(String, String), u8>,
     pub(super) failed_tools: HashSet<(String, String)>,
+    pub(super) execution_ended: bool,
     pub(super) seen: Seen,
     first: Option<String>,
     older: Option<Value>,
@@ -61,6 +62,7 @@ impl Reader {
             owed: HashSet::new(),
             owed_tools: HashMap::new(),
             failed_tools: HashSet::new(),
+            execution_ended: false,
             seen: Seen {
                 entries: VecDeque::new(),
                 bytes: 0,
@@ -94,6 +96,7 @@ impl Reader {
                 self.owed = HashSet::new();
                 self.owed_tools = HashMap::new();
                 self.failed_tools = HashSet::new();
+                self.execution_ended = false;
                 self.seen.entries.clear();
                 self.seen.bytes = 0;
                 self.first = None;
@@ -119,6 +122,7 @@ impl Reader {
         self.owed.clear();
         self.owed_tools.clear();
         self.failed_tools.clear();
+        self.execution_ended = false;
     }
 
     pub(super) fn clear_window_on_revert(&mut self) {
@@ -132,6 +136,7 @@ impl Reader {
         self.owed.clear();
         self.owed_tools.clear();
         self.failed_tools.clear();
+        self.execution_ended = false;
     }
 
     pub(super) async fn sync(
@@ -173,7 +178,10 @@ impl Reader {
             };
             match snapshot {
                 Ok(mut page) if wire.valid(stamp) && rx.is_empty() => {
-                    content::merge_page(&self.resident, &mut page.rows)?;
+                    let mut merged = page.rows.clone();
+                    if content::merge_page(&self.resident, &mut merged).is_ok() {
+                        page.rows = merged;
+                    }
                     self.owed.retain(|(id, ordinal)| {
                         !page
                             .rows
@@ -205,6 +213,29 @@ impl Reader {
                     self.newer = page.newer.clone();
                     self.known = page.rows.iter().map(|r| r.id.clone()).collect();
                     self.resident = page.rows.clone();
+                    if self.execution_ended && !page.running && !self.historical {
+                        self.execution_ended = false;
+                        let turn_start = page
+                            .rows
+                            .iter()
+                            .rposition(|r| r.role == "user")
+                            .map_or(0, |idx| idx + 1);
+                        for row in &page.rows[turn_start..] {
+                            for part in &row.parts {
+                                if let Part::Tool(tool) = part
+                                    && matches!(
+                                        tool.status.as_str(),
+                                        "pending" | "streaming" | "running"
+                                    )
+                                    && self.owed_tools.len() < 64
+                                {
+                                    self.owed_tools
+                                        .entry((row.id.clone(), tool.id.clone()))
+                                        .or_insert(0);
+                                }
+                            }
+                        }
+                    }
                     if self.historical {
                         self.owed_tools.retain(|(id, _), _| self.known.contains(id));
                         self.failed_tools.retain(|(id, _)| self.known.contains(id));
@@ -267,7 +298,9 @@ impl Reader {
                         && !self.failed_tools.is_empty()
                     {
                         self.failed_tools.clear();
-                        reader_event(reading, self.generation, out, wake, Event::Failed).await;
+                        if reading.is_some() {
+                            reader_event(reading, self.generation, out, wake, Event::Failed).await;
+                        }
                     } else if done && reading.is_none() {
                         reader_event(reading, self.generation, out, wake, Event::Done).await;
                     }

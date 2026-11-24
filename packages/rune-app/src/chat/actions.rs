@@ -206,8 +206,10 @@ impl Display {
             s.transcript_display.tool_clock.pause();
             false
         };
-        let timeline =
-            crate::timeline::poll(s, tx) | crate::timeline::search::poll(s, now, tx) | clock;
+        let timeline = crate::timeline::poll(s, tx)
+            | crate::timeline::search::poll(s, now, tx)
+            | s.transcript_display.children.poll_copy(tx)
+            | clock;
         let stream = &mut s.transcript_display.stream;
         if changed {
             stream.pending = s.messages.last().is_some_and(|row| {

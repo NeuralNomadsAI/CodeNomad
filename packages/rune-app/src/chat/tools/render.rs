@@ -132,6 +132,7 @@ pub(in crate::chat) fn match_hidden_by_inputs(
         message,
         tool,
         &key,
+        &[],
         Some(Query {
             claimed: Some(&claimed),
             ..query
@@ -142,12 +143,22 @@ pub(in crate::chat) fn match_hidden_by_inputs(
 }
 
 pub(super) fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
+    render_nested(s, message, tool, key, &[])
+}
+
+pub(super) fn render_nested(
+    s: &State,
+    message: &str,
+    tool: &Arc<Tool>,
+    key: &str,
+    ancestors: &[&str],
+) -> El {
     let claimed = std::cell::Cell::new(false);
     let query = tool_query(s, message, tool).map(|query| Query {
         claimed: Some(&claimed),
         ..query
     });
-    render_body(s, message, tool, key, query, false)
+    render_body(s, message, tool, key, ancestors, query, false)
 }
 
 fn render_body(
@@ -155,6 +166,7 @@ fn render_body(
     message: &str,
     tool: &Arc<Tool>,
     key: &str,
+    ancestors: &[&str],
     query: Option<Query<'_>>,
     probe: bool,
 ) -> El {
@@ -166,7 +178,10 @@ fn render_body(
                 || settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) == "expanded",
         );
     let is_task = task::is_task(tool);
-    let nested = message.starts_with("child:");
+    let nested = !ancestors.is_empty() || message.starts_with("child:");
+    let can_watch_child = is_task
+        && ancestors.len() < task::MAX_DEPTH
+        && task::watched_child(tool).is_some_and(|cid| !ancestors.contains(&cid));
     let task_delivery = is_task.then(|| task::delivery(s, message, tool)).flatten();
     let status = task_delivery
         .as_ref()
@@ -202,7 +217,9 @@ fn render_body(
         parts = [""; 4];
     }
     let report_truncated = task_delivery.as_ref().is_some_and(|d| d.report_truncated);
-    let has_output = !pending && parts.iter().any(|part| !part.trim().is_empty());
+    let structured = super::format::structured_output(tool);
+    let has_output =
+        !pending && (structured.is_some() || parts.iter().any(|part| !part.trim().is_empty()));
     let skill = tool.name == "skill" && tool.status == "completed" && has_output;
     let result_list =
         (expanded && !active && tool.name == "websearch" && tool.status == "completed")
@@ -254,7 +271,8 @@ fn render_body(
     if shared_wrap {
         header = header.child(wrap_control(s, &wrap_key, wrap));
     }
-    if (has_output && !report_truncated)
+    if has_output
+        || report_truncated
         || !pending && tool.name == "apply_patch" && apply_patch::has_patch(tool)
         || tool.name == "todowrite"
             && tool.metadata["todos"]
@@ -263,7 +281,7 @@ fn render_body(
     {
         header = header.child(copy(s, message, &tool.id, Section::Output));
     }
-    let header = if !probe && expanded && is_task && !nested {
+    let header = if !probe && expanded && can_watch_child {
         task::observe(s, key, tool, header)
     } else {
         header
@@ -308,7 +326,7 @@ fn render_body(
                 tool,
                 parts[0],
                 report_truncated,
-                !nested,
+                ancestors,
                 query,
             )
         })
@@ -344,7 +362,7 @@ fn render_body(
         }
     }
     let execute_details = (tool.name == "execute")
-        .then(|| execute::view(s, key, tool))
+        .then(|| execute::view(s, key, tool, query))
         .flatten();
     if let Some(details) = task_body.or(execute_details) {
         block = block.child(details);
@@ -452,64 +470,74 @@ fn render_body(
                 ));
             }
         } else if has_output && !specialized_task {
-            let formatted = (tool.name == "execute" && tool.status == "completed")
-                .then(|| execute::formatted_output(parts[0]))
-                .flatten();
-            let (parts, lang) = if let Some(formatted) = formatted.as_deref() {
-                ([formatted, "", "", ""], "json")
+            let structured_json = structured
+                .map(|value| input_json(value, document::search_limit_for(s, key, query), active));
+            if matches!(structured_json, Some(None)) {
+                block = block.child(text(t("toolCall.output.tooLarge")));
             } else {
-                (parts, lang)
-            };
-            let terminal = shell::matches(tool) && parts.iter().any(|text| ansi::present(text));
-            let highlight = tool.status != "running"
-                && (lang != "diff"
-                    || parts
-                        .iter()
-                        .flat_map(|text| text.encode_utf16())
-                        .nth(TOOL_LIMIT)
-                        .is_none());
-            let output_key = format!("{key}-tool_output");
-            let fallback = || {
-                col()
-                    .full_width()
-                    .separate(Space::Sm)
-                    .children((!shared_wrap).then(|| {
-                        layout::action_row()
-                            .child(wrap_control(s, &wrap_key, wrap))
-                            .child(text(lang).text_role(TextRole::Label))
-                    }))
-                    .child(markdown::tool_pane(
-                        window(
-                            s,
-                            output_key,
-                            &parts,
-                            document::search_limit_for(s, key, query),
-                            |shown, units| {
-                                if !probe && tool.status == "running" && shell::matches(tool) {
-                                    s.transcript_display.live_ansi(key, shown, wrap, query)
-                                } else if terminal {
-                                    ansi::search_code(shown, wrap, query)
-                                } else {
-                                    markdown::search_code(
-                                        shown,
-                                        lang,
-                                        highlight && units <= HIGHLIGHT_LIMIT,
-                                        wrap,
-                                        query,
-                                    )
-                                }
-                            },
-                        ),
-                        matches!(tool.name.as_str(), "edit" | "write"),
-                    ))
-            };
-            block = block.child(if let Some(results) = result_list {
-                results
-            } else if rich_diff {
-                tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
-            } else {
-                fallback()
-            });
+                let formatted = if structured_json.is_some() {
+                    structured_json.flatten()
+                } else {
+                    (tool.name == "execute" && tool.status == "completed")
+                        .then(|| execute::formatted_output(parts[0]))
+                        .flatten()
+                };
+                let (parts, lang) = if let Some(formatted) = formatted.as_deref() {
+                    ([formatted, "", "", ""], "json")
+                } else {
+                    (parts, lang)
+                };
+                let terminal = shell::matches(tool) && parts.iter().any(|text| ansi::present(text));
+                let highlight = tool.status != "running"
+                    && (lang != "diff"
+                        || parts
+                            .iter()
+                            .flat_map(|text| text.encode_utf16())
+                            .nth(TOOL_LIMIT)
+                            .is_none());
+                let output_key = format!("{key}-tool_output");
+                let fallback = || {
+                    col()
+                        .full_width()
+                        .separate(Space::Sm)
+                        .children((!shared_wrap).then(|| {
+                            layout::action_row()
+                                .child(wrap_control(s, &wrap_key, wrap))
+                                .child(text(lang).text_role(TextRole::Label))
+                        }))
+                        .child(markdown::tool_pane(
+                            window(
+                                s,
+                                output_key,
+                                &parts,
+                                document::search_limit_for(s, key, query),
+                                |shown, units| {
+                                    if !probe && tool.status == "running" && shell::matches(tool) {
+                                        s.transcript_display.live_ansi(key, shown, wrap, query)
+                                    } else if terminal {
+                                        ansi::search_code(shown, wrap, query)
+                                    } else {
+                                        markdown::search_code(
+                                            shown,
+                                            lang,
+                                            highlight && units <= HIGHLIGHT_LIMIT,
+                                            wrap,
+                                            query,
+                                        )
+                                    }
+                                },
+                            ),
+                            matches!(tool.name.as_str(), "edit" | "write"),
+                        ))
+                };
+                block = block.child(if let Some(results) = result_list {
+                    results
+                } else if rich_diff {
+                    tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
+                } else {
+                    fallback()
+                });
+            }
         }
     }
     block = block.children(failure);
