@@ -173,7 +173,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
             .merge(auth::remote_routes())
             .fallback(|| async { unavailable() })
             .layer(from_fn(panic_guard::catch))
-            .layer(from_fn_with_state((state.clone(), launch.ui.remote_rune()), auth::remote::admit))
+            .layer(from_fn_with_state((state.clone(), launch.ui.remote_bundle()), auth::remote::admit))
             .layer(from_fn(bench::refusal_trace))
             .with_state(state.clone());
         if !launch.serve {
