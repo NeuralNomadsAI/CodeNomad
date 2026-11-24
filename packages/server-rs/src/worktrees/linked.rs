@@ -49,7 +49,17 @@ pub(super) async fn send(
     body: Option<Value>,
     max: usize,
 ) -> Result<Value, Error> {
-    let mut request = request.query(query).timeout(Duration::from_secs(12));
+    send_with_timeout(request, query, body, max, Duration::from_secs(12)).await
+}
+
+pub(super) async fn send_with_timeout(
+    request: reqwest::RequestBuilder,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+    timeout: Duration,
+) -> Result<Value, Error> {
+    let mut request = request.query(query).timeout(timeout);
     if let Some(body) = body {
         request = request.json(&body);
     }

@@ -128,7 +128,6 @@ fn extract_media(
     part_index: usize,
     item_index: usize,
     digest: &str,
-    initial_revert: Option<&str>,
     revert_boundary: Option<&str>,
     raw: &[u8],
 ) -> Result<(&'static str, Vec<u8>), Error> {
@@ -138,7 +137,6 @@ fn extract_media(
     let message = envelope.get("data").filter(|message| message.is_object()).ok_or_else(unavailable)?;
     if message["id"] != message_id
         || message["type"] != "assistant"
-        || initial_revert.is_some_and(|boundary| message_id >= boundary)
         || revert_boundary.is_some_and(|boundary| message_id >= boundary)
     {
         return Err(missing());
@@ -183,7 +181,7 @@ pub(super) async fn route(
         if app.workspace(&r.workspace).ok().as_ref().map(|w| w.id) != Some(initial_workspace.id) {
             return Ok(crate::shared::abort_response());
         }
-        let placement = match Placement::capture_with_media(&app, &r.workspace, &r.session, true, false).await {
+        let placement = match Placement::capture_for_media(&app, &r.workspace, &r.session).await {
             Ok(placement) => placement,
             Err((Status::GONE, _)) => return Ok(crate::shared::abort_response()),
             Err(failure) if failure.0 == Status::FORBIDDEN => return Err(failure),
@@ -240,10 +238,8 @@ pub(super) async fn route(
             if !placement.operation_current(&app, &r.workspace) {
                 return Ok(crate::shared::abort_response());
             }
-            // Matches TS `session-media.ts:61-76` (3 native GETs: session1, message, session2).
-            // Checking both initial and latest revert boundaries catches staged-then-committed undos;
-            // a full stage+commit strictly between `message` and `session2` needs a native existence
-            // check without re-reading the up-to-16 MiB message (shared TS/Rust limit).
+            // Matches TS `session-media.ts:61-76` (3 native GETs: session1, message, session2,
+            // checking only `latest.revert` so a cancelled staged undo still serves the visible image).
             let newest = match placement.latest(&app, &r.workspace, &r.session).await {
                 Ok(newest) => newest,
                 Err(_) if !placement.operation_current(&app, &r.workspace) => {
@@ -252,20 +248,11 @@ pub(super) async fn route(
                 Err(failure) if failure.0 == Status::CONFLICT => return Err(failure),
                 Err(_) => return Err(unavailable()),
             };
-            let initial_revert = placement.revert_boundary().map(str::to_owned);
             let revert = newest["revert"]["messageID"].as_str().map(str::to_owned);
             let (mime, bytes, slot) = if raw.len() > INLINE_LIMIT {
                 let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.to_owned());
                 let (decoded, slot) = tokio::task::spawn_blocking(move || {
-                    let decoded = extract_media(
-                        &message_id,
-                        part,
-                        index,
-                        &digest,
-                        initial_revert.as_deref(),
-                        revert.as_deref(),
-                        &raw,
-                    );
+                    let decoded = extract_media(&message_id, part, index, &digest, revert.as_deref(), &raw);
                     (decoded, slot)
                 })
                 .await
@@ -273,15 +260,7 @@ pub(super) async fn route(
                 let (mime, bytes) = decoded?;
                 (mime, bytes, slot)
             } else {
-                let (mime, bytes) = extract_media(
-                    &r.message,
-                    r.part,
-                    r.index,
-                    r.digest,
-                    initial_revert.as_deref(),
-                    revert.as_deref(),
-                    &raw,
-                )?;
+                let (mime, bytes) = extract_media(&r.message, r.part, r.index, r.digest, revert.as_deref(), &raw)?;
                 (mime, bytes, slot)
             };
             principal.live()?;
@@ -291,9 +270,11 @@ pub(super) async fn route(
             if !placement.live(&app, &r.workspace) {
                 return Err(error(Status::CONFLICT, "Session location changed"));
             }
+            let length = HeaderValue::from(bytes.len());
             Ok((
                 [
                     (header::CONTENT_TYPE, HeaderValue::from_str(mime).map_err(|_| missing())?),
+                    (header::CONTENT_LENGTH, length),
                     (header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=31536000, immutable")),
                     (header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")),
                     (header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'; sandbox")),
@@ -482,12 +463,11 @@ mod tests {
             }
         }))
         .unwrap();
-        let (mime, bytes) = extract_media("msg_1", 0, 0, &digest, None, None, &raw).unwrap();
+        let (mime, bytes) = extract_media("msg_1", 0, 0, &digest, None, &raw).unwrap();
         assert_eq!(mime, "image/png");
         assert_eq!(bytes, png);
-        // Staged-before-read undo that committed during read is rejected even when latest revert is null.
-        assert_eq!(extract_media("msg_1", 0, 0, &digest, Some("msg_1"), None, &raw).unwrap_err().0, Status::NOT_FOUND);
-        assert_eq!(extract_media("msg_1", 0, 0, &digest, None, Some("msg_1"), &raw).unwrap_err().0, Status::NOT_FOUND);
+        assert_eq!(extract_media("msg_1", 0, 0, &digest, Some("msg_1"), &raw).unwrap_err().0, Status::NOT_FOUND);
+        assert!(extract_media("msg_1", 0, 0, &digest, Some("msg_2"), &raw).is_ok());
 
         let upper_uri = format!("DATA:IMAGE/PNG;BASE64,{}", STANDARD.encode(png));
         let upper_digest = user_files::digest(upper_uri.as_bytes());
@@ -502,10 +482,7 @@ mod tests {
             }
         }))
         .unwrap();
-        assert_eq!(
-            extract_media("msg_1", 0, 0, &upper_digest, None, None, &upper_raw).unwrap_err().0,
-            Status::NOT_FOUND
-        );
+        assert_eq!(extract_media("msg_1", 0, 0, &upper_digest, None, &upper_raw).unwrap_err().0, Status::NOT_FOUND);
     }
 
     #[tokio::test]

@@ -294,6 +294,7 @@ impl Listener {
                         io
                     }
                 };
+                let io = crate::shared::WriteStallIo::new(io, Duration::from_secs(30));
                 let service = router.layer(axum::Extension(channel));
                 let connection = http1::Builder::new()
                     .timer(TokioTimer::new())

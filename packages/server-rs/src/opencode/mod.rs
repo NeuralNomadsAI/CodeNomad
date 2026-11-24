@@ -38,15 +38,23 @@ const RECHECK: Duration = Duration::from_secs(30);
 // Default headers/body inactivity limit of the reference's Undici transport.
 const PROXY_IDLE: Duration = Duration::from_secs(300);
 
-pub struct Native {
-    pub client: Client,
+type AcquireFlight =
+    futures_util::future::Shared<futures_util::future::BoxFuture<'static, Result<Arc<Endpoint>, Refusal>>>;
+
+struct NativeInner {
+    client: Client,
     endpoint: RwLock<Option<Arc<Endpoint>>>,
     /// `None`: the bench's fixture daemon, never rediscovered.
     lifecycle: Option<daemon::Lifecycle>,
     /// When the current endpoint was last confirmed; `None` once invalidated.
     validated: Mutex<Option<Instant>>,
-    acquiring: tokio::sync::Mutex<()>,
+    inflight: Mutex<Option<AcquireFlight>>,
     retired: tokio::sync::Notify,
+}
+
+pub struct Native {
+    pub client: Client,
+    inner: Arc<NativeInner>,
 }
 
 /// Port 0 refuses every connection: before the first acquisition, native requests fail
@@ -80,25 +88,27 @@ impl Native {
             (None, Some(daemon::Lifecycle::new(binary.into(), client.clone())))
         };
         let validated = Mutex::new(endpoint.as_ref().map(|_| Instant::now()));
-        Ok(Self {
-            client,
+        let inner = Arc::new(NativeInner {
+            client: client.clone(),
             endpoint: RwLock::new(endpoint),
             lifecycle,
             validated,
-            acquiring: Default::default(),
+            inflight: Mutex::new(None),
             retired: tokio::sync::Notify::new(),
-        })
+        });
+        Ok(Self { client, inner })
     }
     pub fn endpoint(&self) -> Option<Arc<Endpoint>> {
-        self.endpoint.read().unwrap().clone()
+        self.inner.endpoint.read().unwrap().clone()
     }
     pub fn current(&self, endpoint: &Arc<Endpoint>) -> bool {
-        let live = self.endpoint.read().unwrap();
-        live.as_ref().is_some_and(|current| Arc::ptr_eq(current, endpoint)) && self.validated.lock().unwrap().is_some()
+        let live = self.inner.endpoint.read().unwrap();
+        live.as_ref().is_some_and(|current| Arc::ptr_eq(current, endpoint))
+            && self.inner.validated.lock().unwrap().is_some()
     }
     pub async fn wait_retired(&self, endpoint: &Arc<Endpoint>) {
         loop {
-            let notified = self.retired.notified();
+            let notified = self.inner.retired.notified();
             if !self.current(endpoint) {
                 return;
             }
@@ -115,44 +125,47 @@ impl Native {
     /// `OpenCodeSharedService.connect`: the current connection while confirmed less than
     /// 30 s ago; else discovery, a start when nothing runs, then admission. A recheck that
     /// fails or finds nothing keeps a working connection; an invalidated one is replaced.
+    /// Runs in a detached shared flight so cancelling one waiter never aborts another's acquisition.
     pub async fn acquire(&self, deadline: Instant) -> Result<Arc<Endpoint>, Refusal> {
-        let Some(lifecycle) = &self.lifecycle else {
+        if self.inner.lifecycle.is_none() {
             return self.endpoint().ok_or_else(|| Refusal::Failed("OpenCode fixture endpoint is missing".into()));
-        };
-        let _serialized = self.acquiring.lock().await;
-        let validated = *self.validated.lock().unwrap();
-        let current = self.endpoint();
-        let found = match (&current, validated) {
-            (Some(current), Some(at)) if at.elapsed() < RECHECK => return Ok(current.clone()),
-            (Some(current), Some(_)) => match lifecycle.discover(deadline).await {
-                Ok(Some(found)) if found != **current => found,
-                _ => {
-                    let mut validated = self.validated.lock().unwrap();
-                    if validated.is_none() {
-                        return Err(Refusal::Failed("OpenCode connection was invalidated during discovery".into()));
-                    }
-                    *validated = Some(Instant::now());
-                    return Ok(current.clone());
+        }
+        if let (Some(current), Some(at)) = (self.endpoint(), *self.inner.validated.lock().unwrap())
+            && at.elapsed() < RECHECK
+        {
+            return Ok(current);
+        }
+        let flight = {
+            let mut slot = self.inner.inflight.lock().unwrap();
+            if let Some(existing) = slot.as_ref() {
+                existing.clone()
+            } else {
+                use futures_util::FutureExt;
+                let inner = self.inner.clone();
+                let shared_deadline = deadline.max(Instant::now() + Duration::from_secs(30));
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let shared: AcquireFlight = async move {
+                    rx.await.unwrap_or_else(|_| Err(Refusal::Failed("OpenCode acquisition stopped".into())))
                 }
-            },
-            _ => match lifecycle.discover(deadline).await? {
-                Some(found) => found,
-                None => lifecycle.ensure(deadline).await?,
-            },
+                .boxed()
+                .shared();
+                *slot = Some(shared.clone());
+                tokio::spawn(async move {
+                    let result = run_acquire(&inner, shared_deadline).await;
+                    *inner.inflight.lock().unwrap() = None;
+                    let _ = tx.send(result);
+                });
+                shared
+            }
         };
-        admission::admit(&self.client, &found).await?;
-        let found = Arc::new(found);
-        let mut endpoint = self.endpoint.write().unwrap();
-        *endpoint = Some(found.clone());
-        *self.validated.lock().unwrap() = Some(Instant::now());
-        drop(endpoint);
-        self.retired.notify_waiters();
-        Ok(found)
+        tokio::time::timeout_at(deadline, flight)
+            .await
+            .map_err(|_| Refusal::Failed("Timed out waiting for OpenCode".into()))?
     }
     /// `lifecycle.discover()`: the running daemon, never started. The bench's fixture endpoint
     /// reports the version its `/api/info` declares, as the reference remembers it.
     pub async fn discover(&self, binary: &str, deadline: Instant) -> Result<Option<Endpoint>, String> {
-        if let Some(lifecycle) = &self.lifecycle {
+        if let Some(lifecycle) = &self.inner.lifecycle {
             return if lifecycle.binary == binary {
                 lifecycle.discover(deadline).await
             } else {
@@ -171,11 +184,11 @@ impl Native {
     /// The event stream of `endpoint` ended or failed: the next acquisition discovers again
     /// (and starts the daemon when it is gone). Requests keep it until then.
     pub fn invalidate(&self, endpoint: &Arc<Endpoint>) {
-        let live = self.endpoint.read().unwrap();
-        if self.lifecycle.is_some() && live.as_ref().is_some_and(|e| Arc::ptr_eq(e, endpoint)) {
-            *self.validated.lock().unwrap() = None;
+        let live = self.inner.endpoint.read().unwrap();
+        if self.inner.lifecycle.is_some() && live.as_ref().is_some_and(|e| Arc::ptr_eq(e, endpoint)) {
+            *self.inner.validated.lock().unwrap() = None;
             drop(live);
-            self.retired.notify_waiters();
+            self.inner.retired.notify_waiters();
         }
     }
 
@@ -191,6 +204,45 @@ impl Native {
             .query(&[("location[directory]", directory)])
             .json(&json!({ "input": input }))
     }
+}
+
+async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpoint>, Refusal> {
+    let Some(lifecycle) = &inner.lifecycle else {
+        return inner
+            .endpoint
+            .read()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| Refusal::Failed("OpenCode fixture endpoint is missing".into()));
+    };
+    let validated = *inner.validated.lock().unwrap();
+    let current = inner.endpoint.read().unwrap().clone();
+    let found = match (&current, validated) {
+        (Some(current), Some(at)) if at.elapsed() < RECHECK => return Ok(current.clone()),
+        (Some(current), Some(_)) => match lifecycle.discover(deadline).await {
+            Ok(Some(found)) if found != **current => found,
+            _ => {
+                let mut validated = inner.validated.lock().unwrap();
+                if validated.is_none() {
+                    return Err(Refusal::Failed("OpenCode connection was invalidated during discovery".into()));
+                }
+                *validated = Some(Instant::now());
+                return Ok(current.clone());
+            }
+        },
+        _ => match lifecycle.discover(deadline).await? {
+            Some(found) => found,
+            None => lifecycle.ensure(deadline).await?,
+        },
+    };
+    admission::admit(&inner.client, &found).await?;
+    let found = Arc::new(found);
+    let mut endpoint = inner.endpoint.write().unwrap();
+    *endpoint = Some(found.clone());
+    *inner.validated.lock().unwrap() = Some(Instant::now());
+    drop(endpoint);
+    inner.retired.notify_waiters();
+    Ok(found)
 }
 
 pub fn routes() -> Router<Shared> {

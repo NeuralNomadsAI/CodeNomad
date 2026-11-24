@@ -34,11 +34,16 @@ pub(super) struct Placement {
     checkout: crate::worktrees::ownership::DirectoryProof,
     displays: Vec<Arc<AtomicBool>>,
     media: bool,
+    strict_media: bool,
 }
 
 impl Placement {
     pub(super) async fn capture(app: &App, id: &str, session: &str, references: bool) -> Result<Self, Error> {
-        Self::capture_with_media(app, id, session, false, references).await
+        Self::capture_inner(app, id, session, false, false, references).await
+    }
+
+    pub(super) async fn capture_for_media(app: &App, id: &str, session: &str) -> Result<Self, Error> {
+        Self::capture_inner(app, id, session, true, true, false).await
     }
 
     pub(super) async fn capture_with_media(
@@ -46,6 +51,17 @@ impl Placement {
         id: &str,
         session: &str,
         media: bool,
+        fenced: bool,
+    ) -> Result<Self, Error> {
+        Self::capture_inner(app, id, session, media, false, fenced).await
+    }
+
+    async fn capture_inner(
+        app: &App,
+        id: &str,
+        session: &str,
+        media: bool,
+        strict_media: bool,
         fenced: bool,
     ) -> Result<Self, Error> {
         let workspace = app.workspace(id)?;
@@ -96,14 +112,18 @@ impl Placement {
                 return Err(forbidden());
             }
             let path = crate::worktrees::ownership::resolve_exact_directory(directory).ok_or_else(unavailable)?;
-            let anchor = directory_anchor(&path).map_err(|_| unavailable())?.ok_or_else(forbidden)?.to_owned();
+            let anchor = crate::worktrees::ownership::directory_anchor(&path)
+                .map_err(|_| unavailable())?
+                .ok_or_else(forbidden)?
+                .to_owned();
             let physical = same_file::Handle::from_path(&anchor).map_err(|_| unavailable())?;
             if fenced && path != workspace.path {
                 displays.push(display(&path));
             }
-            let proof = crate::worktrees::ownership::media_directory(app, &workspace, &endpoint, &path, &anchor)
-                .await
-                .map_err(|_| crate::opencode::upstream_error())?;
+            let proof =
+                crate::worktrees::ownership::media_directory(app, &workspace, &endpoint, &path, &anchor, strict_media)
+                    .await
+                    .map_err(|_| crate::opencode::upstream_error())?;
             if media && !current(&displays) {
                 return Err(error(Status::GONE, "Media operation stale"));
             }
@@ -119,6 +139,7 @@ impl Placement {
                 checkout,
                 displays,
                 media,
+                strict_media,
             })
         };
         if media {
@@ -130,9 +151,6 @@ impl Placement {
         } else {
             capture.await
         }
-    }
-    pub(super) fn revert_boundary(&self) -> Option<&str> {
-        self.source["revert"]["messageID"].as_str()
     }
 
     async fn current(&self, app: &App, id: &str, session: &str) -> Recheck {
@@ -180,6 +198,7 @@ impl Placement {
                 &self.endpoint,
                 &self.path,
                 &self.anchor,
+                self.strict_media,
             )
             .await
             .map_err(|_| crate::opencode::upstream_error())?;
@@ -201,7 +220,7 @@ impl Placement {
                 .and_then(crate::worktrees::ownership::resolve_exact_directory)
                 .as_ref()
                 == Some(&self.path)
-            && directory_anchor(&self.path) == Ok(Some(self.anchor.as_path()))
+            && crate::worktrees::ownership::directory_anchor(&self.path) == Ok(Some(self.anchor.as_path()))
             && same_file::Handle::from_path(&self.anchor).is_ok_and(|physical| physical == self.physical)
             && self.checkout.live(&self.path)
             && self.displays.iter().all(|display| display.load(Relaxed))
@@ -244,20 +263,6 @@ enum Recheck {
 
 fn same_identity(path: &std::path::Path, expected: Option<&same_file::Handle>) -> bool {
     expected.is_none_or(|expected| same_file::Handle::from_path(path).is_ok_and(|physical| &physical == expected))
-}
-
-/// A missing child is owned through its nearest existing directory, never
-/// through a file or an unresolved link. I/O failures stay indeterminate (`Err`).
-fn directory_anchor(path: &std::path::Path) -> Result<Option<&std::path::Path>, ()> {
-    for ancestor in path.ancestors() {
-        match std::fs::symlink_metadata(ancestor) {
-            Ok(metadata) => return Ok(metadata.is_dir().then_some(ancestor)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-            Err(error) if error.kind() == std::io::ErrorKind::NotADirectory => return Ok(None),
-            Err(_) => return Err(()),
-        }
-    }
-    Ok(None)
 }
 
 pub(super) async fn prepare(app: &App, directory: &str, deadline: tokio::time::Instant) -> Option<()> {
@@ -368,11 +373,19 @@ fn project_history_response(
     } else {
         body.slice_ref(raw.get().as_bytes())
     };
+    let length = axum::http::HeaderValue::from(payload.len());
     let response_body = match slot {
         Some(slot) => crate::shared::permit_body(payload, slot),
         None => axum::body::Body::from(payload),
     };
-    ([(header::CONTENT_TYPE, "application/json")], response_body).into_response()
+    (
+        [
+            (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/json")),
+            (header::CONTENT_LENGTH, length),
+        ],
+        response_body,
+    )
+        .into_response()
 }
 
 pub async fn handle(
@@ -565,6 +578,7 @@ pub async fn attachment(
 
 #[test]
 fn directory_anchor_accepts_existing_or_missing_descendant_and_rejects_files() {
+    use crate::worktrees::ownership::directory_anchor;
     let dir = crate::shared::test_dir("media-anchor");
     let file = dir.join("leaf.txt");
     std::fs::write(&file, "x").unwrap();

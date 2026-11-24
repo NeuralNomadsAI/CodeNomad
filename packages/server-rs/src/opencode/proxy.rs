@@ -265,26 +265,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         None
     };
     let defer_deadline = defer_guard.as_ref().map(|(deadline, _)| *deadline);
-    let resolve_media_path = |raw: &str| {
-        if !crate::files::paths::local_absolute(raw) {
-            return None;
-        }
-        let normalized = crate::files::node_path::Style::host().normalize(raw);
-        if !crate::files::paths::under(&app.scope, std::path::Path::new(&normalized)) {
-            return None;
-        }
-        let resolved =
-            crate::worktrees::ownership::resolve_exact_directory(raw).filter(|p| p.starts_with(&app.scope))?;
-        let mut cur = resolved.as_path();
-        let anchor = loop {
-            match std::fs::symlink_metadata(cur) {
-                Ok(meta) => break meta.is_dir().then(|| cur.to_path_buf())?,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => cur = cur.parent()?,
-                Err(_) => return None,
-            }
-        };
-        Some((resolved, anchor))
-    };
+    let resolve_media_path = |raw: &str| crate::worktrees::ownership::resolve_media_path(&app.scope, raw);
     let allow_subfolder = send_input || message_list;
     // TS checks every client-supplied directory before session lookup or relay (`http-server.ts:1248-1264`).
     let mut requested_checkout = None;
@@ -293,7 +274,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             let Some((resolved, anchor)) = resolve_media_path(req) else {
                 return Err(foreign());
             };
-            let work = crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor);
+            let work =
+                crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor, false);
             let proof = if let Some(deadline) = defer_deadline {
                 tokio::select! {
                     biased;
@@ -354,7 +336,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         match &initial_identity {
             Some((resolved, anchor, _)) if message_list => {
-                let work = crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor);
+                let work =
+                    crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor, false);
                 if let Some(deadline) = defer_deadline {
                     tokio::select! {
                         biased;
@@ -440,8 +423,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 let Some((resolved, anchor)) = resolve_media_path(ctx_dir) else {
                     return Err(foreign());
                 };
-                let work =
-                    crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor);
+                let work = crate::worktrees::ownership::media_directory(
+                    &app, &workspace, &endpoint, &resolved, &anchor, false,
+                );
                 let owned = if let Some(deadline) = defer_deadline {
                     tokio::select! {
                         biased;
@@ -863,7 +847,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 proof = tokio::time::timeout_at(
                     deadline,
-                    crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor),
+                    crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor, false),
                 ) => {
                     proof.map_err(|_| interrupted())?.map_err(|_| upstream_error())?
                 }
@@ -881,10 +865,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             principal.live()?;
             // Drop the upstream strong ETag only when the JSON body was actually rewritten
             // (RFC 9110: never reuse the original validator for a modified representation).
+            let length = axum::http::HeaderValue::from(payload.len());
             let builder = headers
                 .into_iter()
                 .filter(|(name, _)| !(changed && *name == "etag"))
-                .fold(Response::builder().status(status), |builder, (name, value)| builder.header(name, value));
+                .fold(Response::builder().status(status), |builder, (name, value)| builder.header(name, value))
+                .header(header::CONTENT_LENGTH, length);
             return builder
                 .extension(NativeBody)
                 .body(crate::shared::permit_body(payload, slot))

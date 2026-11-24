@@ -228,12 +228,40 @@ fn catalogue_proof(
     Some(DirectoryProof { tree: Some(tree.clone()), source, external, media })
 }
 
+/// A missing child is owned through its nearest existing directory, never
+/// through a file or an unresolved link. I/O failures stay indeterminate (`Err`).
+pub(crate) fn directory_anchor(path: &Path) -> Result<Option<&Path>, ()> {
+    for ancestor in path.ancestors() {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(metadata) => return Ok(metadata.is_dir().then_some(ancestor)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotADirectory => return Ok(None),
+            Err(_) => return Err(()),
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, PathBuf)> {
+    if !crate::files::paths::local_absolute(raw) {
+        return None;
+    }
+    let normalized = crate::files::node_path::Style::host().normalize(raw);
+    if !crate::files::paths::under(scope, Path::new(&normalized)) {
+        return None;
+    }
+    let resolved = resolve_exact_directory(raw).filter(|p| p.starts_with(scope))?;
+    let anchor = directory_anchor(&resolved).ok()??.to_path_buf();
+    Some((resolved, anchor))
+}
+
 pub(crate) async fn media_directory(
     app: &App,
     workspace: &Workspace,
     endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
     path: &Path,
     anchor: &Path,
+    strict_media: bool,
 ) -> Result<Option<DirectoryProof>, crate::Error> {
     use super::{inventory, linked::native_error};
     let current = || app.native.current(endpoint) && app.workspace(&workspace.id.to_string()).is_ok();
@@ -264,10 +292,38 @@ pub(crate) async fn media_directory(
     if !current() {
         return Err(native_error());
     }
-    // TS `listNativeWorktrees` refreshes on every strict media ownership check (`location -> refresh -> list`).
+    if strict_media {
+        // TS `session-media` forces `location -> refresh -> list` under the 30 s media budget.
+        let timeout = std::time::Duration::from_secs(30);
+        for _ in 0..4 {
+            let revision = inventory::revision(app);
+            let catalogue = inventory::catalogue_at(app, workspace, true, Some(endpoint), timeout).await?;
+            if !current() {
+                return Err(native_error());
+            }
+            let proof = catalogue_proof(&catalogue, path, external, true).filter(|proof| proof.live(path));
+            if inventory::revision(app) != revision {
+                continue;
+            }
+            return Ok(proof);
+        }
+        return Err(native_error());
+    }
+    // History windows and `message.list` reuse a valid warm inventory before falling back to
+    // a cold read and a single refresh on a miss (TS `worktree-directory.ts:37-47`).
+    if let Some(cached) = app.linked_events.lock().unwrap().cached(workspace.id, endpoint)
+        && let Some(proof) = catalogue_proof(&cached, path, external, true).filter(|proof| {
+            proof.live(path) && proof.tree.as_ref().is_none_or(|tree| tree.registered().starts_with(&app.scope))
+        })
+    {
+        return Ok(Some(proof));
+    }
+    let timeout = std::time::Duration::from_secs(12);
+    let mut refresh = false;
+    let mut refreshed = false;
     for _ in 0..4 {
         let revision = inventory::revision(app);
-        let catalogue = inventory::catalogue_at(app, workspace, true, Some(endpoint)).await?;
+        let catalogue = inventory::catalogue_at(app, workspace, refresh, Some(endpoint), timeout).await?;
         if !current() {
             return Err(native_error());
         }
@@ -275,7 +331,11 @@ pub(crate) async fn media_directory(
         if inventory::revision(app) != revision {
             continue;
         }
-        return Ok(proof);
+        refreshed |= refresh;
+        if proof.is_some() || refreshed {
+            return Ok(proof);
+        }
+        refresh = true;
     }
     Err(native_error())
 }

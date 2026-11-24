@@ -97,6 +97,90 @@ pub fn permit_body(bytes: axum::body::Bytes, slot: tokio::sync::SemaphorePermit<
     }))
 }
 
+/// Bounds continuous write stalls (a peer whose TCP receive window stays full) without
+/// interfering with idle SSE or slow-streaming native responses that are not actively writing.
+pub struct WriteStallIo<T> {
+    inner: T,
+    timeout: std::time::Duration,
+    stall: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl<T> WriteStallIo<T> {
+    pub fn new(inner: T, timeout: std::time::Duration) -> Self {
+        Self { inner, timeout, stall: None }
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for WriteStallIo<T> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStallIo<T> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        match std::pin::Pin::new(&mut this.inner).poll_write(cx, buf) {
+            std::task::Poll::Ready(result) => {
+                this.stall = None;
+                std::task::Poll::Ready(result)
+            }
+            std::task::Poll::Pending => {
+                let timer = this.stall.get_or_insert_with(|| Box::pin(tokio::time::sleep(this.timeout)));
+                if std::future::Future::poll(timer.as_mut(), cx).is_ready() {
+                    this.stall = None;
+                    std::task::Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "response write stalled",
+                    )))
+                } else {
+                    std::task::Poll::Pending
+                }
+            }
+        }
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        match std::pin::Pin::new(&mut this.inner).poll_flush(cx) {
+            std::task::Poll::Ready(result) => {
+                this.stall = None;
+                std::task::Poll::Ready(result)
+            }
+            std::task::Poll::Pending => {
+                let timer = this.stall.get_or_insert_with(|| Box::pin(tokio::time::sleep(this.timeout)));
+                if std::future::Future::poll(timer.as_mut(), cx).is_ready() {
+                    this.stall = None;
+                    std::task::Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "response flush stalled",
+                    )))
+                } else {
+                    std::task::Poll::Pending
+                }
+            }
+        }
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
 pub async fn serve_local(
     listener: tokio::net::TcpListener,
     router: axum::Router,
@@ -113,13 +197,20 @@ pub async fn serve_local(
             }
             Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
             accepted = listener.accept() => {
-                let Ok((stream, _)) = accepted else { continue };
+                let (stream, _) = match accepted {
+                    Ok(pair) => pair,
+                    Err(_) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        continue;
+                    }
+                };
                 let _ = stream.set_nodelay(true);
                 let router = router.clone();
                 let stop = shutdown.clone();
                 tasks.spawn(async move {
+                    let io = WriteStallIo::new(stream, std::time::Duration::from_secs(30));
                     let conn = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(hyper_util::rt::TokioIo::new(stream), abortable_service(router))
+                        .serve_connection(hyper_util::rt::TokioIo::new(io), abortable_service(router))
                         .with_upgrades();
                     tokio::pin!(conn);
                     tokio::select! {
