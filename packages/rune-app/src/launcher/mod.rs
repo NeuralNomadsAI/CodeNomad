@@ -76,7 +76,7 @@ enum Reply {
     Opened(crate::workspace::opening::Opening, Sessions, Restored),
     Listed(Sessions, Option<String>),
     Created(Backend, String, String, String, Option<u64>),
-    Selected(Vec<String>, Option<Selection>, Option<u64>),
+    Selected(Vec<String>, Option<Selection>, Option<u64>, bool),
     #[cfg(target_arch = "wasm32")]
     Reopened(crate::workspace::opening::Opening, Backend, String, String),
     Placed(Backend, String, String, bool, bool),
@@ -194,6 +194,7 @@ impl Launcher {
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let browser_changed = cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s));
     let blocked = !can_change_session(s);
+    let child_blocked = !can_open_child_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
     let Some(l) = s.screen.launcher_mut() else {
         return false;
@@ -310,7 +311,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 bind(s, b, title, None, &slug, tx);
             }
         }
-        Ok(Reply::Selected(missing, selection, dismiss)) => {
+        Ok(Reply::Selected(missing, selection, dismiss, allow_streaming)) => {
+            let selection_blocked = if allow_streaming {
+                child_blocked
+            } else {
+                blocked
+            };
             l.sessions.retain(|row| !missing.contains(&row.id));
             if let Some(pages) = &mut l.linked.pages {
                 pages.rows.retain(|row| !missing.contains(&row.id));
@@ -332,13 +338,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 return true;
             }
             if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
-                !blocked
+                !selection_blocked
                     || s.phase == Phase::Failed && selected.as_deref() == Some(b.session.as_str())
             }) {
                 l.show_title = false;
                 dismiss_origin_panel(s, dismiss, tx);
                 bind(s, b, title, visit, &slug, tx);
-            } else if !blocked {
+            } else if !selection_blocked {
                 l.error = Some("sessionList.reload.error");
                 crate::shell::notifications::emit_outcome(
                     s,

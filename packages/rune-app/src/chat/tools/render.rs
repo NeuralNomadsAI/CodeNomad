@@ -187,14 +187,15 @@ fn render_body(
     probe: bool,
 ) -> El {
     let active = query.is_some_and(|q| q.active);
+    let nested = !ancestors.is_empty() || message.starts_with("child:");
     let expanded = active
         || s.transcript_display.expanded(
             key,
-            tool.status == "error"
-                || settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) == "expanded",
+            !nested
+                && (tool.status == "error"
+                    || settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) == "expanded"),
         );
     let is_task = task::is_task(tool);
-    let nested = !ancestors.is_empty() || message.starts_with("child:");
     let can_watch_child = is_task
         && ancestors.len() < task::MAX_DEPTH
         && task::watched_child(tool).is_some_and(|cid| !ancestors.contains(&cid));
@@ -266,9 +267,14 @@ fn render_body(
         super::duration::tool_timing(tool)
     };
     let status_el = if probe {
-        text(t(status)).text_role(TextRole::Label)
+        text(t(status)).text_role(TextRole::Label).role("status")
     } else {
-        super::duration::view(s, key, timing, text(t(status)).text_role(TextRole::Label))
+        super::duration::view(
+            s,
+            key,
+            timing,
+            text(t(status)).text_role(TextRole::Label).role("status"),
+        )
     };
     let mut header = layout::action_row()
         .child(
@@ -291,7 +297,12 @@ fn render_body(
         && let Some(child_id) = task::watched_child(tool)
         && crate::workspace::active_session(s) != Some(child_id)
     {
-        let parent = task::parent_child(message).map(str::to_owned);
+        let parent_ref = task::parent_child(message);
+        let unavailable = s
+            .transcript_display
+            .children
+            .unavailable(parent_ref, child_id);
+        let parent = parent_ref.map(str::to_owned);
         let target = child_id.to_owned();
         header = header.child(
             layout::button_tx(
@@ -302,7 +313,7 @@ fn render_body(
                 }),
             )
             .key(format!("goto-{key}"))
-            .disabled(!crate::launcher::can_open_child_session(s)),
+            .disabled(unavailable || !crate::launcher::can_open_child_session(s)),
         );
     }
     if shared_wrap {

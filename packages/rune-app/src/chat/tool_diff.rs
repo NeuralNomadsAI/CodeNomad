@@ -212,6 +212,19 @@ pub(super) fn body(
     path: &str,
     fallback: impl FnOnce() -> El,
 ) -> El {
+    body_with_copy(s, message, key, tool, patch, path, None, fallback)
+}
+
+pub(super) fn body_with_copy(
+    s: &State,
+    message: &str,
+    key: &str,
+    tool: &Arc<Tool>,
+    patch: &str,
+    path: &str,
+    copy_override: Option<String>,
+    fallback: impl FnOnce() -> El,
+) -> El {
     let path = &path[..path.floor_char_boundary(path.len().min(4096))];
     let entry = s
         .transcript_display
@@ -230,6 +243,7 @@ pub(super) fn body(
             entry,
             (tool.name != "apply_patch")
                 .then(|| path.rsplit(['/', '\\']).next().unwrap_or_default()),
+            copy_override,
         ),
         _ => {
             let stamp = (
@@ -298,7 +312,13 @@ pub(super) fn body(
         })
 }
 
-fn view(s: &State, key: &str, entry: &Entry, path: Option<&str>) -> El {
+fn view(
+    s: &State,
+    key: &str,
+    entry: &Entry,
+    path: Option<&str>,
+    copy_override: Option<String>,
+) -> El {
     let split = entry.state.mode() == DiffMode::Split;
     let wrapped = entry.state.wrap();
     let file = path
@@ -315,7 +335,7 @@ fn view(s: &State, key: &str, entry: &Entry, path: Option<&str>) -> El {
     let mode_key = key.to_owned();
     let wrap_card = key.to_owned();
     let wrap_key = format!("{key}-wrap");
-    let patch = entry.patch.clone();
+    let copy_source = copy_override.unwrap_or_else(|| entry.patch.clone());
     col()
         .full_width()
         .separate(Space::Sm)
@@ -328,7 +348,7 @@ fn view(s: &State, key: &str, entry: &Entry, path: Option<&str>) -> El {
                         t("toolCall.diff.copyPatch"),
                         screen::action_tx(&s.input_scope, move |s, tx| {
                             s.transcript_display.children.cancel_copy();
-                            tx.copy(patch.as_str());
+                            tx.copy(copy_source.as_str());
                         }),
                     )
                     .key(format!("{key}-copy-patch")),

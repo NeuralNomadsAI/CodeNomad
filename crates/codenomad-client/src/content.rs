@@ -14,13 +14,20 @@ pub use subagent::SubagentReport;
 pub use tool_live::install as install_tool;
 pub(crate) use tool_live::{Fit as ToolFit, apply_at as apply_tool};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolEventOutcome {
+    Applied,
+    Drop,
+    Pending,
+}
+
 pub fn apply_tool_event(
     rows: &mut [crate::history::Row],
     message_id: Option<&str>,
     kind: &str,
     data: &Value,
     at: Option<u64>,
-) -> bool {
+) -> ToolEventOutcome {
     let call_id = data["id"].as_str().unwrap_or_default();
     let idx = if let Some(msg) = message_id {
         rows.iter().position(|r| r.id == msg)
@@ -35,13 +42,14 @@ pub fn apply_tool_event(
         None
     };
     let Some(idx) = idx else {
-        return false;
+        return ToolEventOutcome::Pending;
     };
     let row = Arc::make_mut(&mut rows[idx]);
-    matches!(
-        tool_live::apply_at(row, kind, data, at),
-        ToolFit::Applied(_) | ToolFit::Settled(_)
-    )
+    match tool_live::apply_at(row, kind, data, at) {
+        ToolFit::Applied(_) | ToolFit::Settled(_) => ToolEventOutcome::Applied,
+        ToolFit::Drop => ToolEventOutcome::Drop,
+        ToolFit::Repair => ToolEventOutcome::Pending,
+    }
 }
 pub use usage::{FAMILY_LIMIT, Family, FamilyChange, FamilyMember, FamilySnapshot, Usage};
 pub(crate) use user::digest as attachment_digest;
@@ -344,6 +352,51 @@ pub struct Tool {
 impl Tool {
     pub fn retained_bytes(&self) -> usize {
         self.bytes + self.output_bytes + self.media_bytes()
+    }
+
+    pub fn with_budget(&self, budget: usize) -> Self {
+        let mut copy = self.clone();
+        if copy.retained_bytes() <= budget {
+            return copy;
+        }
+        let recompute = |tool: &mut Tool| {
+            let (in_n, in_b) = resident_json(&tool.input);
+            let (md_n, md_b) = resident_json(&tool.metadata);
+            tool.bytes = tool.id.len()
+                + tool.name.len()
+                + tool.status.len()
+                + size_of::<Tool>()
+                + in_n
+                + in_b
+                + md_n;
+            tool.output_bytes = md_b + tool.error.len() + tool.output.len();
+        };
+        if copy.retained_bytes() > budget && !copy.pictures.is_empty() {
+            copy.pictures.clear();
+        }
+        if copy.retained_bytes() > budget && !copy.output.is_empty() {
+            let excess = copy.retained_bytes().saturating_sub(budget);
+            let keep = copy.output.len().saturating_sub(excess);
+            let end = copy.output.floor_char_boundary(keep);
+            copy.output.truncate(end);
+            recompute(&mut copy);
+        }
+        if copy.retained_bytes() > budget && !copy.error.is_empty() {
+            let excess = copy.retained_bytes().saturating_sub(budget);
+            let keep = copy.error.len().saturating_sub(excess);
+            let end = copy.error.floor_char_boundary(keep);
+            copy.error.truncate(end);
+            recompute(&mut copy);
+        }
+        if copy.retained_bytes() > budget && !copy.metadata.is_null() {
+            copy.metadata = Value::Null;
+            recompute(&mut copy);
+        }
+        if copy.retained_bytes() > budget && !copy.input.is_null() {
+            copy.input = Value::Null;
+            recompute(&mut copy);
+        }
+        copy
     }
 
     fn media_bytes(&self) -> usize {

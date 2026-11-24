@@ -211,9 +211,11 @@ fn prose_for(
             let search_terms = query
                 .filter(|q| q.active)
                 .map(|q| (q.terms.to_vec(), q.ranked));
+            let truncated = shown.len() < source.len();
             markdown::prose(
                 shown,
                 streaming,
+                truncated,
                 units
                     <= if streaming {
                         TOOL_LIMIT

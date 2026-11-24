@@ -12,6 +12,7 @@ pub fn prose_has_match(source: &str, query: crate::timeline::search::Query<'_>) 
 pub fn prose<S: 'static>(
     source: &str,
     streaming: bool,
+    truncated: bool,
     highlight: bool,
     query: Option<crate::timeline::search::Query<'_>>,
     link: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
@@ -27,7 +28,7 @@ pub fn prose<S: 'static>(
         .code_block(kit.c.bg_deep, kit.c.border_base)
         .link(kit.c.text_accent)
         .syntax_highlight(highlight);
-    let source = literal_breaks(source).into_owned();
+    let source = literal_breaks_with(source, truncated).into_owned();
     let matches: Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)> = match query {
         Some(q) => prose_ranges(&source, q, 512)
             .into_iter()
@@ -322,6 +323,10 @@ pub fn link_menu<S: 'static>(
 // Normalize only parsed events. Diagram fences stay on Kit's source path so the
 // transcript can gate preview on completion and keep source actions on one frame.
 pub(crate) fn literal_breaks(source: &str) -> Cow<'_, str> {
+    literal_breaks_with(source, false)
+}
+
+fn literal_breaks_with(source: &str, truncated: bool) -> Cow<'_, str> {
     if !source.contains(['<', '\n']) {
         return Cow::Borrowed(source);
     }
@@ -342,11 +347,15 @@ pub(crate) fn literal_breaks(source: &str) -> Cow<'_, str> {
             }
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
                 let line_start = source[..range.start].rfind('\n').map_or(0, |i| i + 1);
+                let block = &source[range.clone()];
+                let truncated_end =
+                    truncated && range.end == source.len() && !block.ends_with('\n');
                 if let Some((word, replacement)) = diagram_fence(
                     info,
                     &source[line_start..range.start],
-                    &source[range.clone()],
+                    block,
                     in_list_item > 0,
+                    truncated_end,
                 ) {
                     let start = range.start + word.start;
                     result.push_str(&source[last..start]);
@@ -392,6 +401,7 @@ fn diagram_fence(
     line_prefix: &str,
     block: &str,
     in_list_item: bool,
+    truncated_end: bool,
 ) -> Option<(std::ops::Range<usize>, &'static str)> {
     let kit_word = info.split(|c: char| c.is_whitespace() || c == ',').next()?;
     if !(kit_word.eq_ignore_ascii_case("mermaid") || kit_word.eq_ignore_ascii_case("mmd")) {
@@ -407,7 +417,8 @@ fn diagram_fence(
     // Kit recognizes comma modifiers; Solid only admits a whitespace-delimited language.
     // Route both forms through the ordinary code frame, retaining Copy even for plain source.
     let replacement = if word.eq_ignore_ascii_case("mermaid") || word.eq_ignore_ascii_case("mmd") {
-        if commonmark_closed(line_prefix, block, marker, fence_len, in_list_item) {
+        if !truncated_end && commonmark_closed(line_prefix, block, marker, fence_len, in_list_item)
+        {
             "mmd"
         } else {
             "mmd-open"

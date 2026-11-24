@@ -5,7 +5,8 @@ use crate::{
 };
 use codenomad_client::{Receiver, bounded, runtime};
 use std::{
-    collections::{HashMap, VecDeque},
+    cell::Cell,
+    collections::{HashMap, HashSet, VecDeque},
     rc::{Rc, Weak},
     sync::{
         Arc,
@@ -18,6 +19,15 @@ static CLIPBOARD_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn note_clipboard_write() {
     CLIPBOARD_EPOCH.fetch_add(1, Ordering::SeqCst);
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 pub(super) const STEP_LIMIT: usize = 200;
@@ -75,7 +85,11 @@ struct Snapshot {
 }
 
 enum ChildUpdate {
-    Loaded { snapshot: Snapshot, settled: bool },
+    Loaded {
+        snapshot: Snapshot,
+        settled: bool,
+        unavailable: bool,
+    },
     Settled,
     Unverified,
     Failed,
@@ -86,9 +100,17 @@ enum ReportCopy {
     Loading {
         key: CopyKey,
         epoch: u64,
+        baseline: Rc<Cell<Option<u64>>>,
         lease: Option<Weak<()>>,
         _cancel: codenomad_client::Sender<()>,
         rx: Receiver<Option<String>>,
+    },
+    #[cfg(target_arch = "wasm32")]
+    Writing {
+        key: CopyKey,
+        epoch: u64,
+        text: String,
+        rx: Receiver<bool>,
     },
     #[allow(dead_code)]
     Ready {
@@ -132,10 +154,15 @@ impl Default for ReportExpand {
 pub(crate) struct Children {
     backend: Option<Backend>,
     entries: HashMap<ChildKey, Entry>,
+    unavailable: HashSet<ChildKey>,
     waiting: VecDeque<(ChildKey, String, Weak<()>)>,
     report_copy: ReportCopy,
     expanded_report: ReportExpand,
-    pending_nav: Option<(codenomad_client::Sender<()>, Receiver<Option<String>>)>,
+    pending_nav: Option<(
+        ChildKey,
+        codenomad_client::Sender<()>,
+        Receiver<Option<String>>,
+    )>,
 }
 
 struct Watcher {
@@ -149,6 +176,7 @@ enum WatchState {
     Dormant {
         _cancel: codenomad_client::Sender<()>,
         wake: Receiver<bool>,
+        pending_promote: bool,
     },
     Pending,
 }
@@ -169,10 +197,22 @@ impl Children {
 
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
+        self.unavailable.clear();
         self.waiting.clear();
         self.report_copy = ReportCopy::Idle;
         self.expanded_report = ReportExpand::Idle;
         self.pending_nav = None;
+    }
+
+    pub(super) fn unavailable(&self, parent: Option<&str>, id: &str) -> bool {
+        self.unavailable.contains(&child_key(parent, id))
+    }
+
+    fn mark_unavailable(&mut self, ck: ChildKey) {
+        if self.unavailable.len() >= 64 && !self.unavailable.contains(&ck) {
+            self.unavailable.clear();
+        }
+        self.unavailable.insert(ck);
     }
 
     pub(crate) fn cancel_copy(&mut self) {
@@ -237,6 +277,11 @@ impl Children {
             ReportCopy::Loading { key: current, .. }
             | ReportCopy::Ready { key: current, .. }
             | ReportCopy::Failed { key: current } => match current {
+                CopyKey::Report(k) => matches_card(&k.key),
+                CopyKey::Steps { key: k, .. } => matches_card(k),
+            },
+            #[cfg(target_arch = "wasm32")]
+            ReportCopy::Writing { key: current, .. } => match current {
                 CopyKey::Report(k) => matches_card(&k.key),
                 CopyKey::Steps { key: k, .. } => matches_card(k),
             },
@@ -335,7 +380,7 @@ impl Children {
         Some((cancel, rx))
     }
 
-    pub(super) fn copy_report(s: &mut State, key: ReportCopyKey) {
+    pub(super) fn copy_report(s: &mut State, key: ReportCopyKey, tx: &mut rune::Tx) {
         let lease = s.transcript_display.children.card_lease(&key.key);
         let copy_key = CopyKey::Report(key.clone());
         let Some((cancel, rx)) = Self::fetch_report(s, &key) else {
@@ -343,16 +388,33 @@ impl Children {
             return;
         };
         let epoch = CLIPBOARD_EPOCH.load(Ordering::SeqCst);
+        let baseline = Rc::new(Cell::new(None));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let capture = baseline.clone();
+            tx.read_clipboard(move |_: &mut State, content, _| {
+                capture.set(Some(fnv1a64(content.text().as_bytes())));
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = tx;
         s.transcript_display.children.report_copy = ReportCopy::Loading {
             key: copy_key,
             epoch,
+            baseline,
             lease,
             _cancel: cancel,
             rx,
         };
     }
 
-    pub(super) fn copy_steps(s: &mut State, key: String, parent: Option<String>, child: String) {
+    pub(super) fn copy_steps(
+        s: &mut State,
+        key: String,
+        parent: Option<String>,
+        child: String,
+        tx: &mut rune::Tx,
+    ) {
         let lease = s.transcript_display.children.card_lease(&key);
         let copy_key = CopyKey::Steps {
             key,
@@ -370,9 +432,20 @@ impl Children {
         let (out, rx) = bounded(1);
         let (cancel, cancelled) = bounded(1);
         let epoch = CLIPBOARD_EPOCH.load(Ordering::SeqCst);
+        let baseline = Rc::new(Cell::new(None));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let capture = baseline.clone();
+            tx.read_clipboard(move |_: &mut State, content, _| {
+                capture.set(Some(fnv1a64(content.text().as_bytes())));
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = tx;
         s.transcript_display.children.report_copy = ReportCopy::Loading {
             key: copy_key,
             epoch,
+            baseline,
             lease,
             _cancel: cancel,
             rx,
@@ -402,9 +475,10 @@ impl Children {
         let Some(backend) = s.transcript_display.children.backend.clone() else {
             return;
         };
+        let ck = child_key(parent, child);
         let (out, rx) = bounded(1);
         let (cancel, cancelled) = bounded(1);
-        s.transcript_display.children.pending_nav = Some((cancel, rx));
+        s.transcript_display.children.pending_nav = Some((ck, cancel, rx));
         let expected_parent = parent.map_or_else(|| backend.session.clone(), str::to_owned);
         let child = child.to_owned();
         let wake = s.wake.clone();
@@ -446,9 +520,9 @@ impl Children {
     }
 
     pub(crate) fn poll_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
-        let mut changed = s.transcript_display.children.poll_copy(tx);
+        let mut changed = Self::poll_copy(s, tx);
         let nav = match s.transcript_display.children.pending_nav.as_ref() {
-            Some((_, rx)) => match rx.try_recv() {
+            Some((_, _, rx)) => match rx.try_recv() {
                 Ok(target) => Some(target),
                 Err(error) if error.is_closed() => Some(None),
                 Err(_) => None,
@@ -456,26 +530,80 @@ impl Children {
             None => None,
         };
         if let Some(target) = nav {
-            s.transcript_display.children.pending_nav = None;
-            if let Some(child_id) = target
-                && crate::launcher::can_open_child_session(s)
-            {
-                crate::launcher::choose_child(s, child_id, tx);
+            let ck = s
+                .transcript_display
+                .children
+                .pending_nav
+                .take()
+                .map(|(ck, _, _)| ck);
+            if let Some(child_id) = target {
+                if let Some(ck) = ck {
+                    s.transcript_display.children.unavailable.remove(&ck);
+                }
+                if crate::launcher::can_open_child_session(s) {
+                    crate::launcher::choose_child(s, child_id, tx);
+                    changed = true;
+                }
+            } else {
+                if let Some(ck) = ck {
+                    s.transcript_display.children.mark_unavailable(ck);
+                }
+                crate::shell::notifications::emit_outcome(
+                    s,
+                    crate::shell::notifications::Category::Sessions,
+                    None,
+                    crate::strings::t("sessionList.reload.error"),
+                    true,
+                );
                 changed = true;
             }
         }
         changed
     }
 
-    fn poll_copy(&mut self, tx: &mut rune::Tx) -> bool {
-        let outcome = match &self.report_copy {
+    fn poll_copy(s: &mut State, tx: &mut rune::Tx) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let write_outcome = match &s.transcript_display.children.report_copy {
+                ReportCopy::Writing { epoch, rx, .. } => {
+                    if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != *epoch {
+                        s.transcript_display.children.report_copy = ReportCopy::Idle;
+                        return false;
+                    }
+                    match rx.try_recv() {
+                        Ok(copied) => Some(copied),
+                        Err(error) if error.is_closed() => Some(false),
+                        Err(_) => return false,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(copied) = write_outcome {
+                if let ReportCopy::Writing {
+                    key, epoch, text, ..
+                } = std::mem::take(&mut s.transcript_display.children.report_copy)
+                {
+                    if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch {
+                        return false;
+                    }
+                    if copied {
+                        note_clipboard_write();
+                    } else {
+                        s.transcript_display.children.report_copy = ReportCopy::Ready { key, text };
+                    }
+                    return true;
+                }
+                return false;
+            }
+        }
+        let outcome = match &s.transcript_display.children.report_copy {
             ReportCopy::Loading {
                 epoch, lease, rx, ..
             } => {
                 if lease.as_ref().is_some_and(|w| w.strong_count() == 0)
                     || CLIPBOARD_EPOCH.load(Ordering::SeqCst) != *epoch
                 {
-                    self.report_copy = ReportCopy::Idle;
+                    s.transcript_display.children.report_copy = ReportCopy::Idle;
                     return false;
                 }
                 match rx.try_recv() {
@@ -486,12 +614,17 @@ impl Children {
             }
             _ => return false,
         };
-        let (key, epoch, lease) = match std::mem::take(&mut self.report_copy) {
-            ReportCopy::Loading {
-                key, epoch, lease, ..
-            } => (key, epoch, lease),
-            _ => return false,
-        };
+        let (key, epoch, baseline, lease) =
+            match std::mem::take(&mut s.transcript_display.children.report_copy) {
+                ReportCopy::Loading {
+                    key,
+                    epoch,
+                    baseline,
+                    lease,
+                    ..
+                } => (key, epoch, baseline, lease),
+                _ => return false,
+            };
         if lease.as_ref().is_some_and(|w| w.strong_count() == 0)
             || CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch
         {
@@ -501,18 +634,41 @@ impl Children {
             Some(Some(text)) => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    note_clipboard_write();
-                    tx.copy(text);
+                    let expected = baseline.get();
+                    tx.read_clipboard(move |_: &mut State, current, tx| {
+                        if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch {
+                            return;
+                        }
+                        if let Some(before) = expected
+                            && fnv1a64(current.text().as_bytes()) != before
+                        {
+                            return;
+                        }
+                        note_clipboard_write();
+                        tx.copy(text);
+                    });
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
-                    let _ = tx;
-                    self.report_copy = ReportCopy::Ready { key, text };
+                    let _ = (tx, baseline);
+                    let (out, rx) = bounded(1);
+                    let wake = s.wake.clone();
+                    crate::platform::diagnostics::copy(&text, move |copied| {
+                        if out.try_send(copied).is_ok() {
+                            wake();
+                        }
+                    });
+                    s.transcript_display.children.report_copy = ReportCopy::Writing {
+                        key,
+                        epoch,
+                        text,
+                        rx,
+                    };
                 }
                 true
             }
             _ => {
-                self.report_copy = ReportCopy::Failed { key };
+                s.transcript_display.children.report_copy = ReportCopy::Failed { key };
                 true
             }
         }
@@ -564,7 +720,14 @@ impl Children {
         }
         let needs_watch = if let Some(entry) = children.entries.get_mut(&ck) {
             entry.cards.insert(key.into(), Rc::downgrade(lease));
-            Some(matches!(entry.watch, WatchState::Pending))
+            Some(matches!(
+                entry.watch,
+                WatchState::Pending
+                    | WatchState::Dormant {
+                        pending_promote: true,
+                        ..
+                    }
+            ))
         } else {
             None
         };
@@ -634,14 +797,19 @@ impl Children {
         let Some((dirty, settlement)) = backend.watch_child(child) else {
             return WatchState::Pending;
         };
-        let (out, wake_rx) = bounded(1);
+        let (out, wake_rx) = bounded(2);
         let (cancel, cancelled) = bounded(1);
         let wake = wake.clone();
         crate::platform::spawn(async move {
             crate::platform::reads::cancellable(&cancelled, async {
-                if dirty.recv().await.is_ok() {
+                while dirty.recv().await.is_ok() {
                     let (_, _, _, _, revoked) = settlement.take();
-                    if out.send(revoked).await.is_ok() {
+                    if revoked {
+                        if out.send(true).await.is_err() {
+                            break;
+                        }
+                        wake();
+                    } else if out.try_send(false).is_ok() {
                         wake();
                     }
                 }
@@ -651,6 +819,7 @@ impl Children {
         WatchState::Dormant {
             _cancel: cancel,
             wake: wake_rx,
+            pending_promote: false,
         }
     }
 
@@ -688,7 +857,14 @@ impl Children {
             let needs_start =
                 if let Some(entry) = s.transcript_display.children.entries.get_mut(&ck) {
                     entry.cards.insert(key.clone(), Rc::downgrade(&lease));
-                    matches!(entry.watch, WatchState::Pending)
+                    matches!(
+                        entry.watch,
+                        WatchState::Pending
+                            | WatchState::Dormant {
+                                pending_promote: true,
+                                ..
+                            }
+                    )
                 } else {
                     true
                 };
@@ -804,29 +980,39 @@ impl Children {
                             let mut changed = false;
                             let mut overflowed = false;
                             for ev in tool_events {
-                                let applied = live_page.as_mut().is_some_and(|page| {
-                                    codenomad_client::content::apply_tool_event(
-                                        &mut page.rows,
-                                        ev.message.as_deref(),
-                                        &ev.kind,
-                                        &ev.data,
-                                        ev.at,
-                                    )
-                                });
-                                if applied {
-                                    if live_page.as_ref().is_some_and(|page| {
-                                        codenomad_client::history::check(&page.rows).is_err()
-                                    }) {
-                                        live_page = None;
-                                        overflowed = true;
-                                        break;
+                                let outcome = live_page.as_mut().map_or(
+                                    codenomad_client::content::ToolEventOutcome::Pending,
+                                    |page| {
+                                        codenomad_client::content::apply_tool_event(
+                                            &mut page.rows,
+                                            ev.message.as_deref(),
+                                            &ev.kind,
+                                            &ev.data,
+                                            ev.at,
+                                        )
+                                    },
+                                );
+                                match outcome {
+                                    codenomad_client::content::ToolEventOutcome::Applied => {
+                                        if live_page.as_ref().is_some_and(|page| {
+                                            codenomad_client::history::check(&page.rows).is_err()
+                                        }) {
+                                            live_page = None;
+                                            overflowed = true;
+                                            break;
+                                        }
+                                        changed = true;
                                     }
-                                    changed = true;
-                                } else if pending_events.len() < MAX_PENDING_EVENTS
-                                    && pending_bytes.saturating_add(ev.bytes) <= MAX_PENDING_BYTES
-                                {
-                                    pending_bytes = pending_bytes.saturating_add(ev.bytes);
-                                    pending_events.push((0, ev));
+                                    codenomad_client::content::ToolEventOutcome::Drop => {}
+                                    codenomad_client::content::ToolEventOutcome::Pending => {
+                                        if pending_events.len() < MAX_PENDING_EVENTS
+                                            && pending_bytes.saturating_add(ev.bytes)
+                                                <= MAX_PENDING_BYTES
+                                        {
+                                            pending_bytes = pending_bytes.saturating_add(ev.bytes);
+                                            pending_events.push((0, ev));
+                                        }
+                                    }
                                 }
                             }
                             if !overflowed
@@ -838,6 +1024,7 @@ impl Children {
                                     .try_send(ChildUpdate::Loaded {
                                         snapshot: snap,
                                         settled: false,
+                                        unavailable: false,
                                     })
                                     .is_ok()
                                 {
@@ -949,14 +1136,18 @@ impl Children {
                                 let mut kept = Vec::new();
                                 pending_bytes = 0;
                                 for (age, ev) in pending_events.drain(..) {
-                                    let applied = codenomad_client::content::apply_tool_event(
+                                    let outcome = codenomad_client::content::apply_tool_event(
                                         &mut page.rows,
                                         ev.message.as_deref(),
                                         &ev.kind,
                                         &ev.data,
                                         ev.at,
                                     );
-                                    if !applied && age < 2 {
+                                    if matches!(
+                                        outcome,
+                                        codenomad_client::content::ToolEventOutcome::Pending
+                                    ) && age < 2
+                                    {
                                         pending_bytes = pending_bytes.saturating_add(ev.bytes);
                                         kept.push((age + 1, ev));
                                     }
@@ -979,6 +1170,7 @@ impl Children {
                                 ChildUpdate::Loaded {
                                     snapshot: snapshot_with_frozen(page, &frozen_ends),
                                     settled,
+                                    unavailable: false,
                                 },
                                 settled,
                                 running,
@@ -997,6 +1189,7 @@ impl Children {
                                 ChildUpdate::Loaded {
                                     snapshot: Snapshot::default(),
                                     settled: true,
+                                    unavailable: true,
                                 },
                                 true,
                                 false,
@@ -1027,7 +1220,7 @@ impl Children {
                             false
                         }
                     });
-                    if !owed_calls.is_empty() || execution_owed > 0 {
+                    if !owed_calls.is_empty() || execution_owed > 0 || !pending_events.is_empty() {
                         let step = max_attempt.max(1);
                         let delay = Duration::from_millis(100 * u64::from(step));
                         runtime::sleep(delay).await;
@@ -1068,6 +1261,8 @@ impl Children {
     pub(crate) fn poll(&mut self) -> bool {
         let mut changed = self.prune();
         let mut to_requeue: Vec<(ChildKey, String, Weak<()>)> = Vec::new();
+        let mut mark_unavailable: Vec<ChildKey> = Vec::new();
+        let mut clear_unavailable: Vec<ChildKey> = Vec::new();
         for (ck, entry) in self.entries.iter_mut() {
             match &mut entry.watch {
                 WatchState::Active(watcher) => {
@@ -1076,7 +1271,13 @@ impl Children {
                             ChildUpdate::Loaded {
                                 snapshot: next,
                                 settled,
+                                unavailable,
                             } => {
+                                if unavailable {
+                                    mark_unavailable.push(ck.clone());
+                                } else {
+                                    clear_unavailable.push(ck.clone());
+                                }
                                 changed |= entry.load_error
                                     || entry.settled != settled
                                     || entry.snapshot != next;
@@ -1089,6 +1290,7 @@ impl Children {
                                 entry.settled = true;
                             }
                             ChildUpdate::Unverified => {
+                                clear_unavailable.push(ck.clone());
                                 changed |= entry.load_error
                                     || entry.settled
                                     || entry.snapshot != Snapshot::default();
@@ -1103,20 +1305,40 @@ impl Children {
                         }
                     }
                 }
-                WatchState::Dormant { wake, .. } => {
-                    let triggered = match wake.try_recv() {
-                        Ok(revoked) => Some(revoked),
-                        Err(error) if error.is_closed() => Some(false),
-                        Err(_) => None,
-                    };
-                    if let Some(revoked) = triggered {
-                        if revoked {
-                            changed |= entry.load_error || entry.snapshot != Snapshot::default();
-                            entry.snapshot = Snapshot::default();
-                            entry.load_error = false;
+                WatchState::Dormant {
+                    wake,
+                    pending_promote,
+                    ..
+                } => {
+                    let mut woke = false;
+                    let mut revoked = false;
+                    let mut closed = false;
+                    loop {
+                        match wake.try_recv() {
+                            Ok(is_revoked) => {
+                                woke = true;
+                                revoked |= is_revoked;
+                            }
+                            Err(error) if error.is_closed() => {
+                                closed = true;
+                                break;
+                            }
+                            Err(_) => break,
                         }
+                    }
+                    if revoked {
+                        clear_unavailable.push(ck.clone());
+                        changed |= entry.load_error || entry.snapshot != Snapshot::default();
+                        entry.snapshot = Snapshot::default();
+                        entry.load_error = false;
+                    }
+                    if woke || closed {
                         entry.settled = false;
-                        entry.watch = WatchState::Pending;
+                        if closed {
+                            entry.watch = WatchState::Pending;
+                        } else {
+                            *pending_promote = true;
+                        }
                         if let Some((card, lease)) =
                             entry.cards.iter().find(|(_, w)| w.strong_count() > 0)
                         {
@@ -1125,6 +1347,15 @@ impl Children {
                     }
                 }
                 WatchState::Pending => {}
+            }
+        }
+        for ck in clear_unavailable {
+            changed |= self.unavailable.remove(&ck);
+        }
+        for ck in mark_unavailable {
+            if !self.unavailable.contains(&ck) {
+                self.mark_unavailable(ck);
+                changed = true;
             }
         }
         if !to_requeue.is_empty() {
@@ -1262,26 +1493,56 @@ fn child_tool_settled(rows: &[crate::history::Row], message: Option<&str>, call:
 }
 
 fn snapshot(page: crate::history::Page) -> Snapshot {
-    let mut remaining = STEP_BYTES;
-    let mut steps_truncated = false;
-    let mut tools: Steps = Vec::new();
-    for (row, tool) in page.rows.iter().rev().flat_map(|row| {
-        row.parts.iter().rev().filter_map(move |part| match part {
-            Part::Tool(tool) => Some((row, tool)),
-            _ => None,
+    let raw_tools: Vec<_> = page
+        .rows
+        .iter()
+        .rev()
+        .flat_map(|row| {
+            row.parts.iter().rev().filter_map(move |part| match part {
+                Part::Tool(tool) => Some((row, tool)),
+                _ => None,
+            })
         })
-    }) {
-        if tools.len() >= STEP_LIMIT {
-            steps_truncated = true;
-            break;
+        .collect();
+    let mut steps_truncated = raw_tools.len() > STEP_LIMIT;
+    let kept_tools: Vec<_> = raw_tools.into_iter().take(STEP_LIMIT).collect();
+    let total_tool_bytes: usize = kept_tools
+        .iter()
+        .map(|(_, tool)| tool.retained_bytes())
+        .sum();
+    let mut tools: Steps = if total_tool_bytes <= STEP_BYTES {
+        kept_tools
+            .into_iter()
+            .map(|(row, tool)| (row.id.clone(), tool.clone()))
+            .collect()
+    } else {
+        steps_truncated = true;
+        // Shortest-first water-filling keeps smaller steps intact beside an oversized step.
+        let mut order: Vec<usize> = (0..kept_tools.len()).collect();
+        order.sort_by_key(|&i| kept_tools[i].1.retained_bytes());
+        let mut caps = vec![0usize; kept_tools.len()];
+        let mut rem = STEP_BYTES;
+        for (pos, &idx) in order.iter().enumerate() {
+            let share = rem / (order.len() - pos);
+            let size = kept_tools[idx].1.retained_bytes();
+            let take = size.min(share);
+            caps[idx] = take;
+            rem -= take;
         }
-        let Some(next) = remaining.checked_sub(tool.retained_bytes()) else {
-            steps_truncated = true;
-            break;
-        };
-        remaining = next;
-        tools.push((row.id.clone(), tool.clone()));
-    }
+        kept_tools
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (row, tool))| {
+                let cap = caps[idx];
+                let bounded = if tool.retained_bytes() <= cap {
+                    tool.clone()
+                } else {
+                    Arc::new(tool.with_budget(cap))
+                };
+                (row.id.clone(), bounded)
+            })
+            .collect()
+    };
     tools.reverse();
     let raw_reports: Vec<_> =
         page.rows
@@ -1403,7 +1664,16 @@ async fn copy_child_steps_bounded(
         let Some(request) = cursor.take() else {
             break;
         };
-        if !seen_cursors.insert(request.to_string()) {
+        let encoded_cursor = request.to_string();
+        if encoded_cursor.len() > 4096 {
+            return None;
+        }
+        let cursor_key = (
+            request["kind"].as_str().unwrap_or_default().to_owned(),
+            request["messageID"].as_str().unwrap_or_default().to_owned(),
+            fnv1a64(encoded_cursor.as_bytes()),
+        );
+        if !seen_cursors.insert(cursor_key) {
             return None;
         }
         let page = {
@@ -1428,6 +1698,34 @@ async fn copy_child_steps_bounded(
                     "error": tool.error,
                     "metadata": tool.metadata,
                 });
+                if !tool.pictures.is_empty() {
+                    let mut content = Vec::new();
+                    if !tool.output.is_empty() {
+                        content.push(serde_json::json!({
+                            "type": "text",
+                            "text": tool.output,
+                        }));
+                    }
+                    for pic in &tool.pictures {
+                        let mut item = serde_json::Map::new();
+                        item.insert("type".into(), serde_json::json!("image"));
+                        item.insert("mimeType".into(), serde_json::json!(pic.mime));
+                        if let Some(name) = pic.name.as_deref() {
+                            item.insert("name".into(), serde_json::json!(name));
+                        }
+                        match &pic.source {
+                            crate::content::PictureSource::Inline(data) => {
+                                item.insert("data".into(), serde_json::json!(data.as_ref()));
+                            }
+                            crate::content::PictureSource::Http(url) => {
+                                item.insert("url".into(), serde_json::json!(url.as_ref()));
+                            }
+                            _ => {}
+                        }
+                        content.push(serde_json::Value::Object(item));
+                    }
+                    state["content"] = serde_json::Value::Array(content);
+                }
                 if tool.started.is_some() || tool.ended.is_some() {
                     let mut time = serde_json::Map::new();
                     if let Some(start) = tool.started {
@@ -1477,6 +1775,7 @@ impl Children {
         out.try_send(ChildUpdate::Loaded {
             snapshot: snapshot(page),
             settled: true,
+            unavailable: false,
         })
         .unwrap();
         let (cancel, _) = bounded(1);

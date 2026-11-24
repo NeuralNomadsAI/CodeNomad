@@ -111,7 +111,7 @@ pub(super) fn copy(
                 if let Some(ready) = s.transcript_display.children.take_ready_copy(&target) {
                     tx.copy(ready);
                 } else {
-                    Children::copy_report(s, report_key);
+                    Children::copy_report(s, report_key, tx);
                 }
             } else {
                 s.transcript_display.children.cancel_copy();

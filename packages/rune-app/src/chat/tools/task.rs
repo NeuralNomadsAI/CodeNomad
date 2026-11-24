@@ -476,6 +476,7 @@ pub(super) fn body(
     }
     if step_count > 0 || live_truncated || live_incomplete {
         let step_key = format!("{key}-task-steps");
+        let pane_clip = s.transcript_display.tool_clock.clip_rect(&step_key);
         let revealed_steps = s.transcript_display.steps(&step_key);
         let scroll_state = s.transcript_display.step_scroll_state(&step_key);
         let (is_detached, scroll_ratio) = scroll_state.get();
@@ -495,9 +496,17 @@ pub(super) fn body(
                 format!("legacy-id:{id}")
             }
         };
+        let selected_rows = s.transcript_display.step_selected(&step_key);
         if !visible_live.is_empty() {
             if revealed_steps == 0 && !is_detached {
                 s.transcript_display.unpin_step_anchor(&step_key);
+            }
+            if is_detached
+                && let Some(measured) = s
+                    .transcript_display
+                    .first_visible_step(&step_key, pane_clip.get())
+            {
+                s.transcript_display.pin_step_anchor(&step_key, measured);
             }
             if let Some(anchor) = s.transcript_display.step_anchor(&step_key) {
                 if let Some(pos) = visible_live
@@ -522,14 +531,15 @@ pub(super) fn body(
                         let owner = format!("child:{cid}:{msg}");
                         let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
                         (s.transcript_display.expanded(&child_key, false)
-                            || focused.is_some_and(|f| f.contains(&child_key)))
+                            || focused.is_some_and(|f| f.contains(&child_key))
+                            || selected_rows.iter().any(|sel| sel == &child_key))
                         .then_some(pos)
                     },
                 ) {
                     start = start.min(protected).max(min_start);
                 }
             }
-            if is_detached {
+            if is_detached && s.transcript_display.step_anchor(&step_key).is_none() {
                 let mounted = visible_live.len().saturating_sub(start);
                 let ratio = scroll_ratio.clamp(0.0, 1.0);
                 let reading = start + ((mounted.saturating_sub(1)) as f32 * ratio).floor() as usize;
@@ -542,6 +552,13 @@ pub(super) fn body(
         } else if !legacy.is_empty() {
             if revealed_steps == 0 && !is_detached {
                 s.transcript_display.unpin_step_anchor(&step_key);
+            }
+            if is_detached
+                && let Some(measured) = s
+                    .transcript_display
+                    .first_visible_step(&step_key, pane_clip.get())
+            {
+                s.transcript_display.pin_step_anchor(&step_key, measured);
             }
             if let Some(anchor) = s.transcript_display.step_anchor(&step_key) {
                 if let Some(pos) = legacy
@@ -564,10 +581,11 @@ pub(super) fn body(
                 let item_key = format!("{step_key}-{index}");
                 s.transcript_display.toggled(&item_key)
                     || focused.is_some_and(|f| f.contains(&item_key))
+                    || selected_rows.iter().any(|sel| sel == &item_key)
             }) {
                 start = start.min(protected).max(min_start);
             }
-            if is_detached {
+            if is_detached && s.transcript_display.step_anchor(&step_key).is_none() {
                 let mounted = legacy.len().saturating_sub(start);
                 let ratio = scroll_ratio.clamp(0.0, 1.0);
                 let reading = start + ((mounted.saturating_sub(1)) as f32 * ratio).floor() as usize;
@@ -578,7 +596,9 @@ pub(super) fn body(
                 }
             }
         }
+        let list_key = format!("list-{step_key}");
         let mut list = col()
+            .key(list_key.clone())
             .role("list")
             .label(t("toolCall.task.sections.steps"))
             .separate(Space::Sm);
@@ -610,9 +630,9 @@ pub(super) fn body(
                 .key(format!("reveal-{step_key}")),
             );
         }
-        let pane_clip = s.transcript_display.tool_clock.clip_rect(&step_key);
+        let mut row_rects: Vec<(String, Rc<DrawnRect>)> = Vec::new();
         let mut budget_truncated = false;
-        let mut rendered_live = 0usize;
+        let mut rendered_steps = 0usize;
         if let Some(child_id) = child_id.filter(|_| !visible_live.is_empty()) {
             let mut next_ancestors = Vec::with_capacity(ancestors.len() + 1);
             next_ancestors.extend_from_slice(ancestors);
@@ -626,87 +646,101 @@ pub(super) fn body(
             list = s.transcript_display.tool_clock.with_clip(&pane_clip, || {
                 let mut list = list;
                 for (message, step) in own_steps.into_iter().skip(drop_oldest) {
-                    rendered_live += 1;
+                    rendered_steps += 1;
                     let owner = format!("child:{child_id}:{message}");
                     let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
-                    list = list.child(col().key(child_key.clone()).role("listitem").child(
-                        super::render::render_nested(
-                            s,
-                            &owner,
-                            step,
-                            &child_key,
-                            &next_ancestors,
-                            &mut child_budget,
-                        ),
-                    ));
+                    let row_rect = Rc::new(DrawnRect::new([0.0; 4]));
+                    row_rects.push((format!("{message}:{}", step.id), row_rect.clone()));
+                    list = list.child(
+                        col()
+                            .key(child_key.clone())
+                            .role("listitem")
+                            .drawn_rect_into(&row_rect)
+                            .child(super::render::render_nested(
+                                s,
+                                &owner,
+                                step,
+                                &child_key,
+                                &next_ancestors,
+                                &mut child_budget,
+                            )),
+                    );
                 }
                 list
             });
             *budget = child_budget;
         }
-        for (index, step) in legacy
-            .iter()
-            .enumerate()
-            .skip(start)
-            .filter(|_| child_steps.is_empty())
-        {
-            let status = string(step, &["status"]);
-            let status = if status.is_empty() {
-                string(&step["state"], &["status"])
-            } else {
-                status
-            };
-            let status = match status {
-                "pending" => "toolCall.status.pending",
-                "running" => "toolCall.status.running",
-                "completed" => "toolCall.status.completed",
-                "error" => "toolCall.status.error",
-                _ => "toolCall.status.unknown",
-            };
-            let name: String = string(step, &["title", "tool"]).chars().take(250).collect();
-            let input = step.get("input").or_else(|| step["state"].get("input"));
-            let key = format!("{step_key}-{index}");
-            let expanded = s.transcript_display.toggled(&key);
-            let label = if input.is_some_and(|input| input.is_object()) {
-                let toggle = key.clone();
-                layout::button(
-                    &name,
-                    false,
-                    screen::action(&s.input_scope, move |s| Display::toggle(s, &toggle)),
-                )
-                .key(format!("toggle-{key}"))
-                .expanded(expanded)
-            } else {
-                text(name)
-            };
-            let mut row = col()
-                .key(key.clone())
-                .role("listitem")
-                .child(layout::action_row().child(label).child(text(t(status))));
-            if expanded && let Some(input) = input {
-                row = row.child(
-                    if let Some(input) = input_json(input, super::TOOL_LIMIT, false) {
-                        window(
-                            s,
-                            format!("{key}-input"),
-                            &[&input],
-                            PANE_LIMIT,
-                            |shown, _| markdown::code(shown, "json", true, true),
-                        )
-                    } else {
-                        text(t("toolCall.output.tooLarge"))
-                    },
-                );
+        if child_steps.is_empty() && start < legacy.len() {
+            let legacy_tail = &legacy[start..];
+            let own_cap = legacy_tail.len().min(*budget);
+            budget_truncated |= own_cap < legacy_tail.len();
+            let drop_oldest = legacy_tail.len().saturating_sub(own_cap);
+            *budget = budget.saturating_sub(own_cap);
+            for (index, step) in legacy.iter().enumerate().skip(start + drop_oldest) {
+                rendered_steps += 1;
+                let status = string(step, &["status"]);
+                let status = if status.is_empty() {
+                    string(&step["state"], &["status"])
+                } else {
+                    status
+                };
+                let status = match status {
+                    "pending" => "toolCall.status.pending",
+                    "running" => "toolCall.status.running",
+                    "completed" => "toolCall.status.completed",
+                    "error" => "toolCall.status.error",
+                    _ => "toolCall.status.unknown",
+                };
+                let name: String = string(step, &["title", "tool"]).chars().take(250).collect();
+                let input = step.get("input").or_else(|| step["state"].get("input"));
+                let key = format!("{step_key}-{index}");
+                let expanded = s.transcript_display.toggled(&key);
+                let label = if input.is_some_and(|input| input.is_object()) {
+                    let toggle = key.clone();
+                    layout::button(
+                        &name,
+                        false,
+                        screen::action(&s.input_scope, move |s| Display::toggle(s, &toggle)),
+                    )
+                    .key(format!("toggle-{key}"))
+                    .expanded(expanded)
+                } else {
+                    text(name)
+                };
+                let row_rect = Rc::new(DrawnRect::new([0.0; 4]));
+                row_rects.push((legacy_anchor(index, step), row_rect.clone()));
+                let mut row = col()
+                    .key(key.clone())
+                    .role("listitem")
+                    .drawn_rect_into(&row_rect)
+                    .child(layout::action_row().child(label).child(text(t(status))));
+                if expanded && let Some(input) = input {
+                    row = row.child(
+                        if let Some(input) = input_json(input, super::TOOL_LIMIT, false) {
+                            window(
+                                s,
+                                format!("{key}-input"),
+                                &[&input],
+                                PANE_LIMIT,
+                                |shown, _| markdown::code(shown, "json", true, true),
+                            )
+                        } else {
+                            text(t("toolCall.output.tooLarge"))
+                        },
+                    );
+                }
+                list = list.child(row);
             }
-            list = list.child(row);
         }
+        s.transcript_display
+            .set_step_row_rects(&step_key, row_rects);
         let legacy_truncated = child_steps.is_empty() && legacy.len() > STEP_LIMIT;
         if step_count > STEP_LIMIT || live_truncated || budget_truncated {
             let notice = if child_steps.is_empty() && live_truncated {
                 text(t("toolCall.output.tooLarge")).role("status")
             } else {
                 let shown_limit = if budget_truncated {
-                    rendered_live
+                    rendered_steps
                 } else if live_truncated && child_steps.len() < STEP_LIMIT {
                     child_steps.len()
                 } else {
@@ -740,7 +774,7 @@ pub(super) fn body(
                         {
                             tx.copy(ready);
                         } else if let CopyKey::Steps { key, parent, child } = &action_target {
-                            Children::copy_steps(s, key.clone(), parent.clone(), child.clone());
+                            Children::copy_steps(s, key.clone(), parent.clone(), child.clone(), tx);
                         }
                     }),
                 )
@@ -771,6 +805,9 @@ pub(super) fn body(
             );
         }
         let scroll_cell = scroll_state.clone();
+        let sel_scope = s.input_scope.clone();
+        let sel_key = step_key.clone();
+        let list_segment = format!("/{list_key}/");
         result = result.child(super::duration::observe_clip(
             s,
             markdown::follow_tool_pane(list, true, !is_detached && revealed_steps == 0)
@@ -784,6 +821,30 @@ pub(super) fn body(
                         1.0
                     };
                     scroll_cell.set((detached, ratio));
+                })
+                .on_selection_change(move |s: &mut State, change, tx| {
+                    if s.current_scope(&sel_scope) {
+                        let mut selected = Vec::new();
+                        if let Some(sel) = change.selection() {
+                            for seg in sel.texts() {
+                                if let Some((_, rest)) = seg.path().split_once(&list_segment)
+                                    && let Some(row_key) = rest.split('/').next()
+                                    && !row_key.is_empty()
+                                    && !selected.iter().any(|existing| existing == row_key)
+                                {
+                                    selected.push(row_key.to_owned());
+                                    if selected.len() >= 8 {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if s.transcript_display.set_step_selected(&sel_key, selected) {
+                            s.revision += 1;
+                            return;
+                        }
+                    }
+                    tx.live_only();
                 }),
         ));
     }

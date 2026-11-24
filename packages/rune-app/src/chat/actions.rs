@@ -27,6 +27,10 @@ pub struct Display {
     pub(crate) messages: super::message_actions::Actions,
     focused_key: Option<String>,
     step_scroll: RefCell<HashMap<String, std::rc::Rc<std::cell::Cell<(bool, f32)>>>>,
+    step_row_rects: RefCell<
+        HashMap<String, Vec<(String, std::rc::Rc<rune_theme_codenomad::layout::DrawnRect>)>>,
+    >,
+    step_selected: HashMap<String, Vec<String>>,
 }
 
 #[derive(Default)]
@@ -66,6 +70,8 @@ impl Display {
         self.usage_family.close();
         self.pictures.clear();
         self.receipts.suspend();
+        self.step_row_rects.get_mut().clear();
+        self.step_selected.clear();
     }
     pub(crate) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
@@ -102,6 +108,8 @@ impl Display {
             self.pictures.clear();
             self.receipts.clear();
             self.diffs = Default::default();
+            self.step_row_rects.get_mut().clear();
+            self.step_selected.clear();
         }
     }
 
@@ -218,6 +226,56 @@ impl Display {
             .clone()
     }
 
+    pub(super) fn first_visible_step(&self, key: &str, pane: [f32; 4]) -> Option<String> {
+        if pane[3] <= 0.0 {
+            return None;
+        }
+        let top = pane[1];
+        let bottom = pane[1] + pane[3];
+        self.step_row_rects.borrow().get(key).and_then(|rows| {
+            rows.iter()
+                .find(|(_, rect)| {
+                    let r = rect.get();
+                    r[3] > 0.0 && r[1] + r[3] > top && r[1] < bottom
+                })
+                .map(|(anchor, _)| anchor.clone())
+        })
+    }
+
+    pub(super) fn set_step_row_rects(
+        &self,
+        key: &str,
+        rows: Vec<(String, std::rc::Rc<rune_theme_codenomad::layout::DrawnRect>)>,
+    ) {
+        let mut map = self.step_row_rects.borrow_mut();
+        if map.len() >= 64 && !map.contains_key(key) {
+            map.clear();
+        }
+        map.insert(key.into(), rows);
+    }
+
+    pub(super) fn step_selected(&self, key: &str) -> &[String] {
+        self.step_selected.get(key).map_or(&[], Vec::as_slice)
+    }
+
+    pub(super) fn set_step_selected(&mut self, key: &str, selected: Vec<String>) -> bool {
+        if selected.is_empty() {
+            return self.step_selected.remove(key).is_some();
+        }
+        if self
+            .step_selected
+            .get(key)
+            .is_some_and(|cur| *cur == selected)
+        {
+            return false;
+        }
+        if self.step_selected.len() >= 64 && !self.step_selected.contains_key(key) {
+            self.step_selected.clear();
+        }
+        self.step_selected.insert(key.into(), selected);
+        true
+    }
+
     pub(super) fn pin_step_anchor(&self, key: &str, anchor: String) {
         let mut anchors = self.active.step_anchors.borrow_mut();
         if !anchors.1.contains_key(key) {
@@ -258,6 +316,11 @@ impl Display {
             .retain(|key| key != prefix && !key.starts_with(&nested));
         self.step_scroll
             .get_mut()
+            .retain(|key, _| key != prefix && !key.starts_with(&nested));
+        self.step_row_rects
+            .get_mut()
+            .retain(|key, _| key != prefix && !key.starts_with(&nested));
+        self.step_selected
             .retain(|key, _| key != prefix && !key.starts_with(&nested));
     }
 

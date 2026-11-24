@@ -76,9 +76,101 @@ fn patch(file: &Value) -> &str {
     string(file, &["diff", "patch"])
 }
 
+fn operation_code(status: &str) -> Option<&'static str> {
+    match status {
+        "added" => Some("A"),
+        "deleted" => Some("D"),
+        "modified" => Some("M"),
+        "renamed" => Some("R"),
+        _ => None,
+    }
+}
+
+fn file_change(s: Option<&State>, file: &Value) -> (&'static str, String) {
+    let path = string(file, &["relativePath", "filePath", "file", "path"]);
+    let patch = patch(file);
+    let display = |p: &str| {
+        s.and_then(|s| super::super::links::native_file(s, p))
+            .unwrap_or_else(|| p.replace('\\', "/"))
+            .chars()
+            .take(250)
+            .collect::<String>()
+    };
+    let mut target = if path.is_empty() {
+        String::new()
+    } else {
+        display(path)
+    };
+    let mut status = match file["status"].as_str().unwrap_or_default() {
+        "added" => "added",
+        "deleted" => "deleted",
+        "modified" => "modified",
+        "renamed" => "renamed",
+        _ => "",
+    };
+    if !path.is_empty()
+        && (status == "renamed" || matches!(status, "" | "modified") && file["file"].is_string())
+    {
+        let header = &patch[..patch.floor_char_boundary(patch.len().min(TOOL_LIMIT))];
+        let header: Vec<_> = header
+            .lines()
+            .take_while(|line| !tool_diff::is_hunk(line))
+            .collect();
+        let old = string(file, &["oldPath", "sourcePath", "oldFilePath"]);
+        let old = (!old.is_empty())
+            .then_some(old)
+            .or_else(|| {
+                header
+                    .iter()
+                    .find_map(|line| line.strip_prefix("rename from "))
+            })
+            .or_else(|| header.iter().find_map(|line| line.strip_prefix("Index: ")))
+            .or_else(|| {
+                header.iter().find_map(|line| {
+                    line.strip_prefix("--- ").map(|old| {
+                        let old = old.split('\t').next().unwrap_or(old);
+                        if header.iter().any(|line| line.starts_with("diff --git ")) {
+                            old.strip_prefix("a/").unwrap_or(old)
+                        } else {
+                            old
+                        }
+                    })
+                })
+            });
+        if let Some(source) = old.filter(|old| !old.is_empty() && *old != "/dev/null") {
+            let source = display(source);
+            if status == "renamed" || source != target && !source.ends_with(&format!("/{target}")) {
+                status = "renamed";
+                target = format!("{source} → {target}");
+            }
+        }
+    }
+    (status, target)
+}
+
+fn file_copy_text(s: Option<&State>, file: &Value) -> String {
+    let (status, target) = file_change(s, file);
+    let diff = patch(file);
+    if let Some(code) = operation_code(status)
+        && !target.is_empty()
+    {
+        if diff.is_empty() {
+            format!("{code} {target}")
+        } else {
+            format!("{code} {target}\n{diff}")
+        }
+    } else {
+        diff.to_owned()
+    }
+}
+
 pub(super) fn has_patch(tool: &Tool) -> bool {
     let mut remaining = TOOL_LIMIT;
     for file in files(tool).iter().take(FILE_LIMIT) {
+        let (status, target) = file_change(None, file);
+        if operation_code(status).is_some() && !target.is_empty() {
+            return true;
+        }
         for ch in patch(file).chars() {
             if !ch.is_whitespace() || remaining < ch.len_utf16() {
                 return true;
@@ -92,7 +184,7 @@ pub(super) fn has_patch(tool: &Tool) -> bool {
 pub(super) fn copy_all(tool: &Tool) -> Option<String> {
     let source = files(tool)
         .iter()
-        .map(patch)
+        .map(|file| file_copy_text(None, file))
         .filter(|source| !source.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n");
@@ -116,17 +208,67 @@ pub(super) fn title(tool: &Tool) -> String {
     )
 }
 
+fn matches_diagnostic_path(file: &Value, diagnostics: &[String]) -> bool {
+    if diagnostics.is_empty() {
+        return false;
+    }
+    let candidates = [
+        string(file, &["relativePath"]),
+        string(file, &["filePath", "file", "path"]),
+    ];
+    candidates.iter().any(|cand| {
+        if cand.is_empty() {
+            return false;
+        }
+        let norm = cand.replace('\\', "/");
+        diagnostics.iter().any(|diag| {
+            norm == *diag
+                || norm.ends_with(&format!("/{diag}"))
+                || diag.ends_with(&format!("/{norm}"))
+        })
+    })
+}
+
 pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Option<El> {
     let changes = files(tool);
+    let diagnostics: Vec<String> = tool.metadata["diagnostics"]
+        .as_object()
+        .into_iter()
+        .flat_map(|map| map.keys())
+        .take(FILE_LIMIT)
+        .map(|path| path.replace('\\', "/"))
+        .collect();
+    let mut selected: Vec<(usize, &Value)> = Vec::new();
+    let mut scanned = 0usize;
+    let mut scanned_chars = 0usize;
+    let mut truncated = false;
+    for (index, file) in changes.iter().enumerate() {
+        if selected.len() >= FILE_LIMIT || scanned >= 10_000 {
+            truncated = true;
+            break;
+        }
+        scanned += 1;
+        let diff = patch(file);
+        let status = file["status"].as_str().unwrap_or_default();
+        let probe_limit = TOOL_LIMIT.saturating_sub(scanned_chars);
+        let probe_end = diff.floor_char_boundary(diff.len().min(probe_limit));
+        let prefix = &diff[..probe_end];
+        scanned_chars = scanned_chars.saturating_add(prefix.len());
+        let has_diff = prefix.chars().any(|c| !c.is_whitespace()) || probe_end < diff.len();
+        let has_explicit_op = matches!(status, "added" | "deleted" | "renamed");
+        if has_diff || has_explicit_op || matches_diagnostic_path(file, &diagnostics) {
+            selected.push((index, file));
+        }
+    }
     let mut remaining = TOOL_LIMIT;
     let mut rendered = 0;
-    let mut truncated = changes.len() > FILE_LIMIT;
     let mut view = col().full_width().separate(Space::Sm);
-    for (index, file) in changes.iter().take(FILE_LIMIT).enumerate() {
+    for (display_idx, (index, file)) in selected.into_iter().enumerate() {
         let patch = patch(file);
         let path = string(file, &["relativePath", "filePath", "file", "path"]);
         let key = format!("{key}-patch-{index}");
-        let label = label(s, file, path, patch, index);
+        let label = label(s, file, display_idx);
+        let copy_text = file_copy_text(Some(s), file);
         let heading = if super::super::links::native_file(s, path).is_some() {
             let path = path.to_owned();
             layout::button(
@@ -154,8 +296,8 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
         let mut units = patch.encode_utf16();
         let used = units.by_ref().take(remaining).count();
         let complete = units.next().is_none();
+        let fallback_copy = copy_text.clone();
         let fallback = || {
-            let snapshot = tool.clone();
             col()
                 .full_width()
                 .separate(Space::Sm)
@@ -165,7 +307,7 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
                             t("toolCall.diff.copyPatch"),
                             screen::action_tx(&s.input_scope, move |s, tx| {
                                 s.transcript_display.children.cancel_copy();
-                                tx.copy(self::patch(&files(&snapshot)[index]));
+                                tx.copy(fallback_copy.as_str());
                             }),
                         )
                         .key(format!("{key}-copy-patch")),
@@ -181,7 +323,16 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
         let body =
             if complete && !message.starts_with("child:") && tool_diff::structured_candidate(patch)
             {
-                tool_diff::body(s, message, &key, tool, patch, path, fallback)
+                tool_diff::body_with_copy(
+                    s,
+                    message,
+                    &key,
+                    tool,
+                    patch,
+                    path,
+                    Some(copy_text),
+                    fallback,
+                )
             } else {
                 fallback()
             };
@@ -252,61 +403,17 @@ fn native_file_summaries_include_diff_less_changes_and_open_the_destination() {
     assert_eq!(files.tree.directory(), "/other");
 }
 
-fn label(s: &State, file: &Value, path: &str, patch: &str, index: usize) -> String {
-    let display = |path: &str| {
-        super::super::links::native_file(s, path)
-            .unwrap_or_else(|| path.replace('\\', "/"))
-            .chars()
-            .take(250)
-            .collect::<String>()
-    };
-    let mut label = if path.is_empty() {
+fn label(s: &State, file: &Value, index: usize) -> String {
+    let (status, target) = file_change(Some(s), file);
+    let label = if target.is_empty() {
         catalogue::format(
             locale(),
             "toolCall.applyPatch.fileFallback",
             &[("number", &(index + 1).to_string())],
         )
     } else {
-        display(path)
+        target
     };
-    let mut status = file["status"].as_str().unwrap_or_default();
-    if !path.is_empty()
-        && (status == "renamed" || matches!(status, "" | "modified") && file["file"].is_string())
-    {
-        let header = &patch[..patch.floor_char_boundary(patch.len().min(TOOL_LIMIT))];
-        let header: Vec<_> = header
-            .lines()
-            .take_while(|line| !tool_diff::is_hunk(line))
-            .collect();
-        let old = string(file, &["oldPath", "sourcePath", "oldFilePath"]);
-        let old = (!old.is_empty())
-            .then_some(old)
-            .or_else(|| {
-                header
-                    .iter()
-                    .find_map(|line| line.strip_prefix("rename from "))
-            })
-            .or_else(|| header.iter().find_map(|line| line.strip_prefix("Index: ")))
-            .or_else(|| {
-                header.iter().find_map(|line| {
-                    line.strip_prefix("--- ").map(|old| {
-                        let old = old.split('\t').next().unwrap_or(old);
-                        if header.iter().any(|line| line.starts_with("diff --git ")) {
-                            old.strip_prefix("a/").unwrap_or(old)
-                        } else {
-                            old
-                        }
-                    })
-                })
-            });
-        if let Some(source) = old.filter(|old| !old.is_empty() && *old != "/dev/null") {
-            let source = display(source);
-            if status == "renamed" || source != label && !source.ends_with(&format!("/{label}")) {
-                status = "renamed";
-                label = format!("{source} → {label}");
-            }
-        }
-    }
     let label_key = match status {
         "added" => "toolCall.applyPatch.added",
         "deleted" => "toolCall.applyPatch.deleted",

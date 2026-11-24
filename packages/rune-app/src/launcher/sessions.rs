@@ -249,6 +249,7 @@ fn choose_from_inner(
                         missing,
                         Some((bound, session.title, step, started, slug)),
                         dismiss,
+                        allow_streaming,
                     ));
                 }
                 Err(err) if err.is::<SessionMissing>() => missing.push(id),
@@ -256,7 +257,7 @@ fn choose_from_inner(
                 Err(_) => break,
             }
         }
-        Ok(Reply::Selected(missing, None, dismiss))
+        Ok(Reply::Selected(missing, None, dismiss, allow_streaming))
     });
 }
 pub fn can_change_session(s: &State) -> bool {
