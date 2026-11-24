@@ -42,6 +42,7 @@ pub fn run() {
         s.screen.launcher().unwrap().connection.is_some()
     });
     assert!(rt.state.screen.launcher().unwrap().password.text.is_empty());
+    super::window_restore::wait_control(&mut rt, "folder-path");
     let folder = std::env::var("RUNE_TEST_FOLDER").unwrap();
     super::window_restore::type_text(&mut rt, "folder-path", "relative-invalid");
     tap(&mut rt, "open-folder");
