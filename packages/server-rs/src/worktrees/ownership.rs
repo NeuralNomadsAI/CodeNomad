@@ -762,17 +762,15 @@ pub(crate) async fn media_directory_with_slot(
         }
         return Err(native_error());
     }
-    // Match TS `worktree-inventory.ts:30-42` & `http-server.ts:1394-1408`: reuse a valid,
-    // non-invalidated 10-second inventory snapshot before calling `worktree.list` so transient
-    // `worktree.list` outages do not break reads while the cache is valid; on a miss, read
-    // `refresh = false` first and trigger one `refresh = true` only if the path is still absent.
+    // Match TS `worktree-inventory.ts:30-42`, `manager.ts:467-469`, & `native-worktrees.ts:86-96`:
+    // reuse a valid, non-invalidated 10-second inventory snapshot before hitting the daemon; on a
+    // cold/invalidated miss, run `refresh = true` before `worktree.list` so worktrees that require
+    // refresh to become visible succeed on the first read.
     let timeout = std::time::Duration::from_secs(12);
     let mut tried_cache = false;
-    let mut refresh = false;
-    let mut refreshed = false;
     for _ in 0..4 {
         let revision = inventory::revision(app);
-        if !tried_cache && !refresh {
+        if !tried_cache {
             tried_cache = true;
             let cached = app.linked_events.lock().unwrap().cached(workspace.id, endpoint);
             if let Some(catalogue) = cached {
@@ -791,7 +789,7 @@ pub(crate) async fn media_directory_with_slot(
             }
         }
         let catalogue =
-            std::sync::Arc::new(inventory::catalogue_at(app, workspace, refresh, Some(endpoint), timeout).await?);
+            std::sync::Arc::new(inventory::catalogue_at(app, workspace, true, Some(endpoint), timeout).await?);
         if !current() {
             return Err(native_error());
         }
@@ -809,12 +807,12 @@ pub(crate) async fn media_directory_with_slot(
         if inventory::revision(app) != revision {
             continue;
         }
-        app.linked_events.lock().unwrap().store_if_current(workspace.id, refresh, endpoint, revision, catalogue);
-        refreshed |= refresh;
-        if proof.is_some() || refreshed {
-            return Ok(proof);
+        {
+            let mut cache = app.linked_events.lock().unwrap();
+            cache.store_if_current(workspace.id, false, endpoint, revision, std::sync::Arc::clone(&catalogue));
+            cache.store_if_current(workspace.id, true, endpoint, revision, catalogue);
         }
-        refresh = true;
+        return Ok(proof);
     }
     Err(native_error())
 }

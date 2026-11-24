@@ -357,8 +357,9 @@ async fn connection_at(
                     || stop.is_some_and(CancellationToken::is_cancelled)
                     || endpoint.is_some_and(|ep| !app.native.current(ep))
                 {
-                    // Remove a freshly added installation if the connection rotated before commit
-                    // so its lease is disposed immediately rather than renewed (TS `desktop-plugin-lifecycle.ts:99-117`).
+                    // Move a freshly added installation directly from `installations` into
+                    // `stranded` while still holding `STATE` so shutdown can never observe a gap
+                    // where the lease is in neither list (TS `desktop-plugin-lifecycle.ts:99-117`).
                     if fresh && index < state.installations.len() {
                         let removed = state.installations.remove(index);
                         if state.current.is_some_and(|c| c == index) {
@@ -368,7 +369,8 @@ async fn connection_at(
                         {
                             *c -= 1;
                         }
-                        stale_install = Some(removed);
+                        state.stranded.push(removed.features);
+                        stale_install = removed.readiness;
                     }
                     state.current = None;
                     state.prepared = None;
@@ -394,17 +396,24 @@ async fn connection_at(
         }
         (status(app, &state), stale_install)
     };
-    if let Some(stale) = stale_install {
-        if let Some(owner) = stale.readiness {
-            let _ = tokio::time::timeout(Duration::from_secs(1), owner.close()).await;
-        }
-        let features = stale.features;
+    if let Some(owner) = stale_install {
+        let _ = tokio::time::timeout(Duration::from_secs(1), owner.close()).await;
+    }
+    let has_stranded = !STATE.lock().unwrap().stranded.is_empty();
+    if has_stranded {
         let _ = tokio::task::spawn_blocking(move || {
             // Take exclusive `LEASE_IO.write()` so a concurrent `sync()` worker cannot recreate
-            // the disposed lease file after this installation was removed from `STATE`.
+            // a disposed lease, and keep any failed removal in `state.stranded` for shutdown.
             let _io = LEASE_IO.write().unwrap();
-            if provision::dispose_checked(&features).is_err() {
-                STATE.lock().unwrap().stranded.push(features);
+            let pending = std::mem::take(&mut STATE.lock().unwrap().stranded);
+            let mut failed = Vec::new();
+            for features in pending {
+                if provision::dispose_checked(&features).is_err() {
+                    failed.push(features);
+                }
+            }
+            if !failed.is_empty() {
+                STATE.lock().unwrap().stranded.extend(failed);
             }
         })
         .await;
@@ -669,6 +678,18 @@ pub fn start(
             Err(_) => Err("Timed out disposing plugin leases during shutdown".into()),
         }
     })))
+}
+
+/// Returns true when the lifecycle is inactive or this exact captured endpoint already owns the
+/// active session-pruning readiness lease (TS `desktop-plugin-lifecycle.ts:147-154`).
+pub fn has_ready_lease(app: &Shared, endpoint: &Arc<crate::opencode::Endpoint>) -> bool {
+    let state = STATE.lock().unwrap();
+    if !state.active {
+        return true;
+    }
+    app.native.current(endpoint)
+        && state.prepared.as_ref().is_some_and(|prepared| Arc::ptr_eq(prepared, endpoint))
+        && state.current.and_then(|i| state.installations[i].readiness.as_ref()).is_some()
 }
 
 /// Runs a fresh presence challenge against the lease already bound to this exact captured

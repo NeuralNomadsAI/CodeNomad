@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use bytes::Bytes;
-use serde_json::{Value, json, value::RawValue};
+use serde_json::{Value, json};
 use std::{
     sync::{
         Arc,
@@ -404,6 +404,11 @@ impl Placement {
         // challenge, matching TS `desktop-plugin-lifecycle.ts:135-154`. Provisioning already ran
         // once on connection acquisition (`Placement::capture`); do not re-provision here.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        // Check that this exact captured endpoint already owns the active pruning readiness lease
+        // BEFORE polling `/api/plugin` (matching TS `desktop-plugin-lifecycle.ts:147-154`).
+        if !crate::extensions::lifecycle::has_ready_lease(app, &self.endpoint) {
+            return Err(Recheck::Unavailable);
+        }
         let still_valid =
             || self.operation_current_fast(app, id) && self.displays.iter().all(|display| display.load(Relaxed));
         let url = self.endpoint.url.join("/api/plugin").map_err(|_| Recheck::Unavailable)?;
@@ -476,7 +481,7 @@ pub(super) async fn prepare(
     deadline: tokio::time::Instant,
     still_valid: impl Fn() -> bool,
 ) -> Option<()> {
-    if !still_valid() {
+    if !still_valid() || !crate::extensions::lifecycle::has_ready_lease(app, endpoint) {
         return None;
     }
     let url = endpoint.url.join("/api/plugin").ok()?;
@@ -541,19 +546,31 @@ async fn rpc_with_limit(
     Ok((status, crate::opencode::read_bytes(response, limit).await?))
 }
 
-#[derive(serde::Deserialize)]
-struct Envelope<'a> {
-    #[serde(borrow)]
-    output: Option<&'a RawValue>,
-    #[serde(borrow, rename = "_tag")]
-    tag: Option<&'a RawValue>,
-    #[serde(borrow, rename = "type")]
-    kind: Option<&'a RawValue>,
+struct EnvelopeSlices<'a> {
+    output: Option<&'a str>,
+    tag: Option<&'a str>,
+    kind: Option<&'a str>,
 }
 
-fn raw_str_eq(raw: Option<&RawValue>, expected: &str) -> bool {
-    raw.is_some_and(|r| {
-        let text = r.get();
+/// Extracts top-level RPC envelope fields in O(1) memory (stripping an optional UTF-8 BOM) so an
+/// adversarial 20 MiB escaped unknown key never allocates a Serde unescape buffer above the
+/// caller's `ResponsePool::History` reservation.
+fn parse_envelope(bytes: &[u8]) -> Option<EnvelopeSlices<'_>> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
+    let mut out = EnvelopeSlices { output: None, tag: None, kind: None };
+    crate::sessions::media_stream::for_each_json_object_field(text, |k, v| match k {
+        "output" => out.output = Some(v),
+        "_tag" => out.tag = Some(v),
+        "type" => out.kind = Some(v),
+        _ => {}
+    })?;
+    Some(out)
+}
+
+fn raw_str_eq(raw: Option<&str>, expected: &str) -> bool {
+    raw.is_some_and(|text| {
+        let text = text.trim();
         text.len() <= 128 && serde_json::from_str::<String>(text).ok().as_deref() == Some(expected)
     })
 }
@@ -585,9 +602,8 @@ fn process_window_payload(
     use super::media_stream;
     let mut refs_valid = true;
     let (raw_range, patches) = {
-        let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return Err(blocked("unavailable")) };
-        let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
-        let raw_str = raw.get();
+        let Some(envelope) = parse_envelope(&body) else { return Err(blocked("unavailable")) };
+        let Some(raw_str) = envelope.output else { return Err(blocked("unavailable")) };
         let raw_bytes = raw_str.as_bytes();
         let offset = raw_bytes.as_ptr() as usize - body.as_ptr() as usize;
         let raw_range = offset..offset + raw_bytes.len();
@@ -1006,9 +1022,9 @@ fn process_history_payload(
         return process_window_payload(status, body, id, session, reference, defer);
     }
     let body: Bytes = body.into();
-    let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return Err(blocked("unavailable")) };
-    let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
-    let raw_bytes = raw.get().as_bytes();
+    let Some(envelope) = parse_envelope(&body) else { return Err(blocked("unavailable")) };
+    let Some(raw_str) = envelope.output else { return Err(blocked("unavailable")) };
+    let raw_bytes = raw_str.as_bytes();
     let offset = raw_bytes.as_ptr() as usize - body.as_ptr() as usize;
     let raw_range = offset..offset + raw_bytes.len();
     // `outline` / `outlinePreview` deserialize directly into flat `#[serde(deny_unknown_fields)]`
@@ -1018,7 +1034,7 @@ fn process_history_payload(
     const MAX_OUTLINE_STRING_BYTES: usize = 64 * 1024;
     if !status.is_success()
         || !crate::sessions::media_stream::json_bounds_within(raw_bytes, MAX_OUTLINE_NODES, MAX_OUTLINE_STRING_BYTES)
-        || !valid_outline_payload(action, raw.get())
+        || !valid_outline_payload(action, raw_str)
     {
         return Err(blocked("unavailable"));
     }
@@ -1162,7 +1178,7 @@ pub async fn handle(
                 return blocked("unavailable");
             };
             if action == "outline" && status == Status::BAD_REQUEST {
-                let fallback = serde_json::from_slice::<Envelope>(&body).ok().is_some_and(|envelope| {
+                let fallback = parse_envelope(&body).is_some_and(|envelope| {
                     raw_str_eq(envelope.tag, "RpcError") && raw_str_eq(envelope.kind, "rpc.method_not_found")
                 });
                 if fallback {

@@ -154,20 +154,26 @@ pub async fn list(
             .acquire(tokio::time::Instant::now() + Duration::from_secs(12))
             .await
             .map_err(|_| crate::opencode::upstream_error())?;
-        let revision = inventory::revision(&app);
-        let catalogue = std::sync::Arc::new(
-            inventory::catalogue_at(&app, &workspace, fresh, Some(&endpoint), Duration::from_secs(12)).await?,
-        );
-        // Warm the shared 10-second inventory cache (matching TS `manager.ts:467-503`) so
-        // subsequent `message.list` and history reads reuse the freshly validated catalogue.
-        {
-            let mut cache = app.linked_events.lock().unwrap();
-            cache.store_if_current(workspace.id, false, &endpoint, revision, std::sync::Arc::clone(&catalogue));
-            if fresh {
-                cache.store_if_current(workspace.id, true, &endpoint, revision, std::sync::Arc::clone(&catalogue));
+        // Match TS `worktree-inventory.ts:61-85`: discard any scan invalidated by a concurrent
+        // `worktree.updated` event and retry until a current inventory settles.
+        for _ in 0..4 {
+            let revision = inventory::revision(&app);
+            let catalogue = std::sync::Arc::new(
+                inventory::catalogue_at(&app, &workspace, fresh, Some(&endpoint), Duration::from_secs(12)).await?,
+            );
+            if inventory::revision(&app) != revision {
+                continue;
             }
+            {
+                let mut cache = app.linked_events.lock().unwrap();
+                cache.store_if_current(workspace.id, false, &endpoint, revision, std::sync::Arc::clone(&catalogue));
+                if fresh {
+                    cache.store_if_current(workspace.id, true, &endpoint, revision, std::sync::Arc::clone(&catalogue));
+                }
+            }
+            return Ok(Json(catalogue.response()).into_response());
         }
-        return Ok(Json(catalogue.response()).into_response());
+        return Err(crate::opencode::upstream_error());
     };
     app.workspace(&id)?;
     let mut root = json!({"slug":"root","kind":"root","directory":workspace.path,"serviceDirectory":workspace.location["directory"]});

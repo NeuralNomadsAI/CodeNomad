@@ -115,6 +115,8 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
     let mut sessions = Vec::new();
     let mut hits = Vec::new();
     let mut seen = HashSet::new();
+    let mut initial_contrib_fences: std::collections::HashMap<String, Vec<Arc<AtomicBool>>> =
+        std::collections::HashMap::new();
     for (index, directory) in selected.iter().enumerate() {
         let mut request = input.clone();
         if token.is_some() {
@@ -166,11 +168,20 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
             }
             pages.push(Page { index, page: page.into() });
         }
-        let Some((approved, _)) = scope.filter(owners, None).await else { return Ok(blocked()) };
+        let Some((approved, contrib_fences)) = scope.filter(owners, None).await else { return Ok(blocked()) };
         if owners.len() != approved.len() {
             add_exclusion(&mut exclusions, "foreign_directory");
         }
         let ids: HashSet<_> = approved.iter().filter_map(|owner| owner["sessionID"].as_str()).collect();
+        // Retain the initial deletion fence flags captured for each approved contributor's
+        // directory (TS `session-history-ranked.ts:107-109, 127-139`) so a delete+recreate
+        // between first and final filtering is still caught for surviving contributors without
+        // letting a contributor dropped by `worktree.updated` block the page.
+        for owned in contrib_fences {
+            for sid in &ids {
+                initial_contrib_fences.entry((*sid).to_owned()).or_default().extend(owned.fences.iter().cloned());
+            }
+        }
         for (rank, hit) in found.iter().enumerate() {
             if hit["sessionID"].as_str().is_some_and(|id| ids.contains(id)) {
                 hits.push((rank, index, hit.clone()));
@@ -188,14 +199,24 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
         capped |= output["capped"] == true;
     }
     // Match TS `session-history-ranked.ts:127-139`: revalidate only surviving approved
-    // contributors (`final_fences`) so a contributor dropped by `worktree.updated` adds
-    // `foreign_directory` instead of blocking the entire page.
+    // contributors (`final_fences`) plus their initial deletion fence flags so a contributor
+    // dropped by `worktree.updated` adds `foreign_directory` instead of blocking the page while
+    // a deleted-and-recreated surviving contributor still blocks publication.
     let Some((approved, final_fences)) = scope.filter(&sessions, None).await else { return Ok(blocked()) };
+    let surviving_ids: HashSet<_> = approved.iter().filter_map(|owner| owner["sessionID"].as_str()).collect();
+    let initial_surviving_fences: Vec<Arc<AtomicBool>> = surviving_ids
+        .iter()
+        .filter_map(|sid| initial_contrib_fences.get(*sid))
+        .flat_map(|flags| flags.iter().cloned())
+        .collect();
     fences = final_fences;
     if approved.len() != sessions.len() {
         add_exclusion(&mut exclusions, "foreign_directory");
     }
-    if selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.owned_current(&root).await {
+    if selected_fences.iter().any(|f| !f.load(Relaxed))
+        || initial_surviving_fences.iter().any(|f| !f.load(Relaxed))
+        || !scope.owned_current(&root).await
+    {
         return Ok(blocked());
     }
     for fence in &fences {
@@ -203,10 +224,11 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
             return Ok(blocked());
         }
     }
-    // Re-check ALL selected and contributor deletion fences synchronously AFTER the final async
-    // revalidation (TS `session-history-ranked.ts:127-139`) so a deletion during a later check
-    // cannot slip past publication.
+    // Re-check ALL selected, initial surviving, and final contributor deletion fences
+    // synchronously AFTER the final async revalidation (TS `session-history-ranked.ts:127-139`)
+    // so a deletion during a later check cannot slip past publication.
     if selected_fences.iter().any(|f| !f.load(Relaxed))
+        || initial_surviving_fences.iter().any(|f| !f.load(Relaxed))
         || fences.iter().any(|owned| owned.fences.iter().any(|f| !f.load(Relaxed)))
         || !scope.current()
     {

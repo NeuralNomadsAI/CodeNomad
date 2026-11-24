@@ -43,12 +43,15 @@ impl InventoryCache {
         id: Uuid,
         endpoint: &Arc<crate::opencode::Endpoint>,
     ) -> Option<Arc<Catalogue>> {
-        self.entries
-            .get(&(id, false))
-            .or_else(|| self.entries.get(&(id, true)))
-            .filter(|e| Arc::ptr_eq(&e.endpoint, endpoint) && e.at.elapsed() < EVENT_STALE_LIMIT)?
-            .value
-            .clone()
+        [(id, false), (id, true)]
+            .into_iter()
+            .filter_map(|key| {
+                let entry = self.entries.get(&key)?;
+                (Arc::ptr_eq(&entry.endpoint, endpoint) && entry.at.elapsed() < EVENT_STALE_LIMIT)
+                    .then_some((entry.at, entry.value.as_ref()?))
+            })
+            .max_by_key(|(at, _)| *at)
+            .map(|(_, value)| Arc::clone(value))
     }
 
     #[cfg(test)]

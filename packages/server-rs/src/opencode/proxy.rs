@@ -1260,7 +1260,24 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             let headers: Vec<(&'static str, axum::http::HeaderValue)> =
                 ["content-type", "cache-control", "etag", "last-modified"]
                     .into_iter()
-                    .filter_map(|name| response.headers().get(name).cloned().map(|value| (name, value)))
+                    .filter_map(|name| {
+                        let mut values = response.headers().get_all(name).iter();
+                        let first = values.next()?;
+                        let Some(second) = values.next() else {
+                            return Some((name, first.clone()));
+                        };
+                        // Match Fetch `Headers.get()` (TS `compatibility/proxy.ts:73-79`): combine
+                        // repeated response headers (e.g. multiple `Cache-Control` lines) with `, `.
+                        let mut combined = Vec::new();
+                        combined.extend_from_slice(first.as_bytes());
+                        combined.extend_from_slice(b", ");
+                        combined.extend_from_slice(second.as_bytes());
+                        for val in values {
+                            combined.extend_from_slice(b", ");
+                            combined.extend_from_slice(val.as_bytes());
+                        }
+                        axum::http::HeaderValue::from_bytes(&combined).ok().map(|v| (name, v))
+                    })
                     .collect();
             let mut stream = crate::sessions::media_stream::MessageListStream::new(id, session);
             let mut slot = Some(slot);
@@ -1290,12 +1307,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     break;
                 };
                 // Clamp pre-reservation to `OUTPUT_LIMIT` (160 MiB) so the `LARGE_DEFER_SLOT`
-                // holder never requests more than its guaranteed `256 - 3*32 = 160 MiB` budget.
+                // holder never requests more than its guaranteed `256 - 3*32 = 160 MiB` budget,
+                // accounting for both the live `chunk` and its copy inside `out`/`item`.
                 let pre_needed = crate::shared::response_memory_units(
                     crate::shared::ResponsePool::List,
                     stream
                         .retained_bytes()
-                        .saturating_add(chunk.len())
+                        .saturating_add(chunk.len().saturating_mul(2))
                         .saturating_add(2 * crate::shared::RESPONSE_CHUNK)
                         .min(crate::sessions::media_stream::OUTPUT_LIMIT),
                 );
@@ -1332,10 +1350,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 }
                 let mut pos = 0;
                 while let Some(pending) = stream.feed(&chunk, &mut pos).map_err(|_| interrupted())? {
-                    // Only reserve the 2x + 8 MiB projection/undo overhead when the item may
-                    // actually contain a deferrable image URI; image-free items pass through
-                    // zero-copy with zero undo patches, so pages up to `OUTPUT_LIMIT` succeed.
-                    let item_peak = if crate::sessions::media_stream::may_contain_image_uri(&pending.bytes) {
+                    // Only reserve the 2x + 8 MiB projection/undo overhead when `project_item`
+                    // will actually attempt deferral (`len <= MESSAGE_LIMIT` and `data:image`
+                    // present); oversized or image-free items pass through zero-copy.
+                    let item_peak = if pending.bytes.len() <= crate::sessions::media::MESSAGE_LIMIT
+                        && crate::sessions::media_stream::may_contain_image_uri(&pending.bytes)
+                    {
                         pending.bytes.capacity().saturating_mul(2).saturating_add(8 * 1024 * 1024)
                     } else {
                         pending.bytes.capacity()
@@ -1408,9 +1428,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     mem = returned_mem;
                     commit_res.map_err(|_| interrupted())?;
                     // Before resuming `stream.feed` on the remainder of the current chunk, keep
-                    // permits >= `retained_bytes + remaining_chunk` (never shrink mid-chunk).
+                    // permits >= `retained_bytes + live chunk + remaining copy` (never shrink mid-chunk).
                     let rem_bytes = stream
                         .retained_bytes()
+                        .saturating_add(chunk.len())
                         .saturating_add(chunk.len().saturating_sub(pos))
                         .min(crate::sessions::media_stream::OUTPUT_LIMIT);
                     let rem_needed = crate::shared::response_memory_units(crate::shared::ResponsePool::List, rem_bytes);

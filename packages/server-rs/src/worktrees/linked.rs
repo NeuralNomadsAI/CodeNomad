@@ -258,7 +258,10 @@ pub async fn create(
             if let (Some(common_raw), Some(exclude_raw)) = (lines.next(), lines.next()) {
                 let common_path = PathBuf::from(common_raw.trim());
                 let exclude_path = PathBuf::from(exclude_raw.trim());
+                // Move `_exclude` into `spawn_blocking` so cancelling the request mid-write
+                // never releases the serialization lock before the worker finishes.
                 let exclude_updated = tokio::task::spawn_blocking(move || -> Result<(), Error> {
+                    let _exclude_guard = _exclude;
                     let Ok(common_canon) = dunce::canonicalize(&common_path) else { return Ok(()) };
                     let rel = match exclude_path
                         .strip_prefix(&common_path)

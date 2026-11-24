@@ -153,7 +153,7 @@ struct Owned {
     directory: String,
     path: PathBuf,
     anchor: PathBuf,
-    identity: Arc<same_file::Handle>,
+    identity: String,
     proof: DirectoryProof,
     fences: Vec<Arc<AtomicBool>>,
     inventory_rev: u64,
@@ -168,12 +168,12 @@ impl Owned {
         let directory = self.directory.clone();
         let expected_path = self.path.clone();
         let expected_anchor = self.anchor.clone();
-        let expected_id = Arc::clone(&self.identity);
+        let expected_id = self.identity.clone();
         let proof = self.proof.clone();
         let ok = tokio::task::spawn_blocking(move || {
             worktrees::ownership::resolve_media_path(&app_scope, &directory)
                 .is_some_and(|(path, anchor)| path == expected_path && anchor == expected_anchor)
-                && same_file::Handle::from_path(&expected_anchor).is_ok_and(|identity| identity == *expected_id)
+                && crate::files::directory_identity(&expected_anchor).ok().as_deref() == Some(expected_id.as_str())
                 && proof.history_live(&workspace_path, &expected_path)
         })
         .await
@@ -208,7 +208,7 @@ impl Scope<'_> {
             let dir_owned = directory.to_owned();
             let (path, anchor, identity) = tokio::task::spawn_blocking(move || {
                 let (path, anchor) = worktrees::ownership::resolve_media_path(&app_scope, &dir_owned)?;
-                let identity = Arc::new(same_file::Handle::from_path(&anchor).ok()?);
+                let identity = crate::files::directory_identity(&anchor).ok()?;
                 Some((path, anchor, identity))
             })
             .await
@@ -320,9 +320,14 @@ impl Scope<'_> {
             return Err(None);
         };
         if let Some(ws) = loc.get("workspaceID") {
-            // Non-string `workspaceID` (including `null`) is a malformed native location payload
-            // -> `blocked/unavailable`; a string `workspaceID` is a foreign workspace -> `403`.
-            return if ws.is_string() { Err(Some(location_denied())) } else { Err(None) };
+            // Non-string or blank `workspaceID` is a malformed native location payload
+            // -> `blocked/unavailable` (TS `location.ts:5-11`, `session-history.ts:67-72, 109`);
+            // a non-empty string `workspaceID` is a foreign workspace -> `403`.
+            return if ws.as_str().is_some_and(|s| !s.trim().is_empty()) {
+                Err(Some(location_denied()))
+            } else {
+                Err(None)
+            };
         }
         if loc_dir != directory {
             return Err(Some(location_denied()));
