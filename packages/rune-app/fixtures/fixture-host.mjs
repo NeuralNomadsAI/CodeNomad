@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {setTimeout as delay} from 'node:timers/promises'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {createAttestedFetch,redactSecrets,resolveWorktreePackage,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createStreamRedactor,redactSecrets,resolveWorktreePackage,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 
 const {request}=await import(resolveWorktreePackage('playwright'))
 
@@ -67,8 +67,16 @@ export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000,redact=
   const startedBy=new Date()
   let output='',stdout='',error,stopping
   const sanitize=text=>redactSecrets(text,redact)
+  const outRedactor=createStreamRedactor(redact)
+  const errRedactor=createStreamRedactor(redact)
+  const appendOut=chunk=>{if(chunk){stdout=(stdout+chunk).slice(-1048576);output=(output+chunk).slice(-1048576)}}
+  const appendErr=chunk=>{if(chunk){output=(output+chunk).slice(-1048576)}}
   const closed=new Promise(resolve=>{
-    child.once('close',resolve)
+    child.once('close',code=>{
+      appendOut(outRedactor.flush())
+      appendErr(errRedactor.flush())
+      resolve(code)
+    })
     child.once('error',cause=>{error=cause;resolve(1)})
   })
   const stop=close=>{
@@ -81,13 +89,15 @@ export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000,redact=
   }
   const untrack=registerFixtureChild(()=>stop())
   void closed.finally(untrack)
-  child.stdout.on('data',data=>{stdout=(stdout+data).slice(-1048576)})
-  for(const stream of [child.stdout,child.stderr])stream.on('data',data=>{output=(output+data).slice(-1048576)})
+  child.stdout.on('data',data=>{appendOut(outRedactor.push(data))})
+  child.stderr.on('data',data=>{appendErr(errRedactor.push(data))})
   child.stdin?.on('error',()=>{})
-  return {child,pid:()=>fixtureChildPid(child),closed,redact:sanitize,output:()=>sanitize(output),stdout:()=>sanitize(stdout),ready:(match,ms)=>until(()=>{
+  const currentStdout=()=>stdout+outRedactor.peek()
+  const currentOutput=()=>output+outRedactor.peek()+errRedactor.peek()
+  return {child,pid:()=>fixtureChildPid(child),closed,redact:sanitize,output:currentOutput,stdout:currentStdout,ready:(match,ms)=>until(()=>{
     if(error)throw error
-    assert(child.exitCode===null&&child.signalCode===null,`Fixture child exited: ${sanitize(output.slice(-2000))}`)
-    return match(stdout)
+    assert(child.exitCode===null&&child.signalCode===null,`Fixture child exited: ${currentOutput().slice(-2000)}`)
+    return match(currentStdout())
   },'owned listener',ms),async stop(close){
     try{await stop(close)}finally{untrack()}
   }}

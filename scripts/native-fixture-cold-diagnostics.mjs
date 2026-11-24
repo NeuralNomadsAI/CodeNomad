@@ -102,7 +102,7 @@ function registration(input) {
   if (!same(info, input.expected) || typeof info.id !== "string" || !info.id || info.id.length > 1024
     || !Number.isSafeInteger(info.pid) || info.pid <= 0 || typeof info.version !== "string" || !info.version || info.version.length > 1024) throw Error("incarnation-mismatch")
   const url = new URL(info.url)
-  if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
+  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1"
     || !url.port || ["9911", "28894"].includes(url.port) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw Error("endpoint-refused")
   // Native service registration stores a top-level password; also accept the public Basic shape.
   const auth = raw.auth ?? { type: "basic", username: "opencode", password: raw.password }

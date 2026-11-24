@@ -51,7 +51,7 @@ try{
   observer=new AbortController();watch=(async()=>{for await(const event of client.event.subscribe({signal:observer.signal})){proof.events.push({type:event.type,sessionID:event.data?.sessionID,id:event.data?.id});assert(proof.events.length<256)}})();void watch.catch(()=>{})
   await until(()=>proof.events.some(e=>e.type==='server.connected'),'native SSE')
   session=await client.session.create({location:{directory:project},title:'Rune private native pending UI',permissions:[{action:'*',resource:'*',effect:'deny'},{action:'rune_fixture',resource:'*',effect:'ask'}]});assert.equal(path.resolve(session.location.directory),project);proof.session=session.id
-  rust=launchFixture(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{cwd:root,shutdown:'shutdown\n',redact:[password,'fixture-rune-native-pending'],env:{...env,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:password,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}})
+  rust=launchFixture(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{cwd:root,shutdown:'shutdown\n',redact:[password,native.relayPassword,'fixture-rune-native-pending'],env:{...env,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}})
   origin=await rust.ready(rustOrigin)
   const rustPid=await rust.pid()
   rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)

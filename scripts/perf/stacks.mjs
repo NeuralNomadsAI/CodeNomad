@@ -26,14 +26,14 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
   const group = process.platform !== "win32"
   const child = spawnFixtureChild(...command, { env: withoutFixtureProxy({ ...daemon.env, CLI_CONFIG: config, PERF_SERVER_DIST: fileURLToPath(new URL("../../packages/server/dist", import.meta.url)),
     PERF_DAEMON_URL: daemon.url, PERF_DAEMON_PID: String(daemon.pid), CODENOMAD_SERVER_PASSWORD: password,
-    ...(resolvedRust && {CNRS_FIXTURE_URL: daemon.relayUrl ?? daemon.url, CNRS_FIXTURE_PASSWORD: daemon.password, CNRS_SERVER_PASSWORD: password, CNRS_FIXTURE_STDIN_STOP: "1"}),
+    ...(resolvedRust && {CNRS_FIXTURE_URL: daemon.relayUrl ?? daemon.url, CNRS_FIXTURE_PASSWORD: daemon.relayPassword ?? daemon.password, CNRS_SERVER_PASSWORD: password, CNRS_FIXTURE_STDIN_STOP: "1"}),
     CODENOMAD_REMOTE_CONTROL: "disabled" }), cwd: root, detached: group, windowsHide: true, stdio: [resolvedRust ? "pipe" : "ignore", "pipe", "pipe"] })
   const startedBy = new Date()
   const stopped = new Promise(resolve => child.once("close", resolve))
   const untrack = registerFixtureChild(() => stopFixtureChild(child, stopped, 1_000, 2_000, { group, startedBy }))
   void stopped.finally(untrack)
   let output = "", spawnError, completed = false, backendFetch
-  const sanitize = text => redactSecrets(text, [password, daemon.password])
+  const sanitize = text => redactSecrets(text, [password, daemon.password, daemon.relayPassword])
   child.on("error", error => { spawnError = error })
   for (const pipe of [child.stdout, child.stderr]) pipe.on("data", bytes => { output = (output + bytes).slice(-500_000) })
   try {

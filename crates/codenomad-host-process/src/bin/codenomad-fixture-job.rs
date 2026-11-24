@@ -131,6 +131,11 @@ fn grace_budget_ms() -> u64 {
 }
 
 fn run() -> io::Result<i32> {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        // Adopt orphaned grandchildren so waitpid reaps them and family_is_empty observes clean exit.
+        let _ = libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0);
+    }
     #[cfg(unix)]
     install_signal_handlers();
     let parent = ParentWatch::open()?;
@@ -208,6 +213,7 @@ fn run() -> io::Result<i32> {
                 break;
             }
             if Instant::now() >= total_deadline {
+                std::mem::forget(child);
                 return Err(io::Error::other("Fixture job did not finish terminating"));
             }
             sleep(pause);

@@ -177,20 +177,34 @@ test('verifyLoopbackConnectionPeer rejects live foreign and dead PIDs, and attes
   releaseAgent()
   await assert.rejects(agentReq,/closed|Attested|hang up/i)
 
-  // Attested relay forwards traffic to the owned loopback target, refuses 3xx redirects, and closes cleanly.
+  // Attested relay validates relay token, injects real Authorization, refuses 3xx redirects, propagates upstream aborts, and closes cleanly.
   let relayMode='ok'
-  const relayTargetSrv=await listen(t,(_req,res)=>{
+  let seenAuth=null
+  const relayTargetSrv=await listen(t,(req,res)=>{
+    seenAuth=req.headers.authorization??null
     if(relayMode==='redirect'){res.writeHead(302,{location:'http://127.0.0.1:4096/secret'});res.end();return}
+    if(relayMode==='abort'){res.writeHead(200,{'content-length':'100'});res.write('partial',()=>setTimeout(()=>req.socket.destroy(),10));return}
     res.writeHead(200);res.end('ok')
   })
-  const relay=await createAttestedRelay(relayTargetSrv.origin,process.pid)
+  const relay=await createAttestedRelay(relayTargetSrv.origin,process.pid,{
+    expectAuthorization:'Basic relay-token',
+    injectAuthorization:'Basic real-upstream-secret',
+  })
   try{
-    const res=await fixtureFetch(new URL('/hello',relay.origin),{signal:AbortSignal.timeout(5000)})
+    const unauth=await fixtureFetch(new URL('/hello',relay.origin),{signal:AbortSignal.timeout(5000)})
+    assert.equal(unauth.status,401)
+    assert.equal(seenAuth,null)
+    const res=await fixtureFetch(new URL('/hello',relay.origin),{headers:{authorization:'Basic relay-token'},signal:AbortSignal.timeout(5000)})
     assert.equal(res.status,200)
     assert.equal(await res.text(),'ok')
+    assert.equal(seenAuth,'Basic real-upstream-secret')
     relayMode='redirect'
-    const redirected=await fixtureFetch(new URL('/redirect',relay.origin),{signal:AbortSignal.timeout(5000)})
+    const redirected=await fixtureFetch(new URL('/redirect',relay.origin),{headers:{authorization:'Basic relay-token'},signal:AbortSignal.timeout(5000)})
     assert.equal(redirected.status,502)
+    relayMode='abort'
+    await assert.rejects(
+      fixtureFetch(new URL('/abort',relay.origin),{headers:{authorization:'Basic relay-token'},signal:AbortSignal.timeout(5000)}).then(r=>r.text()),
+    )
   }finally{await relay.close()}
 })
 
@@ -231,5 +245,16 @@ test('acquireProfileLock serializes concurrent stale recovery and reclaims aged 
   await utimes(lockPath,old,old)
   const reclaimed=await acquireProfileLock(lockPath)
   await reclaimed.close()
+  await unlink(lockPath)
+  // Dead launcher PID with a still-alive daemon PID must block takeover until daemon exits.
+  const survivor=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true})
+  t.after(()=>{try{survivor.kill('SIGKILL')}catch{}})
+  await new Promise((resolve,reject)=>{survivor.once('spawn',resolve);survivor.once('error',reject)})
+  await writeFile(lockPath,JSON.stringify({pid:999999999,daemonPid:survivor.pid,nonce:'stale-launcher'}))
+  await assert.rejects(acquireProfileLock(lockPath),error=>error.code==='EEXIST')
+  survivor.kill('SIGKILL')
+  await new Promise(resolve=>survivor.once('close',resolve))
+  const afterDaemonExit=await acquireProfileLock(lockPath)
+  await afterDaemonExit.close()
   await unlink(lockPath)
 })

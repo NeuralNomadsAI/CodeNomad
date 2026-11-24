@@ -156,7 +156,13 @@ impl Drop for OwnedProcess {
         if !self.family.empty().unwrap_or(false) {
             let _ = self.family.terminate();
         }
-        let _ = self.child.wait();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+        while std::time::Instant::now() < deadline {
+            if matches!(self.child.try_wait(), Ok(Some(_)) | Err(_)) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }
 

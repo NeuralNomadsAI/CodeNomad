@@ -18,8 +18,8 @@ const session=(await native.read('/api/session',{method:'POST',body:JSON.stringi
 await writeFile(path.join(profile,'session.json'),JSON.stringify({session:session.id,project,title},null,2))
 assert(session?.id&&session.location.directory===project)
 assert.deepEqual(session.permissions,permissions,'session must enforce deny-all before launching Rune')
-const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'fixture-controls-live',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile}
-const server=launchFixture(serverBinary,[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,'fixture-controls-live']})
+const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,CNRS_SERVER_PASSWORD:'fixture-controls-live',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile}
+const server=launchFixture(serverBinary,[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,native.relayPassword,'fixture-controls-live']})
 let client,result=1,observer,stream,watch,watchError=null,events=[],cleaned=false,rustFetch,rustRelay
 try{
   const origin=await server.ready(rustOrigin)

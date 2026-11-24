@@ -24,11 +24,12 @@ function sameGroupPeers() {
     try { process.kill(child.pid, 0); peers.add(child.pid) } catch (error) { if (error.code === "EPERM") peers.add(child.pid) }
   }
   try {
-    const out = execFileSync("ps", ["-ax", "-o", "pid=,pgid="], { encoding: "utf8", timeout: 1000 })
+    const out = execFileSync("ps", ["-ax", "-o", "pid=,pgid=,ppid=,comm="], { encoding: "utf8", timeout: 1000 })
     for (const line of out.split(/\r?\n/)) {
-      const parts = line.trim().split(/\s+/)
-      if (parts.length < 2) continue
-      const pid = Number(parts[0]), pgid = Number(parts[1])
+      const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
+      if (!match) continue
+      const pid = Number(match[1]), pgid = Number(match[2]), ppid = Number(match[3]), comm = match[4]
+      if (ppid === process.pid && /(?:^|\/)ps$/.test(comm)) continue
       if (pgid === process.pid && pid !== process.pid && Number.isSafeInteger(pid) && pid > 0) peers.add(pid)
     }
   } catch {}
@@ -94,13 +95,13 @@ child.once("error", error => {
 })
 child.once("exit", (code, signal) => {
   childExited = true
-  shutdown(code ?? (signal ? 1 : 0), 250)
+  shutdown(code ?? (signal ? 1 : 0), graceBudgetMs)
 })
 
 for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
   process.on(sig, () => {
     if (terminating) return
-    shutdown(1, 150)
+    shutdown(1, graceBudgetMs)
   })
 }
 

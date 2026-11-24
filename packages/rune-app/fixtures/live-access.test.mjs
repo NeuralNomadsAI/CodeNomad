@@ -175,7 +175,8 @@ test('resumed profiles reject unattested config files, Git hooks and parent pack
     assert(resolveWorktreePackage('@opencode/client').startsWith('file://'))
     const emptyModules=path.join(root,'empty-node_modules')
     await mkdir(emptyModules)
-    assert.throws(()=>resolveWorktreePackage('undici',emptyModules),/missing undici/)
+    assert.throws(()=>resolveWorktreePackage('undici',emptyModules),/outside repository boundary/)
+    assert.throws(()=>resolveWorktreePackage('__missing_fixture_pkg__'),/missing __missing_fixture_pkg__/)
     const secret='super-secret-value'
     const basic=Buffer.from(`opencode:${secret}`).toString('base64')
     const redacted=redactSecrets(`pw=${secret} header=Basic ${basic}`,[secret])

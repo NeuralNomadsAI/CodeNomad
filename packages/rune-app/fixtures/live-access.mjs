@@ -6,6 +6,7 @@ import {copyFile, link, lstat, mkdir, open, readdir, readFile, realpath, rename,
 import {createServer} from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import {DatabaseSync} from 'node:sqlite'
 import {setTimeout as delay} from 'node:timers/promises'
 import {promisify} from 'node:util'
 import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
@@ -240,61 +241,101 @@ async function removeExecutable(file){
   }
 }
 
-export async function acquireProfileLock(lease){
-  const tmp=`${lease}.tmp-${randomUUID()}`
-  const payload=JSON.stringify({pid:process.pid,nonce:randomUUID()})+'\n'
-  const linkFresh=async()=>{
-    await writeFile(tmp,payload,{flag:'wx'})
-    try{
-      await link(tmp,lease)
-      return await open(lease,'r+')
-    }finally{
-      await unlink(tmp).catch(()=>{})
-    }
-  }
+const heldLeases=new Set()
+
+function pidAlive(pid){
+  if(!Number.isSafeInteger(pid)||pid<=0)return false
+  try{process.kill(pid,0);return true}catch(probe){return probe.code!=='ESRCH'}
+}
+
+function leaseBusyError(lease){
+  return Object.assign(Error(`EEXIST: profile lease already held: ${lease}`),{code:'EEXIST'})
+}
+
+function withLeaseDb(dbPath,run){
+  const db=new DatabaseSync(dbPath,{timeout:0})
   try{
-    return await linkFresh()
-  }catch(error){
-    if(error.code!=='EEXIST')throw error
-    const reclaim=`${lease}.reclaim`
-    let reclaimLock
+    db.exec('PRAGMA journal_mode=DELETE; BEGIN EXCLUSIVE;')
     try{
-      reclaimLock=await open(reclaim,'wx')
-    }catch(reclaimErr){
-      if(reclaimErr.code!=='EEXIST')throw reclaimErr
-      // Recover an abandoned reclaim marker only if older than 10s.
-      const info=await stat(reclaim).catch(()=>null)
-      if(!info||Date.now()-info.mtimeMs<10_000)throw error
-      await unlink(reclaim).catch(()=>{})
-      reclaimLock=await open(reclaim,'wx').catch(()=>{throw error})
+      db.exec('CREATE TABLE IF NOT EXISTS lease (id INTEGER PRIMARY KEY CHECK (id = 1), pid INTEGER NOT NULL, daemon_pid INTEGER, nonce TEXT NOT NULL, updated_at INTEGER NOT NULL);')
+      const result=run(db)
+      db.exec('COMMIT;')
+      return result
+    }catch(error){
+      try{db.exec('ROLLBACK;')}catch{}
+      throw error
     }
+  }finally{db.close()}
+}
+
+export async function acquireProfileLock(lease){
+  const key=path.resolve(lease)
+  if(heldLeases.has(key))throw leaseBusyError(lease)
+  heldLeases.add(key)
+  const dbPath=`${lease}.sqlite`
+  const nonce=randomUUID()
+  const now=Date.now()
+  let acquired=false
+  try{
+    let existingFile=null
+    let existingStat=null
     try{
-      let stale=false
-      const text=await readFile(lease,'utf8').catch(readErr=>{if(readErr.code==='ENOENT')return null;throw readErr})
-      if(text===null){
-        return await linkFresh()
+      existingFile=await readFile(lease,'utf8')
+      existingStat=await stat(lease)
+    }catch(error){if(error.code!=='ENOENT')throw error}
+    withLeaseDb(dbPath,db=>{
+      const row=db.prepare('SELECT pid, daemon_pid, nonce, updated_at FROM lease WHERE id = 1').get()
+      if(row){
+        const ownerLive=row.pid===process.pid||pidAlive(row.pid)
+        const daemonLive=row.daemon_pid!=null&&pidAlive(row.daemon_pid)
+        if(ownerLive||daemonLive)throw leaseBusyError(lease)
       }
-      if(!text.trim()){
-        const info=await stat(lease).catch(()=>null)
-        if(info&&Date.now()-info.mtimeMs>=2_000)stale=true
-      }else{
-        try{
-          const raw=JSON.parse(text)
-          if(Number.isSafeInteger(raw?.pid)&&raw.pid>0&&raw.pid!==process.pid){
-            try{process.kill(raw.pid,0)}catch(probe){if(probe.code==='ESRCH')stale=true}
+      if(existingFile!==null){
+        if(!existingFile.trim()){
+          if(!existingStat||now-existingStat.mtimeMs<2_000)throw leaseBusyError(lease)
+        }else{
+          try{
+            const raw=JSON.parse(existingFile)
+            const ownerLive=Number.isSafeInteger(raw?.pid)&&raw.pid>0&&(raw.pid===process.pid||pidAlive(raw.pid))
+            const daemonLive=Number.isSafeInteger(raw?.daemonPid)&&raw.daemonPid>0&&pidAlive(raw.daemonPid)
+            if(ownerLive||daemonLive)throw leaseBusyError(lease)
+          }catch(parseError){
+            if(parseError.code==='EEXIST')throw parseError
+            if(!existingStat||now-existingStat.mtimeMs<2_000)throw leaseBusyError(lease)
           }
-        }catch{
-          const info=await stat(lease).catch(()=>null)
-          if(info&&Date.now()-info.mtimeMs>=2_000)stale=true
         }
       }
-      if(!stale)throw error
-      await unlink(lease).catch(unlinkErr=>{if(unlinkErr.code!=='ENOENT')throw unlinkErr})
-      return await linkFresh()
-    }finally{
-      await reclaimLock.close().catch(()=>{})
-      await unlink(reclaim).catch(()=>{})
-    }
+      db.prepare('INSERT OR REPLACE INTO lease (id, pid, daemon_pid, nonce, updated_at) VALUES (1, ?, NULL, ?, ?)').run(process.pid,nonce,now)
+    })
+    await writeFile(lease,JSON.stringify({pid:process.pid,daemonPid:null,nonce})+'\n')
+    acquired=true
+  }catch(error){
+    heldLeases.delete(key)
+    if(/database is locked/i.test(error?.message??''))throw leaseBusyError(lease)
+    throw error
+  }
+  let closed=false
+  return {
+    async setDaemonPid(daemonPid){
+      if(closed||!acquired)return
+      withLeaseDb(dbPath,db=>{
+        db.prepare('UPDATE lease SET daemon_pid = ?, updated_at = ? WHERE id = 1 AND nonce = ?').run(daemonPid,Date.now(),nonce)
+      })
+      await writeFile(lease,JSON.stringify({pid:process.pid,daemonPid,nonce})+'\n').catch(()=>{})
+    },
+    async close(){
+      if(closed)return
+      closed=true
+      try{
+        if(acquired){
+          withLeaseDb(dbPath,db=>{
+            db.prepare('DELETE FROM lease WHERE id = 1 AND nonce = ?').run(nonce)
+          })
+        }
+      }finally{
+        heldLeases.delete(key)
+      }
+    },
   }
 }
 
@@ -409,7 +450,7 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
       await mkdir(programData,{recursive:true})
       await ensurePrivateGitRepo(project,profile,runtimeEnv)
       checkActive()
-      if(pruning){const {preparePruning}=await import('../../../scripts/perf/pruning.mjs');plugin=await preparePruning(profile,config)}
+      if(pruning){const {preparePruning}=await import('../../../scripts/perf/pruning.mjs');plugin=await preparePruning(profile,config,runtimeEnv)}
       checkActive()
       daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env,redact:[password]})
       const origin=await daemon.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1])
@@ -418,13 +459,16 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
         daemon.pid(),
         delay(10000,undefined,{ref:false}).then(()=>{throw Error('Timed out reading fixture child PID')}),
       ])
+      await lock.setDaemonPid(pid)
       attested=await attestNative(origin,daemon.child,authorization,fixtureFetch,pid)
-      nativeRelay=await createAttestedRelay(origin,pid)
+      const relayPassword=randomUUID()
+      const relayAuthorization=`Basic ${Buffer.from(`opencode:${relayPassword}`).toString('base64')}`
+      nativeRelay=await createAttestedRelay(origin,pid,{expectAuthorization:relayAuthorization,injectAuthorization:authorization})
       const {read,send}=attested
       checkActive()
       await plugin?.activate({project,url:origin,authorization,send},()=>assert.equal(daemon.child.exitCode,null))
       checkActive()
-      return await run({profile,project,origin:`${origin}/`,relay:nativeRelay.origin,password,read,send,env,runtimeEnv,pid})
+      return await run({profile,project,origin:`${origin}/`,relay:nativeRelay.origin,relayPassword,password,read,send,env,runtimeEnv,pid})
     } finally {
       executionFinished=true
       await cleanup()

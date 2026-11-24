@@ -59,9 +59,9 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
   await mkdir(runDirectory,{recursive:true})
   const profile=await mkdtemp(privatePath(path.join(runDirectory,'trial-rune-journey-')))
   const project=path.join(profile,'project')
-  const privatePassword=randomUUID(), password=randomUUID(), marker=randomUUID()
-  let native, server, pruning, model, attested
-  const secrets=[privatePassword,password,marker]
+  const privatePassword=randomUUID(), relayPassword=randomUUID(), password=randomUUID(), marker=randomUUID()
+  let native, server, pruning, model, attested, nativeRelay
+  const secrets=[privatePassword,relayPassword,password,marker]
   try{
     await mkdir(project)
     const env=await privateEnvironment(profile)
@@ -81,7 +81,7 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
     const programData=path.join(profile,'ProgramData')
     await Promise.all([mkdir(config),mkdir(programData)])
     const {preparePruning}=await import('../../../scripts/perf/pruning.mjs')
-    pruning=await preparePruning(profile,config)
+    pruning=await preparePruning(profile,config,env)
     const ownedNative={
       OPENCODE_TEST_HOME:env.HOME,OPENCODE_CONFIG_DIR:config,
       OPENCODE_DB:path.join(profile,'opencode.db'),OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_PROJECT_CONFIG:'1',
@@ -111,21 +111,21 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
       }
       try{await rm(profile,{recursive:true,force:true,maxRetries:4,retryDelay:100});report.profileRemoved=true}catch{}
     })
-    let nativeRelay
     attested=await attestNative(daemon,native.child,authorization,fixtureFetch,pid)
     report.openCodePID=pid
     await pruning.activate({project,url:daemon,authorization,send:attested.send},()=>assert.equal(native.child.exitCode,null))
-    nativeRelay=await createAttestedRelay(daemon,pid)
-    const ownedRust={CNRS_FIXTURE_PASSWORD:privatePassword,CNRS_SERVER_PASSWORD:password}
+    const relayAuthorization=`Basic ${Buffer.from(`opencode:${relayPassword}`).toString('base64')}`
+    nativeRelay=await createAttestedRelay(daemon,pid,{expectAuthorization:relayAuthorization,injectAuthorization:authorization})
+    const ownedRust={CNRS_FIXTURE_PASSWORD:relayPassword,CNRS_SERVER_PASSWORD:password}
     try{
-      server=launchFixture(rust,[profile,path.join(profile,'backend.json'),'0','fixture-only'],{cwd:profile,shutdown:'shutdown\n',redact:[privatePassword,password,marker],env:assertPrivateChild({
+      server=launchFixture(rust,[profile,path.join(profile,'backend.json'),'0','fixture-only'],{cwd:profile,shutdown:'shutdown\n',redact:secrets,env:assertPrivateChild({
         ...env,...ownedRust,CNRS_FIXTURE_URL:nativeRelay.origin,CNRS_FIXTURE_STDIN_STOP:'1',
         ...(mode==='web'?{CNRS_FIXTURE_UI_DIR:web}:{}),
       },ownedRust)})
       const origin=await server.ready(rustOrigin)
       const rustPid=await server.pid()
       await run({profile,project,origin,rustPid,password,env})
-    }finally{untrackSignalCleanup();await nativeRelay.close().catch(()=>{})}
+    }finally{untrackSignalCleanup()}
     report.stage='verify-model-and-git'
     model.prove()
     assert.equal(git('log','-1','--format=%s'),commit)
@@ -145,6 +145,7 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
     const settle=async run=>{try{await run()}catch(error){errors.push(error)}}
     try{
       await settle(()=>server?.stop())
+      await settle(()=>nativeRelay?.close())
       await settle(()=>attested?.close())
       await settle(()=>pruning?.close())
       await settle(()=>native?.stop())

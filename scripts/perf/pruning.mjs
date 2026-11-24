@@ -4,24 +4,54 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {createHash} from 'node:crypto'
-import {nativePluginBuild} from '../../packages/server/scripts/native-plugin-build.mjs'
-import {fixtureFetch, fixtureTarget, resolveWorktreePackage} from '../native-fixture-http.mjs'
+import {spawnFixtureChild, stopFixtureChild} from '../native-fixture-guards.mjs'
+import {fixtureFetch, fixtureTarget, resolveWorktreePackage, withoutFixtureProxy} from '../native-fixture-http.mjs'
+import {fixtureSystemEnvironment} from '../../packages/rune-app/fixtures/private-profile.mjs'
 import {privatePath} from './isolation.mjs'
 
-export async function preparePruning(root, config) {
-  const [{build},{OpenCode},{tsImport}]=await Promise.all([
-    import(resolveWorktreePackage('esbuild')),
-    import(resolveWorktreePackage('@opencode/client')),
-    import(resolveWorktreePackage('tsx/esm/api')),
+export async function preparePruning(root, config, buildEnv) {
+  const esbuildUrl = resolveWorktreePackage('esbuild')
+  const openCodeUrl = resolveWorktreePackage('@opencode/client')
+  const tsxUrl = resolveWorktreePackage('tsx/esm/api')
+  // Verify transitive dependency required by navigation-contract.ts lives inside the worktree boundary.
+  resolveWorktreePackage('zod')
+  const [{OpenCode},{tsImport}]=await Promise.all([
+    import(openCodeUrl),
+    import(tsxUrl),
   ])
   root=privatePath(root);config=privatePath(config)
   const folder=privatePath(path.join(root,'pruning-build'))
   await mkdir(folder,{recursive:true})
   const outfile=path.join(folder,'plugin.mjs')
-  await build({...nativePluginBuild,
-    entryPoints:[fileURLToPath(new URL('../../packages/server/src/opencode/session-pruning/desktop-plugin.ts',import.meta.url))],outfile,
-    banner:{js:'// CodeNomad plugin IDs: ["codenomad-session-pruning"]\nimport { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);'},
+  const entryPoint=fileURLToPath(new URL('../../packages/server/src/opencode/session-pruning/desktop-plugin.ts',import.meta.url))
+  const pluginBuildUrl=new URL('../../packages/server/scripts/native-plugin-build.mjs',import.meta.url).href
+  const buildScript=`
+    const [esbuildUrl, pluginBuildUrl, entryPoint, outfile] = process.argv.slice(1)
+    const [{ build }, { nativePluginBuild }] = await Promise.all([import(esbuildUrl), import(pluginBuildUrl)])
+    await build({
+      ...nativePluginBuild,
+      entryPoints: [entryPoint],
+      outfile,
+      banner: { js: '// CodeNomad plugin IDs: ["codenomad-session-pruning"]\\nimport { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
+    })
+  `
+  const isolatedBuildEnv = withoutFixtureProxy({ ...(buildEnv ?? fixtureSystemEnvironment()) })
+  const builder = spawnFixtureChild(process.execPath, ['--input-type=module', '-e', buildScript, esbuildUrl, pluginBuildUrl, entryPoint, outfile], {
+    cwd: root, env: isolatedBuildEnv, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   })
+  let buildStderr = ''
+  builder.stderr.on('data', chunk => { buildStderr = (buildStderr + chunk).slice(-32768) })
+  builder.stdout.resume()
+  const buildClosed = new Promise(resolve => {
+    builder.once('close', code => resolve(code))
+    builder.once('error', () => resolve(1))
+  })
+  const buildCode = await Promise.race([
+    buildClosed,
+    new Promise(resolve => setTimeout(() => resolve(124), 60_000).unref()),
+  ])
+  if (buildCode === 124) await stopFixtureChild(builder, buildClosed, 1000, 2000, { group: process.platform !== 'win32' })
+  assert.equal(buildCode, 0, `Isolated pruning plugin build failed (${buildCode}): ${buildStderr}`)
   const [{installPruningPresence},{awaitNativePlugin},{navigationWindowResultSchema}]=await Promise.all([
     tsImport('../../packages/server/src/opencode/pruning-installation.ts',import.meta.url),
     tsImport('../../packages/server/src/opencode/plugin-activation.ts',import.meta.url),

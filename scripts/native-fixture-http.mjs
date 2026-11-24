@@ -84,6 +84,44 @@ export function redactSecrets(text,secrets=[]){
   return value
 }
 
+export function createStreamRedactor(secrets=[]){
+  const tokens=[]
+  for(const secret of secrets){
+    if(!secret)continue
+    tokens.push(secret,Buffer.from(`opencode:${secret}`).toString('base64'),Buffer.from(`codenomad:${secret}`).toString('base64'))
+  }
+  const overlap=tokens.reduce((max,token)=>Math.max(max,token.length),0)
+  let tail=''
+  return {
+    push(chunk){
+      if(!overlap)return String(chunk??'')
+      const combined=redactSecrets(tail+String(chunk??''),secrets)
+      if(combined.length<=overlap){
+        tail=combined
+        return ''
+      }
+      const cut=combined.length-overlap
+      tail=combined.slice(cut)
+      return combined.slice(0,cut)
+    },
+    flush(){
+      const remaining=redactSecrets(tail,secrets)
+      tail=''
+      return remaining
+    },
+    peek(){
+      return redactSecrets(tail,secrets)
+    },
+  }
+}
+
+const netstatBin=()=>{
+  if(process.platform!=='win32')return 'netstat'
+  const candidate=path.join(process.env.SystemRoot||process.env.WINDIR||'C:\\Windows','System32','netstat.exe')
+  return existsSync(candidate)?candidate:'netstat.exe'
+}
+const lsofBin=()=>process.platform==='darwin'&&existsSync('/usr/sbin/lsof')?'/usr/sbin/lsof':'lsof'
+
 const {Agent,Pool,buildConnector,fetch:undiciFetch}=await import(resolveWorktreePackage('undici'))
 
 const dispatcher=new Agent()
@@ -93,7 +131,7 @@ export async function verifyLoopbackListenerOwner(port,pid,forbidden='the shared
   assert(Number.isSafeInteger(port)&&port>0&&port<=65535,'Invalid loopback port')
   assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID')
   if(process.platform==='win32'){
-    const {stdout}=await execFileAsync('netstat.exe',['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
+    const {stdout}=await execFileAsync(netstatBin(),['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
     const owners=new Set()
     for(const line of stdout.split(/\r?\n/)){
       const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+0\.0\.0\.0:0\s+\S+\s+(\d+)\s*$/i.exec(line)
@@ -121,7 +159,7 @@ export async function verifyLoopbackListenerOwner(port,pid,forbidden='the shared
     }
     throw Error(`Loopback port 127.0.0.1:${port} is not owned by fixture PID ${pid}; ${forbidden}`)
   }
-  const {stdout}=await execFileAsync('lsof',['-nP',`-iTCP:${port}`,'-sTCP:LISTEN','-Fpn'],{timeout:10000})
+  const {stdout}=await execFileAsync(lsofBin(),['-nP',`-iTCP:${port}`,'-sTCP:LISTEN','-Fpn'],{timeout:10000})
   const owners=new Set()
   let currentPid=null
   for(const line of stdout.split(/\r?\n/)){
@@ -136,7 +174,7 @@ export async function verifyLoopbackConnectionPeer(localPort,remotePort,pid,forb
   assert(Number.isSafeInteger(remotePort)&&remotePort>0&&remotePort<=65535,'Invalid remote loopback port')
   assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID')
   if(process.platform==='win32'){
-    const {stdout}=await execFileAsync('netstat.exe',['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
+    const {stdout}=await execFileAsync(netstatBin(),['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
     const owners=new Set()
     for(const line of stdout.split(/\r?\n/)){
       const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+127\.0\.0\.1:(\d+)\s+ESTABLISHED\s+(\d+)\s*$/i.exec(line)
@@ -165,7 +203,7 @@ export async function verifyLoopbackConnectionPeer(localPort,remotePort,pid,forb
     }
     throw Error(`Established loopback connection 127.0.0.1:${localPort}->127.0.0.1:${remotePort} is not owned by fixture PID ${pid}; ${forbidden}`)
   }
-  const {stdout}=await execFileAsync('lsof',['-nP',`-iTCP:${remotePort}`,'-sTCP:ESTABLISHED','-Fpn'],{timeout:10000})
+  const {stdout}=await execFileAsync(lsofBin(),['-nP',`-iTCP:${remotePort}`,'-sTCP:ESTABLISHED','-Fpn'],{timeout:10000})
   const owners=new Set()
   let currentPid=null
   const expected=`127.0.0.1:${remotePort}->127.0.0.1:${localPort}`
@@ -212,6 +250,8 @@ export async function originGuardProxy(localOrigin,targetPid){
         }
       }
       res.writeHead(response.statusCode,response.headers)
+      response.on('close',()=>{if(!response.complete)res.destroy()})
+      response.on('error',()=>res.destroy())
       response.pipe(res)
     })
     upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end()})
@@ -353,15 +393,24 @@ export function createAttestedHttpAgent(port,pid,verifyOwner=verifyLoopbackListe
   return agent
 }
 
-export async function createAttestedRelay(targetOrigin,pid,onRequest){
+export async function createAttestedRelay(targetOrigin,pid,options){
+  const opts=typeof options==='function'?{onRequest:options}:(options??{})
+  const {onRequest,expectAuthorization,injectAuthorization}=opts
   const base=new URL(targetOrigin)
   assert(base.protocol==='http:'&&base.hostname==='127.0.0.1'&&base.port,'Expected a loopback HTTP target for attested relay')
   const agent=createAttestedHttpAgent(Number(base.port),pid)
   const server=createServer((req,res)=>{
     const url=relayTarget(req,res,base.origin)
     if(!url)return
+    if(expectAuthorization&&req.headers.authorization!==expectAuthorization){
+      res.writeHead(401)
+      res.end('Attested relay token required')
+      return
+    }
     if(onRequest&&onRequest(req,res,url)===false)return
-    const upstream=httpRequest(url,{agent,method:req.method,headers:{...req.headers,host:url.host}},response=>{
+    const headers={...req.headers,host:url.host}
+    if(injectAuthorization)headers.authorization=injectAuthorization
+    const upstream=httpRequest(url,{agent,method:req.method,headers},response=>{
       if(response.statusCode>=300&&response.statusCode<400){
         response.destroy()
         if(!res.headersSent)res.writeHead(502)
@@ -369,6 +418,8 @@ export async function createAttestedRelay(targetOrigin,pid,onRequest){
         return
       }
       res.writeHead(response.statusCode,response.headers)
+      response.on('close',()=>{if(!response.complete)res.destroy()})
+      response.on('error',()=>res.destroy())
       response.pipe(res)
     })
     upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end()})

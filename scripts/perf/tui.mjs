@@ -24,22 +24,29 @@ export async function withTui(cli, daemon, session, run) {
     name: "xterm-256color", cols, rows, cwd: daemon.project,
     env: withoutFixtureProxy({
       ...daemon.env,
+      OPENCODE_SERVER_PASSWORD: daemon.relayPassword ?? daemon.password,
       CODENOMAD_FIXTURE_PARENT_PID: String(process.pid),
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
     }),
   })
-  const exited = new Promise(resolve => p.onExit(resolve))
-  const killTui = () => {
-    try { p.kill() } catch {}
-    if (process.platform !== "win32" && p.pid) {
+  let didExit = false
+  const exited = new Promise(resolve => p.onExit(info => { didExit = true; resolve(info) }))
+  const stopTui = async () => {
+    if (didExit) return
+    if (process.platform === "win32") {
+      try { p.kill() } catch {}
+      await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 3000))])
+      return
+    }
+    try { p.kill("SIGTERM") } catch {}
+    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 2000))])
+    if (!didExit && p.pid) {
       try { process.kill(-p.pid, "SIGKILL") } catch {}
+      await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 1000))])
     }
   }
-  const untrack = registerFixtureChild(() => {
-    killTui()
-    return Promise.race([exited, new Promise(resolve => setTimeout(resolve, 3000))])
-  })
+  const untrack = registerFixtureChild(() => stopTui())
   void exited.finally(untrack)
   const term = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 0 })
   let screen = "", seen, waiter

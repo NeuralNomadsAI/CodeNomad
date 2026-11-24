@@ -17,11 +17,11 @@ const current=(await native.read(`/api/session/${manifest.sessionID}`)).data
 assert.deepEqual(current.permissions,[{action:'*',resource:'*',effect:'deny'}])
 const info=await native.read('/api/info')
 const stats={nativeVersion:info.version??info.data?.version,prompts:0,cuts:0,nativeFragments:0,tools:0,terminals:0,sseConnections:0,lastOutcome:null}
-const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.password,
+const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,
   CNRS_SERVER_PASSWORD:'real-history-private-backend',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:manifest.profile}
 const server=launchFixture(serverBinary,
   [path.dirname(manifest.project),path.join(manifest.profile,'real-backend.json'),'0','existing-opencode'],
-  {cwd:manifest.profile,env,shutdown:'shutdown\n',redact:[native.password,'real-history-private-backend']})
+  {cwd:manifest.profile,env,shutdown:'shutdown\n',redact:[native.password,native.relayPassword,'real-history-private-backend']})
 let child,proxy,observer,stream,watchTask,proxyError=null,rustFetch,rustAgent
 let result=1
 try{
@@ -77,7 +77,12 @@ try{
       if(req.method==='POST'&&target.pathname===`/workspaces/${workspace.id}/instance/api/session/${manifest.sessionID}/prompt`)stats.prompts++
       const up=request(target,{agent:rustAgent,method:req.method,headers:{...req.headers,host:target.host}},async response=>{
         res.writeHead(response.statusCode,response.headers)
-        if(target.pathname!=='/api/events'){response.pipe(res);return}
+        if(target.pathname!=='/api/events'){
+          response.on('close',()=>{if(!response.complete)res.destroy()})
+          response.on('error',()=>res.destroy())
+          response.pipe(res)
+          return
+        }
         stats.sseConnections++;let buffer='',delivered=0;const decoder=new TextDecoder()
         try{
           for await(const chunk of response){buffer+=decoder.decode(chunk,{stream:true});let index
@@ -118,9 +123,11 @@ try{
 }finally{
   observer?.abort();void stream?.body?.cancel?.().catch(()=>{})
   if(watchTask)await Promise.race([watchTask,delay(2000,undefined,{ref:false})])
-  proxy?.closeAllConnections();proxy?.close()
-  rustAgent?.destroy()
-  try{await rustFetch?.close()}finally{try{await child?.stop()}finally{await server.stop()}}
+  try{await child?.stop()}finally{
+    proxy?.closeAllConnections();proxy?.close()
+    rustAgent?.destroy()
+    try{await rustFetch?.close()}finally{await server.stop()}
+  }
   await writeFile(path.join(manifest.profile,'real-backend.log'),server.output())
 }
 process.exitCode=result??1

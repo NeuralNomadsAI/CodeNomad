@@ -102,20 +102,22 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
   } } })
   let pruning
   try {
-    if(pruningEnabled){const {preparePruning}=await import('./pruning.mjs');pruning=await preparePruning(root,env.OPENCODE_CONFIG_DIR)}
+    if(pruningEnabled){const {preparePruning}=await import('./pruning.mjs');pruning=await preparePruning(root,env.OPENCODE_CONFIG_DIR,gitEnv)}
   } catch(error){provider.closeAllConnections();await new Promise(resolve=>provider.close(resolve));throw error}
   let daemon, attested, nativeRelay
+  const relayPassword = randomUUID()
+  const relayAuthorization = `Basic ${Buffer.from(`opencode:${relayPassword}`).toString("base64")}`
   try {
     const daemonEnv = { ...env, ...gitEnv }
-    daemon = launchFixture(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {cwd: project, env: daemonEnv, redact: [password]})
+    daemon = launchFixture(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {cwd: project, env: daemonEnv, redact: [password, relayPassword]})
     const url = await daemon.ready(stdout => stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1], 60_000)
     const pid = await daemon.pid()
     attested = await attestNative(url, daemon.child, authorization, fixtureFetch, pid)
-    nativeRelay = await createAttestedRelay(url, pid)
+    nativeRelay = await createAttestedRelay(url, pid, { expectAuthorization: relayAuthorization, injectAuthorization: authorization })
     const {send} = attested
     const call = (method, route, body) => json(send, route, {method, body})
     await pruning?.activate({project,url,authorization,send},()=>assert.equal(daemon.child.exitCode,null,'Owned pruning daemon exited'))
-    await run({ project, env: daemonEnv, url, relayUrl: nativeRelay.origin, password, authorization, call, send, markers, pid, cli, pruning,
+    await run({ project, env: daemonEnv, url, relayUrl: nativeRelay.origin, relayPassword, password, authorization, call, send, markers, pid, cli, pruning,
       arm(pass, size) {
         const { promise: start, resolve: release } = Promise.withResolvers()
         batch = { pass, size, start, release, ready: new Set() }
