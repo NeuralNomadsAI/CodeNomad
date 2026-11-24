@@ -51,6 +51,70 @@ pub(crate) fn diff_preferences(s: &State) -> DiffPreferences {
     s.git.preferences.get()
 }
 
+pub(crate) fn overlay_open(s: &State) -> bool {
+    s.git.owner.as_ref().is_some_and(|ui| {
+        ui.placement_picker.is_some() || (ui.shown && (ui.open_menu.is_some() || ui.picker))
+    })
+}
+
+pub(crate) enum SessionDirectory {
+    Root,
+    ResolveSession(String),
+}
+
+pub(crate) fn session_directory(s: &State) -> SessionDirectory {
+    if s.screen.is_launcher() {
+        return SessionDirectory::Root;
+    }
+    let active = crate::workspace::active_session(s)
+        .map(str::to_owned)
+        .or_else(|| {
+            s.git
+                .owner
+                .as_ref()
+                .filter(|owner| !owner.backend.session.is_empty())
+                .map(|owner| owner.backend.session.clone())
+        });
+    active.map_or(SessionDirectory::Root, SessionDirectory::ResolveSession)
+}
+
+pub(crate) fn is_composing(s: &State) -> bool {
+    s.git
+        .owner
+        .as_ref()
+        .is_some_and(|ui| ui.changes.draft.is_composing() || ui.filter.is_composing())
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_commit_preedit(s: &mut State, text: &str) {
+    if let Some(ui) = &mut s.git.owner {
+        ui.changes
+            .draft
+            .ime(&rune::edit::Ime::Preedit(text.to_owned(), None, Vec::new()));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_commit_draft(s: &mut State, text: Option<&str>) -> Option<String> {
+    let ui = s.git.owner.as_mut()?;
+    if let Some(text) = text {
+        ui.changes.draft.replace_text(text);
+    }
+    Some(ui.changes.draft.text.clone())
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_open_picker(s: &mut State) {
+    if let Some(ui) = s.git.owner.as_mut() {
+        ui.picker = true;
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_online(s: &State) -> Option<bool> {
+    s.git.owner.as_ref().map(|ui| ui.online)
+}
+
 pub(crate) fn set_diff_preferences(s: &mut State, preference: DiffPreferences) {
     s.git.preferences.set(preference);
     if let Some(owner) = &mut s.git.owner {
@@ -101,6 +165,38 @@ fn connect(s: &mut State, backend: &Backend, placement: Option<&str>) {
     s.git.owner = Some(owner);
 }
 
+pub(crate) fn detach_session(s: &mut State) {
+    let backend = s.screen.launcher().and_then(|launcher| {
+        let mut backend = launcher.connection.clone()?;
+        backend.workspace.clone_from(&launcher.project.as_ref()?.id);
+        backend.session.clear();
+        Some(backend)
+    });
+    let is_online = s.screen.launcher().is_some_and(|launcher| {
+        launcher
+            .project
+            .as_ref()
+            .is_some_and(|project| launcher.workspace_stream_online_for(&project.id))
+    });
+    if let Some(files) = &mut s.files {
+        files.detach_session();
+        files.online(is_online);
+    } else if let Some(backend) = &backend {
+        crate::files::bind(s, backend);
+        if let Some(files) = &mut s.files {
+            files.online(is_online);
+        }
+    }
+    if let Some(owner) = &mut s.git.owner {
+        owner.detach_session();
+        owner.online(is_online);
+    } else if let Some(backend) = &backend {
+        connected(s, backend);
+        online(s, is_online);
+        crate::workspace::restore_files_mode(s);
+    }
+}
+
 pub(crate) fn project_opened(s: &mut State) {
     let Some(mut backend) = s.screen.launcher().and_then(|launcher| {
         let mut backend = launcher.connection.clone()?;
@@ -109,14 +205,18 @@ pub(crate) fn project_opened(s: &mut State) {
     }) else {
         return;
     };
+    let stream_online = s
+        .screen
+        .launcher()
+        .is_some_and(|launcher| launcher.workspace_stream_online_for(&backend.workspace));
     backend.session.clear();
     backend.session_directory = None;
     crate::files::bind(s, &backend);
     connected(s, &backend);
     if let Some(files) = &mut s.files {
-        files.online(true);
+        files.online(stream_online);
     }
-    online(s, true);
+    online(s, stream_online);
 }
 
 pub(super) fn sync_files(s: &mut State) {

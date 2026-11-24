@@ -114,7 +114,8 @@ impl Totals {
     }
 
     pub(crate) fn poll(s: &mut State) -> bool {
-        let demanded = s.shell.visible(1)
+        let demanded = !s.screen.is_launcher()
+            && s.shell.visible(1)
             && crate::workspace::right_panel_tab(s) == crate::workspace::RightPanelTab::Status
             && s.transcript_display.toggled(KEY)
             && matches!(

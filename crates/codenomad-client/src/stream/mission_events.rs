@@ -1,10 +1,13 @@
 use crate::{history::valid_id, transport::WorkspaceEvent};
 use serde_json::Value;
 
-pub(super) fn decode(workspace: &str, frame: &Value) -> Option<WorkspaceEvent> {
+pub(super) fn decode(
+    workspace: &str,
+    without_session: bool,
+    frame: &Value,
+) -> Option<WorkspaceEvent> {
     let id = frame["instanceId"].as_str()?;
-    // Empty is the shared backend observer, not a conversation stream.
-    if !valid_id(id) || !workspace.is_empty() && id != workspace {
+    if !valid_id(id) || id != workspace {
         return None;
     }
     let event = &frame["event"];
@@ -22,7 +25,7 @@ pub(super) fn decode(workspace: &str, frame: &Value) -> Option<WorkspaceEvent> {
                 revision,
             })
         }
-        "instance.eventStatus" if workspace.is_empty() && frame["status"] == "connected" => {
+        "instance.eventStatus" if without_session && frame["status"] == "connected" => {
             Some(WorkspaceEvent::MissionsReconnected {
                 workspace_id: id.into(),
             })
@@ -65,27 +68,31 @@ mod tests {
         let mut frame = json!({"type":"instance.event","instanceId":"owned","event":{
             "type":"rpc.codenomad.missions.changed","data":{"missionID":"msn_one","revision":7}}});
         assert_eq!(
-            decode("owned", &frame),
+            decode("owned", false, &frame),
             Some(WorkspaceEvent::MissionChanged {
                 workspace_id: "owned".into(),
                 mission_id: "msn_one".into(),
                 revision: 7,
             })
         );
-        assert_eq!(decode("", &frame), decode("owned", &frame));
-        assert_eq!(decode("foreign", &frame), None);
+        assert_eq!(
+            decode("owned", true, &frame),
+            decode("owned", false, &frame)
+        );
+        assert_eq!(decode("", true, &frame), None);
+        assert_eq!(decode("foreign", false, &frame), None);
         frame["event"]["data"]["revision"] = json!(9007199254740992u64);
-        assert_eq!(decode("owned", &frame), None);
+        assert_eq!(decode("owned", true, &frame), None);
         let status =
             json!({"type":"instance.eventStatus","instanceId":"owned","status":"connected"});
         assert_eq!(
-            decode("", &status),
+            decode("owned", true, &status),
             Some(WorkspaceEvent::MissionsReconnected {
                 workspace_id: "owned".into()
             })
         );
         assert_eq!(
-            decode("owned", &status),
+            decode("owned", false, &status),
             None,
             "conversation streams already forward AgentHint"
         );

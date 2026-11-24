@@ -38,6 +38,9 @@ impl Visits {
             visit.listed = true;
         }
     }
+    pub fn current(&self) -> Option<&str> {
+        self.at(self.cursor)
+    }
     fn at(&self, index: usize) -> Option<&str> {
         self.ids.get(index)?.as_ref().map(|visit| visit.id.as_str())
     }

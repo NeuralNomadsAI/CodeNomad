@@ -28,7 +28,7 @@ pub(crate) fn conversation_authentication(
     true
 }
 
-fn authentication_required(s: &mut State, expired: &crate::backend::Backend) -> bool {
+pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::Backend) -> bool {
     let mut prefs = s.settings.shared.borrow_mut();
     let current = match s.screen.launcher() {
         Some(launcher) => launcher.connection.as_ref(),

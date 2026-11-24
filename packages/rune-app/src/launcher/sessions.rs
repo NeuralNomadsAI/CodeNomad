@@ -5,6 +5,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
 };
 const MAX_SESSION_PAGES: usize = 1_000;
+const MAX_SESSION_TEXT_BYTES: usize = 24 * 1024 * 1024;
 
 fn cursor_hash(cursor: &str) -> u64 {
     let mut hash = DefaultHasher::new();
@@ -14,12 +15,14 @@ fn cursor_hash(cursor: &str) -> u64 {
 
 impl Launcher {
     pub(super) fn apply_directory_refresh(&mut self, page: Sessions, selected: Option<&str>) {
-        self.creation_uncertain = false;
+        if self.creation_uncertain_linked.is_none() {
+            self.creation_uncertain = false;
+        }
         self.listed_sessions = page.rows.iter().map(|row| row.id.clone()).collect();
         self.next = None;
         self.consumed_cursors.clear();
         // The first folder page cannot decide which linked sessions disappeared.
-        self.apply_passive_listing(page, selected, false);
+        self.apply_passive_listing(page, selected, false, false, false);
     }
 
     pub(super) fn consume_cursor(&mut self, cursor: &str) {
@@ -27,10 +30,16 @@ impl Launcher {
     }
 
     pub(crate) fn can_page(&self) -> bool {
-        self.next.as_ref().is_some_and(|next| {
-            self.consumed_cursors.len() + 1 < MAX_SESSION_PAGES
-                && !self.consumed_cursors.contains(&cursor_hash(next))
-        })
+        let bytes: usize = self
+            .sessions
+            .iter()
+            .map(|row| row.id.len() + row.title.len())
+            .sum();
+        bytes < MAX_SESSION_TEXT_BYTES
+            && self.next.as_ref().is_some_and(|next| {
+                self.consumed_cursors.len() + 1 < MAX_SESSION_PAGES
+                    && !self.consumed_cursors.contains(&cursor_hash(next))
+            })
     }
 
     pub(crate) fn apply_passive_listing(
@@ -38,22 +47,52 @@ impl Launcher {
         mut page: Sessions,
         selected: Option<&str>,
         authoritative: bool,
+        includes_linked: bool,
+        reset_cursor: bool,
     ) {
+        if includes_linked || (authoritative && self.creation_uncertain_linked.is_none()) {
+            self.creation_uncertain = false;
+            self.creation_uncertain_linked = None;
+            if self.error == Some("rune.create_error") {
+                self.error = None;
+            }
+        }
         let complete = page.next.is_none() && authoritative;
         let listed: HashSet<_> = page.rows.iter().map(|row| row.id.clone()).collect();
         let published = Instant::now();
         for id in &listed {
             self.visits.verified(id, published);
         }
-        page.rows.extend(self.sessions.drain(..).filter(|row| {
-            (!complete || selected == Some(row.id.as_str())) && !listed.contains(&row.id)
-        }));
+        let mut bytes: usize = page
+            .rows
+            .iter()
+            .map(|row| row.id.len() + row.title.len())
+            .sum();
+        for row in self.sessions.drain(..) {
+            if listed.contains(&row.id) {
+                continue;
+            }
+            let is_selected = selected == Some(row.id.as_str());
+            if complete && !is_selected {
+                continue;
+            }
+            let row_bytes = row.id.len() + row.title.len();
+            if !is_selected && bytes.saturating_add(row_bytes) > MAX_SESSION_TEXT_BYTES {
+                continue;
+            }
+            bytes = bytes.saturating_add(row_bytes);
+            page.rows.push(row);
+        }
         self.sessions = page.rows;
         self.visits.observe_listing(&listed);
-        if self.next.is_none() && page.next.is_some() || complete {
+        let root_page = authoritative || !includes_linked;
+        if root_page && (reset_cursor || self.next.is_none() && page.next.is_some() || complete) {
             self.listed_sessions = listed;
             self.next = page.next;
             self.consumed_cursors.clear();
+        }
+        if complete && includes_linked {
+            self.linked.replace_with_authoritative();
         }
         if complete {
             self.check_omitted_visits();
@@ -76,7 +115,9 @@ impl Launcher {
             );
         } else {
             self.consumed_cursors.clear();
-            self.creation_uncertain = false;
+            if self.creation_uncertain_linked.is_none() {
+                self.creation_uncertain = false;
+            }
             if let Some(old) = self
                 .sessions
                 .iter()
@@ -122,6 +163,9 @@ impl Launcher {
 }
 
 pub fn list(s: &mut State, more: bool) {
+    if !more {
+        super::retry_detached_reconcile(s);
+    }
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
@@ -137,10 +181,6 @@ pub fn list(s: &mut State, more: bool) {
     if more && !l.can_page() {
         return;
     }
-    #[cfg(target_arch = "wasm32")]
-    if !more && l.show_search && !l.search.text.trim().is_empty() {
-        l.search_results = Default::default();
-    }
     l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
@@ -148,6 +188,60 @@ pub fn list(s: &mut State, more: bool) {
             b.sessions(&p, cursor.as_deref()).await?,
             cursor,
         ))
+    });
+}
+pub fn create_blank(s: &mut State) {
+    if !can_change_session(s) || crate::git::placement_unconfirmed(s) {
+        return;
+    }
+    let dismiss = s.shell.floating_sessions();
+    let target = crate::git::session_directory(s);
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    if l.pending || l.creation_uncertain {
+        return;
+    }
+    let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
+        return;
+    };
+    s.notifications.supersede_navigation();
+    let ticket = s.notifications.navigation_ticket();
+    crate::timeline::search::cancel_destination(s);
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    // A create request is never automatically retried. Refresh reconciles a lost response.
+    l.job("rune.create_error", async move {
+        let directory = match target {
+            crate::git::SessionDirectory::Root => p.path.clone(),
+            crate::git::SessionDirectory::ResolveSession(session_id) => {
+                match b.session_directory(&p, &session_id).await {
+                    Ok(directory) => directory,
+                    Err(_) => return Ok(Reply::CreatePrecheckFailed),
+                }
+            }
+        };
+        let linked = !codenomad_client::same_server_path(&p.path, &directory);
+        let session = match b.create_untitled_session(&p, &directory).await {
+            Ok(session) => session,
+            Err(error) if error.is::<codenomad_client::catalog::CreateRejected>() => {
+                return Ok(Reply::CreateRejected);
+            }
+            Err(_) if linked => return Ok(Reply::CreateUncertainLinked(directory)),
+            Err(error) => return Err(error),
+        };
+        match b.bind_created_session(&p, &session.id, &directory).await {
+            Ok((backend, _, slug)) => Ok(Reply::Created(
+                backend,
+                session.title,
+                slug,
+                String::new(),
+                dismiss,
+                Some(ticket),
+            )),
+            Err(_) => Ok(Reply::CreatedUnbound(session, String::new())),
+        }
     });
 }
 pub fn create(s: &mut State, _: &mut Tx) {
@@ -158,18 +252,39 @@ pub fn create(s: &mut State, _: &mut Tx) {
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
-    if l.creation_uncertain || l.title.text.trim().is_empty() {
+    if l.pending || l.creation_uncertain || l.title.text.trim().is_empty() {
         return;
     }
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
     let title = l.title.text.clone();
+    s.notifications.supersede_navigation();
+    let ticket = s.notifications.navigation_ticket();
+    crate::timeline::search::cancel_destination(s);
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
     // A create request is never automatically retried. Refresh reconciles a lost response.
     l.job("rune.create_error", async move {
-        let session = b.create_session(&p, &title).await?;
-        let (backend, _, slug) = b.bind_session_placed(&p, &session.id, true).await?;
-        Ok(Reply::Created(backend, session.title, slug, title, dismiss))
+        let session = match b.create_session(&p, &title).await {
+            Ok(session) => session,
+            Err(error) if error.is::<codenomad_client::catalog::CreateRejected>() => {
+                return Ok(Reply::CreateRejected);
+            }
+            Err(error) => return Err(error),
+        };
+        match b.bind_session_placed(&p, &session.id, true).await {
+            Ok((backend, _, slug)) => Ok(Reply::Created(
+                backend,
+                session.title,
+                slug,
+                title,
+                dismiss,
+                Some(ticket),
+            )),
+            Err(_) => Ok(Reply::CreatedUnbound(session, title)),
+        }
     });
 }
 pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
@@ -213,6 +328,10 @@ fn choose_from(
     if l.pending {
         return;
     }
+    crate::timeline::search::cancel_destination(s);
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
     l.selection_ticket = ticket;
     l.job("sessionList.reload.error", async move {
         let mut missing = Vec::new();
@@ -236,7 +355,10 @@ fn choose_from(
 }
 pub fn can_change_session(s: &State) -> bool {
     s.phase != Phase::Streaming
-        && !s.composer.pending()
+        && !s.composer.blocks_navigation()
+        && !crate::workspace::unconfirmed_drafts_full(s)
+        && !s.files.as_ref().is_some_and(|ui| ui.document.pending())
+        && !s.transcript_display.messages.pending()
         && !s.status_permissions.settling()
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)
@@ -276,22 +398,84 @@ pub(super) fn dismiss_origin_panel(s: &mut State, origin: Option<u64>, tx: &mut 
     }
 }
 
-pub(super) fn retire_session(s: &mut State, id: &str) {
-    if !crate::workspace::unselect_missing(s, id) {
-        return;
-    }
+fn clear_conversation_only(s: &mut State) {
+    s.attachments.cancel();
+    s.composer.picker.reset();
+    s.composer.device.cancel();
     s.commands = None;
     s.incoming = None;
     s.reader = None;
     s.agent = None;
-    s.files = None;
     s.attachments = Default::default();
     s.composer = Default::default();
+    s.transcript_display.messages = Default::default();
+    s.transcript_display.pictures.clear();
+    s.transcript_display.usage_family = Default::default();
+    s.status_permissions.attach(None);
+    s.status_usage.invalidate();
     s.history_detached = false;
     s.messages.clear();
     s.chat_title.clear();
     s.draft = TextEdit::new("");
     s.phase = Phase::Ready;
+}
+
+pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
+    let tab_key = s.workspace.as_ref().map(|ui| ui.active_key()).or_else(|| {
+        s.screen
+            .launcher()
+            .and_then(|l| l.project.as_ref())
+            .map(|p| p.id.as_str())
+    });
+    if s.screen.is_launcher()
+        || !can_change_session(s)
+        || s.composer.device.busy()
+        || tab_key.is_some_and(|key| s.documents.has_tab_edits(key))
+        || s.files
+            .as_ref()
+            .is_some_and(|ui| ui.document.pending() || ui.document.dirty())
+        || s.screen
+            .launcher()
+            .is_none_or(|l| l.project.is_none() || l.pending)
+    {
+        return false;
+    }
+    let active = crate::workspace::active_session(s).map(str::to_owned);
+    if s.workspace.is_some() {
+        let Some(id) = active else {
+            return false;
+        };
+        crate::workspace::unselect_missing(s, &id);
+    } else if !s.draft.text.is_empty()
+        || !s.composer.draft.attachments.is_empty()
+        || s.composer.unconfirmed_id().is_some()
+        || s.composer.command_unconfirmed.is_some()
+    {
+        return false;
+    }
+    s.notifications.supersede_navigation();
+    crate::timeline::search::close(s);
+    clear_conversation_only(s);
+    s.show_launcher();
+    if let Some(files) = &mut s.files {
+        files.close_reader();
+        files.online(false);
+    }
+    if s.git.owner.is_some() {
+        crate::git::online(s, false);
+    }
+    crate::git::detach_session(s);
+    crate::workspace::schedule_catalogue_refresh(s);
+    tx.instant();
+    true
+}
+
+pub(super) fn retire_session(s: &mut State, id: &str) {
+    if !crate::workspace::unselect_missing(s, id) {
+        return;
+    }
+    clear_conversation_only(s);
+    s.files = None;
     s.show_launcher();
     if let Some(l) = s.screen.launcher_mut() {
         l.sessions.retain(|row| row.id != id);
@@ -336,6 +520,8 @@ fn bind_at(
             .record(&b.session, visit, l.listed_sessions.contains(&b.session));
         if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
             row.title.clone_from(&title);
+        } else if let Some(row) = l.linked.rows.iter_mut().find(|row| row.id == b.session) {
+            row.title.clone_from(&title);
         } else {
             l.sessions.insert(
                 0,
@@ -365,6 +551,8 @@ fn bind_at(
             agent.online = false;
             agent.pending_known = false;
         }
+    } else if s.files.as_ref().is_none_or(|ui| !ui.uses_connection(&b)) {
+        crate::files::bind(s, &b);
     }
     s.draft = TextEdit::new(draft);
     crate::composer::literal::restore(&mut s.draft, &s.composer.draft.literal_spans);

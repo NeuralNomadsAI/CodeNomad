@@ -18,6 +18,11 @@ pub(crate) fn trigger(s: &State) -> Option<El> {
             t("messageSection.search.ariaLabel"),
             screen::action_tx(&s.input_scope, toggle),
         )
+        .help(crate::settings::with_shortcut_label(
+            s,
+            t("messageSection.search.ariaLabel"),
+            "session-search",
+        ))
         .key("history-search-toggle")
         .on_key(move |s, event, tx| {
             if event.key != rune::Key::Enter {

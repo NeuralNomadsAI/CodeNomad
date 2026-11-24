@@ -52,7 +52,7 @@ pub(super) async fn relay(
     }
     // A conversation move revokes its reader before any send and relays SessionMoved itself.
     if !(own && native["type"] == "session.moved" && native["data"]["sessionID"] == b.session)
-        && let Some(event) = mission_events::decode(&b.workspace, value)
+        && let Some(event) = mission_events::decode(&b.workspace, b.session.is_empty(), value)
     {
         out.send(Input::Workspace(epoch, event)).await?;
     }

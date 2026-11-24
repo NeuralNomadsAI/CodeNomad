@@ -46,6 +46,21 @@ impl Pictures {
         self.backend = Some(backend);
     }
 
+    pub(crate) fn preview_open(&self) -> bool {
+        self.preview.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_preview(&mut self, open: bool) {
+        self.preview = open.then(|| {
+            let image = self
+                .cache
+                .get_or_insert_with(|| ImageCache::new(Arc::new(|| {})))
+                .load(Vec::new());
+            ("preview".into(), "image.png".into(), image)
+        });
+    }
+
     pub(crate) fn clear(&mut self) {
         self.images.clear();
         self.waiting.clear();

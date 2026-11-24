@@ -51,8 +51,17 @@ pub struct Ui {
     pub stopped: bool,
 }
 impl Ui {
+    pub(crate) fn workspace_id(&self) -> &str {
+        &self.backend.workspace
+    }
+
     pub(crate) fn uses_connection(&self, backend: &Backend) -> bool {
         self.backend.client.same_connection(&backend.client)
+    }
+
+    pub(crate) fn same_server_identity(&self, backend: &Backend) -> bool {
+        let previous = self.backend.client.server_identity();
+        previous.is_some() && previous == backend.client.server_identity()
     }
 
     pub fn new(backend: Backend, directory: String, reads: Reads, wake: Wake) -> Self {
@@ -168,6 +177,26 @@ impl Ui {
         }
         self.demand();
     }
+    pub fn detach_session(&mut self) {
+        self.close_reader();
+        self.backend.session.clear();
+    }
+    pub fn rebind_session(&mut self, backend: &Backend) {
+        let renewed = !self.uses_connection(backend);
+        self.close_reader();
+        self.backend = backend.clone();
+        self.reader.rebind_session(backend);
+        self.document.rebind_session(backend);
+        if !backend.session.is_empty() {
+            self.online(false);
+        }
+        if renewed {
+            self.actions.revoke();
+            self.tree.invalidate_all();
+            self.pending = None;
+            self.demand();
+        }
+    }
     pub fn online(&mut self, online: bool) {
         if !online {
             self.pictures.suspend();
@@ -196,6 +225,16 @@ impl Ui {
                 session_id,
             } if workspace_id == self.backend.workspace && session_id == self.backend.session => {
                 self.close_reader();
+            }
+            WorkspaceEvent::NativeFilesystemChanged { workspace_id }
+            | WorkspaceEvent::WorktreesChanged { workspace_id }
+                if workspace_id == self.backend.workspace && !self.stopped =>
+            {
+                let due = self
+                    .last_passive
+                    .map_or(self.clock + 0.1, |last| (last + 5.0).max(self.clock + 0.1));
+                let (_, pending) = self.pending.get_or_insert_with(|| (due, None));
+                *pending = None;
             }
             WorkspaceEvent::FilesChanged {
                 workspace_id,
@@ -434,6 +473,19 @@ impl Ui {
             return true;
         }
         false
+    }
+    pub(crate) fn next_wake(&self) -> Option<f64> {
+        if self.stopped {
+            return None;
+        }
+        let pending = self.pending.as_ref().map(|(due, _)| *due);
+        let refresh = (self.active && self.tree_visible() && self.online)
+            .then_some(self.due)
+            .flatten();
+        match (pending, refresh) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
     pub fn poll(&mut self, now: f64) -> bool {
         self.clock = now;

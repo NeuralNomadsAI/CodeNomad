@@ -122,6 +122,14 @@ impl Permissions {
         self.write.is_some()
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_writing(&mut self, writing: bool) {
+        self.write = writing.then(|| {
+            let (_tx, rx) = bounded(1);
+            (Mode::Autonomous, rx)
+        });
+    }
+
     pub(crate) fn settling(&self) -> bool {
         self.writing()
             || self

@@ -106,6 +106,10 @@ fn state(s: &mut State) -> &mut Search {
     &mut super::owner(s).search
 }
 
+pub(crate) fn available(s: &State) -> bool {
+    visible(s)
+}
+
 fn visible(s: &State) -> bool {
     !s.screen.is_launcher()
         && !crate::files::has_preview(s)
@@ -113,8 +117,39 @@ fn visible(s: &State) -> bool {
         && s.transcript_display.timeline.backend.is_some()
 }
 
-pub(super) fn is_open(s: &State) -> bool {
+pub(crate) fn is_open(s: &State) -> bool {
     s.transcript_display.timeline.search.open && visible(s)
+}
+
+pub(crate) fn is_composing(s: &State) -> bool {
+    is_open(s) && s.transcript_display.timeline.search.query.is_composing()
+}
+
+pub(crate) fn overlay_open(s: &State) -> bool {
+    is_open(s) && s.transcript_display.timeline.search.scope_open
+}
+
+pub(crate) fn cancel_destination(s: &mut State) {
+    state(s).destination = None;
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_scope_open(
+    s: &mut State,
+    backend: Option<crate::backend::Backend>,
+    open: bool,
+) {
+    let timeline = super::owner(s);
+    if backend.is_some() {
+        timeline.backend = backend;
+    }
+    timeline.search.open = open;
+    timeline.search.scope_open = open;
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_blur(s: &mut State) {
+    state(s).query.focused = false;
 }
 
 #[cfg(test)]
@@ -216,7 +251,7 @@ pub(super) fn retry_selected(s: &mut State, tx: &mut Tx) {
     }
 }
 
-pub(crate) fn keys(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+pub(crate) fn close_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if event.key == Key::Escape && state(s).open {
         if std::mem::take(&mut state(s).scope_open) {
             return true;
@@ -225,18 +260,38 @@ pub(crate) fn keys(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         tx.focus("history-search-toggle", true);
         return true;
     }
-    if matches!(event.key, Key::Command(c) if c.eq_ignore_ascii_case(&'f'))
-        && (event.mods.ctrl || event.mods.cmd)
-        && !event.mods.alt
-        && !event.mods.shift
+    false
+}
+
+pub(crate) fn open_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    if crate::shell::shortcut_blocked(s, event, tx) {
+        return false;
+    }
+    if state(s).open
+        && state(s).query.focused
+        && matches!(event.key, Key::Text(_))
+        && (!event.mods.alt || event.mods.ctrl)
+    {
+        return false;
+    }
+    if crate::settings::match_shortcut(s, event, tx, |matches| {
+        matches("session-search").then_some(())
+    })
+    .is_some()
         && visible(s)
     {
-        state(s).open = true;
-        state(s).query.focused = true;
-        tx.focus_when_shown(FOCUS, true);
+        if !tx.key_repeat() {
+            state(s).open = true;
+            state(s).query.focused = true;
+            tx.focus_when_shown(FOCUS, true);
+        }
         return true;
     }
     false
+}
+
+pub(crate) fn keys(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    close_key(s, event, tx) || open_key(s, event, tx)
 }
 
 impl Search {
@@ -295,6 +350,7 @@ pub(crate) fn settle_destination(s: &mut State, tx: &mut Tx) -> bool {
         state(s).destination = None;
         if let Ok((backend, title, slug, mut hit, row)) = destination
             && crate::launcher::can_change_session(s)
+            && !s.screen.launcher().is_some_and(|l| l.pending)
         {
             match hit.landing(s, &row, 0) {
                 Landing::Visible(..) => {
@@ -463,7 +519,7 @@ fn select(s: &mut State, index: usize, tx: &mut Tx) {
 }
 
 fn open_result(s: &mut State, _: &mut Tx) {
-    if !crate::launcher::can_change_session(s) {
+    if !crate::launcher::can_change_session(s) || s.screen.launcher().is_some_and(|l| l.pending) {
         return;
     }
     let model = state(s);

@@ -91,8 +91,8 @@ for(const mode of ['immediate','focus-after']){
     {t:0.8,type:'tap',key:'dialog-cancel'}],'light',mode)
   assert.equal(record.trace.at(-1).event,'dialog-close')
   assert(!record.data.elements.some(e=>e.key==='dialog'),'Closed dialog must leave the actual scene')
-  assert.equal(record.data.elements.find(e=>e.focused)?.key,undefined,'Source returns to BODY after this immediate dialog closes')
-  interaction.dialogClose.push({mode,trace:record.trace,focus:null,tree:record.tree,script:record.script})
+  assert.equal(record.data.elements.find(e=>e.focused)?.key,'actions:trigger','Closing an immediate replacement dialog returns focus to the menu opener')
+  interaction.dialogClose.push({mode,trace:record.trace,focus:'actions:trigger',tree:record.tree,script:record.script})
 }
 await writeFile(path.join(out,'native-captures.json'),JSON.stringify({provenance,viewport:[480,360],records,deferredHelp,
   limitations:['Hover pixels compare the initial state before deferred help. Mature Rune help is captured separately; Chromium screenshots omit native title tooltips.',

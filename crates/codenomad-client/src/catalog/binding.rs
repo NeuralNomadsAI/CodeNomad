@@ -58,7 +58,7 @@ impl Backend {
         fresh: bool,
     ) -> Result<(Self, Session)> {
         let (backend, session, _) = self
-            .bind_at_placed(project, id, expected, fresh, true, false)
+            .bind_at_placed(project, id, expected, fresh, true, false, false)
             .await?;
         Ok((backend, session))
     }
@@ -69,17 +69,71 @@ impl Backend {
         id: &str,
         fresh: bool,
     ) -> Result<(Self, Session, String)> {
-        self.bind_at_placed(project, id, None, fresh, false, false)
+        self.bind_at_placed(project, id, None, fresh, false, false, false)
             .await
+    }
+
+    pub async fn bind_created_session(
+        &self,
+        project: &Project,
+        id: &str,
+        expected_directory: &str,
+    ) -> Result<(Self, Session, String)> {
+        self.bind_at_placed(
+            project,
+            id,
+            Some(expected_directory),
+            true,
+            true,
+            false,
+            true,
+        )
+        .await
+    }
+
+    pub async fn session_directory(&self, project: &Project, id: &str) -> Result<String> {
+        if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
+            return Err("invalid session".into());
+        }
+        let response = self
+            .client
+            .get(format!(
+                "{}workspaces/{}/instance/api/session/{id}",
+                self.base, project.id
+            ))
+            .header("x-codenomad-session-placement", "1")
+            .send()
+            .await?;
+        let data = read_json(response.error_for_status()?).await?;
+        let row = &data["data"];
+        let directory = row["location"]["directory"]
+            .as_str()
+            .filter(|dir| crate::server_path::absolute(dir))
+            .ok_or("missing session directory")?;
+        let placement = row["listWorktreeSlug"]
+            .as_str()
+            .filter(|slug| valid_id(slug));
+        if !crate::server_path::same(&project.path, directory)
+            && !placement.is_some_and(|slug| slug != "root")
+            && !self
+                .session_directories(project)
+                .await?
+                .iter()
+                .any(|dir| crate::server_path::same(dir, directory))
+        {
+            return Err("foreign session location".into());
+        }
+        Ok(directory.into())
     }
 
     pub(crate) async fn bind_root_session(&self, project: &Project, id: &str) -> Result<Session> {
         let (_, session, _) = self
-            .bind_at_placed(project, id, None, false, false, true)
+            .bind_at_placed(project, id, None, false, false, true, false)
             .await?;
         Ok(session)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn bind_at_placed(
         &self,
         project: &Project,
@@ -88,6 +142,7 @@ impl Backend {
         fresh: bool,
         verify_directory: bool,
         require_root: bool,
+        allow_linked_fresh: bool,
     ) -> Result<(Self, Session, String)> {
         if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
             return Err("invalid session".into());
@@ -130,11 +185,20 @@ impl Backend {
             .as_str()
             .filter(|slug| valid_id(slug));
         let linked = !crate::server_path::same(&project.path, directory);
-        if expected.is_some_and(|d| !crate::server_path::same(d, directory)) || linked && fresh {
+        if expected.is_some_and(|d| !crate::server_path::same(d, directory))
+            || !allow_linked_fresh && linked && fresh
+        {
             return Err("foreign session location".into());
         }
         if linked {
-            let owned = if verify_directory {
+            let owned = if allow_linked_fresh {
+                placement.is_some_and(|slug| slug != "root")
+                    || self
+                        .session_directories(project)
+                        .await?
+                        .iter()
+                        .any(|d| crate::server_path::same(d, directory))
+            } else if verify_directory {
                 self.session_directories(project)
                     .await?
                     .iter()
