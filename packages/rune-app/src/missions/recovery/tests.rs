@@ -57,7 +57,13 @@ fn header_value(
     serde_json::from_value(value).unwrap()
 }
 
-fn obs_with(revision: u64, actors: Vec<(&str, ActorState, Option<ActorState>)>) -> Observation {
+fn obs_page(
+    revision: u64,
+    coverage: Coverage,
+    requests: Coverage,
+    total: u64,
+    actors: Vec<(&str, ActorState, Option<ActorState>)>,
+) -> Observation {
     let mut obs = Observation::default();
     let count = actors.len() as u64;
     let page = Activity {
@@ -67,10 +73,10 @@ fn obs_with(revision: u64, actors: Vec<(&str, ActorState, Option<ActorState>)>) 
             order: "ord".into(),
             offset: 0,
             end: count,
-            total: count,
+            total,
         },
-        coverage: Coverage::Observed,
-        requests: Coverage::Observed,
+        coverage,
+        requests,
         actors: actors
             .into_iter()
             .map(|(id, state, request)| codenomad_client::missions::Actor {
@@ -86,6 +92,17 @@ fn obs_with(revision: u64, actors: Vec<(&str, ActorState, Option<ActorState>)>) 
     obs
 }
 
+fn obs_with(revision: u64, actors: Vec<(&str, ActorState, Option<ActorState>)>) -> Observation {
+    let total = actors.len() as u64;
+    obs_page(
+        revision,
+        Coverage::Observed,
+        Coverage::Observed,
+        total,
+        actors,
+    )
+}
+
 fn witness() -> (Wake, Receiver<()>) {
     let (send, done) = bounded(4);
     (
@@ -97,17 +114,49 @@ fn witness() -> (Wake, Receiver<()>) {
 }
 
 #[test]
-fn coordinator_eligibility_requires_interrupted_active_or_resumable_failed_without_pending_control()
-{
+fn coordinator_eligibility_requires_complete_fresh_interrupted_active_or_resumable_failed() {
     let active = header_value("msn", "active", Some("running"), 7, true, None);
     let idle_coord = obs_with(7, vec![("ses_coord", ActorState::IdleWithoutReport, None)]);
     assert!(coordinator_eligible(&active, &idle_coord));
 
-    let unknown_coord = obs_with(7, vec![("ses_coord", ActorState::Unknown, None)]);
-    assert!(
-        !coordinator_eligible(&active, &unknown_coord),
-        "unknown activity must keep Pause rather than offering coordinator recovery"
+    // Partial coverage or unloaded actor pages must keep Pause instead of Recover.
+    let partial_coverage = obs_page(
+        7,
+        Coverage::Partial,
+        Coverage::Observed,
+        1,
+        vec![("ses_coord", ActorState::IdleWithoutReport, None)],
     );
+    assert!(!coordinator_eligible(&active, &partial_coverage));
+
+    let partial_requests = obs_page(
+        7,
+        Coverage::Observed,
+        Coverage::Partial,
+        1,
+        vec![("ses_coord", ActorState::IdleWithoutReport, None)],
+    );
+    assert!(!coordinator_eligible(&active, &partial_requests));
+
+    let unloaded_second_page = obs_page(
+        7,
+        Coverage::Observed,
+        Coverage::Observed,
+        2,
+        vec![("ses_coord", ActorState::IdleWithoutReport, None)],
+    );
+    assert!(
+        !coordinator_eligible(&active, &unloaded_second_page),
+        "unloaded actor page may contain a working specialist"
+    );
+
+    // Same-revision invalidation must immediately revoke Recover eligibility until refreshed.
+    let mut invalidated = obs_with(7, vec![("ses_coord", ActorState::IdleWithoutReport, None)]);
+    invalidated.invalidate(10.0);
+    assert!(!coordinator_eligible(&active, &invalidated));
+
+    let unknown_coord = obs_with(7, vec![("ses_coord", ActorState::Unknown, None)]);
+    assert!(!coordinator_eligible(&active, &unknown_coord));
 
     let worker_running = obs_with(
         7,
@@ -116,10 +165,7 @@ fn coordinator_eligibility_requires_interrupted_active_or_resumable_failed_witho
             ("ses_worker", ActorState::Running, None),
         ],
     );
-    assert!(
-        !coordinator_eligible(&active, &worker_running),
-        "active worker prevents interrupted coordinator recovery"
-    );
+    assert!(!coordinator_eligible(&active, &worker_running));
 
     let pending_control = header_value("msn", "active", Some("running"), 7, true, Some(1));
     assert!(!coordinator_eligible(&pending_control, &idle_coord));
@@ -138,7 +184,7 @@ fn coordinator_eligibility_requires_interrupted_active_or_resumable_failed_witho
 }
 
 #[test]
-fn recovery_guard_prevents_duplicate_admission_and_allows_retry_after_refusal() {
+fn recovery_guard_prevents_duplicate_admission_refreshes_on_refusal_and_allows_retry() {
     crate::platform::block_on(async {
         let http = Http::new().await;
         let (wake, done) = witness();
@@ -154,6 +200,7 @@ fn recovery_guard_prevents_duplicate_admission_and_allows_retry_after_refusal() 
             wake.clone(),
         );
         assert!(guard.pending(&key));
+        assert!(guard.any_pending_for(&src));
         // Second start at the same revision must be ignored while pending.
         guard.start(
             &src,
@@ -174,6 +221,11 @@ fn recovery_guard_prevents_duplicate_admission_and_allows_retry_after_refusal() 
         let polled = guard.poll();
         assert!(polled.changed);
         assert!(polled.admitted.is_empty());
+        assert_eq!(
+            polled.refreshed_scopes,
+            vec![src.workspace_scope()],
+            "refusal must still refresh the workspace in case a failed Mission reopened"
+        );
         assert!(!guard.pending(&key) && !guard.admitted(&key));
         assert_eq!(guard.error(&key), Some(RecoveryError::Busy));
 
@@ -204,7 +256,8 @@ fn recovery_guard_prevents_duplicate_admission_and_allows_retry_after_refusal() 
         let polled = guard.poll();
         assert!(polled.changed);
         assert_eq!(polled.admitted.len(), 1);
-        assert_eq!(polled.admitted[0].2, Some(8));
+        assert_eq!(polled.admitted[0].2, 8);
+        assert_eq!(polled.refreshed_scopes, vec![src.workspace_scope()]);
         assert!(guard.admitted(&key));
 
         // Once admitted, the same revision cannot replay.
@@ -228,6 +281,7 @@ fn settled_guard_capacity_never_evicts_pending_attempts() {
     guard.attempts.insert(
         pending_key.clone(),
         Attempt::Pending {
+            scope: src.workspace_scope(),
             mission: src.mission.clone(),
             target: src.target.clone(),
             flight: inbox,
@@ -241,6 +295,13 @@ fn settled_guard_capacity_never_evicts_pending_attempts() {
         );
     }
     guard.prune();
-    assert_eq!(guard.attempts.len(), SETTLED_CAPACITY);
+    assert_eq!(
+        guard
+            .attempts
+            .values()
+            .filter(|a| matches!(a, Attempt::Admitted(_)))
+            .count(),
+        SETTLED_CAPACITY
+    );
     assert!(guard.pending(&pending_key));
 }

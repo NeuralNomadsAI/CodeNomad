@@ -1,6 +1,6 @@
 use super::{
     Gesture, Lifecycle, Panel, Source,
-    cleanup::{CleanupAct, DeleteState, cleanup_view},
+    cleanup::{CleanupAct, DeleteAct, DeleteState, cleanup_view},
     recovery::{self, RecoveryKey},
 };
 use crate::{State, strings::t};
@@ -14,8 +14,14 @@ use rune_theme_codenomad::{
 
 pub(crate) type Act = fn(&mut State, &Source, Gesture);
 
-pub(crate) fn cleanups(panel: &Panel, owner: &Lifecycle, retry: CleanupAct) -> El {
-    cleanup_view(panel, &owner.cleanup, retry)
+pub(crate) fn cleanups(
+    panel: &Panel,
+    owner: &Lifecycle,
+    occurrence: &str,
+    retry: CleanupAct,
+    orphaned_delete: DeleteAct,
+) -> El {
+    cleanup_view(panel, &owner.cleanup, occurrence, retry, orphaned_delete)
 }
 
 pub(crate) fn controls(
@@ -31,9 +37,10 @@ pub(crate) fn controls(
     let revision = header.root.revision;
     let ready = panel.detail.authoritative();
     let delete_state = owner.cleanup.delete_state(&source);
-    let delete_busy = delete_state == Some(DeleteState::Busy);
+    let delete_active = delete_state.is_some();
     let recover_key = RecoveryKey::coordinator(&source, revision);
     let recover_eligible = recovery::coordinator_eligible(header, &panel.observation);
+    let recovery_busy = owner.recovery.any_pending_for(&source);
     let recover_pending = owner.recovery.pending(&recover_key);
     let recover_admitted = owner.recovery.admitted(&recover_key);
     let recover_error = owner.recovery.error(&recover_key);
@@ -59,20 +66,25 @@ pub(crate) fn controls(
     if owner.unresolved(&source, header) || owner.busy(&source) {
         row = row.child(button(
             t("missionsPanel.action.checkStatus"),
-            owner.busy(&source) || delete_busy,
+            owner.busy(&source) || delete_active || recovery_busy,
             || Gesture::Check,
             "mission-control-primary",
         ));
         if owner.replayable(&source, revision) {
             row = row.child(button(
                 t("missions.control.refreshResend"),
-                !ready || delete_busy,
+                !ready || delete_active || recovery_busy,
                 || Gesture::Replay,
                 "mission-control-replay",
             ));
         }
     } else if header.root.status == Status::Failed && recover_eligible {
-        let disabled = !ready || delete_busy || recover_pending || recover_admitted;
+        let disabled = !ready
+            || delete_active
+            || recovery_busy
+            || recover_pending
+            || recover_admitted
+            || !owner.recovery.can_start(&recover_key);
         let origin = source.clone();
         row = row.child(
             layout::button_tx(t("missionsPanel.action.recover"), false, move |s, tx| {
@@ -88,10 +100,13 @@ pub(crate) fn controls(
     } else if header.root.status == Status::Active
         && header.root.run_state != Some(RunState::Stopped)
     {
-        let disabled = !ready || delete_busy || !owner.idle(&source, header);
+        let disabled = !ready || delete_active || recovery_busy || !owner.idle(&source, header);
         let pause_slot = matches!(header.root.run_state, None | Some(RunState::Running));
         if pause_slot && recover_eligible {
-            let disabled = disabled || recover_pending || recover_admitted;
+            let disabled = disabled
+                || recover_pending
+                || recover_admitted
+                || !owner.recovery.can_start(&recover_key);
             let origin = source.clone();
             row = row.child(
                 layout::button_tx(t("missionsPanel.action.recover"), false, move |s, tx| {
@@ -149,7 +164,7 @@ pub(crate) fn controls(
     if Lifecycle::allow(header, LifecycleAction::Stop, false, false)
         && (owner.can_stop(&source, header) || owner.busy(&source))
     {
-        let disabled = !ready || delete_busy || !owner.can_stop(&source, header);
+        let disabled = !ready || delete_active || recovery_busy || !owner.can_stop(&source, header);
         let origin = source.clone();
         row = row.child(
             layout::button_tx(t("missions.control.run.stop"), disabled, move |s, tx| {
@@ -163,6 +178,7 @@ pub(crate) fn controls(
         let disabled = !ready
             || owner.busy(&source)
             || owner.unresolved(&source, header)
+            || recovery_busy
             || delete_managed_sessions.is_none()
             || !owner.cleanup.can_delete(&source);
         let origin = source.clone();
@@ -216,6 +232,7 @@ pub(crate) fn controls(
             ));
         }
         Some(DeleteState::Failed(key)) => {
+            let retry_disabled = owner.busy(&source) || recovery_busy;
             let retry_origin = source.clone();
             let cancel_origin = source.clone();
             view = view.child(theme::note(t(key), "alert")).child(
@@ -224,9 +241,13 @@ pub(crate) fn controls(
                     .label(t("missions.control.delete"))
                     .child(
                         layout::button_tx(t("missions.control.retry"), false, move |s, tx| {
-                            act(s, &retry_origin, Gesture::RetryDelete);
-                            tx.instant();
+                            if !retry_disabled {
+                                act(s, &retry_origin, Gesture::RetryDelete);
+                                tx.instant();
+                            }
                         })
+                        .disabled(retry_disabled)
+                        .focusable(true)
                         .key("mission-delete-retry"),
                     )
                     .child(

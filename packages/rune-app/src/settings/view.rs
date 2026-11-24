@@ -65,6 +65,7 @@ enum Section {
     General,
     Conversation,
     OpenCode,
+    Missions,
     Notifications,
     Providers,
     Shortcuts,
@@ -216,6 +217,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     render_with(cx, &prefs, system_more, |cx| {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
+        let missions_label = t("settings.nav.missions");
         let notifications_label = t("settings.nav.notifications");
         let providers_label = t("settings.nav.providers");
         let stats_label = t("settings.usage.title");
@@ -229,6 +231,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::General => general_label,
             Section::Conversation => conversation_label,
             Section::OpenCode => opencode_label,
+            Section::Missions => missions_label,
             Section::Notifications => notifications_label,
             Section::Providers => providers_label,
             Section::Shortcuts => shortcuts_label,
@@ -256,6 +259,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-opencode",
                     opencode_label,
                     s.section == Section::OpenCode,
+                ),
+                (
+                    "settings-missions",
+                    missions_label,
+                    s.section == Section::Missions,
                 ),
                 (
                     "settings-notifications",
@@ -309,6 +317,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 s.permissions.close();
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
+                    "settings-missions" => Section::Missions,
                     "settings-conversation" => Section::Conversation,
                     "settings-notifications" => Section::Notifications,
                     "settings-providers" => Section::Providers,
@@ -451,6 +460,16 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 } else {
                     text(t("rune.loading")).role("status")
                 },
+            ),
+            Section::Missions => (
+                "missions",
+                super::missions::view(
+                    &prefs,
+                    |s: &mut Window, checked| {
+                        s.shared.borrow_mut().set_mission_delete_sessions(checked);
+                    },
+                    |s: &mut Window| s.shared.borrow_mut().retry_mission_delete_sessions(),
+                ),
             ),
             Section::Advanced => (
                 "advanced",

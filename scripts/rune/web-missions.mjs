@@ -97,7 +97,7 @@ export function missionsFixture({page,messages,artifact,project}){
     }
     const {source,window:{offset,order}}=request
     reads.push({path,source,offset,order})
-    const activeSummaries=recovery.alphaDeleted()?summaries.filter(row=>JSON.parse(row).id!=='alpha'):summaries
+    const activeSummaries=recovery.alphaTombstoned()?summaries.filter(row=>JSON.parse(row).id!=='alpha'):summaries
     const rows=source==='summaries'?activeSummaries:recovery.cleanups()
     const actualOrder=digest(rows)
     if(order&&order!==actualOrder){

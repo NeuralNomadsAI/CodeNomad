@@ -10,8 +10,9 @@ mod recovery;
 mod task_rows;
 mod view;
 
+pub(crate) use cleanup::WorkspaceScope;
 pub(crate) use directory::Panel;
-pub(crate) use lifecycle::{Gesture, Lifecycle, Source};
+pub(crate) use lifecycle::{Gesture, Lifecycle, MissionKey, Source};
 pub(crate) use lifecycle_view::{cleanups, confirmation, controls};
 #[cfg(test)]
 pub(crate) use view::panel;

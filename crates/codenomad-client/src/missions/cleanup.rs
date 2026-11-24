@@ -153,7 +153,7 @@ impl Backend {
         let body = read_json_limited(response, 4 * 1024 * 1024)
             .await
             .unwrap_or(serde_json::Value::Null);
-        Ok(settle_deletion(status, &body))
+        Ok(settle_deletion(status, &body, mission_id, request))
     }
 }
 
@@ -184,7 +184,12 @@ fn delete_request(
         .json(request)
 }
 
-fn settle_deletion(status: reqwest::StatusCode, body: &serde_json::Value) -> DeletionOutcome {
+fn settle_deletion(
+    status: reqwest::StatusCode,
+    body: &serde_json::Value,
+    mission_id: &str,
+    request: &DeletionRequest,
+) -> DeletionOutcome {
     if !status.is_success() {
         let code = body["code"].as_str().and_then(DeletionCode::parse);
         return DeletionOutcome::Failed(DeletionError {
@@ -192,10 +197,21 @@ fn settle_deletion(status: reqwest::StatusCode, body: &serde_json::Value) -> Del
             code,
         });
     }
-    if body["deleted"] == true {
-        DeletionOutcome::Deleted
-    } else {
-        DeletionOutcome::Unconfirmed
+    if body["deleted"] != true {
+        return DeletionOutcome::Unconfirmed;
+    }
+    match body.get("cleanup") {
+        None | Some(serde_json::Value::Null) => DeletionOutcome::Deleted,
+        Some(value) => match serde_json::from_value::<Cleanup>(value.clone()) {
+            Ok(cleanup)
+                if valid_cleanup(&cleanup)
+                    && request.matches_cleanup(mission_id, &cleanup)
+                    && !cleanup.is_pending() =>
+            {
+                DeletionOutcome::Deleted
+            }
+            _ => DeletionOutcome::Unconfirmed,
+        },
     }
 }
 
@@ -207,7 +223,12 @@ fn parse_reconciliation(
     if body["available"] != true || body["version"] != 1 || body["projectID"] != project {
         return Err("unavailable Mission reconciliation read".into());
     }
-    let cleanup_unavailable = body["cleanupUnavailable"] == true;
+    let cleanup_unavailable = match body.get("cleanupUnavailable") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or("invalid Mission cleanupUnavailable flag")?,
+    };
     let mission_revision = match body.get("mission") {
         None | Some(serde_json::Value::Null) => None,
         Some(mission) => {
@@ -226,7 +247,12 @@ fn parse_reconciliation(
             .map_err(|_| "invalid Mission reconciliation cleanups")?,
         _ => return Err("missing Mission reconciliation cleanups".into()),
     };
-    if cleanups.iter().any(|item| !valid_cleanup(item)) {
+    let mut deletion_ids = std::collections::HashSet::with_capacity(cleanups.len());
+    if cleanups.iter().any(|item| {
+        !valid_cleanup(item)
+            || item.mission_id != mission_id
+            || !deletion_ids.insert(item.deletion_id.as_str())
+    }) {
         return Err("invalid Mission cleanup row".into());
     }
     Ok(MissionSnapshotRead {
@@ -254,6 +280,11 @@ mod tests {
 
     #[test]
     fn deletion_errors_match_solid_classification() {
+        let request = DeletionRequest {
+            expected_revision: 5,
+            request_id: "req-1".into(),
+            delete_managed_sessions: false,
+        };
         for (status, code, expected) in [
             (
                 503,
@@ -296,15 +327,64 @@ mod tests {
             let outcome = settle_deletion(
                 reqwest::StatusCode::from_u16(status).unwrap(),
                 &code.map_or_else(|| json!({}), |c| json!({"code": c})),
+                "msn-1",
+                &request,
             );
             assert_eq!(outcome.error_key(), expected, "{status} {code:?}");
         }
         assert_eq!(
-            settle_deletion(reqwest::StatusCode::OK, &json!({"deleted": true})),
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": true}),
+                "msn-1",
+                &request,
+            ),
             DeletionOutcome::Deleted
         );
         assert_eq!(
-            settle_deletion(reqwest::StatusCode::OK, &json!({"deleted": false})),
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": false}),
+                "msn-1",
+                &request,
+            ),
+            DeletionOutcome::Unconfirmed
+        );
+        let settled_cleanup = json!({
+            "missionID": "msn-1", "deletionID": "del-1", "requestID": "req-1",
+            "expectedRevision": 5, "deleteManagedSessions": false,
+            "objective": "Obj", "createdAt": 1, "removed": 1, "retained": 0,
+            "pending": 0, "reasons": [], "documentPending": false
+        });
+        assert_eq!(
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": true, "cleanup": settled_cleanup}),
+                "msn-1",
+                &request,
+            ),
+            DeletionOutcome::Deleted
+        );
+        let mut wrong_req = settled_cleanup.clone();
+        wrong_req["requestID"] = json!("other-req");
+        assert_eq!(
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": true, "cleanup": wrong_req}),
+                "msn-1",
+                &request,
+            ),
+            DeletionOutcome::Unconfirmed
+        );
+        let mut still_pending = settled_cleanup;
+        still_pending["pending"] = json!(1);
+        assert_eq!(
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": true, "cleanup": still_pending}),
+                "msn-1",
+                &request,
+            ),
             DeletionOutcome::Unconfirmed
         );
     }
@@ -335,5 +415,18 @@ mod tests {
         let mut unavailable = valid.clone();
         unavailable["available"] = json!(false);
         assert!(parse_reconciliation(&unavailable, "proj", "msn-1").is_err());
+
+        let mut bad_flag = valid.clone();
+        bad_flag["cleanupUnavailable"] = json!("yes");
+        assert!(parse_reconciliation(&bad_flag, "proj", "msn-1").is_err());
+
+        let mut foreign_cleanup = valid.clone();
+        foreign_cleanup["cleanups"][0]["missionID"] = json!("msn-foreign");
+        assert!(parse_reconciliation(&foreign_cleanup, "proj", "msn-1").is_err());
+
+        let mut dup = valid;
+        let row = dup["cleanups"][0].clone();
+        dup["cleanups"].as_array_mut().unwrap().push(row);
+        assert!(parse_reconciliation(&dup, "proj", "msn-1").is_err());
     }
 }

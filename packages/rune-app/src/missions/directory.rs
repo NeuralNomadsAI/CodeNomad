@@ -11,7 +11,13 @@ use codenomad_client::{
     missions::{Cleanup, DirectoryChanged, DirectoryPage, DirectoryRows, Summary, Window},
 };
 use rune::edit::TextEdit;
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -54,6 +60,7 @@ pub(crate) struct Panel {
     last_passive: Option<f64>,
     now: f64,
     pub(super) scope: std::rc::Rc<()>,
+    pub(super) view_live: Arc<AtomicBool>,
     supported: Option<bool>,
     capability: Option<Receiver<Option<bool>>>,
     probe_attempted: bool,
@@ -85,6 +92,7 @@ impl Panel {
             last_passive: None,
             now: 0.0,
             scope: std::rc::Rc::new(()),
+            view_live: Arc::new(AtomicBool::new(false)),
             supported: None,
             capability: None,
             probe_attempted: false,
@@ -104,7 +112,9 @@ impl Panel {
             return;
         }
         self.visible = show;
+        self.view_live.store(false, Ordering::Release);
         if show {
+            self.view_live = Arc::new(AtomicBool::new(true));
             self.refresh();
         } else {
             self.refresh_due = None;
@@ -142,6 +152,10 @@ impl Panel {
             }
         } else {
             // A reconnect retires publication authority while keeping the display.
+            self.view_live.store(false, Ordering::Release);
+            if self.visible {
+                self.view_live = Arc::new(AtomicBool::new(true));
+            }
             self.detail.cancel();
             self.observation.cancel();
             for lane in &mut self.lanes {
@@ -367,8 +381,16 @@ impl Panel {
                 }
                 Err(error) if error.is::<DirectoryChanged>() => {
                     self.lanes[done.kind as usize].failed = Some(Read::Refresh);
+                    if owed {
+                        self.start(done.kind, Read::Refresh);
+                    }
                 }
-                _ => self.lanes[done.kind as usize].failed = Some(done.read),
+                _ => {
+                    self.lanes[done.kind as usize].failed = Some(done.read);
+                    if owed {
+                        self.start(done.kind, Read::Refresh);
+                    }
+                }
             }
         }
         if self.visible

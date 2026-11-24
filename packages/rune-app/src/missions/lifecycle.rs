@@ -43,6 +43,14 @@ impl Source {
             target: header.lifecycle_target(),
         })
     }
+
+    pub(super) fn workspace_scope(&self) -> WorkspaceScope {
+        WorkspaceScope {
+            server: self.mission.server.clone(),
+            workspace: self.workspace.clone(),
+            project: self.target.project.clone(),
+        }
+    }
 }
 
 pub(crate) enum Gesture {
@@ -86,16 +94,51 @@ impl Panel {
         })
     }
 
-    pub(crate) fn retry_cleanup(&mut self, owner: &mut Lifecycle, cleanup: Cleanup) {
-        let Some(scope) = self.cleanup_scope() else {
+    pub(crate) fn retry_cleanup(
+        &mut self,
+        owner: &mut Lifecycle,
+        scope: &WorkspaceScope,
+        cleanup: Cleanup,
+    ) {
+        if self.cleanup_scope().as_ref() != Some(scope) {
             return;
-        };
+        }
         if !self.cleanups.iter().any(|row| row.matches_saved(&cleanup)) {
             return;
         }
-        owner
-            .cleanup
-            .start_cleanup_retry(scope, cleanup, self.backend.clone(), self.wake.clone());
+        owner.cleanup.start_cleanup_retry(
+            scope.clone(),
+            cleanup,
+            self.view_live.clone(),
+            self.backend.clone(),
+            self.wake.clone(),
+        );
+    }
+
+    pub(crate) fn act_orphaned_delete(
+        &mut self,
+        owner: &mut Lifecycle,
+        scope: &WorkspaceScope,
+        mission: &MissionKey,
+        retry: bool,
+    ) {
+        if self.cleanup_scope().as_ref() != Some(scope) {
+            return;
+        }
+        if retry {
+            if owner.busy_mission(mission) {
+                return;
+            }
+            owner.cleanup.retry_delete_in_scope(
+                scope,
+                mission,
+                self.view_live.clone(),
+                self.backend.clone(),
+                self.wake.clone(),
+            );
+        } else {
+            owner.cleanup.cancel_delete_in_scope(scope, mission);
+        }
     }
 
     pub(crate) fn control(
@@ -115,10 +158,12 @@ impl Panel {
         let revision = header.root.revision;
         let ready = self.detail.authoritative();
         let working = self.observation.working();
-        let delete_busy = owner.cleanup.delete_busy(source);
+        let delete_active = owner.cleanup.delete_active(source);
+        let recovery_busy = owner.recovery.any_pending_for(source);
         let allowed = |action, graceful| {
             ready
-                && !delete_busy
+                && !delete_active
+                && !recovery_busy
                 && (if action == LifecycleAction::Stop {
                     owner.can_stop(source, header)
                 } else {
@@ -160,6 +205,8 @@ impl Panel {
                     .as_ref()
                     .is_some_and(|(_, expected)| *expected == revision)
                     && ready
+                    && !delete_active
+                    && !recovery_busy
                     && owner.can_stop(source, header)
                     && Lifecycle::allow(header, LifecycleAction::Stop, false, working)
                 {
@@ -175,13 +222,23 @@ impl Panel {
                     None
                 }
             }
-            Gesture::Check if owner.unresolved(source, header) && !owner.busy(source) => {
+            Gesture::Check
+                if !delete_active
+                    && !recovery_busy
+                    && owner.unresolved(source, header)
+                    && !owner.busy(source) =>
+            {
                 if owner.check(source, header, false, self.detail.map_reads) {
                     self.refresh();
                 }
                 None
             }
-            Gesture::Replay if ready && owner.replayable(source, revision) => {
+            Gesture::Replay
+                if ready
+                    && !delete_active
+                    && !recovery_busy
+                    && owner.replayable(source, revision) =>
+            {
                 if owner.check(source, header, true, self.detail.map_reads) {
                     self.refresh();
                 }
@@ -189,7 +246,8 @@ impl Panel {
             }
             Gesture::RecoverCoordinator(witnessed)
                 if ready
-                    && !delete_busy
+                    && !delete_active
+                    && !recovery_busy
                     && witnessed == revision
                     && !owner.unresolved(source, header)
                     && !owner.busy(source)
@@ -207,13 +265,22 @@ impl Panel {
             }
             Gesture::DeleteMission(witnessed, delete_managed_sessions)
                 if ready
+                    && !recovery_busy
                     && witnessed == revision
                     && !owner.unresolved(source, header)
                     && !owner.busy(source)
                     && owner.cleanup.can_delete(source) =>
             {
+                let title = header
+                    .root
+                    .title
+                    .as_deref()
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or(&header.root.excerpt)
+                    .to_owned();
                 owner.cleanup.start_delete(
                     source,
+                    title,
                     revision,
                     delete_managed_sessions,
                     self.backend.clone(),
@@ -221,10 +288,13 @@ impl Panel {
                 );
                 None
             }
-            Gesture::RetryDelete => {
-                owner
-                    .cleanup
-                    .retry_delete(source, self.backend.clone(), self.wake.clone());
+            Gesture::RetryDelete if !owner.busy(source) && !recovery_busy => {
+                owner.cleanup.retry_delete(
+                    source,
+                    self.view_live.clone(),
+                    self.backend.clone(),
+                    self.wake.clone(),
+                );
                 None
             }
             Gesture::CancelDelete => {
@@ -251,12 +321,17 @@ impl Panel {
         settled: &Settled,
     ) {
         let mut refreshed = false;
-        if let Some(scope) = self.cleanup_scope()
-            && settled.cleanup.refreshed_scopes.contains(&scope)
-        {
-            self.refresh();
-            (self.wake)();
-            refreshed = true;
+        if let Some(scope) = self.cleanup_scope() {
+            owner
+                .cleanup
+                .retire_settled_cleanups(&scope, &self.cleanups);
+            if settled.cleanup.refreshed_scopes.contains(&scope)
+                || settled.recovery.refreshed_scopes.contains(&scope)
+            {
+                self.refresh();
+                (self.wake)();
+                refreshed = true;
+            }
         }
         let Some((source, _)) = self.control_source(occurrence) else {
             return;
@@ -297,9 +372,7 @@ impl Panel {
             .iter()
             .find(|(key, target, _)| *key == source.mission && *target == source.target)
         {
-            if let Some(revision) = revision {
-                self.detail.observe(&source.target.mission, *revision);
-            }
+            self.detail.observe(&source.target.mission, *revision);
             if !refreshed {
                 self.refresh();
                 (self.wake)();
@@ -358,6 +431,12 @@ impl Intent {
 }
 
 impl Lifecycle {
+    pub(super) fn busy_mission(&self, mission: &MissionKey) -> bool {
+        self.intents
+            .get(mission)
+            .is_some_and(|intent| intent.flight.is_some() || intent.checking.is_some())
+    }
+
     pub fn idle(&self, source: &Source, header: &MapHeader) -> bool {
         !self.unresolved(source, header) && !self.busy(source) && self.intents.len() < CAPACITY
     }

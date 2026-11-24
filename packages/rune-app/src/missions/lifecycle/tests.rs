@@ -332,3 +332,91 @@ fn capacity_keeps_uncertain_intents_and_reopens_after_an_exact_late_ack() {
         http.quiet().await;
     });
 }
+
+#[test]
+fn symmetric_mutation_guards_block_competing_lifecycle_recovery_and_delete_gestures() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let backend = http.backend.clone();
+        let attest = tokio::spawn({
+            let backend = backend.clone();
+            async move { backend.attest_server().await }
+        });
+        let meta = http.accept().await;
+        meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+            .await;
+        wait(attest).await.unwrap().unwrap();
+
+        let (wake, done) = witness();
+        let mut panel = Panel::new(backend, Some("project".into()), Default::default(), wake);
+        let hdr = serde_json::from_value::<MapHeader>(json!({
+            "root":{"version":1,"id":"mission","projectID":"project","projectCanonical":"/fixture",
+                "excerpt":"Fixture","template":"custom","status":"failed","runState":"running",
+                "coordinatorSessionId":"session","revision":7,"createdAt":1,"updatedAt":1,
+                "historyTruncated":false,"bodies":{}},
+            "collections":{},
+            "coordinator":{"kind":"coordinator","sessionId":"session","location":{"directory":"/fixture"}},
+            "tasks":{"page":{"order":"","offset":0,"end":0,"total":0,"counts":{},"reports":0},
+                "pins":[],"reportPins":[],"version":""},
+        }))
+        .unwrap();
+        panel.detail.snapshot = Some(crate::missions::detail::Snapshot {
+            header: hdr,
+            tasks: std::rc::Rc::new(crate::missions::task_rows::TaskRows::new(vec![])),
+            end: 0,
+            attention_end: 0,
+        });
+        let src = panel.control_source("occ").unwrap().0;
+        let mut owner = Lifecycle::default();
+
+        // 1. Hold recovery pending -> DeleteMission and StopDialog must not send anything.
+        panel.control("occ", &mut owner, &src, Gesture::RecoverCoordinator(7));
+        let rec_req = http.accept().await;
+        assert!(rec_req.header.contains("/missions/mission/recover "));
+        panel.control("occ", &mut owner, &src, Gesture::DeleteMission(7, false));
+        panel.control("occ", &mut owner, &src, Gesture::StopDialog(7));
+        assert!(owner.confirmation.is_none());
+        http.quiet().await;
+        rec_req.reply(409, json!({"code": "recovery-busy"})).await;
+        wait(done.recv()).await.unwrap();
+        let _ = owner.poll_all();
+
+        // 2. Start delete and let it fail -> competing RecoverCoordinator/Check/Replay/ConfirmStop must not dispatch.
+        panel.control("occ", &mut owner, &src, Gesture::DeleteMission(7, false));
+        let del_req = http.accept().await;
+        assert!(del_req.header.starts_with("DELETE /api/workspaces/"));
+        del_req.reply(503, json!({})).await;
+        let reconcile = http.accept().await;
+        reconcile
+            .reply(
+                200,
+                json!({"available": true, "version": 1, "projectID": "project", "generatedAt": 1, "cleanups": []}),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        let _ = owner.poll_all();
+        assert!(owner.cleanup.delete_active(&src));
+
+        panel.control("occ", &mut owner, &src, Gesture::RecoverCoordinator(7));
+        owner.confirmation = Some((src.clone(), 7));
+        panel.control("occ", &mut owner, &src, Gesture::ConfirmStop(true));
+        panel.control("occ", &mut owner, &src, Gesture::Check);
+        panel.control("occ", &mut owner, &src, Gesture::Replay);
+        http.quiet().await;
+
+        // 3. While lifecycle is in flight, RetryDelete must not dispatch.
+        let stop_req = action(LifecycleAction::Stop, 7);
+        owner.start(
+            &src,
+            stop_req,
+            None,
+            http.backend.clone(),
+            panel.wake.clone(),
+        );
+        let stop_post = http.accept().await;
+        assert!(stop_post.header.contains("/missions/mission/control "));
+        panel.control("occ", &mut owner, &src, Gesture::RetryDelete);
+        http.quiet().await;
+        stop_post.reply(503, json!({})).await;
+    });
+}

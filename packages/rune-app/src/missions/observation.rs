@@ -72,9 +72,24 @@ impl Observation {
         })
     }
 
+    pub fn complete_and_fresh(&self, revision: u64) -> bool {
+        !self.pages.is_empty()
+            && !self.busy()
+            && self.due.is_none()
+            && self.failed.is_none()
+            && self.more_offset().is_none()
+            && self.pages.iter().all(|page| {
+                self.current(page)
+                    && page.revision == revision
+                    && page.coverage == Coverage::Observed
+                    && page.requests == Coverage::Observed
+            })
+    }
+
     pub fn interrupted(&self, header: &MapHeader) -> bool {
         header.root.status == Status::Active
             && header.root.run_state.unwrap_or(RunState::Running) == RunState::Running
+            && self.complete_and_fresh(header.root.revision)
             && !self.working()
             && self.actor_state(&header.root.coordinator_session_id)
                 == Some(ActorState::IdleWithoutReport)

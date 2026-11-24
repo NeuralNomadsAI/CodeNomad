@@ -97,7 +97,13 @@ pub(crate) fn mission_panel(s: &State) -> El {
                 delete_sessions,
                 control,
             ),
-            missions::cleanups(panel, &ui.mission_lifecycle, retry_cleanup),
+            missions::cleanups(
+                panel,
+                &ui.mission_lifecycle,
+                &entry.key,
+                retry_cleanup,
+                orphaned_delete,
+            ),
         )
     })
 }
@@ -120,15 +126,14 @@ pub(crate) fn mission_confirmation(s: &State) -> Option<El> {
     missions::confirmation(&ui.mission_lifecycle, control)
 }
 
-fn control(s: &mut State, source: &missions::Source, mut gesture: missions::Gesture) {
+fn control(s: &mut State, source: &missions::Source, gesture: missions::Gesture) {
     if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
         return;
     }
-    if let missions::Gesture::DeleteMission(_, delete_sessions) = &mut gesture {
-        let Some(current) = crate::settings::mission_delete_sessions(s) else {
-            return;
-        };
-        *delete_sessions = current;
+    if let missions::Gesture::DeleteMission(_, delete_sessions) = &gesture
+        && crate::settings::mission_delete_sessions(s) != Some(*delete_sessions)
+    {
+        return;
     }
     let Some(ui) = &mut s.workspace else {
         return;
@@ -139,7 +144,12 @@ fn control(s: &mut State, source: &missions::Source, mut gesture: missions::Gest
     }
 }
 
-fn retry_cleanup(s: &mut State, cleanup: codenomad_client::missions::Cleanup) {
+fn retry_cleanup(
+    s: &mut State,
+    occurrence: String,
+    scope: missions::WorkspaceScope,
+    cleanup: codenomad_client::missions::Cleanup,
+) {
     if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
         return;
     }
@@ -147,8 +157,33 @@ fn retry_cleanup(s: &mut State, cleanup: codenomad_client::missions::Cleanup) {
         return;
     };
     let entry = &mut ui.entries[ui.active];
+    if entry.key != occurrence {
+        return;
+    }
     if let Some(panel) = &mut entry.missions {
-        panel.retry_cleanup(&mut ui.mission_lifecycle, cleanup);
+        panel.retry_cleanup(&mut ui.mission_lifecycle, &scope, cleanup);
+    }
+}
+
+fn orphaned_delete(
+    s: &mut State,
+    occurrence: String,
+    scope: missions::WorkspaceScope,
+    mission: missions::MissionKey,
+    retry: bool,
+) {
+    if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
+        return;
+    }
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    let entry = &mut ui.entries[ui.active];
+    if entry.key != occurrence {
+        return;
+    }
+    if let Some(panel) = &mut entry.missions {
+        panel.act_orphaned_delete(&mut ui.mission_lifecycle, &scope, &mission, retry);
     }
 }
 

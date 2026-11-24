@@ -19,6 +19,7 @@ pub(super) enum Choice {
     Environment,
     NotificationRoute(Category, Destination),
     NotificationsFocused,
+    MissionDeleteSessions,
     Mode,
     Palette(bool),
 }
@@ -65,6 +66,9 @@ impl Choice {
             }
             Self::NotificationsFocused => {
                 patch["settings"]["osNotificationsAllowWhenVisible"] = json!(value == "true");
+            }
+            Self::MissionDeleteSessions => {
+                patch["settings"]["missionDeleteSessions"] = json!(value == "true");
             }
             Self::NewConversationPermissions => {
                 patch["settings"]["newConversationPermissions"] = json!(value)
@@ -124,6 +128,9 @@ impl Choice {
             }
             Self::NotificationsFocused => {
                 snapshot["settings"]["osNotificationsAllowWhenVisible"] == (value == "true")
+            }
+            Self::MissionDeleteSessions => {
+                snapshot["settings"]["missionDeleteSessions"] == (value == "true")
             }
             Self::NewConversationPermissions => {
                 snapshot["settings"]["newConversationPermissions"] == value
@@ -347,6 +354,7 @@ impl Document {
                 | Choice::Environment
                 | Choice::NotificationRoute(..)
                 | Choice::NotificationsFocused
+                | Choice::MissionDeleteSessions
                 | Choice::Shortcut(_)
                 | Choice::ShortcutReset
         ) {

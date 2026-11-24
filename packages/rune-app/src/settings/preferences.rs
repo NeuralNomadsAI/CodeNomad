@@ -494,15 +494,62 @@ impl Preferences {
     }
 
     pub fn mission_delete_sessions(&self) -> Option<bool> {
-        if !self.locale_ready() {
+        if self.authentication_required {
             return None;
         }
-        let doc = self.saved(Owner::Config)?;
+        let doc = self.config.confirmed()?;
         Some(
             doc["settings"]["missionDeleteSessions"]
                 .as_bool()
                 .unwrap_or(false),
         )
+    }
+
+    pub(super) fn mission_delete_sessions_display(&self) -> Option<bool> {
+        if let Some(requested) = self.config.requested(Choice::MissionDeleteSessions)
+            && !self.mission_delete_sessions_failed()
+        {
+            return Some(requested == "true");
+        }
+        Some(
+            self.saved(Owner::Config)?["settings"]["missionDeleteSessions"]
+                .as_bool()
+                .unwrap_or(false),
+        )
+    }
+
+    pub(super) fn mission_delete_sessions_pending(&self) -> bool {
+        self.config
+            .requested(Choice::MissionDeleteSessions)
+            .is_some()
+            && !self.mission_delete_sessions_failed()
+    }
+
+    pub(super) fn mission_delete_sessions_failed(&self) -> bool {
+        self.config.choice_failed(Choice::MissionDeleteSessions)
+    }
+
+    pub(super) fn set_mission_delete_sessions(&mut self, value: bool) {
+        if self.can_retry()
+            && !self.mission_delete_sessions_pending()
+            && self
+                .mission_delete_sessions()
+                .is_some_and(|old| old != value || self.mission_delete_sessions_failed())
+        {
+            self.config.stage(
+                Choice::MissionDeleteSessions,
+                if value { "true" } else { "false" },
+            );
+            self.revision += 1;
+            if let Some(wake) = &self.main_wake {
+                wake();
+            }
+        }
+    }
+
+    pub(super) fn retry_mission_delete_sessions(&mut self) {
+        self.config
+            .retry(|choice| choice == Choice::MissionDeleteSessions);
     }
 
     pub fn set_locale(&mut self, locale: &'static str) {

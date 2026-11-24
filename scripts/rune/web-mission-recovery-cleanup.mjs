@@ -3,6 +3,7 @@ import {pressControl} from './web-mission-lifecycle.mjs'
 
 export function recoveryCleanupFixture(){
   let oldPending=true
+  let alphaTombstoned=false
   let alphaDeleted=false
   let alphaRecoveryCalls=0
   let alphaRevision=5
@@ -22,7 +23,7 @@ export function recoveryCleanupFixture(){
   })
   return {
     cleanups:()=>alphaDeleteRequest?[cleanupRow(),alphaCleanupRow()]:[cleanupRow()],
-    alphaDeleted:()=>alphaDeleted,
+    alphaTombstoned:()=>alphaTombstoned,
     alphaRevision:()=>alphaRevision,
     alphaHeader:()=>({
       coordinator:{kind:'coordinator',sessionId:'ses_existing',location:{directory:'/fixture'}},
@@ -72,7 +73,7 @@ export function recoveryCleanupFixture(){
       }
       if(path.endsWith('/missions/alpha')&&method==='GET'){
         await route.fulfill({json:{available:true,version:1,projectID:'fixture-project',generatedAt:2,
-          mission:alphaDeleted?undefined:{id:'alpha',projectID:'fixture-project',revision:alphaRevision},
+          mission:alphaTombstoned?undefined:{id:'alpha',projectID:'fixture-project',revision:alphaRevision},
           cleanups:alphaDeleteRequest?[JSON.parse(alphaCleanupRow())]:[]}})
         return true
       }
@@ -84,6 +85,7 @@ export function recoveryCleanupFixture(){
         alphaDeleteCalls++
         if(alphaDeleteCalls===1){
           alphaDeleteRequest=body
+          alphaTombstoned=true
           await route.fulfill({status:503,json:{code:'cleanup-pending'}})
           return true
         }
@@ -132,12 +134,14 @@ export async function checkRecoveryAndDelete(page,messages,counts,filter){
   await page.getByText(messages['missions.recovery.error.busy'],{exact:true}).waitFor({state:'detached'})
   assert.equal(counts().alphaRecoveryCalls,2)
 
-  // Delete Alpha: first attempt returns 503 cleanup-pending, retry reuses exact intent and deletes.
+  // Delete Alpha: first attempt tombstones Alpha and returns 503 cleanup-pending;
+  // Retry/Cancel must stay reachable even after Alpha disappears from summaries.
   const delBtn=page.getByRole('button',{name:messages['missionsPanel.picker.delete'],exact:true})
   await delBtn.waitFor()
   const firstDel=page.waitForResponse(r=>r.url().endsWith('/missions/alpha')&&r.request().method()==='DELETE')
   await pressControl(page,delBtn)
   assert.equal((await firstDel).status(),503)
+  await row('Alpha à jour 🦀').waitFor({state:'detached'})
   await page.getByText(messages['missions.cleanup.error.pending'],{exact:true}).waitFor()
   const delGroup=page.getByRole('group',{name:messages['missions.control.delete'],exact:true})
   const retryDel=delGroup.getByRole('button',{name:messages['missions.control.retry'],exact:true})
@@ -147,7 +151,7 @@ export async function checkRecoveryAndDelete(page,messages,counts,filter){
   const secondDel=page.waitForResponse(r=>r.url().endsWith('/missions/alpha')&&r.request().method()==='DELETE')
   await pressControl(page,retryDel)
   assert.equal((await secondDel).status(),200)
-  await row('Alpha à jour 🦀').waitFor({state:'detached'})
+  await delGroup.waitFor({state:'detached'})
   assert.equal(counts().alphaDeleteCalls,2)
   await filter('')
 }

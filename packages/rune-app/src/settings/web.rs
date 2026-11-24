@@ -16,6 +16,7 @@ use std::{cell::Cell, rc::Rc};
 enum Section {
     General,
     OpenCode,
+    Missions,
     Notifications,
     Shortcuts,
     Providers,
@@ -31,6 +32,7 @@ impl Section {
         t(match self {
             Self::General => "settings.nav.general",
             Self::OpenCode => "settings.nav.opencode",
+            Self::Missions => "settings.nav.missions",
             Self::Notifications => "settings.nav.notifications",
             Self::Shortcuts => "settings.nav.hotkeys",
             Self::Providers => "settings.nav.providers",
@@ -292,6 +294,7 @@ pub(super) fn view(
     let sections: Vec<_> = [
         Section::General,
         Section::OpenCode,
+        Section::Missions,
         Section::Notifications,
         Section::Shortcuts,
         Section::Providers,
@@ -466,6 +469,21 @@ pub(super) fn view(
                     &mut s.settings.web.config_files
                 })
         }
+        Section::Missions => super::missions::view(
+            prefs,
+            |s: &mut State, checked| {
+                s.settings
+                    .shared
+                    .borrow_mut()
+                    .set_mission_delete_sessions(checked);
+            },
+            |s: &mut State| {
+                s.settings
+                    .shared
+                    .borrow_mut()
+                    .retry_mission_delete_sessions();
+            },
+        ),
         Section::Advanced => col()
             .full_width()
             .child(super::advanced::view(

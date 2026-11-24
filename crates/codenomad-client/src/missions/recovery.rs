@@ -93,7 +93,7 @@ impl RecoveryError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RecoveryOutcome {
-    Admitted(Option<u64>),
+    Admitted(u64),
     Refused(RecoveryError),
 }
 
@@ -168,10 +168,12 @@ fn settle_recovery(
         return RecoveryOutcome::Refused(classify(body["code"].as_str()));
     }
     let mission = &body["mission"];
-    if body["admitted"] == true && target.matches(mission) {
-        let revision = mission["revision"]
+    if body["admitted"] == true
+        && target.matches(mission)
+        && let Some(revision) = mission["revision"]
             .as_u64()
-            .filter(|r| (request.expected_revision..=MAX_REVISION).contains(r));
+            .filter(|r| (request.expected_revision..=MAX_REVISION).contains(r))
+    {
         return RecoveryOutcome::Admitted(revision);
     }
     RecoveryOutcome::Refused(RecoveryError::Unknown)
@@ -234,7 +236,22 @@ mod tests {
         });
         assert_eq!(
             settle_recovery(reqwest::StatusCode::OK, &ok, &target, &request),
-            RecoveryOutcome::Admitted(Some(8))
+            RecoveryOutcome::Admitted(8)
+        );
+        let mut missing_rev = ok.clone();
+        missing_rev["mission"]
+            .as_object_mut()
+            .unwrap()
+            .remove("revision");
+        assert_eq!(
+            settle_recovery(reqwest::StatusCode::OK, &missing_rev, &target, &request),
+            RecoveryOutcome::Refused(RecoveryError::Unknown)
+        );
+        let mut regressed = ok.clone();
+        regressed["mission"]["revision"] = json!(6);
+        assert_eq!(
+            settle_recovery(reqwest::StatusCode::OK, &regressed, &target, &request),
+            RecoveryOutcome::Refused(RecoveryError::Unknown)
         );
         assert_eq!(
             settle_recovery(

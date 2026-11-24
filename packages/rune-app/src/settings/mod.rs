@@ -7,6 +7,7 @@ mod conversation;
 mod host_support;
 mod info;
 mod memory;
+mod missions;
 pub(crate) mod notification_routing;
 mod notification_settings;
 mod opencode;

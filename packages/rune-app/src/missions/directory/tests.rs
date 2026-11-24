@@ -212,3 +212,28 @@ fn the_read_only_panel_exposes_the_search_status_and_selection() {
     assert!(!tree.contains("No missions yet"));
     assert!(!tree.contains("No matching mission"));
 }
+
+#[test]
+fn owed_refresh_restarts_even_when_the_inflight_read_fails() {
+    crate::platform::block_on(async {
+        let mut panel = panel();
+        panel.visible = true;
+        let kind = Kind::Summaries;
+        let (cancel, _) = bounded(1);
+        panel.lanes[kind as usize].active = Some((1, cancel));
+        panel.lanes[kind as usize].owed = true;
+        panel
+            .out
+            .try_send(Completion {
+                kind,
+                read: Read::Refresh,
+                serial: 1,
+                page: Err(DirectoryChanged.into()),
+            })
+            .unwrap();
+        assert!(panel.poll());
+        assert!(panel.busy(kind));
+        assert!(!panel.lanes[kind as usize].owed);
+        panel.show(false);
+    });
+}

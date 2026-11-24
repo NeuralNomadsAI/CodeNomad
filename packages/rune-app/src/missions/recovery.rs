@@ -1,4 +1,5 @@
 use super::{
+    cleanup::WorkspaceScope,
     lifecycle::{MissionKey, Source},
     observation::Observation,
 };
@@ -14,6 +15,7 @@ use codenomad_client::{
 };
 use std::collections::HashMap;
 
+const PENDING_CAPACITY: usize = 64;
 const SETTLED_CAPACITY: usize = 128;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -39,6 +41,7 @@ impl RecoveryKey {
 
 enum Attempt {
     Pending {
+        scope: WorkspaceScope,
         mission: MissionKey,
         target: LifecycleTarget,
         flight: Receiver<RecoveryOutcome>,
@@ -79,7 +82,8 @@ pub(super) fn coordinator_eligible(header: &MapHeader, observation: &Observation
 
 #[derive(Default)]
 pub(super) struct RecoveryPolled {
-    pub admitted: Vec<(MissionKey, LifecycleTarget, Option<u64>)>,
+    pub admitted: Vec<(MissionKey, LifecycleTarget, u64)>,
+    pub refreshed_scopes: Vec<WorkspaceScope>,
     pub changed: bool,
 }
 
@@ -88,8 +92,29 @@ impl Recovery {
         matches!(self.attempts.get(key), Some(Attempt::Pending { .. }))
     }
 
+    pub fn any_pending_for(&self, source: &Source) -> bool {
+        self.attempts.values().any(|attempt| {
+            matches!(
+                attempt,
+                Attempt::Pending { mission, target, .. }
+                    if mission == &source.mission && target == &source.target
+            )
+        })
+    }
+
     pub fn admitted(&self, key: &RecoveryKey) -> bool {
         matches!(self.attempts.get(key), Some(Attempt::Admitted(_)))
+    }
+
+    pub fn can_start(&self, key: &RecoveryKey) -> bool {
+        !self.attempts.contains_key(key) && self.pending_count() < PENDING_CAPACITY
+    }
+
+    fn pending_count(&self) -> usize {
+        self.attempts
+            .values()
+            .filter(|attempt| matches!(attempt, Attempt::Pending { .. }))
+            .count()
     }
 
     pub fn error(&self, key: &RecoveryKey) -> Option<RecoveryError> {
@@ -114,7 +139,7 @@ impl Recovery {
             revision,
             target: target.clone(),
         };
-        if self.attempts.contains_key(&key) {
+        if !self.can_start(&key) || self.any_pending_for(source) {
             return;
         }
         let Ok(request) = RecoveryRequest::new(revision, target) else {
@@ -128,6 +153,7 @@ impl Recovery {
         self.attempts.insert(
             key,
             Attempt::Pending {
+                scope: source.workspace_scope(),
                 mission: source.mission.clone(),
                 target: lifecycle_target.clone(),
                 flight: inbox,
@@ -149,17 +175,27 @@ impl Recovery {
         let mut settled = Vec::new();
         for (key, attempt) in &self.attempts {
             if let Attempt::Pending {
+                scope,
                 mission,
                 target,
                 flight,
             } = attempt
                 && let Ok(outcome) = flight.try_recv()
             {
-                settled.push((key.clone(), mission.clone(), target.clone(), outcome));
+                settled.push((
+                    key.clone(),
+                    scope.clone(),
+                    mission.clone(),
+                    target.clone(),
+                    outcome,
+                ));
             }
         }
         polled.changed = !settled.is_empty();
-        for (key, mission, target, outcome) in settled {
+        for (key, scope, mission, target, outcome) in settled {
+            if !polled.refreshed_scopes.contains(&scope) {
+                polled.refreshed_scopes.push(scope);
+            }
             match outcome {
                 RecoveryOutcome::Admitted(revision) => {
                     self.seq = self.seq.wrapping_add(1);
@@ -177,7 +213,13 @@ impl Recovery {
     }
 
     fn prune(&mut self) {
-        while self.attempts.len() > SETTLED_CAPACITY {
+        while self
+            .attempts
+            .values()
+            .filter(|attempt| matches!(attempt, Attempt::Admitted(_)))
+            .count()
+            > SETTLED_CAPACITY
+        {
             let Some(oldest) = self
                 .attempts
                 .iter()

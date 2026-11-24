@@ -49,6 +49,10 @@ fn cleanup_row(pending: u64, document_pending: bool) -> Cleanup {
     serde_json::from_value(cleanup_json(pending, document_pending)).unwrap()
 }
 
+fn live_flag() -> Arc<AtomicBool> {
+    Arc::new(AtomicBool::new(true))
+}
+
 fn witness() -> (Wake, Receiver<()>) {
     let (send, done) = bounded(4);
     (
@@ -67,7 +71,14 @@ fn mission_delete_freezes_intent_reconciles_lost_ack_and_reuses_exact_request_on
         let src = source("msn-del");
         let mut owner = CleanupOwner::default();
 
-        owner.start_delete(&src, 7, true, http.backend.clone(), wake.clone());
+        owner.start_delete(
+            &src,
+            "Delete target".into(),
+            7,
+            true,
+            http.backend.clone(),
+            wake.clone(),
+        );
         assert_eq!(owner.delete_state(&src), Some(DeleteState::Busy));
         let first = http.accept().await;
         assert!(first.header.starts_with("DELETE /api/workspaces/"));
@@ -77,7 +88,6 @@ fn mission_delete_freezes_intent_reconciles_lost_ack_and_reuses_exact_request_on
         assert_eq!(first.body["deleteManagedSessions"], true);
         first.reply(503, json!({"code": "cleanup-pending"})).await;
 
-        // Failure triggers read-only reconciliation before surfacing the error.
         let reconcile = http.accept().await;
         assert!(reconcile.header.starts_with("GET /api/workspaces/"));
         assert!(reconcile.header.contains("/missions/msn-del "));
@@ -98,13 +108,14 @@ fn mission_delete_freezes_intent_reconciles_lost_ack_and_reuses_exact_request_on
         wait(done.recv()).await.unwrap();
         let polled = owner.poll();
         assert_eq!(polled.refreshed_missions.len(), 1);
+        assert_eq!(polled.refreshed_scopes, vec![scope()]);
         assert_eq!(
             owner.delete_state(&src),
             Some(DeleteState::Failed("missions.cleanup.error.pending"))
         );
 
         // Retry reconciles first, then reuses the exact frozen requestId and option.
-        owner.retry_delete(&src, http.backend.clone(), wake.clone());
+        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake.clone());
         assert_eq!(owner.delete_state(&src), Some(DeleteState::Busy));
         let pre_retry = http.accept().await;
         assert!(pre_retry.header.starts_with("GET /api/workspaces/"));
@@ -131,8 +142,100 @@ fn mission_delete_freezes_intent_reconciles_lost_ack_and_reuses_exact_request_on
         wait(done.recv()).await.unwrap();
         let polled = owner.poll();
         assert_eq!(polled.refreshed_missions.len(), 1);
+        assert_eq!(polled.refreshed_scopes, vec![scope()]);
         assert_eq!(owner.delete_state(&src), None);
         assert!(owner.can_delete(&src));
+    });
+}
+
+#[test]
+fn hiding_view_during_reconciliation_cancels_both_retry_paths_before_sending_delete() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-fenced");
+        let mut owner = CleanupOwner::default();
+
+        // 1. Delete retry fenced by view_live.
+        owner.start_delete(
+            &src,
+            "Fenced".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let first = http.accept().await;
+        let request_id = first.body["requestId"].as_str().unwrap().to_owned();
+        first.reply(503, json!({"code": "cleanup-pending"})).await;
+        let rec = http.accept().await;
+        rec.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [{
+                    "missionID": "msn-fenced", "deletionID": "del-f", "requestID": request_id,
+                    "expectedRevision": 7, "deleteManagedSessions": false,
+                    "objective": "Fenced", "createdAt": 1, "removed": 0, "retained": 0,
+                    "pending": 1, "reasons": [], "documentPending": false
+                }]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+
+        let live = live_flag();
+        owner.retry_delete(&src, live.clone(), http.backend.clone(), wake.clone());
+        let held_get = http.accept().await;
+        assert!(held_get.header.starts_with("GET /api/workspaces/"));
+        // Hide the view while GET reconciliation is still in flight.
+        live.store(false, Ordering::Release);
+        held_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "cleanups": [{
+                        "missionID": "msn-fenced", "deletionID": "del-f", "requestID": request_id,
+                        "expectedRevision": 7, "deleteManagedSessions": false,
+                        "objective": "Fenced", "createdAt": 1, "removed": 0, "retained": 0,
+                        "pending": 1, "reasons": [], "documentPending": false
+                    }]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+        http.quiet().await;
+        // Original failed intent stays intact for a future explicit retry.
+        assert_eq!(
+            owner.delete_state(&src),
+            Some(DeleteState::Failed("missions.cleanup.error.pending"))
+        );
+
+        // 2. Cleanup row retry fenced by view_live.
+        let sc = scope();
+        let row = cleanup_row(0, true);
+        let live2 = live_flag();
+        owner.start_cleanup_retry(sc.clone(), row, live2.clone(), http.backend.clone(), wake);
+        let held_cleanup_get = http.accept().await;
+        assert!(held_cleanup_get.header.starts_with("GET /api/workspaces/"));
+        live2.store(false, Ordering::Release);
+        held_cleanup_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 3,
+                    "cleanups": [cleanup_json(0, true)]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+        http.quiet().await;
+        assert!(!owner.cleanup_busy(&sc));
+        assert_eq!(owner.cleanup_error(&sc), None);
     });
 }
 
@@ -144,7 +247,14 @@ fn retry_delete_stops_without_sending_when_reconciliation_shows_revision_conflic
         let src = source("msn-conflict");
         let mut owner = CleanupOwner::default();
 
-        owner.start_delete(&src, 7, false, http.backend.clone(), wake.clone());
+        owner.start_delete(
+            &src,
+            "Conflict".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
         let first = http.accept().await;
         let request_id = first.body["requestId"].as_str().unwrap().to_owned();
         first.reply(503, json!({})).await;
@@ -166,7 +276,7 @@ fn retry_delete_stops_without_sending_when_reconciliation_shows_revision_conflic
         );
 
         // Retry sees mission revision advanced to 8 -> reports revisionConflict without DELETE.
-        owner.retry_delete(&src, http.backend.clone(), wake.clone());
+        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake.clone());
         let rec2 = http.accept().await;
         assert!(rec2.header.starts_with("GET /api/workspaces/"));
         rec2.reply(
@@ -189,7 +299,7 @@ fn retry_delete_stops_without_sending_when_reconciliation_shows_revision_conflic
         http.quiet().await;
 
         // If reconciliation instead shows the saved intent settled, retry completes without DELETE.
-        owner.retry_delete(&src, http.backend.clone(), wake.clone());
+        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake.clone());
         let rec3 = http.accept().await;
         rec3.reply(
             200,
@@ -212,7 +322,7 @@ fn retry_delete_stops_without_sending_when_reconciliation_shows_revision_conflic
 }
 
 #[test]
-fn cleanup_retry_reconciles_before_delete_and_settles_409_when_cleanup_already_finished() {
+fn cleanup_retry_reconciles_before_delete_settles_409_and_retires_matching_delete_intent() {
     crate::platform::block_on(async {
         let http = Http::new().await;
         let (wake, done) = witness();
@@ -220,8 +330,29 @@ fn cleanup_retry_reconciles_before_delete_and_settles_409_when_cleanup_already_f
         let row = cleanup_row(0, true);
         let mut owner = CleanupOwner::default();
 
+        // Seed a failed DeleteIntent matching the exact same saved cleanup intent.
+        let old_src = source("old");
+        owner.deletes.insert(
+            old_src.mission.clone(),
+            DeleteIntent {
+                scope: sc.clone(),
+                title: "Old mission".into(),
+                target: old_src.target.clone(),
+                request: DeletionRequest::from_cleanup(&row).unwrap(),
+                flight: None,
+                error: Some("missions.cleanup.documentPending"),
+            },
+        );
+        assert!(!owner.can_delete(&old_src));
+
         // Missing cleanup in reconciliation refuses without calling DELETE.
-        owner.start_cleanup_retry(sc.clone(), row.clone(), http.backend.clone(), wake.clone());
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row.clone(),
+            live_flag(),
+            http.backend.clone(),
+            wake.clone(),
+        );
         assert!(owner.cleanup_busy(&sc));
         let rec = http.accept().await;
         assert!(rec.header.starts_with("GET /api/workspaces/"));
@@ -240,8 +371,14 @@ fn cleanup_retry_reconciles_before_delete_and_settles_409_when_cleanup_already_f
         );
         http.quiet().await;
 
-        // Matching pending cleanup issues DELETE; 409 reconciles and succeeds if settled.
-        owner.start_cleanup_retry(sc.clone(), row.clone(), http.backend.clone(), wake.clone());
+        // Matching pending cleanup issues DELETE; 409 reconciles, succeeds and retires the DeleteIntent slot.
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row.clone(),
+            live_flag(),
+            http.backend.clone(),
+            wake.clone(),
+        );
         let rec_pending = http.accept().await;
         rec_pending
             .reply(
@@ -275,11 +412,15 @@ fn cleanup_retry_reconciles_before_delete_and_settles_409_when_cleanup_already_f
         assert_eq!(polled.refreshed_scopes, vec![sc.clone()]);
         assert_eq!(owner.cleanup_error(&sc), None);
         assert!(!owner.cleanup_busy(&sc));
+        assert!(
+            owner.can_delete(&old_src),
+            "settling via cleanup row must release the original DeleteIntent slot"
+        );
     });
 }
 
 #[test]
-fn cleanup_view_shows_pending_title_retained_reasons_policy_and_disables_retry_while_busy() {
+fn cleanup_view_keeps_tombstoned_delete_reachable_and_fences_stale_scope_retry() {
     use rune::{Env, Runtime};
     let http = crate::platform::block_on(Http::new());
     let backend = http.backend.clone();
@@ -294,34 +435,74 @@ fn cleanup_view_shows_pending_title_retained_reasons_policy_and_disables_retry_w
     attest.join().unwrap();
 
     let (wake, _) = witness();
-    let mut panel = Panel::new(backend, Some("project".into()), Default::default(), wake);
+    let mut panel = Panel::new(
+        backend.clone(),
+        Some("project".into()),
+        Default::default(),
+        wake,
+    );
     panel.cleanups = vec![cleanup_row(0, true)];
-    let owner = CleanupOwner::default();
     let sc = panel.cleanup_scope().unwrap();
-    let (_out, inbox) = bounded(1);
+    let mut owner = CleanupOwner::default();
 
+    // Tombstoned mission: not selected and not in summaries or cleanups, yet Retry/Cancel remain reachable.
+    let gone = source("tombstoned");
+    owner.deletes.insert(
+        gone.mission.clone(),
+        DeleteIntent {
+            scope: sc.clone(),
+            title: "Gone mission".into(),
+            target: gone.target.clone(),
+            request: DeletionRequest::new(7, false).unwrap(),
+            flight: None,
+            error: Some("missions.cleanup.error.unconfirmed"),
+        },
+    );
+
+    let (_out, inbox) = bounded(1);
     let mut rt = Runtime::new(
         (panel, owner),
         |(panel, owner), _| {
             crate::strings::with_locale("en", || {
-                cleanup_view::<(Panel, CleanupOwner)>(panel, owner, |_, _| {})
+                cleanup_view::<(Panel, CleanupOwner)>(
+                    panel,
+                    owner,
+                    "occ",
+                    |_, _, _, _| {},
+                    |_, _, _, _, _| {},
+                )
             })
         },
-        (400.0, 500.0),
+        (400.0, 600.0),
         Env::new(false, 1.0),
     );
     rt.frame(1.0 / 60.0);
     let tree = rt.accessibility_json();
     let text = tree.to_string();
+    assert!(text.contains("Gone mission"));
+    assert!(rt.find("mission-delete-retry-tombstoned").is_some());
+    assert!(rt.find("mission-delete-cancel-tombstoned").is_some());
     assert!(text.contains("Conversation cleanup"));
     assert!(text.contains("Kept because the conversation has child conversations."));
     assert!(text.contains("Counts cover managed cleanup targets only."));
-    assert!(text.contains("Try again"));
     assert!(!has_state(
         &tree,
         "mission-cleanup-retry-old-del-1",
         "disabled"
     ));
+
+    // A retry invoked with a foreign scope must never start on this panel.
+    let mut lifecycle = super::super::Lifecycle::default();
+    let foreign = WorkspaceScope {
+        server: "other-server".into(),
+        workspace: sc.workspace.clone(),
+        project: sc.project.clone(),
+    };
+    rt.state
+        .0
+        .retry_cleanup(&mut lifecycle, &foreign, cleanup_row(0, true));
+    assert!(!lifecycle.cleanup.cleanup_busy(&sc));
+    assert!(!lifecycle.cleanup.cleanup_busy(&foreign));
 
     rt.update(|(panel, owner), _| {
         let key = CleanupKey::new(sc.clone(), &panel.cleanups[0]);
