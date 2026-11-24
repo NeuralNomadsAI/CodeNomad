@@ -394,6 +394,7 @@ pub(super) fn apply_alignment(s: &mut State, tx: &mut Tx) -> bool {
     let Some((message, key)) = owner(s).jump.align.take() else {
         return false;
     };
+    owner(s).keep_passage_deferred = None;
     tx.instant();
     tx.scroll_key_to(
         if key == message {
@@ -515,6 +516,8 @@ fn halt_obsolete_glide(
     rune_theme_codenomad::timeline::scroll_rail_to(at.offset[1], tx);
 }
 
+const RAIL_GLIDE_WATCHDOG: std::time::Duration = std::time::Duration::from_millis(50);
+
 pub(super) fn reveal_active(s: &mut State, tx: &mut Tx, input_waiting: bool) -> bool {
     let t = owner(s);
     let at = t.scroll.get().at;
@@ -554,20 +557,20 @@ pub(super) fn reveal_active(s: &mut State, tx: &mut Tx, input_waiting: bool) -> 
             current.rail_glide_last = at.offset[1];
             current.rail_glide_stalled = 0;
             t.scroll.set(current);
-            tx.wake_after(std::time::Duration::from_millis(50));
+            tx.wake_after(RAIL_GLIDE_WATCHDOG);
             return false;
         }
         if current.rail_glide_stalled == 0 {
             current.rail_glide_stalled = 1;
             t.scroll.set(current);
-            tx.wake_after(std::time::Duration::from_millis(50));
+            tx.wake_after(RAIL_GLIDE_WATCHDOG);
             return false;
         }
     }
     // Defer reveal while queued native input is waiting or a poll commit is pending; glide rather
     // than jumping so concurrent touch pans (`TouchEffect::Pan`) and `WheelOwner::Vertical` bursts
     // preserve `by_hand` and transition cleanly into `browse` instead of being overwritten. Under
-    // `reduced_motion`, Rune 21e5342 converts glides to instant jumps.
+    // `reduced_motion`, Rune 1d78d5688 converts glides to instant jumps.
     if input_waiting {
         tx.wake_after(std::time::Duration::ZERO);
         return false;
@@ -581,6 +584,6 @@ pub(super) fn reveal_active(s: &mut State, tx: &mut Tx, input_waiting: bool) -> 
     scroll.rail_glide_interrupted = false;
     scroll.halt_rail_glide = false;
     t.scroll.set(scroll);
-    tx.wake_after(std::time::Duration::from_millis(50));
+    tx.wake_after(RAIL_GLIDE_WATCHDOG);
     true
 }

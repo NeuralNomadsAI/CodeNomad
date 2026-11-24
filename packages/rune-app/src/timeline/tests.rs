@@ -5554,21 +5554,110 @@ fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
     rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
     rt.frame(0.016);
     assert!(owner(&mut rt.state).keep_passage_deferred.is_some());
+    // Must replay on the VERY FIRST idle poll (not 20 frames later).
     rt.poll = Some(crate::poll);
+    rt.frame(0.016);
+    let hist_idle = rt.presented("history").expect("history presented").0;
+    let frag1_idle = rt
+        .presented("fragment-long-msg:1")
+        .expect("fragment 1 presented on first idle poll")
+        .0;
+    let rel_idle = frag1_idle[1] - hist_idle[1];
+    assert!(
+        owner(&mut rt.state).keep_passage_deferred.is_none() && rel_idle.abs() <= 2.0,
+        "deferred keep_passage must replay on the very first idle poll: deferred={:?}, rel_idle={rel_idle}",
+        owner(&mut rt.state).keep_passage_deferred
+    );
     for _ in 0..20 {
         rt.frame(0.016);
     }
-    let hist_reanchored = rt.presented("history").expect("history presented").0;
-    let frag1_reanchored = rt
+    assert!(rt.presented("timeline").is_none());
+
+    // 1. A rail-only wheel (wheel_last_rail == Some(true)) during a deferred transition must NOT
+    //    cancel the deferred transcript re-anchor.
+    // 2. A second rail toggle before the first idle poll must preserve the original pre-reflow
+    //    (key, offset) target instead of overwriting it with post-reflow layout.
+    // 3. A resident jump (apply_alignment) while keep_passage_deferred is armed must clear it so
+    //    the next idle poll does not snap the transcript back to the departed passage.
+    rt.set_viewport((500.0, 320.0), 1.0);
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_key_to("long-msg/fragment-long-msg:1", 0.0);
+    });
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    rt.set_viewport((419.0, 320.0), 1.0);
+    rt.frame(0.016);
+    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
+    rt.frame(0.016);
+    let original_deferred = owner(&mut rt.state)
+        .keep_passage_deferred
+        .clone()
+        .expect("deferred target captured on narrow");
+    // Simulate a rail-only wheel and a second toggle before any idle poll runs.
+    rt.update(|s, tx| {
+        let mut sc = owner(s).scroll.get();
+        sc.wheel_last_rail = Some(true);
+        owner(s).scroll.set(sc);
+        super::defer_keep_passage(s, tx);
+    });
+    assert_eq!(
+        owner(&mut rt.state).keep_passage_deferred,
+        Some(original_deferred),
+        "second toggle before idle poll must preserve the original pre-reflow target"
+    );
+    rt.poll = Some(crate::poll);
+    rt.frame(0.016);
+    let hist_rail_wheel = rt.presented("history").expect("history presented").0;
+    let frag1_rail_wheel = rt
         .presented("fragment-long-msg:1")
-        .expect("fragment 1 presented after deferred re-anchor")
+        .expect("fragment 1 presented after rail-only wheel")
         .0;
-    let rel_reanchored = frag1_reanchored[1] - hist_reanchored[1];
     assert!(
-        rt.presented("timeline").is_none()
-            && owner(&mut rt.state).keep_passage_deferred.is_none()
-            && rel_reanchored.abs() <= 2.0,
-        "non-scroll input during threshold crossing must replay deferred keep_passage on the next idle poll: rel={rel_reanchored}"
+        owner(&mut rt.state).keep_passage_deferred.is_none()
+            && (frag1_rail_wheel[1] - hist_rail_wheel[1]).abs() <= 2.0,
+        "rail-only wheel must not cancel deferred transcript re-anchor: rel={}",
+        frag1_rail_wheel[1] - hist_rail_wheel[1]
+    );
+    // Resident jump while keep_passage_deferred is armed clears the deferred target immediately.
+    rt.set_viewport((500.0, 320.0), 1.0);
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_key_to("long-msg/fragment-long-msg:1", 0.0);
+    });
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    rt.set_viewport((419.0, 320.0), 1.0);
+    rt.frame(0.016);
+    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
+    rt.frame(0.016);
+    assert!(owner(&mut rt.state).keep_passage_deferred.is_some());
+    rt.update(|s, tx| navigation::select(s, "head:User:0:false", tx));
+    assert!(
+        owner(&mut rt.state).keep_passage_deferred.is_none(),
+        "resident jump must clear keep_passage_deferred immediately"
+    );
+    rt.poll = Some(crate::poll);
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    let hist_jump = rt.presented("history").expect("history presented").0;
+    let head_body = rt
+        .presented("body-head")
+        .expect("head message presented after resident jump")
+        .0;
+    assert!(
+        (head_body[1] - hist_jump[1]).abs() <= 2.0,
+        "idle poll after resident jump must stay at head rather than snapping back to fragment 1: rel={}",
+        head_body[1] - hist_jump[1]
     );
 }
 

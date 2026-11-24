@@ -349,12 +349,9 @@ pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
                     super::owner(s).rail_shown = shown;
                     if super::owner(s).jump.align.is_none() {
                         if super::owner(s).poll_input_waiting
-                            || super::owner(s).scroll.get().wheel_last_rail.is_some()
+                            || super::owner(s).scroll.get().wheel_last_rail == Some(false)
                         {
-                            if let Some(target) = crate::chat::reading::passage_target(s) {
-                                super::owner(s).keep_passage_deferred = Some(target);
-                                tx.wake_after(std::time::Duration::ZERO);
-                            }
+                            super::defer_keep_passage(s, tx);
                         } else {
                             tx.instant();
                             crate::chat::reading::keep_passage(s, tx);

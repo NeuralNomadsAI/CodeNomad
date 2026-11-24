@@ -362,6 +362,17 @@ pub(super) fn poll_with_input(s: &mut State, tx: &mut rune::Tx, input_waiting: b
     poll_inner(s, tx, input_waiting)
 }
 
+pub(super) fn defer_keep_passage(s: &mut State, tx: &mut rune::Tx) {
+    if owner(s).keep_passage_deferred.is_none()
+        && let Some(target) = crate::chat::reading::passage_target(s)
+    {
+        owner(s).keep_passage_deferred = Some(target);
+    }
+    if owner(s).keep_passage_deferred.is_some() {
+        tx.wake_after(std::time::Duration::ZERO);
+    }
+}
+
 fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
     let on_conversation = conversation_shown(s);
     let t = owner(s);
@@ -369,7 +380,8 @@ fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: 
         return false;
     }
     let scroll = t.scroll.get();
-    let scrolled = scroll.transcript != t.jump.last.transcript || scroll.wheel_last_rail.is_some();
+    let scrolled =
+        scroll.transcript != t.jump.last.transcript || scroll.wheel_last_rail == Some(false);
     if scrolled || !on_conversation || t.jump.align.is_some() {
         t.keep_passage_deferred = None;
         return false;
@@ -410,10 +422,7 @@ fn poll_inner(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
         }
         if was_shown && owner(s).jump.align.is_none() {
             if input_waiting {
-                if let Some(target) = crate::chat::reading::passage_target(s) {
-                    owner(s).keep_passage_deferred = Some(target);
-                    tx.wake_after(std::time::Duration::ZERO);
-                }
+                defer_keep_passage(s, tx);
             } else {
                 crate::chat::reading::keep_passage(s, tx);
             }
@@ -519,10 +528,7 @@ fn poll_inner(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
         changed = true;
         if owner(s).jump.align.is_none() {
             if input_waiting {
-                if let Some(target) = crate::chat::reading::passage_target(s) {
-                    owner(s).keep_passage_deferred = Some(target);
-                    tx.wake_after(std::time::Duration::ZERO);
-                }
+                defer_keep_passage(s, tx);
             } else {
                 crate::chat::reading::keep_passage(s, tx);
             }
