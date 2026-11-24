@@ -38,9 +38,12 @@ const evictOldestIdleEntry = () => {
 }
 
 /** File names of one directory inside the worktree `directory`. Concurrent
- * callers share one flight; a failed read keeps the last good set (or caches
- * an empty set when none exists) so prose false positives stay cheap. */
-export function fileNamesInDirectory(instanceId: string, directory: string, parentPath: string, signal?: AbortSignal): Promise<Set<string>> {
+ * and sequential callers share one flight whose lifetime belongs to the
+ * cache, never to a single caller: a render pass that goes away must not
+ * abort the listing its successor still reads. A failed read keeps the
+ * last good set (or caches an empty set when none exists) so prose false
+ * positives stay cheap. */
+export function fileNamesInDirectory(instanceId: string, directory: string, parentPath: string): Promise<Set<string>> {
   const key = `${instanceId}\u0000${directory}\u0000${parentPath}`
   const existing = cache.get(key)
   if (existing?.flight) return existing.flight
@@ -53,7 +56,7 @@ export function fileNamesInDirectory(instanceId: string, directory: string, pare
     let fetched: Set<string> | undefined
     try {
       const entries = (await backendOf(instanceId).api
-        .listWorkspaceFiles(instanceId, parentPath || ".", directory, signal)) as Array<{ name: string; type?: string }>
+        .listWorkspaceFiles(instanceId, parentPath || ".", directory)) as Array<{ name: string; type?: string }>
       fetched = new Set(entries.filter(entry => entry.type !== "directory").map(entry => entry.name))
     } catch {
       // A failed read verifies nothing; the caller converts no paths.
@@ -61,10 +64,8 @@ export function fileNamesInDirectory(instanceId: string, directory: string, pare
     if (fetched === undefined) {
       // Preserve a last good set and its staleness, so the next demand
       // retries; a first failure caches emptiness until the TTL revalidates.
-      // Cancellation publishes nothing fresh: the aborted pass's newer
-      // successor must re-fetch, not serve a just-timestamped empty set.
       const files = prior?.files ?? new Set<string>()
-      cache.set(key, { files, at: signal?.aborted ? prior?.at ?? 0 : prior?.at ?? Date.now() })
+      cache.set(key, { files, at: prior?.at ?? Date.now() })
       return files
     }
     cache.set(key, { files: fetched, at: Date.now() })
@@ -133,7 +134,7 @@ export function linkBarePaths(container: ParentNode, options: LinkBarePathsOptio
       if (!parents.size || options.signal.aborted || !container.isConnected) return
       const unique = [...parents]
       const nameSets = new Map(await Promise.all(unique.map(async parent =>
-        [parent, await fileNamesInDirectory(options.instanceId, options.base.directory, parent, options.signal)] as const)))
+        [parent, await fileNamesInDirectory(options.instanceId, options.base.directory, parent)] as const)))
       if (options.signal.aborted || !container.isConnected) return
 
       // Re-read the container: the markdown pipeline may have replaced its
