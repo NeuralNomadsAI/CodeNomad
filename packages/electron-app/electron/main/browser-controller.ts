@@ -50,6 +50,7 @@ interface OpenClaim {
 type BrowserCommand =
   | { action: "open"; url: string }
   | { action: "navigate"; url: string }
+  | { action: "back" | "forward" | "reload" }
   | { action: "screenshot" }
 
 const noTarget = "No visible local browser target for this session"
@@ -424,7 +425,7 @@ export class BrowserController {
   }
 
   async execute(sessionID: string, command: Exclude<BrowserCommand, { action: "open" }>, deadline = Number.POSITIVE_INFINITY, target?: unknown, checkAdmission: () => void = () => {}): Promise<unknown> {
-    if (command.action !== "navigate" && command.action !== "screenshot") throw new Error("Invalid browser command")
+    if (!["navigate", "back", "forward", "reload", "screenshot"].includes(command.action)) throw new Error("Invalid browser command")
     const registration = this.resolveWitness(sessionID, requireWitness(target))
     const { guest, visibilityVersion } = registration
     const document = this.pageGeneration(registration)
@@ -442,6 +443,27 @@ export class BrowserController {
         case "navigate": {
           if (!isBrowserUrlAllowed(command.url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
           return loadNavigation(guest, command.url, deadline, () => check(false))
+        }
+        case "back":
+        case "forward": {
+          const history = await withDeadline(() => guest.debugger.sendCommand("Page.getNavigationHistory"), deadline) as {
+            currentIndex?: number
+            entries?: Array<{ id: number; url: string }>
+          }
+          checkDocument()
+          const index = typeof history.currentIndex === "number" ? history.currentIndex : -1
+          const entries = Array.isArray(history.entries) ? history.entries : []
+          const next = entries[command.action === "back" ? index - 1 : index + 1]
+          if (!next) throw new Error(command.action === "back" ? "No previous page in browser history" : "No next page in browser history")
+          if (!isBrowserUrlAllowed(next.url)) throw new Error("Browser history entry requires a credential-free HTTP(S) URL")
+          return loadTriggeredNavigation(guest, next.url, deadline, () => check(false),
+            () => guest.debugger.sendCommand("Page.navigateToHistoryEntry", { entryId: next.id }).then(() => undefined))
+        }
+        case "reload": {
+          const currentUrl = guest.getURL()
+          if (!isBrowserUrlAllowed(currentUrl)) throw new Error("Browser reload requires a credential-free HTTP(S) URL")
+          return loadTriggeredNavigation(guest, currentUrl, deadline, () => check(false),
+            () => guest.debugger.sendCommand("Page.reload", {}).then(() => undefined))
         }
         case "screenshot": {
           const result = await withDeadline(() => guest.debugger.sendCommand("Page.captureScreenshot", {
@@ -820,6 +842,17 @@ class MainNavigationSuperseded extends Error {
 
 async function loadNavigation(guest: WebContents, url: string, deadline: number, check: () => void): Promise<{ url: string }> {
   const expected = new URL(url).href
+  return loadTriggeredNavigation(guest, expected, deadline, check, () => guest.loadURL(expected))
+}
+
+async function loadTriggeredNavigation(
+  guest: WebContents,
+  url: string,
+  deadline: number,
+  check: () => void,
+  trigger: () => Promise<void>,
+): Promise<{ url: string }> {
+  const expected = new URL(url).href
   let started = false
   let sameDocument = false
   let committed: string | undefined
@@ -873,7 +906,7 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
   guest.on("did-finish-load", finished)
   guest.on("did-fail-load", failed)
   try {
-    await Promise.race([Promise.all([guest.loadURL(expected), completed]), revoked])
+    await Promise.race([Promise.all([trigger(), completed]), revoked])
     validate()
     if (!started || superseded) throw new Error("Browser navigation changed")
     if (!committed || !isBrowserUrlAllowed(committed)) throw new Error("Browser document is unavailable")

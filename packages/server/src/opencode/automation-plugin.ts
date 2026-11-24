@@ -1,7 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import { execFile, spawn } from "node:child_process"
 import { mkdir, open, opendir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
-import http from "node:http"
 import os from "node:os"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
@@ -11,7 +10,6 @@ import { missionRecoveryControlError, missionRecoveryError } from "../missions/r
 import { parseMissionCreationDefaultsInput } from "../missions/creation-defaults"
 import { MISSION_PREFERENCES_UNAVAILABLE, resolveMissionCreationDefaults } from "../missions/profile-defaults"
 import { isConnectionRefused } from "./connection-errors"
-import { BROWSER_DISCOVERY_TIMEOUT_MS, isBrowserTarget } from "../automation/browser-target"
 import { PAGE_ACTION_PROPERTIES, PAGE_ACTIONS, parsePageAction, type RefAction } from "../automation/page/parse"
 import { MemoryError } from "../memory/model"
 import type { MemoryErrorCode } from "../memory/model"
@@ -45,13 +43,6 @@ export type DeveloperAction =
   | { action: "screenshot" }
 
 const MAX_QUERY_LENGTH = 200
-
-export type BrowserAction =
-  | { action: "open"; url: string }
-  | { action: "navigate"; url: string }
-  | { action: "snapshot"; ref?: string; query?: string }
-  | RefAction
-  | { action: "screenshot" }
 
 export interface AutomationBridgeRegistration {
   version: 1
@@ -328,26 +319,6 @@ export function parseDeveloperAction(input: unknown): DeveloperAction {
   }
 }
 
-export function parseBrowserAction(input: unknown): BrowserAction {
-  if (!input || typeof input !== "object") throw new Error("Browser input must be an object")
-  const value = input as Record<string, unknown>
-  switch (value.action) {
-    case "open":
-    case "navigate":
-      if (typeof value.url !== "string") throw new Error(`${value.action} requires url`)
-      return { action: value.action, url: value.url }
-    case "snapshot":
-      return { action: "snapshot", ...inspectionScope(value, "snapshot") }
-    case "screenshot":
-      return { action: value.action }
-    default: {
-      const page = parsePageAction(value, "snapshot")
-      if (!page) throw new Error("Unsupported browser action")
-      return page
-    }
-  }
-}
-
 function inspectionScope(value: Record<string, unknown>, action: string): { ref?: string; query?: string } {
   if (value.ref !== undefined && typeof value.ref !== "string") throw new Error(`${action} ref must be a ref from the latest inspection`)
   if (value.query !== undefined && (typeof value.query !== "string" || value.query.length > MAX_QUERY_LENGTH)) {
@@ -463,12 +434,9 @@ async function callBridge(
   signal?: AbortSignal,
 ): Promise<{ status: number; body: BridgeResponse }> {
   signal?.throwIfAborted()
-  const browser = body.mode === "browser-execute" || body.mode === "browser-probe"
-    || body.mode === "browser-claim" && body.purpose === undefined
-  const rejectRedirects = browser || body.mode === "developer-restart" || body.mode === "developer-reconnect"
+  const rejectRedirects = body.mode === "developer-restart" || body.mode === "developer-reconnect"
   if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal, rejectRedirects)
   const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
-  if (browser) return callLocalBrowserBridge(registration, body, requestSignal)
   const response = await fetch(registration.url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
@@ -499,36 +467,6 @@ async function callBridge(
     status: response.status,
     body: JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as BridgeResponse,
   }
-}
-
-async function callLocalBrowserBridge(registration: AutomationBridgeRegistration, body: Record<string, unknown>, signal: AbortSignal) {
-  const url = new URL(registration.url)
-  if (url.username || url.password) throw new Error("Invalid native automation bridge URL")
-  const json = JSON.stringify(body)
-  signal.throwIfAborted()
-  const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
-    // A private socket bypasses the proxy configured on Node's global agent.
-    const request = http.request(url, { agent: false, signal, method: "POST", headers: {
-      "content-type": "application/json", "content-length": Buffer.byteLength(json), "x-codenomad-automation-token": registration.token,
-    } }, resolve)
-    request.once("error", reject)
-    request.end(json)
-  })
-  const status = response.statusCode ?? 0
-  const redirected = status >= 300 && status < 400
-  if (redirected || Number(response.headers["content-length"]) > MAX_BRIDGE_RESPONSE_BYTES) {
-    response.destroy()
-    throw new Error(redirected ? "Native automation bridge redirected" : "Native automation bridge response is too large")
-  }
-  const chunks: Buffer[] = []
-  let bytes = 0
-  for await (const chunk of response) {
-    bytes += chunk.length
-    if (bytes > MAX_BRIDGE_RESPONSE_BYTES) throw new Error("Native automation bridge response is too large")
-    chunks.push(chunk)
-  }
-  signal.throwIfAborted()
-  return { status, body: JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as BridgeResponse }
 }
 
 function callWindowsBridge(
@@ -636,17 +574,10 @@ export function formatInspection(result: InspectionResult): string {
   return lines.join("\n")
 }
 
-export function formatBrowserSnapshot(result: { url: string; snapshot: string; collapsed?: number }): string {
-  return `${result.url}\n\n${result.snapshot}${result.collapsed ? "\n\nCollapsed elements: snapshot with their ref to expand them. (+N more) omits siblings: use their parent's ref or query to find them." : ""}`
-}
-
 function formatBridgeResult(resultValue: unknown, screenshot = { text: "Captured the connected CodeNomad build.", name: "codenomad.png" }) {
   const result = resultValue as { image?: { data: string; mime: string }; [key: string]: unknown } | undefined
   if (typeof result?.snapshot === "string" && result.target && result.context && Array.isArray(result.diagnostics)) {
     return { content: formatInspection(result as unknown as InspectionResult) }
-  }
-  if (typeof result?.snapshot === "string" && typeof result.url === "string") {
-    return { content: formatBrowserSnapshot(result as { url: string; snapshot: string; collapsed?: number }) }
   }
   if (result?.image) {
     const content = [
@@ -825,142 +756,6 @@ async function sendMemoryBridge(sessionID: string, mode: "memory-input" | "memor
     throw new MemoryError(code, code === "full" ? "Memory is full. Merge or delete entries before retrying." : `Memory operation failed: ${code}`, response.body.titles)
   }
   return response.body.result
-}
-
-interface BrowserPin {
-  registration: DiscoveredBridgeRegistration
-  target: string
-}
-
-function sameBrowserBridge(a: DiscoveredBridgeRegistration, b: DiscoveredBridgeRegistration): boolean {
-  return a.token === b.token && a.url === b.url && a[WINDOWS_INTEROP] === b[WINDOWS_INTEROP]
-}
-
-export function createBrowserToolExecutor() {
-  const pins = new Map<string, BrowserPin>()
-  const queues = new Map<string, Promise<void>>()
-  return async (sessionID: string, input: unknown) => {
-    const deadline = Date.now() + REQUEST_TIMEOUT_MS
-    const submitted = { pin: pins.get(sessionID) }
-    const result = (queues.get(sessionID) ?? Promise.resolve()).then(() => executeBrowserTool(sessionID, input, pins, deadline, submitted))
-    const tail = result.then(() => undefined, () => undefined)
-    queues.set(sessionID, tail)
-    try { return await result }
-    finally { if (queues.get(sessionID) === tail) queues.delete(sessionID) }
-  }
-}
-
-export async function executeBrowserTool(sessionID: string, input: unknown, pins?: Map<string, BrowserPin>, deadline = Date.now() + REQUEST_TIMEOUT_MS,
-  submitted?: { pin?: BrowserPin }) {
-  const expired = () => new Error("preview-expired: Browser command expired before execution")
-  const remaining = (now = Date.now()) => {
-    const ms = deadline - now
-    if (ms <= 0) throw expired()
-    return ms
-  }
-  remaining()
-  const command = parseBrowserAction(input)
-  const snapshot = command.action === "snapshot" && !command.ref
-  const bound = command.action !== "open" && !snapshot
-  const pin = bound ? submitted ? submitted.pin : pins?.get(sessionID) : undefined
-  const currentPin = pins?.get(sessionID)
-  if (bound && submitted && pin !== currentPin) {
-    throw new Error("stale-preview: The preview selection changed; take a new snapshot")
-  }
-  if (pins && !pin && command.action !== "open" && !snapshot) {
-    throw new Error("snapshot-required: Take a new browser snapshot before using this preview")
-  }
-  const opening = command.action === "open"
-  const inventoryUnavailable = () => new Error("browser-unavailable: The preview inventory could not be verified; take a new snapshot")
-  const signal = AbortSignal.timeout(remaining())
-  const checkDiscovery = () => { if (signal.aborted) throw expired(); remaining() }
-  let abort!: () => void
-  const timeout = new Promise<never>((_resolve, reject) => {
-    abort = () => reject(expired())
-    signal.addEventListener("abort", abort, { once: true })
-  })
-  // Stop waiting on uncancellable filesystem calls and fence their continuations.
-  const discovery = registrations({ strict: "browser" }, signal, checkDiscovery)
-  const active = await Promise.race([discovery, timeout]).catch(() => {
-    checkDiscovery()
-    throw inventoryUnavailable()
-  }).finally(() => signal.removeEventListener("abort", abort))
-  const owners: Array<{ bridge: DiscoveredBridgeRegistration; witness?: string }> = []
-  let incomplete = false, unsupported = false, stale = false
-  for (let index = 0; index < active.length && owners.length < 2; index += PROBE_CONCURRENCY) {
-    const results = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async bridge => {
-      const now = Date.now()
-      const timeout = Math.min(remaining(now), BROWSER_DISCOVERY_TIMEOUT_MS)
-      const probeDeadline = now + timeout
-      try {
-        const result = await callBridge(bridge, { mode: opening ? "browser-claim" : "browser-probe", sessionID, deadline: probeDeadline }, timeout)
-        if (Date.now() < probeDeadline) return { bridge, ...result }
-        incomplete = true
-      } catch (error) {
-        if (Date.now() >= probeDeadline || !isConnectionRefused(error)) incomplete = true
-      }
-      return undefined
-    }))
-    for (const item of results) {
-      if (!item) continue
-      const { bridge, status, body } = item
-      const code = body?.code
-      if (status === 404 && (code === "no-preview-host" || code === "browser-not-owner" || !opening && code === "hidden-preview")) continue
-      if (status === 409 && code === "ambiguous-target") throw new Error("ambiguous-target: Several visible previews match this session")
-      if (status === 409 && code === "stale-preview") stale = true
-      else if (status === 409 && code === "unsupported") unsupported = true
-      else if (status === 200 && (body?.result as { available?: unknown } | undefined)?.available === true) {
-        const witness = (body.result as { target?: unknown }).target
-        if (opening) owners.push({ bridge })
-        else if (isBrowserTarget(witness)) owners.push({ bridge, witness })
-        else unsupported = true
-      } else incomplete = true
-    }
-  }
-  remaining()
-  if (owners.length > 1) throw new Error(opening ? "Multiple CodeNomad instances own this session"
-    : "ambiguous-target: Several CodeNomad profiles show this session preview")
-  if (incomplete) throw inventoryUnavailable()
-  if (unsupported) throw new Error("unsupported: A CodeNomad backend cannot verify the preview target; update the desktop host")
-  if (stale) throw new Error("stale-preview: The preview changed; take a new snapshot")
-  const owner = owners[0]
-  if (pin && (!owner || !sameBrowserBridge(owner.bridge, pin.registration) || owner.witness !== pin.target)) {
-    throw new Error("stale-preview: The preview changed; take a new snapshot")
-  }
-  if (!owner) throw new Error(opening ? "No local CodeNomad window owns this session"
-    : "hidden-preview: Show the session preview and take a new snapshot")
-  const registration = pin?.registration ?? owner.bridge
-  const target = pin?.target ?? owner.witness
-  const response = await callBridge(registration, { mode: "browser-execute", sessionID, command, deadline, ...(target ? { target } : {}) }, remaining())
-    .catch(error => { remaining(); throw error })
-  remaining()
-  if (response.status !== 200) {
-    const reason = response.body?.error || `Browser command failed (${response.status})`
-    throw new Error(typeof response.body?.code === "string" ? `${response.body.code}: ${reason}` : reason)
-  }
-  const result = response.body?.result
-  if (command.action === "snapshot") {
-    const { url, snapshot: text, collapsed } = (result ?? {}) as { url?: unknown; snapshot?: unknown; collapsed?: unknown }
-    const address = typeof url === "string" ? URL.parse(url) : null
-    if (!address || !["http:", "https:"].includes(address.protocol) || address.username || address.password
-      || typeof text !== "string" || !text.trim()
-      || collapsed !== undefined && (typeof collapsed !== "number" || !Number.isSafeInteger(collapsed) || collapsed < 0)) {
-      throw new Error("The browser bridge returned no valid snapshot result; take a new snapshot")
-    }
-    const content = formatBrowserSnapshot({ url: address.href, snapshot: text, collapsed })
-    remaining()
-    if (pins && snapshot && target) {
-      pins.delete(sessionID)
-      pins.set(sessionID, currentPin?.target === target && sameBrowserBridge(currentPin.registration, registration)
-        ? currentPin : { registration, target })
-      if (pins.size > 128) pins.delete(pins.keys().next().value!)
-    }
-    return { content }
-  }
-  const formatted = formatBridgeResult(result, { text: "Captured the visible CodeNomad browser.", name: "browser.png" })
-  remaining()
-  if (command.action === "open") pins?.delete(sessionID)
-  return formatted
 }
 
 function targetError(code: string, message: string): Error {

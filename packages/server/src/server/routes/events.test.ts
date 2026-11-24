@@ -212,6 +212,24 @@ describe("SSE backpressure", () => {
     }
   })
 
+  it("omits internal OpenCode browser control events from UI SSE streams", async () => {
+    const test = harness({ limit: 1024, timeout: 1_000 })
+    try {
+      const response = test.app.inject({ method: "GET", url: "/api/events?clientId=client&connectionId=connection" })
+      await waitFor(test.ready)
+      test.emit({ type: "instance.event", instanceId: "ws-1", event: { type: "rpc.experimental.browser.control", data: { type: "command", connectionID: "c1", requestID: "r1" } } as any })
+      test.emit({ type: "workspace.stopped", workspaceId: "kept", reason: "deleted" })
+      test.drain()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      test.close()
+      const result = await response
+      assert.doesNotMatch(result.body, /rpc\.experimental\.browser\.control/)
+      assert.match(result.body, /"workspaceId":"kept"/)
+    } finally {
+      await test.app.close()
+    }
+  })
+
   it("disconnects when the bounded pending buffer is exceeded", async () => {
     const test = harness({ limit: 256, timeout: 1_000 })
     try {

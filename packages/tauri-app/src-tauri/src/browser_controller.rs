@@ -914,6 +914,114 @@ impl BrowserController {
                 )?;
                 Ok(json!({ "url": url }))
             }
+            "back" | "forward" | "reload" => {
+                let nav_deadline = deadline.min(Instant::now() + Duration::from_secs(15));
+                #[cfg(windows)]
+                let url = if action == "reload" {
+                    let current = allowed_url(
+                        webview.url().map_err(|error| error.to_string())?.as_str(),
+                    )?;
+                    self.navigate_with_dispatch(
+                        &registration,
+                        &webview,
+                        &current,
+                        nav_deadline,
+                        fence,
+                        Some((document, token)),
+                        None,
+                        || Ok(()),
+                        open_navigation::NavigationDispatch::Reload,
+                    )?
+                } else {
+                    let controller = self.clone();
+                    let expected = registration.clone();
+                    let queued_app = app.clone();
+                    let queued_fence = fence.clone();
+                    let history = cdp_guarded(
+                        &webview,
+                        "Page.getNavigationHistory",
+                        json!({}),
+                        nav_deadline,
+                        move || {
+                            controller.check_capture(
+                                &queued_app,
+                                &expected,
+                                document,
+                                nav_deadline,
+                                &queued_fence,
+                            )
+                        },
+                        2 * 1024 * 1024,
+                    )?;
+                    let index = history["currentIndex"]
+                        .as_i64()
+                        .ok_or("Browser history is unavailable")?;
+                    let target_index = if action == "back" { index - 1 } else { index + 1 };
+                    let entry = usize::try_from(target_index)
+                        .ok()
+                        .and_then(|idx| history["entries"].as_array().and_then(|e| e.get(idx)))
+                        .ok_or_else(|| {
+                            if action == "back" {
+                                "No previous page in browser history"
+                            } else {
+                                "No next page in browser history"
+                            }
+                        })?;
+                    let entry_id = entry["id"]
+                        .as_i64()
+                        .ok_or("Invalid browser history entry")?;
+                    let entry_url = allowed_url(
+                        entry["url"]
+                            .as_str()
+                            .ok_or("Invalid browser history URL")?,
+                    )?;
+                    self.navigate_with_dispatch(
+                        &registration,
+                        &webview,
+                        &entry_url,
+                        nav_deadline,
+                        fence,
+                        Some((document, token)),
+                        None,
+                        || Ok(()),
+                        open_navigation::NavigationDispatch::HistoryEntry(entry_id),
+                    )?
+                };
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                let url = if action == "reload" {
+                    self.check_capture(app, &registration, document, nav_deadline, fence)?;
+                    webview.reload().map_err(|error| error.to_string())?;
+                    webview.url().map_err(|error| error.to_string())?.to_string()
+                } else {
+                    let history = webkit_history::action(self, &webview, &registration, None)?;
+                    let index = history["index"]
+                        .as_i64()
+                        .ok_or("Browser history is unavailable")?;
+                    let target_index = if action == "back" { index - 1 } else { index + 1 };
+                    let entry = usize::try_from(target_index)
+                        .ok()
+                        .and_then(|idx| history["entries"].as_array().and_then(|e| e.get(idx)))
+                        .ok_or_else(|| {
+                            if action == "back" {
+                                "No previous page in browser history"
+                            } else {
+                                "No next page in browser history"
+                            }
+                        })?;
+                    let entry_id = entry["id"]
+                        .as_i64()
+                        .ok_or("Invalid browser history entry")?;
+                    let entry_url = allowed_url(
+                        entry["url"]
+                            .as_str()
+                            .ok_or("Invalid browser history URL")?,
+                    )?;
+                    self.check_capture(app, &registration, document, nav_deadline, fence)?;
+                    webkit_history::action(self, &webview, &registration, Some(entry_id))?;
+                    entry_url.to_string()
+                };
+                Ok(json!({ "url": url }))
+            }
             "screenshot" => {
                 #[cfg(windows)]
                 let result = {

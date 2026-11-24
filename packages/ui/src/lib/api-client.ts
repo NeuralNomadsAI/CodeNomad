@@ -427,6 +427,12 @@ export function createServerApi(ctx: BackendHttp) {
     deletePreview(token: string): Promise<void> {
       return request(`/api/previews/${encodeURIComponent(token)}`, { method: "DELETE" })
     },
+    holdNativeBrowser(holdId: string, payload: { workspaceId: string; sessionId: string }): Promise<void> {
+      return request(`/api/native-browser/holds/${encodeURIComponent(holdId)}`, { method: "PUT", body: JSON.stringify(payload) })
+    },
+    releaseNativeBrowser(holdId: string): Promise<void> {
+      return request(`/api/native-browser/holds/${encodeURIComponent(holdId)}`, { method: "DELETE" })
+    },
     createPreviewCapability(payload: { sessionId: string; url: string }): Promise<RemotePreviewCapability> {
       return request("/preview-capabilities", { method: "POST", body: JSON.stringify(payload) })
     },

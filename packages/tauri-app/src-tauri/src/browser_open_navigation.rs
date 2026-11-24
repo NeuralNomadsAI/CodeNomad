@@ -1,5 +1,12 @@
 use super::*;
 
+#[cfg(windows)]
+pub(super) enum NavigationDispatch {
+    Navigate,
+    HistoryEntry(i64),
+    Reload,
+}
+
 impl BrowserController {
     /// Open supplies an occurrence guard; navigate supplies a document witness.
     /// Both own one dispatch, load receipt and deferred native stop.
@@ -13,6 +20,32 @@ impl BrowserController {
         witness: Option<(u64, &str)>,
         open_request_id: Option<&str>,
         check: impl Fn() -> Result<(), String> + Clone + Send + Sync + 'static,
+    ) -> Result<String, String> {
+        self.navigate_with_dispatch(
+            registration,
+            view,
+            url,
+            deadline,
+            fence,
+            witness,
+            open_request_id,
+            check,
+            #[cfg(windows)]
+            NavigationDispatch::Navigate,
+        )
+    }
+
+    pub(super) fn navigate_with_dispatch(
+        &self,
+        registration: &Registration,
+        view: &tauri::Webview,
+        url: &tauri::Url,
+        deadline: Instant,
+        fence: &crate::native_request::RequestFence,
+        witness: Option<(u64, &str)>,
+        open_request_id: Option<&str>,
+        check: impl Fn() -> Result<(), String> + Clone + Send + Sync + 'static,
+        #[cfg(windows)] dispatch_kind: NavigationDispatch,
     ) -> Result<String, String> {
         let controller = self.clone();
         let app = view.app_handle().clone();
@@ -76,24 +109,40 @@ impl BrowserController {
         };
 
         #[cfg(windows)]
-        let dispatch = cdp_guarded_inner(
-            view,
-            "Page.navigate",
-            json!({ "url": url.as_str() }),
-            deadline,
-            move || admit().map(|_| ()),
-            24 * 1024 * 1024,
-        )
-        .and_then(|result| {
-            if let Some(error) = result["errorText"]
-                .as_str()
-                .filter(|error| !error.is_empty())
-            {
-                return Err(format!("Browser navigation failed: {error}"));
-            }
-            Ok(result["loaderId"].as_str().is_none())
-        })
-        .map_err(|error| preview_error("CDP Page.navigate", error));
+        let dispatch = {
+            let (method, params, label) = match dispatch_kind {
+                NavigationDispatch::Navigate => (
+                    "Page.navigate",
+                    json!({ "url": url.as_str() }),
+                    "CDP Page.navigate",
+                ),
+                NavigationDispatch::HistoryEntry(entry_id) => (
+                    "Page.navigateToHistoryEntry",
+                    json!({ "entryId": entry_id }),
+                    "CDP Page.navigateToHistoryEntry",
+                ),
+                NavigationDispatch::Reload => ("Page.reload", json!({}), "CDP Page.reload"),
+            };
+            cdp_guarded_inner(
+                view,
+                method,
+                params,
+                deadline,
+                move || admit().map(|_| ()),
+                24 * 1024 * 1024,
+            )
+            .and_then(|result| {
+                if let Some(error) = result["errorText"]
+                    .as_str()
+                    .filter(|error| !error.is_empty())
+                {
+                    return Err(format!("Browser navigation failed: {error}"));
+                }
+                Ok(matches!(dispatch_kind, NavigationDispatch::Navigate)
+                    && result["loaderId"].as_str().is_none())
+            })
+            .map_err(|error| preview_error(label, error))
+        };
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let dispatch = {
             use crate::embedded_view::input::{self, DocumentDispatch, Read};

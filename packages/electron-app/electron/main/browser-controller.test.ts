@@ -735,6 +735,54 @@ describe("BrowserController preview lifecycle", () => {
     assert.deepEqual(counts(), { attachCount: 1, detachCount: 0 })
   })
 
+  it("supports back, forward and reload through guarded history/reload CDP operations", async () => {
+    const h = createHarness()
+    const history = { currentIndex: 1, entries: [{ id: 10, url: "https://example.com/a" }, { id: 11, url: "https://example.com/b" }, { id: 12, url: "https://example.com/c" }] }
+    const cdpCalls: Array<{ method: string; params?: Record<string, unknown> }> = []
+    let current = "https://example.com/b"
+    const { guest } = createGuest({
+      id: 25,
+      owner: h.owner,
+      sendCommand: async (method, params) => {
+        cdpCalls.push({ method, params })
+        if (method === "Page.getNavigationHistory") return history
+        if (method === "Page.navigateToHistoryEntry") {
+          const entry = history.entries.find(item => item.id === params?.entryId)!
+          history.currentIndex = history.entries.indexOf(entry)
+          current = entry.url
+          guest.getURL = () => current
+          queueMicrotask(() => {
+            guest.emit("did-start-navigation", {}, current, false, true)
+            guest.emit("did-navigate", {}, current)
+            guest.emit("did-finish-load")
+          })
+          return {}
+        }
+        if (method === "Page.reload") {
+          queueMicrotask(() => {
+            guest.emit("did-start-navigation", {}, current, false, true)
+            guest.emit("did-navigate", {}, current)
+            guest.emit("did-finish-load")
+          })
+          return {}
+        }
+        return {}
+      },
+    })
+    guest.getURL = () => current
+    h.add(guest, "one", "session", "tab")
+    const run = async (action: "back" | "forward" | "reload") => {
+      const { target } = await h.controller.probe("session")
+      return handleNativeBrowserRequest(h.controller, "browser.execute", { sessionID: "session", target, command: { action } })
+    }
+    assert.deepEqual(await run("back"), { url: "https://example.com/a" })
+    assert.deepEqual(await run("forward"), { url: "https://example.com/b" })
+    assert.deepEqual(await run("reload"), { url: "https://example.com/b" })
+    assert.ok(cdpCalls.some(call => call.method === "Page.navigateToHistoryEntry" && call.params?.entryId === 10))
+    assert.ok(cdpCalls.some(call => call.method === "Page.navigateToHistoryEntry" && call.params?.entryId === 11))
+    assert.ok(cdpCalls.some(call => call.method === "Page.reload"))
+  })
+
   for (const replace of [false, true]) {
     it(`navigates only the reported registration${replace ? " and refuses a replacement result" : ""}`, async () => {
       const url = "https://example.com/next"
@@ -825,7 +873,8 @@ describe("BrowserController preview lifecycle", () => {
     })
     let completed = false
     const target = (await h.controller.probe("session")).target
-    const navigation = h.controller.execute("session", { action: "navigate", url }, Date.now() + 1000, target)
+    // The deadline only bounds the test; parallel suites can delay these events beyond a second.
+    const navigation = h.controller.execute("session", { action: "navigate", url }, Date.now() + 10_000, target)
       .then(result => { completed = true; return result })
     try {
       await child

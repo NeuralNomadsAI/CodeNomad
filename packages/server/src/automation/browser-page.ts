@@ -6,6 +6,8 @@ import { RefTable } from "./page/refs"
 import { nativeDriver } from "./page/native-driver"
 
 export type BrowserPageAction = RefAction | { action: "snapshot"; ref?: string; query?: string }
+  /** Reads the exact target's address only. */
+  | { action: "location" }
 const OPERATION_MS = 25_000
 const MAX_PENDING = 32
 const MAX_SESSIONS = 128
@@ -21,7 +23,8 @@ export class BrowserPage {
   private pending = 0
   private closed = false
 
-  constructor(private readonly native: Pick<NativeParent, "request">) {}
+  /** `refPrefix` replaces the per-backend ref namespace for callers whose refs follow a fixed pattern. */
+  constructor(private readonly native: Pick<NativeParent, "request">, private readonly refPrefix?: string) {}
 
   async execute(sessionID: string, action: BrowserPageAction, signal?: AbortSignal, expectedTarget?: string,
     deadline = Number.POSITIVE_INFINITY): Promise<Record<string, unknown>> {
@@ -83,7 +86,8 @@ export class BrowserPage {
       const driver = nativeDriver(target, operation => request("browser.page.send", { generation, operation }), checkpoint)
       const page: PageSession = { driver, markAutomation: false, checkpoint }
       const refs = this.table(sessionID)
-      if (action.action === "snapshot") {
+      if (action.action === "location") result = { url }
+      else if (action.action === "snapshot") {
         const rootBackendNodeId = action.ref ? refs.resolve(action.ref, generation) : undefined
         const snapshot = await snapshotPage(page, () => refs.issuer(generation), { rootBackendNodeId, query: action.query, refLength: refs.refLength })
         result = { url, snapshot: snapshot.text, collapsed: snapshot.collapsed }
@@ -102,7 +106,7 @@ export class BrowserPage {
 
   private table(sessionID: string): RefTable {
     let table = this.tables.get(sessionID)
-    if (!table) table = new RefTable("take a new snapshot", `b${this.refNamespace}${++this.sequence}e`)
+    if (!table) table = new RefTable("take a new snapshot", this.refPrefix ?? `b${this.refNamespace}${++this.sequence}e`)
     this.tables.delete(sessionID)
     this.tables.set(sessionID, table)
     if (this.tables.size > MAX_SESSIONS) this.tables.delete(this.tables.keys().next().value!)

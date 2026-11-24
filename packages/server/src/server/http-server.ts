@@ -53,6 +53,8 @@ import { RemoteServerBrowseManager } from "../codenomad-servers/browse-manager"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
+import { registerNativeBrowserRoutes } from "./routes/native-browser"
+import { NativeBrowserAttachments } from "../opencode/native-browser/attachments"
 import { registerUsageRoutes } from "./routes/usage"
 import { registerMissionRoutes } from "./routes/missions"
 import { connectMissionActivityCache, MissionActivityCache } from "../missions/activity-cache"
@@ -574,6 +576,9 @@ export function createHttpServer(deps: HttpServerDeps) {
     remoteDevices: deps.remoteControlManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
+  const nativeBrowser = new NativeBrowserAttachments({ workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, nativeParent: deps.nativeParent, logger: deps.logger })
+  registerNativeBrowserRoutes(app, { attachments: nativeBrowser, authManager: deps.authManager })
+  app.addHook("onClose", async () => nativeBrowser.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager, freeUsage })
   const missionActivityCache = new MissionActivityCache()
   const stopMissionActivityCache = connectMissionActivityCache(deps.eventBus, missionActivityCache)
