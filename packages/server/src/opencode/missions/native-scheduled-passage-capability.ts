@@ -66,12 +66,13 @@ export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acqui
     const initial = yield* schedule.get(id).pipe(Effect.flatMap(readMissionAutomation))
     const code = missionCodeWake(initial)
     if (!code) yield* assertNativeScheduleProviderAvailable(ctx, proof.owner.installation)
-    yield* checkFlag()
-    const [info, carrier] = yield* Effect.all([
-      schedule.get(id).pipe(Effect.flatMap(readMissionAutomation)),
-      session.get(proof.descriptor.sessionID).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(Session.Info)))),
-    ])
-    yield* checkFlag()
+    // No joint native snapshot exists: flag, row and carrier are read together after
+    // every earlier await, and qualification is recorded synchronously on the result.
+    const [, info, carrier] = yield* Effect.all([
+      checkFlag(),
+      Effect.suspend(() => schedule.get(id)).pipe(Effect.flatMap(readMissionAutomation)),
+      Effect.suspend(() => session.get(proof.descriptor!.sessionID)).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(Session.Info)))),
+    ], { concurrency: "unbounded" })
     if (missionCodeWake(info) !== code || info.id !== id || info.status !== "active" || info.nextDueAt === undefined || !matchMissionAutomation(info, proof.descriptor,
       { directory: ctx.location.directory, projectID: doc.projectID }, NATIVE_SCHEDULE_CARRIER_SIGNAL)
       || carrier.id !== proof.descriptor.sessionID || carrier.parentID

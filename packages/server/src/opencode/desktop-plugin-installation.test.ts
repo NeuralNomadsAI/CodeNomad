@@ -429,3 +429,18 @@ test("Missions installation emits a runtime-only artifact manifest when no provi
   const hash = createHash("sha256").update(runtime).digest("hex")
   assert.deepEqual(artifacts, { runtime: { file: path.join(paths.data, "missions", `${hash}.mjs`), sha256: hash } })
 })
+
+test("a build without a packaged provider keeps an intact installed provider and drops a damaged one", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-retained-provider-"))
+  const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
+  const provider = Buffer.from("installed-provider"), sha = createHash("sha256").update(provider).digest("hex")
+  const entry = path.join(paths.config, "plugins", "codenomad-missions.ts"), file = path.join(paths.data, "missions", `${sha}.provider.mjs`)
+  const manifest = async () => JSON.parse(`[${/export default desktopPlugin\((.+)\)\n$/.exec(await readFile(entry, "utf8"))![1]}]`)[1]
+  const stops = [await installDesktopPluginPresence("missions", Buffer.from("runtime-a"), paths, () => {}, undefined, provider)]
+  t.after(async () => { for (const stop of stops) await stop(); await rm(root, { recursive: true, force: true }) })
+  stops.push(await installDesktopPluginPresence("missions", Buffer.from("runtime-b"), paths))
+  assert.deepEqual((await manifest()).provider, { file, sha256: sha })
+  await writeFile(file, "tampered")
+  stops.push(await installDesktopPluginPresence("missions", Buffer.from("runtime-c"), paths))
+  assert.deepEqual(Object.keys(await manifest()), ["runtime"])
+})

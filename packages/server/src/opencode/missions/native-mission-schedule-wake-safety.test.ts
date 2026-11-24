@@ -11,16 +11,18 @@ import { reconcileNativeMissionScheduleMaintenance, sendNativeMissionScheduleMai
 import { NATIVE_SCHEDULE_CARRIER_SIGNAL, readNativeScheduleCarrierOwnership, nativeScheduleCarrierLookupKey } from "./native-schedule-carrier-binding"
 import { missionDocumentChanges } from "../../missions/mission-document-state"
 
+const qualified = async () => {}
+
 test("native principal prompt commits preparation before inbox/ACK, survives a crash, and blocks structural edits", async t => {
   const f = await ownerFixture(t), doc = await f.control("play"), principal = doc.calendars.find(item => item.role === "principal")!
   const event = { sessionID: principal.sessionID, messageID: `msg_${principal.scheduleID}_1`, delivery: "queue", prompt: { text: NATIVE_SCHEDULE_CARRIER_SIGNAL },
     metadata: { schedule: { id: principal.scheduleID, run: 1, dueAt: f.now, late: false } } } as unknown as SessionPrompt
-  const prepared = await prepareNativeMissionSchedulePrincipalPrompt(f.ctx, event, f.store, Effect.runPromise, f.current)
+  const prepared = await prepareNativeMissionSchedulePrincipalPrompt(f.ctx, event, f.store, Effect.runPromise, f.current, qualified)
   const calendar = prepared.calendars.find(item => item.role === "principal")!
   assert.equal(calendar.wakePreparing?.messageID, event.messageID); assert.equal(calendar.highWater, 0)
   assert.equal(prepared.launchedCount, 0); assert.equal(prepared.pending, null)
   assert.equal(f.calendars.get(principal.scheduleID)!.runCount, 0)
-  assert.deepEqual(await prepareNativeMissionSchedulePrincipalPrompt(f.ctx, event, f.store, Effect.runPromise, f.current), prepared)
+  assert.deepEqual(await prepareNativeMissionSchedulePrincipalPrompt(f.ctx, event, f.store, Effect.runPromise, f.current, qualified), prepared)
   await assert.rejects(f.store.change(prepared.id, prepared.revision, f.current, value => missionDocumentChanges.configure(value,
     { ...value.configuration, launch: { ...value.configuration.launch, timing: { kind: "every", intervalMs: 1_800_000 } } }, f.now)), /configuration locked|wake unresolved/)
   assert.deepEqual(await f.read(), prepared)
@@ -30,8 +32,16 @@ test("native principal prompt commits preparation before inbox/ACK, survives a c
   unlinkSync(missingProvider.installation.provider.file)
   const mpEvent = { sessionID: mpPrincipal.sessionID, messageID: `msg_${mpPrincipal.scheduleID}_1`, delivery: "queue", prompt: { text: NATIVE_SCHEDULE_CARRIER_SIGNAL },
     metadata: { schedule: { id: mpPrincipal.scheduleID, run: 1, dueAt: missingProvider.now, late: false } } } as unknown as SessionPrompt
-  await assert.rejects(prepareNativeMissionSchedulePrincipalPrompt(missingProvider.ctx, mpEvent, missingProvider.store, Effect.runPromise, missingProvider.current), /ENOENT|artifact/)
+  await assert.rejects(prepareNativeMissionSchedulePrincipalPrompt(missingProvider.ctx, mpEvent, missingProvider.store, Effect.runPromise, missingProvider.current, qualified), /ENOENT|artifact/)
   assert.equal((await missingProvider.read()).calendars.find(item => item.role === "principal")!.wakePreparing, null)
+
+  const noCatalog = await ownerFixture(t), ncDoc = await noCatalog.control("play")
+  const ncPrincipal = ncDoc.calendars.find(item => item.role === "principal")!
+  const ncEvent = { ...mpEvent, sessionID: ncPrincipal.sessionID, messageID: `msg_${ncPrincipal.scheduleID}_1`,
+    metadata: { schedule: { id: ncPrincipal.scheduleID, run: 1, dueAt: noCatalog.now, late: false } } } as unknown as SessionPrompt
+  await assert.rejects(prepareNativeMissionSchedulePrincipalPrompt(noCatalog.ctx, ncEvent, noCatalog.store, Effect.runPromise, noCatalog.current,
+    async () => { throw new Error("schedule-provider-unavailable") }), /schedule-provider-unavailable/)
+  assert.equal((await noCatalog.read()).calendars.find(item => item.role === "principal")!.wakePreparing, null)
 })
 
 test("Pause or temporal-edit winner rejects a principal before native prompt returns, with no preparation/count", async t => {
@@ -45,7 +55,7 @@ test("Pause or temporal-edit winner rejects a principal before native prompt ret
       await f.control("configure", "edit_winner", { ...doc.configuration, launch: { ...doc.configuration.launch, timing: { kind: "every", intervalMs: 1_800_000 } } })
     }
     const before = await f.read()
-    await assert.rejects(prepareNativeMissionSchedulePrincipalPrompt(f.ctx, event, f.store, Effect.runPromise, f.current), /schedule-prompt-/)
+    await assert.rejects(prepareNativeMissionSchedulePrincipalPrompt(f.ctx, event, f.store, Effect.runPromise, f.current, qualified), /schedule-prompt-/)
     assert.deepEqual(await f.read(), before)
     assert.equal(before.launchedCount, 0); assert(before.calendars.every(item => !item.wakePreparing))
   }

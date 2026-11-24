@@ -124,7 +124,11 @@ test("recognizes runtime-only Missions shims without provider and rejects provid
   const installations = await fixture.read()
   assert.equal(installations.length, 1)
   assert.equal(installations[0].plugin, installed.plugin)
-  const broken = installed.source.replace(/"runtime":\{[^}]+\}/, `"provider":{"file":${JSON.stringify(installed.plugin)},"sha256":"${"a".repeat(64)}"}`)
+  const sha = "a".repeat(64), providerFile = nativePaths.join(nativePaths.dirname(installed.plugin), `${sha}.provider.mjs`)
+  const providerOnly = installed.source.replace(/"runtime":\{[^}]+\}/, `"provider":{"file":${JSON.stringify(providerFile)},"sha256":"${sha}"}`)
+  const complete = installed.source.replace(/"runtime":/, `"provider":{"file":${JSON.stringify(providerFile)},"sha256":"${sha}"},"runtime":`)
+  assert.equal(parseManagedDesktopPluginEntry("missions", complete, nativePaths)!.provider!.file, providerFile)
+  const broken = providerOnly
   assert.throws(() => parseManagedDesktopPluginEntry("missions", broken, nativePaths), /Invalid managed Missions artifacts/)
 })
 

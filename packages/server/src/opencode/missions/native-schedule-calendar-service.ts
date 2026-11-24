@@ -111,16 +111,16 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
     const effect = schedules.enabled(location.directory)
     if (!Effect.isEffect(effect) || (yield* effect) !== true) throw new Error("Native calendar schedules disabled")
   })
+  // Native offers no joint snapshot of the flags and the carrier. Both are read
+  // together after every earlier await; callers act synchronously on the result.
   const carrier = Effect.fnUntraced(function* (target: Target) {
-    yield* enabled()
-    yield* schedulesEnabled()
-    const session = yield* ctx.session.get({ sessionID: Session.ID.make(target.descriptor.sessionID) })
+    const [, , session] = yield* Effect.all([enabled(), schedulesEnabled(),
+      Effect.suspend(() => ctx.session.get({ sessionID: Session.ID.make(target.descriptor.sessionID) }))], { concurrency: "unbounded" })
     if (session.id !== target.descriptor.sessionID || session.parentID || session.projectID !== location.project.id
       || session.location.directory !== location.directory || session.location.workspaceID !== location.workspaceID
       || canonicalAuthority(session.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER]) !== canonicalAuthority(marker(target))
       || !isAllowedScheduleCarrierModel(session.model))
       throw new Error("Native calendar carrier differs")
-    yield* schedulesEnabled()
     assertCurrent()
     return session
   })

@@ -9,11 +9,14 @@ import { acquireNativeMissionDocumentStore, type NativeMissionDocumentRunner } f
 import { assertNativeScheduleCarrierArtifacts, readNativeScheduleCarrierOwnership, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
 import { assertNativeScheduleWake } from "./native-schedule-transport-contract"
 import { missionWakeMessageID, missionWakeMetadata, sameMissionAutomation } from "./native-mission-automation"
+import { assertNativeScheduleProviderAvailable } from "./native-schedule-provider-registration"
+import type { NativeScheduleArtifacts } from "./native-schedule-installation"
 
 /** Native prompt entry is the pre-inbox proof. Serialize with Pause/configure
  * before returning to native Session.prompt, without requiring a later run ACK. */
 export async function prepareNativeMissionSchedulePrincipalPrompt(ctx: Plugin.Context, event: SessionPrompt,
-  store: NativeMissionDocumentStore, run: NativeMissionDocumentRunner, current: () => true) {
+  store: NativeMissionDocumentStore, run: NativeMissionDocumentRunner, current: () => true,
+  qualifyProvider: (installation: NativeScheduleArtifacts) => Promise<void>) {
   const sessionID = event.sessionID, messageID = event.messageID, text = event.prompt.text
   const metadata = missionWakeMetadata(structuredClone(event.metadata), messageID)
   return store.withExclusion(async locked => {
@@ -40,6 +43,9 @@ export async function prepareNativeMissionSchedulePrincipalPrompt(ctx: Plugin.Co
       assertNativeScheduleCarrierArtifacts(fresh.calendarOwner!.installation, { requireProvider: true })
       return assertMissionCalendarPlacement(fresh.calendarOwner!.placement, fresh.configuration.roots)
     }
+    // The prepared wake is only committed once the provider/model catalog is qualified, then
+    // the artifact recheck runs synchronously at the commit.
+    await qualifyProvider(fresh.calendarOwner!.installation)
     guard()
     return locked.change(fresh.id, fresh.revision, guard, value => missionDocumentChanges.prepareWake(value,
       { scheduleID: wake.scheduleID, run: wake.run, messageID: wake.messageID, dueAt: Number(metadata.dueAt) }))
@@ -54,6 +60,7 @@ export function nativeMissionSchedulePreparePrompt(ctx: Plugin.Context, event: S
     let active = true
     yield* Effect.addFinalizer(() => Effect.sync(() => { active = false }))
     return yield* Effect.tryPromise(() => prepareNativeMissionSchedulePrincipalPrompt(ctx, event, store, run,
-      () => { if (!active) throw new Error("schedule-prompt-retired"); return true }))
+      () => { if (!active) throw new Error("schedule-prompt-retired"); return true },
+      installation => run(assertNativeScheduleProviderAvailable(ctx, installation))))
   })).pipe(Effect.orDie))
 }

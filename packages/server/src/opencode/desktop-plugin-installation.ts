@@ -11,7 +11,7 @@ export const PRESENCE_READY_WAIT_MS = 5_000
 const PRESENCE_READY_POLL_MS = 100
 import { isLegacyAutomationPlugin } from "./automation-plugin"
 import { type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
-import { installDesktopPluginArtifact } from "./desktop-plugin-artifact"
+import { installDesktopPluginArtifact, readDesktopPluginFile } from "./desktop-plugin-artifact"
 import { parseManagedDesktopPluginEntry } from "./desktop-plugin-managed"
 import type { NativeScheduleCarrierInstallation } from "./missions/native-schedule-carrier-binding"
 import { ownReadiness } from "./desktop-plugin-readiness"
@@ -31,11 +31,19 @@ export type DesktopPluginFeature = "session-pruning" | "automation" | "missions"
 // readable during migration, but new heartbeats must leave the watched root.
 async function managedStorage(feature: DesktopPluginFeature, existing: string | undefined, marker: string, paths: DesktopPluginPaths, assertCurrent: () => void) {
   if (!existing?.startsWith(marker)) return undefined
-  const { nativeDirectory, presenceDirectories } = parseManagedDesktopPluginEntry(feature, existing, paths.nativeData ? path.posix : path)!
-  if (!paths.nativeData) return { directory: nativeDirectory, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
+  const { nativeDirectory, presenceDirectories, provider } = parseManagedDesktopPluginEntry(feature, existing, paths.nativeData ? path.posix : path)!
+  if (!paths.nativeData) return { directory: nativeDirectory, nativeDirectory, presenceDirectories: presenceDirectories as string[], provider }
   if (!paths.resolveNativePath) throw new Error("Missing managed WSL plugin path resolver")
   const resolved = await paths.resolveNativePath(nativeDirectory, assertCurrent)
-  return { directory: resolved.host, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
+  return { directory: resolved.host, nativeDirectory, presenceDirectories: presenceDirectories as string[], provider }
+}
+
+// A build without a packaged provider keeps an installed one that is still intact,
+// so persisted prompt calendars stay qualified across the upgrade.
+async function retainedProvider(storage: Awaited<ReturnType<typeof managedStorage>>) {
+  if (!storage?.provider) return undefined
+  const bytes = await readDesktopPluginFile(path.join(storage.directory, `${storage.provider.sha256}.provider.mjs`), 32 * 1024 * 1024)
+  return bytes && createHash("sha256").update(bytes).digest("hex") === storage.provider.sha256 ? bytes : undefined
 }
 
 function within(directory: string, root: string): boolean {
@@ -81,6 +89,8 @@ export async function installDesktopPluginPresence(
     throw new Error(`Existing plugin entry is not managed by CodeNomad: ${entry}`)
   }
   const storage = await managedStorage(feature, existing, marker, paths, assertCurrent)
+  assertCurrent()
+  if (feature === "missions" && !providerBundle) providerBundle = await retainedProvider(storage)
   assertCurrent()
   const retainStorage = storage && !within(storage.directory, paths.config)
   const directory = retainStorage ? storage.directory : path.join(paths.data, feature)

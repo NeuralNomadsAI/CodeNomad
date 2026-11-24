@@ -437,20 +437,18 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       ))), /auxiliary differs/)
       assert.equal(pausedAfterProvider, true)
 
-      let offDuringSession = false
+      let offDuringRowRead = false
       await assert.rejects(Effect.runPromise(Effect.scoped(Effect.gen(function* () {
         const cap = yield* acquireNativeScheduledPassageCapability(ctx, current)
         yield* cap.prepare(promptDoc)
       }).pipe(
         Effect.provideService(Context.Service<never, unknown>("@opencode/Automation"), {
-          get: (id: string) => Effect.succeed(infos.get(id)),
+          get: (id: string) => Effect.sync(() => { if (!offDuringRowRead) { offDuringRowRead = true; enabled = false } return infos.get(id) }),
           enabled: () => Effect.sync(() => enabled),
         }),
-        Effect.provideService(Context.Service<never, unknown>("@opencode/Session"), {
-          get: (id: string) => Effect.sync(() => { offDuringSession = true; enabled = false; return sessions.get(id) }),
-        }),
+        Effect.provideService(Context.Service<never, unknown>("@opencode/Session"), { get: (id: string) => Effect.succeed(sessions.get(id)) }),
       ))), /flag disabled/)
-      assert.equal(offDuringSession, true)
+      assert.equal(offDuringRowRead, true)
       enabled = true
     })
     await t.test("Code Mode scheduled passage admits and runs business without local provider or provider.mjs", async () => {
