@@ -47,6 +47,7 @@ impl Linked {
     }
     pub(crate) fn mark_reload(&mut self) {
         self.job = None;
+        self.pages = None;
         self.force_reload = true;
     }
 }
@@ -262,10 +263,21 @@ mod tests {
         {
             let l = s.screen.launcher_mut().unwrap();
             l.linked.rows.push(deleted);
+            let mut stale = Pages::default();
+            stale.remaining.push_back(Location {
+                directory: "/wt-other".into(),
+                cursor: Some("stale".into()),
+                ..Default::default()
+            });
+            l.linked.pages = Some(stale);
             l.linked.mark_reload();
             assert!(
                 l.linked.rows.len() == 1 && l.linked.rows[0].id == "existing",
                 "mark_reload must retain previous display snapshot"
+            );
+            assert!(
+                l.linked.pages.is_none(),
+                "mark_reload must discard stale pagination cursors"
             );
             assert!(l.linked.force_reload);
         }

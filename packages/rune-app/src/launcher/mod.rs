@@ -69,6 +69,7 @@ pub struct Launcher {
     result: Option<Receiver<Result<Reply>>>,
     pending_stream_generation: u64,
     stopped_during_pending: HashSet<String>,
+    stopped_during_pending_overflow: bool,
     detached_reconcile: Option<(u64, HashSet<String>, Receiver<Option<Vec<Project>>>)>,
     failed_detached_workspaces: HashSet<String>,
     pub(crate) rebind_after_send: Option<String>,
@@ -190,6 +191,7 @@ impl Launcher {
             result: None,
             pending_stream_generation: 0,
             stopped_during_pending: HashSet::new(),
+            stopped_during_pending_overflow: false,
             detached_reconcile: None,
             failed_detached_workspaces: HashSet::new(),
             rebind_after_send: None,
@@ -210,6 +212,7 @@ impl Launcher {
         self.pending = true;
         self.pending_stream_generation = self.workspace_stream_generation;
         self.stopped_during_pending.clear();
+        self.stopped_during_pending_overflow = false;
         self.catalogue_generation = self.catalogue_generation.wrapping_add(1);
         self.error = None;
         let (out, input) = bounded(1);
@@ -227,11 +230,15 @@ impl Launcher {
 const MAX_RECONCILE_ATTEMPTS: usize = 5;
 
 fn spawn_detached_reconcile(l: &mut Launcher, generation: u64) {
+    spawn_detached_reconcile_with(l, generation, HashSet::new());
+}
+
+fn spawn_detached_reconcile_with(l: &mut Launcher, generation: u64, opened_after: HashSet<String>) {
     let Some(backend) = l.connection.clone() else {
         return;
     };
     let (out, input) = bounded(1);
-    l.detached_reconcile = Some((generation, HashSet::new(), input));
+    l.detached_reconcile = Some((generation, opened_after, input));
     l.failed_detached_workspaces.clear();
     let wake = l.wake.clone();
     crate::platform::spawn(async move {
@@ -333,7 +340,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         event
                     {
                         if l.pending {
-                            l.stopped_during_pending.insert(workspace_id.clone());
+                            if l.stopped_during_pending.len() < 128 {
+                                l.stopped_during_pending.insert(workspace_id.clone());
+                            } else if !l.stopped_during_pending.contains(workspace_id) {
+                                l.stopped_during_pending_overflow = true;
+                            }
                         }
                         if let Some((_, opened_after, _)) = &mut l.detached_reconcile {
                             opened_after.remove(workspace_id);
@@ -492,6 +503,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.listing = false;
     let pending_stream_generation = l.pending_stream_generation;
     let stopped_during_pending = std::mem::take(&mut l.stopped_during_pending);
+    let stopped_during_pending_overflow = std::mem::take(&mut l.stopped_during_pending_overflow);
     if l.selection_ticket
         .take()
         .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
@@ -579,11 +591,24 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.rebind_after_send = None;
             l.failed_detached_workspaces.remove(&project.id);
             let stopped_in_flight = stopped_during_pending.contains(&project.id);
-            if !stopped_in_flight
-                && let Some((reconcile_generation, opened_after, _)) = &mut l.detached_reconcile
-                && pending_stream_generation == *reconcile_generation
-            {
-                opened_after.insert(project.id.clone());
+            let current_stream_generation = l.workspace_stream_generation;
+            let needs_reconcile = !stopped_in_flight
+                && (stopped_during_pending_overflow
+                    || (current_stream_generation % 2 == 1
+                        && pending_stream_generation != current_stream_generation));
+            if !stopped_in_flight {
+                if !stopped_during_pending_overflow
+                    && let Some((reconcile_generation, opened_after, _)) = &mut l.detached_reconcile
+                    && pending_stream_generation == *reconcile_generation
+                {
+                    opened_after.insert(project.id.clone());
+                } else if !l.authentication_required
+                    && let Some((reconcile_generation, mut opened_after, _)) =
+                        l.detached_reconcile.take()
+                {
+                    opened_after.remove(&project.id);
+                    spawn_detached_reconcile_with(l, reconcile_generation, opened_after);
+                }
             }
             connection::watch_catalogue(l);
             l.apply_listing(rows, false, None);
@@ -612,6 +637,18 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         workspace_id: project.id,
                     }],
                 );
+            } else if needs_reconcile
+                && !auth_required
+                && current_stream_generation % 2 == 1
+                && crate::workspace::has_detached_panels(s)
+                && s.screen
+                    .launcher()
+                    .is_some_and(|l| l.detached_reconcile.is_none())
+            {
+                let _ = crate::workspace::set_detached_online(s, false);
+                if let Some(l) = s.screen.launcher_mut() {
+                    spawn_detached_reconcile(l, current_stream_generation);
+                }
             }
             #[cfg(target_arch = "wasm32")]
             linked::load(s);
@@ -745,11 +782,24 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 let id = opening.project.id.clone();
                 l.failed_detached_workspaces.remove(&id);
                 let stopped_in_flight = stopped_during_pending.contains(&id);
-                if !stopped_in_flight
-                    && let Some((reconcile_generation, opened_after, _)) = &mut l.detached_reconcile
-                    && pending_stream_generation == *reconcile_generation
-                {
-                    opened_after.insert(id.clone());
+                let current_stream_generation = l.workspace_stream_generation;
+                let needs_reconcile = !stopped_in_flight
+                    && (stopped_during_pending_overflow
+                        || (current_stream_generation % 2 == 1
+                            && pending_stream_generation != current_stream_generation));
+                if !stopped_in_flight {
+                    if !stopped_during_pending_overflow
+                        && let Some((reconcile_generation, opened_after, _)) =
+                            &mut l.detached_reconcile
+                        && pending_stream_generation == *reconcile_generation
+                    {
+                        opened_after.insert(id.clone());
+                    } else if let Some((reconcile_generation, mut opened_after, _)) =
+                        l.detached_reconcile.take()
+                    {
+                        opened_after.remove(&id);
+                        spawn_detached_reconcile_with(l, reconcile_generation, opened_after);
+                    }
                 }
                 reopen::apply(s, opening, backend, title, &slug);
                 if stopped_in_flight {
@@ -759,6 +809,17 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                             workspace_id: id,
                         }],
                     );
+                } else if needs_reconcile
+                    && current_stream_generation % 2 == 1
+                    && crate::workspace::has_detached_panels(s)
+                    && s.screen
+                        .launcher()
+                        .is_some_and(|l| l.detached_reconcile.is_none())
+                {
+                    let _ = crate::workspace::set_detached_online(s, false);
+                    if let Some(l) = s.screen.launcher_mut() {
+                        spawn_detached_reconcile(l, current_stream_generation);
+                    }
                 }
             }
         }

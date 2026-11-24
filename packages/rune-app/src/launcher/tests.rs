@@ -931,9 +931,10 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
     assert!(rt.state.files.as_ref().unwrap().stopped);
 
     // Reply::Opened started before an SSE disconnect/reconnect (generation 1 vs reconcile 3)
-    // is not inserted into opened_after even without a Stopped frame.
+    // is not inserted into opened_after and replaces the stale pre-open reconcile read so a
+    // stale GET /api/workspaces snapshot cannot stop the freshly opened project.
     let (opened_out_d, opened_in_d) = bounded(1);
-    let (_reconcile_tx_d, reconcile_rx_d) = bounded(1);
+    let (reconcile_tx_d, reconcile_rx_d) = bounded(1);
     let project_d = Project {
         id: "proj-d".into(),
         path: "/repo-d".into(),
@@ -978,6 +979,10 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
     rt.update(|s, tx| {
         assert!(poll(s, tx));
     });
+    assert!(
+        reconcile_tx_d.try_send(Some(vec![])).is_err(),
+        "stale pre-open reconcile channel must be dropped so it cannot stop proj-d"
+    );
     assert!(
         !rt.state
             .screen

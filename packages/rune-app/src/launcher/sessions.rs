@@ -421,6 +421,7 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
             .is_some_and(|p| l.workspace_stream_online_for(&p.id))
     });
     if let Some(files) = &mut s.files {
+        files.close_reader();
         files.online(false);
         if stream_online {
             files.online(true);

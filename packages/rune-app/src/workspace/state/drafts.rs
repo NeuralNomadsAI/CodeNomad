@@ -139,6 +139,12 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
                     })
                 {
                     item.live_drafts.remove(&evict);
+                    if saved.drafts.remove(&evict).is_some() {
+                        item.cleared.insert(evict.clone());
+                        changed = true;
+                    }
+                    changed |= saved.attachment_drafts.remove(&evict);
+                    changed |= saved.attachment_parts.remove(&evict).is_some();
                 }
                 let live = item.live_drafts.entry(key.into()).or_default();
                 live.text = too_long.then(|| text.clone());
@@ -322,15 +328,25 @@ mod tests {
         for index in 0..(crate::workspace::MAX_DRAFTS + 5) {
             b.session = format!("ses-{index}");
             let _ = bound(&mut s, &b);
+            s.draft = rune::edit::TextEdit::new("/compact payload");
             s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
                 "compact",
                 &"x".repeat(1024),
             ));
             capture(&mut s);
         }
-        assert!(
-            s.workspace.as_ref().unwrap().entries[0].live_drafts.len()
-                <= crate::workspace::MAX_DRAFTS
+        let ui = s.workspace.as_ref().unwrap();
+        assert!(ui.entries[0].live_drafts.len() <= crate::workspace::MAX_DRAFTS);
+        let evicted = (0..(crate::workspace::MAX_DRAFTS + 5))
+            .map(|i| format!("ses-{i}"))
+            .find(|id| !ui.entries[0].live_drafts.contains_key(id))
+            .expect("at least one pure-unconfirmed entry evicted");
+        b.session = evicted;
+        assert_eq!(
+            bound(&mut s, &b),
+            "",
+            "evicting an unconfirmed lock must also clear its saved draft text"
         );
+        assert!(s.composer.command_unconfirmed.is_none());
     }
 }
