@@ -552,12 +552,15 @@ struct EnvelopeSlices<'a> {
     kind: Option<&'a str>,
 }
 
-/// Extracts top-level RPC envelope fields in O(1) memory (stripping an optional UTF-8 BOM) so an
-/// adversarial 20 MiB escaped unknown key never allocates a Serde unescape buffer above the
-/// caller's `ResponsePool::History` reservation.
+/// Extracts top-level RPC envelope fields in O(1) memory (stripping an optional UTF-8 BOM and
+/// strictly validating full JSON syntax) so an adversarial 20 MiB escaped unknown key never
+/// allocates a Serde unescape buffer and malformed ignored fields are still rejected.
 fn parse_envelope(bytes: &[u8]) -> Option<EnvelopeSlices<'_>> {
     let text = std::str::from_utf8(bytes).ok()?;
     let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
+    if !crate::sessions::media_stream::validate_json_syntax(text.as_bytes()) {
+        return None;
+    }
     let mut out = EnvelopeSlices { output: None, tag: None, kind: None };
     crate::sessions::media_stream::for_each_json_object_field(text, |k, v| match k {
         "output" => out.output = Some(v),
@@ -822,6 +825,51 @@ fn valid_outline_payload(action: &str, raw: &str) -> bool {
     {
         <Option<T> as serde::Deserialize<'de>>::deserialize(d).map(Some)
     }
+    fn bounded_vec<'de, D, T, const MAX: usize>(d: D) -> Result<Option<Vec<T>>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+        T: serde::Deserialize<'de>,
+    {
+        struct V<T, const MAX: usize>(std::marker::PhantomData<T>);
+        impl<'de, T: serde::Deserialize<'de>, const MAX: usize> serde::de::Visitor<'de> for V<T, MAX> {
+            type Value = Vec<T>;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "an array of at most {MAX} items")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(MAX).min(1024));
+                while let Some(item) = seq.next_element::<T>()? {
+                    if items.len() >= MAX {
+                        return Err(serde::de::Error::custom("array exceeds maximum length"));
+                    }
+                    items.push(item);
+                }
+                Ok(items)
+            }
+        }
+        d.deserialize_seq(V::<T, MAX>(std::marker::PhantomData)).map(Some)
+    }
+    fn bounded_preview_entries<'de, D, T>(d: D) -> Result<Option<Vec<T>>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+        T: serde::Deserialize<'de>,
+    {
+        bounded_vec::<D, T, 12>(d)
+    }
+    fn bounded_outline_entries<'de, D, T>(d: D) -> Result<Option<Vec<T>>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+        T: serde::Deserialize<'de>,
+    {
+        bounded_vec::<D, T, 16_384>(d)
+    }
+    fn bounded_outline_checkpoints<'de, D, T>(d: D) -> Result<Option<Vec<T>>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+        T: serde::Deserialize<'de>,
+    {
+        bounded_vec::<D, T, 512>(d)
+    }
     struct JsonNum(f64);
     impl<'de> serde::Deserialize<'de> for JsonNum {
         fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -864,7 +912,7 @@ fn valid_outline_payload(action: &str, raw: &str) -> bool {
             status: String,
             #[serde(default, deserialize_with = "present_non_null")]
             reason: Option<String>,
-            #[serde(default, deserialize_with = "present_non_null")]
+            #[serde(default, deserialize_with = "bounded_preview_entries")]
             entries: Option<Vec<PreviewEntry>>,
         }
         let Ok(doc) = serde_json::from_str::<PreviewDoc>(raw) else { return false };
@@ -932,13 +980,13 @@ fn valid_outline_payload(action: &str, raw: &str) -> bool {
         status: String,
         #[serde(default, deserialize_with = "present_non_null")]
         reason: Option<String>,
-        #[serde(default, deserialize_with = "present_non_null")]
+        #[serde(default, deserialize_with = "bounded_outline_entries")]
         entries: Option<Vec<Entry>>,
         #[serde(default, deserialize_with = "present_non_null")]
         total: Option<JsonNum>,
         #[serde(default, deserialize_with = "present_nullable")]
         cursor: Option<Option<Cursor>>,
-        #[serde(default, deserialize_with = "present_non_null")]
+        #[serde(default, deserialize_with = "bounded_outline_checkpoints")]
         checkpoints: Option<Vec<Checkpoint>>,
     }
     let Ok(doc) = serde_json::from_str::<OutlineDoc>(raw) else { return false };

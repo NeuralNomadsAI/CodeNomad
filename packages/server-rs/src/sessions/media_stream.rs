@@ -562,8 +562,10 @@ impl MessageListStream {
             if extra > avail {
                 return Err(());
             }
+            // `Vec::reserve_exact` reserves relative to `len`, not `capacity`, so add `slack`
+            // so the resulting capacity grows by `step <= avail` without triggering Vec doubling.
             let step = self.out.capacity().max(64).min(RESERVE_STEP).max(extra).min(avail);
-            self.out.reserve_exact(step);
+            self.out.reserve_exact(slack.saturating_add(step));
         }
         self.out.extend_from_slice(bytes);
         if self.retained_bytes() > OUTPUT_LIMIT {

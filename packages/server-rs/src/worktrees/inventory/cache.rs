@@ -43,15 +43,21 @@ impl InventoryCache {
         id: Uuid,
         endpoint: &Arc<crate::opencode::Endpoint>,
     ) -> Option<Arc<Catalogue>> {
-        [(id, false), (id, true)]
-            .into_iter()
-            .filter_map(|key| {
-                let entry = self.entries.get(&key)?;
-                (Arc::ptr_eq(&entry.endpoint, endpoint) && entry.at.elapsed() < EVENT_STALE_LIMIT)
-                    .then_some((entry.at, entry.value.as_ref()?))
-            })
-            .max_by_key(|(at, _)| *at)
-            .map(|(_, value)| Arc::clone(value))
+        let entry = self.entries.get(&(id, false))?;
+        (Arc::ptr_eq(&entry.endpoint, endpoint) && entry.at.elapsed() < EVENT_STALE_LIMIT)
+            .then_some(entry.value.as_ref()?)
+            .map(Arc::clone)
+    }
+
+    pub(in crate::worktrees) fn cached_refreshed(
+        &self,
+        id: Uuid,
+        endpoint: &Arc<crate::opencode::Endpoint>,
+    ) -> Option<Arc<Catalogue>> {
+        let entry = self.entries.get(&(id, true))?;
+        (Arc::ptr_eq(&entry.endpoint, endpoint) && entry.at.elapsed() < EVENT_STALE_LIMIT)
+            .then_some(entry.value.as_ref()?)
+            .map(Arc::clone)
     }
 
     #[cfg(test)]
@@ -194,15 +200,16 @@ async fn cached_catalogue(
                     }
                 }
             }
-            if let Some((_, flight_epoch, read)) = cache.entries.get(&key).and_then(|e| e.loading.as_ref()) {
-                let same_endpoint = cache.entries.get(&key).is_some_and(|e| Arc::ptr_eq(&e.endpoint, endpoint));
-                if *flight_epoch == epoch && same_endpoint {
+            if let Some((_, flight_epoch, read)) = cache.entries.get(&key).and_then(|e| e.loading.as_ref())
+                && cache.entries.get(&key).is_some_and(|e| Arc::ptr_eq(&e.endpoint, endpoint))
+            {
+                if *flight_epoch == epoch {
                     if background.is_some() { Step::Hit(background) } else { Step::Join(epoch, read.clone()) }
                 } else if background.is_some() {
                     Step::Hit(background)
                 } else {
-                    // Serialize behind the already-running invalidated flight before starting the
-                    // next scan (TS `worktree-inventory.ts:61-93`).
+                    // Serialize behind the already-running invalidated flight on the SAME live
+                    // endpoint before starting the next scan (TS `worktree-inventory.ts:61-93`).
                     Step::WaitPrevious(read.clone())
                 }
             } else {
@@ -293,7 +300,11 @@ async fn cached_catalogue(
         match step {
             Step::Hit(val) => return val,
             Step::WaitPrevious(prev) => {
-                let _ = prev.await;
+                tokio::select! {
+                    biased;
+                    _ = app.native.wait_retired(endpoint) => return None,
+                    _ = prev => {}
+                }
                 continue;
             }
             Step::Join(epoch, loading) => {

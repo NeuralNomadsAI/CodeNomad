@@ -1349,13 +1349,40 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     held_units = pre_needed;
                 }
                 let mut pos = 0;
-                while let Some(pending) = stream.feed(&chunk, &mut pos).map_err(|_| interrupted())? {
+                while let Some(mut pending) = stream.feed(&chunk, &mut pos).map_err(|_| interrupted())? {
                     // Only reserve the 2x + 8 MiB projection/undo overhead when `project_item`
                     // will actually attempt deferral (`len <= MESSAGE_LIMIT` and `data:image`
-                    // present); oversized or image-free items pass through zero-copy.
-                    let item_peak = if pending.bytes.len() <= crate::sessions::media::MESSAGE_LIMIT
-                        && crate::sessions::media_stream::may_contain_image_uri(&pending.bytes)
-                    {
+                    // present). Offload multi-hundred-KiB scans onto `spawn_blocking` so the
+                    // single-thread Tokio executor never stalls scanning 16 MiB messages.
+                    let may_defer = if pending.bytes.len() > crate::sessions::media::MESSAGE_LIMIT {
+                        false
+                    } else if pending.bytes.len() <= 256 * 1024 {
+                        crate::sessions::media_stream::may_contain_image_uri(&pending.bytes)
+                    } else {
+                        let held = slot.take().ok_or_else(interrupted)?;
+                        let held_large = large_slot.take();
+                        let held_mem = mem.take();
+                        let raw = pending.bytes;
+                        let timeout = step_timeout().ok_or_else(interrupted)?;
+                        let (found, raw_back, returned, returned_large, returned_mem) = tokio::select! {
+                            biased;
+                            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                            res = tokio::time::timeout(
+                                timeout,
+                                tokio::task::spawn_blocking(move || {
+                                    let found = crate::sessions::media_stream::may_contain_image_uri(&raw);
+                                    (found, raw, held, held_large, held_mem)
+                                }),
+                            ) => res.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
+                        };
+                        pending.bytes = raw_back;
+                        slot = Some(returned);
+                        large_slot = returned_large;
+                        mem = returned_mem;
+                        found
+                    };
+                    let item_peak = if may_defer {
                         pending.bytes.capacity().saturating_mul(2).saturating_add(8 * 1024 * 1024)
                     } else {
                         pending.bytes.capacity()
@@ -1620,10 +1647,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         let status = response.status();
         // Fetch `redirect: "error"` rejects only redirect status codes (301/302/303/307/308),
-        // letting 300 Multiple Choices pass through to the contract-error handler (TS `transport.ts:45-65`).
+        // letting 300 Multiple Choices pass through to the contract-error handler; TS invalidates
+        // the connection and propagates the fetch error to Fastify's 500 handler (`transport.ts:45-65`).
         if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
             app.native.invalidate(&endpoint);
-            return Err(upstream_error());
+            return Err(crate::shared::fastify::error(
+                Status::INTERNAL_SERVER_ERROR,
+                "ERR_UNEXPECTED_REDIRECT",
+                "fetch failed",
+            ));
         }
         let unauthorized = status == Status::UNAUTHORIZED;
         if !status.is_success() && !is_transport_json_content_type(response.headers()) {
@@ -1760,7 +1792,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         if message_list && matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
             drop(response);
             app.native.invalidate(&endpoint);
-            return Err(upstream_error());
+            return Err(crate::shared::fastify::error(
+                Status::INTERNAL_SERVER_ERROR,
+                "ERR_UNEXPECTED_REDIRECT",
+                "fetch failed",
+            ));
         }
         if message_list && !response.status().is_success() && !is_transport_json_content_type(response.headers()) {
             let status = response.status();

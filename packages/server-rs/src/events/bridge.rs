@@ -213,9 +213,9 @@ enum JobWork {
         event: Arc<Value>,
         endpoint: Arc<crate::opencode::Endpoint>,
         received: (Instant, i64),
-        directory: Option<String>,
+        directory: Option<Arc<str>>,
         foreign_workspace: bool,
-        session_id: Option<String>,
+        session_id: Option<Arc<str>>,
     },
 }
 
@@ -563,12 +563,13 @@ async fn route(
         }
     }
     let foreign_workspace = matches!(resolved, Some(CachedLocation::ForeignWorkspace));
-    let directory = match resolved {
-        Some(CachedLocation::Directory(dir)) => Some(dir),
+    let directory: Option<Arc<str>> = match resolved {
+        Some(CachedLocation::Directory(dir)) => Some(Arc::from(dir)),
         _ => None,
     };
     let session_id = event["data"]["sessionID"].as_str();
-    let session_id = session_id.filter(|s| *s != "global" && crate::opencode::valid_id(s)).map(str::to_owned);
+    let session_id: Option<Arc<str>> =
+        session_id.filter(|s| *s != "global" && crate::opencode::valid_id(s)).map(Arc::from);
     crate::sessions::favorites::deleted(app, &event);
     let is_moved = kind == "session.moved"
         && session_id.is_some()
@@ -616,9 +617,9 @@ async fn deliver(
     event: Arc<Value>,
     endpoint: Arc<crate::opencode::Endpoint>,
     (routed, received): (Instant, i64),
-    directory: Option<String>,
+    directory: Option<Arc<str>>,
     foreign_workspace: bool,
-    session_id: Option<String>,
+    session_id: Option<Arc<str>>,
 ) {
     let kind = event["type"].as_str().unwrap_or_default();
     let inbox = kind.starts_with("session.inbox.");
@@ -687,9 +688,9 @@ async fn deliver(
                 if inbox {
                     let resolved = {
                         let scope = app.scope.clone();
-                        let dir = dir.to_owned();
+                        let dir = directory.clone().unwrap();
                         tokio::task::spawn_blocking(move || {
-                            let physical = crate::files::paths::canonical(&scope, &dir)?;
+                            let physical = crate::files::paths::canonical(&scope, &*dir)?;
                             // Use `directory_identity` (stat-only on Unix) so a replaced FIFO
                             // never blocks a worker thread on open().
                             let identity = crate::files::directory_identity(&physical).ok()?;
@@ -725,9 +726,9 @@ async fn deliver(
             if inbox {
                 let Some((physical, identity, proof)) = inbox_proof else { break };
                 let scope = app.scope.clone();
-                let dir = directory.clone().unwrap_or_default();
+                let Some(dir) = directory.clone() else { break };
                 let still_live = tokio::task::spawn_blocking(move || {
-                    crate::files::paths::canonical(&scope, &dir).as_ref() == Some(&physical)
+                    crate::files::paths::canonical(&scope, &*dir).as_ref() == Some(&physical)
                         && crate::files::directory_identity(&physical).ok().as_ref() == Some(&identity)
                         && proof.live(&physical)
                 })

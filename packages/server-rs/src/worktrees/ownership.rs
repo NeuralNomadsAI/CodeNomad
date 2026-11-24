@@ -688,7 +688,7 @@ pub(crate) async fn media_directory_with_slot(
         };
         return Ok(proof_live_async(proof, path.to_path_buf(), slot).await);
     }
-    if !external && let Some(subfolders) = super::root_only(workspace).await? {
+    if !external && let Some(subfolders) = super::root_only_with_slot(workspace, slot.clone()).await? {
         if !current() {
             return Err(native_error());
         }
@@ -772,7 +772,7 @@ pub(crate) async fn media_directory_with_slot(
         let revision = inventory::revision(app);
         if !tried_cache {
             tried_cache = true;
-            let cached = app.linked_events.lock().unwrap().cached(workspace.id, endpoint);
+            let cached = app.linked_events.lock().unwrap().cached_refreshed(workspace.id, endpoint);
             if let Some(catalogue) = cached {
                 let proof =
                     catalogue_proof_live_async(catalogue, path.to_path_buf(), external, None, slot.clone()).await;
@@ -807,11 +807,9 @@ pub(crate) async fn media_directory_with_slot(
         if inventory::revision(app) != revision {
             continue;
         }
-        {
-            let mut cache = app.linked_events.lock().unwrap();
-            cache.store_if_current(workspace.id, false, endpoint, revision, std::sync::Arc::clone(&catalogue));
-            cache.store_if_current(workspace.id, true, endpoint, revision, catalogue);
-        }
+        // Keep refreshed HTTP inventories strictly separate from the non-refresh SSE routing cache
+        // (`(workspace.id, false)`), matching TS `manager.ts:467-503`.
+        app.linked_events.lock().unwrap().store_if_current(workspace.id, true, endpoint, revision, catalogue);
         return Ok(proof);
     }
     Err(native_error())

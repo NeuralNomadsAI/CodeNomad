@@ -285,8 +285,26 @@ pub async fn create(
                         return Ok(());
                     };
                     // Match TS `worktree-map.ts:8-12`: ignore mkdir/open failure for `info/`.
+                    // Refuse to follow an in-repo symlink at `info` so we never write outside the
+                    // physical `info/` directory inside the verified Git common directory.
                     let _ = common_dir.create_dir(info_comp);
+                    let Ok(info_meta) = common_dir.symlink_metadata(info_comp) else { return Ok(()) };
+                    if !info_meta.is_dir() || info_meta.is_symlink() {
+                        return Ok(());
+                    }
                     let Ok(info) = common_dir.open_dir(info_comp) else { return Ok(()) };
+                    let expected_info_path = common_canon.join(info_comp);
+                    if dunce::canonicalize(&expected_info_path).ok().as_deref() != Some(expected_info_path.as_path()) {
+                        return Ok(());
+                    }
+                    #[cfg(unix)]
+                    {
+                        use cap_std::fs::MetadataExt;
+                        let Ok(opened_meta) = info.dir_metadata() else { return Ok(()) };
+                        if opened_meta.dev() != info_meta.dev() || opened_meta.ino() != info_meta.ino() {
+                            return Ok(());
+                        }
+                    }
                     #[cfg(unix)]
                     let add_nonblock = |opts: &mut cap_std::fs::OpenOptions| {
                         use cap_std::fs::OpenOptionsExt;

@@ -47,10 +47,20 @@ async fn git(workspace: &Workspace, args: &[&str]) -> Result<std::process::Outpu
 }
 
 pub async fn root_only(workspace: &Workspace) -> Result<Option<bool>, Error> {
+    root_only_with_slot(workspace, None).await
+}
+
+pub(crate) async fn root_only_with_slot(
+    workspace: &Workspace,
+    slot: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
+) -> Result<Option<bool>, Error> {
     let path = workspace.path.clone();
-    let canonical_ok = tokio::task::spawn_blocking(move || dunce::canonicalize(&path).ok().as_ref() == Some(&path))
-        .await
-        .unwrap_or(false);
+    let canonical_ok = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        dunce::canonicalize(&path).ok().as_ref() == Some(&path)
+    })
+    .await
+    .unwrap_or(false);
     if !canonical_ok {
         crate::bench::route_trace(format_args!("root-proof canonical path changed"));
         return Err(probe_error());
@@ -164,13 +174,15 @@ pub async fn list(
             if inventory::revision(&app) != revision {
                 continue;
             }
-            {
-                let mut cache = app.linked_events.lock().unwrap();
-                cache.store_if_current(workspace.id, false, &endpoint, revision, std::sync::Arc::clone(&catalogue));
-                if fresh {
-                    cache.store_if_current(workspace.id, true, &endpoint, revision, std::sync::Arc::clone(&catalogue));
-                }
-            }
+            // Store under `(workspace.id, fresh)` only so `fresh = true` scans never populate
+            // the separate non-refresh SSE routing cache `(workspace.id, false)` (TS `manager.ts:467-503`).
+            app.linked_events.lock().unwrap().store_if_current(
+                workspace.id,
+                fresh,
+                &endpoint,
+                revision,
+                std::sync::Arc::clone(&catalogue),
+            );
             return Ok(Json(catalogue.response()).into_response());
         }
         return Err(crate::opencode::upstream_error());

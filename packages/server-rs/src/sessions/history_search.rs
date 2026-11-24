@@ -388,10 +388,7 @@ impl Scope<'_> {
         let left = self.remaining();
         let (status, bytes) =
             history::rpc_with_timeout(self.app, &self.endpoint, &owned.directory, method, input, left).await.ok()?;
-        if extra_fences.iter().any(|f| !f.load(Relaxed))
-            || !self.session_current(source).await
-            || !self.owned_current(owned).await
-        {
+        if extra_fences.iter().any(|f| !f.load(Relaxed)) || !self.current() || !self.session_current(source).await {
             return None;
         }
         let value: Value = serde_json::from_slice(&bytes).ok()?;
@@ -420,7 +417,17 @@ impl Scope<'_> {
                 owner.as_object_mut()?.entry("prefilterBypassed").or_insert(json!(0));
             }
         }
-        contracts::valid(contracts::get(action, true), &output).then_some(Call::Result(output))
+        if !contracts::valid(contracts::get(action, true), &output) {
+            return None;
+        }
+        // Match TS `session-history-ranked.ts:81-96`: return valid non-ranked statuses (such as
+        // `restart_required` or `blocked`) immediately while the connection and deletion fences
+        // hold, even if `worktree.updated` removed the queried location from inventory mid-RPC.
+        if (action == "ranked" && output["status"] != "ranked") || self.owned_current(owned).await {
+            Some(Call::Result(output))
+        } else {
+            None
+        }
     }
     async fn session_current(&self, source: Option<(&str, &Value)>) -> bool {
         match source {
