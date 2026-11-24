@@ -916,7 +916,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                 _ = workspace_closed() => return Err(not_found()),
-                permit = tokio::time::timeout_at(list_deadline, crate::shared::reserve_response_memory(payload.len())) => {
+                permit = tokio::time::timeout_at(
+                    list_deadline,
+                    crate::shared::reserve_response_memory(crate::shared::ResponsePool::List, payload.len()),
+                ) => {
                     permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                 }
             };
@@ -1027,15 +1030,33 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         // 401 error body finishes streaming downstream, so retiring it does not truncate the body.
         let invalidate = unauthorized.then(|| InvalidateOnDrop { app: app.clone(), endpoint: endpoint.clone() });
         let bytes = futures_util::stream::unfold(
-            (response.bytes_stream(), cancelled, app_retire, endpoint_retire, unauthorized, invalidate),
-            |(mut inner, mut cancelled, app_retire, endpoint_retire, unauthorized, invalidate)| async move {
+            (response.bytes_stream(), cancelled, app_retire, endpoint_retire, unauthorized, invalidate, false),
+            |(mut inner, mut cancelled, app_retire, endpoint_retire, unauthorized, invalidate, done)| async move {
+                if done {
+                    return None;
+                }
                 let next = tokio::select! {
                     biased;
-                    _ = &mut cancelled => return None,
-                    _ = app_retire.native.wait_retired(&endpoint_retire), if !unauthorized => return None,
+                    _ = &mut cancelled => {
+                        return Some((
+                            Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "upstream stream aborted")),
+                            (inner, cancelled, app_retire, endpoint_retire, unauthorized, invalidate, true),
+                        ));
+                    }
+                    _ = app_retire.native.wait_retired(&endpoint_retire), if !unauthorized => {
+                        return Some((
+                            Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "upstream stream aborted")),
+                            (inner, cancelled, app_retire, endpoint_retire, unauthorized, invalidate, true),
+                        ));
+                    }
                     item = inner.next() => item,
                 };
-                next.map(|chunk| (chunk, (inner, cancelled, app_retire, endpoint_retire, unauthorized, invalidate)))
+                next.map(|chunk| {
+                    (
+                        chunk.map_err(std::io::Error::other),
+                        (inner, cancelled, app_retire, endpoint_retire, unauthorized, invalidate, false),
+                    )
+                })
             },
         );
         return builder.extension(NativeBody).body(Body::from_stream(bytes)).map_err(|_| upstream_error());

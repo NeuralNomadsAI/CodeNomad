@@ -115,18 +115,33 @@ pub fn stream_abort(
 }
 
 const RESPONSE_CHUNK: usize = 64 * 1024;
-const RESPONSE_MEM_UNITS: usize = 4096;
+const MEDIA_MEM_UNITS: usize = 1024;
+const LIST_MEM_UNITS: usize = 4096;
 
-/// Global byte budget (256 MiB in 64 KiB units) bounding prepared buffered responses
-/// currently streaming downstream (`session-media`, deferred `window`, deferred `message.list`).
-static RESPONSE_MEM: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
-    std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(RESPONSE_MEM_UNITS)));
+#[derive(Clone, Copy)]
+pub enum ResponsePool {
+    /// 64 MiB isolated pool for `session-media` images (<= 6 MiB each) so slow list streams
+    /// cannot starve image fetches across workspaces.
+    Media,
+    /// 256 MiB pool for deferred `message.list` and `session-history/window` responses.
+    List,
+}
+
+static MEDIA_RESPONSE_MEM: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(MEDIA_MEM_UNITS)));
+static LIST_RESPONSE_MEM: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(LIST_MEM_UNITS)));
 
 pub async fn reserve_response_memory(
+    pool: ResponsePool,
     bytes: usize,
 ) -> Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::AcquireError> {
-    let units = bytes.div_ceil(RESPONSE_CHUNK).clamp(1, RESPONSE_MEM_UNITS) as u32;
-    RESPONSE_MEM.clone().acquire_many_owned(units).await
+    let (sem, cap) = match pool {
+        ResponsePool::Media => (&*MEDIA_RESPONSE_MEM, MEDIA_MEM_UNITS),
+        ResponsePool::List => (&*LIST_RESPONSE_MEM, LIST_MEM_UNITS),
+    };
+    let units = bytes.div_ceil(RESPONSE_CHUNK).clamp(1, cap) as u32;
+    sem.clone().acquire_many_owned(units).await
 }
 
 pub fn permit_body(
@@ -154,6 +169,9 @@ pub fn permit_body(
             return std::task::Poll::Ready(None);
         }
         let chunk = bytes.split_to(bytes.len().min(RESPONSE_CHUNK));
+        if let Some(permit) = mem.as_mut() {
+            drop(permit.split(1));
+        }
         std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(chunk)))
     }))
 }

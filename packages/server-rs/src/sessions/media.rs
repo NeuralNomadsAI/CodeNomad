@@ -154,9 +154,7 @@ pub(crate) fn defer(workspace: &str, session: &str, messages: &mut Value) -> boo
 
 fn parse_message_envelope(raw: &[u8]) -> Result<Value, Error> {
     let unavailable = || error(Status::BAD_GATEWAY, "Media unavailable");
-    let envelope: Value = serde_json::from_slice(raw).map_err(|_| unavailable())?;
-    envelope.get("data").filter(|message| message.is_object()).ok_or_else(unavailable)?;
-    Ok(envelope)
+    serde_json::from_slice(raw).map_err(|_| unavailable())
 }
 
 fn extract_media_from_envelope(
@@ -168,8 +166,7 @@ fn extract_media_from_envelope(
     envelope: &Value,
 ) -> Result<(&'static str, Vec<u8>), Error> {
     let missing = || error(Status::NOT_FOUND, "Media not found");
-    let unavailable = || error(Status::BAD_GATEWAY, "Media unavailable");
-    let message = envelope.get("data").filter(|message| message.is_object()).ok_or_else(unavailable)?;
+    let message = envelope.get("data").filter(|message| message.is_object()).ok_or_else(missing)?;
     if message["id"] != message_id
         || message["type"] != "assistant"
         || revert_boundary.is_some_and(|boundary| message_id.encode_utf16().cmp(boundary.encode_utf16()).is_ge())
@@ -308,9 +305,12 @@ pub(super) async fn route(
             }
             // Reserve response-stream memory BEFORE the final `session.get` so no blocking
             // wait occurs after the last native revert/placement revalidation.
-            let mem = crate::shared::reserve_response_memory(raw_len.min(6 * 1024 * 1024))
-                .await
-                .map_err(|_| unavailable())?;
+            let mem = crate::shared::reserve_response_memory(
+                crate::shared::ResponsePool::Media,
+                raw_len.min(6 * 1024 * 1024),
+            )
+            .await
+            .map_err(|_| unavailable())?;
             if !placement.operation_current(&app, &r.workspace).await {
                 return Ok(crate::shared::abort_response());
             }

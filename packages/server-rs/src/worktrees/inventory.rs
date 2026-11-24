@@ -12,6 +12,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
+struct ConfigStamp {
+    link: (std::time::SystemTime, u64),
+    target: Option<(PathBuf, std::time::SystemTime, u64)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct Physical {
     root: PathBuf,
     common: PathBuf,
@@ -22,11 +28,22 @@ struct Physical {
     marker: Option<Vec<u8>>,
     backlink: Option<Vec<u8>>,
     common_marker: Option<Vec<u8>>,
-    stamp: [Option<(std::time::SystemTime, u64)>; 2],
+    stamp: [Option<ConfigStamp>; 2],
 }
-fn config_stamp(path: &Path) -> Option<Option<(std::time::SystemTime, u64)>> {
+fn config_stamp(path: &Path) -> Option<Option<ConfigStamp>> {
     match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_file() => Some(Some((meta.modified().ok()?, meta.len()))),
+        Ok(meta) if meta.is_file() => {
+            Some(Some(ConfigStamp { link: (meta.modified().ok()?, meta.len()), target: None }))
+        }
+        Ok(meta) if meta.file_type().is_symlink() => {
+            let link = (meta.modified().ok()?, meta.len());
+            let real = dunce::canonicalize(path).ok()?;
+            let target_meta = std::fs::metadata(&real).ok()?;
+            if !target_meta.is_file() {
+                return None;
+            }
+            Some(Some(ConfigStamp { link, target: Some((real, target_meta.modified().ok()?, target_meta.len())) }))
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(None),
         _ => None,
     }
@@ -50,8 +67,8 @@ impl Physical {
             && identity(&self.root).ok().as_ref() == Some(&self.root_id)
             && identity(&self.admin).ok().as_ref() == Some(&self.admin_id)
             && identity(&self.common).ok().as_ref() == Some(&self.common_id)
-            && config_stamp(&self.common.join("config")) == Some(self.stamp[0])
-            && config_stamp(&self.admin.join("config.worktree")) == Some(self.stamp[1])
+            && config_stamp(&self.common.join("config")).as_ref() == Some(&self.stamp[0])
+            && config_stamp(&self.admin.join("config.worktree")).as_ref() == Some(&self.stamp[1])
             && match (&self.marker, &self.backlink, &self.common_marker) {
                 (Some(marker), Some(backlink), Some(common_marker)) => {
                     linked_markers(&self.root, &self.admin, &self.common)

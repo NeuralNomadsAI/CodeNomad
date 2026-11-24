@@ -566,7 +566,8 @@ async fn read_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
         return Ok(None);
     }
     let out = out.ok().map_err(|_| ())?;
-    dunce::canonicalize(out.text().trim()).map(Some).map_err(|_| ())
+    let trimmed = out.text().trim().to_owned();
+    tokio::task::spawn_blocking(move || dunce::canonicalize(trimmed).ok()).await.map_err(|_| ())?.map(Some).ok_or(())
 }
 async fn shares_common_directory(left: &Path, right: &Path) -> Result<bool, ()> {
     let (a, b) = tokio::join!(read_common_directory(left), read_common_directory(right));
@@ -575,7 +576,13 @@ async fn shares_common_directory(left: &Path, right: &Path) -> Result<bool, ()> 
 }
 async fn repository_root(root: &Path) -> PathBuf {
     match crate::git::run(root, &["rev-parse", "--show-toplevel"], 16 * 1024).await.ok().and_then(|o| o.ok().ok()) {
-        Some(o) => dunce::canonicalize(o.text().trim()).unwrap_or_else(|_| root.to_path_buf()),
+        Some(o) => {
+            let trimmed = o.text().trim().to_owned();
+            let fallback = root.to_path_buf();
+            tokio::task::spawn_blocking(move || dunce::canonicalize(trimmed).unwrap_or(fallback))
+                .await
+                .unwrap_or_else(|_| root.to_path_buf())
+        }
         None => root.to_path_buf(),
     }
 }

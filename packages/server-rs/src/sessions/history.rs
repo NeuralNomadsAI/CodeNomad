@@ -228,24 +228,22 @@ impl Placement {
         {
             return Err(changed());
         }
-        if self.media {
-            let current = crate::worktrees::ownership::media_directory(
-                app,
-                &self.workspace,
-                &self.endpoint,
-                &self.path,
-                &self.anchor,
-                self.strict_media,
-            )
-            .await
-            .map_err(|_| crate::opencode::upstream_error())?;
-            if !self.operation_current(app, id).await {
-                return Err(crate::opencode::upstream_error());
-            }
-            let current = current.ok_or_else(changed)?;
-            if !self.checkout.same_checkout(&current) || !self.live(app, id).await {
-                return Err(changed());
-            }
+        let current = crate::worktrees::ownership::media_directory(
+            app,
+            &self.workspace,
+            &self.endpoint,
+            &self.path,
+            &self.anchor,
+            self.strict_media,
+        )
+        .await
+        .map_err(|_| crate::opencode::upstream_error())?;
+        if !self.operation_current(app, id).await {
+            return Err(crate::opencode::upstream_error());
+        }
+        let current = current.ok_or_else(changed)?;
+        if !self.checkout.same_checkout(&current) || !self.live(app, id).await {
+            return Err(changed());
         }
         Ok(newest)
     }
@@ -599,9 +597,11 @@ pub async fn handle(
                 let permit = tokio::select! {
                     biased;
                     _ = workspace_closed => return blocked("unavailable"),
-                    permit = crate::shared::reserve_response_memory(body_len) => match permit {
-                        Ok(permit) => permit,
-                        Err(_) => return blocked("unavailable"),
+                    permit = crate::shared::reserve_response_memory(crate::shared::ResponsePool::List, body_len) => {
+                        match permit {
+                            Ok(permit) => permit,
+                            Err(_) => return blocked("unavailable"),
+                        }
                     }
                 };
                 Some(permit)

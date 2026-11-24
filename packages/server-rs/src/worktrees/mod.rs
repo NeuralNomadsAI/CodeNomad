@@ -35,16 +35,17 @@ fn probe_error() -> Error {
     error(Status::SERVICE_UNAVAILABLE, "Git ownership could not be verified")
 }
 async fn git(workspace: &Workspace, args: &[&str]) -> Result<std::process::Output, std::io::Error> {
+    let _slot = crate::git::slot().await;
     let mut git = crate::git::command(&workspace.path, args);
-    tokio::time::timeout(Duration::from_secs(3), async {
-        let _slot = crate::git::slot().await;
-        git.output().await
-    })
-    .await?
+    tokio::time::timeout(Duration::from_secs(3), git.output()).await?
 }
 
 pub async fn root_only(workspace: &Workspace) -> Result<Option<bool>, Error> {
-    if dunce::canonicalize(&workspace.path).ok().as_ref() != Some(&workspace.path) {
+    let path = workspace.path.clone();
+    let canonical_ok = tokio::task::spawn_blocking(move || dunce::canonicalize(&path).ok().as_ref() == Some(&path))
+        .await
+        .unwrap_or(false);
+    if !canonical_ok {
         return Err(probe_error());
     }
     match git(workspace, &["rev-parse", "--show-toplevel"]).await {
