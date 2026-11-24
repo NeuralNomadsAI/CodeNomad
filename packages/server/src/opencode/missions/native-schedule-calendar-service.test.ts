@@ -177,7 +177,7 @@ test("Code Mode calendar create validates ownership, model and permissions on th
   let enabledCalls = 0
   const postFlagResume = await facade(t, () => Effect.void, {
     model: { ...NATIVE_SCHEDULE_CARRIER_MODEL },
-    onSchedulesEnabled: () => Effect.sync(() => { if (++enabledCalls === 2) postFlagResume.state.model = undefined }),
+    onSchedulesEnabled: () => Effect.sync(() => { if (++enabledCalls === 3) postFlagResume.state.model = undefined }),
   })
   postFlagResume.state.runCount = 0; postFlagResume.state.status = "paused"
   await assert.rejects(postFlagResume.native.resume(postFlagResume.selected, "sch_scope", current), /carrier differs/)
@@ -186,11 +186,19 @@ test("Code Mode calendar create validates ownership, model and permissions on th
   let pauseFlagCalls = 0
   const postFlagPause = await facade(t, () => Effect.void, {
     model: { ...NATIVE_SCHEDULE_CARRIER_MODEL },
-    onSchedulesEnabled: () => Effect.sync(() => { if (++pauseFlagCalls === 2) postFlagPause.state.model = { providerID: "remote", id: "paid" } }),
+    onSchedulesEnabled: () => Effect.sync(() => { if (++pauseFlagCalls === 3) postFlagPause.state.model = { providerID: "remote", id: "paid" } }),
   })
   postFlagPause.state.runCount = 0; postFlagPause.state.status = "active"
   await assert.rejects(postFlagPause.native.pause(postFlagPause.selected, "sch_scope", current), /carrier differs/)
   assert.deepEqual(postFlagPause.pauses, [])
+
+  const offDuringSession = await facade(t, () => Effect.void, {
+    model: undefined,
+    onSessionGet: () => Effect.sync(() => { offDuringSession.state.enabled = false }),
+  })
+  await assert.rejects(offDuringSession.native.create(offDuringSession.selected, current), /schedules disabled/)
+  assert.equal(offDuringSession.state.permissions, undefined)
+  assert.deepEqual(offDuringSession.created, [])
 })
 
 test("prepared wake ACK decodes encoded native SQL timestamps and keeps partial or absent proof closed", async t => {

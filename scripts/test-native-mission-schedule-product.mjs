@@ -34,6 +34,7 @@ const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: tr
   "legacy-bundle": { type: "string" },
 } })
 assert(!values["legacy-bundle"] || path.isAbsolute(values["legacy-bundle"]) && existsSync(values["legacy-bundle"]), "Legacy bundle must be an absolute existing plugin.mjs")
+assert(!(values["runtime-only"] && values["legacy-bundle"]), "Use separate runs for --runtime-only and --legacy-bundle")
 assert(values["parent-ready"], "Explicit product qualification requires --parent-ready")
 assert(cli && scratch && path.isAbsolute(cli) && path.isAbsolute(scratch) && !existsSync(scratch), "Absolute CLI and fresh approved scratch child required")
 const approved = [path.resolve(process.env.TEMP, "opencode")]

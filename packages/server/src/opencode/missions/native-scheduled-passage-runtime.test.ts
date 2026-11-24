@@ -417,6 +417,41 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       assert.equal(driftedModel, true)
       sessions.set("ses_reconciliation", { ...auxSession, metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: {
         missionID: promptDoc.id, timeGeneration: 1, role: "reconciliation", slot: 0 } } } as Session.Info)
+
+      let pausedAfterProvider = false
+      const originalAux = infos.get("aut_reconciliation")!
+      let getCalls = 0
+      const pausingSchedules = {
+        get: (id: string) => Effect.sync(() => {
+          if (++getCalls === 2) { pausedAfterProvider = true; return { ...originalAux, status: "paused" as const } }
+          return infos.get(id)
+        }),
+        enabled: () => Effect.sync(() => enabled),
+      }
+      await assert.rejects(Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+        const cap = yield* acquireNativeScheduledPassageCapability(ctx, current)
+        yield* cap.prepare(promptDoc)
+      }).pipe(
+        Effect.provideService(Context.Service<never, unknown>("@opencode/Automation"), pausingSchedules),
+        Effect.provideService(Context.Service<never, unknown>("@opencode/Session"), { get: (id: string) => Effect.succeed(sessions.get(id)) }),
+      ))), /auxiliary differs/)
+      assert.equal(pausedAfterProvider, true)
+
+      let offDuringSession = false
+      await assert.rejects(Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+        const cap = yield* acquireNativeScheduledPassageCapability(ctx, current)
+        yield* cap.prepare(promptDoc)
+      }).pipe(
+        Effect.provideService(Context.Service<never, unknown>("@opencode/Automation"), {
+          get: (id: string) => Effect.succeed(infos.get(id)),
+          enabled: () => Effect.sync(() => enabled),
+        }),
+        Effect.provideService(Context.Service<never, unknown>("@opencode/Session"), {
+          get: (id: string) => Effect.sync(() => { offDuringSession = true; enabled = false; return sessions.get(id) }),
+        }),
+      ))), /flag disabled/)
+      assert.equal(offDuringSession, true)
+      enabled = true
     })
     await t.test("Code Mode scheduled passage admits and runs business without local provider or provider.mjs", async () => {
       enabled = true

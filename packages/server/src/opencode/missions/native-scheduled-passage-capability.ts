@@ -57,14 +57,22 @@ export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acqui
     const session = sessions.value as { get(id: string): NativeEffect }
     if (!Predicate.isFunction(schedule.get) || !Predicate.isFunction(schedule.enabled) || !Predicate.isFunction(session.get))
       throw new Error("Scheduled passage native capabilities unavailable")
+    const checkFlag = () => Effect.suspend(() => {
+      const effect = schedule.enabled(ctx.location.directory)
+      if (!Effect.isEffect(effect)) return Effect.fail(new Error("Scheduled passage native flag disabled"))
+      return effect.pipe(Effect.flatMap(value => value === true ? Effect.void : Effect.fail(new Error("Scheduled passage native flag disabled"))))
+    })
     const id = missionAutomationID(proof.descriptor.scheduleID!)
-    const info = yield* schedule.get(id).pipe(Effect.flatMap(readMissionAutomation))
-    const code = missionCodeWake(info)
+    const initial = yield* schedule.get(id).pipe(Effect.flatMap(readMissionAutomation))
+    const code = missionCodeWake(initial)
     if (!code) yield* assertNativeScheduleProviderAvailable(ctx, proof.owner.installation)
-    const flag = schedule.enabled(ctx.location.directory)
-    if (!Effect.isEffect(flag) || (yield* flag) !== true) throw new Error("Scheduled passage native flag disabled")
-    const carrier = yield* session.get(proof.descriptor.sessionID).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(Session.Info))))
-    if (info.id !== id || info.status !== "active" || info.nextDueAt === undefined || !matchMissionAutomation(info, proof.descriptor,
+    yield* checkFlag()
+    const [info, carrier] = yield* Effect.all([
+      schedule.get(id).pipe(Effect.flatMap(readMissionAutomation)),
+      session.get(proof.descriptor.sessionID).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(Session.Info)))),
+    ])
+    yield* checkFlag()
+    if (missionCodeWake(info) !== code || info.id !== id || info.status !== "active" || info.nextDueAt === undefined || !matchMissionAutomation(info, proof.descriptor,
       { directory: ctx.location.directory, projectID: doc.projectID }, NATIVE_SCHEDULE_CARRIER_SIGNAL)
       || carrier.id !== proof.descriptor.sessionID || carrier.parentID
       || carrier.projectID !== doc.projectID || carrier.location.directory !== ctx.location.directory

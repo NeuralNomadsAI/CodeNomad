@@ -12,7 +12,8 @@ import { nativeSchedulePreflight } from "./native-mission-schedule-preflight"
 import { nativeScheduleWakeKey } from "./native-schedule-transport-contract"
 import { dispatchNativeMissionScheduleWake, nativeMissionSchedulePriorHeld, parseNativeMissionScheduleClaim,
   recoverNativeMissionScheduleClaim } from "./native-mission-schedule-wake-dispatch"
-import { receiveNativeMissionScheduleWake, type NativeMissionScheduleWakePorts } from "./native-mission-schedule-wake-rpc"
+import { readNativeMissionScheduleWakeProof, receiveNativeMissionScheduleWake, type NativeMissionScheduleWakePorts } from "./native-mission-schedule-wake-rpc"
+import { isLegacyScheduleCarrierModel } from "./native-schedule-carrier"
 import type { createNativeScheduleTransport } from "./native-schedule-transport"
 
 async function receiver(t: test.TestContext, role: "principal" | "reconciliation" = "principal", loseAuxiliary = false) {
@@ -305,4 +306,37 @@ test("a carrier turn reconciles another occurrence's unsettled claim before its 
   assert.equal(await recoverNativeMissionScheduleClaim(claim, next, answer("pending")), false)
   assert.equal(await recoverNativeMissionScheduleClaim(claim, next, answer("applied")), true)
   assert.deepEqual(dispatched, [claim.key, claim.key])
+})
+
+test("legacy auxiliary wake rejects when carrier switches to a foreign model during provider qualification", async t => {
+  const f = await receiver(t, "reconciliation")
+  const session = f.sessions.get(f.slot.sessionID)!
+  let qualifyCalls = 0
+  const native = {
+    ...f.native,
+    get: async (target: Parameters<typeof f.native.get>[0], id: string, guard: () => true) => {
+      const info = await f.native.get(target, id, guard)
+      if (info && !info.code && !isLegacyScheduleCarrierModel(f.sessions.get(target.descriptor.sessionID)?.model)) {
+        throw new Error("Native calendar carrier differs")
+      }
+      return info
+    },
+    qualifyLegacyProvider: async (guard: () => true) => {
+      await f.native.qualifyLegacyProvider(guard)
+      qualifyCalls++
+      if (qualifyCalls === 2) session.model = { providerID: "openai", modelID: "gpt-5" }
+    },
+  }
+  f.ports.read = () => readNativeMissionScheduleWakeProof({
+    ctx: f.ctx, doc: f.doc, role: "reconciliation", wake: f.wake, native,
+    reader: { message: async () => ({ scheduleID: f.wake.scheduleID, run: f.wake.run, messageID: f.wake.messageID, dueAt: f.now }) },
+    run: Effect.runPromise, current: f.current,
+  })
+  await f.claim()
+  const before = await f.read()
+  await assert.rejects(receiveNativeMissionScheduleWake("wake", f.input, f.entry, f.ports), /Native calendar carrier differs/)
+  assert.equal(qualifyCalls, 2)
+  const after = await f.read()
+  assert.equal(after.revision, before.revision)
+  assert.equal(after.calendars.find(item => item.scheduleID === f.wake.scheduleID)!.highWater, 0)
 })

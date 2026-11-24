@@ -169,8 +169,9 @@ the journal revision and write count unchanged.
 provider-HTTP hooks for every owned carrier, plus `language` and `context`
 hooks for legacy prompt carriers, registered with an exact owned carrier lookup.
 `createNativeScheduleCarrierProvider` is registered only when `provider.mjs` is
-present and serves legacy prompt rows; Code Mode carriers have no model and
-refuse prompt and LLM context hooks. The language object is shared and
+present and serves legacy prompt rows; new Code Mode carriers have no model
+(retained carriers with the exact local noop model can also host Code Mode rows)
+and model-less carriers refuse prompt and LLM context hooks. The language object is shared and
 stateless; title and compaction return local results even when auxiliary agent
 defaults point to remote models. Context validation clears technical tools;
 provider HTTP for any owned carrier throws.
