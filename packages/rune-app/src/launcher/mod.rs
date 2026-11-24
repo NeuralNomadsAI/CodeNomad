@@ -733,7 +733,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.show_title = false;
             }
             let superseded = ticket.is_some_and(|t| t != s.notifications.navigation_ticket());
-            let stopped_in_flight = stopped_during_pending.contains(&b.workspace);
+            let stopped_in_flight =
+                stopped_during_pending_overflow || stopped_during_pending.contains(&b.workspace);
             if blocked || superseded || l.authentication_required || stopped_in_flight {
                 if !stopped_in_flight {
                     l.sessions.insert(
@@ -754,10 +755,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.title = TextEdit::new("");
                 l.show_title = false;
             }
-            let stopped_in_flight = l
-                .project
-                .as_ref()
-                .is_some_and(|p| stopped_during_pending.contains(&p.id));
+            let stopped_in_flight = stopped_during_pending_overflow
+                || l.project
+                    .as_ref()
+                    .is_some_and(|p| stopped_during_pending.contains(&p.id));
             if !stopped_in_flight && !l.sessions.iter().any(|row| row.id == session.id) {
                 l.sessions.insert(0, session);
             }
@@ -828,6 +829,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             let auth_required = l.authentication_required;
             if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
                 !auth_required
+                    && !stopped_during_pending_overflow
                     && !stopped_during_pending.contains(&b.workspace)
                     && (!blocked
                         || s.phase == Phase::Failed
@@ -904,6 +906,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.error = (!confirmed).then_some("sessionList.worktreeMove.error");
                 crate::workspace::schedule_catalogue(s);
                 if !auth_required
+                    && !stopped_during_pending_overflow
                     && !stopped_during_pending.contains(&backend.workspace)
                     && (attempted
                         || crate::git::placement(s) != Some(slug.as_str())
@@ -923,6 +926,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             crate::git::release_placement(s, &backend.base, &family);
             crate::workspace::schedule_catalogue(s);
             if !auth_required
+                && !stopped_during_pending_overflow
                 && !stopped_during_pending.contains(&backend.workspace)
                 && (crate::git::placement(s) != Some(slug.as_str()) || s.phase == Phase::Failed)
             {

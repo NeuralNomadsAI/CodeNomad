@@ -5,6 +5,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
 };
 const MAX_SESSION_PAGES: usize = 1_000;
+const MAX_SESSION_TEXT_BYTES: usize = 24 * 1024 * 1024;
 
 fn cursor_hash(cursor: &str) -> u64 {
     let mut hash = DefaultHasher::new();
@@ -29,10 +30,16 @@ impl Launcher {
     }
 
     pub(crate) fn can_page(&self) -> bool {
-        self.next.as_ref().is_some_and(|next| {
-            self.consumed_cursors.len() + 1 < MAX_SESSION_PAGES
-                && !self.consumed_cursors.contains(&cursor_hash(next))
-        })
+        let bytes: usize = self
+            .sessions
+            .iter()
+            .map(|row| row.id.len() + row.title.len())
+            .sum();
+        bytes < MAX_SESSION_TEXT_BYTES
+            && self.next.as_ref().is_some_and(|next| {
+                self.consumed_cursors.len() + 1 < MAX_SESSION_PAGES
+                    && !self.consumed_cursors.contains(&cursor_hash(next))
+            })
     }
 
     pub(crate) fn apply_passive_listing(
@@ -70,7 +77,7 @@ impl Launcher {
                 continue;
             }
             let row_bytes = row.id.len() + row.title.len();
-            if !is_selected && bytes.saturating_add(row_bytes) > 24 * 1024 * 1024 {
+            if !is_selected && bytes.saturating_add(row_bytes) > MAX_SESSION_TEXT_BYTES {
                 continue;
             }
             bytes = bytes.saturating_add(row_bytes);

@@ -870,6 +870,7 @@ fn create_untitled_session_distinguishes_explicit_4xx_rejection_from_ambiguous_e
         let body = Some(json!({"location":{"directory":"/linked"}}));
         let server = Server::start(vec![
             reply(route, body.clone(), 403, json!({"error":"forbidden"})),
+            reply(route, body.clone(), 401, json!({"error":"unauthorized"})),
             reply(route, body.clone(), 408, json!({})),
             reply(route, body.clone(), 409, json!({"error":"conflict"})),
             reply(route, body, 503, json!({})),
@@ -885,6 +886,12 @@ fn create_untitled_session_distinguishes_explicit_4xx_rejection_from_ambiguous_e
             .err()
             .unwrap();
         assert!(rejected.is::<crate::catalog::CreateRejected>());
+        let unauthorized = backend
+            .create_untitled_session(&project, "/linked")
+            .await
+            .err()
+            .unwrap();
+        assert!(!unauthorized.is::<crate::catalog::CreateRejected>());
         let timeout = backend
             .create_untitled_session(&project, "/linked")
             .await

@@ -387,9 +387,7 @@ impl Backend {
             .await?;
         if matches!(
             response.status(),
-            reqwest::StatusCode::BAD_REQUEST
-                | reqwest::StatusCode::UNAUTHORIZED
-                | reqwest::StatusCode::FORBIDDEN
+            reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::FORBIDDEN
         ) {
             return Err(CreateRejected.into());
         }
@@ -420,9 +418,7 @@ impl Backend {
             .await?;
         if matches!(
             response.status(),
-            reqwest::StatusCode::BAD_REQUEST
-                | reqwest::StatusCode::UNAUTHORIZED
-                | reqwest::StatusCode::FORBIDDEN
+            reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::FORBIDDEN
         ) {
             return Err(CreateRejected.into());
         }
