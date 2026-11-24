@@ -114,6 +114,14 @@ test("parsePluginUsageOutput clears windows on failure and rejects malformed, pr
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 1.005, remainingPercent: 99.0549 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 1.01, remainingPercent: 99.0549 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.ok(parsePluginUsageOutput({ configured: true, ok: true, windows: { weekly: { usedPercent: 1.005, remainingPercent: 99.0449 } } }, { requestedProviderId: "x", providerId: "x" }))
+  // Single-pass decimal rounding avoids double-rounding 99.9949999 -> 99.995 -> 100.
+  const noDoubleRound = parsePluginUsageOutput(
+    { configured: true, ok: true, windows: { weekly: { usedPercent: 99.9949999 }, daily: { usedPercent: 1, remainingPercent: 99.0549999 } } },
+    { requestedProviderId: "x", providerId: "x" },
+  )
+  assert.ok(noDoubleRound)
+  assert.equal(noDoubleRound.windows.weekly?.usedPercent, 99.99)
+  assert.equal(noDoubleRound.windows.weekly?.remainingPercent, 0.01)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { credits: { balanceUSD: { remaining: 5, total: -1 } } } }, { requestedProviderId: "x", providerId: "x" }), null)
 })
 
@@ -155,6 +163,8 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     ["plain-text 500", async () => new Response("Internal Server Error", { status: 500 })],
     ["untagged 400 {}", async () => Response.json({}, { status: 400 })],
     ["LocationNotFoundError 404", async () => Response.json({ _tag: "LocationNotFoundError", message: "gone" }, { status: 404 })],
+    ["oversized LocationNotFoundError 404", async () => Response.json({ _tag: "LocationNotFoundError", message: "x".repeat(PLUGIN_USAGE_MAX_RESPONSE_BYTES + 16) }, { status: 404 })],
+    ["malformed JSON 404", async () => new Response("{bad", { status: 404, headers: { "content-type": "application/json" } })],
     ["SessionNotFoundError 404", async () => Response.json({ _tag: "SessionNotFoundError", message: "gone" }, { status: 404 })],
     ["contract error 500", async () => Response.json({ _tag: "OpenCodeContractError", status: 500 }, { status: 500 })],
     ["bad gateway 502", async () => new Response("Bad Gateway", { status: 502 })],
@@ -215,14 +225,19 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     assert.equal(cancelCalled, true)
   }
 
-  // Quota deadline abort bounds an RPC whose transport ignores the abort signal and resolves late or never settles.
+  // Quota deadline abort bounds an RPC whose transport ignores the abort signal and cancels any late response body.
   {
     const outer = new AbortController()
     const quota = new AbortController()
     let release!: () => void
+    let lateCancelled = false
+    const lateStream = new ReadableStream<Uint8Array>({
+      cancel() { lateCancelled = true },
+    })
     const hanging = new Promise<Response>(resolve => {
-      release = () => resolve(Response.json({
-        output: { configured: true, ok: true, windows: { "5h": { usedPercent: 5 } } },
+      release = () => resolve(new Response(lateStream, {
+        status: 200,
+        headers: { "content-type": "application/json" },
       }))
     })
     const pending = readPluginProviderUsage(
@@ -234,10 +249,12 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     quota.abort()
     const timedOut = await pending
     release()
+    await new Promise(resolve => setImmediate(resolve))
     assert.ok(timedOut)
     assert.equal(timedOut.supported, true)
     assert.equal(timedOut.ok, false)
     assert.deepEqual(timedOut.windows, {})
+    assert.equal(lateCancelled, true)
   }
 
   // Already-aborted quota signal rejects even if fetch would return a valid response.

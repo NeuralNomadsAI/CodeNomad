@@ -28,12 +28,17 @@ const canonicalWindowKey = z.string().min(1).max(64).refine(value =>
 )
 
 const finite = z.number().refine(Number.isFinite)
-// Scale in decimal so IEEE-754 multiplication (e.g. 1.005 * 100 = 100.49999999999999)
-// never shifts half-way values across the rounding or complement boundary.
+// Parse JS's shortest decimal string directly so neither binary scaling (`1.005 * 100`)
+// nor intermediate rounding (`99.9949999`) alters hundredths or complement cutoffs.
 function toHundredths(value: number): number {
-  const [whole, frac = ""] = value.toFixed(6).split(".")
-  const base = Number(whole) * 100 + Number(frac.slice(0, 2))
-  return Number(frac.slice(2)) >= 5000 ? base + 1 : base
+  if (value === 0) return 0
+  const [mantissa, expPart] = value.toExponential().split("e")
+  const digits = mantissa!.replace(".", "")
+  const point = Number(expPart) + 3
+  if (point <= 0) return point === 0 && digits[0]! >= "5" ? 1 : 0
+  const padded = digits.padEnd(point, "0")
+  const whole = Number(padded.slice(0, point))
+  return (padded[point] ?? "0") >= "5" ? whole + 1 : whole
 }
 const roundPercent = (value: number) => toHundredths(value) / 100
 const percent = finite.refine(value => value >= 0 && value <= 100).transform(roundPercent)
@@ -150,23 +155,28 @@ function isJsonResponse(response: Response): boolean {
   return type === "application/json" || type.endsWith("+json")
 }
 
-async function readBoundedJson(response: Response, signal: AbortSignal): Promise<{ ok: true; value: unknown } | { ok: false }> {
+type BoundedJsonResult =
+  | { ok: true; value: unknown }
+  | { ok: false; reason: "non-json" | "overflow" | "malformed" }
+
+async function readBoundedJson(response: Response, signal: AbortSignal): Promise<BoundedJsonResult> {
   if (!isJsonResponse(response)) {
     void response.body?.cancel().catch(() => {})
-    return { ok: false }
+    return { ok: false, reason: "non-json" }
   }
   const declaredLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(declaredLength) && declaredLength > PLUGIN_USAGE_MAX_RESPONSE_BYTES) {
     void response.body?.cancel().catch(() => {})
-    return { ok: false }
+    return { ok: false, reason: "overflow" }
   }
   if (!response.body) {
     const pending = response.text()
     pending.catch(() => {})
     const text = await awaitBounded(pending, signal)
-    if (Buffer.byteLength(text, "utf8") > PLUGIN_USAGE_MAX_RESPONSE_BYTES) return { ok: false }
+    if (Buffer.byteLength(text, "utf8") > PLUGIN_USAGE_MAX_RESPONSE_BYTES) return { ok: false, reason: "overflow" }
+    if (!text.trim()) return { ok: false, reason: "non-json" }
     try { return { ok: true, value: JSON.parse(text) } }
-    catch { return { ok: false } }
+    catch { return { ok: false, reason: "malformed" } }
   }
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
@@ -180,7 +190,7 @@ async function readBoundedJson(response: Response, signal: AbortSignal): Promise
       total += value.byteLength
       if (total > PLUGIN_USAGE_MAX_RESPONSE_BYTES) {
         void reader.cancel().catch(() => {})
-        return { ok: false }
+        return { ok: false, reason: "overflow" }
       }
       chunks.push(value)
     }
@@ -191,8 +201,9 @@ async function readBoundedJson(response: Response, signal: AbortSignal): Promise
     reader.releaseLock()
   }
   const text = Buffer.concat(chunks, total).toString("utf8")
+  if (!text.trim()) return { ok: false, reason: "non-json" }
   try { return { ok: true, value: JSON.parse(text) } }
-  catch { return { ok: false } }
+  catch { return { ok: false, reason: "malformed" } }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -215,6 +226,7 @@ export async function readPluginProviderUsage(
     url.searchParams.set("location[directory]", target.location.directory)
     const headers = new Headers(locationRequestOptions(target.location)?.headers)
     headers.set("content-type", "application/json")
+    let abandoned = false
     const pending = connection.fetch(url, {
       method: "POST",
       headers,
@@ -222,11 +234,20 @@ export async function readPluginProviderUsage(
       signal: quotaSignal,
       redirect: "error",
     })
-    pending.catch(() => {})
-    const response = await awaitBounded(pending, quotaSignal)
-    signal.throwIfAborted()
-    if (quotaSignal.aborted) {
+    void pending.then(
+      response => { if (abandoned) void response.body?.cancel().catch(() => {}) },
+      () => {},
+    )
+    let response: Response
+    try {
+      response = await awaitBounded(pending, quotaSignal)
+    } catch (error) {
+      abandoned = true
+      throw error
+    }
+    if (signal.aborted || quotaSignal.aborted) {
       void response.body?.cancel().catch(() => {})
+      signal.throwIfAborted()
       return unavailable(target.providerId, target.modelId)
     }
 
@@ -257,7 +278,11 @@ export async function readPluginProviderUsage(
     if (response.status === 404) {
       const json = await readBoundedJson(response, quotaSignal)
       signal.throwIfAborted()
-      const body = json.ok ? asRecord(json.value) : null
+      if (!json.ok) {
+        if (json.reason === "non-json") return null
+        throw new Error("Plugin usage 404 body unreadable")
+      }
+      const body = asRecord(json.value)
       if (body?._tag === "LocationNotFoundError" || body?._tag === "SessionNotFoundError") {
         throw new Error("Plugin usage location not found")
       }

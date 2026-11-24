@@ -234,3 +234,47 @@ test("route preserves HTTP status: generic 404 degrades to supported=false while
     } finally { await app.close() }
   }
 })
+
+test("ownership loss during absent plugin RPC blocks Codex-alias fallback before reading provider or credentials", async () => {
+  for (const mutation of ["move", "evict"] as const) {
+    let started!: () => void
+    let release!: () => void
+    const entered = new Promise<void>(resolve => { started = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const { app, state } = harness(async () => {
+      started()
+      await gate
+      return Response.json({ _tag: "RpcError", type: "rpc.unavailable", message: "missing" }, { status: 400 })
+    })
+    try {
+      const pending = app.inject(url)
+      await entered
+      if (mutation === "move") state.directory = "/foreign"
+      else state.evicted = true
+      release()
+      const response = await pending
+      assert.equal(response.statusCode, 403)
+      assert.equal(state.nativeCalls.some(path => path.startsWith("/api/provider/")), false)
+      assert.equal(state.nativeCalls.includes("/api/credential"), false)
+    } finally {
+      release()
+      await app.close()
+    }
+  }
+})
+
+test("expired plugin quota timer after RPC 404 still returns supported=false when outer deadline is live", async t => {
+  const realSetTimeout = globalThis.setTimeout
+  t.mock.method(globalThis, "setTimeout", (callback: (...args: any[]) => void, delay?: number, ...args: any[]) =>
+    realSetTimeout(callback, delay === 12_000 ? 25 : delay, ...args))
+  const { app } = harness(
+    async () => Response.json({}, { status: 404 }),
+    { onProviderGet: async () => { await new Promise(resolve => realSetTimeout(resolve, 60)) } },
+  )
+  try {
+    const response = await app.inject(url)
+    assert.equal(response.statusCode, 200, response.body)
+    assert.equal(response.json().supported, false)
+    assert.equal(response.json().ok, false)
+  } finally { await app.close() }
+})

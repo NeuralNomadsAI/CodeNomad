@@ -80,13 +80,29 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           }
           signal.throwIfAborted()
           connection.assertCurrent()
+          const verifyOwned = async (sig: AbortSignal): Promise<boolean> => {
+            const current = await connection.client.session.get({ sessionID: sessionId }, { signal: sig })
+            const currentLocation = readLocationRef(current.location)
+            connection.assertCurrent()
+            sig.throwIfAborted()
+            const stillOwned = manager.get(instanceId) === workspace && currentLocation.directory === location.directory
+              && currentLocation.workspaceID === undefined && await manager.ownsLocation(instanceId, currentLocation, connection.client)
+            sig.throwIfAborted()
+            if (!stillOwned || manager.get(instanceId) !== workspace) return false
+            connection.assertCurrent()
+            return true
+          }
           const free = isOpenCodeFreeModel(params.data.providerId, modelId)
           const provider = free ? null : resolveUsageProvider(params.data.providerId)
-          const plugin = !free && !provider
-            ? await readPluginProviderUsage(connection, {
+          let plugin: ProviderUsageResponse | null = null
+          if (!free && !provider) {
+            plugin = await readPluginProviderUsage(connection, {
               providerId: params.data.providerId, location, modelId,
             }, signal, quotaSignal)
-            : null
+            if (!plugin && !await verifyOwned(signal)) {
+              return reply.code(403).send({ error: "Session does not belong to workspace" })
+            }
+          }
           const native = free ? await freeUsage.read(connection, params.data.providerId, modelId, signal, quotaSignal)
             : !plugin && (!provider || provider.id === "codex")
             ? await nativeCodexUsage(connection, { instanceId, sessionId, directory: location.directory,
@@ -112,18 +128,9 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           }
           const publish = async (usage: ProviderUsageResponse, signal: AbortSignal) => {
             // Session movement, workspace eviction and reconnect fence publication too.
-            const current = await connection.client.session.get({ sessionID: sessionId }, { signal })
-            const currentLocation = readLocationRef(current.location)
-            connection.assertCurrent()
-            signal.throwIfAborted()
-            const stillOwned = manager.get(instanceId) === workspace && currentLocation.directory === location.directory
-              && currentLocation.workspaceID === undefined && await manager.ownsLocation(instanceId, currentLocation, connection.client)
-            signal.throwIfAborted()
-            if (!stillOwned || manager.get(instanceId) !== workspace) {
+            if (!await verifyOwned(signal)) {
               return reply.code(403).send({ error: "Session does not belong to workspace" })
             }
-            signal.throwIfAborted()
-            connection.assertCurrent()
             return usage
           }
           if (provider?.id === "opencode-console") consoleTimeout = publicationSignal => publish({
@@ -132,7 +139,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             unavailableReason: "opencode-console-network-error",
           }, publicationSignal)
           const usage = native ?? plugin ?? await getProviderUsage(params.data.providerId, { modelId, auth,
-            context: { ...settings?.context, signal: quotaSignal } })
+            context: { ...settings?.context, signal: provider ? quotaSignal : signal } })
           consoleTimeout = undefined
           return publish(usage, signal)
         }, signal)
