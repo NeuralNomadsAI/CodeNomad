@@ -46,7 +46,7 @@ fn button(s: &State, id: &str, label: &str, f: impl Fn(&mut State, &mut Tx) + 's
 
 pub(crate) const HOST: &str = "history-search-host";
 const WINDOW: &str = "history-search";
-const BODY: &str = "history-search-body";
+pub(super) const BODY: &str = "history-search-body";
 
 fn drag(s: &mut State, gesture: search::WindowDrag, tx: &mut Tx) {
     let model = state(s);
@@ -174,8 +174,15 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
     let header = layout::action_row()
         .child(input.remaining())
         .children(model.minimum_hint().map(rune::text));
-    let mut frame = search::body().key(BODY).child(header).children(
-        model.page().filter(|p| !p.hits.is_empty()).map(|_| {
+    let body_scroll = model.body_scroll.0.clone();
+    let mut frame = search::body()
+        .key(BODY)
+        .drawn_rect_into(&model.body_frame.0)
+        .on_scroll_offset(move |at| {
+            body_scroll.set((at, None));
+        })
+        .child(header)
+        .children(model.page().filter(|p| !p.hits.is_empty()).map(|_| {
             layout::action_row()
                 .child(button(
                     s,
@@ -189,8 +196,7 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     "messageSection.search.nextAriaLabel",
                     |s, tx| super::move_match(s, tx, true),
                 ))
-        }),
-    );
+        }));
     if model.flight.is_some() {
         frame = frame.child(rune::text(t("messageSection.search.searching")).role("status"));
     }

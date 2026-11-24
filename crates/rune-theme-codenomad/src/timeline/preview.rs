@@ -45,7 +45,12 @@ fn rendered_words(source: &str) -> String {
     rendered.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-pub fn surface(marker: &str, text: &str, [width, height]: [f32; 2]) -> Option<El> {
+pub fn surface(
+    marker: &str,
+    text: &str,
+    [width, height]: [f32; 2],
+    on_scroll: impl Fn(rune::ScrollPos) + 'static,
+) -> Option<El> {
     let w = 360.0_f32.min(width - 32.0);
     let h = 420.0_f32.min(height - 32.0);
     if w <= 0.0 || h <= 0.0 {
@@ -76,6 +81,7 @@ pub fn surface(marker: &str, text: &str, [width, height]: [f32; 2]) -> Option<El
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
+                .on_scroll_offset(on_scroll)
                 .pad(Space::Md)
                 .child(content),
             0.0,

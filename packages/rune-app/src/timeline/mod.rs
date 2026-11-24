@@ -7,9 +7,11 @@ mod preview;
 mod reading_line;
 pub(crate) mod search;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod view;
-pub(crate) use navigation::{admit, cancel_jump, failed, input_precedes_admission, restore_search};
+pub(crate) use navigation::{
+    admit, cancel_jump, failed, input_precedes_admission, poll_reveal, restore_search,
+};
 pub(crate) use preview::{ExcerptCache, window_layout as preview_window_layout};
 pub(crate) use preview::{dismiss as dismiss_preview, overlay as preview_overlay};
 pub(crate) use reading_line::watch as watch_block;
@@ -62,6 +64,14 @@ enum ScanUpdate {
 }
 type Scan = (Sender<()>, Receiver<ScanUpdate>);
 
+struct RailBounds(rune_theme_codenomad::layout::DrawnRect);
+
+impl Default for RailBounds {
+    fn default() -> Self {
+        Self(rune_theme_codenomad::layout::DrawnRect::new([0.0; 4]))
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Timeline {
     backend: Option<Backend>,
@@ -76,6 +86,8 @@ pub(crate) struct Timeline {
     online: bool,
     running: bool,
     visible: bool,
+    rail_shown: bool,
+    live: bool,
     width: f32,
     markers: Vec<Marker>,
     folded: HashMap<String, String>,
@@ -87,6 +99,7 @@ pub(crate) struct Timeline {
     outline_error: bool,
     jump: navigation::Navigation,
     scroll: Rc<Cell<view::Scroll>>,
+    rail_bounds: RailBounds,
     resident: Vec<(String, Vec<Marker>)>,
     detached: bool,
     pub(crate) paging: Option<(Sender<()>, crate::transport::HistoryEdge)>,
@@ -152,22 +165,33 @@ pub(crate) fn sync_outline_mutation(s: &mut State) -> bool {
     }
 }
 
-pub(crate) fn suspend(s: &mut State) {
-    search::close(s);
-    cancel_jump(s);
-    let t = owner(s);
-    t.visible = false;
-    t.previews.hide();
-    cancel_scan(t);
-    t.refresh = true;
+fn drop_uncacheable_outline(t: &mut Timeline) -> bool {
     // A departed view can retain only a cache-sized completed index.
     if t.outline.as_ref().is_some_and(|index| !index.cacheable) {
         t.outline = None;
-        t.markers.clear();
+        t.markers = Vec::new();
+        t.folded = HashMap::new();
         t.has_raw_markers = false;
-        t.resident.clear();
+        t.resident = Vec::new();
+        t.version = t.version.wrapping_add(1);
         t.changed = true;
+        true
+    } else {
+        false
     }
+}
+
+pub(crate) fn suspend(s: &mut State) {
+    search::close(s);
+    cancel_jump(s);
+    navigation::clear_browse(s);
+    let t = owner(s);
+    t.visible = false;
+    t.live = false;
+    t.previews.hide();
+    cancel_scan(t);
+    t.refresh = true;
+    drop_uncacheable_outline(t);
 }
 
 pub(crate) fn observe(s: &mut State, event: &Event) {
@@ -233,13 +257,17 @@ fn project_root(s: &State) -> Option<&str> {
     Some(s.screen.launcher()?.project.as_ref()?.path.as_str())
 }
 
+pub(super) fn conversation_shown(s: &State) -> bool {
+    !s.screen.is_launcher() && !crate::files::has_preview(s) && !crate::git::has_preview(s)
+}
+
+pub(super) fn active_conversation(s: &State) -> bool {
+    conversation_shown(s) && crate::settings::show_timeline(s)
+}
+
 pub(crate) fn demanded(s: &State) -> bool {
     let t = &s.transcript_display.timeline;
-    !s.screen.is_launcher()
-        && !crate::files::has_preview(s)
-        && !crate::git::has_preview(s)
-        && crate::settings::show_timeline(s)
-        && rune_theme_codenomad::timeline::fits(t.width)
+    active_conversation(s) && rune_theme_codenomad::timeline::fits(t.width)
 }
 
 fn reproject(s: &mut State) -> bool {
@@ -325,21 +353,44 @@ fn reproject(s: &mut State) -> bool {
 pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let mut changed = sync_outline_mutation(s);
     if !demanded(s) {
+        let on_conversation = conversation_shown(s);
+        let narrow = active_conversation(s);
         owner(s).previews.hide();
-        if std::mem::take(&mut owner(s).visible) {
-            if search::is_open(s) {
+        let was_visible = std::mem::take(&mut owner(s).visible);
+        let was_shown = std::mem::take(&mut owner(s).rail_shown);
+        if was_visible {
+            navigation::clear_browse(s);
+        }
+        if !on_conversation {
+            if std::mem::take(&mut owner(s).live)
+                || was_visible
+                || search::is_open(s)
+                || navigation::has_pending_or_locked(s)
+            {
+                suspend(s);
+                changed = true;
+            }
+            return changed | navigation::apply_alignment(s, tx);
+        }
+        if was_shown && owner(s).jump.align.is_none() {
+            crate::chat::reading::keep_passage(s, tx);
+        }
+        if !narrow {
+            if std::mem::take(&mut owner(s).live) || was_visible {
                 cancel_scan(owner(s));
                 owner(s).refresh = true;
-            } else {
-                suspend(s);
+                drop_uncacheable_outline(owner(s));
+                changed = true;
             }
+            changed |= navigation::cancel_rail_jump(s);
+        } else if was_visible {
+            // Narrowing hides the rail while keeping the conversation visible: cancel the rail
+            // scan, but keep an already-clicked navigation jump alive so it lands in the transcript.
+            cancel_scan(owner(s));
+            owner(s).refresh = true;
+            changed |= drop_uncacheable_outline(owner(s));
         }
-        return changed
-            | if search::is_open(s) {
-                navigation::poll(s, tx)
-            } else {
-                navigation::apply_alignment(s, tx)
-            };
+        return changed | navigation::poll(s, tx);
     }
     let reads = s.reads.clone();
     let wake = s.wake.clone();
@@ -354,6 +405,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         t.changed = true;
     }
     t.visible = true;
+    t.live = true;
     let mut remember = None;
     while let Some(update) = t.scan.as_ref().and_then(|(_, in_)| in_.try_recv().ok()) {
         changed = true;
@@ -425,6 +477,14 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let t = owner(s);
     if std::mem::take(&mut t.changed) {
         changed |= reproject(s);
+    }
+    let shown = owner(s).has_raw_markers || !owner(s).markers.is_empty();
+    let was_shown = std::mem::replace(&mut owner(s).rail_shown, shown);
+    if shown != was_shown {
+        changed = true;
+        if owner(s).jump.align.is_none() {
+            crate::chat::reading::keep_passage(s, tx);
+        }
     }
     changed | navigation::poll(s, tx) | preview::poll(s, tx)
 }
