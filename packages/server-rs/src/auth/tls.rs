@@ -294,14 +294,15 @@ impl Listener {
                         io
                     }
                 };
-                let io = crate::shared::WriteStallIo::new(io, Duration::from_secs(30));
+                let cancel = crate::shared::WriteCancel::new();
+                let io = crate::shared::WriteStallIo::new(io, Duration::from_secs(30), cancel.clone());
                 let service = router.layer(axum::Extension(channel));
                 let connection = http1::Builder::new()
                     .timer(TokioTimer::new())
                     // Also bounds the wait for a request's first byte, after the
                     // handshake and between keep-alive requests (hyper 1.x).
                     .header_read_timeout(IDLE)
-                    .serve_connection(TokioIo::new(io), crate::shared::abortable_service(service))
+                    .serve_connection(TokioIo::new(io), crate::shared::abortable_service(service, cancel))
                     .with_upgrades();
                 tokio::select! { _=lifetime.cancelled()=>{}, _=connection=>{} }
                 lifetime.cancel();

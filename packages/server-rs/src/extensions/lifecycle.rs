@@ -296,6 +296,9 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
             }
             sync(&app, renew);
         }
+        // Hold `SERIAL` across shutdown cleanup so any detached `prepare()` finishes and
+        // registers its leases before we drain them, and subsequent waiters see `!state.active`.
+        let _serial = SERIAL.lock().await;
         let (owners, leases): (Vec<_>, Vec<_>) = {
             let mut state = STATE.lock().unwrap();
             state.active = false;

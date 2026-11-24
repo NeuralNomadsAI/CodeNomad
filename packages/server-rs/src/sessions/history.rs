@@ -22,6 +22,32 @@ pub fn pending_valid(value: &Value) -> bool {
     crate::sessions::contracts::valid(crate::sessions::contracts::get("pending", true), value)
 }
 
+#[derive(Clone, PartialEq, Eq)]
+enum DirIdentity {
+    #[cfg(unix)]
+    Unix(u64, u64),
+    #[cfg(not(unix))]
+    Handle(Arc<same_file::Handle>),
+}
+
+/// Identifies a live directory without opening POSIX FIFOs or symlinks (`lstat` on Unix;
+/// `symlink_metadata().is_dir()` before `same_file::Handle` on Windows).
+fn directory_identity(path: &std::path::Path) -> std::io::Result<DirIdentity> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if !meta.is_dir() {
+        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "not a directory"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(DirIdentity::Unix(meta.dev(), meta.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(DirIdentity::Handle(Arc::new(same_file::Handle::from_path(path)?)))
+    }
+}
+
 pub(super) struct Placement {
     workspace: crate::Workspace,
     pub(super) endpoint: Arc<crate::opencode::Endpoint>,
@@ -29,8 +55,8 @@ pub(super) struct Placement {
     /// Physical checkout of the session's owned location (root or linked worktree).
     path: std::path::PathBuf,
     anchor: std::path::PathBuf,
-    physical: Arc<same_file::Handle>,
-    workspace_physical: Option<Arc<same_file::Handle>>,
+    physical: DirIdentity,
+    workspace_physical: Option<DirIdentity>,
     checkout: crate::worktrees::ownership::DirectoryProof,
     displays: Vec<Arc<AtomicBool>>,
     media: bool,
@@ -68,11 +94,11 @@ impl Placement {
         let unavailable = || error(Status::SERVICE_UNAVAILABLE, "History placement unavailable");
         let workspace_physical = if media {
             let path = workspace.path.clone();
-            let handle = tokio::task::spawn_blocking(move || same_file::Handle::from_path(&path))
+            let handle = tokio::task::spawn_blocking(move || directory_identity(&path))
                 .await
                 .map_err(|_| unavailable())?
                 .map_err(|_| unavailable())?;
-            Some(Arc::new(handle))
+            Some(handle)
         } else {
             None
         };
@@ -137,8 +163,8 @@ impl Placement {
                     .map_err(|_| unavailable())?
                     .ok_or_else(forbidden)?
                     .to_owned();
-                let physical = same_file::Handle::from_path(&anchor).map_err(|_| unavailable())?;
-                Ok((path, anchor, Arc::new(physical)))
+                let physical = directory_identity(&anchor).map_err(|_| unavailable())?;
+                Ok((path, anchor, physical))
             })
             .await
             .map_err(|_| unavailable())??;
@@ -222,7 +248,8 @@ impl Placement {
             return Err(crate::opencode::upstream_error());
         }
         if newest["id"] != self.source["id"]
-            || newest["location"] != self.source["location"]
+            || newest["location"]["directory"] != self.source["location"]["directory"]
+            || newest["location"].get("workspaceID") != self.source["location"].get("workspaceID")
             || (!self.strict_media && newest["projectID"] != self.source["projectID"])
             || !self.live(app, id).await
         {
@@ -262,11 +289,12 @@ impl Placement {
         let physical = self.physical.clone();
         let checkout = self.checkout.clone();
         let ok = tokio::task::spawn_blocking(move || {
-            workspace_physical.as_ref().is_none_or(|expected| {
-                same_file::Handle::from_path(&workspace_path).is_ok_and(|current| current == **expected)
-            }) && crate::worktrees::ownership::resolve_exact_directory(&raw_dir).as_ref() == Some(&path)
+            workspace_physical
+                .as_ref()
+                .is_none_or(|expected| directory_identity(&workspace_path).is_ok_and(|current| &current == expected))
+                && crate::worktrees::ownership::resolve_exact_directory(&raw_dir).as_ref() == Some(&path)
                 && crate::worktrees::ownership::directory_anchor(&path) == Ok(Some(anchor.as_path()))
-                && same_file::Handle::from_path(&anchor).is_ok_and(|current| current == *physical)
+                && directory_identity(&anchor).is_ok_and(|current| current == physical)
                 && checkout.live(&path)
         })
         .await
@@ -310,11 +338,11 @@ enum Recheck {
     Unavailable,
 }
 
-async fn same_identity_async(path: std::path::PathBuf, expected: Option<Arc<same_file::Handle>>) -> bool {
+async fn same_identity_async(path: std::path::PathBuf, expected: Option<DirIdentity>) -> bool {
     let Some(expected) = expected else {
         return true;
     };
-    tokio::task::spawn_blocking(move || same_file::Handle::from_path(&path).is_ok_and(|physical| physical == *expected))
+    tokio::task::spawn_blocking(move || directory_identity(&path).is_ok_and(|physical| physical == expected))
         .await
         .unwrap_or(false)
 }
@@ -655,14 +683,18 @@ pub async fn handle(
             } else {
                 axum::body::Body::from(payload)
             };
-            (
+            let mut response = (
                 [
                     (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/json")),
                     (header::CONTENT_LENGTH, length),
                 ],
                 response_body,
             )
-                .into_response()
+                .into_response();
+            if defer {
+                response.extensions_mut().insert(crate::shared::CancelWrite(principal.0.clone()));
+            }
+            response
         };
         if defer {
             tokio::select! {

@@ -255,8 +255,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             notified.await;
         }
     };
+    let list_deadline = tokio::time::Instant::now() + super::PROXY_IDLE;
     let endpoint = if message_list {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let deadline = list_deadline.min(tokio::time::Instant::now() + Duration::from_secs(30));
         tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
@@ -395,7 +396,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
             _ = workspace_closed() => return Err(not_found()),
-            result = admission_work => result?,
+            result = tokio::time::timeout_at(list_deadline, admission_work) => {
+                result.map_err(|_| upstream_error())??
+            }
         }
     } else {
         admission_work.await?
@@ -439,14 +442,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                 _ = workspace_closed() => return Err(not_found()),
-                proof = crate::worktrees::ownership::media_directory(
-                    &app,
-                    &workspace,
-                    &endpoint,
-                    resolved,
-                    anchor,
-                    false,
-                ) => proof.ok().flatten(),
+                proof = tokio::time::timeout_at(
+                    list_deadline,
+                    crate::worktrees::ownership::media_directory(
+                        &app,
+                        &workspace,
+                        &endpoint,
+                        resolved,
+                        anchor,
+                        false,
+                    ),
+                ) => proof.map_err(|_| upstream_error())?.ok().flatten(),
             }
         } else {
             None
@@ -859,6 +865,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if let Some(accept) = head.headers.get(header::ACCEPT) {
         upstream = upstream.header(header::ACCEPT, accept);
     }
+    if message_list {
+        for conditional in [header::IF_NONE_MATCH, header::IF_MODIFIED_SINCE] {
+            if let Some(value) = head.headers.get(&conditional) {
+                upstream = upstream.header(conditional, value);
+            }
+        }
+    }
     if let Some(input) = &input {
         upstream = upstream.json(input);
     }
@@ -875,7 +888,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if let Some(session) = defer_media {
         static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
         let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
-        let list_deadline = tokio::time::Instant::now() + super::PROXY_IDLE;
         // Acquire the projection slot right before upstream dispatch so admission checks
         // and `session.get` never occupy slots while waiting or after principal revocation.
         let slot = tokio::select! {
@@ -1023,16 +1035,18 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 .header(header::CONTENT_LENGTH, length);
             return builder
                 .extension(NativeBody)
+                .extension(crate::shared::CancelWrite(principal.0.clone()))
                 .body(crate::shared::permit_body(payload, Some(mem), abort))
                 .map_err(|_| upstream_error());
         }
         drop(slot);
         let status = response.status();
-        if status.is_redirection() {
+        if status.is_redirection() && status != Status::NOT_MODIFIED {
             return Err(upstream_error());
         }
         let unauthorized = status == Status::UNAUTHORIZED;
         if !status.is_success()
+            && status != Status::NOT_MODIFIED
             && !response
                 .headers()
                 .get(header::CONTENT_TYPE)
@@ -1134,7 +1148,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 })
             },
         );
-        return builder.extension(NativeBody).body(Body::from_stream(bytes)).map_err(|_| upstream_error());
+        return builder
+            .extension(NativeBody)
+            .extension(crate::shared::CancelWrite(principal.0.clone()))
+            .body(Body::from_stream(bytes))
+            .map_err(|_| upstream_error());
     }
     let (route, opened, directory, id) = (route.to_owned(), opened.to_owned(), directory.to_owned(), id.to_owned());
     let dispatched_mutation = mutation.is_some();

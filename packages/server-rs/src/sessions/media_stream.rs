@@ -292,27 +292,123 @@ fn parse_string(raw: &RawValue) -> Option<String> {
     serde_json::from_str::<String>(raw.get()).ok()
 }
 
-enum JsonNode<'a> {
-    Raw(&'a RawValue),
-    Str(String),
-    Array(Vec<JsonNode<'a>>),
-    Object(BTreeMap<String, JsonNode<'a>>),
-}
+const MAX_SCANNED_ITEMS: usize = 100_001;
 
-impl serde::Serialize for JsonNode<'_> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::Raw(raw) => raw.serialize(serializer),
-            Self::Str(s) => s.serialize(serializer),
-            Self::Array(items) => items.serialize(serializer),
-            Self::Object(map) => map.serialize(serializer),
+/// Splits a JSON array slice `[ item_0, ..., item_{limit-1}, <opaque tail> ]` into at most
+/// `limit` zero-copy item slices plus an optional unparsed tail (`, ...` before `]`), so
+/// dense arrays with millions of elements never allocate more than `limit` entries.
+fn split_json_array_prefix(raw: &str, limit: usize) -> Option<(Vec<&str>, Option<&str>)> {
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if bytes.get(i) != Some(&b'[') {
+        return None;
+    }
+    i += 1;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if bytes.get(i) == Some(&b']') {
+        return Some((Vec::new(), None));
+    }
+    let mut items = Vec::new();
+    loop {
+        let start = i;
+        let mut depth = 0usize;
+        let mut in_string = false;
+        let mut escaped = false;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if b == b'\\' {
+                    escaped = true;
+                } else if b == b'"' {
+                    in_string = false;
+                }
+            } else {
+                match b {
+                    b'"' => in_string = true,
+                    b'{' | b'[' => depth += 1,
+                    b'}' | b']' if depth > 0 => depth -= 1,
+                    b',' | b']' if depth == 0 => break,
+                    _ => {}
+                }
+            }
+            i += 1;
+        }
+        if i >= bytes.len() || in_string || depth != 0 {
+            return None;
+        }
+        let slice = raw[start..i].trim();
+        if slice.is_empty() {
+            return None;
+        }
+        items.push(slice);
+        if bytes[i] == b']' {
+            return Some((items, None));
+        }
+        if items.len() == limit {
+            let tail = raw[i..].trim_end().strip_suffix(']')?;
+            return Some((items, Some(tail)));
+        }
+        i += 1;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
         }
     }
 }
 
-/// Projects a single message JSON item by borrowing `&RawValue` slices directly from `raw`
-/// and building only the modified JSON tree spine (`JsonNode`), performing a single final
-/// serialization with zero intermediate re-encoding buffers.
+enum JsonNode<'a> {
+    Raw(&'a str),
+    Str(String),
+    Array { items: Vec<JsonNode<'a>>, tail: Option<&'a str> },
+    Object(BTreeMap<String, JsonNode<'a>>),
+}
+
+fn write_json_node(node: &JsonNode<'_>, out: &mut Vec<u8>) -> Result<(), serde_json::Error> {
+    match node {
+        JsonNode::Raw(raw) => {
+            out.extend_from_slice(raw.as_bytes());
+            Ok(())
+        }
+        JsonNode::Str(s) => serde_json::to_writer(out, s),
+        JsonNode::Array { items, tail } => {
+            out.push(b'[');
+            for (idx, item) in items.iter().enumerate() {
+                if idx > 0 {
+                    out.push(b',');
+                }
+                write_json_node(item, out)?;
+            }
+            if let Some(tail) = tail {
+                out.extend_from_slice(tail.as_bytes());
+            }
+            out.push(b']');
+            Ok(())
+        }
+        JsonNode::Object(map) => {
+            out.push(b'{');
+            for (idx, (key, value)) in map.iter().enumerate() {
+                if idx > 0 {
+                    out.push(b',');
+                }
+                serde_json::to_writer(&mut *out, key)?;
+                out.push(b':');
+                write_json_node(value, out)?;
+            }
+            out.push(b'}');
+            Ok(())
+        }
+    }
+}
+
+/// Projects a single message JSON item by borrowing `&RawValue` / `&str` slices directly from
+/// `raw`, capping scanned arrays at `MAX_SCANNED_ITEMS` with an unparsed opaque tail so dense
+/// arrays never allocate unbounded vectors, and performing one single final serialization.
 pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>) -> (Vec<u8>, bool) {
     if !may_contain_image_uri(&raw) {
         return (raw, false);
@@ -330,18 +426,18 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>)
         if !may_contain_image_uri(content_raw.get().as_bytes()) {
             return None;
         }
-        let raw_parts = serde_json::from_str::<Vec<&RawValue>>(content_raw.get()).ok()?;
+        let (raw_parts, parts_tail) = split_json_array_prefix(content_raw.get(), MAX_SCANNED_ITEMS)?;
         let id_enc = media::encode(&id_raw);
         let mut parts: Vec<JsonNode<'_>> = raw_parts.into_iter().map(JsonNode::Raw).collect();
         let mut changed = false;
-        for (part_idx, part_node) in parts.iter_mut().take(100_001).enumerate() {
+        for (part_idx, part_node) in parts.iter_mut().enumerate() {
             let JsonNode::Raw(part_raw) = *part_node else {
                 continue;
             };
-            if !may_contain_image_uri(part_raw.get().as_bytes()) {
+            if !may_contain_image_uri(part_raw.as_bytes()) {
                 continue;
             }
-            let Ok(raw_part_fields) = serde_json::from_str::<BTreeMap<String, &RawValue>>(part_raw.get()) else {
+            let Ok(raw_part_fields) = serde_json::from_str::<BTreeMap<String, &RawValue>>(part_raw) else {
                 continue;
             };
             if raw_part_fields.get("type").and_then(|v| parse_string(v)).as_deref() != Some("tool") {
@@ -362,19 +458,19 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>)
             if !may_contain_image_uri(items_raw.get().as_bytes()) {
                 continue;
             }
-            let Ok(raw_items) = serde_json::from_str::<Vec<&RawValue>>(items_raw.get()) else {
+            let Some((raw_items, items_tail)) = split_json_array_prefix(items_raw.get(), MAX_SCANNED_ITEMS) else {
                 continue;
             };
             let mut items: Vec<JsonNode<'_>> = raw_items.into_iter().map(JsonNode::Raw).collect();
             let mut part_changed = false;
-            for (item_idx, item_node) in items.iter_mut().take(100_001).enumerate() {
+            for (item_idx, item_node) in items.iter_mut().enumerate() {
                 let JsonNode::Raw(item_raw) = *item_node else {
                     continue;
                 };
-                if item_raw.get().len() <= INLINE_THRESHOLD || !may_contain_image_uri(item_raw.get().as_bytes()) {
+                if item_raw.len() <= INLINE_THRESHOLD || !may_contain_image_uri(item_raw.as_bytes()) {
                     continue;
                 }
-                let Ok(raw_file_fields) = serde_json::from_str::<BTreeMap<String, &RawValue>>(item_raw.get()) else {
+                let Ok(raw_file_fields) = serde_json::from_str::<BTreeMap<String, &RawValue>>(item_raw) else {
                     continue;
                 };
                 let Some(file_type) = raw_file_fields.get("type").and_then(|v| parse_string(v)) else {
@@ -397,7 +493,7 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>)
                 {
                     drop(uri);
                     let mut file_fields: BTreeMap<String, JsonNode<'_>> =
-                        raw_file_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v))).collect();
+                        raw_file_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v.get()))).collect();
                     file_fields.insert("uri".into(), JsonNode::Str(reference));
                     *item_node = JsonNode::Object(file_fields);
                     part_changed = true;
@@ -405,10 +501,10 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>)
             }
             if part_changed {
                 let mut state_fields: BTreeMap<String, JsonNode<'_>> =
-                    raw_state_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v))).collect();
-                state_fields.insert("content".into(), JsonNode::Array(items));
+                    raw_state_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v.get()))).collect();
+                state_fields.insert("content".into(), JsonNode::Array { items, tail: items_tail });
                 let mut part_fields: BTreeMap<String, JsonNode<'_>> =
-                    raw_part_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v))).collect();
+                    raw_part_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v.get()))).collect();
                 part_fields.insert("state".into(), JsonNode::Object(state_fields));
                 *part_node = JsonNode::Object(part_fields);
                 changed = true;
@@ -418,9 +514,11 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>)
             return None;
         }
         let mut fields: BTreeMap<String, JsonNode<'_>> =
-            raw_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v))).collect();
-        fields.insert("content".into(), JsonNode::Array(parts));
-        serde_json::to_vec(&fields).ok()
+            raw_fields.into_iter().map(|(k, v)| (k, JsonNode::Raw(v.get()))).collect();
+        fields.insert("content".into(), JsonNode::Array { items: parts, tail: parts_tail });
+        let mut out = Vec::new();
+        write_json_node(&JsonNode::Object(fields), &mut out).ok()?;
+        Some(out)
     })();
     match projected {
         Some(serialized) => (serialized, true),
@@ -534,5 +632,27 @@ mod tests {
                 .unwrap()
                 .starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_uni/0/0/")
         );
+
+        let large = format!("data:image/png;base64,{}", "A".repeat(40 * 1024));
+        let mut big_parts = String::from("{\"id\":\"msg_huge\",\"type\":\"assistant\",\"content\":[");
+        big_parts.push_str(&format!(
+            "{{\"type\":\"tool\",\"state\":{{\"content\":[{{\"type\":\"file\",\"mime\":\"image/png\",\"uri\":\"{large}\"}}]}}}}",
+        ));
+        for _ in 0..100_005 {
+            big_parts.push_str(",1");
+        }
+        big_parts.push_str("]}");
+        let (out, changed) = project_item("ws_1", "ses_1", big_parts.into_bytes());
+        assert!(changed);
+        let parsed: Value = serde_json::from_slice(&out).unwrap();
+        let parts = parsed["content"].as_array().unwrap();
+        assert_eq!(parts.len(), 100_006);
+        assert!(
+            parts[0]["state"]["content"][0]["uri"]
+                .as_str()
+                .unwrap()
+                .starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_huge/0/0/")
+        );
+        assert_eq!(parts[100_005], 1);
     }
 }

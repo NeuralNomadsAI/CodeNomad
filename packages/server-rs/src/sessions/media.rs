@@ -360,7 +360,7 @@ pub(super) async fn route(
                 principal.0.clone(),
             );
             let length = HeaderValue::from(bytes.len());
-            Ok((
+            let mut response = (
                 [
                     (header::CONTENT_TYPE, HeaderValue::from_str(mime).map_err(|_| missing())?),
                     (header::CONTENT_LENGTH, length),
@@ -370,7 +370,9 @@ pub(super) async fn route(
                 ],
                 crate::shared::permit_body(bytes.into(), Some(mem), abort),
             )
-                .into_response())
+                .into_response();
+            response.extensions_mut().insert(crate::shared::CancelWrite(principal.0.clone()));
+            Ok(response)
         };
         tokio::select! {
             biased;
