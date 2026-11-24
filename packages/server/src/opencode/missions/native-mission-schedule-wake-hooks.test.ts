@@ -39,14 +39,16 @@ test("model-less Code Mode carriers refuse prompts and LLM context turns while b
   const f = await ownerFixture(t)
   const doc = await f.control("play")
   const sessionID = doc.calendarOwner!.slots.find(slot => slot.role === "reconciliation")!.sessionID
-  delete f.sessions.get(sessionID).model
   const hooks = new Map<string, (event: any) => Effect.Effect<void>>()
   const ctx = { ...f.ctx, aisdk: { hook: (name: string, use: (event: any) => Effect.Effect<void>) => Effect.sync(() => { hooks.set(`aisdk:${name}`, use) }) },
     session: { ...f.ctx.session, hook: (name: string, use: (event: any) => Effect.Effect<void>) => Effect.sync(() => { hooks.set(name, use) }) } } as unknown as Plugin.Context
   await Effect.runPromise(Effect.scoped(registerNativeMissionScheduleCarrierHooks(ctx)))
   const scheduleID = doc.calendarOwner!.slots.find(slot => slot.sessionID === sessionID)!.scheduleID!
-  await assert.rejects(Effect.runPromise(hooks.get("prompt")!({ sessionID, messageID: `msg_${scheduleID}_1`,
-    prompt: { text: NATIVE_SCHEDULE_CARRIER_SIGNAL }, metadata: { automation: { id: scheduleID, run: 1, dueAt: 1000, late: false } } })), /carrier-prompt/)
+  const validPrompt = { sessionID, messageID: `msg_${scheduleID}_1`,
+    prompt: { text: NATIVE_SCHEDULE_CARRIER_SIGNAL }, metadata: { schedule: { id: scheduleID, run: 1, dueAt: 1000, late: false } } }
+  await Effect.runPromise(hooks.get("prompt")!(validPrompt))
+  delete f.sessions.get(sessionID).model
+  await assert.rejects(Effect.runPromise(hooks.get("prompt")!(validPrompt)), /carrier-prompt/)
   await assert.rejects(Effect.runPromise(hooks.get("context")!({ sessionID, model: { providerID: "remote", id: "chat" }, messages: [], tools: {} })), /carrier-model/)
   await assert.rejects(Effect.runPromise(hooks.get("http.request")!({ sessionID, model: { providerID: "remote", id: "chat" } })), /provider-http/)
 })

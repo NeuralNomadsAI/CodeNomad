@@ -214,7 +214,7 @@ test("intact saved runtime is accepted across upgrade even if provider changes; 
   rmSync(f.artifacts.provider.file)
   await f.invoke(async () => {
     const route = await f.bridge.select(f.rootID)
-    assert.ok(route, "Code Mode scheduled business does not depend on provider.mjs")
+    assert.ok(route, "scheduled business RPC artifact fence does not depend on provider.mjs")
   })
   const selected = f.calls.acquired
   rmSync(f.savedRuntime.file)

@@ -44,7 +44,9 @@ export async function readNativeScheduleAuxiliaryWakeBinding(ctx: Plugin.Context
   }
   const fresh = await run(readNativeScheduleCarrierOwnership(ctx, wake.sessionID))
   guard()
-  if (!fresh?.verified || fresh.document?.revision !== doc.revision || canonicalAuthority(fresh.reference) !== canonicalAuthority(ownership.reference)) return undefined
+  if (!fresh?.verified || fresh.document?.revision !== doc.revision || canonicalAuthority(fresh.reference) !== canonicalAuthority(ownership.reference)
+    || !rows[0].code && !fresh.legacyModel) return undefined
+  if (!rows[0].code) assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation, { requireProvider: true })
   assertMissionCalendarPlacement(doc.calendarOwner!.placement, doc.configuration.roots)
   const calendar = doc.calendars.find(item => item.sessionID === slot.sessionID)
   if (calendar && (calendar.scheduleID !== wake.scheduleID || calendar.role !== "reconciliation" || calendar.timeGeneration !== doc.timeGeneration)) return undefined

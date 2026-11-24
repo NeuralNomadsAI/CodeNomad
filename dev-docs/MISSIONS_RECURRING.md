@@ -495,10 +495,11 @@ owns its preparation and read-only target access in the ordinary project journal
 An explicitly requested `startOnCreation` continues only fresh creation through the
 guarded first-Play contract in [Missions](MISSIONS.md#mission-profile-selection-and-creation-recovery).
 New calendars run a fixed Code Mode program that calls the wake tool, with no model
-turn and no carrier message ([code wakes](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#code-wakes)).
-Rows created with the carrier prompt keep that action until they retire.
-Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
-local title/compaction hooks and authoritative ordinary-input guards.
+turn, no carrier model and no carrier message ([code wakes](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#code-wakes)).
+Rows created with the carrier prompt keep that action and the local provider until they retire.
+Technical carriers use the reserved `ses_cn_schedule_` namespace, local title/compaction
+hooks and authoritative ordinary-input guards; managed provisioning installs the legacy local
+provider when bundled and allows runtime-only manifests for Code Mode.
 Context classification and recovery follow the schedule transport's
 [native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
 Ordinary sidebar browsing/search and Mission criterion conversation-source pickers

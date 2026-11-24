@@ -321,6 +321,12 @@ export class NativeScheduleCalendarOwner {
     const change = async (update: (value: MissionDocument) => void) => { doc = await locked.change(doc.id, doc.revision, guard, update) }
     const owner = () => doc.calendarOwner!
     const updateSlot = async (index: number, update: (slot: MissionCalendarOwnerSlot) => void) => change(value => update(value.calendarOwner!.slots[index]))
+    const legacyGuard = (): true => {
+      guard()
+      return assertNativeScheduleCarrierArtifacts(owner().installation, { requireProvider: true })
+    }
+    const resumeSlot = (slot: MissionCalendarOwnerSlot, info: NativeScheduleCalendarInfo) =>
+      native.resume(target(doc, slot), info.id, info.code ? guard : legacyGuard)
     const qualifyLegacy = async (info: NativeScheduleCalendarInfo) => {
       if (info.code) return
       assertNativeScheduleCarrierArtifacts(owner().installation, { requireProvider: true })
@@ -366,7 +372,7 @@ export class NativeScheduleCalendarOwner {
       const index = owner().slots.findIndex(slot => slot.role === "reconciliation")
       if (index < 0) throw new OwnerPending("cleanup-pending")
       const info = await ensure(index, true), slot = owner().slots[index]
-      const fresh = info.status === "paused" ? await native.resume(target(doc, slot), info.id, guard) : info
+      const fresh = info.status === "paused" ? await resumeSlot(slot, info) : info
       if (fresh.status !== "active") throw new OwnerPending("native-uncertain")
       if (!owner().auxiliaryReady) await change(value => { value.calendarOwner!.auxiliaryReady = true })
     }
@@ -439,7 +445,7 @@ export class NativeScheduleCalendarOwner {
           if (!owner().auxiliaryReady) throw new OwnerPending("native-uncertain")
           const info = await ensure(index, true)
           principalInfos.push(info)
-          if (info.status === "paused") await native.resume(target(doc, owner().slots[index]), info.id, guard)
+          if (info.status === "paused") await resumeSlot(owner().slots[index], info)
         }
         if (doc.synchronization) await change(value => {
           const calendars = value.calendarOwner!.slots.map(slot => calendarForSlot(value, slot))
@@ -475,7 +481,7 @@ export class NativeScheduleCalendarOwner {
           const keep = fresh.role === "reconciliation" && (unresolved() || !closed)
           const info = await native.get(target(doc, fresh), fresh.scheduleID!, guard)
           if (!info) throw new OwnerPending("native-uncertain")
-          if (keep && info.status === "paused") await native.resume(target(doc, fresh), info.id, guard)
+          if (keep && info.status === "paused") await resumeSlot(fresh, info)
           else if (!keep && info.status === "active") await native.pause(target(doc, fresh), info.id, guard)
         }
         if (!closed) throw new OwnerPending("claim-held")
@@ -509,7 +515,7 @@ export class NativeScheduleCalendarOwner {
         ?? owner().retired.find(item => item.descriptor.role === "reconciliation" && !item.scheduleRemoved)?.descriptor
       if (auxiliary?.scheduleID) try {
         const info = await native.get(target(doc, auxiliary), auxiliary.scheduleID, guard)
-        if (info?.status === "paused") await native.resume(target(doc, auxiliary), auxiliary.scheduleID, guard)
+        if (info?.status === "paused") await resumeSlot(auxiliary, info)
       } catch {}
       try { await change(value => { value.calendarOwner!.error = code }) } catch {}
       return doc

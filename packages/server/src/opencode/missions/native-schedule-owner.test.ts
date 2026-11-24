@@ -558,3 +558,34 @@ test("active legacy prompt adoption and reconciliation require a usable provider
   assert.equal(ready.calendarOwner?.operation.pending, false)
   assert.equal(missionCalendarOwnerReady(ready), true)
 })
+
+test("legacy prompt resume and lost-ACK auxiliary adoption recheck provider artifacts and legacy model at the boundary", async t => {
+  const f = await ownerFixture(t)
+  await f.control("play")
+  await f.control("pause")
+  const originalResume = f.native.resume
+  let removed = false
+  f.native.resume = async (target, id, guard) => {
+    if (!removed) { removed = true; unlinkSync(f.installation.provider.file) }
+    return originalResume(target, id, guard)
+  }
+  const resumed = await f.control("resume")
+  assert.equal(resumed.calendarOwner?.operation.pending, true)
+  assert.equal([...f.calendars.values()].every(info => info.status === "paused"), true)
+
+  const aux = await ownerFixture(t)
+  aux.loseCreateACK("reconciliation")
+  const doc = await aux.control("play")
+  const info = [...aux.calendars.values()][0]
+  info.runCount = 1
+  const originalQualify = aux.native.qualifyLegacyProvider
+  aux.native.qualifyLegacyProvider = async guard => {
+    await originalQualify(guard)
+    delete aux.sessions.get(info.sessionID).model
+  }
+  const wake = { missionID: doc.id, generation: doc.timeGeneration, sessionID: info.sessionID,
+    scheduleID: info.id, run: 1, messageID: `msg_${info.id}_1` }
+  assert.equal(await readNativeScheduleAuxiliaryWakeBinding(aux.ctx, wake, aux.native, Effect.runPromise, aux.current), undefined)
+  await assert.rejects(aux.owner.adoptAuxiliary(wake), /unqualified/)
+  assert.equal((await aux.read()).calendarOwner?.slots.find(item => item.role === "reconciliation")?.creation, "attempted")
+})

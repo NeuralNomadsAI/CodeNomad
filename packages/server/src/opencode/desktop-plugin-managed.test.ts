@@ -118,6 +118,16 @@ test("does not recognize the Missions carrier provider as a plugin runtime", asy
   assert.equal(managedDesktopPluginForSource(installations, pathToFileURL(providerFile).href, nativePaths), undefined)
 })
 
+test("recognizes runtime-only Missions shims without provider and rejects provider-only artifact shims", async t => {
+  const fixture = await createFixture(t)
+  const installed = await fixture.install("missions", ["codenomad.missions"])
+  const installations = await fixture.read()
+  assert.equal(installations.length, 1)
+  assert.equal(installations[0].plugin, installed.plugin)
+  const broken = installed.source.replace(/"runtime":\{[^}]+\}/, `"provider":{"file":${JSON.stringify(installed.plugin)},"sha256":"${"a".repeat(64)}"}`)
+  assert.throws(() => parseManagedDesktopPluginEntry("missions", broken, nativePaths), /Invalid managed Missions artifacts/)
+})
+
 for (const damage of ["malformed shim", "extra shim code", "digest tamper", "missing payload", "renamed shim"] as const)
 test(`leaves an unproven installation ordinary after ${damage}`, async t => {
   const fixture = await createFixture(t)

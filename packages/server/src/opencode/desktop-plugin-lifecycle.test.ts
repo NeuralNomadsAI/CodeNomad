@@ -201,6 +201,17 @@ test("a missing packaged provider fails Missions provisioning before installing 
   await assert.rejects(readdir(leasesFor(root, "missions")), { code: "ENOENT" })
 })
 
+test("Missions provisions a runtime-only artifact manifest when the optional legacy provider is absent", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-provider-optional-"))
+  const lifecycle = new DesktopPluginLifecycle("missions", async () => bundle, async () => undefined)
+  t.after(async () => { await lifecycle.stop(); await rm(root, { recursive: true, force: true }) })
+  await lifecycle.start(pathsFor(root))
+  const source = await readFile(entryFor(root, "missions"), "utf8")
+  const [, artifacts] = JSON.parse(`[${/export default desktopPlugin\((.+)\)\n$/.exec(source)![1]}]`)
+  assert.deepEqual(Object.keys(artifacts), ["runtime"])
+  assert.equal((await readdir(path.join(pathsFor(root).data, "missions"))).filter(name => name.endsWith(".provider.mjs")).length, 0)
+})
+
 test("standalone memory preparation shares transactional claims and releases leases on shutdown", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-memory-lifecycle-"))
   const pruning = new DesktopPluginLifecycle("session-pruning", async () => bundle)

@@ -243,17 +243,28 @@ test("an attempted auxiliary resolves its schedule ID from native records, retai
   assert.deepEqual(await owner.read(), doc) // No service registration: no native adoption or dispatch.
 })
 
-test("legacy prompt carrier foundation refuses registration when provider.mjs is missing or omitted even with intact runtime", async t => {
-  const owner = await ownerFixture(t), f = nativeReads(t, owner.directory)
+test("legacy prompt carrier foundation refuses registration without provider.mjs and rejects model-less carriers at hook entry", async t => {
+  const owner = await ownerFixture(t), doc = await owner.control("play"), f = nativeReads(t, owner.directory)
+  const calendar = doc.calendars.find(item => item.role === "reconciliation")!
+  const hooks = new Map<string, (event: any) => Effect.Effect<void>>()
   let registered = 0
   const ctx = { ...owner.ctx, location: f.location,
     rpc: { register: () => Effect.sync(() => { registered++ }) },
     aisdk: { hook: () => Effect.void },
-    session: { ...owner.ctx.session, hook: () => Effect.void } } as unknown as Plugin.Context
+    session: { ...owner.ctx.session, hook: (name: string, use: (event: any) => Effect.Effect<void>) => Effect.sync(() => { hooks.set(name, use) }) } } as unknown as Plugin.Context
   await assert.rejects(f.run(Effect.scoped(registerNativeScheduleCarrierFoundation(ctx, {
     registrationFile: owner.installation.registrationFile, runtime: owner.installation.runtime,
   }))), /artifact/)
+  assert.equal(registered, 0)
+
+  await f.run(Effect.scoped(registerNativeScheduleCarrierFoundation(ctx, owner.installation)))
+  assert.equal(registered, 1)
+  delete owner.sessions.get(calendar.sessionID).model
+  await assert.rejects(f.run(hooks.get("prompt")!({ sessionID: calendar.sessionID, messageID: `msg_${calendar.scheduleID}_1`,
+    prompt: { text: NATIVE_SCHEDULE_CARRIER_SIGNAL }, metadata: { automation: { id: calendar.scheduleID, run: 1, dueAt: 1000, late: false } } })), /ownership/)
+  await assert.rejects(f.run(hooks.get("context")!({ sessionID: calendar.sessionID, model: NATIVE_SCHEDULE_CARRIER_MODEL, messages: [], tools: {} })), /ownership/)
+
   unlinkSync(owner.installation.provider.file)
   await assert.rejects(f.run(Effect.scoped(registerNativeScheduleCarrierFoundation(ctx, owner.installation))))
-  assert.equal(registered, 0)
+  assert.equal(registered, 1)
 })

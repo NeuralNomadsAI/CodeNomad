@@ -416,3 +416,16 @@ test("concurrent Missions installers repair a truncated provider before publishi
   assert.deepEqual(await readFile(payload), provider)
   assert.equal((await readdir(directory)).filter(name => name.endsWith(".tmp")).length, 0)
 })
+
+test("Missions installation emits a runtime-only artifact manifest when no provider bundle is supplied", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-runtime-only-"))
+  const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
+  const runtime = Buffer.from("runtime-only")
+  const stop = await installDesktopPluginPresence("missions", runtime, paths)
+  t.after(async () => { await stop(); await rm(root, { recursive: true, force: true }) })
+  const entry = path.join(paths.config, "plugins", "codenomad-missions.ts")
+  const source = await readFile(entry, "utf8")
+  const [, artifacts] = JSON.parse(`[${/export default desktopPlugin\((.+)\)\n$/.exec(source)![1]}]`)
+  const hash = createHash("sha256").update(runtime).digest("hex")
+  assert.deepEqual(artifacts, { runtime: { file: path.join(paths.data, "missions", `${hash}.mjs`), sha256: hash } })
+})

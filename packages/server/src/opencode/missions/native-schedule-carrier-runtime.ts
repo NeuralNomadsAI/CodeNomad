@@ -45,7 +45,7 @@ export function registerNativeScheduleCarrierFoundation(ctx: Plugin.Context, opt
       if (input.registrationFile !== options.registrationFile) throw new Error("schedule-registration-ownership")
       const guard = nativeScheduleIncarnationGuard(options.registrationFile, input.incarnation)
       guard(); installed()
-      const binding = yield* readNativeScheduleCarrierBinding(ctx, input.wake.sessionID)
+      const binding = yield* readNativeScheduleCarrierBinding(ctx, input.wake.sessionID, undefined, { requireLegacyModel: true })
       if (!binding || binding.document.id !== input.wake.missionID || binding.document.timeGeneration !== input.wake.generation
         || binding.calendar.scheduleID !== input.wake.scheduleID) throw new Error("schedule-carrier-mapping")
       const key = nativeScheduleWakeKey(input.wake)
@@ -131,7 +131,7 @@ export function registerNativeScheduleCarrierFoundation(ctx: Plugin.Context, opt
       admit: () => Effect.die(new Error("schedule-foundation-admit")),
     }).pipe(Effect.orDie)
     yield* ctx.aisdk.hook("language", event => Effect.sync(() => hooks.language(event)))
-    const owned = (sessionID: string) => readNativeScheduleCarrierBinding(ctx, sessionID).pipe(Effect.tap(binding =>
+    const owned = (sessionID: string) => readNativeScheduleCarrierBinding(ctx, sessionID, undefined, { requireLegacyModel: true }).pipe(Effect.tap(binding =>
       binding ? Effect.sync(() => { installed() }) : Effect.void), Effect.orDie)
     yield* ctx.session.hook("prompt", event => Effect.gen(function* () {
       const binding = yield* owned(event.sessionID)

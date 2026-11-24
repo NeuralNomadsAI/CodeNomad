@@ -14,7 +14,8 @@ import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "
 import { matchMissionAutomation, MISSION_WAKE_CODE, MISSION_WAKE_PERMISSIONS, runningMissionCodeWake } from "./native-mission-automation"
 
 async function facade(t: test.TestContext, availability: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void, unknown>,
-  options: { model?: { providerID: string; id: string }; onSessionGet?: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void> } = { model: { ...NATIVE_SCHEDULE_CARRIER_MODEL } }) {
+  options: { model?: { providerID: string; id: string }; onSessionGet?: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void>;
+    assertLegacyProviderArtifacts?: () => true } = { model: { ...NATIVE_SCHEDULE_CARRIER_MODEL } }) {
   const state: { enabled: boolean; closed: boolean; row?: string; duplicate?: boolean; runCount?: number; action?: Automation.Info["action"]
     status?: Automation.Info["status"]; permissions?: unknown[]; present?: boolean; model?: { providerID: string; id: string } } = {
     enabled: true, closed: false, present: true, model: options.model }, created: any[] = [], createdSessions: any[] = [], resumes: string[] = [], pauses: string[] = []
@@ -55,7 +56,8 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
     update: (input: { permissions: unknown[] }) => Effect.sync(() => { state.permissions = structuredClone(input.permissions) }) } } as unknown as Plugin.Context
   const scope = await Effect.runPromise(Scope.make())
   t.after(() => Effect.runPromise(Scope.close(scope, Exit.void)))
-  const native = await Effect.runPromise(acquireNativeScheduleCalendarService(ctx, "build", () => true, undefined, () => availability(state)).pipe(
+  const native = await Effect.runPromise(acquireNativeScheduleCalendarService(ctx, "build", () => true, undefined, () => availability(state),
+    options.assertLegacyProviderArtifacts).pipe(
     Effect.provideService(Context.Service<never, unknown>("@opencode/Automation"), schedules),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Location"), location),
     Effect.provideService(Context.Service<never, unknown>("@opencode/LocationLifecycle"), { isClosed: () => state.closed }),
@@ -139,6 +141,33 @@ test("legacy prompt pause and resume refuse before mutating native state when th
   await assert.rejects(pausing.native.pause(pausing.selected, "sch_scope", current), /carrier differs/)
   assert.deepEqual(pausing.pauses, [])
   assert.equal(pausing.state.status, "active")
+
+  let providerIntact = true, resumeReads = 0
+  const vanishing = await facade(t, () => Effect.void, {
+    model: { ...NATIVE_SCHEDULE_CARRIER_MODEL },
+    onSessionGet: () => Effect.sync(() => { if (++resumeReads === 2) providerIntact = false }),
+    assertLegacyProviderArtifacts: () => { if (!providerIntact) throw new Error("schedule-carrier-artifact"); return true },
+  })
+  vanishing.state.runCount = 0; vanishing.state.status = "paused"
+  await assert.rejects(vanishing.native.resume(vanishing.selected, "sch_scope", current), /schedule-carrier-artifact/)
+  assert.deepEqual(vanishing.resumes, [])
+  assert.equal(vanishing.state.status, "paused")
+})
+
+test("Code Mode calendar create validates ownership, model and permissions on the same fresh session read", async t => {
+  const current = () => true as const
+  let reads = 0
+  const f = await facade(t, () => Effect.void, {
+    model: undefined,
+    onSessionGet: () => Effect.sync(() => { if (++reads === 2) f.state.model = { providerID: "remote", id: "paid" } }),
+  })
+  await assert.rejects(f.native.create(f.selected, current), /carrier differs/)
+  assert.deepEqual(f.created, [])
+
+  const foreign = await facade(t, () => Effect.void, { model: { providerID: "remote", id: "paid" } })
+  foreign.state.permissions = MISSION_WAKE_PERMISSIONS.map(rule => ({ ...rule }))
+  await assert.rejects(foreign.native.create(foreign.selected, current), /carrier differs/)
+  assert.deepEqual(foreign.created, [])
 })
 
 test("prepared wake ACK decodes encoded native SQL timestamps and keeps partial or absent proof closed", async t => {

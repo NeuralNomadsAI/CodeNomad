@@ -376,6 +376,10 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       codeDoc = await owner!.read(codeDoc.id) as MissionDocument
       assert.equal(codeDoc.launchedCount, 1)
       assert.equal(await invoke(runtime => runtime.prepareBusiness(codeDoc.pending!.coordinatorSessionID, entry), bare), true)
+      const declared = await invoke(runtime => runtime.executeBusiness(codeDoc.pending!.coordinatorSessionID, entry, control => control.declare(
+        codeDoc.pending!.coordinatorSessionID, { taskKey: "code_task", title: "Code work", brief: "Bounded work", role: "specialist", blockedBy: [] })), bare)
+      assert.equal(declared?.value.contract.taskKey, "code_task")
+      assert.equal((await owner!.read(codeDoc.id) as MissionDocument).everCreatedTask, true)
     })
   } finally { await Effect.runPromise(Scope.close(providerScope, Exit.void)); db.close() }
 })

@@ -132,7 +132,8 @@ export async function removeNativeScheduleCarrierLookupLocked(ctx: Context, sess
 }
 
 /** Exact session → durable document → current calendar, with no inventory scan. */
-export const readNativeScheduleCarrierBinding = (ctx: Context, sessionID: string, auxiliaryIntent?: NativeScheduleCarrierBinding) => Effect.gen(function* () {
+export const readNativeScheduleCarrierBinding = (ctx: Context, sessionID: string, auxiliaryIntent?: NativeScheduleCarrierBinding,
+  options: { requireLegacyModel?: boolean } = {}) => Effect.gen(function* () {
   const session = yield* ctx.session.get({ sessionID: Session.ID.make(sessionID) })
   const raw = session.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER]
   if (raw === undefined) return undefined
@@ -160,7 +161,7 @@ export const readNativeScheduleCarrierBinding = (ctx: Context, sessionID: string
     || marker.timeGeneration !== document.timeGeneration || marker.role !== calendar.role || marker.slot !== calendar.slot
     || session.id !== sessionID || session.parentID || session.projectID !== document.projectID || session.location.directory !== ctx.location.directory
     || session.location.workspaceID !== ctx.location.workspaceID || !document.configuration.roots.some(root => root.directory === session.location.directory)
-    || !isAllowedScheduleCarrierModel(session.model))
+    || !(options.requireLegacyModel ? isLegacyScheduleCarrierModel(session.model) : isAllowedScheduleCarrierModel(session.model)))
     throw new Error("schedule-carrier-ownership")
   return { document, calendar } satisfies NativeScheduleCarrierBinding
 })

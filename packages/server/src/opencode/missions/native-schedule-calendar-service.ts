@@ -62,6 +62,7 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
   ctx: Plugin.Context, carrierAgent: string, current: () => true,
   invocationRun?: <A>(effect: Effect.Effect<A, unknown>) => Promise<A>,
   providerAvailable?: () => Effect.Effect<void, unknown>,
+  assertLegacyProviderArtifacts?: () => true,
 ) {
   const graph = yield* Effect.context<never>()
   const required = (key: typeof missionAutomationService) => {
@@ -122,15 +123,17 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
   const wakeRules = () => MISSION_WAKE_PERMISSIONS.map(rule => ({ ...rule }))
   // A carrier made before code wakes has no rules of its own; it receives exactly these.
   const codeCarrier = Effect.fnUntraced(function* (target: Target, guard: () => true) {
-    const sessionID = Session.ID.make(target.descriptor.sessionID)
-    const rules = (yield* ctx.session.get({ sessionID })).permissions
-    if (canonicalAuthority(rules ?? []) === canonicalAuthority(MISSION_WAKE_PERMISSIONS)) return
+    const session = yield* carrier(target)
+    const rules = session.permissions
+    if (canonicalAuthority(rules ?? []) === canonicalAuthority(MISSION_WAKE_PERMISSIONS)) return session
     if (rules?.length) throw new Error("Native calendar carrier permissions differ")
+    const sessionID = Session.ID.make(target.descriptor.sessionID)
     yield* Effect.suspend(() => { assertCurrent(); assertSynchronousAuthorityGuard(guard, "policy-unqualified")
       return ctx.session.update({ sessionID, permissions: wakeRules() }) })
-    if (canonicalAuthority((yield* ctx.session.get({ sessionID })).permissions ?? []) !== canonicalAuthority(MISSION_WAKE_PERMISSIONS))
+    const updated = yield* carrier(target)
+    if (canonicalAuthority(updated.permissions ?? []) !== canonicalAuthority(MISSION_WAKE_PERMISSIONS))
       throw new Error("Native calendar carrier permissions unconfirmed")
-    yield* carrier(target)
+    return updated
   })
   const project = (info: MissionAutomationInfo, target: Target, legacyModel: boolean): NativeScheduleCalendarInfo => {
     const time = (value: DateTime.Utc | undefined) => value === undefined ? null : DateTime.toEpochMillis(value)
@@ -163,7 +166,12 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
     const legacyModel = isLegacyScheduleCarrierModel((yield* carrier(target)).model)
     if (!existing.code && !legacyModel) throw new Error("Native calendar carrier differs")
     const nativeID = missionAutomationID(id)
-    const value = yield* Effect.suspend(() => { assertCurrent(); assertSynchronousAuthorityGuard(guard, "policy-unqualified"); return schedules[action](nativeID) })
+    const value = yield* Effect.suspend(() => {
+      assertCurrent()
+      if (action === "resume" && !existing.code) assertLegacyProviderArtifacts?.()
+      assertSynchronousAuthorityGuard(guard, "policy-unqualified")
+      return schedules[action](nativeID)
+    })
       .pipe(Effect.flatMap(readMissionAutomation), Effect.map(info => {
         if (info.id !== nativeID) throw new Error("Native calendar mutation differs")
         return { ...project(info, target, legacyModel), id }
@@ -209,9 +217,8 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
     }), guard),
     get: (input, id, guard) => protect(input, target => get(target, id), guard),
     create: (input, guard) => protect(input, target => Effect.gen(function* () {
-      const legacyModel = isLegacyScheduleCarrierModel((yield* carrier(target)).model)
       if (target.descriptor.anchorAt === undefined) throw new Error("Native calendar creation anchor unavailable")
-      yield* codeCarrier(target, guard)
+      const legacyModel = isLegacyScheduleCarrierModel((yield* codeCarrier(target, guard)).model)
       const anchor = target.descriptor.anchorAt, real = yield* Clock.Clock
       const creationClock: Clock.Clock = { currentTimeMillis: Effect.succeed(anchor), currentTimeMillisUnsafe: () => anchor,
         currentTimeNanos: Effect.succeed(BigInt(anchor) * 1_000_000n), currentTimeNanosUnsafe: () => BigInt(anchor) * 1_000_000n,

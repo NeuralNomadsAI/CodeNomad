@@ -94,8 +94,8 @@ export async function installDesktopPluginPresence(
   const presenceDirectories = [...new Set([nativeLeases, ...(storage?.presenceDirectories ?? [])])]
   const providerHash = providerBundle && createHash("sha256").update(providerBundle).digest("hex")
   const nativePlugin = paths.nativeData ? path.posix.join(nativeDirectory, `${hash}.mjs`) : plugin
-  const artifacts: DesktopMissionArtifacts | undefined = providerHash ? Object.freeze({
-    provider: Object.freeze({ file: (paths.nativeData ? path.posix : path).join(nativeDirectory, `${providerHash}.provider.mjs`), sha256: providerHash }),
+  const artifacts: DesktopMissionArtifacts | undefined = feature === "missions" ? Object.freeze({
+    ...(providerHash ? { provider: Object.freeze({ file: (paths.nativeData ? path.posix : path).join(nativeDirectory, `${providerHash}.provider.mjs`), sha256: providerHash }) } : {}),
     runtime: Object.freeze({ file: nativePlugin, sha256: hash }),
   }) : undefined
   const source = `${marker}import { desktopPlugin } from ${JSON.stringify(pluginUrl)}\nexport default desktopPlugin(${JSON.stringify(presenceDirectories.length === 1 ? nativeLeases : presenceDirectories)}${artifacts ? `, ${JSON.stringify(artifacts)}` : ""})\n`
