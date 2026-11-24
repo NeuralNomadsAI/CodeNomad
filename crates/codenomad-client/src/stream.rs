@@ -79,6 +79,12 @@ impl State {
         }
     }
 
+    pub(crate) fn close_placement(&self) {
+        if let Some((cancel, _)) = &self.placement {
+            cancel.close();
+        }
+    }
+
     pub(crate) fn placement_closed(&self) -> bool {
         self.placement
             .as_ref()

@@ -58,81 +58,50 @@ fn oversized(text: &str) -> bool {
     text.encode_utf16().nth(super::super::MAX_DRAFT).is_some()
 }
 
+pub fn window_inline_usage_without_history(
+    s: &State,
+    seen: &mut std::collections::HashSet<usize>,
+) -> (usize, usize) {
+    let (mut files, mut bytes) = s.composer.add_unique_inline_usage(seen, true);
+    let Some(ui) = &s.workspace else {
+        return (files, bytes);
+    };
+    let active_session = super::active_session(s);
+    for (index, entry) in ui.entries.iter().enumerate() {
+        if index != ui.active
+            && let Some(cache) = entry.cache.as_ref()
+        {
+            let (f, b) = cache.add_unique_inline_usage(seen);
+            files = files.saturating_add(f);
+            bytes = bytes.saturating_add(b);
+        }
+        for (key, draft) in &entry.live_drafts {
+            if index == ui.active && Some(key.as_str()) == active_session {
+                continue;
+            }
+            if let Some((base, _)) = draft.parts.as_ref() {
+                let (f, b) = base.add_unique_inline_usage(seen);
+                files = files.saturating_add(f);
+                bytes = bytes.saturating_add(b);
+            }
+            if let Some(send) = draft.unconfirmed.as_ref() {
+                let (f, b) = send.draft().add_unique_inline_usage(seen);
+                files = files.saturating_add(f);
+                bytes = bytes.saturating_add(b);
+            }
+        }
+    }
+    (files, bytes)
+}
+
 pub fn attachment_draft_admissible(s: &State) -> bool {
     let Some(ui) = &s.workspace else { return true };
     let Some(id) = super::active_session(s) else {
         return false;
     };
-    let (current_files, current_bytes) = {
-        let (draft_files, draft_bytes) = s.composer.draft.inline_usage();
-        let (recall_files, recall_bytes) = s.composer.recall_inline_usage();
-        let (sending_files, sending_bytes) = s
-            .composer
-            .sending_state()
-            .map_or((0, 0), |send| send.inline_usage());
-        let (held_files, held_bytes) = s
-            .composer
-            .unconfirmed_state()
-            .map_or((0, 0), |send| send.unique_inline_usage(&s.composer.draft));
-        (
-            draft_files
-                .saturating_add(recall_files)
-                .saturating_add(sending_files)
-                .saturating_add(held_files),
-            draft_bytes
-                .saturating_add(recall_bytes)
-                .saturating_add(sending_bytes)
-                .saturating_add(held_bytes),
-        )
-    };
-    let inactive_sending = ui
-        .entries
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| *index != ui.active)
-        .filter_map(|(_, entry)| entry.cache.as_ref())
-        .fold((0usize, 0usize), |(files, bytes), cache| {
-            let (send_files, send_bytes) = cache.sending_inline_usage();
-            let (recalled_files, recalled_bytes) = cache.recalled_draft_inline_usage();
-            (
-                files
-                    .saturating_add(send_files)
-                    .saturating_add(recalled_files),
-                bytes
-                    .saturating_add(send_bytes)
-                    .saturating_add(recalled_bytes),
-            )
-        });
-    let (files, bytes) = ui
-        .entries
-        .iter()
-        .enumerate()
-        .flat_map(|(index, entry)| {
-            entry
-                .live_drafts
-                .iter()
-                .filter(move |(key, _)| index != ui.active || key.as_str() != id)
-        })
-        .fold(
-            (
-                current_files.saturating_add(inactive_sending.0),
-                current_bytes.saturating_add(inactive_sending.1),
-            ),
-            |(files, bytes), (_, draft)| {
-                let base_draft = draft.parts.as_ref().map(|(draft, _)| draft);
-                let (part_files, part_bytes) = base_draft.map_or((0, 0), Draft::inline_usage);
-                let (held_files, held_bytes) = draft.unconfirmed.as_ref().map_or((0, 0), |send| {
-                    base_draft.map_or_else(
-                        || send.inline_usage(),
-                        |base| send.unique_inline_usage(base),
-                    )
-                });
-                (
-                    files.saturating_add(part_files).saturating_add(held_files),
-                    bytes.saturating_add(part_bytes).saturating_add(held_bytes),
-                )
-            },
-        );
+    let mut seen = std::collections::HashSet::new();
+    let (files, mut bytes) = window_inline_usage_without_history(s, &mut seen);
+    bytes = bytes.saturating_add(s.prompt_history.unique_inline_bytes(&mut seen));
     if files > MAX_WINDOW_DEVICE_FILES || bytes > MAX_WINDOW_DEVICE_BYTES {
         return false;
     }
@@ -184,14 +153,13 @@ pub(super) fn note_unconfirmed_for(
                 if same_backend(current, saved)
                     && current.active_session_id.as_deref() == Some(key)
         ) && if index == ui.active {
-            s.messages
-                .iter()
-                .any(|row| row.id == attempt_id && row.role == "user")
+            s.composer
+                .has_confirmed_user_message(&s.messages, attempt_id)
         } else {
             entry
                 .cache
                 .as_ref()
-                .is_some_and(|cache| cache.has_user_message(attempt_id))
+                .is_some_and(|cache| cache.has_confirmed_user_message(attempt_id))
         }
     });
     if already_confirmed {

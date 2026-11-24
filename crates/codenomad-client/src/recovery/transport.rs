@@ -168,8 +168,16 @@ pub(crate) async fn run_with_reading(
         }
         match input {
             Some(Input::Workspace(e, event)) if e == epoch => {
+                let stopped = matches!(event, crate::transport::WorkspaceEvent::Stopped { .. });
                 if !publish(&out, &wake, Event::Workspace(event)).await {
                     wire.cancelled.store(true, SeqCst);
+                    return Ok(());
+                }
+                if stopped {
+                    wire.close_placement();
+                    wire.cancelled.store(true, SeqCst);
+                    ReadingLane::invalidate_connection(reading);
+                    publish(&out, &wake, Event::Failed).await;
                     return Ok(());
                 }
             }

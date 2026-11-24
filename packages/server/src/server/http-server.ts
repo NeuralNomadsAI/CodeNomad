@@ -1418,6 +1418,42 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     }
     authorizedSessionDirectory = session?.location.directory
     authorizedSession = session
+    const sessionDirectoryHeader = request.headers["x-codenomad-session-directory"]
+    if (
+      session
+      && request.method === "POST"
+      && /^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathname)
+      && sessionDirectoryHeader !== undefined
+    ) {
+      if (typeof sessionDirectoryHeader !== "string" || sessionDirectoryHeader.length > 16_384) {
+        reply.code(400).send({ error: "Invalid session directory header" })
+        return
+      }
+      let boundDirectory: string
+      try {
+        boundDirectory = decodeURIComponent(sessionDirectoryHeader)
+      } catch {
+        reply.code(400).send({ error: "Invalid session directory header" })
+        return
+      }
+      const nativeDirectory = session.location.directory
+      let matchesNative = nativeDirectory === boundDirectory
+      if (!matchesNative && workspaceManager.getServiceDirectoryForPath) {
+        const translatedBound = await wait(workspaceManager.getServiceDirectoryForPath(workspaceId, boundDirectory))
+        if (translatedBound && translatedBound === nativeDirectory) matchesNative = true
+      }
+      if (!matchesNative) {
+        const [realNative, realBound] = await Promise.all([
+          fs.promises.realpath(nativeDirectory).catch(() => undefined),
+          fs.promises.realpath(boundDirectory).catch(() => undefined),
+        ])
+        if (realNative && realBound && realNative === realBound) matchesNative = true
+      }
+      if (!matchesNative) {
+        reply.code(403).send({ error: "Location does not belong to workspace" })
+        return
+      }
+    }
     if (session && isMutation) {
       const sessionWorktree = await wait(workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory))
       if (!sessionWorktree) {
@@ -1845,6 +1881,7 @@ function sanitizeInstanceProxyRequestHeaders(
     HUMAN_ANSWER_HEADER,
     DEFERRED_MEDIA_HEADER,
     SESSION_PLACEMENT_HEADER,
+    "x-codenomad-session-directory",
   ])
   const connection = headers.connection
   for (const name of (Array.isArray(connection) ? connection.join(",") : connection ?? "").split(",")) blocked.add(name.trim().toLowerCase())

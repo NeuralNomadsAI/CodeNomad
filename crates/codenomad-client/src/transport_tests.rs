@@ -815,22 +815,47 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
                 )
                 .await
                 .unwrap();
-            let (pong_socket, _) = listener.accept().await.unwrap();
-            let mut pong = BufReader::new(pong_socket);
-            let mut first_line = String::new();
-            assert!(pong.read_line(&mut first_line).await.unwrap() > 0);
-            assert!(first_line.starts_with("POST /api/client-connections/pong "));
             loop {
-                let mut line = String::new();
-                assert!(pong.read_line(&mut line).await.unwrap() > 0);
-                if line == "\r\n" {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut req = BufReader::new(socket);
+                let mut first_line = String::new();
+                assert!(req.read_line(&mut first_line).await.unwrap() > 0);
+                let mut content_len = 0usize;
+                loop {
+                    let mut line = String::new();
+                    assert!(req.read_line(&mut line).await.unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(rest) = line
+                        .strip_prefix("content-length:")
+                        .or_else(|| line.strip_prefix("Content-Length:"))
+                    {
+                        content_len = rest.trim().parse().unwrap_or(0);
+                    }
+                }
+                if content_len > 0 {
+                    let mut discard = vec![0; content_len];
+                    tokio::io::AsyncReadExt::read_exact(&mut req, &mut discard)
+                        .await
+                        .unwrap();
+                }
+                assert!(
+                    !first_line.contains("/prompt"),
+                    "unexpected prompt before /pong barrier: {first_line}"
+                );
+                if first_line.starts_with("POST /api/client-connections/pong ") {
+                    req.get_mut()
+                        .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                        .await
+                        .unwrap();
                     break;
                 }
+                req.get_mut()
+                    .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
             }
-            pong.get_mut()
-                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
-                .await
-                .unwrap();
             let id = "msg_00000000000000000000000000000007";
             commands
                 .send(Command::Prompt(crate::prompt::Prompt {
@@ -1029,22 +1054,47 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
                 )
                 .await
                 .unwrap();
-            let (pong_socket, _) = listener.accept().await.unwrap();
-            let mut pong = BufReader::new(pong_socket);
-            let mut first_line = String::new();
-            assert!(pong.read_line(&mut first_line).await.unwrap() > 0);
-            assert!(first_line.starts_with("POST /api/client-connections/pong "));
             loop {
-                let mut line = String::new();
-                assert!(pong.read_line(&mut line).await.unwrap() > 0);
-                if line == "\r\n" {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut req = BufReader::new(socket);
+                let mut first_line = String::new();
+                assert!(req.read_line(&mut first_line).await.unwrap() > 0);
+                let mut content_len = 0usize;
+                loop {
+                    let mut line = String::new();
+                    assert!(req.read_line(&mut line).await.unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(rest) = line
+                        .strip_prefix("content-length:")
+                        .or_else(|| line.strip_prefix("Content-Length:"))
+                    {
+                        content_len = rest.trim().parse().unwrap_or(0);
+                    }
+                }
+                if content_len > 0 {
+                    let mut discard = vec![0; content_len];
+                    tokio::io::AsyncReadExt::read_exact(&mut req, &mut discard)
+                        .await
+                        .unwrap();
+                }
+                assert!(
+                    !first_line.contains("/prompt"),
+                    "unexpected prompt before /pong barrier: {first_line}"
+                );
+                if first_line.starts_with("POST /api/client-connections/pong ") {
+                    req.get_mut()
+                        .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                        .await
+                        .unwrap();
                     break;
                 }
+                req.get_mut()
+                    .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
             }
-            pong.get_mut()
-                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
-                .await
-                .unwrap();
             let id = "msg_00000000000000000000000000000009";
             commands
                 .send(Command::Prompt(crate::prompt::Prompt {

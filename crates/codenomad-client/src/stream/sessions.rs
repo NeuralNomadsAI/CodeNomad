@@ -19,10 +19,9 @@ pub(super) async fn relay(
             Some("session.moved" | "session.deleted")
         )
         && native["data"]["sessionID"] == b.session
-        && let Some((cancel, _)) = &state.placement
     {
         // Closing the signal before any send fences reads and prompts even if the relay inbox is full.
-        cancel.close();
+        state.close_placement();
     }
     if own && value["type"] == "instance.event" {
         children::observe(b, native);

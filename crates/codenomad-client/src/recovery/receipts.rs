@@ -1,9 +1,10 @@
 //! One dispatch attempt and its correlated receipt.
 use super::authentication::rejected_by_authentication;
+#[cfg(test)]
+use crate::prompt::Prompt;
 use crate::{
     Sender, Wake,
     backend::Backend,
-    prompt::Prompt,
     stream,
     transport::{Event, PromptOutcome, publish},
 };
@@ -40,8 +41,16 @@ pub(super) async fn slash(
                 {
                     return SlashReceipt::AuthenticationRequired { confirmed };
                 }
-                // Even if another tab re-paired, a 401 on an already-dispatched mutation cannot prove non-delivery.
-                PromptOutcome::Unconfirmed
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // In a browser, another tab may have re-paired the shared cookie jar after revocation.
+                    PromptOutcome::Unconfirmed
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    // Native backends own an isolated cookie jar: a live status proves synchronous rejection.
+                    PromptOutcome::Rejected
+                }
             }
         }
     } else {
@@ -96,8 +105,16 @@ pub(super) async fn prompt_encoded(
             {
                 return PromptReceipt::AuthenticationRequired { confirmed };
             }
-            // Even if another tab re-paired, a 401 on an already-dispatched prompt cannot prove non-delivery.
-            PromptOutcome::Unconfirmed
+            #[cfg(target_arch = "wasm32")]
+            {
+                // In a browser, another tab may have re-paired the shared cookie jar after revocation.
+                PromptOutcome::Unconfirmed
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                // Native backends own an isolated cookie jar: a live status proves synchronous rejection.
+                PromptOutcome::Rejected
+            }
         }
         Err(error)
             if error.downcast_ref() == Some(&crate::prompt::PromptError::Rejected)

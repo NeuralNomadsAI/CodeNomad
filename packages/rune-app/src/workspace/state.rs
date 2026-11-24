@@ -11,7 +11,7 @@ mod strip;
 
 pub use drafts::{
     attachment_draft_admissible, bound, capture, confirm_unconfirmed, draft_changed,
-    has_unconfirmed, note_unconfirmed,
+    has_unconfirmed, note_unconfirmed, window_inline_usage_without_history,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,

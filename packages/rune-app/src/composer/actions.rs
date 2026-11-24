@@ -17,6 +17,7 @@ pub struct Owner {
     pub send_error: bool,
     pub(crate) announce_send_error: bool,
     pub(crate) announce_unconfirmed: bool,
+    optimistic_id: Option<String>,
     unconfirmed: Option<PendingSend>,
     pub restored: bool,
     pub attachments_missing: bool,
@@ -35,13 +36,50 @@ impl Owner {
     pub(crate) fn unconfirmed_state(&self) -> Option<&PendingSend> {
         self.unconfirmed.as_ref()
     }
+    #[cfg(test)]
     pub(crate) fn sending_state(&self) -> Option<&PendingSend> {
         self.sending.as_ref()
     }
-    pub(crate) fn recall_inline_usage(&self) -> (usize, usize) {
-        self.recall
-            .as_ref()
-            .map_or((0, 0), super::recall::Recall::inline_usage)
+    pub(crate) fn add_unique_inline_usage(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+        include_draft: bool,
+    ) -> (usize, usize) {
+        let mut files = 0usize;
+        let mut bytes = 0usize;
+        let mut add = |draft: &Draft| {
+            let (f, b) = draft.add_unique_inline_usage(seen);
+            files = files.saturating_add(f);
+            bytes = bytes.saturating_add(b);
+        };
+        if include_draft {
+            add(&self.draft);
+        }
+        if let Some(recall) = &self.recall {
+            add(recall.draft());
+        }
+        if let Some(send) = &self.sending {
+            add(&send.draft);
+        }
+        if let Some(send) = &self.unconfirmed {
+            add(&send.draft);
+        }
+        (files, bytes)
+    }
+    pub(crate) fn clear_optimistic(&mut self, id: Option<&str>) {
+        if id.is_none() || self.optimistic_id.as_deref() == id {
+            self.optimistic_id = None;
+        }
+    }
+    pub(crate) fn has_confirmed_user_message(
+        &self,
+        messages: &[crate::history::Row],
+        id: &str,
+    ) -> bool {
+        self.optimistic_id.as_deref() != Some(id)
+            && messages
+                .iter()
+                .any(|row| row.id == id && row.role == "user")
     }
     pub(crate) fn restore_unconfirmed(&mut self, pending: PendingSend) {
         self.unconfirmed = Some(pending);
@@ -57,8 +95,16 @@ impl Owner {
         let Some(send) = self.unconfirmed.take() else {
             return false;
         };
+        self.send_error = false;
+        self.announce_send_error = false;
+        if let Some(recall) = &mut self.recall {
+            if !send.edited && recall.matches_draft(&send.edit, &send.draft) {
+                recall.clear_draft();
+                return true;
+            }
+            return false;
+        }
         if !send.edited
-            && self.recall.is_none()
             && draft_edit.text == send.edit.text
             && self.draft.attachments == send.draft.attachments
         {
@@ -108,9 +154,14 @@ impl PendingSend {
     pub(crate) fn id(&self) -> &str {
         &self.id
     }
+    pub(crate) fn draft(&self) -> &Draft {
+        &self.draft
+    }
+    #[cfg(test)]
     pub(crate) fn inline_usage(&self) -> (usize, usize) {
         self.draft.inline_usage()
     }
+    #[cfg(test)]
     pub(crate) fn unique_inline_usage(&self, active_draft: &Draft) -> (usize, usize) {
         if !self.restored_to_draft {
             return self.draft.inline_usage();
@@ -310,6 +361,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
     s.composer.picker.reset();
     renew_editor(s, tx);
     if !queued {
+        s.composer.optimistic_id = Some(id.clone());
         s.messages.push(
             Message {
                 completed: true,
@@ -416,6 +468,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
     if let PromptOutcome::Confirmed(confirmed) = outcome {
+        s.composer.clear_optimistic(Some(attempted));
         s.composer.send_error = false;
         s.composer.announce_send_error = false;
         if confirmed != attempted {
@@ -441,6 +494,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         }
         return;
     }
+    s.composer.clear_optimistic(Some(attempted));
     crate::chat::reader::settle_bookmark(s, attempted, None);
     if let Some(index) = row {
         s.messages.remove(index);
@@ -467,27 +521,19 @@ pub fn settle_pending(s: &mut State, outcome: PromptOutcome) {
 }
 
 pub fn reconcile(s: &mut State) {
-    let confirmed = s.composer.unconfirmed.as_ref().is_some_and(|send| {
-        s.messages
-            .iter()
-            .any(|row| row.id == send.id && row.role == "user")
-    });
-    if !confirmed {
-        return;
-    }
-    let Some(send) = s.composer.unconfirmed.take() else {
+    let Some(attempt_id) = s
+        .composer
+        .unconfirmed
+        .as_ref()
+        .filter(|send| s.composer.has_confirmed_user_message(&s.messages, &send.id))
+        .map(|send| send.id.clone())
+    else {
         return;
     };
-    if !send.edited
-        && s.composer.recall.is_none()
-        && s.draft.text == send.edit.text
-        && s.composer.draft.attachments == send.draft.attachments
-    {
-        s.draft.clear();
-        s.composer.draft = Draft::default();
-    }
+    s.composer
+        .confirm_unconfirmed_matching(&mut s.draft, &attempt_id);
     if s.workspace.is_some() {
-        workspace::confirm_unconfirmed(s, &send.id);
+        workspace::confirm_unconfirmed(s, &attempt_id);
         workspace::capture(s);
     }
 }
@@ -772,21 +818,26 @@ mod tests {
             panic!("expected prompt")
         };
         let id = prompt.id.unwrap();
-        let row = rt.state.messages.pop().unwrap();
+        // Keep the optimistic row in Tab A: Unconfirmed must NOT self-confirm on its own local echo.
         acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
+        assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
+        assert_eq!(rt.state.draft.text, "tab A attempt");
+        assert!(!can_send(&rt.state));
         // Switching to already-open sibling Tab B must block sending while Tab A is still open.
         rt.update(|s, tx| workspace::select(s, &tab_b, tx));
         assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
         assert!(!can_send(&rt.state));
-        // Reconciling in Tab A must clear the lock globally, including Tab B's cache.
+        // Native sync in Tab A clears the optimistic marker, reconciles and clears the lock globally.
         rt.update(|s, tx| workspace::select(s, &tab_a, tx));
-        rt.state.messages.push(row);
+        rt.state.composer.clear_optimistic(None);
         reconcile(&mut rt.state);
         assert!(rt.state.composer.unconfirmed_id().is_none());
+        assert!(rt.state.draft.text.is_empty());
         // Closing sibling Tab B afterwards must not reintroduce the reconciled lock.
         rt.update(|s, tx| workspace::close(s, &tab_b, tx));
         assert!(rt.state.composer.unconfirmed_id().is_none());
         assert!(!workspace::has_unconfirmed(&rt.state));
+        rt.state.draft = TextEdit::new("next");
         assert!(can_send(&rt.state));
     }
 

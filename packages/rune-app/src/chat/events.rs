@@ -198,6 +198,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                     event,
                     codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
                 ) {
+                    s.composer.clear_optimistic(None);
                     s.status_permissions.online(false);
                     s.status_usage.disconnect();
                     chat::reader::suspend(s);
@@ -208,6 +209,21 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                     s.can_older = false;
                     s.phase = Phase::Reconnecting;
                     if let Some(agent) = &mut s.agent {
+                        agent.attention.disconnected();
+                    }
+                } else if matches!(
+                    event,
+                    codenomad_client::transport::WorkspaceEvent::Stopped { .. }
+                ) {
+                    s.stream_offline = true;
+                    s.status_permissions.online(false);
+                    s.status_usage.disconnect();
+                    chat::reader::suspend(s);
+                    s.composer.picker.set_attachments_supported(false);
+                    s.attachments.cancel();
+                    s.phase = Phase::Failed;
+                    if let Some(agent) = &mut s.agent {
+                        agent.online = false;
                         agent.attention.disconnected();
                     }
                 }
@@ -242,6 +258,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                         a.refresh(false);
                     }
                 }
+                s.composer.clear_optimistic(None);
                 s.messages = page.rows;
                 crate::timeline::restore_search(s);
                 s.history_detached = s.reader.is_some() && page.newer.is_some();
@@ -341,6 +358,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
+                s.composer.clear_optimistic(None);
                 s.messages.clear();
                 s.history_detached = false;
                 s.can_older = false;
@@ -365,14 +383,20 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 }
             }
             Event::History(messages) => {
+                s.composer.clear_optimistic(None);
                 s.messages = messages;
+                composer::reconcile(s);
                 s.phase = Phase::Ready;
                 s.stream_offline = false;
             }
             Event::Message(m) => {
-                if !s.messages.iter().any(|existing| existing.id == m.id) {
+                s.composer.clear_optimistic(Some(&m.id));
+                if let Some(existing) = s.messages.iter_mut().find(|existing| existing.id == m.id) {
+                    *existing = m.into();
+                } else {
                     s.messages.push(m.into());
                 }
+                composer::reconcile(s);
             }
             Event::PromptAcknowledged { attempted, outcome } => {
                 composer::acknowledge(s, &attempted, outcome);

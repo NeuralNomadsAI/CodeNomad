@@ -57,10 +57,8 @@ impl Cache {
         }
     }
 
-    pub(super) fn has_user_message(&self, id: &str) -> bool {
-        self.messages
-            .iter()
-            .any(|row| row.id == id && row.role == "user")
+    pub(super) fn has_confirmed_user_message(&self, id: &str) -> bool {
+        self.composer.has_confirmed_user_message(&self.messages, id)
     }
 
     pub(super) fn clear_unconfirmed_matching(&mut self, attempt_id: &str) -> bool {
@@ -68,18 +66,12 @@ impl Cache {
             .confirm_unconfirmed_matching(&mut self.draft, attempt_id)
     }
 
-    pub(super) fn sending_inline_usage(&self) -> (usize, usize) {
+    pub(super) fn add_unique_inline_usage(
+        &self,
+        seen: &mut std::collections::HashSet<usize>,
+    ) -> (usize, usize) {
         self.composer
-            .sending_state()
-            .map_or((0, 0), |send| send.inline_usage())
-    }
-
-    pub(super) fn recalled_draft_inline_usage(&self) -> (usize, usize) {
-        if self.composer.recall.is_some() {
-            self.composer.draft.inline_usage()
-        } else {
-            (0, 0)
-        }
+            .add_unique_inline_usage(seen, self.composer.recall.is_some())
     }
 
     #[cfg(target_arch = "wasm32")]

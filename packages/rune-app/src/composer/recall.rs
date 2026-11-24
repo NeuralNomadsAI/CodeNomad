@@ -9,6 +9,7 @@ pub(crate) use persistence::poll;
 use codenomad_client::prompt_history::MAX_ENTRIES;
 const MAX_WINDOW_ENTRIES: usize = 3200;
 const MAX_BYTES: usize = 80 * 1024 * 1024;
+const MAX_INLINE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum Project {
@@ -119,6 +120,24 @@ impl History {
     fn full(&self, additional: usize) -> bool {
         self.entries.len() >= MAX_WINDOW_ENTRIES || self.bytes + additional > MAX_BYTES
     }
+
+    pub(crate) fn unique_inline_bytes(&self, seen: &mut std::collections::HashSet<usize>) -> usize {
+        self.entries.iter().fold(0usize, |total, entry| {
+            total.saturating_add(entry.draft.add_unique_inline_usage(seen).1)
+        })
+    }
+
+    fn inline_bytes_with(
+        &self,
+        base_seen: &std::collections::HashSet<usize>,
+        base_bytes: usize,
+        draft: &Draft,
+    ) -> usize {
+        let mut seen = base_seen.clone();
+        base_bytes
+            .saturating_add(draft.add_unique_inline_usage(&mut seen).1)
+            .saturating_add(self.unique_inline_bytes(&mut seen))
+    }
 }
 
 pub(crate) struct Recall {
@@ -129,8 +148,18 @@ pub(crate) struct Recall {
 }
 
 impl Recall {
-    pub(crate) fn inline_usage(&self) -> (usize, usize) {
-        self.draft.inline_usage()
+    pub(crate) fn draft(&self) -> &Draft {
+        &self.draft
+    }
+
+    pub(crate) fn matches_draft(&self, edit: &TextEdit, draft: &Draft) -> bool {
+        self.edit.text == edit.text && self.draft.attachments == draft.attachments
+    }
+
+    pub(crate) fn clear_draft(&mut self) {
+        self.edit.clear();
+        self.draft = Draft::default();
+        self.missing = false;
     }
 }
 
@@ -173,7 +202,12 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
                 } => name.len() + mime.len() + token.as_ref().map_or(0, String::len),
             })
             .sum::<usize>();
-    if bytes > MAX_BYTES {
+    let mut base_seen = std::collections::HashSet::new();
+    let (_, base_inline_bytes) = workspace::window_inline_usage_without_history(s, &mut base_seen);
+    let mut with_new = base_seen.clone();
+    let new_inline_total =
+        base_inline_bytes.saturating_add(draft.add_unique_inline_usage(&mut with_new).1);
+    if bytes > MAX_BYTES || new_inline_total > MAX_INLINE_BYTES {
         persistence::append(s, &resolved);
         return false;
     }
@@ -187,7 +221,10 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
     {
         history.discard(index);
     }
-    while history.full(bytes) {
+    while !history.entries.is_empty()
+        && (history.full(bytes)
+            || history.inline_bytes_with(&base_seen, base_inline_bytes, &draft) > MAX_INLINE_BYTES)
+    {
         history.discard(history.entries.len() - 1);
     }
     history.next += 1;

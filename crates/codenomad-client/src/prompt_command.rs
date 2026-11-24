@@ -20,7 +20,10 @@ impl Backend {
             ))
             .json(&json!({"name":name,"text":text,"delivery":"steer"}));
         if let Some(directory) = &self.session_directory {
-            request = request.query(&[("directory", directory.as_str())]);
+            request = request.query(&[("directory", directory.as_str())]).header(
+                "x-codenomad-session-directory",
+                crate::backend::percent_encode_header(directory),
+            );
         }
         let response = request
             .send()

@@ -786,7 +786,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let response = tokio::select! {
             _ = principal.0.cancelled(), if !dispatched_mutation => return Err(crate::auth::unauthorized()),
             response = tokio::time::timeout(super::PROXY_IDLE, upstream.send()) =>
-                response.map_err(|_| upstream_error())?.map_err(|_| upstream_error())?,
+                response.map_err(|_| upstream_error())?.map_err(|err| {
+                    if send_input && err.is_connect() {
+                        super::pre_dispatch_unavailable()
+                    } else {
+                        upstream_error()
+                    }
+                })?,
         };
         if response.status().is_success() {
             if let Some(receipt) = receipt {

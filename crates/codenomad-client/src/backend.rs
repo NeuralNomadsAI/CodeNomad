@@ -18,7 +18,7 @@ impl std::fmt::Debug for Backend {
         f.write_str("CodeNomadConnection")
     }
 }
-fn percent_encode_header(value: &str) -> String {
+pub(crate) fn percent_encode_header(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
@@ -85,6 +85,7 @@ pub(crate) async fn classify_http_error(
                         "Mission schedule carrier ownership could not be verified"
                             | "Conversation permissions unavailable"
                             | "Git ownership could not be verified"
+                            | "Session mutation transport is unavailable"
                     )
                 )
             {

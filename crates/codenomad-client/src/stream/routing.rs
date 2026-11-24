@@ -101,6 +101,9 @@ pub(super) async fn dispatch(
         .await?;
     }
     if let Some(event) = workspace_event(b, &value) {
+        if matches!(event, WorkspaceEvent::Stopped { .. }) {
+            state.close_placement();
+        }
         out.send(Input::Workspace(epoch, event)).await?;
         return Ok(());
     }
