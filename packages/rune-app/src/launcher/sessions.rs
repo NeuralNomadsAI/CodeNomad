@@ -21,7 +21,7 @@ impl Launcher {
         self.next = None;
         self.consumed_cursors.clear();
         // The first folder page cannot decide which linked sessions disappeared.
-        self.apply_passive_listing(page, selected, false);
+        self.apply_passive_listing(page, selected, false, false);
     }
 
     pub(super) fn consume_cursor(&mut self, cursor: &str) {
@@ -40,8 +40,9 @@ impl Launcher {
         mut page: Sessions,
         selected: Option<&str>,
         authoritative: bool,
+        includes_linked: bool,
     ) {
-        if authoritative {
+        if authoritative && (includes_linked || self.creation_uncertain_linked.is_none()) {
             self.creation_uncertain = false;
             self.creation_uncertain_linked = None;
         }

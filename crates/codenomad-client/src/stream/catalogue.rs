@@ -20,13 +20,71 @@ pub enum CatalogueChanges {
     All,
 }
 
+const MAX_WORKSPACE_EVENTS: usize = 256;
+const MAX_WORKSPACE_EVENT_BYTES: usize = 512 * 1024;
+
+#[derive(Default)]
+struct WorkspaceEventQueue {
+    events: VecDeque<(WorkspaceEvent, usize)>,
+    bytes: usize,
+}
+
+impl WorkspaceEventQueue {
+    fn clear(&mut self) {
+        self.events.clear();
+        self.bytes = 0;
+    }
+
+    fn push(&mut self, event: WorkspaceEvent) -> bool {
+        let size = workspace_event_bytes(&event);
+        if size > MAX_WORKSPACE_EVENT_BYTES {
+            return true;
+        }
+        let mut overflow = false;
+        while self.events.len() >= MAX_WORKSPACE_EVENTS
+            || self.bytes.saturating_add(size) > MAX_WORKSPACE_EVENT_BYTES
+        {
+            let Some((_, dropped)) = self.events.pop_front() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(dropped);
+            overflow = true;
+        }
+        self.bytes = self.bytes.saturating_add(size);
+        self.events.push_back((event, size));
+        overflow
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = WorkspaceEvent> + '_ {
+        self.bytes = 0;
+        self.events.drain(..).map(|(event, _)| event)
+    }
+}
+
+fn workspace_event_bytes(event: &WorkspaceEvent) -> usize {
+    match event {
+        WorkspaceEvent::FilesChanged {
+            workspace_id,
+            changes,
+        } => changes.iter().fold(workspace_id.len() + 64, |acc, change| {
+            acc.saturating_add(change.directory.len())
+                .saturating_add(change.path.len())
+                .saturating_add(64)
+        }),
+        WorkspaceEvent::NativeFilesystemChanged { workspace_id }
+        | WorkspaceEvent::WorktreesChanged { workspace_id }
+        | WorkspaceEvent::Stopped { workspace_id } => workspace_id.len() + 64,
+        _ => 64,
+    }
+}
+
 pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
     stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
-    workspace_events: Mutex<VecDeque<WorkspaceEvent>>,
+    workspace_events: Mutex<WorkspaceEventQueue>,
     workspace_stopped: Mutex<HashSet<String>>,
     workspace_overflow: std::sync::atomic::AtomicBool,
     disconnect_notice: std::sync::atomic::AtomicBool,
@@ -44,7 +102,8 @@ struct StatsChanges {
 
 impl Signals {
     pub(super) fn invalidate_all(&self) {
-        if self.mark(&self.pending, None) | self.mark(&self.providers, None) {
+        let workspace = !self.workspace_overflow.swap(true, SeqCst);
+        if self.mark(&self.pending, None) | self.mark(&self.providers, None) | workspace {
             (self.wake)();
         }
     }
@@ -133,12 +192,9 @@ impl Signals {
                         }
                     }
                     other => {
-                        let mut queue = self.workspace_events.lock().unwrap();
-                        if queue.len() >= 256 {
-                            queue.pop_front();
+                        if self.workspace_events.lock().unwrap().push(other) {
                             self.workspace_overflow.store(true, SeqCst);
                         }
-                        queue.push_back(other);
                     }
                 }
                 true
@@ -355,7 +411,7 @@ impl CatalogueWatch {
         for workspace_id in self.signals.workspace_stopped.lock().unwrap().drain() {
             events.push_back(WorkspaceEvent::Stopped { workspace_id });
         }
-        events.extend(self.signals.workspace_events.lock().unwrap().drain(..));
+        events.extend(self.signals.workspace_events.lock().unwrap().drain());
         (generation, overflow, events)
     }
 
@@ -574,8 +630,46 @@ mod tests {
             *signals.stopped.lock().unwrap(),
             CatalogueChanges::None
         ));
+        assert!(signals.workspace_overflow.load(SeqCst));
         assert_eq!(signals.generation.load(SeqCst), 3);
         assert_eq!(count.load(SeqCst), 1);
+    }
+
+    #[test]
+    fn workspace_event_queue_bounds_bytes_and_flags_overflow() {
+        let (watch, _task) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
+            Arc::new(|| {}),
+        );
+        let batch: Vec<_> = (0..2500)
+            .map(|i| json!({"directory": "/repo", "path": format!("src/module/file_{i:04}.rs")}))
+            .collect();
+        for index in 0..4 {
+            watch.signals.observe(&json!({
+                "type": "workspace.filesChanged",
+                "workspaceId": format!("ws-{index}"),
+                "changes": batch,
+            }));
+        }
+        let (_, overflow, events) = watch.take_workspace_events();
+        assert!(overflow);
+        assert!(!events.is_empty() && events.len() < 4);
+        assert!(
+            watch.signals.workspace_events.lock().unwrap().bytes == 0,
+            "draining must reset tracked queue bytes"
+        );
+        // A single valid event larger than the queue byte budget is dropped and flags overflow.
+        let huge_batch: Vec<_> = (0..7000)
+            .map(|i| json!({"directory": "/repo", "path": format!("src/module/file_{i:04}.rs")}))
+            .collect();
+        watch.signals.observe(&json!({
+            "type": "workspace.filesChanged",
+            "workspaceId": "ws-huge",
+            "changes": huge_batch,
+        }));
+        let (_, overflow, events) = watch.take_workspace_events();
+        assert!(overflow);
+        assert!(events.is_empty());
     }
 
     #[test]

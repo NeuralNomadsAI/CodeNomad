@@ -686,12 +686,25 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
     );
     assert!(launcher.creation_uncertain);
     assert!(launcher.creation_uncertain_linked.is_some());
+    // An authoritative root-only fallback (includes_linked = false) must not unlock a linked creation.
+    launcher.apply_passive_listing(
+        Sessions {
+            rows: vec![row("root")],
+            next: None,
+        },
+        None,
+        true,
+        false,
+    );
+    assert!(launcher.creation_uncertain);
+    assert!(launcher.creation_uncertain_linked.is_some());
     launcher.apply_passive_listing(
         Sessions {
             rows: vec![row("root"), row("linked-new")],
             next: None,
         },
         None,
+        true,
         true,
     );
     assert!(!launcher.creation_uncertain);

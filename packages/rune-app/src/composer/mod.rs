@@ -11,5 +11,6 @@ mod picker;
 mod tokens;
 pub(crate) mod view;
 pub(crate) use actions::{
-    Owner, UnconfirmedPrompt, acknowledge, can_send, reconcile, send, settle_pending,
+    Owner, UnconfirmedCommand, UnconfirmedPrompt, acknowledge, can_send, reconcile, send,
+    settle_pending,
 };

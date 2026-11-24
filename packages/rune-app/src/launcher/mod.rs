@@ -698,6 +698,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
+            l.linked.rows.retain(|row| !missing.contains(&row.id));
             if let Some(pages) = &mut l.linked.pages {
                 pages.rows.retain(|row| !missing.contains(&row.id));
             }

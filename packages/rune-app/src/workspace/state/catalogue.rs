@@ -10,7 +10,7 @@ use rune::Tx;
 pub(super) struct Refresh {
     due: Option<f64>,
     urgent: bool,
-    request: Option<(u64, Receiver<Option<(Sessions, bool)>>)>,
+    request: Option<(u64, Receiver<Option<(Sessions, bool, bool)>>)>,
 }
 
 impl Refresh {
@@ -85,7 +85,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         refresh.request = None;
         if refresh.due.is_none() {
             refresh.urgent = false;
-            if let Some((page, authoritative)) = result {
+            if let Some((page, authoritative, includes_linked)) = result {
                 let selected = match &entry.saved {
                     super::Tab::Workspace(w) => w.active_session_id.as_deref(),
                     _ => None,
@@ -97,7 +97,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                 {
                     s.chat_title.clone_from(&row.title);
                 }
-                l.apply_passive_listing(page, selected, authoritative);
+                l.apply_passive_listing(page, selected, authoritative, includes_linked);
                 changed = true;
             }
         }
@@ -133,7 +133,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                     )
                     .await
                     {
-                        Ok(Some(projected)) => return Some((projected, true)),
+                        Ok(Some(projected)) => return Some((projected, true, true)),
                         Ok(None) => true,
                         Err(_) => false,
                     };
@@ -142,7 +142,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                         .sessions(&project, None)
                         .await
                         .ok()
-                        .map(|page| (page, can_replace))
+                        .map(|page| (page, can_replace, false))
                 };
                 let result = codenomad_client::runtime::until_closed(&out, read).await;
                 drop(owner);

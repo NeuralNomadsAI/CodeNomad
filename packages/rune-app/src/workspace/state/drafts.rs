@@ -12,7 +12,7 @@ pub(super) struct LiveDraft {
     text: Option<String>,
     parts: Option<(Draft, bool)>,
     unconfirmed: Option<crate::composer::UnconfirmedPrompt>,
-    command_unconfirmed: Option<(String, String)>,
+    command_unconfirmed: Option<crate::composer::UnconfirmedCommand>,
 }
 
 impl Ui {
@@ -125,6 +125,21 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
             let unconfirmed = s.composer.clone_unconfirmed();
             let has_unconfirmed = unconfirmed.is_some() || s.composer.command_unconfirmed.is_some();
             if too_long || has_device_parts || has_unconfirmed {
+                if !too_long
+                    && !has_device_parts
+                    && !item.live_drafts.contains_key(key)
+                    && item
+                        .live_drafts
+                        .values()
+                        .filter(|draft| draft.text.is_none() && draft.parts.is_none())
+                        .count()
+                        >= super::super::MAX_DRAFTS
+                    && let Some(evict) = item.live_drafts.iter().find_map(|(existing, draft)| {
+                        (draft.text.is_none() && draft.parts.is_none()).then(|| existing.clone())
+                    })
+                {
+                    item.live_drafts.remove(&evict);
+                }
                 let live = item.live_drafts.entry(key.into()).or_default();
                 live.text = too_long.then(|| text.clone());
                 live.parts = (too_long || has_device_parts).then(|| {
@@ -277,5 +292,45 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         w.drafts.remove(id);
         w.attachment_drafts.remove(id);
         w.attachment_parts.remove(id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pure_unconfirmed_live_drafts_stay_bounded_to_max_drafts() {
+        let mut s = crate::init();
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        ui.entries[0].saved = Tab::Workspace(crate::workspace::Workspace {
+            backend_id: None,
+            server_id: None,
+            folder: "/repo".into(),
+            occurrence: 0,
+            workspace_id: Some("ws".into()),
+            active_session_id: None,
+            drafts: Default::default(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        });
+        s.workspace = Some(ui);
+        let mut b = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        b.workspace = "ws".into();
+        for index in 0..(crate::workspace::MAX_DRAFTS + 5) {
+            b.session = format!("ses-{index}");
+            let _ = bound(&mut s, &b);
+            s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
+                "compact",
+                &"x".repeat(1024),
+            ));
+            capture(&mut s);
+        }
+        assert!(
+            s.workspace.as_ref().unwrap().entries[0].live_drafts.len()
+                <= crate::workspace::MAX_DRAFTS
+        );
     }
 }

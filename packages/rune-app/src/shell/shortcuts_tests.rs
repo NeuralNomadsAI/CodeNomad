@@ -365,7 +365,8 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
         Some(unconfirmed_id.as_str())
     );
     rt.state.phase = Phase::Ready;
-    rt.state.composer.command_unconfirmed = Some(("compact".into(), String::new()));
+    rt.state.composer.command_unconfirmed =
+        Some(crate::composer::UnconfirmedCommand::new("compact", ""));
     assert!(crate::launcher::can_change_session(&rt.state));
 
     // Streaming blocks close-session.
@@ -406,7 +407,7 @@ fn close_session_preserves_project_files_git_and_draft_and_honors_guards() {
     );
     assert_eq!(
         rt.state.composer.command_unconfirmed,
-        Some(("compact".into(), String::new()))
+        Some(crate::composer::UnconfirmedCommand::new("compact", ""))
     );
 }
 

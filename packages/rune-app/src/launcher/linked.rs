@@ -35,6 +35,7 @@ impl Pages {
 }
 #[derive(Default)]
 pub(crate) struct Linked {
+    pub rows: Vec<Session>,
     pub pages: Option<Pages>,
     job: Option<(Sender<()>, Receiver<Result<(Pages, bool, bool)>>)>,
     pub failed: bool,
@@ -143,12 +144,12 @@ pub(super) fn load(s: &mut State) {
                         break;
                     };
                     let kept_all = pages.keep(page.rows, &mut ids);
-                    if first_page {
-                        if matches_target && (kept_all || !pages.rows.is_empty()) {
+                    if first_page && kept_all {
+                        if matches_target {
                             target_verified = true;
                         } else if !target_matched && unverified_first_pages > 0 {
                             unverified_first_pages -= 1;
-                            if unverified_first_pages == 0 && (kept_all || !pages.rows.is_empty()) {
+                            if unverified_first_pages == 0 {
                                 target_verified = true;
                             }
                         }
@@ -200,18 +201,21 @@ pub(super) fn poll(s: &mut State) -> bool {
     };
     l.linked.job = None;
     match result {
-        Ok((mut pages, complete, target_verified)) => {
-            if !complete && let Some(previous) = l.linked.pages.as_ref() {
-                let mut seen: HashSet<String> =
-                    pages.rows.iter().map(|row| row.id.clone()).collect();
-                for row in &previous.rows {
-                    if pages.rows.len() == MAX_BROWSED_SESSIONS {
+        Ok((pages, complete, target_verified)) => {
+            if complete {
+                l.linked.rows = pages.rows.clone();
+            } else {
+                let mut display = pages.rows.clone();
+                let mut seen: HashSet<String> = display.iter().map(|row| row.id.clone()).collect();
+                for row in &l.linked.rows {
+                    if display.len() == MAX_BROWSED_SESSIONS {
                         break;
                     }
                     if seen.insert(row.id.clone()) {
-                        pages.rows.push(row.clone());
+                        display.push(row.clone());
                     }
                 }
+                l.linked.rows = display;
             }
             l.linked.pages = Some(pages);
             l.linked.failed = !complete;
@@ -251,20 +255,17 @@ mod tests {
     fn capped_error_free_refresh_clears_linked_creation_uncertain() {
         let mut s = crate::init();
         s.screen = crate::Screen::Launcher(crate::launcher::Launcher::fixture());
-        let mut retained = Pages::default();
-        retained.rows.push(Session {
+        let deleted = Session {
             id: "existing".into(),
             title: "Existing".into(),
-        });
+        };
         {
             let l = s.screen.launcher_mut().unwrap();
-            l.linked.pages = Some(retained);
+            l.linked.rows.push(deleted);
             l.linked.mark_reload();
             assert!(
-                l.linked
-                    .pages
-                    .as_ref()
-                    .is_some_and(|p| p.rows.len() == 1 && p.rows[0].id == "existing")
+                l.linked.rows.len() == 1 && l.linked.rows[0].id == "existing",
+                "mark_reload must retain previous display snapshot"
             );
             assert!(l.linked.force_reload);
         }
@@ -278,34 +279,83 @@ mod tests {
             l.linked.job = Some((cancel, input));
         }
         let mut pages = Pages::default();
+        pages.rows.push(Session {
+            id: "fresh".into(),
+            title: "Fresh".into(),
+        });
         pages.remaining.push_back(Location {
             directory: "/wt-target".into(),
             cursor: Some("next".into()),
             ..Default::default()
         });
-        // Cap/error before verifying the target worktree keeps creation locked and preserves retained rows.
+        // Partial refresh before verifying the target worktree keeps creation locked, preserves
+        // retained rows in the display snapshot, and keeps the pagination accumulator clean.
         assert!(out.try_send(Ok((pages.clone(), false, false))).is_ok());
         assert!(poll(&mut s));
         let l = s.screen.launcher().unwrap();
         assert!(l.creation_uncertain);
         assert!(l.creation_uncertain_linked.is_some());
         assert!(
+            l.linked.rows.iter().any(|row| row.id == "existing"),
+            "partial refresh must preserve previously retained display rows"
+        );
+        assert!(
             l.linked
                 .pages
                 .as_ref()
-                .is_some_and(|p| p.rows.iter().any(|row| row.id == "existing")),
-            "partial refresh must preserve previously retained linked rows"
+                .is_some_and(|p| p.rows.iter().all(|row| row.id != "existing")),
+            "pagination accumulator must stay uncontaminated by retained display rows"
         );
 
         // Once the target worktree's first page is verified, creation unlocks even if capped overall.
         let (cancel, _cancelled) = bounded(1);
         let (out, input) = bounded(1);
         s.screen.launcher_mut().unwrap().linked.job = Some((cancel, input));
-        assert!(out.try_send(Ok((pages, false, true))).is_ok());
+        assert!(out.try_send(Ok((pages.clone(), false, true))).is_ok());
         assert!(poll(&mut s));
         let l = s.screen.launcher().unwrap();
         assert!(!l.creation_uncertain);
         assert!(l.creation_uncertain_linked.is_none());
         assert!(l.linked.failed);
+
+        // Completing the resumed pagination replaces the display snapshot, purging deleted rows.
+        let (cancel, _cancelled) = bounded(1);
+        let (out, input) = bounded(1);
+        s.screen.launcher_mut().unwrap().linked.job = Some((cancel, input));
+        let mut completed = pages;
+        completed.remaining.clear();
+        assert!(out.try_send(Ok((completed, true, true))).is_ok());
+        assert!(poll(&mut s));
+        let l = s.screen.launcher().unwrap();
+        assert!(!l.linked.failed);
+        assert_eq!(
+            l.linked
+                .rows
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["fresh"]
+        );
+    }
+
+    #[test]
+    fn full_cache_does_not_verify_target_first_page() {
+        let mut pages = Pages::default();
+        let mut ids = HashSet::new();
+        let filler: Vec<Session> = (0..MAX_BROWSED_SESSIONS)
+            .map(|id| Session {
+                id: format!("old-{id}"),
+                title: String::new(),
+            })
+            .collect();
+        assert!(pages.keep(filler, &mut ids));
+        let target_rows = vec![Session {
+            id: "target-new".into(),
+            title: "New".into(),
+        }];
+        // Even with non-empty pages.rows, a full cache cannot admit the target page.
+        assert!(!pages.keep(target_rows, &mut ids));
+        assert_eq!(pages.rows.len(), MAX_BROWSED_SESSIONS);
+        assert!(pages.rows.iter().all(|row| row.id != "target-new"));
     }
 }

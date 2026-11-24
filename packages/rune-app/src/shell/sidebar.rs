@@ -23,13 +23,7 @@ fn session_rows(
     if remote_search {
         (&l.search_results.rows, &[])
     } else {
-        (
-            &l.sessions,
-            l.linked
-                .pages
-                .as_ref()
-                .map_or(&[], |page| page.rows.as_slice()),
-        )
+        (&l.sessions, l.linked.rows.as_slice())
     }
 }
 

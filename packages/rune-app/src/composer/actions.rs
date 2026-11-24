@@ -15,7 +15,7 @@ pub struct Owner {
     sending: Option<Send>,
     pub send_error: bool,
     unconfirmed: Option<UnconfirmedPrompt>,
-    pub command_unconfirmed: Option<(String, String)>,
+    pub command_unconfirmed: Option<UnconfirmedCommand>,
     pub restored: bool,
     pub attachments_missing: bool,
 }
@@ -138,22 +138,47 @@ fn hash_attachments(edit: &TextEdit, attachments: &[super::draft::Attachment]) -
     count.hash(&mut hasher);
     (count, hasher.finish())
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UnconfirmedCommand {
+    name_len: usize,
+    name_hash: u64,
+    args_len: usize,
+    args_hash: u64,
+}
+impl UnconfirmedCommand {
+    pub(crate) fn new(name: &str, args: &str) -> Self {
+        let (name_len, name_hash) = hash_text(name);
+        let (args_len, args_hash) = hash_text(args);
+        Self {
+            name_len,
+            name_hash,
+            args_len,
+            args_hash,
+        }
+    }
+    fn matches(&self, name: &str, args: &str) -> bool {
+        (self.name_len, self.name_hash) == hash_text(name)
+            && (self.args_len, self.args_hash) == hash_text(args)
+    }
+}
 struct Send {
     id: String,
     edit: TextEdit,
     draft: Draft,
     was_running: bool,
-    slash: Option<(String, String)>,
+    slash: Option<UnconfirmedCommand>,
 }
 
 fn repeats_uncertain_command(s: &State) -> bool {
     s.composer
         .command_unconfirmed
         .as_ref()
-        .is_some_and(|(name, text)| {
+        .is_some_and(|unconfirmed| {
             super::picker::command_parts(&s.draft.text).is_some_and(|(candidate, args)| {
-                candidate == name
-                    && s.composer.draft.resolve_args(&s.draft, args).as_deref() == Some(text)
+                s.composer
+                    .draft
+                    .resolve_args(&s.draft, args)
+                    .is_some_and(|resolved| unconfirmed.matches(candidate, &resolved))
             })
         })
 }
@@ -196,17 +221,18 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             s.composer.send_error = true;
             return;
         };
-        let slash = (name.to_owned(), text);
+        let slash = UnconfirmedCommand::new(name, &text);
+        let name = name.to_owned();
         let command = Command::Slash {
             attempt: id.clone(),
-            name: slash.0.clone(),
-            text: slash.1.clone(),
+            name: name.clone(),
+            text,
         };
         if s.commands
             .as_ref()
             .is_some_and(|pipe| pipe.try_send(command).is_ok())
         {
-            s.composer.picker.remember_command(&slash.0);
+            s.composer.picker.remember_command(&name);
             s.composer.sending = Some(Send {
                 id,
                 edit: s.draft.clone(),
