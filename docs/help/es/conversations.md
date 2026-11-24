@@ -71,8 +71,9 @@ Los borradores son estado de trabajo del cliente, no mensajes nativos compartido
 ## Abrir archivos desde las respuestas {#open-files-from-replies}
 
 1. Las respuestas del agente enlazan archivos del proyecto con rutas relativas y absolutas.
-2. Un clic normal abre el archivo enlazado en la vista previa del archivo, leído del worktree de la conversación.
-3. Los clics con modificadores (Ctrl/⌘-clic, Mayús-clic, clic central) y los enlaces fuera del worktree de la sesión mantienen el comportamiento normal de los enlaces.
+2. Una ruta escrita como texto sin formato también se convierte en un enlace cuando se sabe que el worktree de la conversación contiene el archivo; las rutas inexistentes permanecen como texto sin formato.
+3. Un clic normal abre el archivo enlazado en la vista previa del archivo, leído del worktree de la conversación.
+4. Los clics con modificadores (Ctrl/⌘-clic, Mayús-clic, clic central) y los enlaces fuera del worktree de la sesión mantienen el comportamiento normal de los enlaces.
 
 ## Comandos y modo shell {#commands-shell}
 

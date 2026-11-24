@@ -15,6 +15,7 @@ import type { RecordTextRevealTarget } from "../stores/message-v2/record-display
 import { scheduleDeferredHighlight } from "../lib/markdown-highlight-schedule"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
 import { decorateSessionLinks, routeSessionLink, sessionLinkBase, sessionLinkTitles } from "./markdown-session-links"
+import { linkBarePaths } from "./markdown-bare-paths"
 import { matchLocalImage, messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
 import { createMediaSource } from "../lib/media-source"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -431,6 +432,26 @@ export function Markdown(props: MarkdownProps) {
         return
       }
       decorateSessionLinks(containerRef, titles, base)
+    })
+  })
+
+  createEffect(() => {
+    html()
+    // Bare paths convert only in session-bound markdown, and only once the
+    // backend confirms the file exists (see markdown-bare-paths). The
+    // synchronous reads track the same reactive inputs as the decoration
+    // pass, so availability, locale and inventory changes re-run this one.
+    const instanceId = props.instanceId, sessionId = props.sessionId
+    if (!instanceId || !sessionId) return
+    const titles = sessionLinkTitles(instanceId, sessionId, loopbackLinksOpenPreview())
+    const base = sessionLinkBase(instanceId, sessionId)
+    if (!base) return
+    const controller = new AbortController()
+    onCleanup(() => controller.abort())
+    Promise.resolve().then(() => {
+      if (!controller.signal.aborted && !disposed && containerRef) {
+        linkBarePaths(containerRef, { instanceId, sessionId, base, titles, signal: controller.signal })
+      }
     })
   })
 
