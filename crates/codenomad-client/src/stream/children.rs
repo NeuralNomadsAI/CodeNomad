@@ -49,7 +49,19 @@ impl Backend {
     }
 
     pub async fn child_page(&self, child: &str) -> history::Result<Option<history::Page>> {
-        if child == self.session || !history::valid_id(child) {
+        self.child_page_for(&self.session, child).await
+    }
+
+    pub async fn child_page_for(
+        &self,
+        parent: &str,
+        child: &str,
+    ) -> history::Result<Option<history::Page>> {
+        if child == parent
+            || child == self.session
+            || !history::valid_id(parent)
+            || !history::valid_id(child)
+        {
             return Err("invalid task child".into());
         }
         let record = |client: &Http, id: &str| {
@@ -65,10 +77,8 @@ impl Backend {
             }
             let response = crate::backend::read_json(response.error_for_status()?).await?;
             let native = response.get("data").unwrap_or(&response);
-            Ok(
-                (native["id"] == child && native["parentID"] == self.session)
-                    .then(|| native["location"].clone()),
-            )
+            Ok((native["id"] == child && native["parentID"] == parent)
+                .then(|| native["location"].clone()))
         };
         let Some(location) = owned().await? else {
             return Ok(None);

@@ -24,6 +24,7 @@ pub struct Display {
     pub(crate) usage_family: super::usage::family::Totals,
     pub(super) pictures: super::media::Pictures,
     pub(crate) receipts: super::receipts::Receipts,
+    focused_key: Option<String>,
 }
 
 #[derive(Default)]
@@ -37,6 +38,7 @@ struct StreamRender {
 struct TaskStepsState {
     at_bottom: bool,
     visible: Vec<String>,
+    selected: Vec<String>,
 }
 
 impl Default for TaskStepsState {
@@ -44,6 +46,7 @@ impl Default for TaskStepsState {
         Self {
             at_bottom: true,
             visible: Vec::new(),
+            selected: Vec::new(),
         }
     }
 }
@@ -158,6 +161,10 @@ impl Display {
         self.active.revealed.get(key).copied().unwrap_or_default()
     }
 
+    pub(super) fn focused_key(&self) -> Option<&str> {
+        self.focused_key.as_deref()
+    }
+
     pub(super) fn task_anchors(&self, key: &str) -> &[String] {
         self.active
             .task_anchors
@@ -167,9 +174,24 @@ impl Display {
             .map_or(&[], |(_, state)| state.visible.as_slice())
     }
 
+    pub(super) fn task_selected(&self, key: &str) -> &[String] {
+        self.active
+            .task_anchors
+            .iter()
+            .find(|(id, _)| id == key)
+            .map_or(&[], |(_, state)| state.selected.as_slice())
+    }
+
     pub(super) fn set_task_visible(&mut self, key: &str, visible: Vec<String>) {
         let state = self.task_steps_entry(key);
         state.visible = visible;
+    }
+
+    pub(super) fn set_task_selected(&mut self, key: &str, selected: Vec<String>) -> bool {
+        let state = self.task_steps_entry(key);
+        let released = !state.selected.is_empty() && selected.is_empty() && state.at_bottom;
+        state.selected = selected;
+        released
     }
 
     pub(super) fn set_task_at_bottom(&mut self, key: &str, at_bottom: bool) -> bool {
@@ -232,6 +254,10 @@ impl Display {
     }
 
     pub fn poll(s: &mut State, changed: bool, now: f64, tx: &mut rune::Tx) -> bool {
+        let focused = tx.focused();
+        if s.transcript_display.focused_key.as_deref() != focused {
+            s.transcript_display.focused_key = focused.map(str::to_owned);
+        }
         let timeline = crate::timeline::poll(s, tx)
             | crate::timeline::search::poll(s, now, tx)
             | s.transcript_display.tool_clock.poll(now, tx);

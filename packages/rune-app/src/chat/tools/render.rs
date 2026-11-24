@@ -158,10 +158,8 @@ fn render_body(
         );
     let is_task = task::is_task(tool);
     let nested = message.starts_with("child:");
-    let report = is_task.then(|| task::report(s, message, tool)).flatten();
-    let task_status = is_task
-        .then(|| task::header_status(s, message, tool))
-        .flatten();
+    let delivery = is_task.then(|| task::delivery(s, message, tool)).flatten();
+    let task_status = delivery.map(|d| d.status);
     let status = task_status
         .map(|override_status| override_status.status)
         .unwrap_or(match tool.status.as_str() {
@@ -188,7 +186,7 @@ fn render_body(
     let pending = matches!(tool.status.as_str(), "pending" | "streaming");
     let lang = output(tool, &mut parts);
     if is_task {
-        parts[0] = task::output(tool, report);
+        parts[0] = task::output(tool, delivery.and_then(|d| d.body));
     } else if tool.name == "skill" && tool.status != "completed" {
         parts = [""; 4];
     }
@@ -247,11 +245,6 @@ fn render_body(
     {
         header = header.child(copy(s, message, &tool.id, Section::Output));
     }
-    let header = if expanded && is_task && !nested {
-        task::observe(s, key, tool, header)
-    } else {
-        header
-    };
     let mut block = col()
         .full_width()
         .pad(Space::Sm)
@@ -284,7 +277,7 @@ fn render_body(
             .children(diagnostics());
     }
     let task_body = is_task
-        .then(|| task::body(s, key, tool, parts[0], !nested))
+        .then(|| task::body(s, message, key, tool, parts[0]))
         .flatten();
     let specialized_task = task_body.is_some();
     let execute_details = (tool.name == "execute")
@@ -441,9 +434,14 @@ fn render_body(
     if tool.name == "execute" {
         block = block.children(execute::notice(tool));
     }
-    block
+    let block = block
         .children(media::tool(s, key, &tool.pictures))
-        .children(diagnostics())
+        .children(diagnostics());
+    if is_task {
+        task::observe(s, message, key, tool, block)
+    } else {
+        block
+    }
 }
 
 fn wrap_control(s: &State, key: &str, wrap: bool) -> El {

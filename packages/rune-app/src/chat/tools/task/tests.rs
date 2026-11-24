@@ -224,7 +224,7 @@ fn subagent_duration_ticks_past_launch_ack_and_ends_at_terminal_report() {
     rt.update(|s, tx| ticked = Display::poll(s, false, 3.5, tx));
     assert!(!ticked);
 
-    // An un-timestamped launch must not inherit an older terminal report.
+    // An un-timestamped continuation must not inherit an older terminal report and must isolate its own report from the earlier launch.
     let untimed = history::decode_message(&json!({
         "id": "untimed",
         "type": "assistant",
@@ -250,6 +250,31 @@ fn subagent_duration_ticks_past_launch_ack_and_ends_at_terminal_report() {
     assert!(
         tree.contains("Untimed continuation") && tree.contains("Running"),
         "untimed launch inherited old report: {tree}"
+    );
+    rt.update(|s, _| {
+        s.messages.push(
+            report_row(
+                "done_untimed",
+                start + 68_000,
+                "completed",
+                "Untimed result",
+            )
+            .into(),
+        );
+        s.revision += 1;
+    });
+    rt.frame(3.58);
+    let tool_at = |index: usize| match &rt.state.messages[index].parts[0] {
+        crate::content::Part::Tool(t) => Some(t.as_ref()),
+        _ => None,
+    };
+    assert_eq!(
+        tool_at(0).and_then(|t| super::report_body(&rt.state, "run1", t)),
+        Some("Final answer")
+    );
+    assert_eq!(
+        tool_at(3).and_then(|t| super::report_body(&rt.state, "untimed", t)),
+        Some("Untimed result")
     );
 
     // A cancelled/error continuation ends at its own terminal report.
@@ -289,7 +314,7 @@ fn nested_subagent_stops_duration_from_child_snapshot_report() {
         .set_test_now(Some(start + 65_000));
     crate::settings::fixture_transcript(
         &mut state,
-        json!({"toolCallExpansionDefaults": {"tools": {"task": "expanded"}}}),
+        json!({"toolCallExpansionDefaults": {"tools": {"task": "expanded", "read": "collapsed"}}}),
     );
     state.messages.push(parent.into());
     let mut rt = Runtime::new(
@@ -314,12 +339,29 @@ fn nested_subagent_stops_duration_from_child_snapshot_report() {
         "status": "window", "latest": true, "messages": [nested_launch]
     }))
     .unwrap();
-    let mut lease = None;
+    let mut lease_a = None;
+    let mut lease_b = None;
     rt.update(|s, _| {
-        lease = Some(
+        lease_a = Some(
             s.transcript_display
                 .children
                 .install("child_a", page_running),
+        );
+        lease_b = Some(
+            s.transcript_display.children.install_under(
+                Some("child_a"),
+                "child_b",
+                history::decode(json!({
+                    "status": "window", "latest": true, "messages": [{
+                        "id": "b_msg_1", "type": "assistant", "time": {"completed": 1},
+                        "content": [{
+                            "type": "tool", "id": "grandchild_read", "name": "read",
+                            "state": {"status": "completed", "input": {"filePath": "grandchild.rs"}}
+                        }]
+                    }]
+                }))
+                .unwrap(),
+            ),
         );
         assert!(crate::chat::events::poll_chat(s, 1));
     });
@@ -327,16 +369,20 @@ fn nested_subagent_stops_duration_from_child_snapshot_report() {
     rt.frame(0.0);
     let tree = rt.accessibility_json().to_string();
     assert!(
-        tree.contains("Inner agent") && tree.contains("\"1m 04s\""),
+        tree.contains("Inner agent")
+            && tree.contains("\"1m 04s\"")
+            && tree.contains("grandchild.rs"),
         "{tree}"
     );
 
+    // Even when a nested report body exceeds the 2 MiB body budget, its terminal state and timestamp still stop the clock.
+    let huge_body = "z".repeat((2 << 20) + 128);
     let page_done = history::decode(json!({
         "status": "window", "latest": true, "messages": [
             nested_launch,
             {
                 "id": "a_msg_2", "type": "synthetic", "time": {"created": start + 6_000},
-                "text": "<subagent sessionID=\"child_b\" state=\"completed\">\nNested answer\n</subagent>"
+                "text": format!("<subagent sessionID=\"child_b\" state=\"completed\">\n{huge_body}\n</subagent>")
             }
         ]
     }))
@@ -345,7 +391,7 @@ fn nested_subagent_stops_duration_from_child_snapshot_report() {
         s.transcript_display
             .tool_clock
             .set_test_now(Some(start + 90_000));
-        lease = Some(s.transcript_display.children.install("child_a", page_done));
+        lease_a = Some(s.transcript_display.children.install("child_a", page_done));
         assert!(crate::chat::events::poll_chat(s, 2));
     });
     for _ in 0..4 {
@@ -353,10 +399,10 @@ fn nested_subagent_stops_duration_from_child_snapshot_report() {
     }
     let tree = rt.accessibility_json().to_string();
     assert!(
-        tree.contains("Completed") && tree.contains("\"5s\"") && tree.contains("Nested answer"),
-        "{tree}"
+        tree.contains("Completed") && tree.contains("\"5s\""),
+        "oversized report body must still settle nested status/duration: {tree}"
     );
-    let _ = lease;
+    let _ = (lease_a, lease_b);
 }
 
 #[test]
@@ -455,6 +501,23 @@ fn child_step_truncation_reports_proven_limits_and_preserves_legacy_on_empty_pag
     assert!(
         tree.contains("4+ steps") && tree.contains("Showing the latest 4 steps."),
         "{tree}"
+    );
+
+    // When 0 child steps fit in 2 MiB, keep the truncation notice AND fall back to the legacy summary.
+    rt.update(|s, _| {
+        lease = Some(s.transcript_display.children.install(
+            "child",
+            child_steps_page(1, false, &"y".repeat((2 << 20) + 64)),
+        ));
+        assert!(crate::chat::events::poll_chat(s, 5));
+    });
+    for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.contains("Legacy summary only") && tree.contains("Content too large to display."),
+        "0-retained byte overflow must keep notice and legacy fallback: {tree}"
     );
     let _ = lease;
 }
@@ -709,13 +772,28 @@ fn reveal_uses_effective_start_and_survives_anchor_eviction() {
     for _ in 0..8 {
         rt.frame(1.0 / 60.0);
     }
+    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let step0_key = super::super::tool_key(&format!("{step_key}-child:child:child_msg"), "step_0");
+    assert!(
+        rt.elements()
+            .into_iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some(step0_key.as_str())),
+        "first click must actually mount step_0"
+    );
     assert!(
         rt.find(&format!("reveal-{step_key}")).is_none(),
         "first click must reveal all 50 promised steps"
     );
 
     // 190 steps -> reveal 100 -> read at step_60 -> 71 newer steps evict step_60 at the 200-step cap.
-    // The next visible row (step_61) must survive as the anchor at start=0.
+    // The next visible row (step_61) must stay mounted in place with no scroll jump.
+    rt.update(|_, tx| tx.scroll_to_bottom_instant(scroll_key.clone()));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
     rt.update(|s, _| {
         s.transcript_display.bind("srv", "ws", "other");
         s.transcript_display.bind("srv", "ws", "fresh");
@@ -742,7 +820,7 @@ fn reveal_uses_effective_start_and_survives_anchor_eviction() {
         rt.frame(1.0 / 60.0);
     }
     rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
-    for _ in 0..8 {
+    for _ in 0..30 {
         rt.frame(1.0 / 60.0);
     }
     assert_eq!(
@@ -753,6 +831,14 @@ fn reveal_uses_effective_start_and_survives_anchor_eviction() {
             .map(String::as_str),
         Some("child_msg:step_60")
     );
+    let step61_key =
+        super::super::tool_key(&format!("{step_key}-child:child:child_msg"), "step_61");
+    assert!(
+        rt.elements()
+            .into_iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some(step61_key.as_str())),
+        "step_61 visible before eviction"
+    );
     rt.update(|s, _| {
         lease = Some(
             s.transcript_display
@@ -761,6 +847,32 @@ fn reveal_uses_effective_start_and_survives_anchor_eviction() {
         );
         assert!(crate::chat::events::poll_chat(s, 4));
     });
+    for _ in 0..30 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.elements()
+            .into_iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some(step61_key.as_str())),
+        "surviving visible step_61 must stay mounted immediately without scrolling"
+    );
+    assert!(rt.find(&format!("reveal-{step_key}")).is_none());
+
+    // A focused step stays mounted even after returning to bottom when newer steps arrive.
+    rt.update(|_, tx| tx.scroll_to_bottom_instant(scroll_key.clone()));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|s, _| {
+        s.transcript_display.bind("srv", "ws", "focus-a");
+        s.transcript_display.bind("srv", "ws", "focus-b");
+        lease = Some(
+            s.transcript_display
+                .children
+                .install("child", child_steps_page(30, false, "ok")),
+        );
+        assert!(crate::chat::events::poll_chat(s, 5));
+    });
     for _ in 0..8 {
         rt.frame(1.0 / 60.0);
     }
@@ -768,13 +880,36 @@ fn reveal_uses_effective_start_and_survives_anchor_eviction() {
     for _ in 0..8 {
         rt.frame(1.0 / 60.0);
     }
-    let step61_key =
-        super::super::tool_key(&format!("{step_key}-child:child:child_msg"), "step_61");
+    let step0_toggle = format!("toggle-{step0_key}");
+    rt.update(|_, tx| tx.focus(step0_toggle.clone(), true));
+    rt.frame(1.0 / 60.0);
+    rt.update(|s, tx| {
+        Display::poll(s, false, 0.1, tx);
+        tx.scroll_to_bottom_instant(scroll_key.clone());
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|s, _| {
+        lease = Some(
+            s.transcript_display
+                .children
+                .install("child", child_steps_page(35, false, "ok")),
+        );
+        assert!(crate::chat::events::poll_chat(s, 6));
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
     assert!(
         rt.elements()
             .into_iter()
-            .any(|e| !e.exiting && e.key.as_deref() == Some(step61_key.as_str())),
-        "surviving visible step_61 must stay mounted at start=0"
+            .any(|e| !e.exiting && e.key.as_deref() == Some(step0_key.as_str())),
+        "focused step_0 must stay mounted even after returning to bottom"
     );
     assert!(rt.find(&format!("reveal-{step_key}")).is_none());
 
@@ -792,16 +927,19 @@ fn reveal_uses_effective_start_and_survives_anchor_eviction() {
             .is_empty()
     );
 
-    // Disambiguated legacy step identities never collide on duplicates or numeric IDs.
-    let legacy = vec![
-        json!({"id": "0", "tool": "read"}),
-        json!({"tool": "read"}),
-        json!({"id": "dup", "tool": "read"}),
-        json!({"id": "dup", "tool": "read"}),
-    ];
-    assert_eq!(
-        super::legacy_identities(1, &legacy),
-        vec!["id:0:0", "idx:2", "id:dup:0", "id:dup:1"]
+    // Disambiguated legacy step identities stay stable when an earlier duplicate slides past 200.
+    let mut legacy = vec![json!({"id": "dup", "tool": "read"})];
+    for _ in 0..199 {
+        legacy.push(json!({"tool": "read"}));
+    }
+    let dup_key_before = super::legacy_identities(&legacy, 0)[0].clone();
+    legacy.push(json!({"id": "dup", "tool": "read"}));
+    let ids_after = super::legacy_identities(&legacy, 1);
+    assert_ne!(
+        ids_after.last().unwrap(),
+        &dup_key_before,
+        "second duplicate must not inherit the evicted first duplicate's key"
     );
+    assert!(ids_after[0].starts_with("idx:1"));
     let _ = lease;
 }

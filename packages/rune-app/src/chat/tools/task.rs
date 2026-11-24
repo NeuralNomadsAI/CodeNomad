@@ -1,6 +1,6 @@
 use super::{
     Display, Tool,
-    children::{Children, STEP_LIMIT},
+    children::{Children, STEP_BYTES, STEP_LIMIT},
     input_json, string, window,
 };
 use crate::{
@@ -48,6 +48,29 @@ pub(super) struct HeaderStatus {
     pub ended: Option<u64>,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Delivery<'a> {
+    pub status: HeaderStatus,
+    pub body: Option<&'a str>,
+}
+
+#[derive(Clone, Copy)]
+struct Launch<'a> {
+    pos: usize,
+    row_id: &'a str,
+    call_id: &'a str,
+    at: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+struct ReportEntry<'a> {
+    pos: usize,
+    row_id: &'a str,
+    state: &'a str,
+    created: u64,
+    body: Option<&'a str>,
+}
+
 fn launch_time(tool: &Tool) -> Option<u64> {
     tool.started.or(tool.message_created).filter(|&at| at > 0)
 }
@@ -59,111 +82,179 @@ fn child_owner(message: &str) -> Option<&str> {
         .map(|(owner, _)| owner)
 }
 
+fn message_row_id(message: &str) -> &str {
+    message
+        .strip_prefix("child:")
+        .and_then(|rest| rest.split_once(':'))
+        .map_or(message, |(_, id)| id)
+}
+
 fn launches_and_reports<'a>(
     s: &'a State,
     message: &str,
     child_id: &str,
-) -> (Vec<u64>, Vec<(&'a str, &'a crate::content::SubagentReport)>) {
+) -> (Vec<Launch<'a>>, Vec<ReportEntry<'a>>) {
     use crate::content::Part;
     let mut launches = Vec::new();
     let mut reports = Vec::new();
     if let Some(owner) = child_owner(message) {
         if let Some(snap) = s.transcript_display.children.snapshot(owner) {
-            for (_, other) in &snap.steps {
-                if is_task(other)
-                    && child(other) == child_id
-                    && let Some(at) = launch_time(other)
-                {
-                    launches.push(at);
+            for (index, (row_id, other)) in snap.steps.iter().enumerate() {
+                if is_task(other) && child(other) == child_id {
+                    launches.push(Launch {
+                        pos: index * 2 + 1,
+                        row_id: row_id.as_str(),
+                        call_id: other.id.as_str(),
+                        at: launch_time(other),
+                    });
                 }
             }
-            for (row_id, report) in &snap.reports {
+            for report in &snap.reports {
                 if report.child == child_id {
-                    reports.push((row_id.as_str(), report));
+                    reports.push(ReportEntry {
+                        pos: report.after_steps * 2,
+                        row_id: report.row_id.as_str(),
+                        state: report.state.as_str(),
+                        created: report.created,
+                        body: report.body.as_deref(),
+                    });
                 }
             }
         }
         return (launches, reports);
     }
+    let mut pos = 0usize;
     for row in &s.messages[s.messages.len().saturating_sub(500)..] {
         for part in &row.parts {
             match part {
                 Part::Tool(other) if is_task(other) && child(other) == child_id => {
-                    if let Some(at) = launch_time(other) {
-                        launches.push(at);
-                    }
+                    launches.push(Launch {
+                        pos,
+                        row_id: row.id.as_str(),
+                        call_id: other.id.as_str(),
+                        at: launch_time(other),
+                    });
                 }
                 Part::SubagentReport(report) if report.child == child_id => {
-                    reports.push((row.id.as_str(), report));
+                    reports.push(ReportEntry {
+                        pos,
+                        row_id: row.id.as_str(),
+                        state: report.state.as_str(),
+                        created: report.created,
+                        body: Some(report.body.as_str()),
+                    });
                 }
                 _ => {}
             }
+            pos += 1;
         }
     }
     (launches, reports)
 }
 
-pub(super) fn report<'a>(
-    s: &'a State,
-    message: &str,
-    tool: &Tool,
-) -> Option<&'a crate::content::SubagentReport> {
+fn report_at_or_after(launch: &Launch<'_>, report: &ReportEntry<'_>) -> bool {
+    match launch.at {
+        Some(from) if report.created > 0 => {
+            report.created > from || (report.created == from && report.pos > launch.pos)
+        }
+        Some(from) => report.created >= from && report.pos > launch.pos,
+        None => report.pos > launch.pos,
+    }
+}
+
+fn is_later_launch(current: &Launch<'_>, other: &Launch<'_>) -> bool {
+    match (current.at, other.at) {
+        (Some(a), Some(b)) => b > a || (b == a && other.pos > current.pos),
+        _ => other.pos > current.pos,
+    }
+}
+
+fn launch_is_after_report(launch: &Launch<'_>, report: &ReportEntry<'_>) -> bool {
+    match launch.at {
+        Some(at) if report.created > 0 => {
+            at > report.created || (at == report.created && launch.pos > report.pos)
+        }
+        _ => launch.pos > report.pos,
+    }
+}
+
+pub(super) fn delivery<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<Delivery<'a>> {
     if tool.status != "completed" || tool.metadata["status"] != "running" {
         return None;
     }
-    let from = launch_time(tool)?;
     let child_id = child(tool);
     if child_id.is_empty() {
-        return None;
+        return Some(Delivery {
+            status: HeaderStatus {
+                status: "toolCall.status.running",
+                running: true,
+                ended: None,
+            },
+            body: None,
+        });
     }
-    let (mut launches, reports) = launches_and_reports(s, message, child_id);
-    launches.retain(|at| *at > from);
-    launches.sort_unstable();
-    let first = reports
+    let row_id = message_row_id(message);
+    let (launches, reports) = launches_and_reports(s, message, child_id);
+    let current = launches
         .iter()
-        .filter(|(_, report)| report.created >= from)
-        .map(|(_, report)| report.created)
-        .min()?;
-    let end = launches
-        .into_iter()
-        .find(|next| *next > first)
-        .unwrap_or(u64::MAX);
-    reports
-        .into_iter()
-        .filter(|(_, report)| report.created >= from && report.created < end)
-        .max_by_key(|(id, report)| (report.created, *id))
-        .map(|(_, report)| report)
-}
-
-pub(super) fn output<'a>(
-    tool: &'a Tool,
-    report: Option<&'a crate::content::SubagentReport>,
-) -> &'a str {
-    if tool.status == "completed" && tool.metadata["status"] == "running" {
-        report.map_or("", |report| report.body.as_str())
-    } else {
-        &tool.output
-    }
-}
-
-pub(super) fn header_status(s: &State, message: &str, tool: &Tool) -> Option<HeaderStatus> {
-    if tool.status != "completed" || tool.metadata["status"] != "running" {
-        return None;
-    }
-    let child_id = child(tool);
-    let latest = (!child_id.is_empty())
-        .then(|| {
-            let from = launch_time(tool)?;
-            let (launches, reports) = launches_and_reports(s, message, child_id);
-            let newest = launches.into_iter().max().map_or(from, |max| max.max(from));
-            reports
-                .into_iter()
-                .filter(|(_, report)| report.created >= newest)
-                .max_by_key(|(id, report)| (report.created, *id))
-                .map(|(_, report)| (report.created, report.state.as_str()))
-        })
-        .flatten();
-    Some(match latest {
+        .copied()
+        .find(|launch| launch.row_id == row_id && launch.call_id == tool.id)
+        .or_else(|| {
+            launch_time(tool).map(|at| Launch {
+                pos: 0,
+                row_id: "",
+                call_id: "",
+                at: Some(at),
+            })
+        });
+    let body = current.and_then(|current| {
+        let mut later: Vec<_> = launches
+            .iter()
+            .copied()
+            .filter(|other| is_later_launch(&current, other))
+            .collect();
+        later.sort_unstable_by(|a, b| {
+            if is_later_launch(a, b) {
+                std::cmp::Ordering::Less
+            } else if is_later_launch(b, a) {
+                std::cmp::Ordering::Greater
+            } else {
+                a.pos.cmp(&b.pos)
+            }
+        });
+        let first = reports
+            .iter()
+            .copied()
+            .filter(|report| report_at_or_after(&current, report))
+            .min_by_key(|report| (report.created, report.pos, report.row_id))?;
+        let boundary = later
+            .into_iter()
+            .find(|other| launch_is_after_report(other, &first));
+        reports
+            .iter()
+            .copied()
+            .filter(|report| {
+                report_at_or_after(&current, report)
+                    && boundary.is_none_or(|end| launch_is_after_report(&end, report))
+            })
+            .max_by_key(|report| (report.created, report.pos, report.row_id))
+            .and_then(|report| report.body)
+    });
+    let latest = current.and_then(|current| {
+        let mut newest = current;
+        for other in &launches {
+            if is_later_launch(&newest, other) {
+                newest = *other;
+            }
+        }
+        reports
+            .iter()
+            .copied()
+            .filter(|report| report_at_or_after(&newest, report))
+            .max_by_key(|report| (report.created, report.pos, report.row_id))
+            .map(|report| (report.created, report.state))
+    });
+    let status = match latest {
         Some((created, "completed")) => HeaderStatus {
             status: "toolCall.status.completed",
             running: false,
@@ -179,34 +270,93 @@ pub(super) fn header_status(s: &State, message: &str, tool: &Tool) -> Option<Hea
             running: true,
             ended: None,
         },
-    })
+    };
+    Some(Delivery { status, body })
 }
 
-fn legacy_identities(legacy_base: usize, legacy: &[serde_json::Value]) -> Vec<String> {
-    let mut seen = std::collections::HashMap::<&str, usize>::new();
-    legacy
-        .iter()
-        .enumerate()
-        .map(|(offset, step)| {
-            let id = string(step, &["id"]);
-            if id.is_empty() {
-                format!("idx:{}", legacy_base + offset)
+pub(super) fn report_body<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<&'a str> {
+    delivery(s, message, tool).and_then(|d| d.body)
+}
+
+pub(super) fn output<'a>(tool: &'a Tool, report: Option<&'a str>) -> &'a str {
+    if tool.status == "completed" && tool.metadata["status"] == "running" {
+        report.unwrap_or("")
+    } else {
+        &tool.output
+    }
+}
+
+fn fnv64(text: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in text.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
+}
+
+fn json_bytes(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Null => 4,
+        serde_json::Value::Bool(b) => {
+            if *b {
+                4
             } else {
-                let occ = seen.entry(id).or_default();
-                let key = format!("id:{id}:{}", *occ);
-                *occ += 1;
-                key
+                5
             }
-        })
-        .collect()
+        }
+        serde_json::Value::Number(_) => 12,
+        serde_json::Value::String(s) => s.len() + 2,
+        serde_json::Value::Array(items) => 2 + items.iter().map(json_bytes).sum::<usize>(),
+        serde_json::Value::Object(map) => {
+            2 + map
+                .iter()
+                .map(|(k, v)| k.len() + 3 + json_bytes(v))
+                .sum::<usize>()
+        }
+    }
 }
 
-pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool) -> Option<El> {
+fn legacy_identities(legacy_all: &[serde_json::Value], legacy_base: usize) -> Vec<String> {
+    let mut seen = std::collections::HashMap::<&str, usize>::new();
+    let mut ids = Vec::with_capacity(legacy_all.len().saturating_sub(legacy_base));
+    for (index, step) in legacy_all.iter().enumerate() {
+        let id = string(step, &["id"]);
+        let key = if id.is_empty() {
+            format!("idx:{index}")
+        } else {
+            let occ = seen.entry(id).or_default();
+            let key = format!("id:{:016x}:{}", fnv64(id), *occ);
+            *occ += 1;
+            key
+        };
+        if index >= legacy_base {
+            ids.push(key);
+        }
+    }
+    ids
+}
+
+fn key_matches_row(focused: &str, row_key: &str) -> bool {
+    focused == row_key
+        || focused.strip_prefix("toggle-") == Some(row_key)
+        || focused
+            .strip_prefix("copy-")
+            .is_some_and(|rest| rest.starts_with(row_key))
+        || focused
+            .strip_prefix(row_key)
+            .is_some_and(|rest| rest.starts_with('-'))
+}
+
+pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &str) -> Option<El> {
     let prompt = string(&tool.input, &["prompt"]);
-    let child_id = watch.then(|| watched_child(tool)).flatten();
+    let parent = child_owner(message);
+    let child_id =
+        watched_child(tool).filter(|id| s.transcript_display.children.can_watch(parent, id));
     let child_snapshot = child_id.and_then(|id| s.transcript_display.children.snapshot(id));
-    let use_child = child_snapshot
-        .is_some_and(|snap| !snap.steps.is_empty() || snap.count_truncated || snap.byte_truncated);
+    let use_child = child_snapshot.is_some_and(|snap| !snap.steps.is_empty());
+    let child_all_dropped =
+        child_snapshot.is_some_and(|snap| snap.steps.is_empty() && snap.byte_truncated);
     let visible_steps: Vec<_> = child_snapshot
         .filter(|_| use_child)
         .map(|snap| {
@@ -219,8 +369,26 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
     let legacy_all = tool.metadata["summary"]
         .as_array()
         .map_or(&[][..], Vec::as_slice);
-    let legacy_base = legacy_all.len().saturating_sub(STEP_LIMIT);
-    let legacy = &legacy_all[legacy_base..];
+    let legacy_count_truncated = legacy_all.len() > STEP_LIMIT;
+    let mut legacy_remaining = STEP_BYTES;
+    let mut legacy_keep = 0usize;
+    let mut legacy_byte_truncated = false;
+    if !use_child {
+        for entry in legacy_all.iter().rev().take(STEP_LIMIT) {
+            let Some(left) = legacy_remaining.checked_sub(json_bytes(entry)) else {
+                legacy_byte_truncated = true;
+                break;
+            };
+            legacy_remaining = left;
+            legacy_keep += 1;
+        }
+    }
+    let legacy_base = legacy_all.len().saturating_sub(legacy_keep);
+    let legacy = if use_child {
+        &[][..]
+    } else {
+        &legacy_all[legacy_base..]
+    };
     let step_count = if use_child {
         visible_steps.len()
     } else {
@@ -229,13 +397,19 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
     let count_truncated = if use_child {
         child_snapshot.is_some_and(|snap| snap.count_truncated)
     } else {
-        legacy_base > 0
+        legacy_count_truncated || child_snapshot.is_some_and(|snap| snap.count_truncated)
     };
-    let byte_truncated = use_child && child_snapshot.is_some_and(|snap| snap.byte_truncated);
+    let byte_truncated = if use_child {
+        child_snapshot.is_some_and(|snap| snap.byte_truncated)
+    } else {
+        legacy_byte_truncated || child_all_dropped
+    };
     let truncated = count_truncated || byte_truncated;
+    let show_notice =
+        truncated && (step_count > 0 || child_all_dropped || (!use_child && legacy_byte_truncated));
     if prompt.trim().is_empty()
         && step_count == 0
-        && !truncated
+        && !show_notice
         && output.trim().is_empty()
         && child_id.is_none()
     {
@@ -261,7 +435,7 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
                 ));
         }
     }
-    if step_count > 0 || truncated {
+    if step_count > 0 || show_notice {
         let step_key = format!("{key}-task-steps");
         let mut section_header = layout::action_row()
             .child(text(t("toolCall.task.sections.steps")).text_role(TextRole::Label));
@@ -285,23 +459,33 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
             section_header = section_header.child(text(count_label).text_role(TextRole::Label));
         }
         result = result.child(section_header);
-        if truncated {
-            let notice = match child_snapshot.filter(|_| use_child) {
-                Some(snap) if snap.byte_truncated && snap.steps.is_empty() => {
-                    t("toolCall.output.tooLarge").to_owned()
-                }
-                Some(snap) if snap.byte_truncated && snap.steps.len() < STEP_LIMIT => {
-                    catalogue::format(
-                        locale(),
-                        "toolCall.task.steps.truncated",
-                        &[("count", &snap.steps.len().to_string())],
-                    )
-                }
-                _ => catalogue::format(
+        if show_notice {
+            let notice = if child_all_dropped {
+                t("toolCall.output.tooLarge").to_owned()
+            } else if use_child
+                && let Some(snap) = child_snapshot
+                && snap.byte_truncated
+                && snap.steps.len() < STEP_LIMIT
+            {
+                catalogue::format(
+                    locale(),
+                    "toolCall.task.steps.truncated",
+                    &[("count", &snap.steps.len().to_string())],
+                )
+            } else if !use_child && legacy_byte_truncated && legacy.is_empty() {
+                t("toolCall.output.tooLarge").to_owned()
+            } else if !use_child && legacy_byte_truncated && legacy.len() < STEP_LIMIT {
+                catalogue::format(
+                    locale(),
+                    "toolCall.task.steps.truncated",
+                    &[("count", &legacy.len().to_string())],
+                )
+            } else {
+                catalogue::format(
                     locale(),
                     "toolCall.task.steps.truncated",
                     &[("count", &STEP_LIMIT.to_string())],
-                ),
+                )
             };
             result = result.child(text(notice).text_role(TextRole::Label).role("status"));
         }
@@ -309,11 +493,24 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
             let legacy_ids = if use_child {
                 Vec::new()
             } else {
-                legacy_identities(legacy_base, legacy)
+                legacy_identities(legacy_all, legacy_base)
+            };
+            let row_keys: Vec<String> = if let Some(child_id) = child_id.filter(|_| use_child) {
+                visible_steps
+                    .iter()
+                    .map(|(message, step)| {
+                        super::tool_key(&format!("{step_key}-child:{child_id}:{message}"), &step.id)
+                    })
+                    .collect()
+            } else {
+                legacy_ids
+                    .iter()
+                    .map(|identity| format!("{step_key}-{identity}"))
+                    .collect()
             };
             let count = (INITIAL_STEPS + s.transcript_display.steps(&step_key)).min(STEP_LIMIT);
             let desired = step_count.saturating_sub(count);
-            let anchor_index = s
+            let visible_anchor = s
                 .transcript_display
                 .task_anchors(&step_key)
                 .iter()
@@ -326,7 +523,23 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
                         legacy_ids.iter().position(|id| id == anchor)
                     }
                 });
-            let start = desired.min(anchor_index.unwrap_or(usize::MAX));
+            let focused_anchor = s.transcript_display.focused_key().and_then(|focused| {
+                row_keys
+                    .iter()
+                    .position(|row_key| key_matches_row(focused, row_key))
+            });
+            let selected_anchor = s
+                .transcript_display
+                .task_selected(&step_key)
+                .iter()
+                .filter_map(|sel| row_keys.iter().position(|row_key| row_key == sel))
+                .min();
+            let boundary = visible_anchor
+                .into_iter()
+                .chain(focused_anchor)
+                .chain(selected_anchor)
+                .min();
+            let start = desired.min(boundary.unwrap_or(usize::MAX));
             let has_reveal = start > 0;
             let mut mounted_ids = Vec::with_capacity(step_count.saturating_sub(start));
             let mut step_rows =
@@ -359,21 +572,23 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
                 );
             }
             if let Some(child_id) = child_id.filter(|_| use_child) {
-                for (message, step) in visible_steps.into_iter().skip(start) {
+                for ((message, step), child_key) in
+                    visible_steps.into_iter().zip(row_keys.iter()).skip(start)
+                {
                     mounted_ids.push(format!("{message}:{}", step.id));
                     let owner = format!("child:{child_id}:{message}");
-                    let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
                     step_rows.push(
                         col()
                             .key(child_key.clone())
                             .role("listitem")
-                            .child(super::render::render(s, &owner, step, &child_key)),
+                            .child(super::render::render(s, &owner, step, child_key)),
                     );
                 }
             }
-            for (step, identity) in legacy
+            for ((step, identity), key) in legacy
                 .iter()
                 .zip(legacy_ids.iter())
+                .zip(row_keys.iter())
                 .skip(start)
                 .filter(|_| !use_child)
             {
@@ -393,8 +608,7 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
                 };
                 let name: String = string(step, &["title", "tool"]).chars().take(250).collect();
                 let input = step.get("input").or_else(|| step["state"].get("input"));
-                let key = format!("{step_key}-{identity}");
-                let expanded = s.transcript_display.toggled(&key);
+                let expanded = s.transcript_display.toggled(key);
                 let label = if input.is_some_and(|input| input.is_object()) {
                     let toggle = key.clone();
                     layout::button(
@@ -431,8 +645,11 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
             let offset = usize::from(has_reveal);
             let anchor_key = step_key.clone();
             let bottom_key = step_key.clone();
+            let sel_key = step_key.clone();
+            let list_segment = format!("/{step_key}-scroll-list/");
             let scope = s.input_scope.clone();
             let bottom_scope = scope.clone();
+            let sel_scope = scope.clone();
             result = result.child(markdown::steps_pane(
                 format!("{step_key}-scroll"),
                 t("toolCall.task.sections.steps"),
@@ -464,6 +681,30 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
                     }
                     false
                 },
+                move |s: &mut State, change, tx| {
+                    if s.current_scope(&sel_scope) {
+                        let mut selected = Vec::new();
+                        if let Some(sel) = change.selection() {
+                            for seg in sel.texts() {
+                                if let Some((_, rest)) = seg.path().split_once(&list_segment)
+                                    && let Some(row_key) = rest.split('/').next()
+                                    && !row_key.is_empty()
+                                    && !selected.iter().any(|existing| existing == row_key)
+                                {
+                                    selected.push(row_key.to_owned());
+                                    if selected.len() >= 8 {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if s.transcript_display.set_task_selected(&sel_key, selected) {
+                            s.revision += 1;
+                            return;
+                        }
+                    }
+                    tx.live_only();
+                },
             ));
         }
     }
@@ -477,19 +718,32 @@ fn watched_child(tool: &Tool) -> Option<&str> {
     .then_some(id)
 }
 
-pub(super) fn observe(s: &State, key: &str, tool: &Tool, card: El) -> El {
-    let Some(id) = watched_child(tool) else {
-        return card;
+pub(super) fn observe(s: &State, message: &str, key: &str, tool: &Tool, card: El) -> El {
+    let parent = child_owner(message).map(str::to_owned);
+    let child_id = watched_child(tool).filter(|id| {
+        s.transcript_display
+            .children
+            .can_watch(parent.as_deref(), id)
+    });
+    let lease = child_id.map(|id| s.transcript_display.children.lease(id, key));
+    let (id, key, scope) = (
+        child_id.map(str::to_owned),
+        key.to_owned(),
+        s.input_scope.clone(),
+    );
+    let watch_key = match &id {
+        Some(id) => format!("{key}-watch-{id}"),
+        None => format!("{key}-watch-steps"),
     };
-    let lease = s.transcript_display.children.lease(id, key);
-    let (id, key, scope) = (id.to_owned(), key.to_owned(), s.input_scope.clone());
     col()
         .full_width()
-        .key(format!("{key}-watch-{id}"))
+        .key(watch_key)
         .child(card)
         .on_visible(move |s: &mut State, visible, tx| {
             if s.current_scope(&scope) {
-                Children::demand(s, &id, &key, &lease, visible);
+                if let (Some(id), Some(lease)) = (id.as_deref(), lease.as_ref()) {
+                    Children::demand(s, parent.as_deref(), id, &key, lease, visible);
+                }
                 if !visible {
                     s.transcript_display
                         .clear_task_anchor(&format!("{key}-task-steps"));

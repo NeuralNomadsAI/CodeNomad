@@ -149,6 +149,7 @@ pub fn steps_pane<S: 'static>(
     rows: Vec<El>,
     on_visible: impl Fn(&mut S, std::ops::Range<usize>) -> bool + 'static,
     on_at_bottom: impl Fn(&mut S, bool) -> bool + 'static,
+    on_selection: impl Fn(&mut S, &rune::SelectionChange, &mut rune::Tx) + 'static,
 ) -> El {
     let t = tokens(dark());
     let gap = t.space(Space::Sm).px();
@@ -169,6 +170,7 @@ pub fn steps_pane<S: 'static>(
         .scroll(ScrollSpec { stick_bottom: true })
         .scroll_anchor()
         .on_at_bottom_if(on_at_bottom)
+        .on_selection_change(on_selection)
         .child(list)
 }
 
