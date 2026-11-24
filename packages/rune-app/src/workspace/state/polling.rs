@@ -24,6 +24,9 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
     }
     let became_ready = loading && !ui.persistence.loading;
+    if let Some(store) = &ui.persistence.store {
+        s.saved_outlines.poll(store, s.wake.clone());
+    }
     if became_ready {
         ui.ready = true;
         #[cfg(target_arch = "wasm32")]
@@ -33,6 +36,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
     changed |= poll_cached(s, &mut ui, Some(now), tx);
+    changed |= crate::timeline::sync_outline_mutation(s);
     changed |= panel_state::poll_missions(&mut ui, s, tx);
     ui.stage();
     let previous_error = (

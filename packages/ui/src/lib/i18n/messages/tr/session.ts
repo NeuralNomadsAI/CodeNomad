@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.filter.includeSubsessions": "Alt oturumlar",
   "session.pruning.maintenance_required": "Geçerli işlem bitince temizlemeyi yeniden deneyin.",
   "session.pruning.unavailable": "CodeNomad'i yeniden açıp tekrar deneyin.",
+  "session.messageActions.serverUnavailable": "Bu sunucu bu işlemi desteklemiyor.",
   "session.pruning.conflict": "Mesajı yeniden yükleyip içeriği tekrar seçin.",
   "session.pruning.not_deletable": "Yalnızca bu oturumdaki tamamlanmış araçlar ve düşünceler kaldırılabilir.",
   "session.pruning.unsupported_storage": "Temizleme eklentisi bu oturumun depolama alanını doğrulayamadı. Temizleme reddedildi.",

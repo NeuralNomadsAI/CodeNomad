@@ -1,7 +1,7 @@
 // Native file dialog smoke on isolated hosts with the real source SessionView.
 // No OpenCode daemon is needed: the UI fixture supplies deterministic native data.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { fixtureChildPid, spawnFixtureChild, stopFixtureChild } from "./native-fixture-guards.mjs"
 import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { createHash } from "node:crypto"
@@ -10,11 +10,9 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
 import { chromium, _electron } from "playwright"
-import { tsImport } from "tsx/esm/api"
 import { startDeviceUploadFixture } from "../packages/ui/tests/browser/fixtures/device-upload-server.mjs"
 
 assert.equal(process.platform, "win32")
-const { stopWindowsProcessTree } = await tsImport("../packages/server/src/process-tree.ts", import.meta.url)
 const workspace = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const root = await mkdtemp(path.join(os.tmpdir(), "opencode", "attachment-picker-desktop-"))
 console.log(`Evidence: ${root}`)
@@ -34,7 +32,7 @@ async function until(fn) {
 async function dialog(pid, file) {
   const args = ["-NoProfile", "-File", path.join(workspace, "scripts/fixtures/attachment-picker-windows.ps1"), "-OwnerPid", String(pid), ...(file ? ["-FilePath", file] : ["-Cancel"])]
   return new Promise((resolve, reject) => {
-    const child = spawn("pwsh", args, { stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 })
+    const child = spawnFixtureChild("pwsh", args, { stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 })
     let output = ""
     child.stdout.on("data", data => { output += data }); child.stderr.on("data", data => { output += data })
     child.on("error", reject); child.on("exit", code => code === 0 ? resolve(output) : reject(new Error(output)))
@@ -48,7 +46,7 @@ try {
     for (const folder of ["Desktop", "Documents", "Downloads"]) await mkdir(path.join(profile, folder))
     const sample = path.join(profile, "device-not-in-project.txt")
     await writeFile(sample, "native picker bytes")
-    let app, browser, child, spawnedBy, page, output = ""
+    let app, browser, child, stopped, page, output = ""
     try {
       let pid
       if (host === "electron") {
@@ -67,10 +65,10 @@ try {
           OPENCODE_TEST_HOME: profile, CLI_CONFIG: path.join(profile, "config.yaml"), PATH: `${process.env.SystemRoot}\\System32` })
         for (const key of ["APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "OPENCODE_CONFIG_DIR"]) await mkdir(env[key], { recursive: true })
         await writeFile(env.CLI_CONFIG, JSON.stringify({ server: { opencodeBinary: path.join(profile, "missing.exe") } }))
-        child = spawn(process.env.CODENOMAD_FIXTURE_TAURI || path.join(workspace, "packages/tauri-app/target/release/codenomad-tauri.exe"), [], { cwd: profile, env, stdio: ["ignore", "pipe", "pipe"] })
-        spawnedBy = new Date()
+        child = spawnFixtureChild(process.env.CODENOMAD_FIXTURE_TAURI || path.join(workspace, "packages/tauri-app/target/release/codenomad-tauri.exe"), [], { cwd: profile, env, stdio: ["ignore", "pipe", "pipe"] })
+        stopped = new Promise(resolve => child.once("close", resolve))
         child.stdout.on("data", data => { output += data }); child.stderr.on("data", data => { output += data })
-        pid = child.pid
+        pid = await fixtureChildPid(child)
         // Rust's Windows known-folder lookup can retain the real local-data root
         // despite synthetic HOME. Discover only this unique config's native scope.
         const suffix = createHash("sha256").update(`dev-v2\0${env.CLI_CONFIG.replaceAll("/", "\\").toLowerCase()}`).digest("hex").slice(0, 16)
@@ -126,7 +124,7 @@ try {
       await app?.close()
       await browser?.close()
       if (child?.pid && child.exitCode === null) {
-        await stopWindowsProcessTree(child.pid, spawnedBy)
+        await stopFixtureChild(child, stopped)
       }
       await writeFile(path.join(profile, "host.log"), output)
     }

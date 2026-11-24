@@ -7,6 +7,9 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
         setup: Some(|s, wake| {
             let mut prefs = s.shared.borrow_mut();
             prefs.window_wake = Some(wake);
+            if std::mem::take(&mut prefs.open_providers) {
+                s.section = Section::Providers;
+            }
             prefs.memory.show(s.section == Section::General);
             if prefs.backend.is_some() {
                 prefs.refresh();
@@ -28,6 +31,23 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     return true;
                 }
                 let mut prefs = s.shared.borrow_mut();
+                let jump = std::mem::take(&mut prefs.open_providers);
+                if jump && !s.config_files.busy() && !s.confirm_close && !s.closing {
+                    s.section = Section::Providers;
+                    s.general.close();
+                    s.transcript_picker.set(None);
+                    s.advanced_help = None;
+                    s.recording_shortcut = false;
+                    s.shortcut_capture = Default::default();
+                    s.behavior.close();
+                    s.opencode = super::opencode::Status::default();
+                    s.logging.close();
+                    prefs.hide_opencode();
+                    prefs.memory.show(false);
+                    s.memory_help_failed = false;
+                    s.remote.close();
+                    s.info.close();
+                }
                 let environment = s
                     .environment
                     .poll(&mut prefs, s.section == Section::Advanced && !s.closing);
@@ -113,7 +133,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 } else {
                     false
                 };
-                updated
+                jump | updated
                     | status_changed
                     | remote_changed
                     | info_changed

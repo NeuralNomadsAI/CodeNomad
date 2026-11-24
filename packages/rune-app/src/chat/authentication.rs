@@ -185,6 +185,13 @@ pub(crate) fn poll(s: &mut State) -> bool {
     true
 }
 
+pub(crate) fn open(s: &State) -> bool {
+    s.direct_authentication
+        .challenge
+        .as_ref()
+        .is_some_and(|challenge| challenge.required)
+}
+
 pub(crate) fn dialog(s: &State) -> Option<El> {
     let challenge = s.direct_authentication.challenge.as_ref()?;
     if !challenge.required {

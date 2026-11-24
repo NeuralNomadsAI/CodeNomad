@@ -204,25 +204,38 @@ mod tests {
 
     #[test]
     fn mission_delete_sessions_change_wakes_main_panel_display() {
+        use rune::{Env, Runtime};
         let mut root = crate::init();
         root.settings.shared.borrow_mut().fixture();
+        let mut rt = Runtime::new(root, crate::view, (960.0, 800.0), Env::new(false, 1.0));
         // Establish baseline display snapshot.
-        let _ = crate::settings::poll(&mut root);
-        let rev_before = root.revision;
-        assert!(
-            !crate::settings::poll(&mut root),
-            "idle poll without preference changes returns false"
-        );
+        rt.update(|s, tx| {
+            let _ = crate::settings::poll(s, tx);
+        });
+        let mut idle = true;
+        rt.update(|s, tx| {
+            idle = crate::settings::poll(s, tx);
+        });
+        assert!(!idle, "idle poll without preference changes returns false");
         // Simulate a confirmed preference save toggling only missionDeleteSessions.
-        {
-            let mut prefs = root.settings.shared.borrow_mut();
-            prefs.fixture_mission_delete_sessions(true);
-        }
+        rt.update(|s, _| {
+            s.settings
+                .shared
+                .borrow_mut()
+                .fixture_mission_delete_sessions(true);
+        });
+        let mut woke = false;
+        rt.update(|s, tx| {
+            woke = crate::settings::poll(s, tx);
+        });
         assert!(
-            crate::settings::poll(&mut root),
+            woke,
             "changing only missionDeleteSessions must wake the main window display"
         );
-        assert!(root.revision > rev_before);
+        assert_eq!(
+            crate::settings::mission_delete_sessions(&rt.state),
+            Some(true)
+        );
     }
 
     #[test]

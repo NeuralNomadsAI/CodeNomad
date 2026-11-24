@@ -11,7 +11,7 @@ pub(super) fn poll_cached(s: &mut State, ui: &mut Ui, now: Option<f64>, tx: &mut
             let awaiting_prompt = s.composer.pending();
             let uncertain_prompt = s.composer.unconfirmed_id().is_some();
             s.cached_stream_online = None;
-            changed |= crate::poll_chat(s, 8);
+            changed |= crate::chat::events::poll_hidden_chat(s, 8);
             if let Some(online) = s.cached_stream_online.take()
                 && let Some(panel) = &mut item.missions
             {

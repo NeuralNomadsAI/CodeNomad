@@ -26,6 +26,8 @@ pub(super) struct Cache {
     history_detached: bool,
     launcher_visible: bool,
     input_scope: std::rc::Rc<()>,
+    status_permissions: crate::shell::status_permissions::Permissions,
+    status_usage: crate::shell::status_usage::Panel,
 }
 impl Cache {
     pub(super) fn observes_notifications(&self, allow_running: bool) -> bool {
@@ -38,6 +40,167 @@ impl Cache {
         self.incoming
             .as_ref()
             .is_some_and(|incoming| !incoming.is_closed())
+    }
+
+    fn is_detached(&self) -> bool {
+        self.launcher_visible && self.incoming.is_none()
+    }
+
+    pub(super) fn deliver_detached_event(
+        &mut self,
+        event: &codenomad_client::transport::WorkspaceEvent,
+    ) -> bool {
+        if !self.is_detached()
+            && !matches!(
+                event,
+                codenomad_client::transport::WorkspaceEvent::Stopped { .. }
+            )
+        {
+            return false;
+        }
+        if matches!(
+            event,
+            codenomad_client::transport::WorkspaceEvent::UiPreferencesChanged
+        ) {
+            if let Some(git) = &mut self.git.owner {
+                git.event(event);
+                return true;
+            }
+            return false;
+        }
+        let Some(target) = super::state::event_workspace_id(event) else {
+            return false;
+        };
+        let mut delivered = false;
+        if let Some(git) = &mut self.git.owner
+            && git.workspace_id() == target
+        {
+            git.event(event);
+            delivered = true;
+        }
+        if let Some(files) = &mut self.files
+            && files.workspace_id() == target
+        {
+            files.event(event.clone());
+            delivered = true;
+        }
+        delivered
+    }
+
+    pub(super) fn has_detached_panels(&self) -> bool {
+        self.is_detached() && (self.git.owner.is_some() || self.files.is_some())
+    }
+
+    pub(super) fn collect_detached_workspace_ids(
+        &self,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        if !self.is_detached() {
+            return;
+        }
+        if let Some(git) = &self.git.owner {
+            out.insert(git.workspace_id().to_owned());
+        }
+        if let Some(files) = &self.files {
+            out.insert(files.workspace_id().to_owned());
+        }
+    }
+
+    pub(super) fn stop_unlisted_detached(
+        &mut self,
+        live: &std::collections::HashSet<&str>,
+    ) -> bool {
+        if !self.is_detached() {
+            return false;
+        }
+        let mut changed = false;
+        if let Some(git) = &mut self.git.owner {
+            let id = git.workspace_id();
+            if !live.contains(id) {
+                let workspace_id = id.to_owned();
+                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                changed = true;
+            }
+        }
+        if let Some(files) = &mut self.files {
+            let id = files.workspace_id();
+            if !live.contains(id) {
+                let workspace_id = id.to_owned();
+                files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    pub(super) fn reconcile_detached_online(
+        &mut self,
+        opened_after: &std::collections::HashSet<String>,
+        live: Option<&std::collections::HashSet<&str>>,
+    ) -> bool {
+        if !self.is_detached() {
+            return false;
+        }
+        let mut changed = false;
+        if let Some(git) = &mut self.git.owner {
+            let id = git.workspace_id();
+            match live {
+                Some(live) if !opened_after.contains(id) && !live.contains(id) => {
+                    let workspace_id = id.to_owned();
+                    git.event(&codenomad_client::transport::WorkspaceEvent::Stopped {
+                        workspace_id,
+                    });
+                    changed = true;
+                }
+                Some(_) => {
+                    git.online(true);
+                    changed = true;
+                }
+                None if opened_after.contains(id) => {
+                    git.online(true);
+                    changed = true;
+                }
+                None => {}
+            }
+        }
+        if let Some(files) = &mut self.files {
+            let id = files.workspace_id();
+            match live {
+                Some(live) if !opened_after.contains(id) && !live.contains(id) => {
+                    let workspace_id = id.to_owned();
+                    files.event(codenomad_client::transport::WorkspaceEvent::Stopped {
+                        workspace_id,
+                    });
+                    changed = true;
+                }
+                Some(_) => {
+                    files.online(true);
+                    changed = true;
+                }
+                None if opened_after.contains(id) => {
+                    files.online(true);
+                    changed = true;
+                }
+                None => {}
+            }
+        }
+        changed
+    }
+
+    pub(super) fn set_detached_online(&mut self, online: bool) -> bool {
+        if !self.is_detached() {
+            return false;
+        }
+        let mut changed = false;
+        if let Some(git) = &mut self.git.owner {
+            git.online(online);
+            changed = true;
+        }
+        if let Some(files) = &mut self.files {
+            files.online(online);
+            changed = true;
+        }
+        changed
     }
 
     pub(super) fn history_weight(&self) -> (usize, usize) {
@@ -63,7 +226,7 @@ impl Cache {
         self.transcript_display.evict_rendered();
     }
     pub fn navigation_blocked(&self) -> bool {
-        self.composer.pending()
+        self.composer.blocks_navigation()
             || self
                 .agent
                 .as_ref()
@@ -94,6 +257,8 @@ impl Cache {
             history_detached: std::mem::take(&mut s.history_detached),
             launcher_visible: s.screen.is_launcher(),
             input_scope: s.input_scope.clone(),
+            status_permissions: std::mem::take(&mut s.status_permissions),
+            status_usage: std::mem::take(&mut s.status_usage),
         }
     }
     pub fn apply(self, s: &mut State) {
@@ -122,6 +287,8 @@ impl Cache {
             s.screen.show_chat();
         }
         s.input_scope = self.input_scope;
+        s.status_permissions = self.status_permissions;
+        s.status_usage = self.status_usage;
     }
 }
 pub(super) fn status(

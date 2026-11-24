@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.filter.includeSubsessions": "Untersitzungen",
   "session.pruning.maintenance_required": "Warte, bis der aktuelle Vorgang abgeschlossen ist, und versuche die Bereinigung erneut.",
   "session.pruning.unavailable": "Öffne CodeNomad erneut und versuche es noch einmal.",
+  "session.messageActions.serverUnavailable": "Dieser Server unterstützt diese Aktion nicht.",
   "session.pruning.conflict": "Lade die Nachricht neu und wähle den Inhalt erneut aus.",
   "session.pruning.not_deletable": "Nur abgeschlossene Werkzeuge und Überlegungen dieser Sitzung können entfernt werden.",
   "session.pruning.unsupported_storage": "Das Bereinigungs-Plugin konnte den Speicher dieser Sitzung nicht validieren. Die Bereinigung wurde abgelehnt.",

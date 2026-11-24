@@ -1,5 +1,8 @@
 use super::{Backend, Owner, platform};
-use crate::settings::notification_routing::{self, Category, Destination};
+use crate::settings::{
+    notification_routing::{self, Category, Destination},
+    transcript_preset::{self, Row},
+};
 use codenomad_client::{Receiver, bounded};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,9 +13,10 @@ pub(super) enum Choice {
     Contrast,
     Shortcut(&'static str),
     ShortcutReset,
+    GeneralBehavior(crate::settings::preferences::behavior::GeneralToggle),
     NewConversationPermissions,
-    UsageVisible,
-    UsageExpansion,
+    TranscriptPreset,
+    TranscriptRow(Row),
     LogLevel,
     UpdateFeed,
     Advanced(crate::settings::advanced::Toggle),
@@ -25,7 +29,7 @@ pub(super) enum Choice {
 }
 
 impl Choice {
-    fn put(self, patch: &mut Value, value: &ChoiceValue) {
+    fn put(self, patch: &mut Value, value: &ChoiceValue, snapshot: &Value) {
         if self == Self::ShortcutReset {
             patch["settings"]["hotkeyOverrides"] = Value::Null;
             return;
@@ -70,11 +74,22 @@ impl Choice {
             Self::MissionDeleteSessions => {
                 patch["settings"]["missionDeleteSessions"] = json!(value == "true");
             }
+            Self::GeneralBehavior(toggle) => {
+                patch["settings"][toggle.key()] = toggle.json_value(value == "true");
+            }
             Self::NewConversationPermissions => {
                 patch["settings"]["newConversationPermissions"] = json!(value)
             }
-            Self::UsageVisible => patch["settings"]["showUsageMetrics"] = json!(value == "on"),
-            Self::UsageExpansion => patch["settings"]["usageMetricsExpansion"] = json!(value),
+            Self::TranscriptPreset => {
+                if let Value::Object(fields) = transcript_preset::patch(value) {
+                    for (key, value) in fields {
+                        patch["settings"][key] = value;
+                    }
+                }
+            }
+            Self::TranscriptRow(row) => {
+                row.put(&mut patch["settings"], &snapshot["settings"], value)
+            }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
             Self::Shortcut(_) | Self::ShortcutReset | Self::Environment => (),
             Self::Palette(dark) => {
@@ -132,11 +147,14 @@ impl Choice {
             Self::MissionDeleteSessions => {
                 snapshot["settings"]["missionDeleteSessions"] == (value == "true")
             }
+            Self::GeneralBehavior(toggle) => {
+                snapshot["settings"][toggle.key()] == toggle.json_value(value == "true")
+            }
             Self::NewConversationPermissions => {
                 snapshot["settings"]["newConversationPermissions"] == value
             }
-            Self::UsageVisible => snapshot["settings"]["showUsageMetrics"] == (value == "on"),
-            Self::UsageExpansion => snapshot["settings"]["usageMetricsExpansion"] == value,
+            Self::TranscriptPreset => transcript_preset::confirmed(value, &snapshot["settings"]),
+            Self::TranscriptRow(row) => row.mode(&snapshot["settings"]) == value,
             Self::Mode => appearance["mode"] == value,
             Self::Shortcut(_) | Self::ShortcutReset | Self::Environment => false,
             Self::Palette(dark) => {
@@ -363,12 +381,27 @@ impl Document {
     }
 
     fn stage_value(&mut self, choice: Choice, value: ChoiceValue) {
+        let obsolete = |prior: &Choice| match choice {
+            Choice::TranscriptPreset => matches!(prior, Choice::TranscriptRow(_)),
+            Choice::TranscriptRow(_) => {
+                *prior == Choice::TranscriptPreset && self.write.failed.contains(prior)
+            }
+            _ => false,
+        };
+        self.write.requested.retain(|prior, _| !obsolete(prior));
+        self.write
+            .pending
+            .retain(|prior| self.write.requested.contains_key(prior));
+        self.write
+            .failed
+            .retain(|prior| self.write.requested.contains_key(prior));
         if matches!(
             choice,
             Choice::Contrast
+                | Choice::GeneralBehavior(_)
                 | Choice::NewConversationPermissions
-                | Choice::UsageVisible
-                | Choice::UsageExpansion
+                | Choice::TranscriptPreset
+                | Choice::TranscriptRow(_)
                 | Choice::LogLevel
                 | Choice::UpdateFeed
                 | Choice::Advanced(_)
@@ -394,6 +427,18 @@ impl Document {
 
     pub(super) fn choice_failed(&self, choice: Choice) -> bool {
         self.write.failed.contains(&choice)
+    }
+
+    pub(super) fn choice_pending(&self, choice: Choice) -> bool {
+        let in_flight = |flight: &Option<Flight>| match flight.as_ref().map(|f| &f.operation) {
+            Some(Operation::Write(sent)) => sent.contains_key(&choice),
+            Some(Operation::Read { retry }) => retry.contains(&choice),
+            None => false,
+        };
+        self.write.pending.contains(&choice)
+            || self.write.retry.contains(&choice)
+            || in_flight(&self.flight)
+            || in_flight(&self.barrier)
     }
 
     pub(super) fn unsettled(&self) -> bool {
@@ -427,13 +472,24 @@ impl Document {
     fn settle(&mut self, operation: Operation, snapshot: Option<Value>, current: bool) {
         if let Operation::Write(sent) = &operation {
             for (&choice, value) in sent {
-                if !self.write.pending.contains(&choice)
+                if self.write.requested.get(&choice) == Some(value)
+                    && !self.write.pending.contains(&choice)
                     && !snapshot
                         .as_ref()
                         .is_some_and(|data| choice.confirmed(value, data))
                 {
-                    self.write.failed.insert(choice);
-                    self.notification_failure |= current && !choice.has_dedicated_error();
+                    if choice == Choice::TranscriptPreset
+                        && self
+                            .write
+                            .pending
+                            .iter()
+                            .any(|prior| matches!(prior, Choice::TranscriptRow(_)))
+                    {
+                        self.write.requested.remove(&choice);
+                    } else {
+                        self.write.failed.insert(choice);
+                        self.notification_failure |= current && !choice.has_dedicated_error();
+                    }
                 }
             }
         }
@@ -537,8 +593,16 @@ impl Document {
                 retry: BTreeSet::new(),
             }
         } else if !self.read.failed && !self.write.pending.is_empty() {
+            // A preset is one authoritative write. Build following per-row edits from its receipt.
+            let preset = self.write.pending.contains(&Choice::TranscriptPreset);
+            let mut pending = std::mem::take(&mut self.write.pending);
+            if preset {
+                self.write.pending.extend(
+                    pending.extract_if(.., |choice| matches!(choice, Choice::TranscriptRow(_))),
+                );
+            }
             Operation::Write(
-                std::mem::take(&mut self.write.pending)
+                pending
                     .into_iter()
                     .filter_map(|choice| {
                         self.write
@@ -567,7 +631,11 @@ impl Document {
                 patch["settings"]["notificationRouting"] = notification_routing::seed(before);
             }
             for (&choice, value) in sent {
-                choice.put(&mut patch, value);
+                choice.put(
+                    &mut patch,
+                    value,
+                    self.snapshot.as_ref().unwrap_or(&Value::Null),
+                );
             }
             Some(patch)
         } else {
@@ -640,13 +708,19 @@ fn dedicated_error_choices_do_not_emit_generic_save_notification() {
         (Choice::UpdateFeed, ChoiceValue::Text("stable")),
     ] {
         let mut document = Document::default();
+        document.write.requested.insert(choice, value.clone());
         let sent = BTreeMap::from([(choice, value)]);
         document.settle(Operation::Write(sent), Some(unchanged.clone()), true);
         assert!(document.choice_failed(choice));
         assert!(!document.take_notification_failure());
     }
     let mut document = Document::default();
-    let sent = BTreeMap::from([(Choice::Locale, ChoiceValue::Text("fr"))]);
+    let value = ChoiceValue::Text("fr");
+    document
+        .write
+        .requested
+        .insert(Choice::Locale, value.clone());
+    let sent = BTreeMap::from([(Choice::Locale, value)]);
     document.settle(Operation::Write(sent), Some(unchanged), true);
     assert!(document.choice_failed(Choice::Locale));
     assert!(document.take_notification_failure());

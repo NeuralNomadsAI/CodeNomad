@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 mod cache;
 pub(crate) mod opening;
+pub(crate) mod outlines;
 mod persistence;
 mod save_snapshot;
 mod snapshot_budget;
@@ -21,13 +22,17 @@ pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
     close, connected, draft_changed, file_wrap, files_tab, has_conversation_stream, input_ready,
     new_tab, opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume,
-    retry, schedule_catalogue, select, status, strip, toggle_file_wrap, unselect_missing,
+    retry, schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative,
+    status, strip, toggle_file_wrap, unconfirmed_drafts_full, unselect_missing,
 };
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::{active_workspace, poll_cached_notifications};
 pub(crate) use state::{
-    hide_missions, mission_confirmation, mission_event, mission_observation_project, mission_panel,
-    mission_supported, missions_online, right_panel_tab, set_right_panel_tab, suspend_missions,
+    deliver_detached_events, detached_workspace_ids, has_detached_panels,
+    has_unopened_detached_panels, hide_missions, mission_confirmation, mission_event,
+    mission_observation_project, mission_panel, mission_supported, missions_composing,
+    missions_online, reconcile_detached_online, right_panel_tab, set_detached_online,
+    set_right_panel_tab, stop_unlisted_detached, suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;

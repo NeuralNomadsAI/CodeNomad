@@ -1,7 +1,8 @@
 // Real packaged app + backend + native parent, with a private OpenCode daemon and
 // deterministic provider producing ordinary codenomad.browser agent tool calls.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
+import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { createServer } from "node:http"
 import { mkdir, readFile, writeFile, chmod, readdir } from "node:fs/promises"
 import { createHash, randomUUID } from "node:crypto"
@@ -149,7 +150,7 @@ try {
       execFileSync("xdotool", ["windowactivate", "--sync", windows.at(-1)])
       execFileSync("xdotool", ["key", "Return"])
     } else {
-      execFileSync("pwsh", ["-NoProfile", "-File", new URL("fixtures/accept-owned-browser-dialog.ps1", import.meta.url).pathname.replace(/^\/(\w:)/, "$1"), "-AppProcessId", String(app.pid)], { windowsHide: true, timeout: 20000 })
+      execFileSync("pwsh", ["-NoProfile", "-File", new URL("fixtures/accept-owned-browser-dialog.ps1", import.meta.url).pathname.replace(/^\/(\w:)/, "$1"), "-AppProcessId", String(await fixtureChildPid(app))], { windowsHide: true, timeout: 20000 })
     }
     await call({ action: "wait", text: "Dialog accepted" })
   }

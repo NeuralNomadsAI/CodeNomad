@@ -1,4 +1,4 @@
-use super::{FILE_SAVE, Preferences, catalog, record, reserved};
+use super::{Preferences, catalog, record, reserved};
 use crate::strings::t;
 use rune::{El, Key, TextEdit, col, text};
 use rune_theme_codenomad::{
@@ -13,18 +13,18 @@ type Access<S> = fn(&mut S) -> Option<(&mut bool, &mut Capture)>;
 
 #[derive(Default)]
 pub(in crate::settings) struct Capture {
-    target: Option<&'static str>,
+    target: Option<String>,
     refused: bool,
     announced: Option<&'static str>,
 }
 
 impl Capture {
-    pub fn target(&self, recording: bool) -> Option<&'static str> {
-        self.target.filter(|_| recording)
+    pub fn target(&self, recording: bool) -> Option<&str> {
+        self.target.as_deref().filter(|_| recording)
     }
 
     pub fn poll(&mut self, recording: &mut bool, prefs: &Preferences, tx: &mut rune::Tx) -> bool {
-        let ended = *recording && tx.focused() != self.target;
+        let ended = *recording && tx.focused() != self.target.as_deref();
         if ended {
             *recording = false;
             self.refused = false;
@@ -141,15 +141,12 @@ fn row_view<S: 'static>(
     access: Access<S>,
 ) -> El {
     let id = row.id;
-    let edit_key = match id {
-        FILE_SAVE => "settings-file-save-edit",
-        "new-instance" => "settings-new-instance-edit",
-        "close-instance" => "settings-close-instance-edit",
-        _ => "settings-unavailable-shortcut",
-    };
+    let edit_key = format!("settings-{id}-edit");
     let disabled = locked || !row.active;
-    let editing = recording == Some(edit_key) && !disabled;
+    let editing = recording == Some(edit_key.as_str()) && !disabled;
     let prefs = shared.clone();
+    let press_key = edit_key.clone();
+    let key_target = edit_key.clone();
     let edit = layout::button_tx(
         t(if editing {
             "hotkeys.capture"
@@ -159,11 +156,11 @@ fn row_view<S: 'static>(
         disabled,
         move |s: &mut S, tx| {
             if let Some((recording, capture)) = access(s) {
-                *recording = !*recording || capture.target != Some(edit_key);
-                capture.target = Some(edit_key);
+                *recording = !*recording || capture.target.as_deref() != Some(press_key.as_str());
+                capture.target = Some(press_key.clone());
                 capture.refused = false;
                 if *recording {
-                    tx.focus(edit_key, true);
+                    tx.focus(&press_key, true);
                 }
             }
         },
@@ -175,8 +172,8 @@ fn row_view<S: 'static>(
         };
         if disabled
             || !*recording
-            || capture.target != Some(edit_key)
-            || tx.focused() != Some(edit_key)
+            || capture.target.as_deref() != Some(key_target.as_str())
+            || tx.focused() != Some(key_target.as_str())
         {
             return false;
         }

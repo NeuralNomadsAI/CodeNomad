@@ -14,6 +14,8 @@ fn stash(s: &mut State) {
     if let Some(git) = &mut s.git.owner {
         git.activate(false);
     }
+    s.status_permissions.show(false);
+    s.status_usage.invalidate();
     let cache = Cache::take(s);
     if let Some(ui) = &mut s.workspace {
         let stamp = ui
@@ -33,6 +35,8 @@ fn stash(s: &mut State) {
             entry.sessions = std::mem::take(&mut l.sessions);
             entry.listed_sessions = std::mem::take(&mut l.listed_sessions);
             entry.creation_uncertain = l.creation_uncertain;
+            entry.creation_uncertain_linked = l.creation_uncertain_linked.take();
+            entry.rebind_after_send = l.rebind_after_send.take();
             entry.next = l.next.take();
             entry.linked = std::mem::take(&mut l.linked);
             entry.consumed_cursors = std::mem::take(&mut l.consumed_cursors);
@@ -66,6 +70,8 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             _ => "",
         });
         l.creation_uncertain = std::mem::take(&mut item.creation_uncertain);
+        l.creation_uncertain_linked = std::mem::take(&mut item.creation_uncertain_linked);
+        l.rebind_after_send = item.rebind_after_send.take();
         l.error = l.creation_uncertain.then_some("rune.create_error");
         (l.title, l.show_title, l.search, l.show_search) = item
             .sidebar_edits
@@ -76,6 +82,19 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
         s.renew_scope();
+        if s.screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required)
+        {
+            s.show_launcher();
+        } else if s
+            .screen
+            .launcher()
+            .is_some_and(|l| l.rebind_after_send.is_some())
+            && crate::launcher::session_loaded(s)
+        {
+            s.show_chat();
+        }
         if super::active_session(s).is_none()
             && s.screen
                 .launcher()
@@ -125,8 +144,60 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
     tx.instant();
 }
 pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
-    s.notifications.supersede_navigation();
+    let allowed = s.workspace.as_ref().is_some_and(|ui| {
+        ui.entries
+            .iter()
+            .position(|e| e.key == id)
+            .is_some_and(|index| ui.active == index || !busy(s))
+    });
+    if allowed {
+        s.notifications.supersede_navigation();
+    }
     select_destination(s, id, tx);
+}
+
+pub fn select_relative(s: &mut State, next: bool, tx: &mut Tx) {
+    let Some(key) = s.workspace.as_ref().and_then(|ui| {
+        let len = ui.entries.len();
+        if len <= 1 {
+            return None;
+        }
+        let target = if next {
+            (ui.active + 1) % len
+        } else if ui.active == 0 {
+            len - 1
+        } else {
+            ui.active - 1
+        };
+        ui.entries.get(target).map(|entry| entry.key.clone())
+    }) else {
+        return;
+    };
+    select(s, &key, tx);
+    if s.workspace
+        .as_ref()
+        .is_some_and(|ui| ui.entries.get(ui.active).is_some_and(|e| e.key == key))
+    {
+        tx.scroll_into_view_in("project-tabs-scroll", format!("t-{key}"));
+    }
+}
+
+pub fn select_index(s: &mut State, index: usize, tx: &mut Tx) {
+    let Some(key) = s
+        .workspace
+        .as_ref()
+        .and_then(|ui| ui.entries.get(index))
+        .map(|entry| entry.key.clone())
+    else {
+        return;
+    };
+    select(s, &key, tx);
+    if s.workspace
+        .as_ref()
+        .is_some_and(|ui| ui.entries.get(ui.active).is_some_and(|e| e.key == key))
+    {
+        tx.scroll_into_view_in("project-tabs-scroll", format!("t-{key}"));
+    }
 }
 
 pub(super) fn select_destination(s: &mut State, id: &str, tx: &mut Tx) {
@@ -271,7 +342,7 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
         return true;
     }
     if ui.active == index {
-        s.composer.pending() || crate::agent::navigation_blocked(s)
+        s.composer.blocks_navigation() || crate::agent::navigation_blocked(s)
     } else {
         ui.entries[index]
             .cache

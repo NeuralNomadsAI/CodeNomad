@@ -2,7 +2,8 @@
 // Hosts the frame probe in the isolated Tauri fixture: WebView2 on Windows,
 // WKWebView on macOS, WebKitGTK on Linux.
 import assert from "node:assert/strict"
-import { spawn, spawnSync } from "node:child_process"
+import { spawnSync } from "node:child_process"
+import { spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"

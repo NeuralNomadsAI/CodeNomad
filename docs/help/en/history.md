@@ -31,6 +31,8 @@ The timeline is hidden when the conversation is too narrow (below 420 CSS pixels
 
 ## Choose the right history operation {#operation-reference}
 
+In Rune, search opens a collapsed result. If the result is hidden, show its type or tool inputs in **Message content**, then select it again. A hidden result in another session leaves you in the current conversation.
+
 | Operation | Where | Scope and consequence |
 | --- | --- | --- |
 | Display filtering | **Message content**, or **Settings → Chat** | Shared transcript display preferences; hides/collapses content without deleting it |

@@ -49,6 +49,8 @@ These are execution choices for subsequent sends, not edits to earlier responses
 
 ## Drafts and attachments {#drafts-attachments}
 
+In Rune, hover over an image attachment to preview it, or use **Enlarge image** to open it at a larger size.
+
 1. Compose in the selected conversation. Switching conversations retains its draft rather than sending it.
 2. Choose **Attach file…** in the composer's **More actions** menu, or drop or paste, for files from this device; or type `@` to select project files, agents or skills.
 3. Review the attachment chips and remove anything not intended for the next send.
@@ -116,6 +118,8 @@ Closing cancels the pending side request without interrupting the main session. 
 A goal belongs to its conversation: subsessions and forks start without one. OpenCode also pauses a goal itself when you stop the session, when a run fails, when it stops making progress, at its round limit or when the service restarts; resume it to continue. Pausing or clearing does not undo work already done. Without a goal, or with an OpenCode service that has no goal support, the line does not appear.
 
 ## Fork, undo and recover a failed run {#fork-errors}
+
+In Rune, undo fills an empty composer with the original text. Use **Redo Last Message** above the conversation to restore the staged history. Undo and technical cleanup require server support.
 
 1. On a message, choose **Fork after this message** to create a conversation after that point without replacing the original.
 2. For undo, review **Undo changes up to here (deletes messages)** carefully. The palette offers **Undo Last Message** and **Redo Last Message** for the staged undo. Undo is disabled without an undoable user message; Redo is disabled without a staged undo.

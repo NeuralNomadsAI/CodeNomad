@@ -1,7 +1,7 @@
 // Native migration only: isolated synthetic storage, never service discovery or
 // a user's database. Keep an untouched seed and migrate a copied DB via OpenCode.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { randomUUID, createHash } from "node:crypto"
 import { mkdtemp, mkdir, readFile, writeFile, copyFile } from "node:fs/promises"
 import path from "node:path"
@@ -11,7 +11,7 @@ import { tsImport } from "tsx/esm/api"
 import { OpenCode } from "@opencode/client"
 import { Service } from "@opencode/client/service"
 import { SessionLegacy } from "@opencode/schema/session-legacy"
-import { fixturePaginationGuard, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixturePaginationGuard, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 const deadlineAt = Date.now() + 180_000
 const signal = AbortSignal.timeout(180_000)
 const [oldCli, newCli] = process.argv.slice(2)

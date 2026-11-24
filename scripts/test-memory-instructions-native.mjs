@@ -1,7 +1,6 @@
 // Private daemon and deterministic loopback provider: parent entry inheritance and
 // awaited native prompt-hook writes before a native child's very first model call.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
@@ -13,7 +12,7 @@ import { OpenCode } from "@opencode/client"
 import { nativePluginBuild } from "../packages/server/scripts/native-plugin-build.mjs"
 import { readMemoryInstructionsCapability } from "../packages/server/src/memory/instructions-capability.ts"
 import { fixtureEnvironment, fixtureParent } from "./native-product-fixture.mjs"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const cli = process.argv[2]
 assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")

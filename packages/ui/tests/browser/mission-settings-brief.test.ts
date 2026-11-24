@@ -155,13 +155,10 @@ test("saving the brief that fills the library returns focus to an enabled toolba
     await name.fill("Twentieth brief")
     await name.press("Enter")
     await name.waitFor({ state: "detached" })
-    // Full, the library leaves the menu nothing to offer: its trigger is disabled, so
-    // focus lands on the toolbar's first enabled button instead of the body.
-    assert.equal(await missionToolbar(page).locator(".action-overflow-trigger").isDisabled(), true)
-    await page.waitForFunction(() => {
-      const active = document.activeElement as HTMLButtonElement | null
-      return Boolean(active?.closest(".mission-action-bar") && !active.disabled)
-    }, undefined, { timeout: 5_000 })
+    // A full library still offers replacement; focus returns to the same trigger.
+    const trigger = (await missionToolbar(page)).locator(".action-overflow-trigger")
+    assert.equal(await trigger.isDisabled(), false)
+    await trigger.and(page.locator(":focus")).waitFor({ timeout: 5_000 })
     assert.equal(fixture.writes.length, 1)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }

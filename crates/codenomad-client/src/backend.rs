@@ -9,6 +9,7 @@ pub struct Backend {
     pub base: String,
     pub workspace: String,
     pub session: String,
+    pub session_directory: Option<String>,
     pub client_id: String,
     pub fresh_mode: bool,
 }
@@ -38,6 +39,7 @@ impl Backend {
             base: endpoint(address)?,
             workspace: String::new(),
             session: String::new(),
+            session_directory: None,
             client_id: client_id()?,
             fresh_mode: false,
         })

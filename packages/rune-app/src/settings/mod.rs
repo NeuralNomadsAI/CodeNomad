@@ -4,6 +4,7 @@ mod behavior;
 mod config_files;
 mod contrast;
 mod conversation;
+mod general;
 mod host_support;
 mod info;
 mod memory;
@@ -15,6 +16,13 @@ mod preferences;
 mod providers;
 mod remote;
 mod stats;
+pub(crate) mod transcript_filters;
+mod transcript_preset;
+pub(crate) use transcript_preset::Row as TranscriptRow;
+
+pub(crate) fn show_timeline(s: &crate::State) -> bool {
+    s.settings.shared.borrow().show_timeline()
+}
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -35,18 +43,18 @@ use appearance::effective_contrast;
 use appearance::render_with;
 pub(crate) use appearance::{app_locale, render};
 pub(crate) use connection::{
-    bound_backend, connected, connection_event, conversation_authentication, invalidate,
-    stop_before_conversation,
+    authentication_required, bound_backend, connected, connection_event,
+    conversation_authentication, invalidate, stop_before_conversation,
 };
 #[cfg(test)]
 use connection::{provider_changed, provider_stopped};
 pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_notification};
 #[cfg(test)]
 pub(crate) use delivery::{notification_fixture, notification_test_config};
-pub(crate) use shortcuts::matches_shortcut;
+pub(crate) use shortcuts::{with_shortcut_label, with_shortcut_label_excluding};
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
-pub(crate) use window::{close, direct_entry, entries};
+pub(crate) use window::{close, direct_entry, entries, open_providers};
 #[cfg(not(target_arch = "wasm32"))]
 use window::{launch_preferences, settle_close, warn_save_failed};
 
@@ -64,12 +72,13 @@ pub(crate) struct Host {
     #[cfg(target_arch = "wasm32")]
     web: web::Panel,
     #[cfg(target_arch = "wasm32")]
-    web_usage: Option<bool>,
-    #[cfg(target_arch = "wasm32")]
     contrast: Option<web_contrast::Watch>,
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
-    last_display: Option<([&'static str; 6], bool, Option<bool>)>,
+    last_display: Option<([&'static str; 5], bool, Option<bool>)>,
+    last_revision: u64,
+    last_transcript: Option<[&'static str; transcript_preset::ROW_COUNT]>,
+    transcript_filters: transcript_filters::Filters,
     memory_cleanup: Option<memory::cleanup::Run>,
 }
 
@@ -93,7 +102,38 @@ pub(crate) fn set_stream_online(s: &State, online: bool) {
     }
 }
 
+pub(crate) fn match_shortcut<T>(
+    s: &State,
+    event: &rune::KeyEvent,
+    tx: &rune::Tx,
+    find: impl FnOnce(&dyn Fn(&str) -> bool) -> Option<T>,
+) -> Option<T> {
+    let preferences = s.settings.shared.borrow();
+    let matches = |id: &str| shortcuts::matches_shortcut_in(&preferences, id, event, tx);
+    find(&matches)
+}
+
+pub(crate) fn blocks_shell_shortcuts(s: &State) -> bool {
+    let awaiting = awaiting_appearance(s, &s.settings.shared.borrow());
+    let filters = s.settings.transcript_filters.is_open(&s.input_scope);
+    #[cfg(target_arch = "wasm32")]
+    return awaiting || filters || s.settings.web.shown();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        awaiting || filters
+    }
+}
+
+pub(crate) fn transcript_mode(s: &State, row: TranscriptRow) -> &'static str {
+    s.settings.shared.borrow().transcript_mode(row, false)
+}
 #[cfg(any(test, feature = "test-support"))]
+pub(crate) fn fixture_transcript(s: &mut State, settings: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_transcript(settings);
+    s.revision += 1;
+}
+
+#[cfg(test)]
 pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
     s.settings.shared.borrow_mut().fixture_usage(mode);
     s.revision += 1;
@@ -122,7 +162,7 @@ pub(crate) fn poll_stats(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
     })
 }
 
-pub(crate) fn poll(s: &mut State) -> bool {
+pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some((request, editor)) = s.settings.window.as_ref().and_then(|(_, _, request)| {
         let editor = request.reopen.borrow_mut().take();
@@ -219,21 +259,36 @@ pub(crate) fn poll(s: &mut State) -> bool {
     if preferences_changed && let Some(wake) = &shared.window_wake {
         wake();
     }
+    let locale = shared.locale().unwrap_or_else(strings::locale);
+    #[cfg(target_arch = "wasm32")]
+    if s.settings
+        .last_display
+        .is_none_or(|(last, _, _)| last[0] != locale)
+        && let Some(root) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.document_element())
+    {
+        let _ = root.set_attribute("lang", locale);
+    }
     let display = Some((
         [
-            shared.locale().unwrap_or_else(strings::locale),
+            locale,
             shared.mode(),
             shared.palette(false).map_or("", |p| p.id),
             shared.palette(true).map_or("", |p| p.id),
             shared.contrast(),
-            shared.usage_visibility(false),
         ],
         awaiting_appearance(s, &shared),
         shared.mission_delete_sessions(),
     ));
-    if s.settings.last_display.map(|last| (last.0[5], last.2))
-        != display.map(|next| (next.0[5], next.2))
-    {
+    let mut rows = TranscriptRow::all();
+    let transcript = Some(std::array::from_fn(|_| {
+        shared.transcript_mode(rows.next().unwrap(), false)
+    }));
+    let transcript_changed = s.settings.last_transcript != transcript;
+    let keep_passage = transcript_changed && s.settings.last_transcript.is_some();
+    if transcript_changed {
+        s.settings.last_transcript = transcript;
         s.revision += 1;
     }
     #[cfg(target_arch = "wasm32")]
@@ -251,6 +306,8 @@ pub(crate) fn poll(s: &mut State) -> bool {
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
+    let revision_changed =
+        shared.revision != std::mem::replace(&mut s.settings.last_revision, shared.revision);
     let (reconnected, missions) = if stream_state == Some(false) {
         let _ = shared.mission_changes();
         (false, Vec::new())
@@ -297,6 +354,9 @@ pub(crate) fn poll(s: &mut State) -> bool {
         s.show_launcher();
         crate::workspace::suspend_missions(s);
     } else {
+        if keep_passage {
+            crate::chat::reading::keep_passage(s, tx);
+        }
         if let Some(online) = stream_state {
             #[cfg(target_arch = "wasm32")]
             if !online && !crate::platform::pairing::required(s) {
@@ -315,7 +375,32 @@ pub(crate) fn poll(s: &mut State) -> bool {
             }
         }
     }
-    changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
+    let filters_changed =
+        preferences_changed && s.settings.transcript_filters.is_open(&s.input_scope);
+    preferences_changed
+        | revision_changed
+        | changed
+        | expired
+        | filters_changed
+        | transcript_changed
+        | (display != std::mem::replace(&mut s.settings.last_display, display))
+}
+
+pub(crate) fn show_provider_usage_credit_balance(s: &State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .saved(codenomad_client::settings::Owner::Config)
+        .is_some_and(|config| config["settings"]["showProviderUsageCreditBalance"] == true)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn locale(s: &State) -> &'static str {
+    s.settings
+        .shared
+        .borrow()
+        .locale()
+        .unwrap_or_else(strings::locale)
 }
 
 #[cfg(test)]

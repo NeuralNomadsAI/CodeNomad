@@ -37,11 +37,20 @@ pub(crate) async fn run_with_reading(
         let _ = forward.send(Input::Command(Command::Close)).await;
     });
     let mut epoch = 1;
+    let provider_usage = backend
+        .client
+        .supports("provider-usage")
+        .then(crate::provider_usage::Watch::default);
+    if let Some(watch) = &provider_usage
+        && !publish(&out, &wake, Event::ProviderUsageWatch(watch.clone())).await
+    {
+        return Ok(());
+    }
     let make_wire = || {
-        Arc::new(stream::State::observing_preferences(
-            out.clone(),
-            wake.clone(),
-        ))
+        Arc::new(
+            stream::State::observing_preferences(out.clone(), wake.clone())
+                .with_provider_usage(provider_usage.clone()),
+        )
     };
     let mut wire = make_wire();
     stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
@@ -146,7 +155,9 @@ pub(crate) async fn run_with_reading(
                 }
                 publish(&out, &wake, Event::Reconnecting).await;
             }
-            Some(Input::Command(Command::Older)) => {
+            Some(Input::Command(
+                command @ (Command::Older | Command::Page(..) | Command::Anchor(_)),
+            )) => {
                 let lane = Lane {
                     backend: &backend,
                     reading,
@@ -155,7 +166,18 @@ pub(crate) async fn run_with_reading(
                     out: &out,
                     wake: &wake,
                 };
-                match reader.older(&lane, opened).await? {
+                let (edge, cancellation) = match command {
+                    Command::Anchor(jump) => {
+                        reader.anchor(&lane, opened, jump).await;
+                        continue;
+                    }
+                    Command::Page(edge, signal) => (edge, Some(signal)),
+                    _ => (crate::transport::HistoryEdge::Before, None),
+                };
+                match reader
+                    .page(&lane, opened, edge, cancellation.as_ref())
+                    .await?
+                {
                     Turn::Process => {}
                     Turn::Next => continue,
                     Turn::Stop => return Ok(()),
@@ -250,6 +272,14 @@ pub(crate) async fn run_with_reading(
                     if let Some(usage) = content::Usage::decode(&native["data"]) {
                         publish(&out, &wake, Event::SessionUsage(usage)).await;
                     }
+                    continue;
+                }
+                if matches!(kind, "session.revert.staged" | "session.revert.cleared") {
+                    publish(&out, &wake, Event::RevertChanged).await;
+                    reader.clear_window_on_revert();
+                    reader.parked = false;
+                    reader.dirty = reader.active_reader;
+                    reader.quiet = Instant::now();
                     continue;
                 }
                 if matches!(kind, "session.deleted" | "session.revert.committed") {

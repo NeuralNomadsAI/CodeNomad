@@ -113,6 +113,10 @@ pub(crate) fn mission_supported(s: &State) -> bool {
     mission_owner(s).is_some_and(missions::Panel::supported)
 }
 
+pub(crate) fn missions_composing(s: &State) -> bool {
+    mission_owner(s).is_some_and(missions::Panel::is_composing)
+}
+
 pub(crate) fn mission_panel(s: &State) -> El {
     let Some(ui) = s.workspace.as_ref() else {
         return rune::el();
@@ -468,6 +472,245 @@ pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
         None => panel.invalidate(None, ui.clock),
         _ => {}
     }
+}
+
+pub(crate) fn event_workspace_id(event: &WorkspaceEvent) -> Option<&str> {
+    match event {
+        WorkspaceEvent::NativeFilesystemChanged { workspace_id }
+        | WorkspaceEvent::FilesChanged { workspace_id, .. }
+        | WorkspaceEvent::WorktreesChanged { workspace_id }
+        | WorkspaceEvent::SessionMoved { workspace_id, .. }
+        | WorkspaceEvent::Stopped { workspace_id } => Some(workspace_id.as_str()),
+        _ => None,
+    }
+}
+
+pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) -> bool {
+    if events.is_empty() {
+        return false;
+    }
+    let mut delivered = false;
+    let active_detached = s.screen.is_launcher() && s.incoming.is_none();
+    for event in events {
+        if matches!(event, WorkspaceEvent::UiPreferencesChanged) {
+            if active_detached && s.git.owner.is_some() {
+                crate::git::event(s, event);
+                delivered = true;
+            }
+            continue;
+        }
+        let Some(target) = event_workspace_id(event) else {
+            continue;
+        };
+        if active_detached || matches!(event, WorkspaceEvent::Stopped { .. }) {
+            if s.git
+                .owner
+                .as_ref()
+                .is_some_and(|git| git.workspace_id() == target)
+            {
+                crate::git::event(s, event);
+                delivered = true;
+            }
+            if let Some(files) = &mut s.files
+                && files.workspace_id() == target
+            {
+                files.event(event.clone());
+                delivered = true;
+            }
+        }
+    }
+    if let Some(ui) = &mut s.workspace {
+        for (index, entry) in ui.entries.iter_mut().enumerate() {
+            if index == ui.active {
+                continue;
+            }
+            let Some(cache) = entry.cache.as_mut() else {
+                continue;
+            };
+            for event in events {
+                delivered |= cache.deliver_detached_event(event);
+            }
+        }
+    }
+    delivered
+}
+
+pub(crate) fn has_detached_panels(s: &State) -> bool {
+    let active = s.screen.is_launcher()
+        && s.incoming.is_none()
+        && (s.git.owner.is_some() || s.files.is_some());
+    active
+        || s.workspace.as_ref().is_some_and(|ui| {
+            ui.entries.iter().enumerate().any(|(index, entry)| {
+                index != ui.active
+                    && entry
+                        .cache
+                        .as_ref()
+                        .is_some_and(super::Cache::has_detached_panels)
+            })
+        })
+}
+
+pub(crate) fn detached_workspace_ids(s: &State) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    if s.screen.is_launcher() && s.incoming.is_none() {
+        if let Some(git) = &s.git.owner {
+            ids.insert(git.workspace_id().to_owned());
+        }
+        if let Some(files) = &s.files {
+            ids.insert(files.workspace_id().to_owned());
+        }
+    }
+    if let Some(ui) = &s.workspace {
+        for (index, entry) in ui.entries.iter().enumerate() {
+            if index == ui.active {
+                continue;
+            }
+            if let Some(cache) = entry.cache.as_ref() {
+                cache.collect_detached_workspace_ids(&mut ids);
+            }
+        }
+    }
+    ids
+}
+
+pub(crate) fn has_unopened_detached_panels(
+    s: &State,
+    opened_after: &std::collections::HashSet<String>,
+) -> bool {
+    detached_workspace_ids(s)
+        .iter()
+        .any(|id| !opened_after.contains(id))
+}
+
+pub(crate) fn stop_unlisted_detached(
+    s: &mut State,
+    live: &std::collections::HashSet<&str>,
+) -> bool {
+    let mut changed = false;
+    if s.screen.is_launcher() && s.incoming.is_none() {
+        if let Some(workspace_id) = s
+            .git
+            .owner
+            .as_ref()
+            .map(|git| git.workspace_id().to_owned())
+            .filter(|id| !live.contains(id.as_str()))
+        {
+            crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+            changed = true;
+        }
+        if let Some(files) = &mut s.files {
+            let workspace_id = files.workspace_id().to_owned();
+            if !live.contains(workspace_id.as_str()) {
+                files.event(WorkspaceEvent::Stopped { workspace_id });
+                changed = true;
+            }
+        }
+    }
+    if let Some(ui) = &mut s.workspace {
+        for (index, entry) in ui.entries.iter_mut().enumerate() {
+            if index == ui.active {
+                continue;
+            }
+            if let Some(cache) = entry.cache.as_mut() {
+                changed |= cache.stop_unlisted_detached(live);
+            }
+        }
+    }
+    changed
+}
+
+pub(crate) fn reconcile_detached_online(
+    s: &mut State,
+    opened_after: &std::collections::HashSet<String>,
+    live: Option<&std::collections::HashSet<&str>>,
+) -> bool {
+    let mut changed = false;
+    if s.screen.is_launcher() && s.incoming.is_none() {
+        if let Some(workspace_id) = s
+            .git
+            .owner
+            .as_ref()
+            .map(|git| git.workspace_id().to_owned())
+        {
+            match live {
+                Some(live)
+                    if !opened_after.contains(workspace_id.as_str())
+                        && !live.contains(workspace_id.as_str()) =>
+                {
+                    crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+                    changed = true;
+                }
+                Some(_) => {
+                    crate::git::online(s, true);
+                    changed = true;
+                }
+                None if opened_after.contains(workspace_id.as_str()) => {
+                    crate::git::online(s, true);
+                    changed = true;
+                }
+                None => {}
+            }
+        }
+        if let Some(files) = &mut s.files {
+            let workspace_id = files.workspace_id().to_owned();
+            match live {
+                Some(live)
+                    if !opened_after.contains(workspace_id.as_str())
+                        && !live.contains(workspace_id.as_str()) =>
+                {
+                    files.event(WorkspaceEvent::Stopped { workspace_id });
+                    changed = true;
+                }
+                Some(_) => {
+                    files.online(true);
+                    changed = true;
+                }
+                None if opened_after.contains(workspace_id.as_str()) => {
+                    files.online(true);
+                    changed = true;
+                }
+                None => {}
+            }
+        }
+    }
+    if let Some(ui) = &mut s.workspace {
+        for (index, entry) in ui.entries.iter_mut().enumerate() {
+            if index == ui.active {
+                continue;
+            }
+            if let Some(cache) = entry.cache.as_mut() {
+                changed |= cache.reconcile_detached_online(opened_after, live);
+            }
+        }
+    }
+    changed
+}
+
+pub(crate) fn set_detached_online(s: &mut State, online: bool) -> bool {
+    let mut changed = false;
+    let active_detached = s.screen.is_launcher() && s.incoming.is_none();
+    if active_detached {
+        if s.git.owner.is_some() {
+            crate::git::online(s, online);
+            changed = true;
+        }
+        if let Some(files) = &mut s.files {
+            files.online(online);
+            changed = true;
+        }
+    }
+    if let Some(ui) = &mut s.workspace {
+        for (index, entry) in ui.entries.iter_mut().enumerate() {
+            if index == ui.active {
+                continue;
+            }
+            if let Some(cache) = entry.cache.as_mut() {
+                changed |= cache.set_detached_online(online);
+            }
+        }
+    }
+    changed
 }
 
 pub(crate) fn mission_observation_project(s: &State) -> Option<&str> {

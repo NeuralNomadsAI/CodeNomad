@@ -12,8 +12,11 @@ export const providerUsageKey = (source: ProviderUsageSource) => JSON.stringify(
   source.instanceId, source.sessionId, source.directory, source.providerId, source.modelId,
 ])
 
-export const shouldShowProviderUsageWindow = (label: string, showCreditBalance: boolean) =>
-  label !== "credits_balance" || showCreditBalance
+export const shouldShowProviderUsageWindow = (label: string, showCreditBalance: boolean) => {
+  const scope = label.indexOf(":")
+  const base = (scope > 0 ? label.slice(0, scope) : label).trim()
+  return base !== "credits_balance" || showCreditBalance
+}
 
 // The display snapshot is local to the mounted panel. Do not restore a global
 // browser cache before the server can revalidate the native selected account.

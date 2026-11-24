@@ -76,13 +76,24 @@ function windowsStopScript(targets: readonly ProcessTreeRow[]): string {
   // Each Process object binds its handle before the creation-time check, so the stop cannot
   // reach a process that took the ID after the listing.
   return `$ErrorActionPreference = 'Continue'
+$failed = @()
 foreach ($target in @(${list})) {
   $process = Get-Process -Id $target.Id -ErrorAction SilentlyContinue
   if ($null -eq $process) { continue }
-  try { $null = $process.Handle; $ticks = $process.StartTime.ToUniversalTime().Ticks } catch { continue }
-  if (($ticks - $ticks % 10) -ne [long]$target.Ticks) { continue }
-  Stop-Process -InputObject $process -Force -ErrorAction SilentlyContinue
-}`
+  try {
+    $null = $process.Handle
+    $ticks = $process.StartTime.ToUniversalTime().Ticks
+    if (($ticks - $ticks % 10) -ne [long]$target.Ticks) { continue }
+    Stop-Process -InputObject $process -Force -ErrorAction Stop
+    if (!$process.WaitForExit(2000)) { throw "Process $($target.Id) still running" }
+  } catch {
+    $message = $_.Exception.Message
+    try { if ($process.HasExited) { continue } } catch {}
+    $failed += "$($target.Id): $message"
+  }
+}
+if ($failed.Count) { Write-Error ($failed -join "; "); exit 1 }
+exit 0`
 }
 
 function powershell(script: string, timeoutMs: number): Promise<string | undefined> {

@@ -119,6 +119,10 @@ const CLEANUP_DISPLAY_CAP: usize = 2_000;
 const DELETED_MISSIONS_CAP: usize = 256;
 
 impl Panel {
+    pub(crate) fn is_composing(&self) -> bool {
+        self.filter.is_composing()
+    }
+
     pub(crate) fn new(backend: Backend, project: Option<String>, reads: Reads, wake: Wake) -> Self {
         let (out, incoming) = bounded(4);
         Self {

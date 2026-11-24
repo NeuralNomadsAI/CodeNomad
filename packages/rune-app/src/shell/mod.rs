@@ -2,7 +2,11 @@ pub(crate) mod notifications;
 mod panels;
 pub(crate) mod render;
 mod right_panel;
+mod shortcuts;
+pub(crate) use shortcuts::global_blocked as shortcut_blocked;
 mod sidebar;
+pub(crate) mod status_permissions;
+pub(crate) mod status_usage;
 
 use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};
 use rune::{Cx, El, Tx, col, text};
@@ -72,7 +76,7 @@ fn body(
     panels::view(s, cx.touch_controls(), has_project, body)
 }
 
-fn launcher_replaces_project(s: &State) -> bool {
+pub(crate) fn launcher_replaces_project(s: &State) -> bool {
     s.screen
         .launcher()
         .is_some_and(|l| l.authentication_required)
@@ -115,63 +119,77 @@ fn connection(s: &State) -> &'static str {
     })
 }
 
-pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
+pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     use rune::{Key, Mods};
+    if shortcuts::modal_open(s) {
+        return false;
+    }
+    if crate::timeline::search::close_key(s, event, tx) {
+        return true;
+    }
+    if event.key == Key::Escape && crate::timeline::dismiss_preview(s) {
+        return true;
+    }
     if event.key == Key::Tab && !event.mods.ctrl && !event.mods.cmd && !event.mods.alt {
         return s.shell.wrap_floating_focus(event.mods.shift, tx);
     }
     if event.key == Key::Function(6) && s.shell.has_floating() {
         return !event.mods.ctrl && !event.mods.cmd && !event.mods.alt;
     }
-    if tx.key_repeat() {
+    if !tx.key_repeat()
+        && event.mods == Mods::default()
+        && event.key == Key::Escape
+        && s.shell.close_floating(tx)
+    {
+        if !s.shell.visible(1) {
+            crate::workspace::hide_missions(s);
+        }
+        return true;
+    }
+    false
+}
+
+pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
+    use rune::{Key, Mods};
+    if shortcuts::modal_open(s) {
         return false;
     }
-    if event.mods == Mods::default() {
-        let handled = match event.key {
-            Key::Escape if s.shell.close_floating(tx) => {
-                if !s.shell.visible(1) {
-                    crate::workspace::hide_missions(s);
-                }
-                true
+    if panel_keys(s, event, tx) {
+        return true;
+    }
+    if !tx.key_repeat() && event.mods == Mods::default() && event.key == Key::Escape {
+        if crate::git::has_preview(s) {
+            crate::git::close_preview(s);
+            tx.instant();
+            return true;
+        }
+        if crate::files::has_preview(s) && !s.screen.is_launcher() {
+            if let Some(files) = &mut s.files {
+                files.close_reader();
             }
-            Key::Escape if crate::git::has_preview(s) => {
-                crate::git::close_preview(s);
-                tx.instant();
-                true
-            }
-            Key::Escape if crate::files::has_preview(s) && !s.screen.is_launcher() => {
-                if let Some(files) = &mut s.files {
-                    if files.document.confirmation().is_some() {
-                        return false;
-                    }
-                    files.close_reader();
-                }
-                crate::chat::reading::restore_position(s, tx);
-                true
-            }
-            Key::Function(11) if crate::platform::titlebar::available() => {
-                tx.toggle_full_screen();
-                true
-            }
-            _ => false,
-        };
-        if handled {
+            crate::chat::reading::restore_position(s, tx);
             return true;
         }
     }
-    if crate::settings::matches_shortcut(s, "new-instance", event, tx, 'n') && workspace::can_new(s)
-    {
-        workspace::new_tab(s, tx);
-    } else if crate::settings::matches_shortcut(s, "close-instance", event, tx, 'w') {
-        let Some(key) = s.workspace.as_ref().map(|ui| ui.active_key().to_owned()) else {
-            return false;
-        };
-        workspace::close(s, &key, tx);
-    } else {
-        return false;
+    if crate::timeline::search::open_key(s, event, tx) {
+        return true;
     }
-    true
+    if shortcuts::dispatch(s, event, tx) {
+        return true;
+    }
+    if event.mods == Mods::default()
+        && event.key == Key::Function(11)
+        && crate::platform::titlebar::available()
+    {
+        if !tx.key_repeat() {
+            tx.toggle_full_screen();
+        }
+        return true;
+    }
+    false
 }
 
+#[cfg(test)]
+mod shortcuts_tests;
 #[cfg(test)]
 mod tests;
