@@ -8,7 +8,7 @@ let browser: Browser, url: string
 before(async () => {
   const fixture = await borrowFixture({
     name: "empty-tab",
-    routes: [{ path: "/fixture", html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/empty-tab.tsx"></script></body></html>' }],
+    routes: [{ path: "/fixture", html: '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/empty-tab.tsx"></script></body></html>' }],
   })
   url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
@@ -184,9 +184,9 @@ test("stacked recents collapse to their empty state or one or two rows", async (
   }
 })
 
-for (const delayed of ["recents", "sidecars"] as const) {
-  test(`a stacked Browse submit survives ${delayed} arriving during the click`, async () => {
-    const page = await browser.newPage({ viewport: { width: 390, height: 850 } })
+for (const [delayed, touch] of [["recents", false], ["sidecars", false], ["recents", true], ["sidecars", true]] as const) {
+  test(`a stacked Browse submit survives ${delayed} arriving during a ${touch ? "tap" : "click"}`, async () => {
+    const page = await browser.newPage({ viewport: { width: 390, height: 850 }, hasTouch: touch, isMobile: touch })
     const arrival = Promise.withResolvers<void>()
     const recents = Array.from({ length: 20 }, (_, i) => ({ path: `/project-${i}`, lastAccessed: 20 - i }))
     const sidecars = Array.from({ length: 8 }, (_, i) => ({ id: `sidecar-${i}`, name: `SideCar ${i}`, status: "running", kind: "port", port: 7000 + i }))
@@ -215,14 +215,20 @@ for (const delayed of ["recents", "sidecars"] as const) {
       const submit = browse.locator(".browse-menu-footer button[type=submit]")
       await submit.scrollIntoViewIfNeeded()
       const { x, y, width, height } = (await submit.boundingBox())!
-      await page.mouse.move(x + width / 2, y + height / 2)
-      await page.mouse.down()
+      const point = { x: Math.round(x + width / 2), y: Math.round(y + height / 2) }
+      const input = touch ? await page.context().newCDPSession(page) : undefined
+      if (input) await input.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] })
+      else {
+        await page.mouse.move(point.x, point.y)
+        await page.mouse.down()
+      }
       arrival.resolve()
       await (delayed === "recents" ? lastRecent : lastSidecar).waitFor()
-      const hit = await submit.evaluate((button, point) => button.contains(document.elementFromPoint(point.x, point.y)), { x: x + width / 2, y: y + height / 2 })
-      await page.mouse.up()
-      assert.ok(hit, "the same pointer position still hits Submit")
-      await browse.getByRole("alert").waitFor()
+      assert.ok(await submit.evaluate((button, point) => button.contains(document.elementFromPoint(point.x, point.y)), point),
+        "the same pointer position still hits Submit")
+      if (input) await input.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+      else await page.mouse.up()
+      await browse.getByRole("alert").waitFor({ timeout: 5000 })
       assert.equal(probes, 1)
     } finally {
       arrival.resolve()

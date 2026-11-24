@@ -79,16 +79,26 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     // Keep native hit testing stable while async rows change either stacked panel.
     grid.style.setProperty("--folder-home-pressed-browse-height", `${panel.getBoundingClientRect().height}px`)
     const listeners = new AbortController()
-    releaseBrowseHeight = () => {
+    const options = { capture: true, signal: listeners.signal }
+    let clickDeadline: number | undefined
+    const release = releaseBrowseHeight = () => {
+      window.clearTimeout(clickDeadline)
       listeners.abort()
       grid.style.removeProperty("--folder-home-pressed-browse-height")
       releaseBrowseHeight = undefined
     }
-    const finish = (end: PointerEvent) => { if (end.pointerId === event.pointerId) releaseBrowseHeight?.() }
-    const options = { capture: true, signal: listeners.signal }
+    const finish = (end: PointerEvent) => {
+      if (end.pointerId !== event.pointerId) return
+      if (end.type === "pointercancel" || event.pointerType === "mouse") return release()
+      // Touch hit-tests the synthesized click after pointerup. A non-clicking release still unpins.
+      window.addEventListener("click", click => {
+        if (click.isTrusted && click.detail > 0 && (!(click instanceof PointerEvent) || click.pointerId === event.pointerId)) release()
+      }, options)
+      clickDeadline = window.setTimeout(release, 400)
+    }
     window.addEventListener("pointerup", finish, options)
     window.addEventListener("pointercancel", finish, options)
-    window.addEventListener("blur", releaseBrowseHeight, { signal: listeners.signal })
+    window.addEventListener("blur", release, { signal: listeners.signal })
   }
 
   createEffect(on(() => props.active === true, (active) => {
