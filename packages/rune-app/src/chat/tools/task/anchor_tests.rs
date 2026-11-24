@@ -245,12 +245,19 @@ fn reveal_virtual_rows_focus_and_real_selection_protection() {
         rt.frame(1.0 / 60.0);
     }
     assert!(rt.accessibility_json().to_string().contains("Show 50 more"));
+    rt.state.transcript_display.task_row_builds.set(0);
     let (x, y) = rt
         .find(&format!("reveal-{step_key}"))
         .expect("reveal button");
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
-    for _ in 0..8 {
+    rt.frame(1.0 / 60.0);
+    let built_on_reveal = rt.state.transcript_display.task_row_builds.get();
+    assert!(
+        built_on_reveal < 80,
+        "virtual_rows builder must only be invoked for the mounted window out of 200 steps, got {built_on_reveal} builds"
+    );
+    for _ in 0..7 {
         rt.frame(1.0 / 60.0);
     }
     let mounted_step_rows = rt
@@ -265,7 +272,7 @@ fn reveal_virtual_rows_focus_and_real_selection_protection() {
         .count();
     assert!(
         mounted_step_rows < 80,
-        "virtual_rows must only build visible window out of 200 steps, got {mounted_step_rows}"
+        "virtual_rows must only mount visible window out of 200 steps, got {mounted_step_rows}"
     );
     rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
     for _ in 0..8 {
@@ -620,6 +627,117 @@ fn parent_steps_pane_clips_nested_subagent_visibility() {
         ),
         Some(true),
         "scrolling nested card out of parent steps_pane must mark it not visible or prune its demand"
+    );
+    let _ = lease;
+}
+
+#[test]
+fn focused_markdown_link_inside_step_protects_row_from_eviction() {
+    let parent = history::decode_message(&json!({
+        "id": "parent", "type": "assistant", "time": {"completed": 1}, "content": [{
+            "type": "tool", "id": "launch", "name": "subagent", "state": {
+                "status": "completed",
+                "metadata": {"sessionID": "child", "status": "running"}
+            }
+        }]
+    }))
+    .unwrap();
+    let make_page = |count: usize| {
+        let mut tools = vec![json!({
+            "type": "tool", "id": "step_0", "name": "skill", "state": {
+                "status": "completed",
+                "input": {"id": "guide"},
+                "content": [{"type": "text", "text": "Read [the guide](https://example.com/step0-guide) first."}]
+            }
+        })];
+        for i in 1..count {
+            tools.push(json!({
+                "type": "tool", "id": format!("step_{i}"), "name": "read", "state": {
+                    "status": "completed", "input": {"filePath": format!("f_{i:02}.rs")}
+                }
+            }));
+        }
+        history::decode(json!({
+            "status": "window", "latest": true,
+            "messages": [{"id": "child_msg", "type": "assistant", "time": {"completed": 1}, "content": tools}]
+        }))
+        .unwrap()
+    };
+    let mut state = init();
+    state.phase = Phase::Ready;
+    crate::settings::fixture_transcript(
+        &mut state,
+        json!({"toolCallExpansionDefaults": {"tools": {"task": "expanded", "skill": "collapsed", "read": "collapsed"}}}),
+    );
+    state.messages.push(parent.into());
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| with_locale("en", || crate::view(s, cx)),
+        (1160.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    let task_key = super::super::tool_key("parent", "launch");
+    let step_key = format!("{task_key}-task-steps");
+    let scroll_key = format!("{step_key}-scroll");
+    let step0_key = super::super::tool_key(&format!("{step_key}-child:child:child_msg"), "step_0");
+    let mut lease = None;
+    rt.update(|s, _| {
+        lease = Some(
+            s.transcript_display
+                .children
+                .install("child", make_page(30)),
+        );
+        assert!(crate::chat::events::poll_chat(s, 1));
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let (sx, sy) = rt
+        .find(&format!("toggle-{step0_key}"))
+        .expect("step_0 toggle");
+    rt.pointer_down(sx, sy);
+    rt.pointer_up(sx, sy);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let link_url = "https://example.com/step0-guide";
+    rt.update(|_, tx| tx.focus(link_url, true));
+    rt.frame(1.0 / 60.0);
+    rt.update(|s, tx| {
+        Display::poll(s, false, 0.1, tx);
+        tx.scroll_to_bottom_instant(scroll_key.clone());
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|s, _| {
+        lease = Some(
+            s.transcript_display
+                .children
+                .install("child", make_page(40)),
+        );
+        assert!(crate::chat::events::poll_chat(s, 2));
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.find(&format!("reveal-{step_key}")).is_none(),
+        "focused Markdown link inside step_0 must keep start at 0 even at bottom"
+    );
+    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.elements()
+            .into_iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some(step0_key.as_str())),
+        "step_0 must remain mounted while its Markdown link holds focus"
     );
     let _ = lease;
 }

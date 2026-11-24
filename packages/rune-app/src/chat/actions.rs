@@ -25,6 +25,8 @@ pub struct Display {
     pub(super) pictures: super::media::Pictures,
     pub(crate) receipts: super::receipts::Receipts,
     focused_key: Option<String>,
+    #[cfg(test)]
+    pub(super) task_row_builds: std::cell::Cell<usize>,
 }
 
 #[derive(Default)]

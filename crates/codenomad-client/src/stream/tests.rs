@@ -112,13 +112,30 @@ fn watch_children_queues_distinct_ids_and_collapses_overflow_to_all() {
             backend.workspace = "project".into();
             backend.session = "root".into();
             let (invalidations, rx) = backend.watch_children().expect("watch_children");
+            // Untracked children never wake the observer or fill the queue.
             children::observe(
                 &backend,
-                &json!({"type":"session.tool.success","data":{"sessionID":"child_1"}}),
+                &json!({"type":"session.tool.success","data":{"sessionID":"unrelated"}}),
+            );
+            assert!(rx.try_recv().is_err());
+            assert_eq!(invalidations.drain(), (false, Vec::new()));
+
+            let tracked: std::collections::HashSet<String> = (0..70)
+                .map(|i| format!("child_{i}"))
+                .chain(["child_a".into(), "child_b".into()])
+                .collect();
+            invalidations.set_tracked(tracked);
+            children::observe(
+                &backend,
+                &json!({"type":"session.tool.success","data":{"sessionID":"child_a"}}),
             );
             children::observe(
                 &backend,
-                &json!({"type":"session.synthetic","data":{"sessionID":"child_2"}}),
+                &json!({"type":"session.synthetic","data":{"sessionID":"child_b"}}),
+            );
+            children::observe(
+                &backend,
+                &json!({"type":"session.tool.success","data":{"sessionID":"unrelated"}}),
             );
             children::observe(
                 &backend,
@@ -127,7 +144,7 @@ fn watch_children_queues_distinct_ids_and_collapses_overflow_to_all() {
             assert!(rx.try_recv().is_ok());
             let (all, mut ids) = invalidations.drain();
             ids.sort();
-            assert!(!all && ids == vec!["child_1", "child_2"]);
+            assert!(!all && ids == vec!["child_a", "child_b"]);
 
             for i in 0..70 {
                 children::observe(

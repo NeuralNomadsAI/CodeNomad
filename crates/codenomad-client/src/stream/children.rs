@@ -35,12 +35,26 @@ struct SessionWatch {
 struct Invalidations {
     all: bool,
     ids: HashSet<String>,
+    tracked: HashSet<String>,
 }
 
 #[derive(Clone)]
 pub struct ChildInvalidations(Arc<Mutex<Invalidations>>);
 
 impl ChildInvalidations {
+    pub fn set_tracked(&self, tracked: HashSet<String>) {
+        if let Ok(mut guard) = self.0.lock() {
+            let guard = &mut *guard;
+            guard.tracked = tracked;
+            if guard.tracked.is_empty() {
+                guard.all = false;
+                guard.ids.clear();
+            } else {
+                guard.ids.retain(|id| guard.tracked.contains(id));
+            }
+        }
+    }
+
     pub fn drain(&self) -> (bool, Vec<String>) {
         let Ok(mut guard) = self.0.lock() else {
             return (false, Vec::new());
@@ -68,23 +82,33 @@ impl Children {
                 .iter()
                 .filter(|watch| watch.workspace == b.workspace && watch.root == b.session)
             {
+                let mut wake = false;
                 if let Ok(mut queue) = watch.queue.lock() {
                     match child {
-                        None => {
+                        None if !queue.tracked.is_empty() => {
                             queue.all = true;
                             queue.ids.clear();
+                            wake = true;
                         }
-                        Some(_) if queue.all => {}
+                        None => {}
+                        Some(id) if !queue.tracked.contains(id) => {}
+                        Some(_) if queue.all => {
+                            wake = true;
+                        }
                         Some(_) if queue.ids.len() >= MAX_INVALIDATED_IDS => {
                             queue.all = true;
                             queue.ids.clear();
+                            wake = true;
                         }
                         Some(id) => {
                             queue.ids.insert(id.to_owned());
+                            wake = true;
                         }
                     }
                 }
-                let _ = watch.notify.try_send(());
+                if wake {
+                    let _ = watch.notify.try_send(());
+                }
             }
         }
     }

@@ -173,13 +173,35 @@ fn render_legacy_row(s: &State, step: &serde_json::Value, key: &str) -> El {
     row
 }
 
-pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &str) -> Option<El> {
+fn step_expanded(s: &State, row_key: &str) -> bool {
+    s.transcript_display.expanded(row_key, false)
+}
+
+fn step_contains_link(s: &State, owner: &str, step: &Tool, target: &str) -> bool {
+    let within = |text: &str| {
+        !text.is_empty() && super::children::truncate_utf8(text, PANE_LIMIT).contains(target)
+    };
+    within(&step.output)
+        || within(string(&step.input, &["prompt"]))
+        || (is_task(step) && report_body(s, owner, step).is_some_and(within))
+}
+
+pub(super) fn body(
+    s: &State,
+    message: &str,
+    key: &str,
+    tool: &Tool,
+    output: &str,
+    output_truncated: bool,
+) -> Option<El> {
     let prompt = string(&tool.input, &["prompt"]);
     let chain = child_chain(message);
     let parent = chain.map(|c| split_chain(c).1);
     let child_id =
         watched_child(tool).filter(|id| s.transcript_display.children.can_watch(chain, id));
     let child_snapshot = child_id.and_then(|id| s.transcript_display.children.snapshot(parent, id));
+    let load_failed =
+        child_id.is_some_and(|id| s.transcript_display.children.has_failed(parent, id));
     let use_child = child_snapshot.is_some_and(|snap| !snap.steps.is_empty());
     let child_all_dropped =
         child_snapshot.is_some_and(|snap| snap.steps.is_empty() && snap.byte_truncated);
@@ -234,30 +256,71 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
     if prompt.trim().is_empty()
         && step_count == 0
         && !truncated
+        && !load_failed
         && output.trim().is_empty()
+        && !output_truncated
         && child_id.is_none()
     {
         return None;
     }
     let mut result = col().full_width().separate(Space::Sm);
-    for (section, label, value) in [
-        ("prompt", "toolCall.task.sections.prompt", prompt),
-        ("output", "toolCall.task.sections.output", output),
-    ] {
-        if !value.trim().is_empty() {
-            result = result
-                .child(text(t(label)).text_role(TextRole::Label))
-                .child(markdown::tool_pane(
-                    super::super::document::prose_at(
-                        s,
-                        format!("{key}-task-{section}"),
-                        value,
-                        tool.status == "running" && section == "output",
-                        PANE_LIMIT,
-                    ),
-                    true,
-                ));
+    if !prompt.trim().is_empty() {
+        result = result
+            .child(text(t("toolCall.task.sections.prompt")).text_role(TextRole::Label))
+            .child(markdown::tool_pane(
+                super::super::document::prose_at(
+                    s,
+                    format!("{key}-task-prompt"),
+                    prompt,
+                    false,
+                    PANE_LIMIT,
+                ),
+                true,
+            ));
+    }
+    if !output.trim().is_empty() || output_truncated {
+        result = result.child(text(t("toolCall.task.sections.output")).text_role(TextRole::Label));
+        if output_truncated {
+            result = result.child(
+                text(t("toolCall.output.tooLarge"))
+                    .text_role(TextRole::Label)
+                    .role("status"),
+            );
         }
+        if !output.trim().is_empty() {
+            result = result.child(markdown::tool_pane(
+                super::super::document::prose_at(
+                    s,
+                    format!("{key}-task-output"),
+                    output,
+                    tool.status == "running",
+                    PANE_LIMIT,
+                ),
+                true,
+            ));
+        }
+    }
+    if let Some(id) = child_id.filter(|_| load_failed) {
+        let retry_parent = parent.map(str::to_owned);
+        let retry_id = id.to_owned();
+        result = result.child(
+            layout::action_row()
+                .child(
+                    text(t("messageSection.loadError.title"))
+                        .text_role(TextRole::Label)
+                        .role("status"),
+                )
+                .child(
+                    layout::button(
+                        t("messageSection.loadError.reload"),
+                        false,
+                        screen::action(&s.input_scope, move |s| {
+                            Children::retry(s, retry_parent.as_deref(), &retry_id);
+                        }),
+                    )
+                    .key(format!("retry-{key}-task-steps")),
+                ),
+        );
     }
     if step_count > 0 || truncated {
         let step_key = format!("{key}-task-steps");
@@ -364,6 +427,23 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
                 row_keys
                     .iter()
                     .position(|row_key| key_matches_row(focused, row_key))
+                    .or_else(|| {
+                        (use_child && focused.len() >= 2 && !focused.starts_with('#'))
+                            .then(|| {
+                                let chain_ref = next_chain.as_deref()?;
+                                visible_steps.iter().take(desired).enumerate().find_map(
+                                    |(idx, (message, step))| {
+                                        let row_key = &row_keys[idx];
+                                        if !step_expanded(s, row_key) {
+                                            return None;
+                                        }
+                                        let owner = format!("child:{chain_ref}:{message}");
+                                        step_contains_link(s, &owner, step, focused).then_some(idx)
+                                    },
+                                )
+                            })
+                            .flatten()
+                    })
             });
             let selected_anchor = s
                 .transcript_display
@@ -452,6 +532,10 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
                 version,
                 move |_: &State, index| Cow::Owned(key_source[index].clone()),
                 move |s: &State, index| {
+                    #[cfg(test)]
+                    s.transcript_display
+                        .task_row_builds
+                        .set(s.transcript_display.task_row_builds.get() + 1);
                     crate::strings::with_locale(active_locale, || {
                         if has_reveal && index == 0 {
                             let toggle = build_step_key.clone();
@@ -505,7 +589,7 @@ pub(super) fn body(s: &State, message: &str, key: &str, tool: &Tool, output: &st
                         if let Some(owner) = parent_for_nested.as_deref() {
                             for (idx, target) in nested_targets.iter().enumerate() {
                                 if let Some((child_id, card_key)) = target {
-                                    Children::set_card_visible(
+                                    Children::set_card_in_pane(
                                         s,
                                         owner,
                                         child_id,

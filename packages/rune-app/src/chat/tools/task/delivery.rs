@@ -12,6 +12,7 @@ pub(in crate::chat::tools) struct HeaderStatus {
 pub(in crate::chat::tools) struct Delivery<'a> {
     pub status: HeaderStatus,
     pub body: Option<&'a str>,
+    pub body_truncated: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -29,6 +30,7 @@ struct ReportEntry<'a> {
     state: &'a str,
     created: u64,
     body: Option<&'a str>,
+    body_truncated: bool,
 }
 
 fn launch_time(tool: &Tool) -> Option<u64> {
@@ -40,6 +42,40 @@ fn message_row_id(message: &str) -> &str {
         .strip_prefix("child:")
         .and_then(|rest| rest.split_once(':'))
         .map_or(message, |(_, id)| id)
+}
+
+fn report_at_or_after_launch(report: &ReportEntry<'_>, launch: &Launch<'_>) -> bool {
+    match (report.created > 0, launch.at) {
+        (true, Some(at)) => {
+            report.created > at || (report.created == at && report.pos >= launch.pos)
+        }
+        _ => report.pos >= launch.pos,
+    }
+}
+
+fn launch_strictly_after_launch(later: &Launch<'_>, earlier: &Launch<'_>) -> bool {
+    match (later.at, earlier.at) {
+        (Some(lt), Some(et)) => lt > et || (lt == et && later.pos > earlier.pos),
+        _ => later.pos > earlier.pos,
+    }
+}
+
+fn launch_strictly_after_report(launch: &Launch<'_>, report: &ReportEntry<'_>) -> bool {
+    match (launch.at, report.created > 0) {
+        (Some(lt), true) => {
+            lt > report.created || (lt == report.created && launch.pos > report.pos)
+        }
+        _ => launch.pos > report.pos,
+    }
+}
+
+fn report_before_launch(report: &ReportEntry<'_>, launch: &Launch<'_>) -> bool {
+    match (report.created > 0, launch.at) {
+        (true, Some(lt)) => {
+            report.created < lt || (report.created == lt && report.pos < launch.pos)
+        }
+        _ => report.pos < launch.pos,
+    }
 }
 
 fn launches_and_reports<'a>(
@@ -71,6 +107,7 @@ fn launches_and_reports<'a>(
                         state: report.state.as_str(),
                         created: report.created,
                         body: report.body.as_deref(),
+                        body_truncated: report.body_truncated,
                     });
                 }
             }
@@ -96,6 +133,7 @@ fn launches_and_reports<'a>(
                         state: report.state.as_str(),
                         created: report.created,
                         body: Some(report.body.as_str()),
+                        body_truncated: false,
                     });
                 }
                 _ => {}
@@ -123,6 +161,7 @@ pub(in crate::chat::tools) fn delivery<'a>(
                 ended: None,
             },
             body: None,
+            body_truncated: false,
         });
     }
     let row_id = message_row_id(message);
@@ -139,60 +178,50 @@ pub(in crate::chat::tools) fn delivery<'a>(
                 at: Some(at),
             })
         });
-    let all_timed = launches.iter().all(|launch| launch.at.is_some())
-        && reports.iter().all(|report| report.created > 0)
-        && current.is_none_or(|launch| launch.at.is_some());
-    let launch_key = |launch: &Launch<'_>| {
-        if all_timed {
-            (launch.at.unwrap_or(0), launch.pos)
-        } else {
-            (0, launch.pos)
-        }
-    };
-    let report_key = |report: &ReportEntry<'_>| {
-        if all_timed {
+    let reports_timed = reports.iter().all(|report| report.created > 0);
+    let report_order = |report: &ReportEntry<'_>| {
+        if reports_timed {
             (report.created, report.pos)
         } else {
             (0, report.pos)
         }
     };
-    let body = current.and_then(|current| {
-        let cur_key = launch_key(&current);
-        let mut later: Vec<_> = launches
-            .iter()
-            .map(launch_key)
-            .filter(|&key| key > cur_key)
-            .collect();
-        later.sort_unstable();
+    let chosen_report = current.and_then(|current| {
         let first = reports
             .iter()
             .copied()
-            .filter(|report| report_key(report) >= cur_key)
-            .min_by_key(|report| (report_key(report), report.row_id))?;
-        let first_key = report_key(&first);
-        let boundary = later.into_iter().find(|&key| key > first_key);
+            .filter(|report| report_at_or_after_launch(report, &current))
+            .min_by_key(|report| (report_order(report), report.row_id))?;
+        let boundaries: Vec<Launch<'_>> = launches
+            .iter()
+            .copied()
+            .filter(|launch| {
+                launch_strictly_after_launch(launch, &current)
+                    && launch_strictly_after_report(launch, &first)
+            })
+            .collect();
         reports
             .iter()
             .copied()
             .filter(|report| {
-                let key = report_key(report);
-                key >= cur_key && boundary.is_none_or(|end| key < end)
+                report_at_or_after_launch(report, &current)
+                    && boundaries
+                        .iter()
+                        .all(|boundary| report_before_launch(report, boundary))
             })
-            .max_by_key(|report| (report_key(report), report.row_id))
-            .and_then(|report| report.body)
+            .max_by_key(|report| (report_order(report), report.row_id))
     });
     let latest = current.and_then(|current| {
-        let cur_key = launch_key(&current);
-        let newest = launches
-            .iter()
-            .map(launch_key)
-            .max()
-            .map_or(cur_key, |max| max.max(cur_key));
         reports
             .iter()
             .copied()
-            .filter(|report| report_key(report) >= newest)
-            .max_by_key(|report| (report_key(report), report.row_id))
+            .filter(|report| {
+                report_at_or_after_launch(report, &current)
+                    && launches
+                        .iter()
+                        .all(|launch| report_at_or_after_launch(report, launch))
+            })
+            .max_by_key(|report| (report_order(report), report.row_id))
             .map(|report| (report.created, report.state))
     });
     let status = match latest {
@@ -212,7 +241,11 @@ pub(in crate::chat::tools) fn delivery<'a>(
             ended: None,
         },
     };
-    Some(Delivery { status, body })
+    Some(Delivery {
+        status,
+        body: chosen_report.and_then(|report| report.body),
+        body_truncated: chosen_report.is_some_and(|report| report.body_truncated),
+    })
 }
 
 pub(in crate::chat::tools) fn report_body<'a>(

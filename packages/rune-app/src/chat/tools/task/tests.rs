@@ -419,8 +419,12 @@ fn nested_subagent_stops_duration_from_child_snapshot_report() {
     }
     let tree = rt.accessibility_json().to_string();
     assert!(
-        tree.contains("Completed") && tree.contains("\"5s\""),
-        "oversized report body must still settle nested status/duration: {tree}"
+        tree.contains("Completed")
+            && tree.contains("\"5s\"")
+            && tree.contains("Content too large to display.")
+            && tree.contains("\"role\":\"status\"")
+            && tree.contains("zzzzzzzz"),
+        "oversized report body must settle nested status/duration, retain bounded prefix, and announce truncation: {tree}"
     );
     let _ = (lease_a, lease_b);
 }
@@ -820,12 +824,66 @@ fn mutual_child_references_non_transitive_times_untimed_reports_and_late_session
     // 4. Structured JSON resident-byte accounting crosses 2 MiB on large null arrays.
     let null_heavy = json!(vec![serde_json::Value::Null; 100_000]);
     assert!(super::json_bytes(&null_heavy) > super::STEP_BYTES);
+
+    // 5. One untimed launch does not let an earlier-timestamped report terminate a later-timestamped launch.
+    let mut s_mixed = init();
+    let untimed_sibling = history::decode_message(&json!({
+        "id": "m_untimed", "type": "assistant", "time": {},
+        "content": [{"type": "tool", "id": "call_u", "name": "subagent", "state": {
+            "status": "completed", "metadata": {"sessionId": "child", "status": "running"}
+        }}]
+    }))
+    .unwrap();
+    s_mixed.messages = vec![
+        launch("m_timed_30", 30_000, 30_100).into(),
+        untimed_sibling.into(),
+        report_row("r_20", 20_000, "completed", "Earlier timestamp").into(),
+    ];
+    if let crate::content::Part::Tool(tool_30) = &s_mixed.messages[0].parts[0] {
+        let d_30 = super::delivery(&s_mixed, "m_timed_30", tool_30).expect("delivery");
+        assert!(
+            d_30.status.running && d_30.body.is_none(),
+            "report at t=20 must not terminate launch at t=30 even when another launch is untimed"
+        );
+    }
+
+    // 6. Launch without time.ran falls back to message_created for its live timer.
+    let mut s_fallback = init();
+    s_fallback.phase = Phase::Ready;
+    s_fallback
+        .transcript_display
+        .tool_clock
+        .set_test_now(Some(50_000));
+    s_fallback.messages = vec![
+        history::decode_message(&json!({
+            "id": "m_msg_ts", "type": "assistant", "time": {"created": 42_000},
+            "content": [{"type": "tool", "id": "c_ts", "name": "subagent",
+                "state": {"status": "completed", "input": {"description": "Msg time"},
+                    "metadata": {"sessionId": "child_ts", "status": "running"}}}]
+        }))
+        .unwrap()
+        .into(),
+    ];
+    let mut rt_ts = Runtime::new(
+        s_fallback,
+        |s, cx| with_locale("en", || crate::view(s, cx)),
+        (1160.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    rt_ts.frame(0.0);
+    rt_ts.frame(0.0);
+    let ts_tree = rt_ts.accessibility_json().to_string();
+    assert!(
+        ts_tree.contains("\"8s\"") && ts_tree.contains("\"role\":\"status\""),
+        "launch missing time.ran must fall back to message_created for timer: {ts_tree}"
+    );
     let _ = leases;
 }
 
 #[test]
 fn child_queue_promotes_all_visible_demands_preserves_lru_cache_and_allows_deep_nesting() {
     let mut s = init();
+    assert!(!s.transcript_display.children.has_events_watcher());
     let mut leases = Vec::new();
     for i in 0..20 {
         let id = format!("child_{i:02}");
@@ -851,12 +909,14 @@ fn child_queue_promotes_all_visible_demands_preserves_lru_cache_and_allows_deep_
         }
         assert!(batch.len() <= 4 && s.transcript_display.children.in_flight_count() <= 4);
         for key in &batch {
-            let page = if key.1 == "child_03" {
-                None
+            let outcome = if key.1 == "child_03" {
+                Ok(None)
             } else {
-                Some(child_steps_page(1, false, "ok"))
+                Ok(Some(child_steps_page(1, false, "ok")))
             };
-            s.transcript_display.children.complete_test_slot(key, page);
+            s.transcript_display
+                .children
+                .complete_test_slot(key, outcome);
             dispatched.push(key.1.clone());
         }
         crate::chat::events::poll_chat(&mut s, tick);
@@ -874,9 +934,31 @@ fn child_queue_promotes_all_visible_demands_preserves_lru_cache_and_allows_deep_
     );
     assert_eq!(s.transcript_display.children.in_flight_count(), 0);
 
+    // Targeted SSE invalidation lifts a transient refusal once (and recovers on success), while capping repeated refusals.
+    s.transcript_display
+        .children
+        .notify_test_invalidation(Some("child_03"));
+    let retry_batch = s.transcript_display.children.dispatch_test_slots();
+    assert_eq!(retry_batch, vec![(None, "child_03".to_owned())]);
+    // Invalidation arriving while in-flight is kept only within the bounded retry budget.
+    s.transcript_display
+        .children
+        .complete_test_slot(&retry_batch[0], Ok(Some(child_steps_page(1, false, "ok"))));
+    crate::chat::events::poll_chat(&mut s, tick);
+    tick += 1;
+    assert!(
+        !s.transcript_display.children.is_refused(None, "child_03")
+            && s.transcript_display
+                .children
+                .snapshot(None, "child_03")
+                .is_some(),
+        "transient refusal must recover on targeted SSE invalidation"
+    );
+
     // Dropping a card's lease removes its live demand while retaining its cached snapshot.
     leases.remove(0);
     crate::chat::events::poll_chat(&mut s, tick);
+    tick += 1;
     assert!(!s.transcript_display.children.has_demand(None, "child_00"));
     assert!(
         s.transcript_display
@@ -886,35 +968,49 @@ fn child_queue_promotes_all_visible_demands_preserves_lru_cache_and_allows_deep_
         "unmounted card snapshot must survive in bounded cache"
     );
 
-    // Cache stays bounded at 32 entries across 35 distinct children.
-    let mut extra_leases = Vec::new();
-    for i in 20..40 {
+    // Loading 35 sequential unmounted children must NEVER evict still-visible child_01, and cache stays bounded at 32.
+    for i in 20..55 {
         let id = format!("child_{i:02}");
-        extra_leases.push(
-            s.transcript_display
-                .children
-                .install(&id, child_steps_page(1, false, "ok")),
-        );
+        let temp = s
+            .transcript_display
+            .children
+            .install(&id, child_steps_page(1, false, "ok"));
+        crate::chat::events::poll_chat(&mut s, tick);
+        tick += 1;
+        drop(temp);
+        crate::chat::events::poll_chat(&mut s, tick);
+        tick += 1;
     }
-    crate::chat::events::poll_chat(&mut s, tick + 1);
     assert_eq!(s.transcript_display.children.snapshot_count(), 32);
+    assert!(
+        s.transcript_display
+            .children
+            .snapshot(None, "child_01")
+            .is_some(),
+        "visible card snapshot must never be evicted by inactive sequential reads"
+    );
 
-    // 4-level nesting chain is allowed when its parent snapshot exists, while ancestor cycles stay blocked.
+    // 4-level nesting chain is allowed when its parent snapshot exists, ancestor cycles stay blocked,
+    // and hiding an ancestor cancels descendant visibility & in-flight reads.
     let l1 = s
         .transcript_display
         .children
         .install("a", child_steps_page(1, false, "ok"));
+    crate::chat::events::poll_chat(&mut s, tick);
+    tick += 1;
     let l2 = s.transcript_display.children.install_under(
         Some("a"),
         "b",
         child_steps_page(1, false, "ok"),
     );
+    crate::chat::events::poll_chat(&mut s, tick);
+    tick += 1;
     let l3 = s.transcript_display.children.install_under(
         Some("b"),
         "c",
         child_steps_page(1, false, "ok"),
     );
-    crate::chat::events::poll_chat(&mut s, tick + 2);
+    crate::chat::events::poll_chat(&mut s, tick);
     assert!(
         s.transcript_display.children.can_watch(Some("a>b>c"), "d"),
         "nesting deeper than 3 levels must be allowed when parent snapshot is verified"
@@ -923,5 +1019,88 @@ fn child_queue_promotes_all_visible_demands_preserves_lru_cache_and_allows_deep_
         !s.transcript_display.children.can_watch(Some("a>b>c"), "a"),
         "ancestor cycles must still be blocked at any depth"
     );
-    let _ = (leases, extra_leases, l1, l2, l3);
+    let ld = std::rc::Rc::default();
+    super::Children::demand(&mut s, Some("a>b>c"), "d", "card_d", &ld, true);
+    let d_batch = s.transcript_display.children.dispatch_test_slots();
+    assert_eq!(d_batch, vec![(Some("c".to_owned()), "d".to_owned())]);
+    assert_eq!(s.transcript_display.children.in_flight_count(), 1);
+    // Hiding root ancestor "a" hides descendant "d" and cancels its in-flight fetch.
+    super::Children::demand(&mut s, None, "a", "test", &l1, false);
+    assert_eq!(
+        s.transcript_display
+            .children
+            .card_visible(Some("c"), "d", "card_d"),
+        Some(false),
+        "hiding ancestor card must propagate invisibility to nested descendants"
+    );
+    assert_eq!(
+        s.transcript_display.children.in_flight_count(),
+        0,
+        "hiding ancestor card must cancel descendant in-flight reads"
+    );
+
+    // Fetch failure preserves the last snapshot and surfaces Reload button that retries on click.
+    let mut sf = init();
+    sf.phase = Phase::Ready;
+    crate::settings::fixture_transcript(
+        &mut sf,
+        json!({"toolCallExpansionDefaults": {"tools": {"task": "expanded"}}}),
+    );
+    sf.messages = vec![launch("fail_m", 100, 150).into()];
+    let mut rtf = Runtime::new(
+        sf,
+        |s, cx| with_locale("en", || crate::view(s, cx)),
+        (1160.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    let fail_key = super::super::tool_key("fail_m", "call");
+    let mut fl = None;
+    rtf.update(|s, _| {
+        fl = Some(
+            s.transcript_display
+                .children
+                .install("child", child_steps_page(2, false, "ok")),
+        );
+        assert!(crate::chat::events::poll_chat(s, 1));
+    });
+    rtf.frame(0.0);
+    rtf.frame(0.0);
+    rtf.update(|s, _| {
+        s.transcript_display
+            .children
+            .notify_test_invalidation(Some("child"));
+        let slots = s.transcript_display.children.dispatch_test_slots();
+        assert_eq!(slots, vec![(None, "child".to_owned())]);
+        s.transcript_display
+            .children
+            .complete_test_slot(&slots[0], Err(()));
+        assert!(crate::chat::events::poll_chat(s, 2));
+        s.revision += 1;
+    });
+    rtf.frame(0.02);
+    let fail_tree = rtf.accessibility_json().to_string();
+    assert!(
+        fail_tree.contains("Could not load messages")
+            && fail_tree.contains("Reload messages")
+            && fail_tree.contains("file_000.rs"),
+        "failed fetch must preserve last snapshot and show retry action: {fail_tree}"
+    );
+    let (rx, ry) = rtf
+        .find(&format!("retry-{fail_key}-task-steps"))
+        .expect("retry button");
+    rtf.pointer_down(rx, ry);
+    rtf.pointer_up(rx, ry);
+    rtf.frame(0.04);
+    assert!(
+        !rtf.state
+            .transcript_display
+            .children
+            .has_failed(None, "child"),
+        "clicking reload must clear failed state and re-queue fetch"
+    );
+    assert_eq!(
+        rtf.state.transcript_display.children.dispatch_test_slots(),
+        vec![(None, "child".to_owned())]
+    );
+    let _ = (leases, l1, l2, l3, ld, fl);
 }

@@ -15,6 +15,9 @@ pub(super) const STEP_LIMIT: usize = 200;
 pub(super) const STEP_BYTES: usize = 2 << 20;
 const FETCH_CONCURRENCY: usize = 4;
 const SNAPSHOT_CACHE_LIMIT: usize = 32;
+const SNAPSHOT_CACHE_HARD_LIMIT: usize = 64;
+const REPORT_TRUNCATE_CAP: usize = 64 * 1024;
+const MAX_REFUSAL_ATTEMPTS: u8 = 2;
 type Steps = Vec<(String, Arc<Tool>)>;
 pub(super) type ChildKey = (Option<String>, String);
 
@@ -25,6 +28,7 @@ pub(super) struct ChildReport {
     pub state: String,
     pub created: u64,
     pub body: Option<String>,
+    pub body_truncated: bool,
     pub ordinal: usize,
 }
 
@@ -41,6 +45,7 @@ pub(super) struct Snapshot {
 pub(crate) struct Children {
     backend: Option<Backend>,
     events: Option<(ChildInvalidations, Sender<()>)>,
+    tracked_ids: HashSet<String>,
     snapshots: VecDeque<(ChildKey, Snapshot)>,
     demands: HashMap<ChildKey, Demand>,
     in_flight: HashMap<ChildKey, InFlight>,
@@ -48,15 +53,25 @@ pub(crate) struct Children {
 }
 
 struct Demand {
+    parent_key: Option<ChildKey>,
     cards: HashMap<String, CardDemand>,
     dirty: bool,
     refused: bool,
+    refused_attempts: u8,
+    failed: bool,
     seq: u64,
 }
 
 struct CardDemand {
     lease: Weak<()>,
-    visible: bool,
+    on_screen: bool,
+    in_pane: bool,
+}
+
+impl CardDemand {
+    fn is_visible(&self) -> bool {
+        self.on_screen && self.in_pane && self.lease.strong_count() > 0
+    }
 }
 
 struct InFlight {
@@ -78,6 +93,7 @@ impl Children {
 
     pub(crate) fn clear(&mut self) {
         self.events = None;
+        self.tracked_ids.clear();
         self.snapshots.clear();
         self.demands.clear();
         self.in_flight.clear();
@@ -90,20 +106,12 @@ impl Children {
         reads: &crate::platform::reads::Reads,
         wake: &rune::Waker,
     ) {
-        let in_flight = &mut self.in_flight;
-        self.demands.retain(|child_key, demand| {
+        self.demands.retain(|_, demand| {
             demand.cards.remove(key);
-            if !demand
-                .cards
-                .values()
-                .any(|c| c.visible && c.lease.strong_count() > 0)
-                && in_flight.remove(child_key).is_some()
-                && !demand.refused
-            {
-                demand.dirty = true;
-            }
             !demand.cards.is_empty()
         });
+        self.cancel_hidden_in_flight();
+        self.trim_inactive_snapshots();
         self.promote(reads, wake);
     }
 
@@ -128,6 +136,27 @@ impl Children {
         self.has_snapshot(&parent_key)
     }
 
+    pub(super) fn has_failed(&self, parent: Option<&str>, id: &str) -> bool {
+        self.demands
+            .get(&(parent.map(str::to_owned), id.to_owned()))
+            .is_some_and(|demand| demand.failed)
+    }
+
+    pub(super) fn retry(s: &mut State, parent: Option<&str>, id: &str) {
+        let child_key = (parent.map(str::to_owned), id.to_owned());
+        let wake = s.wake.clone();
+        let reads = s.reads.clone();
+        let children = &mut s.transcript_display.children;
+        if let Some(demand) = children.demands.get_mut(&child_key) {
+            demand.failed = false;
+            demand.refused = false;
+            demand.refused_attempts = 0;
+            demand.dirty = true;
+            children.promote(&reads, &wake);
+            s.revision += 1;
+        }
+    }
+
     pub(super) fn demand(
         s: &mut State,
         chain: Option<&str>,
@@ -136,6 +165,10 @@ impl Children {
         lease: &Rc<()>,
         visible: bool,
     ) {
+        let parent_key = chain.map(|c| {
+            let (grandparent, owner) = split_chain(c);
+            (grandparent.map(str::to_owned), owner.to_owned())
+        });
         let parent = chain.map(|c| split_chain(c).1);
         let child_key = (parent.map(str::to_owned), id.to_owned());
         let wake = s.wake.clone();
@@ -144,30 +177,28 @@ impl Children {
         children.prune();
         let has_snapshot = children.has_snapshot(&child_key);
         if let Some(demand) = children.demands.get_mut(&child_key) {
+            if demand.parent_key.is_none() {
+                demand.parent_key = parent_key;
+            }
             if visible {
-                let is_new = !demand.cards.get(key).is_some_and(|c| c.visible);
+                let was_visible = demand.cards.get(key).is_some_and(CardDemand::is_visible);
+                let prev_in_pane = demand.cards.get(key).map_or(true, |c| c.in_pane);
                 demand.cards.insert(
                     key.into(),
                     CardDemand {
                         lease: Rc::downgrade(lease),
-                        visible: true,
+                        on_screen: true,
+                        in_pane: prev_in_pane,
                     },
                 );
-                if is_new && !demand.refused && !has_snapshot {
+                if !was_visible && prev_in_pane && !demand.refused && !has_snapshot {
                     demand.dirty = true;
                 }
             } else if let Some(card) = demand.cards.get_mut(key) {
-                card.visible = false;
-                if !demand
-                    .cards
-                    .values()
-                    .any(|c| c.visible && c.lease.strong_count() > 0)
-                    && children.in_flight.remove(&child_key).is_some()
-                    && !demand.refused
-                {
-                    demand.dirty = true;
-                }
+                card.on_screen = false;
             }
+            children.cancel_hidden_in_flight();
+            children.trim_inactive_snapshots();
             children.promote(&reads, &wake);
             return;
         }
@@ -179,27 +210,31 @@ impl Children {
         children.demands.insert(
             child_key,
             Demand {
+                parent_key,
                 cards: HashMap::from([(
                     key.into(),
                     CardDemand {
                         lease: Rc::downgrade(lease),
-                        visible: true,
+                        on_screen: true,
+                        in_pane: true,
                     },
                 )]),
                 dirty: true,
                 refused: false,
+                refused_attempts: 0,
+                failed: false,
                 seq,
             },
         );
         children.promote(&reads, &wake);
     }
 
-    pub(super) fn set_card_visible(
+    pub(super) fn set_card_in_pane(
         s: &mut State,
         parent: &str,
         id: &str,
         key: &str,
-        visible: bool,
+        in_pane: bool,
     ) {
         let child_key = (Some(parent.to_owned()), id.to_owned());
         let wake = s.wake.clone();
@@ -212,24 +247,63 @@ impl Children {
         let Some(card) = demand.cards.get_mut(key) else {
             return;
         };
-        if card.visible == visible {
+        if card.in_pane == in_pane {
             return;
         }
-        card.visible = visible;
-        if visible {
-            if !demand.refused && !has_snapshot {
-                demand.dirty = true;
-            }
-        } else if !demand
-            .cards
-            .values()
-            .any(|c| c.visible && c.lease.strong_count() > 0)
-            && children.in_flight.remove(&child_key).is_some()
-            && !demand.refused
-        {
+        card.in_pane = in_pane;
+        if in_pane && card.on_screen && !demand.refused && !has_snapshot {
             demand.dirty = true;
         }
+        children.cancel_hidden_in_flight();
+        children.trim_inactive_snapshots();
         children.promote(&reads, &wake);
+    }
+
+    fn demand_visible(&self, key: &ChildKey) -> bool {
+        let mut cursor = Some(key);
+        let mut depth = 0usize;
+        while let Some(current) = cursor {
+            if depth >= 32 {
+                return false;
+            }
+            depth += 1;
+            let Some(demand) = self.demands.get(current) else {
+                return false;
+            };
+            if !demand.cards.values().any(CardDemand::is_visible) {
+                return false;
+            }
+            cursor = demand.parent_key.as_ref();
+        }
+        true
+    }
+
+    fn cancel_hidden_in_flight(&mut self) {
+        let hidden: Vec<ChildKey> = self
+            .in_flight
+            .keys()
+            .filter(|key| !self.demand_visible(key))
+            .cloned()
+            .collect();
+        for key in hidden {
+            self.in_flight.remove(&key);
+            if let Some(demand) = self.demands.get_mut(&key)
+                && !demand.refused
+            {
+                demand.dirty = true;
+            }
+        }
+    }
+
+    fn sync_tracked(&mut self) {
+        let Some((events, _)) = &self.events else {
+            return;
+        };
+        let next: HashSet<String> = self.demands.keys().map(|(_, id)| id.clone()).collect();
+        if next != self.tracked_ids {
+            events.set_tracked(next.clone());
+            self.tracked_ids = next;
+        }
     }
 
     fn ensure_events(&mut self, wake: &rune::Waker) {
@@ -255,6 +329,7 @@ impl Children {
             .await;
         });
         self.events = Some((invalidations, cancel));
+        self.tracked_ids.clear();
     }
 
     fn next_ready(&self) -> Vec<ChildKey> {
@@ -269,10 +344,7 @@ impl Children {
                 demand.dirty
                     && !demand.refused
                     && !self.in_flight.contains_key(*key)
-                    && demand
-                        .cards
-                        .values()
-                        .any(|c| c.visible && c.lease.strong_count() > 0)
+                    && self.demand_visible(key)
             })
             .map(|(k, d)| (d.seq, k.clone()))
             .collect();
@@ -289,10 +361,16 @@ impl Children {
     }
 
     fn promote(&mut self, reads: &crate::platform::reads::Reads, wake: &rune::Waker) {
+        if self.demands.is_empty() {
+            self.events = None;
+            self.tracked_ids.clear();
+            return;
+        }
         if self.backend.is_none() {
             return;
         }
         self.ensure_events(wake);
+        self.sync_tracked();
         let Some(backend) = self.backend.clone() else {
             return;
         };
@@ -346,13 +424,20 @@ impl Children {
             if all {
                 for demand in self.demands.values_mut() {
                     demand.refused = false;
+                    demand.refused_attempts = 0;
+                    demand.failed = false;
                     demand.dirty = true;
                 }
             } else if !ids.is_empty() {
                 let set: HashSet<String> = ids.into_iter().collect();
                 for ((_, child), demand) in &mut self.demands {
-                    if !demand.refused && set.contains(child) {
-                        demand.dirty = true;
+                    if set.contains(child) {
+                        if !demand.refused {
+                            demand.dirty = true;
+                        } else if demand.refused_attempts < MAX_REFUSAL_ATTEMPTS {
+                            demand.refused = false;
+                            demand.dirty = true;
+                        }
                     }
                 }
             }
@@ -369,21 +454,43 @@ impl Children {
                 FetchOutcome::Snapshot(next) => {
                     if let Some(demand) = self.demands.get_mut(&key) {
                         demand.refused = false;
+                        demand.refused_attempts = 0;
+                        if demand.failed {
+                            demand.failed = false;
+                            changed = true;
+                        }
                     }
                     changed |= self.store_snapshot(key, next);
                 }
                 FetchOutcome::Refused => {
                     if let Some(demand) = self.demands.get_mut(&key) {
-                        demand.refused = true;
-                        demand.dirty = false;
+                        demand.refused_attempts = demand.refused_attempts.saturating_add(1);
+                        if demand.dirty && demand.refused_attempts < MAX_REFUSAL_ATTEMPTS {
+                            demand.refused = false;
+                        } else {
+                            demand.refused = true;
+                            demand.dirty = false;
+                        }
+                        if demand.failed {
+                            demand.failed = false;
+                            changed = true;
+                        }
                     }
                     let before = self.snapshots.len();
                     self.snapshots.retain(|(k, _)| k != &key);
                     changed |= before != self.snapshots.len();
                 }
-                FetchOutcome::Failed => {}
+                FetchOutcome::Failed => {
+                    if let Some(demand) = self.demands.get_mut(&key)
+                        && !demand.failed
+                    {
+                        demand.failed = true;
+                        changed = true;
+                    }
+                }
             }
         }
+        self.trim_inactive_snapshots();
         self.promote(reads, wake);
         changed
     }
@@ -396,10 +503,31 @@ impl Children {
             return changed;
         }
         if self.snapshots.len() >= SNAPSHOT_CACHE_LIMIT {
-            self.snapshots.pop_front();
+            if let Some(pos) = self
+                .snapshots
+                .iter()
+                .position(|(k, _)| !self.demand_visible(k))
+            {
+                self.snapshots.remove(pos);
+            } else if self.snapshots.len() >= SNAPSHOT_CACHE_HARD_LIMIT {
+                self.snapshots.pop_front();
+            }
         }
         self.snapshots.push_back((key, next));
         true
+    }
+
+    fn trim_inactive_snapshots(&mut self) {
+        while self.snapshots.len() > SNAPSHOT_CACHE_LIMIT {
+            let Some(pos) = self
+                .snapshots
+                .iter()
+                .position(|(k, _)| !self.demand_visible(k))
+            else {
+                break;
+            };
+            self.snapshots.remove(pos);
+        }
     }
 
     fn has_snapshot(&self, key: &ChildKey) -> bool {
@@ -409,17 +537,12 @@ impl Children {
     fn prune(&mut self) -> bool {
         // Rune drops the visibility handler on unmount without a final `false` callback.
         // Drop live demands on unmount while keeping retained snapshots in the bounded cache.
-        let in_flight = &mut self.in_flight;
-        self.demands.retain(|key, demand| {
+        self.demands.retain(|_, demand| {
             demand.cards.retain(|_, card| card.lease.strong_count() > 0);
-            if !demand.cards.values().any(|c| c.visible)
-                && in_flight.remove(key).is_some()
-                && !demand.refused
-            {
-                demand.dirty = true;
-            }
             !demand.cards.is_empty()
         });
+        self.cancel_hidden_in_flight();
+        self.trim_inactive_snapshots();
         false
     }
 
@@ -480,16 +603,24 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
                     step_ordinals.push(reverse_ord);
                 }
                 Part::SubagentReport(report) if reports.len() < STEP_LIMIT => {
-                    let body = report_bytes.checked_sub(report.body.len()).map(|left| {
-                        report_bytes = left;
-                        report.body.clone()
-                    });
+                    let (body, body_truncated) = if report.body.len() <= report_bytes {
+                        report_bytes -= report.body.len();
+                        (Some(report.body.clone()), false)
+                    } else if report_bytes > 0 {
+                        let cap = report_bytes.min(REPORT_TRUNCATE_CAP);
+                        let prefix = truncate_utf8(&report.body, cap);
+                        report_bytes -= prefix.len();
+                        (Some(prefix.to_owned()), true)
+                    } else {
+                        (None, true)
+                    };
                     reports.push(ChildReport {
                         row_id: row.id.clone(),
                         child: report.child.clone(),
                         state: report.state.clone(),
                         created: report.created,
                         body,
+                        body_truncated,
                         ordinal: reverse_ord,
                     });
                 }
@@ -519,6 +650,17 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
     }
 }
 
+pub(super) fn truncate_utf8(text: &str, max_bytes: usize) -> &str {
+    if text.len() <= max_bytes {
+        return text;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 #[cfg(test)]
 impl Children {
     pub(super) fn install(&mut self, child: &str, page: crate::history::Page) -> Rc<()> {
@@ -533,6 +675,7 @@ impl Children {
     ) -> Rc<()> {
         let lease = Rc::default();
         let key = (parent.map(str::to_owned), child.into());
+        let parent_key = parent.and_then(|p| self.demands.keys().find(|(_, id)| id == p).cloned());
         let (out, result) = bounded(1);
         out.try_send(FetchOutcome::Snapshot(snapshot(page)))
             .unwrap();
@@ -540,15 +683,19 @@ impl Children {
         self.demands.insert(
             key.clone(),
             Demand {
+                parent_key,
                 cards: HashMap::from([(
                     "test".into(),
                     CardDemand {
                         lease: Rc::downgrade(&lease),
-                        visible: true,
+                        on_screen: true,
+                        in_pane: true,
                     },
                 )]),
                 dirty: false,
                 refused: false,
+                refused_attempts: 0,
+                failed: false,
                 seq: 0,
             },
         );
@@ -571,15 +718,19 @@ impl Children {
         self.demands.insert(
             key.clone(),
             Demand {
+                parent_key: None,
                 cards: HashMap::from([(
                     "test".into(),
                     CardDemand {
                         lease: Rc::downgrade(&lease),
-                        visible: true,
+                        on_screen: true,
+                        in_pane: true,
                     },
                 )]),
                 dirty: false,
                 refused: false,
+                refused_attempts: 0,
+                failed: false,
                 seq: 0,
             },
         );
@@ -612,16 +763,20 @@ impl Children {
         self.snapshots.len()
     }
 
+    pub(super) fn has_events_watcher(&self) -> bool {
+        self.events.is_some()
+    }
+
     pub(super) fn card_visible(
         &self,
         parent: Option<&str>,
         child: &str,
         key: &str,
     ) -> Option<bool> {
-        self.demands
-            .get(&(parent.map(str::to_owned), child.into()))
-            .and_then(|d| d.cards.get(key))
-            .map(|c| c.visible)
+        let child_key = (parent.map(str::to_owned), child.into());
+        let demand = self.demands.get(&child_key)?;
+        let card = demand.cards.get(key)?;
+        Some(card.is_visible() && self.demand_visible(&child_key))
     }
 
     pub(super) fn dispatch_test_slots(&mut self) -> Vec<ChildKey> {
@@ -644,16 +799,42 @@ impl Children {
     pub(super) fn complete_test_slot(
         &mut self,
         key: &ChildKey,
-        page: Option<crate::history::Page>,
+        outcome: Result<Option<crate::history::Page>, ()>,
     ) {
         let (out, result) = bounded(1);
-        let outcome = match page {
-            Some(page) => FetchOutcome::Snapshot(snapshot(page)),
-            None => FetchOutcome::Refused,
+        let outcome = match outcome {
+            Ok(Some(page)) => FetchOutcome::Snapshot(snapshot(page)),
+            Ok(None) => FetchOutcome::Refused,
+            Err(()) => FetchOutcome::Failed,
         };
         let _ = out.try_send(outcome);
         if let Some(flight) = self.in_flight.get_mut(key) {
             flight.result = result;
+        }
+    }
+
+    pub(super) fn notify_test_invalidation(&mut self, child: Option<&str>) {
+        match child {
+            None => {
+                for demand in self.demands.values_mut() {
+                    demand.refused = false;
+                    demand.refused_attempts = 0;
+                    demand.failed = false;
+                    demand.dirty = true;
+                }
+            }
+            Some(target) => {
+                for ((_, id), demand) in &mut self.demands {
+                    if id == target {
+                        if !demand.refused {
+                            demand.dirty = true;
+                        } else if demand.refused_attempts < MAX_REFUSAL_ATTEMPTS {
+                            demand.refused = false;
+                            demand.dirty = true;
+                        }
+                    }
+                }
+            }
         }
     }
 }

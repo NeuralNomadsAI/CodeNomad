@@ -207,7 +207,7 @@ fn render_body(
         && result_list.is_none()
         && !rich_diff
         && !matches!(tool.name.as_str(), "question" | "todowrite");
-    let status_el = text(t(status)).text_role(TextRole::Label);
+    let status_el = text(t(status)).text_role(TextRole::Label).role("status");
     let status_el = if expanded && is_task {
         task::observe_status(s, message, key, tool, status_el)
     } else {
@@ -234,10 +234,11 @@ fn render_body(
         )
         .child(status_el);
     let timing = if let Some(override_status) = task_status {
+        let start = tool.started.or(tool.message_created).filter(|&at| at > 0);
         if override_status.running {
-            tool.started.map(|start| (start, None))
+            start.map(|at| (at, None))
         } else {
-            tool.started.zip(override_status.ended.map(Some))
+            start.zip(override_status.ended.map(Some))
         }
     } else {
         super::duration::tool_timing(tool)
@@ -286,7 +287,16 @@ fn render_body(
             .children(diagnostics());
     }
     let task_body = is_task
-        .then(|| task::body(s, message, key, tool, parts[0]))
+        .then(|| {
+            task::body(
+                s,
+                message,
+                key,
+                tool,
+                parts[0],
+                delivery.is_some_and(|d| d.body_truncated),
+            )
+        })
         .flatten();
     let specialized_task = task_body.is_some();
     let execute_details = (tool.name == "execute")
@@ -446,7 +456,7 @@ fn render_body(
     let block = block
         .children(media::tool(s, key, &tool.pictures))
         .children(diagnostics());
-    if is_task && !nested {
+    if is_task {
         task::observe(s, message, key, tool, block)
     } else {
         block
