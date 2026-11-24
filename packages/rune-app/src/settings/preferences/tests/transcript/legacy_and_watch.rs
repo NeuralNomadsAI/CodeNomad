@@ -515,3 +515,131 @@ fn legacy_materialization_stale_requeue_and_watch_revalidation() {
         drop(sse_req15);
     });
 }
+
+#[test]
+fn healthy_missions_watch_keeps_saves_working_after_background_conversation_drops_and_sibling_closes()
+ {
+    use crate::transport::{Event, run_backend};
+    use std::sync::Arc;
+    use tokio::io::AsyncWriteExt;
+
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let client = prefs.backend.as_ref().unwrap().client.clone();
+
+        // Open Missions PreferencesWatch stream and drain its initial Opened(1) reads.
+        let wake: rune::Waker = Arc::new(|| {});
+        prefs.watch_project(Some("proj-missions"), &wake);
+        let mut watch_sse = request(&listener).await;
+        assert!(watch_sse.first.starts_with("GET /api/events?"));
+        watch_sse
+            .socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+            .await
+            .unwrap();
+        wait_until(|| {
+            prefs.poll();
+            prefs.has_healthy_watch_stream()
+        })
+        .await;
+        let mut drained = false;
+        while !drained {
+            prefs.poll();
+            if let Ok(req) = timeout(
+                Duration::from_millis(30),
+                poll_next_request(&mut prefs, &listener),
+            )
+            .await
+            {
+                if req.first == "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" {
+                    req.reply(200, json!({"settings":{"locale":"en"}})).await;
+                } else if req.first == "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" {
+                    req.reply(200, json!({})).await;
+                } else {
+                    panic!("unexpected initial watch request: {}", req.first);
+                }
+            } else {
+                drained = !prefs.config.refreshing() && !prefs.state.refreshing();
+            }
+        }
+
+        // Open real conversation A stream while healthy sibling B is also present.
+        let mut tab_a = prefs.backend.clone().unwrap();
+        tab_a.client_id.push_str("-conv-a");
+        tab_a.workspace = "project".into();
+        tab_a.session = "session-a".into();
+        let tab_a_id = tab_a.client_id.clone();
+        let tab_b_id = format!("{}-conv-b", prefs.backend.as_ref().unwrap().client_id);
+        prefs.observe_conversation_clients(&[(tab_a_id.clone(), true), (tab_b_id.clone(), true)]);
+
+        let (out_a, ev_a) = bounded(16);
+        let (_cmd_a, in_a) = bounded(4);
+        platform::spawn(async move {
+            let _ = run_backend(tab_a, out_a, in_a, Arc::new(|| {})).await;
+        });
+        let mut sse_a = request(&listener).await;
+        sse_a
+            .socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+            .await
+            .unwrap();
+        request(&listener)
+            .await
+            .reply(200, json!({"status":"window","messages":[{"id":"m","type":"user","text":"m"}],"older":null,"newer":null,"latest":true}))
+            .await;
+        request(&listener)
+            .await
+            .reply(200, json!({"data":{}}))
+            .await;
+        loop {
+            if matches!(
+                timeout(Duration::from_secs(4), ev_a.recv())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                Event::Sync(_)
+            ) {
+                break;
+            }
+        }
+
+        // Drop A in the background while B is still healthy, then close B before A reconnects.
+        drop(sse_a);
+        wait_until(|| client.transport_drops(&tab_a_id) == 1).await;
+        prefs.observe_conversation_clients(&[(tab_a_id.clone(), false), (tab_b_id.clone(), true)]);
+        prefs.observe_conversation_clients(&[(tab_a_id.clone(), false)]);
+        assert!(prefs.transcript_ready());
+
+        // Saving a Chat preference must succeed immediately over the healthy Missions watch
+        // instead of stalling on A's unseen drop counter in active_client_ids.
+        prefs.set_transcript(Some(Row::Diagnostics), "hidden");
+        assert!(prefs.poll());
+        let patch = poll_next_request(&mut prefs, &listener).await;
+        assert_eq!(patch.first, "PATCH /api/storage/config/ui HTTP/1.1");
+        assert_eq!(
+            patch.body,
+            json!({"settings":{"diagnosticsExpansion":"hidden"}})
+        );
+        patch
+            .reply(
+                200,
+                json!({"settings":{"locale":"en","diagnosticsExpansion":"hidden"}}),
+            )
+            .await;
+        wait_until(|| {
+            prefs.poll();
+            prefs.transcript_mode(Row::Diagnostics, false) == "hidden" && !prefs.config.refreshing()
+        })
+        .await;
+
+        // Once the Missions watch closes while A is still unhealthy, A's unseen drop is detected.
+        prefs.unwatch();
+        drop(watch_sse);
+        wait_until(|| {
+            prefs.poll();
+            prefs.is_transport_lost()
+        })
+        .await;
+        assert!(!prefs.transcript_ready());
+    });
+}

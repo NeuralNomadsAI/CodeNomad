@@ -125,9 +125,14 @@ impl Preferences {
             })
             .map(|(id, _)| id.clone())
             .collect();
+        let watch_continuously_healthy = self.has_healthy_watch_stream()
+            && self.stream.as_ref().is_some_and(|stream| {
+                backend.client.transport_drops(stream.client_id())
+                    == self.seen_drop(stream.client_id())
+            });
         if !healthy_observed.is_empty() {
             ids.extend(healthy_observed);
-        } else {
+        } else if !watch_continuously_healthy {
             ids.extend(self.observed_clients.iter().map(|(id, _)| id.clone()));
         }
         if let Some(stream) = &self.stream {
