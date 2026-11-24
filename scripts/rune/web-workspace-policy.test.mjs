@@ -132,3 +132,17 @@ test('only the Android benchmark may submit its exact prompt on an owned session
   assert(!p.allows('POST',route.replace('/one/','/foreign/'),{text:androidPrompt}))
   assert(!p.allows('POST',route.replace('ses_existing','ses_another'),{text:androidPrompt}))
 })
+
+test('Mission control is admitted only to the recorded lifecycle fixture target',()=>{
+  for(const missions of [false,true]){
+    const p=workspacePolicy({origin,project,missions}),input=creation('own')
+    p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
+    const path='/api/workspaces/one/missions/gamma/control'
+    const intent={action:'pause',expectedRevision:7,requestId:'a8df8d99-9f05-42e9-8ba6-5558eb68a166',graceful:true}
+    assert.equal(p.allows('POST',path,intent),missions)
+    assert(!p.allows('POST',path.replace('/one/','/outside/'),intent))
+    assert(!p.allows('POST',path.replace('/gamma/','/another/'),intent))
+    assert(!p.allows('POST',path,{...intent,action:'stop'}))
+    assert(!p.allows('POST',path,{...intent,expectedRevision:0}))
+  }
+})

@@ -1,5 +1,5 @@
 use super::{
-    Attention, RunState, Status,
+    Attention, ControlReceipt, RunState, Status,
     codec::{RevisionChanged, decode_row},
     directory::{DirectoryChanged, PageRead, Source, Verified, digest_id, panel_id},
 };
@@ -155,9 +155,9 @@ pub struct Header {
     pub run_state: Option<RunState>,
     pub revision: u64,
     #[serde(rename = "projectID")]
-    project: String,
-    project_canonical: String,
-    coordinator_session_id: String,
+    pub(super) project: String,
+    pub(super) project_canonical: String,
+    pub(super) coordinator_session_id: String,
     version: u8,
     #[serde(rename = "template")]
     _template: Template,
@@ -212,9 +212,8 @@ pub struct MapHeader {
     pub root: Header,
     pub tasks: TaskSource,
     collections: HashMap<String, Collection>,
-    coordinator: Option<Value>,
-    #[serde(rename = "control")]
-    _control: Option<Value>,
+    pub(super) coordinator: Option<Value>,
+    pub control: Option<ControlReceipt>,
 }
 
 pub struct DetailRead<T> {
@@ -366,6 +365,10 @@ fn header(page: Verified, mission: &str) -> Result<MapHeader> {
         || !root.created_at.is_finite()
         || !root.updated_at.is_finite()
         || !valid_bodies(&root.bodies)
+        || map
+            .control
+            .as_ref()
+            .is_some_and(|control| !control.valid(root.revision))
         || [
             "objective",
             "notes",

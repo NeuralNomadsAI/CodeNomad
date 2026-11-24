@@ -57,7 +57,7 @@ Belege sind schreibgeschützte CodeNomad-Anmerkungen, keine nativen Nachrichten 
 
 ## Berechtigungsmodus für Unterhaltungen {#conversation-mode}
 
-Wählen Sie eine Unterhaltung, öffnen Sie **Status → Berechtigungen** und klicken Sie auf einen Modus. Bei eingeklapptem Abschnitt zeigt ein Blitz (Autonom) oder ein Schild (Beaufsichtigt) den zuletzt bekannten Modus an.
+Wählen Sie eine Unterhaltung, öffnen Sie **Status → Berechtigungen** und klicken Sie auf einen Modus. Der eingeklappte Abschnitt zeigt den zuletzt bekannten Modus an.
 
 - **Autonom** — Befolgt die Berechtigungsregeln von OpenCode.
 - **Beaufsichtigt** — Fragt vor Dateiänderungen und Shell-Befehlen des Agenten nach. Globale Verbote sowie Verbote für das Projekt und die Unterhaltung bleiben für diese Aktionen wirksam; Erlaubnisregeln führen zu einer Anfrage. Passende, von OpenCode gespeicherte Genehmigungen über **Immer erlauben** gelten weiterhin.

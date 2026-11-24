@@ -1270,6 +1270,7 @@
   "missions.control.run.start": "Запустить миссию",
   "missions.control.run.stop": "Окончательно остановить миссию",
   "missions.control.run.stopConfirm": "Остановить эту миссию навсегда?",
+  "missions.control.run.superseded": "Это действие заменено более новым.",
   "missions.control.save": "Сохранить",
   "missions.control.status.active": "Активна",
   "missions.control.status.completed": "Завершена",

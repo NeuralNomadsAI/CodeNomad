@@ -1270,6 +1270,7 @@
   "missions.control.run.start": "ミッションを開始",
   "missions.control.run.stop": "ミッションを完全に停止",
   "missions.control.run.stopConfirm": "このミッションを完全に停止しますか？",
+  "missions.control.run.superseded": "この操作は新しい操作に置き換えられました。",
   "missions.control.save": "保存",
   "missions.control.status.active": "進行中",
   "missions.control.status.completed": "完了",

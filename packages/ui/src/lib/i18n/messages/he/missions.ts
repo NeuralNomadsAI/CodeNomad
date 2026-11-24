@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.control.reader.loading": "קורא תוכן…",
   "missions.control.form.loading": "טוען טופס…",
   "missions.control.run.checking": "בודק את מצב הפעולה…",
+  "missions.control.run.superseded": "פעולה חדשה יותר החליפה את הפעולה הזו.",
   "missions.control.run.pending.start": "מפעיל משימה…",
   "missions.control.run.pending.pause": "משהה משימה…",
   "missions.control.run.pending.interrupt": "קוטע משימה…",

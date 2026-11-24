@@ -16,7 +16,7 @@ import { browserWorktrees } from "./worktrees.mjs"
 
 const MODES = ["http", "files", "contract", "history-bytes", "history-search", "attachment-history", "workspace-claims", "agent-controls", "remote-session-controls", "static-assets", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
-MODES.push("provider-logins")
+MODES.push("provider-logins", "receipt-worktree", "receipt-reconnect", "meta-update", "mutation-fence")
 if (["prompt-admission", "command-admission"].includes(mode)) {
   await (await import("./prompt-admission.mjs")).run(mode === "command-admission")
   process.exit(process.exitCode ?? 0)
@@ -495,15 +495,15 @@ try {
     const settings = `server:\n  opencodeBinary: ${JSON.stringify(exe)}\n${seeded}ui:\n  settings:\n    multiBackend: true\n    locale: en\n`
     await writeFile(path.join(local.root, "ts.yaml"), settings)
     if (mode === "host" || bench?.configure) await writeFile(path.join(remote.root, "rust.yaml"), settings)
-    let ts, rs
+    let ts, rs, sequenceFailed = false
     try {
       rs = await start("rs", remote, rsRoot, password)
       ts = await start("ts", local, tsRoot, password, missionServe ? undefined : path.join(remote.root, "rust.data", "tls", "ca-cert.pem"))
       assert.notEqual(ts.daemonPID, rs.daemonPID)
       result.daemons = [ts.status, rs.status]
-      // Attachment history opens and authenticates its own workspaces. Pending
-      // question recovery belongs to the general qualification, not this mode.
-      if (!["attachment-history", "history-search"].includes(mode)) await qualify(ts, rs, password, rsRoot)
+      // Modes that open and authenticate their own workspaces (or run dedicated
+      // mutation-fence scenarios) skip the generic pending-question qualification.
+      if (!["attachment-history", "history-search", "receipt-reconnect", "meta-update", "mutation-fence"].includes(mode)) await qualify(ts, rs, password, rsRoot)
       if (mode === "solid") return await solid({ ts, rs, local, remote, tsRoot, rsRoot, password })
       const hosts = []
       for (const host of [ts, rs]) {
@@ -516,7 +516,17 @@ try {
         { ...hosts[0], fixture: local, folder: "Local Project", root: tsRoot, other: path.join(tsRoot, "No Repository"), pid: ts.pid, native: ts.native },
         { ...hosts[1], fixture: remote, folder: "Rust Project", root: rsRoot, other: path.join(rsRoot, "No Repository"), pid: rs.pid, native: rs.native, data: path.join(remote.root, "rust.data") },
       ])
-    } finally { await Promise.all([ts?.close(), rs?.close(), bench?.close?.()]) }
+    } catch (error) {
+      sequenceFailed = true
+      throw error
+    } finally {
+      const closed = await Promise.allSettled([ts?.close(), rs?.close(), bench?.close?.()])
+      const errors = closed.flatMap(item => item.status === "rejected" ? [String(item.reason?.stack ?? item.reason)] : [])
+      if (errors.length) {
+        result.cleanupErrors = errors
+        if (!sequenceFailed) throw new Error(`Bench teardown failed:\n${errors.join("\n")}`)
+      }
+    }
     assert(!result.leaks, "A server logged a synthetic provider credential")
   }, runtime), runtime)
 } catch (error) {
