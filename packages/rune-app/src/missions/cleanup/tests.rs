@@ -1502,7 +1502,7 @@ fn delete_intent_pins_observed_deletion_id_across_retry_and_passive_retirement()
             "pending": 0, "reasons": [], "documentPending": false
         });
         let substituted: Cleanup = serde_json::from_value(substituted_json.clone()).unwrap();
-        owner.retire_settled_cleanups(&src.workspace_scope(), &[substituted]);
+        owner.retire_settled_cleanups(&src.workspace_scope(), &[substituted], true);
         assert!(owner.delete_state(&src).is_some());
 
         // Explicit retry observing a contradictory deletionID "del-b" on preflight GET must
@@ -1566,7 +1566,10 @@ fn cleanup_retry_preserves_preflight_document_pending_across_failed_attempt_and_
         let polled1 = owner.poll();
         assert_eq!(
             polled1.document_pending_rows,
-            vec![(sc.clone(), "old".into(), "del-1".into())]
+            vec![(
+                sc.clone(),
+                super::super::directory::cleanup_identity(&omitted_row)
+            )]
         );
 
         // Even if a subsequent directory refresh still omits documentPending, Panel preserves true
@@ -1578,7 +1581,9 @@ fn cleanup_retry_preserves_preflight_document_pending_across_failed_attempt_and_
             wake.clone(),
         );
         assert!(panel.accept_cleanups_for_test(vec![omitted_row.clone()]));
-        panel.mark_cleanup_document_pending("old", "del-1");
+        panel.mark_cleanup_document_pending(&super::super::directory::cleanup_identity(
+            &omitted_row,
+        ));
         assert_eq!(panel.cleanups[0].document_pending, Some(true));
         assert!(panel.accept_cleanups_for_test(vec![omitted_row.clone()]));
         assert_eq!(panel.cleanups[0].document_pending, Some(true));
@@ -1918,9 +1923,9 @@ fn ambiguous_cleanup_rows_never_settle_or_authorize_delete() {
         // Passive retirement with two distinct IDs for the same frozen intent must not settle.
         let r1: Cleanup = serde_json::from_value(settled_row.clone()).unwrap();
         let r2: Cleanup = serde_json::from_value(pending_row.clone()).unwrap();
-        owner.retire_settled_cleanups(&sc, &[r1.clone(), r2.clone()]);
+        owner.retire_settled_cleanups(&sc, &[r1.clone(), r2.clone()], true);
         assert!(owner.delete_state(&src).is_some());
-        owner.retire_settled_cleanups(&sc, &[r2, r1]);
+        owner.retire_settled_cleanups(&sc, &[r2, r1], true);
         assert!(owner.delete_state(&src).is_some());
 
         // Reconciliation with two distinct IDs must stay unconfirmed without dispatching DELETE.
@@ -2067,7 +2072,9 @@ fn remembered_document_pending_survives_empty_directory_refresh_and_obsolete_ret
             wake,
         );
         assert!(panel.accept_cleanups_for_test(vec![omitted_row.clone()]));
-        panel.mark_cleanup_document_pending("old", "del-1");
+        panel.mark_cleanup_document_pending(&super::super::directory::cleanup_identity(
+            &omitted_row,
+        ));
         assert_eq!(panel.cleanups[0].document_pending, Some(true));
         // Empty directory gap:
         assert!(panel.accept_cleanups_for_test(vec![]));
@@ -2246,6 +2253,234 @@ fn cleanup_directory_failure_revokes_retry_fence_and_disables_retry() {
             "mission-cleanup-retry-old-del-1",
             "disabled"
         ));
+    });
+}
+
+#[test]
+fn revoked_delete_retry_never_publishes_readonly_failure() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-revoked-fail");
+        let mut owner = CleanupOwner::default();
+        owner.start_delete(
+            &src,
+            "Revoked fail".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let first = http.accept().await;
+        first.reply(503, json!({})).await;
+        let rec1 = http.accept().await;
+        rec1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "mission": {"id": "msn-revoked-fail", "projectID": "project", "revision": 7},
+                "cleanups": []
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+        assert_eq!(
+            owner.delete_state(&src),
+            Some(DeleteState::Failed("missions.cleanup.error.unconfirmed"))
+        );
+
+        // Queue a revision-conflict failure from a retry GET, hide panel before poll().
+        let live = live_flag();
+        owner.retry_delete(&src, live.clone(), http.backend.clone(), wake);
+        let pre_get = http.accept().await;
+        pre_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "mission": {"id": "msn-revoked-fail", "projectID": "project", "revision": 8},
+                    "cleanups": []
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        live.store(false, Ordering::Release);
+        let polled = owner.poll();
+        assert!(polled.refreshed_missions.is_empty());
+        assert!(polled.refreshed_scopes.is_empty());
+        assert_eq!(
+            owner.delete_state(&src),
+            Some(DeleteState::Failed("missions.cleanup.error.unconfirmed")),
+            "revoked read-only retry failure must not overwrite the previous error"
+        );
+    });
+}
+
+#[test]
+fn cleanup_row_retry_rejects_ambiguous_reconciliation_in_preflight_and_409() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let sc = scope();
+        let mut owner = CleanupOwner::default();
+        let row = cleanup_row(1, false);
+        let mut sibling = cleanup_json(0, false);
+        sibling["deletionID"] = json!("del-2");
+
+        // 1. Ambiguous preflight GET (two distinct deletionIDs for the same frozen request)
+        // must NOT dispatch DELETE.
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row.clone(),
+            live_flag(),
+            live_flag(),
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let pre1 = http.accept().await;
+        pre1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [cleanup_json(1, false), sibling.clone()]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        http.quiet().await;
+        let polled1 = owner.poll();
+        assert!(polled1.settled_cleanups.is_empty());
+        assert_eq!(
+            owner.cleanup_error(&sc),
+            Some("missions.cleanup.error.unconfirmed")
+        );
+
+        // 2. Ambiguous post-409 reconciliation must NOT settle the row.
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row,
+            live_flag(),
+            live_flag(),
+            http.backend.clone(),
+            wake,
+        );
+        let pre2 = http.accept().await;
+        pre2.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": [cleanup_json(1, false)]
+            }),
+        )
+        .await;
+        let del = http.accept().await;
+        del.reply(409, json!({"code": "request-conflict"})).await;
+        let after = http.accept().await;
+        after
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 3,
+                    "cleanups": [cleanup_json(0, false), sibling]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        let polled2 = owner.poll();
+        assert!(polled2.settled_cleanups.is_empty());
+        assert_eq!(
+            owner.cleanup_error(&sc),
+            Some("missions.cleanup.error.requestConflict")
+        );
+    });
+}
+
+#[test]
+fn document_pending_cache_retains_65_rows_across_empty_gap_and_isolates_created_at() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        // Load 65 document-only pending rows.
+        let rows: Vec<Cleanup> = (0..65)
+            .map(|i| {
+                let mut r = cleanup_row(0, true);
+                r.mission_id = format!("msn-{i}");
+                r.deletion_id = format!("del-{i}");
+                r
+            })
+            .collect();
+        assert!(panel.accept_cleanups_for_test(rows.clone()));
+        assert_eq!(panel.cleanups.len(), 65);
+        // Complete empty refresh gap:
+        assert!(panel.accept_cleanups_for_test(vec![]));
+        assert!(panel.cleanups.is_empty());
+        // Returning a row with a different createdAt and documentPending: false must NOT clear
+        // the original createdAt: 1.0 obligation.
+        let mut different_lifetime = rows[0].clone();
+        different_lifetime.created_at = 2.0;
+        different_lifetime.document_pending = Some(false);
+        assert!(panel.accept_cleanups_for_test(vec![different_lifetime]));
+        // Returning all 65 original rows with pending: 0 and documentPending omitted must keep
+        // EVERY single one of the 65 rows pending!
+        let omitted: Vec<Cleanup> = rows
+            .into_iter()
+            .map(|mut r| {
+                r.document_pending = None;
+                r
+            })
+            .collect();
+        assert!(panel.accept_cleanups_for_test(omitted));
+        assert_eq!(panel.cleanups.len(), 65);
+        assert!(
+            panel
+                .cleanups
+                .iter()
+                .all(|row| row.document_pending == Some(true) && row.is_pending()),
+            "all 65 document-pending rows must stay pending across an empty gap"
+        );
+    });
+}
+
+#[test]
+fn cleanup_pagination_stays_within_2000_row_display_and_seen_cap() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, _done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        let total = 41 * 50u64;
+        for page in 0..41u64 {
+            let offset = page * 50;
+            let rows: Vec<Cleanup> = (0..50)
+                .map(|i| {
+                    let idx = offset + i;
+                    let mut r = cleanup_row(1, false);
+                    r.mission_id = format!("msn-{idx}");
+                    r.deletion_id = format!("del-{idx}");
+                    r
+                })
+                .collect();
+            let accepted = panel.accept_more_cleanups_for_test("stable-order", offset, total, rows);
+            if page < 40 {
+                assert!(accepted, "page {page} should be accepted within cap");
+            } else {
+                assert!(!accepted, "page 41 past 2000-row cap must be refused");
+            }
+        }
+        assert_eq!(panel.cleanups.len(), 2_000);
+        assert_eq!(panel.cleanup_seen_count(), 2_000);
+        assert!(!panel.has_more(super::super::directory::Kind::Cleanups));
     });
 }
 

@@ -64,14 +64,15 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
         Object.keys(body).every(key=>['action','expectedRevision','requestId','graceful'].includes(key))&&
         (body.graceful===undefined||body.action==='pause'&&body.graceful===true)
       if(missions&&method==='POST'&&owned[2]==='missions/alpha/recover')return body?.target==='coordinator'&&
-        Number.isSafeInteger(body.expectedRevision)&&body.expectedRevision>0&&
+        body.expectedRevision===5&&
         Object.keys(body).every(key=>['target','expectedRevision'].includes(key))
       if(missions&&method==='GET'&&(owned[2]==='missions/old'||owned[2]==='missions/alpha'))return true
       if(missions&&method==='DELETE'&&owned[2]==='missions/old')return body?.expectedRevision===1&&
         body.requestId==='request'&&body.deleteManagedSessions===false&&
         Object.keys(body).every(key=>['expectedRevision','requestId','deleteManagedSessions'].includes(key))
-      if(missions&&method==='DELETE'&&owned[2]==='missions/alpha')return Number.isSafeInteger(body?.expectedRevision)&&
-        body.expectedRevision>0&&claim(body)&&typeof body.deleteManagedSessions==='boolean'&&
+      if(missions&&method==='DELETE'&&owned[2]==='missions/alpha')return body?.expectedRevision===6&&
+        typeof body.requestId==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.requestId)&&
+        body.deleteManagedSessions===true&&
         Object.keys(body).every(key=>['expectedRevision','requestId','deleteManagedSessions'].includes(key))
       if(missions&&method==='POST'&&owned[2]==='missions/panel-page'){
         if(body?.source==='mission')return body.header===true&&['alpha','beta','gamma'].includes(body.missionID)||

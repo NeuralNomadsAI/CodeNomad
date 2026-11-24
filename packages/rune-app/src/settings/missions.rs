@@ -9,10 +9,8 @@ pub(super) fn view<S: 'static>(
     retry: fn(&mut S),
 ) -> El {
     let label = t("missions.preferences.deleteSessions");
-    let confirmed = prefs.mission_delete_sessions();
     let checked = prefs.mission_delete_sessions_display().unwrap_or(false);
-    let disabled =
-        !prefs.can_retry() || confirmed.is_none() || prefs.mission_delete_sessions_pending();
+    let disabled = !prefs.mission_delete_sessions_editable();
     let error = prefs.mission_delete_sessions_error().or_else(|| {
         (prefs.backend.is_none() && prefs.saved(super::preferences::Owner::Config).is_none())
             .then_some("rune.connect_error")
@@ -375,25 +373,73 @@ mod tests {
     }
 
     #[test]
-    fn queued_mission_reconnect_does_not_rearm_offline_panel_before_available() {
-        let mut root = crate::init();
-        let wake: rune::Waker = std::sync::Arc::new(|| {});
-        let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
-        let mut panel = crate::missions::Panel::new(
-            backend.clone(),
-            Some("project".into()),
-            Default::default(),
-            wake,
-        );
-        panel.show(true);
-        panel.set_online(false);
-        assert!(!panel.online());
-        root.settings.shared.borrow_mut().set_stream_online(false);
-        assert!(crate::settings::stream_offline(&root));
-        // Poll settings while stream_offline is true and no Available transition arrived:
-        // mission_changes must not be drained to re-arm the offline panel.
-        let _ = crate::settings::poll(&mut root);
-        assert!(crate::settings::stream_offline(&root));
-        assert!(!panel.online());
+    fn opencode_outage_keeps_delete_sessions_preference_editable_while_blocking_delete() {
+        use rune::{Env, Runtime};
+
+        platform::block_on(async {
+            let http = Http::new().await;
+            let mut prefs = Preferences::default();
+            prefs.bind(Some(http.backend.clone()));
+
+            let (mut got_config, mut got_state) = (false, false);
+            while !(got_config && got_state) {
+                prefs.poll();
+                let req = http.accept().await;
+                if req.header.contains("/api/storage/config/ui") {
+                    req.reply(200, json!({"settings": {"missionDeleteSessions": true}}))
+                        .await;
+                    got_config = true;
+                } else {
+                    req.reply(200, json!({})).await;
+                    got_state = true;
+                }
+            }
+            wait_until(|| {
+                prefs.poll();
+                prefs.mission_delete_sessions() == Some(true)
+            })
+            .await;
+
+            // Upstream OpenCode disconnects while CodeNomad remains authenticated and config loaded.
+            prefs.set_stream_online(false);
+            // Destructive mission deletion stays blocked:
+            assert_eq!(prefs.mission_delete_sessions(), None);
+            // Preferences -> Missions switch stays editable!
+            assert!(prefs.mission_delete_sessions_editable());
+
+            let mut rt = Runtime::new(
+                prefs,
+                |prefs, _| {
+                    crate::strings::with_locale("en", || {
+                        view(
+                            prefs,
+                            |p: &mut Preferences, v| p.set_mission_delete_sessions(v),
+                            |p: &mut Preferences| p.retry_mission_delete_sessions(),
+                        )
+                    })
+                },
+                (500.0, 300.0),
+                Env::new(false, 1.0),
+            );
+            rt.frame(1.0 / 60.0);
+            let tree = rt.accessibility_json();
+            fn switch_disabled(node: &serde_json::Value) -> Option<bool> {
+                if node["key"].as_str() == Some("missions-delete-sessions") {
+                    return Some(
+                        node["states"]
+                            .as_array()
+                            .is_some_and(|s| s.contains(&serde_json::Value::from("disabled"))),
+                    );
+                }
+                node["children"]
+                    .as_array()
+                    .and_then(|c| c.iter().find_map(switch_disabled))
+            }
+            assert_eq!(
+                switch_disabled(&tree),
+                Some(false),
+                "Preferences -> Missions switch must stay editable during an OpenCode outage"
+            );
+        });
     }
 }

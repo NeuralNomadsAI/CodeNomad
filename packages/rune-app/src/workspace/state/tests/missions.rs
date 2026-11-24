@@ -609,3 +609,309 @@ fn parked_tab_clears_saved_selection_on_tombstone_and_replacement_panel_inherits
         );
     });
 }
+
+#[test]
+fn parked_tab_preserves_active_retry_error_and_reauth_carries_document_pending_and_same_poll_delete_fences_retry()
+ {
+    crate::platform::block_on(async {
+        let http = test_http::Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let wake: codenomad_client::Wake = std::sync::Arc::new(|| {});
+        let s = crate::init();
+
+        let mut active_saved = workspace("alpha", "");
+        active_saved.view.right_panel = RightPanelTab::Missions;
+        active_saved.view.selected_mission = Some("msn-a".into());
+        let mut active_entry = entry("tab-active".into(), Tab::Workspace(active_saved));
+        active_entry.binding = Some(backend.clone());
+        active_entry.project = Some(codenomad_client::catalog::Project {
+            id: backend.workspace.clone(),
+            path: "/fixture".into(),
+        });
+        let active_panel = crate::missions::Panel::new(
+            backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        let pending_b_json = json!({
+            "missionID": "msn-b", "deletionID": "del-b", "requestID": "req-b",
+            "expectedRevision": 2, "deleteManagedSessions": false,
+            "objective": "Pending B", "createdAt": 1, "removed": 0, "retained": 0,
+            "pending": 1, "reasons": [], "documentPending": false
+        });
+        let pending_b: codenomad_client::missions::Cleanup =
+            serde_json::from_value(pending_b_json.clone()).unwrap();
+        let doc_only: codenomad_client::missions::Cleanup = serde_json::from_value(json!({
+            "missionID": "msn-doc", "deletionID": "del-doc", "requestID": "req-doc",
+            "expectedRevision": 3, "deleteManagedSessions": false,
+            "objective": "Doc only", "createdAt": 1, "removed": 0, "retained": 0,
+            "pending": 0, "reasons": [], "documentPending": true
+        }))
+        .unwrap();
+        active_entry.missions = Some(active_panel);
+
+        // Parked tab on the same workspace with an EMPTY cleanup cache.
+        let mut parked_entry = entry("tab-parked".into(), Tab::Workspace(workspace("alpha", "")));
+        let parked_panel = crate::missions::Panel::new(
+            backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        parked_entry.missions = Some(parked_panel);
+
+        let mut ui = Ui::new();
+        ui.entries = vec![active_entry, parked_entry];
+        ui.active = 0;
+        let sc = ui.entries[0]
+            .missions
+            .as_ref()
+            .unwrap()
+            .cleanup_scope()
+            .unwrap();
+        // Force active panel visible/supported without dispatching probe HTTP.
+        let mut tx = rune::Tx::default();
+        ui.entries[0].missions.as_mut().unwrap().show(true);
+        let empty_digest = "XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc";
+        let empty_panel_page = |req: &test_http::Request| {
+            let source = req.body["source"]
+                .as_str()
+                .unwrap_or("summaries")
+                .to_owned();
+            let mut page = json!({
+                "available": true, "version": 1, "source": source, "projectID": "project",
+                "discardedEvents": 0, "controlUnavailable": false,
+                "notificationUnavailable": false, "cleanupUnavailable": false,
+                "window": {"order": empty_digest, "offset": 0, "end": 0, "total": 0},
+                "page": {"digest": empty_digest, "total": 0, "pieces": []}
+            });
+            if source == "summaries" {
+                page["finishHighWater"] = json!(0);
+            }
+            page
+        };
+        for _ in 0..2 {
+            let req = http.accept().await;
+            let page = empty_panel_page(&req);
+            req.reply(200, page).await;
+        }
+        for _ in 0..50 {
+            ui.entries[0].missions.as_mut().unwrap().poll();
+            crate::platform::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        // Seed cleanup rows after initial empty show refresh (no mission selected yet so step 1
+        // refresh dispatches only summaries + cleanups).
+        assert!(
+            ui.entries[0]
+                .missions
+                .as_mut()
+                .unwrap()
+                .accept_cleanups_for_test(vec![pending_b.clone(), doc_only.clone()])
+        );
+
+        // 1. Parked tab with empty cache must NOT erase active tab's 409 cleanup retry error.
+        ui.entries[0].missions.as_mut().unwrap().retry_cleanup(
+            &mut ui.mission_lifecycle,
+            &sc,
+            pending_b.clone(),
+        );
+        let pre = http.accept().await;
+        pre.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [pending_b_json.clone()]
+            }),
+        )
+        .await;
+        let del = http.accept().await;
+        del.reply(409, json!({"code": "request-conflict"})).await;
+        let after = http.accept().await;
+        after
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "cleanups": [pending_b_json.clone()]
+                }),
+            )
+            .await;
+        let mut saw_error = false;
+        for _ in 0..100 {
+            let deletes = ui.mission_lifecycle.poll_deletes();
+            let finished = ui.mission_lifecycle.poll_after_deletes();
+            if deletes.changed() || finished.changed() {
+                ui.entries[0].missions.as_mut().unwrap().settle_controls(
+                    "tab-active",
+                    &mut ui.mission_lifecycle,
+                    &finished,
+                );
+                ui.entries[1]
+                    .missions
+                    .as_mut()
+                    .unwrap()
+                    .apply_background_deletions(&mut ui.mission_lifecycle, &finished);
+                saw_error = true;
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(saw_error);
+        assert_eq!(
+            ui.mission_lifecycle.cleanup_error_for_test(&sc),
+            Some("missions.cleanup.error.requestConflict"),
+            "empty parked tab must not erase the active tab's cleanup retry error"
+        );
+        // Drain the two panel-page refresh requests triggered by settle_controls above.
+        for _ in 0..2 {
+            let req = http.accept().await;
+            assert!(
+                req.header.contains("/missions/panel-page"),
+                "expected panel-page refresh, got: {}",
+                req.header
+            );
+            let page = empty_panel_page(&req);
+            req.reply(200, page).await;
+        }
+        for _ in 0..50 {
+            ui.entries[0].missions.as_mut().unwrap().poll();
+            crate::platform::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        ui.entries[0]
+            .missions
+            .as_mut()
+            .unwrap()
+            .seed_summary_for_test("msn-a");
+        assert!(
+            ui.entries[0]
+                .missions
+                .as_mut()
+                .unwrap()
+                .accept_cleanups_for_test(vec![pending_b.clone(), doc_only.clone()])
+        );
+
+        // 2. Direct delete A clearing selection in phase 1 revokes cleanup retry B's GET-only
+        // settlement in phase 2 of the SAME poll_missions cycle.
+        ui.mission_lifecycle.start_delete_for_test(
+            "tab-active",
+            &http.backend,
+            "project",
+            "msn-a",
+            7,
+            wake.clone(),
+        );
+        ui.entries[0].missions.as_mut().unwrap().retry_cleanup(
+            &mut ui.mission_lifecycle,
+            &sc,
+            pending_b.clone(),
+        );
+        let mut del_a = None;
+        let mut get_b = None;
+        while del_a.is_none() || get_b.is_none() {
+            let req = http.accept().await;
+            if req.header.starts_with("DELETE ") && del_a.is_none() {
+                del_a = Some(req);
+            } else if req.header.starts_with("GET ") && get_b.is_none() {
+                get_b = Some(req);
+            } else if req.header.contains("/missions/panel-page") {
+                let page = empty_panel_page(&req);
+                req.reply(200, page).await;
+            } else {
+                panic!("unexpected request in step 2: {}", req.header);
+            }
+        }
+        // Complete both before polling: A succeeds, B returns a GET-only settled receipt.
+        del_a.unwrap().reply(200, json!({"deleted": true})).await;
+        let mut settled_b = pending_b_json;
+        settled_b["pending"] = json!(0);
+        settled_b["removed"] = json!(1);
+        get_b
+            .unwrap()
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 3,
+                    "cleanups": [settled_b]
+                }),
+            )
+            .await;
+        // Wait for both HTTP responses to land in their channels, then run phase 1 + phase 2.
+        crate::platform::sleep(std::time::Duration::from_millis(80)).await;
+        let deletes = ui.mission_lifecycle.poll_deletes();
+        assert!(deletes.changed());
+        ui.entries[0].missions.as_mut().unwrap().settle_controls(
+            "tab-active",
+            &mut ui.mission_lifecycle,
+            &deletes,
+        );
+        assert!(ui.entries[0].missions.as_ref().unwrap().selected.is_none());
+        let after_del = ui.mission_lifecycle.poll_after_deletes();
+        ui.entries[0].missions.as_mut().unwrap().settle_controls(
+            "tab-active",
+            &mut ui.mission_lifecycle,
+            &after_del,
+        );
+        assert!(
+            !ui.entries[0]
+                .missions
+                .as_ref()
+                .unwrap()
+                .has_settled_cleanup_for_test("del-b"),
+            "B's read-only GET settlement must not publish after A's delete cleared selection in the same poll"
+        );
+
+        // 3. Same-workspace reauthentication carries passively learned documentPending: true.
+        let mut renewed_backend =
+            crate::backend::Backend::unauthenticated(&http.backend.base).unwrap();
+        renewed_backend.workspace = http.backend.workspace.clone();
+        let attest2 = {
+            let b = renewed_backend.clone();
+            tokio::spawn(async move { b.attest_server().await })
+        };
+        loop {
+            let req = http.accept().await;
+            if req.header.contains("/api/meta") {
+                req.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                break;
+            }
+            if req.header.contains("/missions/panel-page") {
+                let page = empty_panel_page(&req);
+                let _ = req.try_reply(200, page).await;
+            } else {
+                panic!("unexpected request in step 3: {}", req.header);
+            }
+        }
+        test_http::wait(attest2).await.unwrap().unwrap();
+        ui.entries[0].binding = Some(renewed_backend);
+        super::super::panel_state::poll_missions(&mut ui, &s, &mut tx);
+        let mut doc_omitted = doc_only;
+        doc_omitted.document_pending = None;
+        assert!(
+            ui.entries[0]
+                .missions
+                .as_mut()
+                .unwrap()
+                .accept_cleanups_for_test(vec![doc_omitted])
+        );
+        assert!(
+            !ui.entries[0]
+                .missions
+                .as_ref()
+                .unwrap()
+                .has_settled_cleanup_for_test("del-doc"),
+            "passively learned documentPending: true must survive same-workspace reauthentication"
+        );
+    });
+}

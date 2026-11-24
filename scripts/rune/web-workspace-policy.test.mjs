@@ -128,19 +128,27 @@ test('Mission recovery, reconciliation and deletion are admitted only to the fix
     p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
     const recover='/api/workspaces/one/missions/alpha/recover'
     assert.equal(p.allows('POST',recover,{target:'coordinator',expectedRevision:5}),missions)
+    assert(!p.allows('POST',recover,{target:'coordinator',expectedRevision:6}))
     assert(!p.allows('POST',recover,{target:'report',expectedRevision:5,taskKey:'k'}))
     assert(!p.allows('POST',recover.replace('/alpha/','/beta/'),{target:'coordinator',expectedRevision:5}))
-    for(const target of ['old','alpha']){
-      const path=`/api/workspaces/one/missions/${target}`
-      assert.equal(p.allows('GET',path),missions)
-      const del={expectedRevision:1,requestId:'request',deleteManagedSessions:false}
-      assert.equal(p.allows('DELETE',path,del),missions)
-      assert(!p.allows('DELETE',path,{...del,extra:true}))
-      assert(!p.allows('DELETE',path.replace('/one/','/outside/'),del))
-    }
-    assert(!p.allows('DELETE','/api/workspaces/one/missions/old',{expectedRevision:2,requestId:'request',deleteManagedSessions:false}))
-    assert(!p.allows('DELETE','/api/workspaces/one/missions/old',{expectedRevision:1,requestId:'other',deleteManagedSessions:false}))
-    assert(!p.allows('DELETE','/api/workspaces/one/missions/old',{expectedRevision:1,requestId:'request',deleteManagedSessions:true}))
+    const oldPath='/api/workspaces/one/missions/old'
+    const oldDel={expectedRevision:1,requestId:'request',deleteManagedSessions:false}
+    assert.equal(p.allows('GET',oldPath),missions)
+    assert.equal(p.allows('DELETE',oldPath,oldDel),missions)
+    assert(!p.allows('DELETE',oldPath,{...oldDel,extra:true}))
+    assert(!p.allows('DELETE',oldPath.replace('/one/','/outside/'),oldDel))
+    assert(!p.allows('DELETE',oldPath,{expectedRevision:2,requestId:'request',deleteManagedSessions:false}))
+    assert(!p.allows('DELETE',oldPath,{expectedRevision:1,requestId:'other',deleteManagedSessions:false}))
+    assert(!p.allows('DELETE',oldPath,{expectedRevision:1,requestId:'request',deleteManagedSessions:true}))
+    const alphaPath='/api/workspaces/one/missions/alpha'
+    const alphaDel={expectedRevision:6,requestId:'12345678-1234-4123-8123-123456789abc',deleteManagedSessions:true}
+    assert.equal(p.allows('GET',alphaPath),missions)
+    assert.equal(p.allows('DELETE',alphaPath,alphaDel),missions)
+    assert(!p.allows('DELETE',alphaPath,{...alphaDel,extra:true}))
+    assert(!p.allows('DELETE',alphaPath,{...alphaDel,requestId:'not-a-uuid'}))
+    assert(!p.allows('DELETE',alphaPath,{...alphaDel,expectedRevision:5}))
+    assert(!p.allows('DELETE',alphaPath,{...alphaDel,deleteManagedSessions:false}))
+    assert(!p.allows('DELETE',alphaPath.replace('/one/','/outside/'),alphaDel))
     assert(!p.allows('GET','/api/workspaces/one/missions/other'))
     assert(!p.allows('DELETE','/api/workspaces/one/missions/other',{expectedRevision:1,requestId:'request',deleteManagedSessions:false}))
     assert.equal(p.allows('PATCH','/api/storage/config/ui',{settings:{missionDeleteSessions:true}}),missions)

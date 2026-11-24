@@ -238,6 +238,7 @@ impl PreferencesWatch {
         let run = async move {
             futures_lite::future::race(
                 async {
+                    let mut workspace_unavailable = false;
                     for epoch in 1u64.. {
                         let (output, events) = crate::bounded(16);
                         let state = stream::State::default();
@@ -250,14 +251,21 @@ impl PreferencesWatch {
                                 while let Ok(event) = events.recv().await {
                                     let flag = match event {
                                         Input::Opened(e) => {
-                                            notices.fetch_and(!64, SeqCst);
-                                            if e > 1 { 11 | 16 | 32 | 128 } else { 11 | 32 | 128 }
+                                            if workspace_unavailable {
+                                                // Keep Missions offline until the owned workspace reports connected.
+                                                11 | 32
+                                            } else {
+                                                notices.fetch_and(!64, SeqCst);
+                                                if e > 1 { 11 | 16 | 32 | 128 } else { 11 | 32 | 128 }
+                                            }
                                         }
                                         Input::Unavailable(_) => {
+                                            workspace_unavailable = true;
                                             notices.fetch_and(!(16 | 128), SeqCst);
                                             64
                                         }
                                         Input::Available(_, _) => {
+                                            workspace_unavailable = false;
                                             notices.fetch_and(!64, SeqCst);
                                             11 | 16 | 32 | 128
                                         }
@@ -464,6 +472,137 @@ mod watch_tests {
             assert!(reconnected, "upstream connected must restore online state");
 
             drop(tx_ev);
+            let closed = watch.stop();
+            let _ = tokio::time::timeout(Duration::from_secs(2), closed.recv()).await;
+            handle.abort();
+            server.abort();
+        });
+    }
+
+    #[test]
+    fn outer_sse_reconnect_keeps_workspace_offline_until_connected_event() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let (tx_second, rx_second) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let (s2_ready_tx, s2_ready_rx) = tokio::sync::oneshot::channel::<()>();
+            let server = tokio::spawn(async move {
+                let mut sse_count = 0usize;
+                let mut s2_ready_tx = Some(s2_ready_tx);
+                let mut rx_second = Some(rx_second);
+                loop {
+                    let Ok((mut stream, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    if req.starts_with("POST /api/client-connections/pong") {
+                        let _ = stream
+                            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                            .await;
+                        let _ = stream.flush().await;
+                        continue;
+                    }
+                    sse_count += 1;
+                    if sse_count == 1 {
+                        // Connection 1: open, report workspace disconnected, then close outer stream.
+                        tokio::spawn(async move {
+                            let _ = stream
+                                .write_all(
+                                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n\
+                                      data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"ws-1\",\"status\":\"disconnected\"}\n\n",
+                                )
+                                .await;
+                            let _ = stream.flush().await;
+                            tokio::time::sleep(Duration::from_millis(80)).await;
+                        });
+                    } else if let Some(mut rx) = rx_second.take() {
+                        // Connection 2: reopen with SSE headers + ping heartbeat only, then later send connected.
+                        let ready = s2_ready_tx.take();
+                        tokio::spawn(async move {
+                            let _ = stream
+                                .write_all(
+                                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n\
+                                      event: codenomad.client.ping\ndata: {\"ts\":1}\n\n",
+                                )
+                                .await;
+                            let _ = stream.flush().await;
+                            if let Some(ready) = ready {
+                                let _ = ready.send(());
+                            }
+                            while let Some(chunk) = rx.recv().await {
+                                if stream.write_all(chunk.as_bytes()).await.is_err() {
+                                    break;
+                                }
+                                let _ = stream.flush().await;
+                            }
+                        });
+                    }
+                }
+            });
+            let backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+            let (notify, woken) = crate::bounded(16);
+            let wake: Wake = Arc::new(move || {
+                let _ = notify.try_send(());
+            });
+            let (watch, task) = PreferencesWatch::task(backend, Some("ws-1"), wake);
+            let handle = tokio::spawn(task);
+
+            // Wait for offline from connection 1.
+            let mut saw_offline = false;
+            for _ in 0..40 {
+                if watch.take_stream_state() == Some(false) {
+                    saw_offline = true;
+                    break;
+                }
+                let _ = tokio::time::timeout(Duration::from_millis(25), woken.recv()).await;
+            }
+            assert!(saw_offline);
+            let _ = watch.take();
+
+            // Wait until connection 2 has opened and delivered its heartbeat.
+            tokio::time::timeout(Duration::from_secs(3), s2_ready_rx)
+                .await
+                .unwrap()
+                .unwrap();
+            let mut saw_config_invalidation = false;
+            for _ in 0..20 {
+                assert_ne!(
+                    watch.take_stream_state(),
+                    Some(true),
+                    "outer SSE reconnect must not re-arm Missions before workspace reports connected"
+                );
+                let (cfg, _) = watch.take();
+                if cfg {
+                    saw_config_invalidation = true;
+                }
+                let _ = tokio::time::timeout(Duration::from_millis(25), woken.recv()).await;
+            }
+            assert!(saw_config_invalidation, "connection 2 should have opened");
+
+            // Once the workspace emits `connected`, watch transitions back to online.
+            tx_second
+                .send(
+                    "data: {\"type\":\"instance.eventStatus\",\"instanceId\":\"ws-1\",\"status\":\"connected\"}\n\n"
+                        .into(),
+                )
+                .unwrap();
+            let mut back_online = false;
+            for _ in 0..40 {
+                if watch.take_stream_state() == Some(true) {
+                    back_online = true;
+                    break;
+                }
+                let _ = tokio::time::timeout(Duration::from_millis(25), woken.recv()).await;
+            }
+            assert!(back_online);
+
+            drop(tx_second);
             let closed = watch.stop();
             let _ = tokio::time::timeout(Duration::from_secs(2), closed.recv()).await;
             handle.abort();

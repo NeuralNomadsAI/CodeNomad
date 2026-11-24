@@ -47,6 +47,19 @@ struct Completion {
     page: Result<DirectoryPage>,
 }
 
+pub(super) type CleanupIdentity = (String, String, String, u64, bool, u64);
+
+pub(super) fn cleanup_identity(row: &Cleanup) -> CleanupIdentity {
+    (
+        row.mission_id.clone(),
+        row.deletion_id.clone(),
+        row.request_id.clone(),
+        row.expected_revision,
+        row.delete_managed_sessions,
+        row.created_at.to_bits(),
+    )
+}
+
 pub(crate) struct Panel {
     pub(super) backend: Backend,
     pub(super) reads: Reads,
@@ -65,7 +78,8 @@ pub(crate) struct Panel {
     pub(super) selection_live: Arc<AtomicBool>,
     pub(super) cleanup_view_live: Arc<AtomicBool>,
     cleanup_tokens: HashMap<(String, String), Arc<AtomicBool>>,
-    remembered_document_pending: HashSet<(String, String)>,
+    remembered_document_pending: HashSet<CleanupIdentity>,
+    document_pending_overflow: bool,
     supported: Option<bool>,
     capability: Option<Receiver<Option<bool>>>,
     probe_attempted: bool,
@@ -81,7 +95,6 @@ pub(crate) struct Panel {
 
 const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
 const CLEANUP_DISPLAY_CAP: usize = 2_000;
-const DOCUMENT_PENDING_CAP: usize = 64;
 
 impl Panel {
     pub(crate) fn new(backend: Backend, project: Option<String>, reads: Reads, wake: Wake) -> Self {
@@ -105,6 +118,7 @@ impl Panel {
             cleanup_view_live: Arc::new(AtomicBool::new(false)),
             cleanup_tokens: HashMap::new(),
             remembered_document_pending: HashSet::new(),
+            document_pending_overflow: false,
             supported: None,
             capability: None,
             probe_attempted: false,
@@ -156,16 +170,21 @@ impl Panel {
         self.lanes[Kind::Cleanups as usize].failed.is_some()
     }
 
-    fn remember_document_pending(&mut self, mission_id: &str, deletion_id: &str) {
-        let key = (mission_id.to_owned(), deletion_id.to_owned());
-        if !self.remembered_document_pending.contains(&key) {
-            if self.remembered_document_pending.len() >= DOCUMENT_PENDING_CAP
-                && let Some(evict) = self.remembered_document_pending.iter().next().cloned()
-            {
-                self.remembered_document_pending.remove(&evict);
-            }
-            self.remembered_document_pending.insert(key);
+    pub(crate) fn carry_document_pending_from(&mut self, old: &Self) {
+        self.remembered_document_pending
+            .clone_from(&old.remembered_document_pending);
+        self.document_pending_overflow |= old.document_pending_overflow;
+    }
+
+    fn remember_document_pending(&mut self, key: CleanupIdentity) {
+        if self.remembered_document_pending.contains(&key) {
+            return;
         }
+        if self.remembered_document_pending.len() >= CLEANUP_DISPLAY_CAP {
+            self.document_pending_overflow = true;
+            return;
+        }
+        self.remembered_document_pending.insert(key);
     }
 
     pub(crate) fn set_online(&mut self, online: bool) {
@@ -226,24 +245,23 @@ impl Panel {
 
     pub(super) fn adopt_settled_cleanup(&mut self, mut receipt: Cleanup) {
         self.cancel_lane(Kind::Cleanups);
-        let key = (receipt.mission_id.clone(), receipt.deletion_id.clone());
+        let key = cleanup_identity(&receipt);
         match receipt.document_pending {
             Some(false) => {
                 self.remembered_document_pending.remove(&key);
             }
             Some(true) => {
-                self.remember_document_pending(&receipt.mission_id, &receipt.deletion_id);
+                self.remember_document_pending(key);
             }
             None => {
-                if self.remembered_document_pending.contains(&key)
+                if self.document_pending_overflow
+                    || self.remembered_document_pending.contains(&key)
                     || self.cleanups.iter().any(|row| {
-                        row.mission_id == receipt.mission_id
-                            && row.deletion_id == receipt.deletion_id
-                            && row.document_pending == Some(true)
+                        cleanup_identity(row) == key && row.document_pending == Some(true)
                     })
                 {
                     receipt.document_pending = Some(true);
-                    self.remember_document_pending(&receipt.mission_id, &receipt.deletion_id);
+                    self.remember_document_pending(key);
                 }
             }
         }
@@ -274,13 +292,10 @@ impl Panel {
         }
     }
 
-    pub(super) fn mark_cleanup_document_pending(&mut self, mission_id: &str, deletion_id: &str) {
-        self.remember_document_pending(mission_id, deletion_id);
+    pub(super) fn mark_cleanup_document_pending(&mut self, key: &CleanupIdentity) {
+        self.remember_document_pending(key.clone());
         for row in &mut self.cleanups {
-            if row.mission_id == mission_id
-                && row.deletion_id == deletion_id
-                && row.document_pending.is_none()
-            {
+            if cleanup_identity(row) == *key && row.document_pending.is_none() {
                 row.document_pending = Some(true);
             }
         }
@@ -510,6 +525,9 @@ impl Panel {
     }
 
     pub(super) fn has_more(&self, kind: Kind) -> bool {
+        if kind == Kind::Cleanups && self.cleanups.len() >= CLEANUP_DISPLAY_CAP {
+            return false;
+        }
         self.lanes[kind as usize]
             .window
             .as_ref()
@@ -517,7 +535,13 @@ impl Panel {
     }
 
     pub(super) fn covered(&self, kind: Kind) -> bool {
-        self.loaded(kind) && !self.has_more(kind) && !self.failed(kind) && !self.busy(kind)
+        self.loaded(kind)
+            && !self.failed(kind)
+            && !self.busy(kind)
+            && self.lanes[kind as usize]
+                .window
+                .as_ref()
+                .is_some_and(|w| w.end == w.total)
     }
 
     fn start(&mut self, kind: Kind, read: Read) {
@@ -728,18 +752,20 @@ impl Panel {
                 }
             }
             (Kind::Cleanups, DirectoryRows::Cleanups(mut rows)) => {
+                if read == Read::More && self.cleanups.len() >= CLEANUP_DISPLAY_CAP {
+                    return false;
+                }
                 for row in &mut rows {
-                    if row.document_pending.is_none()
-                        && (self
-                            .remembered_document_pending
-                            .contains(&(row.mission_id.clone(), row.deletion_id.clone()))
+                    if row.document_pending.is_none() {
+                        let id = cleanup_identity(row);
+                        if self.document_pending_overflow
+                            || self.remembered_document_pending.contains(&id)
                             || self.cleanups.iter().any(|old| {
-                                old.mission_id == row.mission_id
-                                    && old.deletion_id == row.deletion_id
-                                    && old.document_pending == Some(true)
-                            }))
-                    {
-                        row.document_pending = Some(true);
+                                cleanup_identity(old) == id && old.document_pending == Some(true)
+                            })
+                        {
+                            row.document_pending = Some(true);
+                        }
                     }
                 }
                 let before_pending = pending_cleanup_keys(&self.cleanups);
@@ -756,26 +782,29 @@ impl Panel {
                 }) {
                     return false;
                 }
-                let covered = page.window.end == page.window.total;
+                let mut truncated = false;
+                if self.cleanups.len() > CLEANUP_DISPLAY_CAP {
+                    self.cleanups.drain(CLEANUP_DISPLAY_CAP..);
+                    lane.seen = self
+                        .cleanups
+                        .iter()
+                        .map(|row| (row.mission_id.clone(), Some(row.deletion_id.clone())))
+                        .collect();
+                    truncated = true;
+                }
+                let covered = page.window.end == page.window.total && !truncated;
                 self.project = Some(page.project_id);
                 lane.window = Some(page.window);
-                let doc_updates: Vec<(String, String, Option<bool>)> = self
+                let doc_updates: Vec<(CleanupIdentity, Option<bool>)> = self
                     .cleanups
                     .iter()
-                    .map(|row| {
-                        (
-                            row.mission_id.clone(),
-                            row.deletion_id.clone(),
-                            row.document_pending,
-                        )
-                    })
+                    .map(|row| (cleanup_identity(row), row.document_pending))
                     .collect();
-                for (mission_id, deletion_id, doc_pending) in doc_updates {
+                for (id, doc_pending) in doc_updates {
                     match doc_pending {
-                        Some(true) => self.remember_document_pending(&mission_id, &deletion_id),
+                        Some(true) => self.remember_document_pending(id),
                         Some(false) => {
-                            self.remembered_document_pending
-                                .remove(&(mission_id, deletion_id));
+                            self.remembered_document_pending.remove(&id);
                         }
                         None => {}
                     }
@@ -838,6 +867,41 @@ impl Panel {
         self.cleanups
             .iter()
             .any(|row| row.deletion_id == deletion_id && !row.is_pending())
+    }
+
+    #[cfg(test)]
+    pub(super) fn cleanup_seen_count(&self) -> usize {
+        self.lanes[Kind::Cleanups as usize].seen.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn accept_more_cleanups_for_test(
+        &mut self,
+        order: &str,
+        offset: u64,
+        total: u64,
+        rows: Vec<Cleanup>,
+    ) -> bool {
+        let end = offset + rows.len() as u64;
+        self.accept(
+            Kind::Cleanups,
+            if offset == 0 {
+                Read::Refresh
+            } else {
+                Read::More
+            },
+            DirectoryPage {
+                project_id: self.project.clone().unwrap_or_else(|| "project".into()),
+                finish_high_water: None,
+                window: Window {
+                    order: order.into(),
+                    offset,
+                    end,
+                    total,
+                },
+                rows: DirectoryRows::Cleanups(rows),
+            },
+        )
     }
 
     #[cfg(test)]

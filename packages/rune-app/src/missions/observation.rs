@@ -108,11 +108,24 @@ impl Observation {
         }
     }
 
+    fn any_actor_running(&self) -> bool {
+        self.pages
+            .iter()
+            .filter(|page| self.current(page))
+            .flat_map(|page| &page.actors)
+            .any(|actor| {
+                matches!(
+                    actor.state,
+                    ActorState::Running | ActorState::Queued | ActorState::Background
+                )
+            })
+    }
+
     pub fn interrupted(&self, header: &MapHeader) -> bool {
         header.root.status == Status::Active
             && header.root.run_state.unwrap_or(RunState::Running) == RunState::Running
             && self.complete_and_fresh(header.root.revision)
-            && !self.working()
+            && !self.any_actor_running()
             && self.actor_state(&header.root.coordinator_session_id)
                 == Some(ActorState::IdleWithoutReport)
     }

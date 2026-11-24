@@ -551,6 +551,13 @@ impl Preferences {
         }
     }
 
+    pub(super) fn mission_delete_sessions_editable(&self) -> bool {
+        self.can_retry()
+            && self.config.snapshot.is_some()
+            && !self.config.read_failed()
+            && !self.mission_delete_sessions_pending()
+    }
+
     pub(super) fn mission_delete_sessions_display(&self) -> Option<bool> {
         if let Some(requested) = self.config.requested(Choice::MissionDeleteSessions)
             && !self.mission_delete_sessions_failed()

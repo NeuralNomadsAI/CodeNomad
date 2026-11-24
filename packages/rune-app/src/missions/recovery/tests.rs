@@ -606,3 +606,45 @@ fn offline_failed_mission_disables_recovery_and_refuses_dispatch() {
         assert!(has_disabled(&tree, "mission-control-primary"));
     });
 }
+
+#[test]
+fn independent_task_form_does_not_suppress_coordinator_recovery() {
+    let header = header_value("msn-indep", "active", Some("running"), 7, true, None);
+    let obs = obs_page(
+        7,
+        Coverage::Observed,
+        Coverage::Observed,
+        2,
+        vec![
+            ("ses_coord", ActorState::IdleWithoutReport, None),
+            (
+                "ses_independent_task",
+                ActorState::Form,
+                Some(ActorState::Form),
+            ),
+        ],
+    );
+    assert!(
+        obs.interrupted(&header),
+        "Form owned by an independent task must not suppress interrupted coordinator detection"
+    );
+    assert!(
+        coordinator_eligible(&header, &obs),
+        "coordinator recovery must remain eligible when only an independent task awaits a Form"
+    );
+
+    // By contrast, a Form on the coordinator itself MUST still suppress recovery.
+    let coord_form_obs = obs_page(
+        7,
+        Coverage::Observed,
+        Coverage::Observed,
+        1,
+        vec![(
+            "ses_coord",
+            ActorState::IdleWithoutReport,
+            Some(ActorState::Form),
+        )],
+    );
+    assert!(!coord_form_obs.interrupted(&header));
+    assert!(!coordinator_eligible(&header, &coord_form_obs));
+}

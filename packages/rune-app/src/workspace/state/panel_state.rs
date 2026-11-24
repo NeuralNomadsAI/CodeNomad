@@ -279,23 +279,25 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
         {
             ui.mission_lifecycle.retain_checks_for(None);
             ui.mission_lifecycle.confirmation = None;
-            let carried_project = entry.missions.as_ref().and_then(|old| {
-                old.same_workspace_target(&backend)
-                    .then(|| old.project().map(str::to_owned))
-                    .flatten()
-            });
+            let same_workspace = entry
+                .missions
+                .as_ref()
+                .is_some_and(|old| old.same_workspace_target(&backend));
+            let carried_project = same_workspace
+                .then(|| entry.missions.as_ref()?.project().map(str::to_owned))
+                .flatten();
             let stream_offline = crate::settings::stream_offline(s)
                 || (s.incoming.is_some()
                     && matches!(
                         s.phase,
                         crate::Phase::Loading | crate::Phase::Reconnecting | crate::Phase::Failed
                     ))
-                || entry
-                    .missions
-                    .as_ref()
-                    .is_some_and(|old| old.same_workspace_target(&backend) && !old.online());
+                || (same_workspace && entry.missions.as_ref().is_some_and(|old| !old.online()));
             let mut panel =
                 missions::Panel::new(backend, carried_project, s.reads.clone(), s.wake.clone());
+            if same_workspace && let Some(old) = entry.missions.as_ref() {
+                panel.carry_document_pending_from(old);
+            }
             if stream_offline {
                 panel.set_online(false);
             }
@@ -326,9 +328,23 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
     for old in retired_panels {
         retire_unused_mission_scope(&ui.entries, &mut ui.mission_lifecycle, Some(old));
     }
-    // Poll lifecycle/cleanup completions only after directory reads, visibility transitions,
-    // and scope retirements have updated every live publication fence.
-    let finished = ui.mission_lifecycle.poll_all();
+    // Phase 1: apply direct deletion completions first so any resulting selection clear revokes
+    // `cleanup_view_live` before cleanup-row retries evaluate their publication fences.
+    let deletes = ui.mission_lifecycle.poll_deletes();
+    changed |= deletes.changed();
+    if deletes.changed() {
+        for (index, entry) in ui.entries.iter_mut().enumerate() {
+            if let Some(panel) = &mut entry.missions {
+                if index == ui.active && active_visible {
+                    panel.settle_controls(&entry.key, &mut ui.mission_lifecycle, &deletes);
+                } else {
+                    panel.apply_background_deletions(&mut ui.mission_lifecycle, &deletes);
+                }
+            }
+        }
+    }
+    // Phase 2: poll cleanup-row retries, recovery and lifecycle controls against the updated fences.
+    let finished = ui.mission_lifecycle.poll_after_deletes();
     changed |= finished.changed();
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if let Some(panel) = &mut entry.missions {

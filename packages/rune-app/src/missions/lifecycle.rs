@@ -335,9 +335,9 @@ impl Panel {
                 owner.recovery.clear_error_for(&scope, mission_id);
             }
         }
-        for (doc_scope, mission_id, deletion_id) in &settled.cleanup.document_pending_rows {
+        for (doc_scope, identity) in &settled.cleanup.document_pending_rows {
             if doc_scope == &scope {
-                self.mark_cleanup_document_pending(mission_id, deletion_id);
+                self.mark_cleanup_document_pending(identity);
             }
         }
         for (settled_scope, receipt) in &settled.cleanup.settled_cleanups {
@@ -345,9 +345,6 @@ impl Panel {
                 self.adopt_settled_cleanup(receipt.clone());
             }
         }
-        owner
-            .cleanup
-            .retire_settled_cleanups(&scope, &self.cleanups);
     }
 
     pub(crate) fn settle_controls(
@@ -364,9 +361,9 @@ impl Panel {
                     owner.recovery.clear_error_for(&scope, mission_id);
                 }
             }
-            for (doc_scope, mission_id, deletion_id) in &settled.cleanup.document_pending_rows {
+            for (doc_scope, identity) in &settled.cleanup.document_pending_rows {
                 if doc_scope == &scope {
-                    self.mark_cleanup_document_pending(mission_id, deletion_id);
+                    self.mark_cleanup_document_pending(identity);
                 }
             }
             for (settled_scope, receipt) in &settled.cleanup.settled_cleanups {
@@ -374,9 +371,11 @@ impl Panel {
                     self.adopt_settled_cleanup(receipt.clone());
                 }
             }
-            owner
-                .cleanup
-                .retire_settled_cleanups(&scope, &self.cleanups);
+            owner.cleanup.retire_settled_cleanups(
+                &scope,
+                &self.cleanups,
+                self.covered(super::directory::Kind::Cleanups),
+            );
             if settled.cleanup.refreshed_scopes.contains(&scope)
                 || settled.recovery.refreshed_scopes.contains(&scope)
             {
@@ -483,6 +482,11 @@ impl Intent {
 }
 
 impl Lifecycle {
+    #[cfg(test)]
+    pub(crate) fn cleanup_error_for_test(&self, scope: &WorkspaceScope) -> Option<&'static str> {
+        self.cleanup.cleanup_error(scope)
+    }
+
     #[cfg(test)]
     pub(crate) fn start_delete_for_test(
         &mut self,
@@ -750,6 +754,23 @@ impl Lifecycle {
         });
     }
 
+    pub fn poll_deletes(&mut self) -> Settled {
+        Settled {
+            lifecycle: Vec::new(),
+            recovery: RecoveryPolled::default(),
+            cleanup: self.cleanup.poll_deletes(),
+        }
+    }
+
+    pub fn poll_after_deletes(&mut self) -> Settled {
+        Settled {
+            lifecycle: self.poll(),
+            recovery: self.recovery.poll(),
+            cleanup: self.cleanup.poll_retries(),
+        }
+    }
+
+    #[cfg(test)]
     pub fn poll_all(&mut self) -> Settled {
         Settled {
             lifecycle: self.poll(),
