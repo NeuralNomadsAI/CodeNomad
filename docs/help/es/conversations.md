@@ -73,7 +73,7 @@ Los borradores son estado de trabajo del cliente, no mensajes nativos compartido
 1. Las respuestas del agente enlazan archivos del proyecto con rutas relativas y absolutas.
 2. Una ruta escrita como texto sin formato también se convierte en un enlace cuando se sabe que el worktree de la conversación contiene el archivo; las rutas inexistentes permanecen como texto sin formato.
 3. Un clic normal abre el archivo enlazado en la vista previa del archivo, leído del worktree de la conversación.
-4. En la aplicación de escritorio, un enlace o una ruta en texto a una carpeta del worktree la abre en tu gestor de archivos; si no se puede abrir, aparece un error.
+4. En la aplicación de escritorio, para un proyecto en este equipo, un enlace o una ruta en texto a una carpeta del worktree la abre en tu gestor de archivos; si no se puede abrir, aparece un error.
 5. Los clics con modificadores (Ctrl/⌘-clic, Mayús-clic, clic central) y los enlaces fuera del worktree de la sesión mantienen el comportamiento normal de los enlaces.
 
 ## Comandos y modo shell {#commands-shell}

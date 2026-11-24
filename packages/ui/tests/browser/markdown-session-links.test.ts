@@ -103,9 +103,10 @@ test("on the local desktop, project folder links open in the file manager", { ti
       return { ok: true }
     } }`)
   try {
-    await page.goto(url)
+    // The `src` listing never settles: links in other folders must not wait on it.
+    await page.goto(`${url}?holdSrc=1`)
     await page.waitForFunction(() => (window as any).fixture?.rendered() > 0)
-    await page.locator('#main-root a[href="file:///fixture-root/docs/"][data-project-folder]').waitFor()
+    await page.waitForFunction(() => (window as any).fixture.isFolder('#main-root a[href="file:///fixture-root/docs/"]'))
 
     // A worktree the inventory has not identified never opens natively: its
     // native slug could name another checkout.

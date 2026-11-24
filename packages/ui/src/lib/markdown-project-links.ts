@@ -5,8 +5,11 @@
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/
 const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/
 const WINDOWS_ROOT = /^[A-Za-z]:\//
-// A local `file:` URL: empty or `localhost` host, never a remote share.
-const LOCAL_FILE_URL = /^file:\/\/(?:localhost)?(?=\/)/i
+// A local `file:` URL (`file:/p`, `file:///p`, `file://localhost/p`), never a
+// remote share.
+const LOCAL_FILE_URL = /^file:(?:\/\/(?:localhost)?)?(?=\/)/i
+// An encoded separator is invalid inside a file URL path.
+const ENCODED_SEPARATOR = /%(?:2f|5c)/i
 
 /** A project-file link candidate's normalized path, or undefined when the href
  * cannot point at a workspace file (URL schemes other than local `file:`,
@@ -17,6 +20,7 @@ export function projectLinkPath(href: string): string | undefined {
   const fragment = trimmed.indexOf("#")
   let withoutFragment = fragment >= 0 ? trimmed.slice(0, fragment) : trimmed
   if (LOCAL_FILE_URL.test(withoutFragment)) {
+    if (ENCODED_SEPARATOR.test(withoutFragment)) return undefined
     // `file:///C:/x` names `C:/x`; `file:///home/x?q` names `/home/x`.
     withoutFragment = withoutFragment.replace(LOCAL_FILE_URL, "").replace(/\?.*$/, "").replace(/^\/(?=[A-Za-z]:\/)/, "")
   }

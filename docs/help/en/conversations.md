@@ -73,7 +73,7 @@ Drafts are client-side working state, not shared native messages. Startup restor
 1. Agent replies link project files with relative and absolute paths.
 2. A path written as plain text becomes a link too when the conversation's worktree is known to contain the file; missing paths stay plain text.
 3. A plain click opens the linked file in the file preview, read from the conversation’s worktree.
-4. In the desktop app, a link or plain-text path to a folder of the worktree opens it in your file manager; an error appears if it cannot be opened.
+4. In the desktop app, for a project on this computer, a link or plain-text path to a folder of the worktree opens it in your file manager; an error appears if it cannot be opened.
 5. Modified clicks (Ctrl/Cmd-click, Shift-click, middle-click) and links outside the session’s worktree keep normal link behavior.
 
 ## Commands and Shell mode {#commands-shell}

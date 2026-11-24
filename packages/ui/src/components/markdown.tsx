@@ -15,7 +15,7 @@ import type { RecordTextRevealTarget } from "../stores/message-v2/record-display
 import { scheduleDeferredHighlight } from "../lib/markdown-highlight-schedule"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
 import { decorateSessionLinks, nativeFolderSlug, routeSessionLink, sessionLinkBase, sessionLinkTitles } from "./markdown-session-links"
-import { linkBarePaths, PROJECT_FOLDER_ATTRIBUTE } from "./markdown-bare-paths"
+import { isProjectFolderLink, linkBarePaths } from "./markdown-bare-paths"
 import { matchLocalImage, messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
 import { createMediaSource } from "../lib/media-source"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -497,7 +497,7 @@ export function Markdown(props: MarkdownProps) {
         // on a path inside the session's worktree opens the file reader;
         // modified clicks keep browser defaults (see markdown-session-links).
         if (plainClick && routeSessionLink(props.instanceId, props.sessionId, href, loopbackLinksOpenPreview(),
-          anchor.hasAttribute(PROJECT_FOLDER_ATTRIBUTE))) {
+          isProjectFolderLink(anchor))) {
           event.preventDefault()
           return
         }

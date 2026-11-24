@@ -73,7 +73,7 @@ Entwürfe sind clientseitiger Arbeitszustand, keine gemeinsamen nativen Nachrich
 1. Agent-Antworten verlinken Projektdateien mit relativen und absoluten Pfaden.
 2. Auch ein als einfacher Text geschriebener Pfad wird zu einem Link, sobald bekannt ist, dass der Worktree der Unterhaltung die Datei enthält; nicht vorhandene Pfade bleiben einfacher Text.
 3. Ein einfacher Klick öffnet die verlinkte Datei in der Dateivorschau, gelesen aus dem Worktree der Unterhaltung.
-4. In der Desktop-App öffnet ein Link oder ein als Text geschriebener Pfad zu einem Ordner des Worktrees diesen im Dateimanager; kann er nicht geöffnet werden, erscheint ein Fehler.
+4. In der Desktop-App öffnet bei einem Projekt auf diesem Computer ein Link oder ein als Text geschriebener Pfad zu einem Ordner des Worktrees diesen im Dateimanager; kann er nicht geöffnet werden, erscheint ein Fehler.
 5. Klicks mit Zusatztasten (Strg/⌘-Klick, Umschalt-Klick, Mittelklick) und Links außerhalb des Session-Worktrees behalten das normale Linkverhalten.
 
 ## Befehle und Shell-Modus {#commands-shell}

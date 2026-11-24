@@ -184,9 +184,11 @@ const resolveTarget = (href: string, base: string): ResolvedTarget | undefined =
   return { parent: lastSlash < 0 ? "" : resolved.slice(0, lastSlash), name: lastSlash < 0 ? resolved : resolved.slice(lastSlash + 1) }
 }
 
-/** Marks session links naming a worktree folder; the click routing opens them
- * in the system file manager. */
-export const PROJECT_FOLDER_ATTRIBUTE = "data-project-folder"
+// Session links naming a worktree folder; the click routing opens them in the
+// system file manager. Held outside the markup, which authors can write.
+const projectFolderLinks = new WeakSet<Element>()
+
+export const isProjectFolderLink = (anchor: Element) => projectFolderLinks.has(anchor)
 
 /** An entry's kind; names compare case-insensitively under a Windows root. */
 export const entryKind = (entries: DirectoryEntries | undefined, name: string, windows: boolean) => {
@@ -201,62 +203,65 @@ export const entryKind = (entries: DirectoryEntries | undefined, name: string, w
  * candidates that resolve inside the session's worktree and name a file (or a
  * folder, with `folders`) become anchors the shared click routing and link
  * decoration already serve, and with `folders` every link naming a worktree
- * folder carries `PROJECT_FOLDER_ATTRIBUTE`. The container is walked once to
- * warm the directory cache and walked again after the listings land, so a
- * fallback/final html commit between the two walks can never strand a wrap.
- * Fire-and-forget; errors never break rendering. */
+ * folder is recorded for `isProjectFolderLink`. The container is walked once
+ * to warm the directory cache and walked again as each listing lands, so a
+ * slow listing delays only its own links and a fallback/final html commit
+ * between walks can never strand a wrap. Fire-and-forget; errors never break
+ * rendering. */
 export function linkBarePaths(container: ParentNode, options: LinkBarePathsOptions): void {
-  void (async () => {
-    try {
-      const base = options.base.base
-      const anchors = () => options.folders ? [...container.querySelectorAll<HTMLAnchorElement>("a[href]")] : []
-      const parents = new Set<string>()
-      const hrefs = [...walkHits(container).flatMap(hit => hit.candidates.map(candidate => candidate.href)),
-        ...anchors().map(anchor => anchor.getAttribute("href") ?? "")]
-      for (const href of hrefs) {
-        const target = resolveTarget(href, base)
-        if (target) parents.add(target.parent)
-      }
-      if (!parents.size || options.signal.aborted || !container.isConnected) return
-      const listings = new Map(await Promise.all([...parents].map(async parent =>
-        [parent, await directoryEntries(options.instanceId, options.base.directory, parent, { signal: options.signal })] as const)))
-      if (options.signal.aborted || !container.isConnected) return
-      const windows = /^[A-Za-z]:[\\/]/.test(base)
-      const kindOf = (href: string) => {
-        const target = resolveTarget(href, base)
-        return target && entryKind(listings.get(target.parent), target.name, windows)
-      }
+  const base = options.base.base
+  const windows = /^[A-Za-z]:[\\/]/.test(base)
+  const anchors = () => options.folders ? [...container.querySelectorAll<HTMLAnchorElement>("a[href]")] : []
+  const listings = new Map<string, DirectoryEntries>()
+  const kindOf = (href: string) => {
+    const target = resolveTarget(href, base)
+    return target && entryKind(listings.get(target.parent), target.name, windows)
+  }
 
-      // Re-read the container: the markdown pipeline may have replaced its
-      // children while the listings were in flight.
-      let wrapped = false
-      for (const { node, candidates } of walkHits(container)) {
-        const matches = candidates
-          .filter(candidate => { const kind = kindOf(candidate.href); return kind === "file" || (options.folders && kind === "directory") })
-          .sort((left, right) => right.start - left.start)
-        if (!matches.length) continue
-        for (const candidate of matches) {
-          if (candidate.end < node.nodeValue!.length) node.splitText(candidate.end)
-          const target = candidate.start > 0 ? node.splitText(candidate.start) : node
-          const anchor = document.createElement("a")
-          anchor.setAttribute("href", candidate.href)
-          const range = document.createRange()
-          range.setStart(target, 0)
-          range.setEnd(target, candidate.end - candidate.start)
-          range.surroundContents(anchor)
-        }
-        wrapped = true
+  // Re-reads the container: the markdown pipeline may have replaced its
+  // children while listings were in flight.
+  const apply = async () => {
+    if (options.signal.aborted || !container.isConnected) return
+    let wrapped = false
+    for (const { node, candidates } of walkHits(container)) {
+      const matches = candidates
+        .filter(candidate => { const kind = kindOf(candidate.href); return kind === "file" || (options.folders && kind === "directory") })
+        .sort((left, right) => right.start - left.start)
+      if (!matches.length) continue
+      for (const candidate of matches) {
+        if (candidate.end < node.nodeValue!.length) node.splitText(candidate.end)
+        const target = candidate.start > 0 ? node.splitText(candidate.start) : node
+        const anchor = document.createElement("a")
+        anchor.setAttribute("href", candidate.href)
+        const range = document.createRange()
+        range.setStart(target, 0)
+        range.setEnd(target, candidate.end - candidate.start)
+        range.surroundContents(anchor)
       }
-      for (const anchor of anchors()) {
-        anchor.toggleAttribute(PROJECT_FOLDER_ATTRIBUTE, kindOf(anchor.getAttribute("href") ?? "") === "directory")
-      }
-      if (wrapped) {
-        // Loaded dynamically: this module stays importable outside the browser.
-        const { decorateSessionLinks } = await import("./markdown-session-links")
-        decorateSessionLinks(container, options.titles, options.base)
-      }
-    } catch {
-      // Conversion is decoration; it never breaks rendering.
+      wrapped = true
     }
-  })()
+    for (const anchor of anchors()) {
+      if (kindOf(anchor.getAttribute("href") ?? "") === "directory") projectFolderLinks.add(anchor)
+      else projectFolderLinks.delete(anchor)
+    }
+    if (wrapped) {
+      // Loaded dynamically: this module stays importable outside the browser.
+      const { decorateSessionLinks } = await import("./markdown-session-links")
+      decorateSessionLinks(container, options.titles, options.base)
+    }
+  }
+
+  const parents = new Set<string>()
+  for (const href of [...walkHits(container).flatMap(hit => hit.candidates.map(candidate => candidate.href)),
+    ...anchors().map(anchor => anchor.getAttribute("href") ?? "")]) {
+    const target = resolveTarget(href, base)
+    if (target) parents.add(target.parent)
+  }
+  for (const parent of parents) {
+    void directoryEntries(options.instanceId, options.base.directory, parent, { signal: options.signal })
+      .then(entries => { listings.set(parent, entries); return apply() })
+      .catch(() => {
+        // Conversion is decoration; it never breaks rendering.
+      })
+  }
 }
