@@ -279,7 +279,7 @@ pub(super) async fn route(
                     (header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")),
                     (header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'; sandbox")),
                 ],
-                crate::shared::permit_body(bytes.into(), slot),
+                crate::shared::permit_body(bytes.into(), slot, principal.0.clone()),
             )
                 .into_response())
         };

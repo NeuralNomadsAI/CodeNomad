@@ -86,15 +86,29 @@ pub fn abortable_service(
     })
 }
 
-pub fn permit_body(bytes: axum::body::Bytes, slot: tokio::sync::SemaphorePermit<'static>) -> axum::body::Body {
-    axum::body::Body::from_stream(futures_util::stream::unfold((bytes, Some(slot)), |(mut bytes, slot)| async move {
-        if bytes.is_empty() {
-            drop(slot);
-            return None;
-        }
-        let chunk = bytes.split_to(bytes.len().min(64 * 1024));
-        Some((Ok::<_, std::convert::Infallible>(chunk), (bytes, slot)))
-    }))
+pub fn permit_body(
+    bytes: axum::body::Bytes,
+    slot: tokio::sync::SemaphorePermit<'static>,
+    cancel: tokio_util::sync::CancellationToken,
+) -> axum::body::Body {
+    axum::body::Body::from_stream(futures_util::stream::unfold(
+        (bytes, Some(slot), cancel),
+        |(mut bytes, slot, cancel)| async move {
+            if cancel.is_cancelled() {
+                drop(slot);
+                return Some((
+                    Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "session revoked")),
+                    (axum::body::Bytes::new(), None, cancel),
+                ));
+            }
+            if bytes.is_empty() {
+                drop(slot);
+                return None;
+            }
+            let chunk = bytes.split_to(bytes.len().min(64 * 1024));
+            Some((Ok::<_, std::io::Error>(chunk), (bytes, slot, cancel)))
+        },
+    ))
 }
 
 /// Bounds continuous write stalls (a peer whose TCP receive window stays full) without
@@ -123,7 +137,7 @@ impl<T: AsyncRead + Unpin> AsyncRead for WriteStallIo<T> {
 
 impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStallIo<T> {
     fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
@@ -149,7 +163,7 @@ impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStallIo<T>
     }
 
     fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         let this = self.get_mut();

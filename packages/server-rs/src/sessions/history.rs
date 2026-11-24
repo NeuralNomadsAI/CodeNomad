@@ -340,6 +340,7 @@ fn project_history_response(
     reference: bool,
     defer: bool,
     slot: Option<tokio::sync::SemaphorePermit<'static>>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Response {
     let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return blocked("unavailable") };
     let Some(raw) = envelope.output else { return blocked("unavailable") };
@@ -375,7 +376,7 @@ fn project_history_response(
     };
     let length = axum::http::HeaderValue::from(payload.len());
     let response_body = match slot {
-        Some(slot) => crate::shared::permit_body(payload, slot),
+        Some(slot) => crate::shared::permit_body(payload, slot, cancel),
         None => axum::body::Body::from(payload),
     };
     (
@@ -414,35 +415,54 @@ pub async fn handle(
     let input: Option<Value> = serde_json::from_slice(&bytes).ok();
     let input = input.filter(|i| crate::sessions::contracts::valid(schema, i)).ok_or_else(invalid)?;
     let session = input["sessionID"].as_str().ok_or_else(invalid)?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let request = async {
         let placement = match Placement::capture_with_media(&app, &id, session, defer, reference || defer).await {
             Ok(placement) => placement,
             Err((Status::FORBIDDEN, body)) => return (Status::FORBIDDEN, body).into_response(),
             Err(_) => return blocked("unavailable"),
         };
-        match placement.current(&app, &id, session).await {
-            Recheck::Current => {}
-            Recheck::Conflict => return blocked("conflict"),
-            Recheck::Unavailable => return blocked("unavailable"),
-        }
-        // Reference: `desktopPluginsReady` for the session's own Location, which
-        // may be a linked worktree the plugin has not served yet.
+        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+        let slot = if defer {
+            let workspace_closed = async {
+                loop {
+                    let notified = app.workspace_closed.notified();
+                    if !placement.operation_current(&app, &id) {
+                        return;
+                    }
+                    notified.await;
+                }
+            };
+            let permit = tokio::select! {
+                biased;
+                _ = app.native.wait_retired(&placement.endpoint) => return blocked("unavailable"),
+                _ = workspace_closed => return blocked("unavailable"),
+                permit = DEFER_SLOTS.acquire() => match permit {
+                    Ok(permit) => permit,
+                    Err(_) => return blocked("unavailable"),
+                }
+            };
+            Some(permit)
+        } else {
+            None
+        };
+        // Acquire the deferred permit before final revalidation so a closed project or
+        // retired daemon cannot dispatch an RPC after waiting for a slot.
         let directory = match placement.ready(&app, &id, session).await {
             Ok(directory) => directory,
             Err(Recheck::Conflict) => return blocked("conflict"),
             Err(_) => return blocked("unavailable"),
         };
-        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
-        let slot = if defer {
-            let Ok(permit) = DEFER_SLOTS.acquire().await else { return blocked("unavailable") };
-            Some(permit)
-        } else {
-            None
-        };
+        if !placement.operation_current(&app, &id) {
+            return blocked("unavailable");
+        }
         let rpc_limit = 24 * 1024 * 1024 + if defer { 64 * 1024 } else { 0 };
+        let rpc_timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if rpc_timeout.is_zero() {
+            return blocked("unavailable");
+        }
         let Ok((mut status, mut body)) =
-            rpc_with_limit(&app, &placement.endpoint, directory, method, &input, Duration::from_secs(10), rpc_limit)
-                .await
+            rpc_with_limit(&app, &placement.endpoint, directory, method, &input, rpc_timeout, rpc_limit).await
         else {
             return blocked("unavailable");
         };
@@ -456,16 +476,20 @@ pub async fn handle(
                     Recheck::Conflict => return blocked("conflict"),
                     Recheck::Unavailable => return blocked("unavailable"),
                 }
-                let Ok(fallback) = rpc(&app, &placement.endpoint, directory, "outline", &input).await else {
+                let fallback_timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+                let Ok(fallback) =
+                    rpc_with_timeout(&app, &placement.endpoint, directory, "outline", &input, fallback_timeout).await
+                else {
                     return blocked("unavailable");
                 };
                 (status, body) = fallback;
             }
         }
+        let cancel = principal.0.clone();
         let response = if defer && body.len() > 32 * 1024 {
             let (action, id, session) = (action.clone(), id.clone(), session.to_owned());
             match tokio::task::spawn_blocking(move || {
-                project_history_response(status, body, &action, &id, &session, reference, defer, slot)
+                project_history_response(status, body, &action, &id, &session, reference, defer, slot, cancel)
             })
             .await
             {
@@ -473,7 +497,7 @@ pub async fn handle(
                 Err(_) => return blocked("unavailable"),
             }
         } else {
-            project_history_response(status, body, &action, &id, session, reference, defer, slot)
+            project_history_response(status, body, &action, &id, session, reference, defer, slot, cancel)
         };
         match placement.current(&app, &id, session).await {
             Recheck::Current => {}
@@ -488,7 +512,7 @@ pub async fn handle(
     tokio::select! {
         biased;
         _ = principal.0.cancelled() => Err(crate::auth::unauthorized()),
-        result = tokio::time::timeout(Duration::from_secs(15),request) => Ok(result.unwrap_or_else(|_| blocked("unavailable"))),
+        result = tokio::time::timeout_at(deadline, request) => Ok(result.unwrap_or_else(|_| blocked("unavailable"))),
     }
 }
 
