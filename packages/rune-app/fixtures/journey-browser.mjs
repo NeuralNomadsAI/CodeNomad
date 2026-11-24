@@ -22,11 +22,15 @@ export async function journeyBrowser(host, web, report, executablePath){
   }finally{await http.dispose()}
   const rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
   const cookieHeader=(storageState?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
-  const owned=await launchOwnedChromium({executablePath,profile,env:assertPrivateChild(env),origin,targetPid:rustPid})
+  const browserStorageState={
+    ...storageState,
+    cookies:(storageState?.cookies??[]).map(c=>({...c,value:'fixture-relay-placeholder'})),
+  }
+  const owned=await launchOwnedChromium({executablePath,profile,env:assertPrivateChild(env),origin,targetPid:rustPid,injectCookie:cookieHeader})
   const {browser}=owned
   report.chromiumPID=owned.pid
   try{
-    const context=await browser.newContext({...mobileContext(browser),storageState,serviceWorkers:'block',colorScheme:'light'})
+    const context=await browser.newContext({...mobileContext(browser),storageState:browserStorageState,serviceWorkers:'block',colorScheme:'light'})
     const refused=[], errors=[]
     report.refused=refused
     const reads=await guardJourney(context,{origin,project,web,refused,attestedFetch:rustFetch,cookieHeader})

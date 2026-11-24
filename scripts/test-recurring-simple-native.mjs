@@ -130,15 +130,16 @@ async function waitForMissions() {
 let attestedFetch, managerRelay, managerEndpoint
 async function start() {
   output = ""
+  let stdout = ""
   await managerRelay?.close().catch(() => {})
   managerRelay = undefined; managerEndpoint = undefined
   await attestedFetch?.close().catch(() => {})
   attestedFetch = undefined
   child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { env, cwd: root, windowsHide: true })
   closed = new Promise(resolve => child.once("close", resolve))
-  child.stdout.on("data", data => { output += data }); child.stderr.on("data", data => { output += data })
-  await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output))
-  endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password: env.OPENCODE_SERVER_PASSWORD } }
+  child.stdout.on("data", data => { stdout += data; output += data }); child.stderr.on("data", data => { output += data })
+  await until(() => /^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m.test(stdout))
+  endpoint = { url: stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)[1], auth: { type: "basic", username: "opencode", password: env.OPENCODE_SERVER_PASSWORD } }
   const pid = await fixtureChildPid(child)
   assert.ok(Number.isSafeInteger(pid) && pid > 0, "Expected owned service PID")
   const port = Number(new URL(endpoint.url).port)
@@ -203,8 +204,7 @@ async function closeBackend() {
   await plugin?.stop(); plugin = undefined
   await removeBridge?.(); removeBridge = undefined
   await bridge?.close(); bridge = undefined
-  await manager?.shutdown(); manager = undefined // Drops connections only; never stops the owned service.
-  await managerRelay?.close().catch(() => {}); managerRelay = undefined; managerEndpoint = undefined
+  await manager?.shutdown(); manager = undefined // Drops connections only; never stops the owned service or its relay.
 }
 const location = { directory: project }
 const rpc = () => client.rpc(CODENOMAD_MISSIONS_RPC)

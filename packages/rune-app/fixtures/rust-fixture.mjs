@@ -50,10 +50,11 @@ const requests = []
 const commands = []
 let attachmentPrompts=0, attachmentReads=0, projectionReads=0
 let turn = 0
+const backendPassword=randomUUID(),nativePassword=randomUUID()
 const upstream = createServer(async(req,res)=>{
   const url = new URL(req.url,'http://127.0.0.1')
   requests.push(`${req.method} ${url.pathname}`)
-  assert.equal(req.headers.authorization,`Basic ${Buffer.from('opencode:fixture-native').toString('base64')}`)
+  assert.equal(req.headers.authorization,`Basic ${Buffer.from(`opencode:${nativePassword}`).toString('base64')}`)
   let raw=''; for await(const chunk of req) { raw+=chunk; assert(raw.length<262144) }
   const json = value => { res.setHeader('content-type','application/json');res.end(JSON.stringify(value)) }
   if(url.pathname==='/api/event') {
@@ -156,8 +157,8 @@ const upstream = createServer(async(req,res)=>{
 })
 await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 // Build a minimal child environment: user config, credentials and daemon overrides never inherit.
-Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,
-  CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,
+Object.assign(env,{CNRS_SERVER_PASSWORD:backendPassword,CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,
+  CNRS_FIXTURE_PASSWORD:nativePassword,CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,
   CODENOMAD_REMOTE_CONTROL:'disabled',RUST_BACKTRACE:'1'})
 const server=spawn(serverBinary,
   [path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
@@ -170,7 +171,7 @@ try {
     assert(Date.now()<end && server.exitCode===null,`Rust startup: ${log}`)
     origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,100))
   }
-  const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'fixture-backend'})})
+  const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:backendPassword})})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await fetch(`${origin}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({path:project})})
@@ -207,7 +208,7 @@ try {
   const run = (stage = {}) => {
     child=spawn(clientBinary,runeArgs,{
       cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
-        RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0',...(linked?{RUNE_HISTORY_WORKTREE:'1'}:{}),...stage},
+        RUNE_SESSION:session,RUNE_PASSWORD:backendPassword,RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0',...(linked?{RUNE_HISTORY_WORKTREE:'1'}:{}),...stage},
     })
     return new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
   }
@@ -227,7 +228,7 @@ try {
   if(attachments&&result===0) {
     child=spawn(clientBinary,runeArgs,{
       cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
-        RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_ATTACHMENT_STAGE:'reopen'},
+        RUNE_SESSION:session,RUNE_PASSWORD:backendPassword,RUNE_LOCALE:'fr',RUNE_ATTACHMENT_STAGE:'reopen'},
     })
     result=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
   }

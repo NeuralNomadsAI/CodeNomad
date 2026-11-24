@@ -176,6 +176,7 @@ async function stopOwnedTree(child, stopped, graceMs, { close, group, startedBy 
 }
 
 export async function stopFixtureChild(child, stopped, graceMs = 1_000, forceMs = 2_000, options = {}) {
+  child.abortGate?.()
   let treeError
   const isJob = jobs.has(child)
   if (isJob) {
@@ -227,6 +228,7 @@ export async function stopFixtureHandle(child, stopped, graceMs = 1_000, forceMs
   child.stdout?.destroy()
   child.stderr?.destroy()
   child.stdin?.destroy()
+  child.stdio?.[3]?.destroy?.()
   child.unref()
   throw new Error(`Fixture-owned child ${child.pid} did not exit after forced termination`)
 }

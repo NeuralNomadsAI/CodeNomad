@@ -1,12 +1,14 @@
+#[cfg(not(target_os = "linux"))]
+use std::path::Path;
 use std::{
     collections::{HashMap, HashSet},
     io,
     os::unix::process::CommandExt,
-    path::Path,
     process::{Child, Command},
 };
 pub(super) struct Family {
     leader: i32,
+    include_subreaper_children: bool,
 }
 impl Family {
     pub fn prepare(command: &mut Command) {
@@ -15,7 +17,13 @@ impl Family {
     pub fn adopt(child: &mut Child) -> io::Result<Self> {
         let leader = i32::try_from(child.id())
             .map_err(|_| io::Error::other("Invalid process group leader"))?;
-        Ok(Self { leader })
+        Ok(Self {
+            leader,
+            include_subreaper_children: false,
+        })
+    }
+    pub fn track_subreaper(&mut self) {
+        self.include_subreaper_children = true;
     }
     pub fn empty(&self) -> io::Result<bool> {
         // SAFETY: kill with signal zero only queries our spawn's process group.
@@ -27,7 +35,7 @@ impl Family {
         if !group_empty {
             return Ok(false);
         }
-        Ok(descendants_of(self.leader).is_empty())
+        Ok(descendants_of(self.leader, self.include_subreaper_children).is_empty())
     }
     pub fn terminate(&self) -> io::Result<()> {
         self.signal(libc::SIGKILL)
@@ -37,7 +45,7 @@ impl Family {
     }
     fn signal(&self, sig: libc::c_int) -> io::Result<()> {
         let mut first_err = None;
-        for pid in descendants_of(self.leader) {
+        for pid in descendants_of(self.leader, self.include_subreaper_children) {
             // SAFETY: pid was enumerated as a descendant of our own spawned process group/root.
             if unsafe { libc::kill(pid, sig) } != 0 {
                 let err = io::Error::last_os_error();
@@ -66,11 +74,14 @@ impl Family {
     }
 }
 
-fn descendants_of(root: i32) -> Vec<i32> {
+fn descendants_of(root: i32, include_subreaper_children: bool) -> Vec<i32> {
     let self_pid = std::process::id() as i32;
     let rows = process_table();
     let mut children_by_parent: HashMap<i32, Vec<i32>> = HashMap::new();
     let mut seeds = vec![root];
+    if include_subreaper_children {
+        seeds.push(self_pid);
+    }
     for &(pid, ppid, pgid) in &rows {
         if pid <= 0 || pid == self_pid {
             continue;

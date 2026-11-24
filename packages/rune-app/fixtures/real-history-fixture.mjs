@@ -6,7 +6,7 @@ import {createServer,request} from 'node:http'
 import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
 import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
-import {createAttestedFetch,createAttestedHttpAgent,createClientPidGate,relayTarget} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedHttpAgent,createClientPidGate,RELAY_PLACEHOLDER_PASSWORD,relayTarget} from '../../../scripts/native-fixture-http.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
@@ -86,6 +86,25 @@ try{
         res.setHeader('content-type','application/json');res.end(JSON.stringify(value));return
       }
       if(req.method==='POST'&&target.pathname===`/workspaces/${workspace.id}/instance/api/session/${manifest.sessionID}/prompt`)stats.prompts++
+      if(req.method==='POST'&&target.pathname==='/api/auth/login'){
+        const chunks=[];let total=0
+        req.resume()
+        for await(const chunk of req){total+=chunk.length;assert(total<65536,'login body too large');chunks.push(chunk)}
+        const payload=JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        if(payload?.password===RELAY_PLACEHOLDER_PASSWORD)payload.password=rustPassword
+        const body=Buffer.from(JSON.stringify(payload))
+        const headers={...req.headers,host:target.host,'content-length':String(body.length)}
+        delete headers['transfer-encoding']
+        const up=request(target,{agent:rustAgent,method:req.method,headers},response=>{
+          res.writeHead(response.statusCode,response.headers)
+          response.on('close',()=>{if(!response.complete)res.destroy()})
+          response.on('error',()=>res.destroy())
+          response.pipe(res)
+        })
+        up.on('error',()=>{if(!res.headersSent)res.writeHead(503);res.end()});res.on('close',()=>up.destroy())
+        up.end(body)
+        return
+      }
       const up=request(target,{agent:rustAgent,method:req.method,headers:{...req.headers,host:target.host}},async response=>{
         res.writeHead(response.statusCode,response.headers)
         if(target.pathname!=='/api/events'){
@@ -123,7 +142,7 @@ try{
   const base=`http://127.0.0.1:${proxy.address().port}/`
   child=launchFixture(clientBinary,['--probe-real-history'],
     {cwd:manifest.profile,env:{...native.runtimeEnv,RUNE_BACKEND:base,
-      RUNE_WORKSPACE:workspace.id,RUNE_SESSION:manifest.sessionID,RUNE_PASSWORD:rustPassword,RUNE_TEST_CONTROL:`${base}__real__/`},
+      RUNE_WORKSPACE:workspace.id,RUNE_SESSION:manifest.sessionID,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_CONTROL:`${base}__real__/`},
       redact:[native.password,rustPassword]})
   clientGate.allow(child.pid(),child.closed)
   result=await Promise.race([child.closed,delay(120000,124,{ref:false})])

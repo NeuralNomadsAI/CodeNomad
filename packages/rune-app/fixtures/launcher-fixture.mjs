@@ -6,7 +6,6 @@ import {spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixtur
 import {promisify} from 'node:util'
 import {mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
-import {request} from 'playwright'
 import path from 'node:path'
 import {FixtureStore} from './fixture-store.mjs'
 import {seedHistory,historyResponse,historyPreview} from './launcher-history.mjs'
@@ -217,11 +216,12 @@ if(linked&&!webSearch){
 const mobile=webMobile?webLiveFixture({stores,project,streams,compare}):null
 if(withTools)stores.get('ses_existing').rows[1].content.push({type:'tool',id:'historical-read',name:'read',state:{status:'completed',input:{file:'synthetic.rs'},content:[{type:'text',text:'fn historical() {}'}]}})
 const control=controls?controlsFixture({records,stores,streams,project,stats}):null
+const backendPassword=randomUUID(),nativePassword=randomUUID()
 const upstream=createServer(async(req,res)=>{
   try {
     const url=new URL(req.url,'http://127.0.0.1');requests.push(`${req.method} ${url.pathname}`)
     if(filesState||gitPanel)assert(!(url.pathname==='/api/session'&&req.method==='POST')&&!url.pathname.endsWith('/prompt'),'Read-only native session fixture')
-    assert.equal(req.headers.authorization,`Basic ${Buffer.from('opencode:fixture-native').toString('base64')}`)
+    assert.equal(req.headers.authorization,`Basic ${Buffer.from(`opencode:${nativePassword}`).toString('base64')}`)
     let raw='';for await(const chunk of req){raw+=chunk;assert(raw.length<262144)}
     const json=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data))}
     if(useTs&&url.pathname==='/api/info')return json({version:'2.3.2',pid:process.pid})
@@ -421,7 +421,7 @@ const upstream=createServer(async(req,res)=>{
 await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
-Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
+Object.assign(env,{CNRS_SERVER_PASSWORD:backendPassword,CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:nativePassword,CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
@@ -441,7 +441,7 @@ async function signIn(origin){
   await http?.dispose()
   const serverPid=await host.pid()
   assert(Number.isSafeInteger(serverPid)&&serverPid>0,'Owned fixture server PID unavailable')
-  http=await signInFixture(origin,'fixture-backend',serverPid)
+  http=await signInFixture(origin,backendPassword,serverPid)
 }
 async function restartWeb(previous,uiOrigin){
   const {serverId}=await (await previous.get('/api/meta')).json()
@@ -472,7 +472,7 @@ try{
     for(const stage of ['prepare','resume','verify']){
       if(restoreFileDrafts&&stage==='verify')await writeFile(path.join(project,'draft.txt'),'external')
       clientLines=''
-      client=spawnFixtureChild(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
+      client=spawnFixtureChild(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:backendPassword,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
       client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
       const timer=setTimeout(()=>client.kill(),120000)
       try{result=await new Promise((resolve,reject)=>{client.on('close',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
@@ -489,7 +489,7 @@ try{
   }else {
     if(gitPanel)await signIn(origin)
     const args=gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'
-    client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
+    client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:backendPassword,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
@@ -531,7 +531,7 @@ try{
     for(const key of ['readerHiddenLive','readerSuspensionRetained','readerQueuedCloseAndReplacementFenced','readerClosed'])assert.equal(filesProof[key],true)
     if(documentState)assert.deepEqual(filesProof.document,{cancelled:true,versionConflict:true,saved:documentDraft,draftRetained:true,lateEditRejected:true,discarded:true,interfaceQualified:false})
     assert(!requests.includes('POST /api/session'));assert(!requests.some(r=>r.endsWith('/prompt')))
-    http=await request.newContext({baseURL:origin});assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200);assert.deepEqual(await (await http.get('/api/workspaces')).json(),[])
+    await signIn(origin);assert.deepEqual(await (await http.get('/api/workspaces')).json(),[])
   }
   if(!web&&!controls&&!workspaceClaims&&!pendingOpen&&!filesState&&!gitPanel)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
   if(restoreState){assert.deepEqual(restoreStages.map(s=>s.stage),['prepare','resume','verify']);assert.deepEqual(restorePrompts.map(p=>p.sessionID),['ses_created_2','ses_created_1']);for(const id of ['ses_created_1','ses_created_2']){const rows=stores.get(id).rows;assert.deepEqual(rows.map(r=>r.type),['user','assistant']);assert(rows[1].time.completed)}}

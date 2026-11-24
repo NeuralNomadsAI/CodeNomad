@@ -61,7 +61,7 @@ function familyPeers() {
     const out = execFileSync(psBin, ["-ax", "-o", "pid=,pgid=,ppid=,comm="], { encoding: "utf8", timeout: 1000 })
     psOk = true
     const byParent = new Map()
-    const seeds = []
+    const seeds = [process.pid]
     if (child.pid) seeds.push(child.pid)
     for (const line of out.split(/\r?\n/)) {
       const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)

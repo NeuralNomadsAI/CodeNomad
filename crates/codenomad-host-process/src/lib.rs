@@ -158,6 +158,10 @@ impl OwnedProcess {
         #[cfg(windows)]
         return self.child.try_wait();
     }
+    #[cfg(unix)]
+    pub fn track_subreaper(&mut self) {
+        self.family.track_subreaper();
+    }
     /// Includes remaining owned descendants after the direct child has exited.
     pub fn family_is_empty(&self) -> io::Result<bool> {
         self.family.empty()

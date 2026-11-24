@@ -1,15 +1,19 @@
 // node --import tsx scripts/test-native-schedule-installation.mjs <isolated-cli> <fresh-scratch>
 import assert from "node:assert/strict"
-import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
-import { createAttestedFetch, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, resolveWorktreePackage, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { pathToFileURL } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
-import { build } from "esbuild"
-import { OpenCode } from "@opencode/client"
-import { Service } from "@opencode/client/service"
+const esbuildBinSpec = process.platform === "win32"
+  ? `@esbuild/win32-${process.arch}/esbuild.exe`
+  : `@esbuild/${process.platform}-${process.arch}/bin/esbuild`
+process.env.ESBUILD_BINARY_PATH = fileURLToPath(resolveWorktreePackage(esbuildBinSpec))
+const { build } = await import(resolveWorktreePackage("esbuild"))
+const { OpenCode } = await import(resolveWorktreePackage("@opencode/client"))
+const { Service } = await import(resolveWorktreePackage("@opencode/client/service"))
 import { nativePluginBuild } from "../packages/server/scripts/native-plugin-build.mjs"
 import { installDesktopPluginPresence } from "../packages/server/src/opencode/desktop-plugin-installation.ts"
 
@@ -134,6 +138,6 @@ try {
 } finally {
   await attestedFetch?.close().catch(() => {})
   await stopPresence?.()
-  if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
-  await closed
+  if (child && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, closed)
+  else await closed
 }

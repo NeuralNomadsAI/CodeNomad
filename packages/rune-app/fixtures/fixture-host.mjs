@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import {writeFile} from 'node:fs/promises'
 import {setTimeout as delay} from 'node:timers/promises'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 import {createAttestedFetch,createStreamRedactor,redactSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
@@ -136,21 +137,26 @@ export async function signInFixture(origin,password,targetPid){
         body=JSON.stringify(options.data)
       }
       const res=await attested(url,{method,headers,body,signal:AbortSignal.timeout(options.timeout??15000)})
+      const rawBody=Buffer.from(await res.arrayBuffer())
       return {
         status:()=>res.status,
         ok:()=>res.ok,
         headers:()=>Object.fromEntries(res.headers.entries()),
-        text:()=>res.text(),
-        json:()=>res.json(),
-        body:async()=>Buffer.from(await res.arrayBuffer()),
+        text:async()=>rawBody.toString('utf8'),
+        json:async()=>JSON.parse(rawBody.toString('utf8')),
+        body:async()=>rawBody,
       }
     }
     return {
       get:(pathname,options)=>call('GET',pathname,options),
       post:(pathname,options)=>call('POST',pathname,options),
       put:(pathname,options)=>call('PUT',pathname,options),
+      patch:(pathname,options)=>call('PATCH',pathname,options),
       delete:(pathname,options)=>call('DELETE',pathname,options),
-      storageState:async()=>state,
+      storageState:async(options={})=>{
+        if(options?.path)await writeFile(options.path,JSON.stringify(state,null,2))
+        return state
+      },
       dispose:async()=>{await attested.close()},
     }
   }catch(error){

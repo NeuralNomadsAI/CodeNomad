@@ -342,7 +342,8 @@ export async function acquireProfileLock(lease){
       if(closed||!acquired)return
       trackedSupervisorPid=supervisorPid
       withLeaseDb(dbPath,db=>{
-        db.prepare('UPDATE lease SET supervisor_pid = ?, updated_at = ? WHERE id = 1 AND nonce = ?').run(supervisorPid,Date.now(),nonce)
+        const info=db.prepare('UPDATE lease SET supervisor_pid = ?, updated_at = ? WHERE id = 1 AND nonce = ?').run(supervisorPid,Date.now(),nonce)
+        assert.equal(info.changes,1,'Profile lease lost before recording supervisor PID')
       },5000)
       await writeFile(lease,JSON.stringify({pid:process.pid,supervisorPid:trackedSupervisorPid,daemonPid:trackedDaemonPid,nonce})+'\n').catch(()=>{})
     },
@@ -350,7 +351,8 @@ export async function acquireProfileLock(lease){
       if(closed||!acquired)return
       trackedDaemonPid=daemonPid
       withLeaseDb(dbPath,db=>{
-        db.prepare('UPDATE lease SET daemon_pid = ?, updated_at = ? WHERE id = 1 AND nonce = ?').run(daemonPid,Date.now(),nonce)
+        const info=db.prepare('UPDATE lease SET daemon_pid = ?, updated_at = ? WHERE id = 1 AND nonce = ?').run(daemonPid,Date.now(),nonce)
+        assert.equal(info.changes,1,'Profile lease lost before recording daemon PID')
       },5000)
       await writeFile(lease,JSON.stringify({pid:process.pid,supervisorPid:trackedSupervisorPid,daemonPid:trackedDaemonPid,nonce})+'\n').catch(()=>{})
     },

@@ -42,7 +42,7 @@ export async function pendingOpenFixture({origin,profile,project,env,clientBinar
     await new Promise(r=>proxy.listen(0,'127.0.0.1',r))
     const state=path.join(profile,`pending-state-${mode}`);await mkdir(state,{recursive:true})
     let output='',lines='',proof
-    const client=spawn(clientBinary,['--probe-pending-open'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`http://127.0.0.1:${proxy.address().port}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:state,RUNE_TEST_PENDING_GATE:gate,RUNE_TEST_PENDING_CASE:mode}})
+    const client=spawn(clientBinary,['--probe-pending-open'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`http://127.0.0.1:${proxy.address().port}/`,RUNE_PASSWORD:env.CNRS_SERVER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:state,RUNE_TEST_PENDING_GATE:gate,RUNE_TEST_PENDING_CASE:mode}})
     client.stdout.on('data',chunk=>{
       output+=chunk;process.stdout.write(chunk);lines+=chunk
       for(let at;(at=lines.indexOf('\n'))>=0;){const line=lines.slice(0,at);lines=lines.slice(at+1);let json;try{json=JSON.parse(line)}catch{continue}

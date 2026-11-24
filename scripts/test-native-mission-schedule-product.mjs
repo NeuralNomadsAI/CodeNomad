@@ -283,7 +283,9 @@ async function journey(kind) {
       try { return await client.server.info({ signal }) } catch { return false }
     }, 40000)
     assert.equal(info.version, cliVersion); assert.equal(info.pid, pid)
-    managerRelay = await createAttestedRelay(origin, pid, { requireClientAttestation: true, injectAuthorization: headers.Authorization })
+    const authHeader = headers.authorization ?? headers.Authorization
+    assert(authHeader, "Expected OpenCode authorization header")
+    managerRelay = await createAttestedRelay(origin, pid, { requireClientAttestation: true, injectAuthorization: authHeader })
     managerRelay.allowClientPid(process.pid)
     managerEndpoint = { url: managerRelay.origin, auth: { type: "basic", username: endpoint.auth?.username ?? "opencode", password: RELAY_PLACEHOLDER_PASSWORD } }
     if (endpoint.auth?.password) credentialsChild = child
@@ -305,7 +307,9 @@ async function journey(kind) {
     isLoopbackRequest: request => ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.ip), getCookieName: () => "session",
     getSessionFromHeaders: headers => headers.cookie === cookie ? human : null, getSessionFromRequest: request => request.headers.cookie === cookie ? human : null }
   secrets.add(cookie); secrets.add(human.sessionId)
+  let appFetch
   const closeBackend = async () => {
+    await appFetch?.close().catch(() => {}); appFetch = undefined
     await managerRelay?.close().catch(() => {}); managerRelay = undefined; managerEndpoint = undefined
     await attestedFetch?.close().catch(() => {}); attestedFetch = undefined
     await plugin?.stop(); plugin = undefined
@@ -315,7 +319,8 @@ async function journey(kind) {
     client = undefined; endpoint = undefined
   }
   const http = async (suffix, payload, allowPending = false) => {
-    const response = await fetch(`${baseURL}/api/workspaces/${workspace.id}/missions${suffix}`, { method: "POST", headers: { cookie, "content-type": "application/json" },
+    assert(appFetch, "Expected attested Fastify HTTP client")
+    const response = await appFetch(`${baseURL}/api/workspaces/${workspace.id}/missions${suffix}`, { method: "POST", headers: { cookie, "content-type": "application/json" },
       body: JSON.stringify(payload), signal: AbortSignal.timeout(95_000) })
     const raw = await response.text()
     let body
@@ -489,6 +494,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       scheduleSettingsActivation: new NativeScheduleSettingsActivation(controls, manager) })
     registerAutomationPluginRoute(app, { workspaceManager: manager, worktreeDeletionFence: fence, authManager: auth, settings, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
     await app.listen({ host: "127.0.0.1", port: 0 }); baseURL = `http://127.0.0.1:${app.server.address().port}`; assert.notEqual(app.server.address().port, 28894)
+    appFetch = createAttestedFetch(baseURL, app.server.address().port, process.pid)
     registration.url = `${baseURL}/api/opencode-plugin/automation`; removeBridge = await publishAutomationBridge(registration)
     const legacy = values["legacy-bundle"]
     plugin = controlTrace ? new DesktopPluginLifecycle("missions", () => readFile(controlTrace.file))

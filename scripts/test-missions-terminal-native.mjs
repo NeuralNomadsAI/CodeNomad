@@ -82,13 +82,14 @@ async function until(predicate, label) {
 }
 async function start() {
   output = ""
+  let stdout = ""
   await attestedFetch?.close().catch(() => {})
   attestedFetch = undefined
   child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env, windowsHide: true })
   stopped = new Promise(resolve => child.once("close", resolve))
-  child.stdout.on("data", data => { output += data }); child.stderr.on("data", data => { output += data })
-  await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output), "private listen")
-  const baseUrl = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0]
+  child.stdout.on("data", data => { stdout += data; output += data }); child.stderr.on("data", data => { output += data })
+  await until(() => /^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m.test(stdout), "private listen")
+  const baseUrl = stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)[1]
   const pid = await fixtureChildPid(child)
   assert.ok(Number.isSafeInteger(pid) && pid > 0, "Expected owned child PID")
   const port = Number(new URL(baseUrl).port)

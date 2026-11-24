@@ -6,7 +6,7 @@ import {createServer} from 'node:http'
 import path from 'node:path'
 import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
 import {createAttestedRelay,fixtureFetch,redactSecrets,RELAY_PLACEHOLDER_PASSWORD} from '../../../scripts/native-fixture-http.mjs'
-import {assertNoSystemOpenCodeConfig, attestNative} from './live-access.mjs'
+import {acquireProfileLock, assertNoSystemOpenCodeConfig, attestNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {launchFixture,onFixtureSignal,rustOrigin} from './fixture-host.mjs'
 
@@ -60,9 +60,10 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
   const profile=await mkdtemp(privatePath(path.join(runDirectory,'trial-rune-journey-')))
   const project=path.join(profile,'project')
   const privatePassword=randomUUID(), password=randomUUID(), marker=randomUUID()
-  let native, server, pruning, model, attested, nativeRelay
+  let lock, native, server, pruning, model, attested, nativeRelay
   const secrets=[privatePassword,password,marker]
   try{
+    lock=await acquireProfileLock(path.join(profile,'running.lock'))
     await mkdir(project)
     const env=await privateEnvironment(profile)
     env.GIT_CONFIG_NOSYSTEM='1'
@@ -81,7 +82,16 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
     const programData=path.join(profile,'ProgramData')
     await Promise.all([mkdir(config),mkdir(programData)])
     const {preparePruning}=await import('../../../scripts/perf/pruning.mjs')
-    pruning=await preparePruning(profile,config,env)
+    pruning=await preparePruning(profile,config,env,{
+      async onBuilderSpawn({supervisorPid,childPid}){
+        assert(Number.isSafeInteger(supervisorPid)&&supervisorPid>0,'Builder supervisor PID unavailable')
+        await lock.setSupervisorPid(supervisorPid)
+        void Promise.resolve(childPid).then(pid=>{
+          if(Number.isSafeInteger(pid)&&pid>0)void lock.setDaemonPid(pid)
+        },()=>{})
+      },
+    })
+    await lock.setSupervisorPid(null);await lock.setDaemonPid(null)
     const ownedNative={
       OPENCODE_TEST_HOME:env.HOME,OPENCODE_CONFIG_DIR:config,
       OPENCODE_DB:path.join(profile,'opencode.db'),OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_PROJECT_CONFIG:'1',
@@ -94,17 +104,26 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
           settings:{baseURL:`http://127.0.0.1:${model.port}/v1`,apiKey:marker},models:{journey:{}}}},
       }),
     }
-    native=launchFixture(await realpath(cli),['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,redact:[privatePassword,password,marker],env:assertPrivateChild({
+    native=launchFixture(await realpath(cli),['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,gate:true,redact:[privatePassword,password,marker],env:assertPrivateChild({
       ...env,ProgramData:programData,
       npm_config_userconfig:path.join(profile,'empty.npmrc'),npm_config_globalconfig:path.join(profile,'empty-global.npmrc'),
       npm_config_cache:path.join(profile,'npm-cache'),
       ...ownedNative,
     },ownedNative)})
+    try{
+      assert(Number.isSafeInteger(native.child.pid)&&native.child.pid>0,'Native supervisor PID unavailable')
+      await lock.setSupervisorPid(native.child.pid)
+    }catch(error){
+      native.abortGate()
+      throw error
+    }
+    native.releaseGate()
     const daemon=await native.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)?.[1])
     assert.notEqual(new URL(daemon).port,'4096','Default OpenCode port is forbidden')
     const authorization=`Basic ${Buffer.from(`opencode:${privatePassword}`).toString('base64')}`
     const pid=await native.pid()
     assert(Number.isSafeInteger(pid)&&pid>0,'Private OpenCode child PID unavailable')
+    await lock.setDaemonPid(pid)
     const untrackSignalCleanup=onFixtureSignal(async()=>{
       for(const [name,proc] of [['rust',server],['opencode',native]]){
         if(proc)try{await writeFile(path.join(report.output,`${name}.log`),redactSecrets(proc.output(),secrets))}catch{}
@@ -150,6 +169,7 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
       await settle(()=>attested?.close())
       await settle(()=>pruning?.close())
       await settle(()=>native?.stop())
+      await settle(()=>lock?.close())
       await settle(()=>model?.close())
       for(const [name,process] of [['rust',server],['opencode',native]]){
         if(process)await settle(()=>writeFile(path.join(report.output,`${name}.log`),

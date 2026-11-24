@@ -239,11 +239,46 @@ fn run() -> io::Result<i32> {
         }
     }
     if gate_stdin {
-        use std::io::Read;
-        let mut token = [0u8; 1];
-        let mut stdin = io::stdin().lock();
-        if stdin.read(&mut token).unwrap_or(0) != 1 || token[0] != b'G' {
-            return Ok(1);
+        #[cfg(unix)]
+        {
+            let mut pfd = libc::pollfd {
+                fd: 0,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            loop {
+                if STOP_REQUESTED.load(std::sync::atomic::Ordering::SeqCst)
+                    || parent.as_ref().is_some_and(ParentWatch::exited)
+                {
+                    return Ok(1);
+                }
+                // SAFETY: poll on stdin descriptor 0 with a bounded 10ms timeout.
+                let ready = unsafe { libc::poll(&mut pfd, 1, 10) };
+                if ready > 0 {
+                    let mut token = [0u8; 1];
+                    // SAFETY: fd 0 is readable/closed; read exactly 1 byte into stack buffer.
+                    let n = unsafe { libc::read(0, token.as_mut_ptr().cast(), 1) };
+                    if n != 1 || token[0] != b'G' {
+                        return Ok(1);
+                    }
+                    break;
+                } else if ready < 0 {
+                    let err = io::Error::last_os_error();
+                    if err.kind() == io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    return Ok(1);
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            use std::io::Read;
+            let mut token = [0u8; 1];
+            let mut stdin = io::stdin().lock();
+            if stdin.read(&mut token).unwrap_or(0) != 1 || token[0] != b'G' {
+                return Ok(1);
+            }
         }
     }
     let program = args
@@ -283,6 +318,8 @@ fn run() -> io::Result<i32> {
             report_pid(pid, pid_file.as_ref());
         })?
     };
+    #[cfg(unix)]
+    child.track_subreaper();
     let pause = Duration::from_millis(10);
     let status = loop {
         if let Some(status) = child.try_wait()? {

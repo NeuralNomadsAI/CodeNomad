@@ -1,15 +1,20 @@
 // node scripts/test-native-schedule-provider-registration.mjs <isolated-cli> <fresh-scratch>
 import assert from "node:assert/strict"
-import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
-import { createAttestedFetch, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { createAttestedFetch, resolveWorktreePackage, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
-import { build } from "esbuild"
-import { OpenCode } from "@opencode/client"
-import { Service } from "@opencode/client/service"
+const esbuildBinSpec = process.platform === "win32"
+  ? `@esbuild/win32-${process.arch}/esbuild.exe`
+  : `@esbuild/${process.platform}-${process.arch}/bin/esbuild`
+process.env.ESBUILD_BINARY_PATH = fileURLToPath(resolveWorktreePackage(esbuildBinSpec))
+const { build } = await import(resolveWorktreePackage("esbuild"))
+const { OpenCode } = await import(resolveWorktreePackage("@opencode/client"))
+const { Service } = await import(resolveWorktreePackage("@opencode/client/service"))
 import { nativePluginBuild } from "../packages/server/scripts/native-plugin-build.mjs"
 
 const [cli, root] = process.argv.slice(2)
@@ -153,8 +158,8 @@ try {
         technicalHooksFixture: mode === "healthy", remoteHTTP: requests.length })
     } finally {
       await attestedFetch?.close().catch(() => {})
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
-      await closed
+      if (child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, closed)
+      else await closed
     }
   }
   writeFileSync(path.join(root, "evidence.json"), JSON.stringify({ ...evidence, completed: true, allOwnedServicesStopped: true }, null, 2))
