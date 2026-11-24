@@ -17,6 +17,8 @@ use serde_json::json;
 pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
     pub(super) provider_target: Option<super::providers::Target>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) open_providers: bool,
     pub(super) memory: super::memory::Setting,
     pub(super) opencode_install: super::opencode::install::Install,
     pub(super) notification_update: Option<String>,

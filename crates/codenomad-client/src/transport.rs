@@ -33,6 +33,9 @@ pub enum WorkspaceEvent {
     SessionExecution {
         notice: Option<String>,
     },
+    PermissionModeChanged {
+        root: Option<String>,
+    },
     CommandsChanged,
     MentionsChanged,
     ComposerCataloguesChanged,
@@ -40,6 +43,7 @@ pub enum WorkspaceEvent {
     ProvidersChanged {
         workspace_id: String,
     },
+    ProviderUsageRefresh(Option<String>),
     UiPreferencesChanged,
     MissionChanged {
         workspace_id: String,
@@ -109,6 +113,7 @@ pub struct Authentication {
 #[derive(Debug)]
 pub enum Event {
     Connected(crate::backend::Backend),
+    ProviderUsageWatch(crate::provider_usage::Watch),
     Workspace(WorkspaceEvent),
     Preferences(crate::settings::Owner),
     AgentHint(bool),
