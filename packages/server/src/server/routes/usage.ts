@@ -104,6 +104,11 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           const provider = free ? null : resolveUsageProvider(params.data.providerId)
           let plugin: ProviderUsageResponse | null = null
           if (!free && !provider) {
+            // Plugin code receives the Location: confirm the session did not move during the ownership check.
+            const current = readLocationRef((await connection.client.session.get({ sessionID: sessionId }, { signal })).location)
+            if (current.directory !== location.directory || current.workspaceID !== undefined || !assertCurrentWorkspace(signal)) {
+              return reply.code(403).send({ error: "Session does not belong to workspace" })
+            }
             plugin = await readPluginProviderUsage(connection, {
               providerId: params.data.providerId, location, modelId,
             }, signal, quotaSignal)

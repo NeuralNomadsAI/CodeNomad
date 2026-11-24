@@ -68,6 +68,8 @@ const pluginWindowSchema = z.object({
 }).strict().refine(item =>
   item.usedPercent == null || item.remainingPercent == null
     || Math.abs(toHundredths(item.usedPercent) + toHundredths(item.remainingPercent) - 10_000) <= 5,
+).refine(item =>
+  !(item.consumption && "unlimited" in item.consumption) || (item.usedPercent == null && item.remainingPercent == null),
 )
 
 const absentRpcErrorSchema = z.object({

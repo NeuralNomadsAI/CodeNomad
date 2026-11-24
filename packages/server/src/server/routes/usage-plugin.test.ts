@@ -324,7 +324,21 @@ test("a client disconnect aborts the plugin RPC without follow-up ownership chec
     await request
     await Promise.race([aborted, new Promise((_resolve, reject) => setTimeout(() => reject(new Error("RPC not aborted")), 2_000))])
     await new Promise(resolve => setTimeout(resolve, 50))
-    assert.equal(state.nativeCalls.filter(path => path === "/api/session/session").length, 1)
+    // Initial read plus the pre-dispatch Location re-read; nothing after the abort.
+    assert.equal(state.nativeCalls.filter(path => path === "/api/session/session").length, 2)
+  } finally { await app.close() }
+})
+
+test("a session moved during the initial ownership check never reaches the plugin RPC", async () => {
+  let dispatched = 0
+  const { app, state } = harness(
+    async () => { dispatched++; return Response.json({ output: { configured: true, ok: true, windows: {} } }) },
+    { onOwnsLocation: index => { if (index === 1) state.directory = "/foreign" } },
+  )
+  try {
+    const response = await app.inject(url)
+    assert.equal(response.statusCode, 403, response.body)
+    assert.equal(dispatched, 0)
   } finally { await app.close() }
 })
 

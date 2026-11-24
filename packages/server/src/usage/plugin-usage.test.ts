@@ -129,6 +129,10 @@ test("parsePluginUsageOutput clears windows on failure and rejects malformed, pr
   assert.equal(noDoubleRound.windows.weekly?.usedPercent, 99.99)
   assert.equal(noDoubleRound.windows.weekly?.remainingPercent, 0.01)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { credits: { balanceUSD: { remaining: 5, total: -1 } } } }, { requestedProviderId: "x", providerId: "x" }), null)
+  // An unlimited window cannot also declare a percentage.
+  assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { pro: { usedPercent: 100, consumption: { unlimited: true } } } }, { requestedProviderId: "x", providerId: "x" }), null)
+  assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { pro: { remainingPercent: 0, consumption: { unlimited: true } } } }, { requestedProviderId: "x", providerId: "x" }), null)
+  assert.ok(parsePluginUsageOutput({ configured: true, ok: true, windows: { pro: { consumption: { unlimited: true } } } }, { requestedProviderId: "x", providerId: "x" })?.windows.pro)
   // Out-of-range JS Date timestamps (> 8.64e15 ms) are rejected for resetAt and fetchedAt.
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { "5h": { usedPercent: 10, resetAt: 1e30 } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, fetchedAt: 8_640_000_000_000_001, windows: {} }, { requestedProviderId: "x", providerId: "x" }), null)
