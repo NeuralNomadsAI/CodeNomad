@@ -22,7 +22,7 @@ test('absolute foreign and blob targets receive a 403 without contacting the ups
   const agent=new Agent()
   t.after(()=>agent.destroy())
   const status=target=>new Promise((resolve,reject)=>{
-    const req=request(origin,{path:target,agent},res=>{res.resume();resolve(res.statusCode)})
+    const req=request(origin,{path:target,agent,signal:AbortSignal.timeout(10000)},res=>{res.resume();resolve(res.statusCode)})
     req.once('error',reject);req.end()
   })
   assert.equal(await status('http://foreign.invalid/private'),403)

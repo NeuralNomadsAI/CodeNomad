@@ -11,12 +11,12 @@ import {clientBinary,serverBinary,requireTestSupport} from './fixture-binaries.m
 import {preparePruning} from '../../../scripts/perf/pruning.mjs'
 import {privatePath} from '../../../scripts/perf/isolation.mjs'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {attestNative} from './live-access.mjs'
+import {attestNative,isLocalAbsolutePath} from './live-access.mjs'
 import {fixtureFetch,fixtureHttpAgent,relayTarget,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {rustOrigin} from './fixture-host.mjs'
 
 const {values}=parseArgs({options:{opencode:{type:'string'}}})
-assert(values.opencode&&path.isAbsolute(values.opencode),'--opencode requires an absolute private-runtime executable')
+assert(isLocalAbsolutePath(values.opencode),'--opencode requires an absolute local private-runtime executable')
 const repository=path.resolve(import.meta.dirname,'../../..')
 const root=privatePath(path.join(repository,'scripts/perf/run',`trial-rune-store-${randomUUID()}`))
 await mkdir(root,{recursive:true})

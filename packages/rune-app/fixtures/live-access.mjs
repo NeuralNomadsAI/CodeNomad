@@ -6,7 +6,7 @@ import path from 'node:path'
 import {setTimeout as delay} from 'node:timers/promises'
 import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
 import {privateEnvironment} from './private-profile.mjs'
-import {launchFixture} from './fixture-host.mjs'
+import {launchFixture,onFixtureSignal} from './fixture-host.mjs'
 import {fixtureFetch,fixtureTarget} from '../../../scripts/native-fixture-http.mjs'
 export {fixtureTarget}
 
@@ -14,11 +14,12 @@ export const args=process.argv.slice(2).filter((arg,i,all)=>arg!=='--opencode'&&
 const marker='.rune-private-opencode'
 const forbidden='the shared OpenCode service is forbidden'
 
-const isUnc=value=>typeof value==='string'&&/^(\\\\|\/\/)/.test(value)
+const isUnc=value=>typeof value==='string'&&(/^[\\/]{2}/.test(value)||/^[\\/]{2}/.test(path.normalize(value)))
+export const isLocalAbsolutePath=value=>typeof value==='string'&&value.length>0&&path.isAbsolute(value)&&!isUnc(value)
 
 export function requirePrivateCli(argv=process.argv.slice(2)){
   const index=argv.indexOf('--opencode'), cli=argv[index+1]
-  assert(index>=0&&index===argv.lastIndexOf('--opencode')&&cli&&path.isAbsolute(cli)&&!isUnc(cli),
+  assert(index>=0&&index===argv.lastIndexOf('--opencode')&&isLocalAbsolutePath(cli),
     `Pass --opencode <absolute local executable>; ${forbidden}`)
   return cli
 }
@@ -84,9 +85,9 @@ export async function privateManifest(file){
   const data=JSON.parse(await readFile(actual,'utf8'))
   assert.equal(data.profile,profile)
   const expectedProject=path.join(profile,'project')
-  assert(typeof data.project==='string'&&!isUnc(data.project)&&path.resolve(data.project)===expectedProject,'Expected the private fixture project')
+  assert(isLocalAbsolutePath(data.project)&&path.resolve(data.project)===expectedProject,'Expected the private fixture project')
   assert.equal(await realpath(data.project),expectedProject,'Expected the private fixture project')
-  assert(/^[A-Za-z0-9_-]{1,256}$/.test(data.sessionID),'Expected a fixture session ID')
+  assert(typeof data.sessionID==='string'&&/^[A-Za-z0-9_-]{1,256}$/.test(data.sessionID),'Expected a fixture session ID')
   return data
 }
 
@@ -135,7 +136,7 @@ async function removeExecutable(file){
   }
 }
 
-export async function withNative(run,{profile,pruning=true}={}){
+export async function withNative(run,{profile,pruning=true,denyAllTools=false}={}){
   const cli=requirePrivateCli()
   const fresh=!profile
   const supplied=profile
@@ -149,37 +150,64 @@ export async function withNative(run,{profile,pruning=true}={}){
   assert.equal(await readFile(path.join(profile,marker),'utf8'),'Rune private OpenCode v1\n')
   const lease=path.join(profile,'running.lock')
   const lock=await open(lease,'wx')
-  let daemon,model,plugin,password,executable,config
+  let daemon,model,plugin,password,executable,config,runtime
   const owned=name=>{
     const expected=path.join(profile,name)
     assert.equal(privatePath(expected),expected,'A private fixture path was redirected')
     return expected
   }
+  let cleaned
+  const cleanup=()=>{
+    cleaned??=(async()=>{
+      try{try{await plugin?.close()}finally{await daemon?.stop()}}finally{
+        model?.closeAllConnections()
+        if(model)await new Promise(resolve=>model.close(resolve))
+        try{
+          const log=daemon?.output()??''
+          try{await writeFile(path.join(profile,'daemon.log'),password?log.replaceAll(password,'<fixture password>'):log)}
+          finally{
+            try{if(executable)await removeExecutable(executable)}
+            finally{
+              try{if(config)await rm(config,{recursive:true,force:true})}
+              finally{if(runtime)await rm(runtime,{recursive:true,force:true})}
+            }
+          }
+        } finally {
+          await lock.close()
+          if(!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null)await unlink(lease)
+        }
+      }
+    })()
+    return cleaned
+  }
+  const untrackSignal=onFixtureSignal(()=>cleanup())
   try{
     const project=owned('project')
     config=owned(`native-config-${randomUUID()}`)
+    runtime=owned(`native-runtime-${randomUUID()}`)
     const database=owned('opencode.db')
-    for(const name of ['home','xdg','tmp','config','ProgramData','npm-cache','empty.npmrc','empty-global.npmrc',
-      'home/AppData','home/AppData/Local','home/AppData/Roaming','xdg/config','xdg/data','xdg/state','xdg/cache'])owned(name)
-    await mkdir(project,{recursive:true});await mkdir(config)
+    await mkdir(project,{recursive:true});await mkdir(config);await mkdir(runtime)
     executable=path.join(profile,`opencode-${randomUUID()}${process.platform==='win32'?'.exe':''}`)
     await copyFile(await realpath(cli),executable)
     password=randomUUID()
     const authorization=`Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`
     model=await provider()
-    const env={...await privateEnvironment(profile),OPENCODE_TEST_HOME:path.join(profile,'home'),
+    const configContent={model:'fixture/fixture',providers:{fixture:{
+      package:'@opencode/ai/providers/openai-compatible',
+      settings:{baseURL:`http://127.0.0.1:${model.address().port}/v1`,apiKey:'fixture-only'},
+      models:{fixture:{},alternate:{variants:[{id:'low'}]}},
+    }}}
+    if(denyAllTools)configContent.permissions=[{action:'*',resource:'*',effect:'deny'}]
+    const programData=path.join(runtime,'ProgramData')
+    const env={...await privateEnvironment(runtime),OPENCODE_TEST_HOME:path.join(runtime,'home'),
       OPENCODE_CONFIG_DIR:config,OPENCODE_DB:database,
       OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FFF:'1',
       OPENCODE_DISABLE_AUTOUPDATE:'true',OPENCODE_SERVER_PASSWORD:password,
-      ProgramData:path.join(profile,'ProgramData'),npm_config_userconfig:path.join(profile,'empty.npmrc'),
-      npm_config_globalconfig:path.join(profile,'empty-global.npmrc'),npm_config_cache:path.join(profile,'npm-cache'),
-      OPENCODE_CONFIG_CONTENT:JSON.stringify({model:'fixture/fixture',providers:{fixture:{
-        package:'@opencode/ai/providers/openai-compatible',
-        settings:{baseURL:`http://127.0.0.1:${model.address().port}/v1`,apiKey:'fixture-only'},
-        models:{fixture:{},alternate:{variants:[{id:'low'}]}},
-      }}}),
+      ProgramData:programData,npm_config_userconfig:path.join(runtime,'empty.npmrc'),
+      npm_config_globalconfig:path.join(runtime,'empty-global.npmrc'),npm_config_cache:path.join(runtime,'npm-cache'),
+      OPENCODE_CONFIG_CONTENT:JSON.stringify(configContent),
     }
-    await mkdir(env.ProgramData,{recursive:true})
+    await mkdir(programData,{recursive:true})
     if(pruning){const {preparePruning}=await import('../../../scripts/perf/pruning.mjs');plugin=await preparePruning(profile,config)}
     daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env,redact:[password]})
     const origin=await daemon.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1])
@@ -188,20 +216,6 @@ export async function withNative(run,{profile,pruning=true}={}){
     await plugin?.activate({project,url:origin,authorization,send},()=>assert.equal(daemon.child.exitCode,null))
     return await run({profile,project,origin:`${origin}/`,password,read,send,env,pid})
   } finally {
-    try{try{await plugin?.close()}finally{await daemon?.stop()}}finally{
-      model?.closeAllConnections()
-      if(model)await new Promise(resolve=>model.close(resolve))
-      try{
-        const log=daemon?.output()??''
-        try{await writeFile(path.join(profile,'daemon.log'),password?log.replaceAll(password,'<fixture password>'):log)}
-        finally{
-          try{if(executable)await removeExecutable(executable)}
-          finally{if(config)await rm(config,{recursive:true,force:true})}
-        }
-      } finally {
-        await lock.close()
-        if(!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null)await unlink(lease)
-      }
-    }
+    try{await cleanup()}finally{untrackSignal()}
   }
 }

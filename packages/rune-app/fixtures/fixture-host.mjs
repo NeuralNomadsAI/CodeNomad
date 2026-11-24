@@ -5,19 +5,29 @@ import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scrip
 import {withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 
 const activeGroups=new Set()
-let cleaningSignals=false
+const signalCleanups=new Set()
+let cleaningSignals=false,signalHooked=false
+function updateSignalHooks(){
+  const active=activeGroups.size+signalCleanups.size>0
+  if(active&&!signalHooked){signalHooked=true;process.on('SIGINT',onSignal);process.on('SIGTERM',onSignal)}
+  else if(!active&&signalHooked){signalHooked=false;process.off('SIGINT',onSignal);process.off('SIGTERM',onSignal)}
+}
 function onSignal(signal){
   if(cleaningSignals)return
   cleaningSignals=true
-  Promise.allSettled([...activeGroups].map(stop=>stop())).finally(()=>process.exit(signal==='SIGINT'?130:143))
+  Promise.allSettled([...activeGroups].map(stop=>stop()))
+    .then(()=>Promise.allSettled([...signalCleanups].map(cleanup=>cleanup())))
+    .finally(()=>process.exit(signal==='SIGINT'?130:143))
 }
 function trackGroup(stop){
-  if(activeGroups.size===0){process.on('SIGINT',onSignal);process.on('SIGTERM',onSignal)}
   activeGroups.add(stop)
-  return ()=>{
-    activeGroups.delete(stop)
-    if(activeGroups.size===0){process.off('SIGINT',onSignal);process.off('SIGTERM',onSignal)}
-  }
+  updateSignalHooks()
+  return ()=>{activeGroups.delete(stop);updateSignalHooks()}
+}
+export function onFixtureSignal(cleanup){
+  signalCleanups.add(cleanup)
+  updateSignalHooks()
+  return ()=>{signalCleanups.delete(cleanup);updateSignalHooks()}
 }
 
 export async function until(check,label,ms=20000){

@@ -4,6 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { spawnFixtureChild, stopFixtureChild } from "../native-fixture-guards.mjs"
 import { fixtureFetch, withoutFixtureProxy } from "../native-fixture-http.mjs"
+import { isLocalAbsolutePath } from "../../packages/rune-app/fixtures/live-access.mjs"
 import { privatePath } from "./isolation.mjs"
 import { sleep } from "./lib.mjs"
 import assert from "node:assert/strict"
@@ -16,7 +17,7 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
   const password = randomUUID()
   const config = path.join(root, "server.yaml")
   await writeFile(config, JSON.stringify({ server: { opencodeBinary: daemon.cli } }))
-  if (rustBinary) assert(path.isAbsolute(rustBinary), "Rust benchmark binary must be absolute")
+  if (rustBinary) assert(isLocalAbsolutePath(rustBinary), "Rust benchmark binary must be absolute and local")
   const command = rustBinary ? [rustBinary, [daemon.project, path.join(root, "identity.json"), "0", daemon.cli]] : [process.execPath, [
     fileURLToPath(new URL("./ts-wrapper.mjs", import.meta.url)),
     "--http", "true", "--http-port", "0", "--https", "false", "--host", "127.0.0.1", "--ui-no-update",

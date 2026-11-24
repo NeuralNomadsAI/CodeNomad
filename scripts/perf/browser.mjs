@@ -16,16 +16,20 @@ export async function withBrowser(daemon, tree, root, followLongReplies, run) {
     try {
       context = await chromium.launchPersistentContext(profile, {
         headless: true, channel: "chromium", env: { ...daemon.env, ...(socketDir && { TMPDIR: socketDir }) },
+        args: ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--disable-background-networking", "--no-proxy-server"],
         viewport: { width: 1440, height: 1440 }, locale: "en-US", serviceWorkers: "block",
       })
       await context.addInitScript({ path: fileURLToPath(new URL("./page-probe.js", import.meta.url)) })
       const localOrigin = new URL(url).origin
-      await context.route("**/*", route => new URL(route.request().url()).origin === localOrigin ? route.continue() : route.abort("blockedbyclient"))
       await context.addCookies([{ name: "codenomad_session", value: cookie, url }])
       const page = context.pages()[0] ?? await context.newPage()
       page.setDefaultTimeout(60_000)
       const failures = []
       page.on("pageerror", error => failures.push(error.message))
+      page.on("request", req => {
+        const target = new URL(req.url())
+        if (target.hostname === "127.0.0.1" && target.origin !== localOrigin) failures.push(`Unexpected loopback target: ${target.origin}`)
+      })
       await page.goto(url, { waitUntil: "domcontentloaded" })
       await page.locator(".folder-home-recent-primary-action").first().click()
       const search = page.getByRole("button", { name: "Search sessions" })

@@ -86,4 +86,4 @@ try{
   try{await child?.stop()}finally{await server.stop()}
   await save();await writeFile(path.join(profile,'rust.log'),server.output())
 }
-})
+},{denyAllTools:true})

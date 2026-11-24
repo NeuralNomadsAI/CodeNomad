@@ -19,7 +19,8 @@ export async function seedRealHistory(native,manifest) {
   const page=(await native.read(`/api/rpc/codenomad.session-pruning/window?${query}`,{method:'POST',body:JSON.stringify({input:{sessionID:imported.id,target:{kind:'latest'}}})})).output
   assert.equal(page.status,'window');assert.equal(page.messages.length,200)
   assert.equal(page.messages[0].id,messages[400].id)
-  const next={...manifest,sessionID:imported.id,info:imported,seedIDs:messages.map(m=>m.id),seedCount:600}
+  const next={profile:manifest.profile,project:manifest.project,sessionID:imported.id,info:imported,
+    pluginActive:manifest.pluginActive,seedIDs:messages.map(m=>m.id),seedCount:600}
   await writeFile(path.join(manifest.profile,'seeded.json'),JSON.stringify(next))
   console.log(JSON.stringify({type:'REAL_HISTORY_SEEDED',rows:600,pageRows:200,permissions:'deny-all',manifest:path.join(manifest.profile,'seeded.json')}))
   return {...native,...next}

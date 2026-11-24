@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
-import {link,mkdtemp,mkdir,realpath,rm,symlink,writeFile} from 'node:fs/promises'
+import {link,mkdtemp,mkdir,readFile,realpath,rm,symlink,writeFile} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {test} from 'node:test'
-import {attestNative,fixtureTarget,requirePrivateCli,validatePrivateTree} from './live-access.mjs'
+import {attestNative,fixtureTarget,isLocalAbsolutePath,privateManifest,requirePrivateCli,validatePrivateTree} from './live-access.mjs'
+import {seedRealHistory} from './real-history-seed.mjs'
+import {runDirectory} from '../../../scripts/perf/isolation.mjs'
 
 const origin='http://127.0.0.1:42395'
 const auth='fixture-credential'
@@ -25,8 +27,10 @@ test('live fixtures fail closed before work when the listener cannot prove its P
 })
 
 test('live fixtures reject UNC executables before touching the filesystem',()=>{
-  assert.throws(()=>requirePrivateCli(['--opencode','\\\\server\\share\\opencode.exe']),/absolute local executable/)
-  assert.throws(()=>requirePrivateCli(['--opencode','//server/share/opencode']),/absolute local executable/)
+  for(const bad of ['\\\\server\\share\\opencode.exe','//server/share/opencode','/\\server\\share\\opencode.exe','\\/server/share/opencode.exe']){
+    assert.equal(isLocalAbsolutePath(bad),false)
+    assert.throws(()=>requirePrivateCli(['--opencode',bad]),/absolute local executable/)
+  }
 })
 
 test('a fixture refuses a redirected target and an exited child before sending',async()=>{
@@ -70,4 +74,39 @@ test('resumed profiles must own every file, including a config nested below CLI_
     await symlink(outside,junction,process.platform==='win32'?'junction':'dir')
     await assert.rejects(validatePrivateTree(profile),/linked path: .*linked/)
   }finally{await rm(temp,{recursive:true,force:true})}
+})
+
+test('privateManifest rejects missing sessionID and seedRealHistory omits runtime secrets',async()=>{
+  await mkdir(runDirectory,{recursive:true})
+  const profile=await mkdtemp(path.join(runDirectory,'trial-rune-live-unit-'))
+  try{
+    const project=path.join(profile,'project')
+    await mkdir(project)
+    await writeFile(path.join(profile,'.rune-private-opencode'),'Rune private OpenCode v1\n')
+    const missing=path.join(profile,'session.json')
+    await writeFile(missing,JSON.stringify({profile,project}))
+    await assert.rejects(privateManifest(missing),/fixture session ID/)
+    let importedMessages=[]
+    const native={
+      profile,project,password:'secret-fixture-password',env:{OPENCODE_SERVER_PASSWORD:'secret-fixture-password'},
+      async read(route,init){
+        if(route.endsWith('/export'))return {data:{info:{id:'ses_orig',time:{created:1}},messages:[]}}
+        if(route==='/api/experimental/session/import'){
+          const body=JSON.parse(init.body)
+          importedMessages=body.messages
+          return {data:body.info}
+        }
+        if(route.startsWith('/api/rpc/codenomad.session-pruning/window'))return {output:{status:'window',messages:importedMessages.slice(400)}}
+        throw Error(`Unexpected route: ${route}`)
+      },
+    }
+    await seedRealHistory(native,{...native,profile,project,sessionID:'ses_orig',pluginActive:true})
+    const persisted=JSON.parse(await readFile(path.join(profile,'seeded.json'),'utf8'))
+    assert.equal('password' in persisted,false)
+    assert.equal('env' in persisted,false)
+    assert.equal(persisted.seedCount,600)
+    assert.equal(persisted.pluginActive,true)
+    const validated=await privateManifest(path.join(profile,'seeded.json'))
+    assert.equal(validated.sessionID,persisted.sessionID)
+  }finally{await rm(profile,{recursive:true,force:true})}
 })

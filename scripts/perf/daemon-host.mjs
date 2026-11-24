@@ -6,13 +6,13 @@ import { createServer } from "node:http"
 import path from "node:path"
 import { fixtureEnvironment } from "../native-product-fixture.mjs"
 import { launchFixture } from "../../packages/rune-app/fixtures/fixture-host.mjs"
-import { attestNative } from "../../packages/rune-app/fixtures/live-access.mjs"
+import { attestNative, isLocalAbsolutePath } from "../../packages/rune-app/fixtures/live-access.mjs"
 import { fixtureFetch } from "../native-fixture-http.mjs"
 import { privatePath } from "./isolation.mjs"
 import { json, now, sleep } from "./lib.mjs"
 
 export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnabled = false} = {}) {
-  assert(path.isAbsolute(cli), "Pass the absolute path to the pinned OpenCode binary")
+  assert(isLocalAbsolutePath(cli), "Pass the absolute local path to the pinned OpenCode binary")
   root = privatePath(root)
   const project = privatePath(path.join(root, "project"))
   await mkdir(project, { recursive: true })
