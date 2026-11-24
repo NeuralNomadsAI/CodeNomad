@@ -102,6 +102,28 @@ describe("directory existence cache", () => {
     } finally { stub.restore(); t.mock.timers.reset() }
   })
 
+  it("an aborted in-flight listing publishes no fresh snapshot", async () => {
+    clearBarePathCaches()
+    const controller = new AbortController()
+    let release!: () => void
+    const stub = patchListing((_path, _directory) => new Promise<Entry[]>((_resolve, reject) => {
+      release = () => { controller.abort(); reject(new Error("The operation was aborted")) }
+    }))
+    try {
+      const first = fileNamesInDirectory("inst", "/repo", "src", controller.signal)
+      release()
+      assert.equal((await first).size, 0, "the aborted caller converts nothing")
+    } finally { stub.restore() }
+    const healthy = patchListing(async () => [{ name: "app.ts", type: "file" }])
+    try {
+      // Cancellation is not a listing failure: the next demand re-fetches
+      // instead of serving a freshly-timestamped empty set for the TTL.
+      const second = await fileNamesInDirectory("inst", "/repo", "src")
+      assert.deepEqual([...second], ["app.ts"])
+      assert.equal(healthy.calls.length, 1)
+    } finally { healthy.restore() }
+  })
+
   it("keys the cache by instance, directory and parent path", async () => {
     clearBarePathCaches()
     const stub = patchListing(async () => [])

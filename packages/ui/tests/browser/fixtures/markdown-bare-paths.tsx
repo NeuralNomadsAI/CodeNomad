@@ -22,13 +22,14 @@ addInstance({ id, folder: scope, port: 0, pid: 0, proxyPath: `/workspaces/${id}/
 
 let includeGone = false
 let holdListing = new URLSearchParams(location.search).has("held")
+let released = false
 const pendingReleases: Array<() => void> = []
 const listingCalls: Array<{ path: string; directory: string | undefined }> = []
 type Entry = { name: string; type: string }
 const entries = (names: Array<[string, string]>): Entry[] => names.map(([name, type]) => ({ name, type }))
 serverApi.listWorkspaceFiles = (async (_id: string, relativePath = ".", directory?: string) => {
   listingCalls.push({ path: relativePath, directory })
-  if (holdListing) await new Promise<void>(resolve => { pendingReleases.push(resolve) })
+  if (holdListing && !released) await new Promise<void>(resolve => { pendingReleases.push(resolve) })
   if (relativePath === "src") return entries([["app.ts", "file"], ["inner", "directory"],
     ...(includeGone ? ([["gone.ts", "file"]] as Array<[string, string]>) : [])])
   if (relativePath === ".") return entries([["README.md", "file"], ["src", "directory"], ["docs", "directory"]])
@@ -71,7 +72,7 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
   clearCache: () => clearBarePathCaches(),
   addGone: () => { includeGone = true },
   listingCalls: () => [...listingCalls],
-  release: () => { const pending = pendingReleases.splice(0); for (const release of pending) release() },
+  release: () => { released = true; const pending = pendingReleases.splice(0); for (const release of pending) release() },
   initialText,
   dispose,
 }

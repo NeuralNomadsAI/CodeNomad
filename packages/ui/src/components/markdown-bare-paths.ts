@@ -61,8 +61,10 @@ export function fileNamesInDirectory(instanceId: string, directory: string, pare
     if (fetched === undefined) {
       // Preserve a last good set and its staleness, so the next demand
       // retries; a first failure caches emptiness until the TTL revalidates.
+      // Cancellation publishes nothing fresh: the aborted pass's newer
+      // successor must re-fetch, not serve a just-timestamped empty set.
       const files = prior?.files ?? new Set<string>()
-      cache.set(key, { files, at: prior?.at ?? Date.now() })
+      cache.set(key, { files, at: signal?.aborted ? prior?.at ?? 0 : prior?.at ?? Date.now() })
       return files
     }
     cache.set(key, { files: fetched, at: Date.now() })
