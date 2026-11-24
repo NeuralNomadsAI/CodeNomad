@@ -280,10 +280,14 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::Reconnecting | Event::ConnectionLost => {
                 let stream_lost = matches!(event, Event::ConnectionLost);
+                let keep_stream_authority = matches!(
+                    s.phase,
+                    Phase::Ready | Phase::Streaming | Phase::StreamDisconnected { .. }
+                );
                 s.stream_offline = true;
                 s.transcript_display.messages.offline();
                 s.status_permissions.online(false);
-                if !stream_lost {
+                if !stream_lost && !keep_stream_authority {
                     s.composer.picker.set_attachments_supported(false);
                 }
                 chat::reader::reconnecting(s);
@@ -296,10 +300,10 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                     files.online(false);
                 }
                 if !s.history_detached && s.phase != Phase::Failed {
-                    s.phase = match (&s.phase, stream_lost) {
-                        (Phase::Ready, true) => Phase::StreamDisconnected { running: false },
-                        (Phase::Streaming, true) => Phase::StreamDisconnected { running: true },
-                        (Phase::StreamDisconnected { running }, true) => {
+                    s.phase = match &s.phase {
+                        Phase::Ready => Phase::StreamDisconnected { running: false },
+                        Phase::Streaming => Phase::StreamDisconnected { running: true },
+                        Phase::StreamDisconnected { running } => {
                             Phase::StreamDisconnected { running: *running }
                         }
                         _ => Phase::Reconnecting,

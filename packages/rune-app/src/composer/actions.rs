@@ -63,6 +63,7 @@ pub(crate) struct PendingSend {
     slash: Option<CommandAttempt>,
     edited: bool,
     recallable: bool,
+    restored_to_draft: bool,
 }
 impl PendingSend {
     pub(crate) fn locked(id: String) -> Self {
@@ -74,6 +75,7 @@ impl PendingSend {
             slash: None,
             edited: true,
             recallable: false,
+            restored_to_draft: false,
         }
     }
     pub(crate) fn id(&self) -> &str {
@@ -82,8 +84,16 @@ impl PendingSend {
     pub(crate) fn inline_usage(&self) -> (usize, usize) {
         self.draft.inline_usage()
     }
+    pub(crate) fn unique_inline_usage(&self, active_draft: &Draft) -> (usize, usize) {
+        if self.restored_to_draft && self.draft.attachments == active_draft.attachments {
+            (0, 0)
+        } else {
+            self.draft.inline_usage()
+        }
+    }
     pub(crate) fn clear_retained(&mut self) {
         self.edited = true;
+        self.restored_to_draft = false;
         self.edit = TextEdit::default();
         self.draft = Draft::default();
     }
@@ -191,6 +201,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
                 slash: Some(slash),
                 edited: s.composer.recall.is_some(),
                 recallable,
+                restored_to_draft: false,
             });
             s.draft.clear();
             s.composer
@@ -239,6 +250,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         slash: None,
         edited: s.composer.recall.is_some(),
         recallable,
+        restored_to_draft: false,
     });
     s.draft.clear();
     super::recall::restore(s);
@@ -339,6 +351,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         if may_restore && s.composer.draft.attachments.is_empty() {
             super::recall::replace_edit(s, send.edit.clone());
             s.composer.draft = send.draft.clone();
+            send.restored_to_draft = true;
         } else {
             send.clear_retained();
         }
@@ -565,6 +578,13 @@ mod tests {
         workspace::bound(&mut s, &first);
         s.phase = Phase::Ready;
         s.commands = Some(sender.clone());
+        s.composer.picker.set_attachments_supported(true);
+        s.composer.draft.attachments.push(Attachment::Device {
+            name: "clip.png".into(),
+            mime: "image/png".into(),
+            bytes: std::sync::Arc::from(vec![7u8; 4096]),
+            token: None,
+        });
         s.draft = TextEdit::new("attempt");
         let mut rt = Runtime::new(s, crate::view, (600.0, 600.0), Env::new(false, 1.0));
         rt.update(|s, tx| send(s, tx, false));
@@ -576,6 +596,15 @@ mod tests {
         acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
         assert!(rt.state.composer.announce_unconfirmed);
         assert!(rt.state.composer.restored);
+        assert_eq!(
+            rt.state
+                .composer
+                .unconfirmed_state()
+                .unwrap()
+                .unique_inline_usage(&rt.state.composer.draft),
+            (0, 0),
+            "restored shared attachment bytes must not be double-counted against the window budget"
+        );
         workspace::capture(&mut rt.state);
         workspace::bound(&mut rt.state, &second);
         assert!(rt.state.composer.unconfirmed_id().is_none());
@@ -594,8 +623,22 @@ mod tests {
         workspace::opened(&mut rt.state, &project);
         let reopened_draft = workspace::bound(&mut rt.state, &first);
         rt.state.draft = TextEdit::new(reopened_draft);
+        rt.state.phase = Phase::Ready;
+        rt.state.commands = Some(sender.clone());
         assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
-        assert!(!can_send(&rt.state));
+        assert_eq!(
+            rt.state
+                .composer
+                .unconfirmed_state()
+                .unwrap()
+                .inline_usage(),
+            (0, 0),
+            "closing a tab must drop retained inline attachment bytes from the lock"
+        );
+        assert!(
+            !can_send(&rt.state),
+            "reopened session must remain blocked by the unconfirmed lock even with live commands"
+        );
         // Anchor installation reconciles the unconfirmed send just like Sync and pagination.
         crate::chat::reader::install_anchor(
             &mut rt.state,

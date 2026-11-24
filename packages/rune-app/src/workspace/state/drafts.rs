@@ -1,4 +1,4 @@
-use super::{Backend, State, Tab, Tx, Ui, same_project};
+use super::{Backend, Cache, State, Tab, Tx, Ui, same_project};
 use crate::composer::{
     draft::{Draft, MAX_FILES},
     draft_storage::SavedParts,
@@ -52,7 +52,7 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
         let (held_files, held_bytes) = s
             .composer
             .unconfirmed_state()
-            .map_or((0, 0), |send| send.inline_usage());
+            .map_or((0, 0), |send| send.unique_inline_usage(&s.composer.draft));
         (
             draft_files
                 .saturating_add(sending_files)
@@ -62,6 +62,19 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
                 .saturating_add(held_bytes),
         )
     };
+    let inactive_sending = ui
+        .entries
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != ui.active)
+        .filter_map(|(_, entry)| entry.cache.as_ref())
+        .fold((0usize, 0usize), |(files, bytes), cache| {
+            let (send_files, send_bytes) = cache.sending_inline_usage();
+            (
+                files.saturating_add(send_files),
+                bytes.saturating_add(send_bytes),
+            )
+        });
     let (files, bytes) = ui
         .entries
         .iter()
@@ -73,16 +86,19 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
                 .filter(move |(key, _)| index != ui.active || key.as_str() != id)
         })
         .fold(
-            (current_files, current_bytes),
+            (
+                current_files.saturating_add(inactive_sending.0),
+                current_bytes.saturating_add(inactive_sending.1),
+            ),
             |(files, bytes), (_, draft)| {
-                let (part_files, part_bytes) = draft
-                    .parts
-                    .as_ref()
-                    .map_or((0, 0), |(draft, _)| draft.inline_usage());
-                let (held_files, held_bytes) = draft
-                    .unconfirmed
-                    .as_ref()
-                    .map_or((0, 0), |send| send.inline_usage());
+                let base_draft = draft.parts.as_ref().map(|(draft, _)| draft);
+                let (part_files, part_bytes) = base_draft.map_or((0, 0), Draft::inline_usage);
+                let (held_files, held_bytes) = draft.unconfirmed.as_ref().map_or((0, 0), |send| {
+                    base_draft.map_or_else(
+                        || send.inline_usage(),
+                        |base| send.unique_inline_usage(base),
+                    )
+                });
                 (
                     files.saturating_add(part_files).saturating_add(held_files),
                     bytes.saturating_add(part_bytes).saturating_add(held_bytes),

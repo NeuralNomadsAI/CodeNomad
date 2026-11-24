@@ -247,7 +247,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         if trace_fence {
             eprintln!("mutation-fence prompt {session}: read native session before admission");
         }
-        Some(super::session_record_at(&app, &endpoint, session).await?)
+        Some(super::session_record_at(&app, &endpoint, session).await.map_err(|e| {
+            if send_input && e.0 == Status::BAD_GATEWAY { super::pre_dispatch_unavailable() } else { e }
+        })?)
     } else {
         None
     };
@@ -343,7 +345,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     for (key, value) in target.query_pairs() {
         match key.as_ref() {
             "directory" | "location[directory]" => {
-                if seen_directory || (prompt_query.is_none() && value != directory) {
+                if seen_directory
+                    || prompt_query.as_deref().map_or(value != directory, |translated| translated != directory)
+                {
                     return Err(foreign());
                 }
                 seen_directory = true;
@@ -623,7 +627,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         principal.live()?;
         if !app.native.current(&endpoint) {
-            return Err(super::session_environment::unavailable());
+            return Err(super::pre_dispatch_unavailable());
         }
         Ok(fresh)
     };
@@ -741,7 +745,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         recheck_input().await?;
     }
     if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
-        return Err(upstream_error());
+        return Err(if send_input { super::pre_dispatch_unavailable() } else { upstream_error() });
     }
     let (route, opened, directory, id) = (route.to_owned(), opened.to_owned(), directory.to_owned(), id.to_owned());
     let dispatched_mutation = mutation.is_some();
@@ -752,7 +756,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             || !app.native.current(&endpoint)
             || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
         {
-            return Err(upstream_error());
+            return Err(if send_input { super::pre_dispatch_unavailable() } else { upstream_error() });
         }
         // Undici's default headers deadline for the TypeScript runtime transport.
         // Do not cap the total lifetime of a streaming native response.

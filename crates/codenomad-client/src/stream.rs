@@ -170,16 +170,23 @@ pub(crate) async fn read(
     out: &Sender<Input>,
     state: &State,
 ) -> Result<()> {
-    #[cfg(not(target_arch = "wasm32"))]
-    return futures_lite::future::race(native::read_native(backend, epoch, out, state), async {
+    let reader = async {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            native::read_native(backend, epoch, out, state).await
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            browser::read(backend, epoch, out, state).await
+        }
+    };
+    futures_lite::future::race(reader, async {
         while !state.cancelled.load(SeqCst) && !out.is_closed() {
             runtime::sleep(Duration::from_millis(25)).await;
         }
         Ok(())
     })
-    .await;
-    #[cfg(target_arch = "wasm32")]
-    browser::read(backend, epoch, out, state).await
+    .await
 }
 
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {

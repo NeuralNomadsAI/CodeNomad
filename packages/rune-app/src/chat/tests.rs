@@ -253,6 +253,18 @@ fn stream_disconnected_keeps_device_attachments_tracks_observed_running_and_sett
     ));
     assert!(crate::composer::device::available(&rt.state));
 
+    // A failed SSE reconnect emits Event::Reconnecting without proof of HTTP authority loss.
+    out.try_send(Event::Reconnecting).unwrap();
+    rt.frame(1.0 / 60.0);
+    assert!(matches!(
+        rt.state.phase,
+        Phase::StreamDisconnected { running: false }
+    ));
+    assert!(crate::composer::device::available(&rt.state));
+    rt.state.draft = rune::edit::TextEdit::new("Still admissible");
+    assert!(crate::composer::can_send(&rt.state));
+    rt.state.draft.clear();
+
     out.try_send(Event::ObservedRunning {
         running: true,
         version: 1,

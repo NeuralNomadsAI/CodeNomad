@@ -47,6 +47,18 @@ impl Cache {
         self.composer.unconfirmed_id()
     }
 
+    pub(super) fn restore_unconfirmed(&mut self, pending: crate::composer::PendingSend) {
+        if self.composer.unconfirmed_state().is_none() {
+            self.composer.restore_unconfirmed(pending);
+        }
+    }
+
+    pub(super) fn sending_inline_usage(&self) -> (usize, usize) {
+        self.composer
+            .sending_state()
+            .map_or((0, 0), |send| send.inline_usage())
+    }
+
     #[cfg(target_arch = "wasm32")]
     pub(super) fn revoke_pairing(&mut self) {
         self.composer.picker.set_attachments_supported(false);

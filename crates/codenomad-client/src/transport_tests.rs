@@ -784,12 +784,30 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
             stream
                 .get_mut()
                 .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"permission.updated\",\"data\":{\"sessionID\":\"session\"}}}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"session\"}}}\n\n",
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"permission.updated\",\"data\":{\"sessionID\":\"session\"}}}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"session\"}}}\n\nevent: codenomad.client.ping\ndata: {}\n\n",
                 )
                 .await
                 .unwrap();
-            // Wait deterministically until Opened's AgentHint(true) is consumed and permission.updated fills out.
+            // Consume Connected and Opened's AgentHint(true) so permission.updated fills out (cap 1).
+            assert!(matches!(events.recv().await.unwrap(), Event::Connected(_)));
             assert!(matches!(events.recv().await.unwrap(), Event::AgentHint(true)));
+            // Await the /pong request emitted after session.moved to prove the stream relay closed placement.
+            let (pong_socket, _) = listener.accept().await.unwrap();
+            let mut pong = BufReader::new(pong_socket);
+            let mut first_line = String::new();
+            assert!(pong.read_line(&mut first_line).await.unwrap() > 0);
+            assert!(first_line.starts_with("POST /api/client-connections/pong "));
+            loop {
+                let mut line = String::new();
+                assert!(pong.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            pong.get_mut()
+                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
             while events.is_empty() {
                 tokio::task::yield_now().await;
             }
@@ -968,11 +986,28 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
             stream
                 .get_mut()
                 .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"permission.updated\",\"data\":{\"sessionID\":\"session\"}}}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"session\"}}}\n\n",
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"permission.updated\",\"data\":{\"sessionID\":\"session\"}}}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"session\"}}}\n\nevent: codenomad.client.ping\ndata: {}\n\n",
                 )
                 .await
                 .unwrap();
+            assert!(matches!(events.recv().await.unwrap(), Event::Connected(_)));
             assert!(matches!(events.recv().await.unwrap(), Event::AgentHint(true)));
+            let (pong_socket, _) = listener.accept().await.unwrap();
+            let mut pong = BufReader::new(pong_socket);
+            let mut first_line = String::new();
+            assert!(pong.read_line(&mut first_line).await.unwrap() > 0);
+            assert!(first_line.starts_with("POST /api/client-connections/pong "));
+            loop {
+                let mut line = String::new();
+                assert!(pong.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            pong.get_mut()
+                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
             while events.is_empty() {
                 tokio::task::yield_now().await;
             }

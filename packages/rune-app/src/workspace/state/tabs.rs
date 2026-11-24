@@ -1,4 +1,7 @@
-use super::{Cache, State, Tab, TextEdit, Tx, busy, capture, capture_files_mode, entry};
+use super::{
+    Cache, State, Tab, TextEdit, Tx, Ui, Workspace, busy, capture, capture_files_mode, entry,
+    same_project,
+};
 use crate::platform;
 
 fn stash(s: &mut State) {
@@ -76,8 +79,22 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             .take()
             .unwrap_or_else(|| (TextEdit::new(""), false, TextEdit::new(""), false));
     }
+    let cached_lock = match &ui.entries[ui.active].saved {
+        Tab::Workspace(saved) => saved.active_session_id.as_deref().and_then(|session_id| {
+            ui.closed_unconfirmed_id(saved, session_id)
+                .map(str::to_owned)
+        }),
+        Tab::Blank => None,
+    };
+    let item = &mut ui.entries[ui.active];
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
+        if let Some(attempt_id) = cached_lock
+            && s.composer.unconfirmed_state().is_none()
+        {
+            s.composer
+                .restore_unconfirmed(crate::composer::PendingSend::locked(attempt_id));
+        }
         s.renew_scope();
         if super::active_session(s).is_none()
             && s.screen
@@ -195,6 +212,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     };
     s.notifications.forget_tab(id);
     let mut propagate_to_active: Option<String> = None;
+    let mut propagate_locks: Vec<(Workspace, String, String)> = Vec::new();
     let active_matches = |ui: &Ui, saved: &Workspace, session_id: &str| {
         !active
             && ui.entries.get(next_active).is_some_and(|entry| {
@@ -209,6 +227,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
                 && let Some(attempt_id) = live.unconfirmed_id()
             {
                 ui.remember_closed_unconfirmed(&saved, session_id.clone(), attempt_id.to_owned());
+                propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.to_owned()));
                 if active_matches(ui, &saved, session_id) {
                     propagate_to_active = Some(attempt_id.to_owned());
                 }
@@ -219,6 +238,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
             && let Some(attempt_id) = removed.cache.as_ref().and_then(Cache::unconfirmed_id)
         {
             ui.remember_closed_unconfirmed(&saved, session_id.clone(), attempt_id.to_owned());
+            propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.to_owned()));
             if active_matches(ui, &saved, session_id) {
                 propagate_to_active = Some(attempt_id.to_owned());
             }
@@ -250,6 +270,16 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         platform::spawn(async move {
             let _ = backend.release_project(&project.id).await;
         });
+    }
+    for (saved, session_id, attempt_id) in propagate_locks {
+        for entry in &mut ui.entries {
+            if matches!(&entry.saved, Tab::Workspace(current) if same_project(current, &saved)
+                && current.active_session_id.as_deref() == Some(session_id.as_str()))
+                && let Some(cache) = &mut entry.cache
+            {
+                cache.restore_unconfirmed(crate::composer::PendingSend::locked(attempt_id.clone()));
+            }
+        }
     }
     if ui.entries.is_empty() {
         ui.entries

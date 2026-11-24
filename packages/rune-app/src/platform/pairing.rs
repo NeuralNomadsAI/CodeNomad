@@ -8,6 +8,7 @@ use wasm_bindgen::{JsCast, closure::Closure};
 #[derive(Default)]
 pub struct Recovery {
     required: bool,
+    observed_tab: Option<Option<String>>,
     retry_pending: Option<Option<String>>,
     result: Option<Receiver<Option<bool>>>,
     focus: Option<FocusCheck>,
@@ -53,6 +54,7 @@ pub fn observe(s: &mut State) {
     if s.pairing.result.is_some() || !available() {
         return;
     }
+    s.pairing.observed_tab = Some(s.workspace.as_ref().map(|ui| ui.active_key().to_owned()));
     let (out, input) = bounded(1);
     s.pairing.result = Some(input);
     let wake = s.wake.clone();
@@ -97,6 +99,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         return false;
     };
     s.pairing.result = None;
+    let observed_tab = s.pairing.observed_tab.take();
     let Some(required) = result else { return true };
     if required == s.pairing.required {
         return true;
@@ -124,9 +127,19 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     } else {
         s.pairing.focus = None;
         s.history_error = false;
-        let active_tab = s.workspace.as_ref().map(|ui| ui.active_key().to_owned());
-        crate::retry_connection(s, tx);
-        s.pairing.retry_pending = s.composer.pending().then_some(active_tab);
+        let target_tab = observed_tab
+            .unwrap_or_else(|| s.workspace.as_ref().map(|ui| ui.active_key().to_owned()));
+        let active_matches =
+            s.workspace.as_ref().map(|ui| ui.active_key()) == target_tab.as_deref();
+        if active_matches && !s.composer.pending() {
+            crate::retry_connection(s, tx);
+            s.pairing.retry_pending = None;
+        } else if target_tab
+            .as_deref()
+            .is_none_or(|key| s.workspace.as_ref().is_some_and(|ui| ui.has_tab_key(key)))
+        {
+            s.pairing.retry_pending = Some(target_tab);
+        }
     }
     true
 }

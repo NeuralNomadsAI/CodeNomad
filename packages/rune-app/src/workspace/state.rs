@@ -141,9 +141,6 @@ impl Ui {
             session_id,
             attempt_id,
         });
-        if self.closed_unconfirmed.len() > 64 {
-            self.closed_unconfirmed.remove(0);
-        }
     }
     pub(super) fn closed_unconfirmed_id(
         &self,
