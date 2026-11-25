@@ -1209,6 +1209,7 @@ pub(crate) fn abandon_unfinished_local_window_builds_in(
             windows.remove_runtime(&build.label);
         }
         if let Some(client_state) = client_state {
+            client_state.abandon_window_build_capture(&build.window_id);
             client_state.unregister_window(&build.window_id);
         }
     }

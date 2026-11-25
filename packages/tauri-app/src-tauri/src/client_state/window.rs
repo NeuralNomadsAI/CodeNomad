@@ -179,8 +179,8 @@ fn center_distance_squared(bounds: &WindowBounds, display: DisplayArea) -> i128 
     (bounds_x - display_x).pow(2) + (bounds_y - display_y).pow(2)
 }
 
-fn capture_window_in_memory(
-    app: &AppHandle,
+fn capture_window_in_memory<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     window_label: &str,
     window_id: &str,
     persisted: bool,
@@ -198,7 +198,7 @@ fn capture_window_in_memory(
     client_state.capture_window_geometry(window_id, || read_window_geometry(&window))
 }
 
-fn read_window_geometry(window: &tauri::Window) -> WindowGeometry {
+fn read_window_geometry<R: tauri::Runtime>(window: &tauri::Window<R>) -> WindowGeometry {
     let maximized = window.is_maximized().unwrap_or(false);
     let fullscreen = window.is_fullscreen().unwrap_or(false);
     let minimized = window.is_minimized().unwrap_or(false);
@@ -479,9 +479,29 @@ pub fn local_window_zoom(app: &AppHandle, window_label: &str) -> f64 {
         .unwrap_or(DEFAULT_ZOOM_LEVEL)
 }
 
-pub fn capture_preferences_window(app: &AppHandle) {
+pub fn capture_preferences_window<R: tauri::Runtime>(app: &AppHandle<R>) {
     let label = crate::preferences_window::LABEL;
     capture_window_in_memory(app, label, label, true);
+}
+
+pub(crate) fn read_preferences_window_geometry<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Option<WindowGeometry> {
+    let webview = app.get_webview(crate::preferences_window::LABEL)?;
+    Some(read_window_geometry(&webview.window()))
+}
+
+pub(crate) fn record_preferences_window_geometry<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    geometry: Option<WindowGeometry>,
+) -> bool {
+    let Some(geometry) = geometry else {
+        return false;
+    };
+    let Some(client_state) = app.try_state::<ClientState>() else {
+        return false;
+    };
+    client_state.record_window_geometry(crate::preferences_window::LABEL, geometry)
 }
 
 pub fn capture_and_flush_window(app: &AppHandle, window_label: &str) {

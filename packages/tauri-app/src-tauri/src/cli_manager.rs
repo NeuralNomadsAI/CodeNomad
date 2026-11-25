@@ -851,6 +851,7 @@ pub struct CliProcessManager {
     lifecycle: Arc<Mutex<()>>,
     generation_authority: Arc<Mutex<()>>,
     generation: Arc<AtomicU64>,
+    origin_authority_epoch: Arc<AtomicU64>,
     accepting_spawns: Arc<AtomicBool>,
 }
 
@@ -880,6 +881,7 @@ impl CliProcessManager {
             lifecycle: Arc::new(Mutex::new(())),
             generation_authority: Arc::new(Mutex::new(())),
             generation: Arc::new(AtomicU64::new(0)),
+            origin_authority_epoch: Arc::new(AtomicU64::new(0)),
             accepting_spawns: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -927,6 +929,7 @@ impl CliProcessManager {
             status.error = None;
             status.pid = None;
         }
+        self.bump_origin_authority_epoch();
         Self::emit_status(&app, &self.status());
 
         let manager = self.clone();
@@ -945,7 +948,9 @@ impl CliProcessManager {
         let generation = {
             let _authority = self.generation_authority.lock();
             self.accepting_spawns.store(false, Ordering::SeqCst);
-            self.generation.fetch_add(1, Ordering::SeqCst) + 1
+            let next = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            self.bump_origin_authority_epoch();
+            next
         };
         *self.bootstrap_token.lock() = None;
         *self.local_access.lock() = None;
@@ -969,6 +974,7 @@ impl CliProcessManager {
                 "timed out waiting for CLI generation authority"
             ));
         };
+        self.bump_origin_authority_epoch();
         let Some(mut bootstrap_token) = self.bootstrap_token.try_lock_until(deadline) else {
             return Err(anyhow::anyhow!(
                 "timed out waiting for CLI bootstrap token authority"
@@ -1015,6 +1021,14 @@ impl CliProcessManager {
 
     pub(crate) fn generation(&self) -> u64 {
         self.generation.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn origin_authority_epoch(&self) -> u64 {
+        self.origin_authority_epoch.load(Ordering::SeqCst)
+    }
+
+    fn bump_origin_authority_epoch(&self) {
+        self.origin_authority_epoch.fetch_add(1, Ordering::SeqCst);
     }
 
     pub(crate) fn is_current_generation(&self, generation: u64) -> bool {
@@ -1167,12 +1181,14 @@ impl CliProcessManager {
         status.url = None;
         status.error = None;
         drop(status);
+        self.bump_origin_authority_epoch();
         *self.local_access.lock() = None;
         self.stdin.lock().take();
     }
 
     fn publish_error(&self, app: &AppHandle, generation: u64, message: String) {
         self.with_current_generation(generation, || {
+            self.bump_origin_authority_epoch();
             *self.local_access.lock() = None;
             let mut status = self.status.lock();
             status.state = CliState::Error;
@@ -1282,12 +1298,21 @@ impl CliProcessManager {
         Ok(())
     }
 
-    pub(crate) fn local_cli_access(&self) -> Option<LocalCliAccess> {
+    pub(crate) fn with_local_cli_access<T>(
+        &self,
+        f: impl FnOnce(Option<LocalCliAccess>) -> T,
+    ) -> T {
         let _lifecycle = self.lifecycle.lock();
-        if self.status.lock().state != CliState::Ready {
-            return None;
-        }
-        self.local_access.lock().clone()
+        let access = if self.status.lock().state != CliState::Ready {
+            None
+        } else {
+            self.local_access.lock().clone()
+        };
+        f(access)
+    }
+
+    pub(crate) fn local_cli_access(&self) -> Option<LocalCliAccess> {
+        self.with_local_cli_access(|access| access)
     }
 
     #[cfg(test)]
@@ -1297,7 +1322,12 @@ impl CliProcessManager {
 
     #[cfg(test)]
     pub(crate) fn set_ready_local_access_for_test(&self, base_url: &str) {
-        self.status.lock().state = CliState::Ready;
+        {
+            let mut status = self.status.lock();
+            status.state = CliState::Ready;
+            status.url = Some(base_url.to_string());
+        }
+        self.bump_origin_authority_epoch();
         *self.local_access.lock() = Some(LocalCliAccess {
             base_url: base_url.to_string(),
             cookie_name: "codenomad_session".to_string(),
@@ -1611,6 +1641,7 @@ impl CliProcessManager {
                 }
                 Poll::Exited(code) => {
                     manager.with_current_generation(generation, || {
+                        manager.bump_origin_authority_epoch();
                         *manager.local_access.lock() = None;
                         let mut status = manager.status.lock();
                         let message = cli_exit_error(&status, &code);
@@ -1770,6 +1801,8 @@ impl CliProcessManager {
                 locked.url = Some(base_url.clone());
                 locked.state = CliState::Ready;
                 locked.error = None;
+                drop(locked);
+                manager.bump_origin_authority_epoch();
                 manager.bootstrap_token.lock().take()
             })
             .flatten();

@@ -598,6 +598,37 @@ impl Drop for NativeMenuAdmission {
     }
 }
 
+struct AdmittedPopupOrigin {
+    url: Url,
+    /// `None` for static asset/dev origins; `Some(epoch)` when trust depends
+    /// on the currently active managed backend origin.
+    backend_origin_epoch: Option<u64>,
+}
+
+fn admit_popup_local_origin(
+    url: Url,
+    manager: &CliProcessManager,
+) -> Result<AdmittedPopupOrigin, String> {
+    if is_asset_renderer_origin(&url) || is_dev_renderer_origin(&url) {
+        return Ok(AdmittedPopupOrigin {
+            url,
+            backend_origin_epoch: None,
+        });
+    }
+    // Capture the atomic epoch before reading status so a concurrent stop/clear
+    // cannot leave an admitted token pointing at a retired backend origin.
+    let epoch = manager.origin_authority_epoch();
+    let status = manager.status();
+    if same_origin(&url, status.url.as_deref()) && manager.origin_authority_epoch() == epoch {
+        Ok(AdmittedPopupOrigin {
+            url,
+            backend_origin_epoch: Some(epoch),
+        })
+    } else {
+        Err("Native application commands require a trusted local renderer origin".into())
+    }
+}
+
 async fn run_popup_titlebar_menu_with<E, Auth, AuthFut, D, F>(
     pending: &Arc<AtomicBool>,
     menu: &str,
@@ -610,9 +641,9 @@ async fn run_popup_titlebar_menu_with<E, Auth, AuthFut, D, F>(
 where
     E: std::fmt::Display,
     Auth: FnOnce() -> AuthFut,
-    AuthFut: std::future::Future<Output = Result<Url, String>>,
+    AuthFut: std::future::Future<Output = Result<AdmittedPopupOrigin, String>>,
     D: FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), E>,
-    F: FnOnce(&'static str, Url) -> Result<(), String> + Send + 'static,
+    F: FnOnce(&'static str, AdmittedPopupOrigin) -> Result<(), String> + Send + 'static,
 {
     // Reserve before any URL/native getter can wait behind an existing popup.
     // Dropping `admission` on early return or scheduling failure releases it.
@@ -620,17 +651,38 @@ where
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .map_err(|_| "A native titlebar menu is already open".to_string())?;
     let admission = NativeMenuAdmission(Arc::clone(pending));
-    let admitted_url = authorize().await?;
+    let admitted = authorize().await?;
     if !x.is_finite() || !y.is_finite() {
         return Err("Invalid titlebar menu position".into());
     }
     let id = titlebar_menu_id(menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
     run_on_dispatch(dispatch, move || {
-        let result = run_on_main(id, admitted_url);
+        let result = run_on_main(id, admitted);
         drop(admission);
         result
     })
     .await
+}
+
+fn check_popup_origin_on_main(
+    current: &Url,
+    admitted: &AdmittedPopupOrigin,
+    manager: &CliProcessManager,
+) -> Result<(), String> {
+    if current != &admitted.url {
+        return Err(
+            "Native application commands require a trusted local renderer origin".into(),
+        );
+    }
+    if admitted
+        .backend_origin_epoch
+        .is_some_and(|epoch| manager.origin_authority_epoch() != epoch)
+    {
+        return Err(
+            "Native application commands require a trusted local renderer origin".into(),
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -645,20 +697,21 @@ async fn popup_titlebar_menu(
     let app = webview.app_handle().clone();
     let dispatch_app = app.clone();
     let auth_webview = webview.clone();
+    let auth_manager = state.manager.clone();
+    let manager = state.manager.clone();
     run_popup_titlebar_menu_with(
         &state.native_menu_popup_pending,
         &menu,
         x,
         y,
-        || async move { require_local_app_webview_async(&auth_webview).await },
+        || async move {
+            let current = read_webview_url_async(&auth_webview).await?;
+            admit_popup_local_origin(current, &auth_manager)
+        },
         |job| dispatch_app.run_on_main_thread(job),
-        move |id, admitted_url| {
+        move |id, admitted| {
             let current = webview.url().map_err(|error| error.to_string())?;
-            if current != admitted_url {
-                return Err(
-                    "Native application commands require a trusted local renderer origin".into(),
-                );
-            }
+            check_popup_origin_on_main(&current, &admitted, &manager)?;
             let state = app.state::<AppState>();
             if state.native_menu_popup_active.load(Ordering::Relaxed) {
                 return Err("A native titlebar menu is already open".to_string());
@@ -3704,11 +3757,16 @@ mod menu_tests {
                 "file",
                 12.0,
                 24.0,
-                || async move { Ok(first_url) },
+                || async move {
+                    Ok(super::AdmittedPopupOrigin {
+                        url: first_url,
+                        backend_origin_epoch: Some(1),
+                    })
+                },
                 move |job| dispatch_tx.send(job),
-                |id, url| {
+                |id, admitted| {
                     assert_eq!(id, "menu-file");
-                    assert_eq!(url.as_str(), "http://127.0.0.1:43123/");
+                    assert_eq!(admitted.url.as_str(), "http://127.0.0.1:43123/");
                     Ok(())
                 },
             ));
@@ -3741,13 +3799,87 @@ mod menu_tests {
                 "file",
                 12.0,
                 24.0,
-                || async move { Ok(dropped_url) },
+                || async move {
+                    Ok(super::AdmittedPopupOrigin {
+                        url: dropped_url,
+                        backend_origin_epoch: Some(1),
+                    })
+                },
                 |_job| Ok::<(), &str>(()),
                 |_, _| Ok(()),
             )
             .await;
             assert!(dropped.is_err());
             assert!(!pending.load(Ordering::Acquire));
+        });
+    }
+
+    #[test]
+    fn popup_titlebar_menu_rejects_retired_managed_origin_after_backend_stop() {
+        use std::{
+            future::{poll_fn, Future},
+            pin::{pin, Pin},
+            sync::{
+                atomic::{AtomicBool, Ordering},
+                mpsc, Arc,
+            },
+            task::Poll,
+            time::Duration,
+        };
+
+        async fn assert_pending(mut future: Pin<&mut impl Future>) {
+            poll_fn(|cx| {
+                assert!(future.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+        }
+
+        let manager = super::CliProcessManager::new();
+        manager.set_ready_local_access_for_test("http://127.0.0.1:43123");
+        let pending = Arc::new(AtomicBool::new(false));
+        let shown = Arc::new(AtomicBool::new(false));
+        let trusted_url = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+        let (dispatch_tx, dispatch_rx) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+
+        tauri::async_runtime::block_on(async {
+            let auth_url = trusted_url.clone();
+            let auth_manager = manager.clone();
+            let check_url = trusted_url.clone();
+            let check_manager = manager.clone();
+            let shown_on_main = Arc::clone(&shown);
+            let mut popup = pin!(super::run_popup_titlebar_menu_with(
+                &pending,
+                "file",
+                12.0,
+                24.0,
+                move || async move { super::admit_popup_local_origin(auth_url, &auth_manager) },
+                move |job| dispatch_tx.send(job),
+                move |_id, admitted| {
+                    super::check_popup_origin_on_main(&check_url, &admitted, &check_manager)?;
+                    shown_on_main.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            ));
+            assert_pending(popup.as_mut()).await;
+
+            // Managed backend stops while the popup closure is queued; webview URL is unchanged.
+            manager.stop().unwrap();
+
+            let job = dispatch_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            std::thread::spawn(job).join().unwrap();
+            let result = popup.await;
+            assert_eq!(
+                result.unwrap_err(),
+                "Native application commands require a trusted local renderer origin"
+            );
+            assert!(!shown.load(Ordering::SeqCst));
+            assert!(!pending.load(Ordering::Acquire));
+
+            // Static bundled asset origins remain trusted even when the managed backend is stopped.
+            let asset_url = Url::parse("tauri://localhost/loading.html").unwrap();
+            let admitted_asset = super::admit_popup_local_origin(asset_url.clone(), &manager).unwrap();
+            assert!(super::check_popup_origin_on_main(&asset_url, &admitted_asset, &manager).is_ok());
         });
     }
 

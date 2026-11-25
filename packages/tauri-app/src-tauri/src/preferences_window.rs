@@ -848,17 +848,16 @@ pub(crate) fn suspend_guard(app: &AppHandle) {
 
 pub(crate) async fn approve_close(app: &AppHandle) -> Result<bool, String> {
     let incarnation = app.state::<PreferencesWindow>().incarnation();
-    let capture_app = app.clone();
-    approve_close_with(
-        |job| app.run_on_main_thread(job),
-        move || {
-            // Capture only native geometry on dispatch; shutdown/queue locks stay off-thread.
-            crate::client_state::capture_preferences_window(&capture_app);
-            Ok(())
+    let app = app.clone();
+    approve_close_for_app(
+        &app,
+        {
+            let dispatch_app = app.clone();
+            move |job| dispatch_app.run_on_main_thread(job)
         },
-        move || {
+        move |enqueue_app| {
             let (done, reply) = tokio::sync::oneshot::channel();
-            if !enqueue_close_after_capture(app, incarnation, move |result| {
+            if !enqueue_close_after_capture(&enqueue_app, incarnation, move |result| {
                 let _ = done.send(result);
             })? {
                 return Ok(None);
@@ -869,16 +868,49 @@ pub(crate) async fn approve_close(app: &AppHandle) -> Result<bool, String> {
     .await
 }
 
-async fn approve_close_with<E>(
+async fn approve_close_for_app<R, E>(
+    app: &AppHandle<R>,
     dispatch: impl FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), E>,
-    capture_native: impl FnOnce() -> Result<(), String> + Send + 'static,
-    enqueue: impl FnOnce() -> Result<Option<tokio::sync::oneshot::Receiver<Result<bool, String>>>, String>,
+    enqueue: impl FnOnce(AppHandle<R>) -> Result<Option<tokio::sync::oneshot::Receiver<Result<bool, String>>>, String>
+        + Send
+        + 'static,
 ) -> Result<bool, String>
 where
+    R: tauri::Runtime,
     E: std::fmt::Display,
 {
-    crate::run_on_dispatch(dispatch, capture_native).await?;
-    let Some(reply) = enqueue()? else {
+    let read_app = app.clone();
+    let record_app = app.clone();
+    approve_close_with(
+        dispatch,
+        move || {
+            // Read only native Wry geometry on dispatch; client-state and queue locks stay off-thread.
+            Ok(crate::client_state::read_preferences_window_geometry(&read_app))
+        },
+        move |geometry| {
+            crate::client_state::record_preferences_window_geometry(&record_app, geometry);
+            enqueue(record_app)
+        },
+    )
+    .await
+}
+
+async fn approve_close_with<G, E>(
+    dispatch: impl FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), E>,
+    read_native: impl FnOnce() -> Result<G, String> + Send + 'static,
+    record_and_enqueue: impl FnOnce(G) -> Result<Option<tokio::sync::oneshot::Receiver<Result<bool, String>>>, String>
+        + Send
+        + 'static,
+) -> Result<bool, String>
+where
+    G: Send + 'static,
+    E: std::fmt::Display,
+{
+    let geometry = crate::run_on_dispatch(dispatch, read_native).await?;
+    let Some(reply) = tauri::async_runtime::spawn_blocking(move || record_and_enqueue(geometry))
+        .await
+        .map_err(|error| error.to_string())??
+    else {
         return Ok(false);
     };
     reply.await.map_err(|error| error.to_string())?
@@ -1370,16 +1402,16 @@ mod tests {
         let captured_on_dispatch = Arc::clone(&captured);
 
         tauri::async_runtime::block_on(async {
-            let executor_id = std::thread::current().id();
             let mut approving = pin!(approve_close_with(
                 move |job| dispatch_tx.send(job),
                 move || {
                     captured_on_dispatch.store(true, Ordering::SeqCst);
-                    capture_thread_tx.send(std::thread::current().id()).unwrap();
-                    Ok(())
+                    let id = std::thread::current().id();
+                    capture_thread_tx.send(id).unwrap();
+                    Ok(id)
                 },
-                move || {
-                    assert_eq!(std::thread::current().id(), executor_id);
+                move |native_id| {
+                    assert_ne!(std::thread::current().id(), native_id);
                     Ok(Some(worker_reply))
                 },
             ));
@@ -1414,11 +1446,72 @@ mod tests {
                     Ok::<(), &str>(())
                 },
                 || Ok(()),
-                || Ok(None),
+                |()| Ok(None),
             )
             .await
             .unwrap();
             assert!(!approved);
         });
+    }
+
+    #[test]
+    fn approve_close_does_not_hold_client_state_locks_on_native_dispatch() {
+        use crate::client_state::ClientState;
+        use std::{sync::mpsc, time::Duration};
+        use tauri::test;
+
+        let directory = tempfile::tempdir().unwrap();
+        let app = test::mock_builder()
+            .manage(ClientState::initialize_at(directory.path()).unwrap())
+            .manage(PreferencesWindow::default())
+            .build(test::mock_context(test::noop_assets()))
+            .unwrap();
+        let _window = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+
+        let client_state = app.state::<ClientState>();
+        let state_guard = client_state.lock_state_for_test();
+        let (native_tx, native_rx) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let native_thread = std::thread::spawn(move || {
+            for job in native_rx {
+                job();
+            }
+        });
+
+        let (dispatched_tx, dispatched_rx) = mpsc::channel();
+        let close_tx = native_tx.clone();
+        let handle = app.handle().clone();
+        let close_thread = std::thread::spawn(move || {
+            tauri::async_runtime::block_on(approve_close_for_app(
+                &handle,
+                move |job| {
+                    let result = close_tx.send(job);
+                    let _ = dispatched_tx.send(());
+                    result
+                },
+                |_app| Ok(None),
+            ))
+        });
+
+        dispatched_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (heartbeat_tx, heartbeat_rx) = mpsc::channel();
+        native_tx
+            .send(Box::new(move || {
+                let _ = heartbeat_tx.send(());
+            }))
+            .unwrap();
+
+        let heartbeat = heartbeat_rx.recv_timeout(Duration::from_millis(300));
+        drop(state_guard);
+        let result = close_thread.join().unwrap();
+        drop(native_tx);
+        native_thread.join().unwrap();
+
+        assert!(
+            heartbeat.is_ok(),
+            "native dispatch heartbeat blocked while ClientState lock was held"
+        );
+        assert_eq!(result.unwrap(), false);
     }
 }

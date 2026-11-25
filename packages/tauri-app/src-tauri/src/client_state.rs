@@ -41,6 +41,7 @@ pub use window::{
     capture_all_windows, capture_and_flush_window, capture_preferences_window, local_window_zoom,
     set_local_window_zoom, setup_local_window, DEFAULT_ZOOM_LEVEL, MIN_WINDOW_WIDTH,
 };
+pub(crate) use window::{read_preferences_window_geometry, record_preferences_window_geometry};
 
 use envelope::PersistedClientState;
 use renderer_flush::RendererFlush;
@@ -575,7 +576,7 @@ impl ClientState {
         Ok(())
     }
 
-    fn schedule_window_flush(&self, app: &AppHandle) {
+    pub(crate) fn schedule_window_flush(&self, app: &AppHandle) {
         let app = app.clone();
         if let Err(error) = self.window_flush.schedule(move || {
             // Only persist captured data; never dispatch native getters from this worker.

@@ -5,15 +5,24 @@
 //! launches it. Handoffs always run off the native event loop on a dedicated
 //! FIFO worker thread.
 
-use std::sync::{mpsc, OnceLock};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Runtime};
 
 type OpenJob = Box<dyn FnOnce() + Send>;
-static QUEUE: OnceLock<ExternalOpenQueue> = OnceLock::new();
 
+enum GlobalQueue {
+    Uninitialized,
+    Running(ExternalOpenQueue),
+    Closed,
+}
+
+static QUEUE: Mutex<GlobalQueue> = Mutex::new(GlobalQueue::Uninitialized);
+
+#[derive(Clone)]
 pub(crate) struct ExternalOpenQueue {
-    sender: mpsc::Sender<OpenJob>,
+    // Only admission is locked; openers never execute under this mutex.
+    admission: Arc<Mutex<(mpsc::Sender<OpenJob>, bool)>>,
 }
 
 impl ExternalOpenQueue {
@@ -23,25 +32,42 @@ impl ExternalOpenQueue {
             .name("external-open".into())
             .spawn(move || receiver.into_iter().for_each(|job| job()))
             .expect("start external opener worker");
-        Self { sender }
+        Self {
+            admission: Arc::new(Mutex::new((sender, true))),
+        }
     }
 
     fn enqueue(&self, job: OpenJob) -> Result<(), String> {
-        self.sender
+        let admission = self
+            .admission
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if !admission.1 {
+            return Err("External URL opener is closed for shutdown".to_string());
+        }
+        admission
+            .0
             .send(job)
             .map_err(|_| "External URL opener worker stopped".to_string())
     }
 
     fn drain_until(&self, timeout: Duration) -> bool {
         let (done, barrier) = mpsc::sync_channel(1);
-        if self
-            .sender
-            .send(Box::new(move || {
-                let _ = done.send(());
-            }))
-            .is_err()
         {
-            return false;
+            let mut admission = self
+                .admission
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            admission.1 = false;
+            if admission
+                .0
+                .send(Box::new(move || {
+                    let _ = done.send(());
+                }))
+                .is_err()
+            {
+                return false;
+            }
         }
         barrier.recv_timeout(timeout).is_ok()
     }
@@ -76,14 +102,27 @@ impl ExternalOpenQueue {
     }
 }
 
-fn queue() -> &'static ExternalOpenQueue {
-    QUEUE.get_or_init(ExternalOpenQueue::new)
+fn open_global_queue() -> Option<ExternalOpenQueue> {
+    let mut global = QUEUE.lock().unwrap_or_else(|error| error.into_inner());
+    match &*global {
+        GlobalQueue::Running(queue) => Some(queue.clone()),
+        GlobalQueue::Closed => None,
+        GlobalQueue::Uninitialized => {
+            let queue = ExternalOpenQueue::new();
+            *global = GlobalQueue::Running(queue.clone());
+            Some(queue)
+        }
+    }
 }
 
 pub(crate) fn drain_pending(timeout: Duration) -> bool {
-    match QUEUE.get() {
-        Some(queue) => queue.drain_until(timeout),
-        None => true,
+    let previous = {
+        let mut global = QUEUE.lock().unwrap_or_else(|error| error.into_inner());
+        std::mem::replace(&mut *global, GlobalQueue::Closed)
+    };
+    match previous {
+        GlobalQueue::Running(queue) => queue.drain_until(timeout),
+        GlobalQueue::Uninitialized | GlobalQueue::Closed => true,
     }
 }
 
@@ -92,9 +131,13 @@ pub(crate) fn enqueue_open_url<R: Runtime>(
     url: String,
     on_error: impl FnOnce(AppHandle<R>, String) + Send + 'static,
 ) {
+    let Some(queue) = open_global_queue() else {
+        eprintln!("[tauri] failed to enqueue external URL handoff: External URL opener is closed for shutdown");
+        return;
+    };
     let worker_app = app.clone();
     let error_app = app.clone();
-    queue().enqueue_url(
+    queue.enqueue_url(
         url,
         move |url| open_url_blocking(&worker_app, url),
         move |error| on_error(error_app, error),
@@ -105,7 +148,9 @@ pub(crate) async fn open_url_async<R: Runtime>(
     app: AppHandle<R>,
     url: String,
 ) -> Result<(), String> {
-    queue()
+    let queue = open_global_queue()
+        .ok_or_else(|| "External URL opener is closed for shutdown".to_string())?;
+    queue
         .open_url_async(url, move |url| open_url_blocking(&app, url))
         .await
 }
@@ -309,5 +354,41 @@ mod tests {
         release_tx.send(()).unwrap();
         assert!(queue.drain_until(Duration::from_secs(5)));
         completed_rx.try_recv().unwrap();
+    }
+
+    #[test]
+    fn drain_seals_admission_so_post_barrier_handoffs_cannot_remain_pending() {
+        let queue = Arc::new(ExternalOpenQueue::new());
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+
+        queue.enqueue_url(
+            "https://example.com/in-flight".into(),
+            move |_| {
+                started_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(())
+            },
+            |error| panic!("unexpected error: {error}"),
+        );
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let draining = Arc::clone(&queue);
+        let drain_handle = std::thread::spawn(move || draining.drain_until(Duration::from_secs(5)));
+        std::thread::sleep(Duration::from_millis(30));
+
+        let late_ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let late_flag = Arc::clone(&late_ran);
+        let late_admission = queue.enqueue(Box::new(move || {
+            late_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        }));
+
+        release_tx.send(()).unwrap();
+        assert!(drain_handle.join().unwrap());
+        assert!(
+            late_admission.is_err(),
+            "handoffs enqueued after drain starts must be refused"
+        );
+        assert!(!late_ran.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

@@ -579,22 +579,33 @@ async fn require_local_window_with<E, D, U>(
     manager: CliProcessManager,
 ) -> Result<(), String>
 where
-    E: std::fmt::Display,
-    D: FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), E>,
+    E: std::fmt::Display + Send + 'static,
+    D: FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), E> + Send + 'static,
     U: FnOnce() -> Result<url::Url, String> + Send + 'static,
 {
-    // Dispatch only the Wry URL read on the native thread; lifecycle-locked
-    // CLI access stays off native dispatch and off the async executor.
-    let current = crate::run_on_dispatch(dispatch, read_url).await?;
-    let config = tauri::async_runtime::spawn_blocking(move || manager.local_cli_access())
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or("Local CodeNomad server is unavailable")?;
-    let expected = url::Url::parse(&config.base_url).map_err(|error| error.to_string())?;
-    if current.origin() != expected.origin() {
-        return Err("Workspace open requests require the local CodeNomad origin".into());
-    }
-    Ok(())
+    // Acquire lifecycle-locked CLI access on a blocking worker first and keep
+    // it while dispatching only the lock-free Wry URL read to the native thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        manager.with_local_cli_access(|access| {
+            let config = access.ok_or("Local CodeNomad server is unavailable")?;
+            let expected =
+                url::Url::parse(&config.base_url).map_err(|error| error.to_string())?;
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            dispatch(Box::new(move || {
+                let _ = sender.send(read_url());
+            }))
+            .map_err(|error| error.to_string())?;
+            let current = receiver
+                .blocking_recv()
+                .map_err(|_| "Native main-thread dispatch dropped before replying".to_string())??;
+            if current.origin() != expected.origin() {
+                return Err("Workspace open requests require the local CodeNomad origin".into());
+            }
+            Ok(())
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 async fn require_local_window(webview: &tauri::Webview) -> Result<(), String> {
@@ -603,7 +614,7 @@ async fn require_local_window(webview: &tauri::Webview) -> Result<(), String> {
     let manager = app.state::<AppState>().manager.clone();
     let target = webview.clone();
     require_local_window_with(
-        |job| app.run_on_main_thread(job),
+        move |job| app.run_on_main_thread(job),
         move || target.url().map_err(|error| error.to_string()),
         manager,
     )
@@ -868,7 +879,11 @@ mod tests {
             ))
         });
 
-        dispatched_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(
+            dispatched_rx.try_recv().is_err(),
+            "URL read must wait for lifecycle-locked CLI access before dispatching"
+        );
         let (heartbeat_tx, heartbeat_rx) = mpsc::channel();
         native_tx
             .send(Box::new(move || {
@@ -878,6 +893,7 @@ mod tests {
 
         let heartbeat = heartbeat_rx.recv_timeout(Duration::from_millis(300));
         drop(lifecycle);
+        dispatched_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         let auth_result = auth_handle.join().unwrap();
         drop(native_tx);
         native_thread.join().unwrap();
@@ -898,6 +914,60 @@ mod tests {
         ));
         assert_eq!(
             rejected.unwrap_err(),
+            "Workspace open requests require the local CodeNomad origin"
+        );
+    }
+
+    #[test]
+    fn navigation_while_lifecycle_lock_is_held_is_rejected_without_blocking_native_dispatch() {
+        use std::sync::{mpsc, Arc, Mutex};
+
+        let manager = CliProcessManager::new();
+        manager.set_ready_local_access_for_test("http://127.0.0.1:43123");
+        let lifecycle = manager.lock_lifecycle_for_test();
+        let current_url = Arc::new(Mutex::new("http://127.0.0.1:43123/workspace".to_string()));
+
+        let (native_tx, native_rx) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let native_thread = std::thread::spawn(move || {
+            for job in native_rx {
+                job();
+            }
+        });
+
+        let auth_tx = native_tx.clone();
+        let auth_url = Arc::clone(&current_url);
+        let auth_manager = manager.clone();
+        let auth_handle = std::thread::spawn(move || {
+            tauri::async_runtime::block_on(require_local_window_with(
+                move |job| auth_tx.send(job),
+                move || url::Url::parse(&auth_url.lock().unwrap()).map_err(|e| e.to_string()),
+                auth_manager,
+            ))
+        });
+
+        std::thread::sleep(Duration::from_millis(50));
+        let (heartbeat_tx, heartbeat_rx) = mpsc::channel();
+        native_tx
+            .send(Box::new(move || {
+                let _ = heartbeat_tx.send(());
+            }))
+            .unwrap();
+        let heartbeat = heartbeat_rx.recv_timeout(Duration::from_millis(300));
+
+        // Renderer navigates to an untrusted origin while the lifecycle lock is still held.
+        *current_url.lock().unwrap() = "https://untrusted.example/".to_string();
+        drop(lifecycle);
+
+        let auth_result = auth_handle.join().unwrap();
+        drop(native_tx);
+        native_thread.join().unwrap();
+
+        assert!(
+            heartbeat.is_ok(),
+            "native dispatch heartbeat blocked while CLI lifecycle lock was held"
+        );
+        assert_eq!(
+            auth_result.unwrap_err(),
             "Workspace open requests require the local CodeNomad origin"
         );
     }

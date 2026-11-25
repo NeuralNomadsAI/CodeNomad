@@ -222,6 +222,81 @@ fn windows_session_end_abandons_unfinished_window_build_instead_of_waiting() {
     });
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_session_end_abandoning_reused_saved_window_discards_unfinished_geometry() {
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    let reused_id = state.active_window_id().unwrap();
+    assert!(state.capture_test_bounds(&reused_id, 100));
+    state.flush_for_test().unwrap();
+    assert_eq!(state.saved_window_x_on_disk(&reused_id), Some(100));
+
+    let windows = LocalWindows::default();
+    let shutdown = ShutdownCoordinator::default();
+    let pending = queued_window(&windows, &shutdown, vec![reused_id.clone()]);
+    assert_eq!(pending.id, reused_id);
+    let timeout = Duration::from_secs(2);
+
+    std::thread::scope(|scope| {
+        let (entered_tx, entered_rx) = channel();
+        let (resume_tx, resume_rx) = channel();
+        let (windows_ref, shutdown_ref, state_ref) = (&windows, &shutdown, &state);
+        let construction = scope.spawn(move || {
+            pending.construct(windows_ref, shutdown_ref, true, |record, new_record, building| {
+                assert!(!new_record);
+                admit_local_window_build_capture(state_ref, &record.id, new_record, true);
+                assert!(state_ref.capture_test_bounds(&record.id, 999));
+                entered_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+                assert!(building.is_abandoned());
+                if building
+                    .finish(|| panic!("abandoned reused build must not commit"))
+                    .is_none()
+                {
+                    return Err(SHUTDOWN_IN_PROGRESS.into());
+                }
+                Ok(record)
+            })
+        });
+        entered_rx.recv_timeout(timeout).unwrap();
+
+        let (_, start, abandoned) = shutdown.confirm_windows_session_end();
+        assert!(start);
+        assert_eq!(abandoned.len(), 1);
+        assert_eq!(abandoned[0].window_id, reused_id);
+        crate::shutdown::abandon_unfinished_local_window_builds_in(
+            Some(&windows),
+            Some(&state),
+            abandoned,
+        );
+        // Late captures from an unwinding build are also ignored once abandoned.
+        assert!(!state.capture_test_bounds(&reused_id, 888));
+        state.prepare_ownership_release().unwrap();
+        assert_eq!(state.saved_window_x_on_disk(&reused_id), Some(100));
+
+        resume_tx.send(()).unwrap();
+        assert_eq!(construction.join().unwrap().unwrap_err(), SHUTDOWN_IN_PROGRESS);
+    });
+
+    // A non-abandoned reused build commits and flushes its captured geometry.
+    let commit_dir = tempfile::tempdir().unwrap();
+    let commit_state = ClientState::initialize_at(commit_dir.path()).unwrap();
+    let commit_id = commit_state.active_window_id().unwrap();
+    assert!(commit_state.capture_test_bounds(&commit_id, 100));
+    commit_state.flush_for_test().unwrap();
+    admit_local_window_build_capture(&commit_state, &commit_id, false, true);
+    assert!(commit_state.capture_test_bounds(&commit_id, 250));
+    commit_state.flush_for_test().unwrap();
+    assert_eq!(commit_state.saved_window_x_on_disk(&commit_id), Some(100));
+    assert!(commit_state.commit_reused_window_build_capture(&commit_id));
+    commit_state.flush_for_test().unwrap();
+    assert_eq!(commit_state.saved_window_x_on_disk(&commit_id), Some(250));
+}
+
 #[test]
 fn registry_tracks_uuid_labels_mru_and_folder_ack_order() {
     let mut registry = Registry::default();

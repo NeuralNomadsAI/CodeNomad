@@ -5,10 +5,10 @@ use super::{
 };
 use std::collections::{HashMap, HashSet};
 
-pub(super) struct WindowGeometry {
-    pub bounds: Option<WindowBounds>,
-    pub maximized: bool,
-    pub fullscreen: bool,
+pub(crate) struct WindowGeometry {
+    pub(super) bounds: Option<WindowBounds>,
+    pub(super) maximized: bool,
+    pub(super) fullscreen: bool,
 }
 
 #[derive(Default)]
@@ -16,6 +16,8 @@ pub(super) struct WindowCaptures {
     latest: HashMap<String, NativeWindowState>,
     active: Option<String>,
     new_windows: HashSet<String>,
+    building_windows: HashSet<String>,
+    abandoned_builds: HashSet<String>,
     // A clear/disable/removal is tentative until publication. Keep admission
     // based on its previous policy so a failed write cannot drop live events.
     mutation: Option<(String, Option<NativeWindowState>)>,
@@ -32,7 +34,7 @@ impl ClientState {
 
     pub(crate) fn capture_active_window(&self, id: String) -> bool {
         if let Ok(mut pending) = self.pending_windows.lock() {
-            if pending.stopped {
+            if pending.stopped || pending.abandoned_builds.contains(&id) {
                 return false;
             }
             pending.active = Some(id);
@@ -49,6 +51,14 @@ impl ClientState {
         // A native getter can synchronously wait for the UI event loop. Do not
         // hold ANY client-state lock until it returns, including during shutdown.
         let geometry = read_native();
+        self.record_window_geometry(window_id, geometry)
+    }
+
+    pub(super) fn record_window_geometry(
+        &self,
+        window_id: &str,
+        geometry: WindowGeometry,
+    ) -> bool {
         let zoom = self
             .zoom_levels
             .lock()
@@ -83,7 +93,7 @@ impl ClientState {
         let Ok(mut pending) = self.pending_windows.lock() else {
             return false;
         };
-        if pending.stopped {
+        if pending.stopped || pending.abandoned_builds.contains(window_id) {
             return false;
         }
         let previous_window = if let Some((_, window)) =
@@ -141,16 +151,21 @@ impl ClientState {
         }
         let mut applied = false;
         if let Some(id) = pending.active.take() {
-            if pending.new_windows.contains(&id) {
+            if pending.new_windows.contains(&id) || pending.building_windows.contains(&id) {
                 pending.active = Some(id);
             } else if id != state.active_window_id && state.record(&id).is_ok() {
                 state.active_window_id = id;
                 applied = true;
             }
         }
-        let WindowCaptures { new_windows, latest, .. } = &mut *pending;
+        let WindowCaptures {
+            new_windows,
+            building_windows,
+            latest,
+            ..
+        } = &mut *pending;
         latest.retain(|id, capture| {
-            if new_windows.contains(id) {
+            if new_windows.contains(id) || building_windows.contains(id) {
                 return true;
             }
             if id == crate::preferences_window::LABEL {
@@ -171,13 +186,42 @@ impl ClientState {
     pub(crate) fn admit_new_window_capture(&self, id: String) {
         let mut pending = self.pending_windows.lock().unwrap_or_else(|err| err.into_inner());
         if !pending.stopped {
+            pending.abandoned_builds.remove(&id);
             pending.new_windows.insert(id);
+        }
+    }
+
+    pub(crate) fn admit_reused_window_build_capture(&self, id: String) {
+        let mut pending = self.pending_windows.lock().unwrap_or_else(|err| err.into_inner());
+        if !pending.stopped {
+            pending.abandoned_builds.remove(&id);
+            pending.building_windows.insert(id);
+        }
+    }
+
+    pub(crate) fn commit_reused_window_build_capture(&self, id: &str) -> bool {
+        let mut pending = self.pending_windows.lock().unwrap_or_else(|err| err.into_inner());
+        pending.building_windows.remove(id)
+            && (pending.latest.contains_key(id) || pending.active.as_deref() == Some(id))
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(crate) fn abandon_window_build_capture(&self, id: &str) {
+        let mut pending = self.pending_windows.lock().unwrap_or_else(|err| err.into_inner());
+        pending.new_windows.remove(id);
+        pending.building_windows.remove(id);
+        pending.abandoned_builds.insert(id.to_string());
+        pending.latest.remove(id);
+        if pending.active.as_deref() == Some(id) {
+            pending.active = None;
         }
     }
 
     pub(crate) fn discard_new_window_capture(&self, id: &str) {
         let mut pending = self.pending_windows.lock().unwrap_or_else(|err| err.into_inner());
-        if pending.new_windows.remove(id) {
+        let removed_new = pending.new_windows.remove(id);
+        let removed_building = pending.building_windows.remove(id);
+        if removed_new || removed_building {
             pending.latest.remove(id);
             if pending.active.as_deref() == Some(id) {
                 pending.active = None;
@@ -259,6 +303,39 @@ impl ClientState {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .stopped = stopped;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lock_state_for_test(&self) -> impl Drop + '_ {
+        self.state.lock().unwrap()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn capture_test_bounds(&self, window_id: &str, x: i32) -> bool {
+        self.capture_window_geometry(window_id, || WindowGeometry {
+            bounds: Some(WindowBounds {
+                x,
+                y: 20,
+                width: 1200,
+                height: 800,
+            }),
+            maximized: false,
+            fullscreen: false,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn flush_for_test(&self) -> Result<(), String> {
+        self.flush()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn saved_window_x_on_disk(&self, window_id: &str) -> Option<i32> {
+        let bytes = std::fs::read(&self.state_path).ok()?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        value["windows"][window_id]["window"]["bounds"]["x"]
+            .as_i64()
+            .map(|x| x as i32)
     }
 
     pub(super) fn window_captures_stopped(&self) -> Result<bool, String> {

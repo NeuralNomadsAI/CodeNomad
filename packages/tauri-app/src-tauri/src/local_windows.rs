@@ -815,6 +815,22 @@ pub(crate) fn create_local_window(
     build_local_window(app, record, false, None)
 }
 
+fn admit_local_window_build_capture(
+    state: &ClientState,
+    id: &str,
+    new_record: bool,
+    persisted: bool,
+) {
+    if !persisted {
+        return;
+    }
+    if new_record {
+        state.admit_new_window_capture(id.to_string());
+    } else {
+        state.admit_reused_window_build_capture(id.to_string());
+    }
+}
+
 fn build_local_window(
     app: &AppHandle,
     record: LocalWindowRecord,
@@ -830,9 +846,7 @@ fn build_local_window(
         .join("local");
     let badge_binding = crate::notification_badge::prepare_window(app, &record.label);
     let state = app.state::<ClientState>();
-    if new_record && persisted {
-        state.admit_new_window_capture(id.clone());
-    }
+    admit_local_window_build_capture(&state, id, new_record, persisted);
     let builder = WebviewWindowBuilder::new(app, &record.label, local_window_initial_url())
         .data_directory(data_directory)
         .initialization_script(script)
@@ -934,7 +948,10 @@ fn build_local_window(
         return Err(error);
     }
     let admit_state = || {
-        if new_record && persisted {
+        if !persisted {
+            return;
+        }
+        if new_record {
             state.register_ephemeral_window(id.clone());
             // Admit only after successful construction and before the first
             // renderer can claim its document. Shutdown drains this publication.
@@ -942,6 +959,8 @@ fn build_local_window(
                 state.discard_new_window_capture(id);
                 eprintln!("[client-state] failed to admit new window state: {error}");
             }
+        } else if state.commit_reused_window_build_capture(id) {
+            state.schedule_window_flush(app);
         }
     };
     let committed = match building {
