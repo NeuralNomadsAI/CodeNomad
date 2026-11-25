@@ -510,7 +510,7 @@ impl Document {
         if !self.has_unconfirmed() {
             return;
         }
-        let mut clear_transcript_for_preset = |write: &mut Write| {
+        let clear_transcript_for_preset = |write: &mut Write| {
             write.requested.retain(|c, _| !is_transcript(*c));
             write.failed.retain(|c| !is_transcript(*c));
             write.post_preset_rows.clear();
@@ -562,7 +562,7 @@ impl Document {
                 self.write.failed.insert(choice);
             }
         }
-        for batch in self.write.transcript_queue.drain(..) {
+        for batch in std::mem::take(&mut self.write.transcript_queue) {
             if batch.contains_key(&Choice::TranscriptPreset) {
                 clear_transcript_for_preset(&mut self.write);
             }

@@ -1027,9 +1027,8 @@ fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfi
             "Retry after row-then-preset timeout must apply preset (expanded), not earlier hidden row: {}",
             retry_patch.body
         );
-        retry_patch
-            .reply(200, json!({"settings": retry_patch.body["settings"]}))
-            .await;
+        let saved = retry_patch.body["settings"].clone();
+        retry_patch.reply(200, json!({"settings": saved})).await;
     });
 
     // Admission budget across multiple owners: at 15 settled ops with 2 ready owners, admit at most 1.
