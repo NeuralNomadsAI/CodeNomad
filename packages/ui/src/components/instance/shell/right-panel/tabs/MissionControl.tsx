@@ -477,6 +477,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   })
   // A schedule's current passage: its selected task takes the toolbar from the schedule's.
   const passageTask = createMemo(() => passageSchedule() ? taskSelection(mission(), observedActivity(), passageStore()) : undefined)
+  // The selected row's task tree, with its task sessions, mounts only while its chevron is open;
+  // the toolbar keeps reading the selection's map either way.
+  const selectedExpanded = () => (view().expanded ?? []).includes(selectedScheduled() ? `scheduled:${selectedScheduled()}`
+    : selectedSchedule() ? `schedule:${selectedSchedule()}` : `mission:${selectedMissionId()}`)
   const tracking = () => <>
     <MissionPanelScope value={passageStore}><Show when={mission()}>{selected => <>
       <Show when={passageTask()?.task.key} keyed>{_key => <MissionTaskActions readOnly instanceId={props.instanceId} mission={selected()}
@@ -484,9 +488,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         reading={isReading({ missionId: selected().id, kind: "task", itemId: passageTask()!.task.id })}
         onToggleReader={() => { const task = passageTask(); if (task) void read({ missionId: selected().id, kind: "task", itemId: task.task.id }) }}
         onOpenConversation={id => void onOpenActor(id)} />}</Show>
-      <MissionTracking instanceId={props.instanceId} mission={selected()} activity={observedActivity()}
+      <Show when={selectedExpanded()}><MissionTracking instanceId={props.instanceId} mission={selected()} activity={observedActivity()}
         active={treeShown()} selected={task => isSelectedTask(selected().id, task.id)} onSelect={task => selectTask(selected().id, task.id)}
-        onOpenActor={onOpenActor} /></>}</Show></MissionPanelScope>
+        onOpenActor={onOpenActor} /></Show></>}</Show></MissionPanelScope>
   </>
   const recurrence = createMissionRecurrenceList({ get instanceId() { return props.instanceId }, get scope() { return scope() },
     get projectID() { return projectID() }, active: () => props.isActive?.() ?? true, get refresh() { return recurrenceRefresh() },
