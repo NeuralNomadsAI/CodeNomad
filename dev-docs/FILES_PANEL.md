@@ -214,10 +214,10 @@ opaque device/inode identity distinct from mtime.
   `409 { error: "File changed on disk" }` when missing or different. Existing
   single-link files stage to a sibling temporary file, re-verify target and parent
   identity, and publish via `rename` (preserving POSIX mode and ownership where
-  permitted; ACLs, xattrs and NTFS alternate streams are preserved only by the
-  Rust server); hardlinks (`nlink > 1`), non-writable parent directories, rename
-  limitations, and unpreservable POSIX ownership fall back to a verified in-place
-  write on the open handle. New files stage to a temporary file and publish
+  permitted; Node.js `fs` does not copy POSIX ACLs, xattrs or NTFS alternate
+  streams across `rename`); hardlinks (`nlink > 1`), non-writable parent
+  directories, rename limitations, and unpreservable POSIX ownership fall back to
+  a verified in-place write on the open handle. New files stage to a temporary file and publish
   atomically with no-clobber `link` (or an exclusive `wx` create-and-write
   fallback when hard links are unavailable). Successful saves return `204` with
   the new `ETag`. The Solid editor forwards `expectedVersion` and maps save-time

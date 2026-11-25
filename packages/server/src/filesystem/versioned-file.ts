@@ -86,10 +86,15 @@ async function writeAllToHandle(handle: fs.promises.FileHandle, bytes: Buffer): 
   await handle.sync()
 }
 
-function rawJoin(baseDir: string, target: string): string {
+function rawJoin(baseDir: string, target: string, isWindows: boolean): string {
   if (path.isAbsolute(target)) return target
-  const sep = baseDir.endsWith("/") || baseDir.endsWith("\\") ? "" : path.sep
+  const sep = baseDir.endsWith("/") || (isWindows && baseDir.endsWith("\\")) ? "" : path.sep
   return `${baseDir}${sep}${target}`
+}
+
+function isMissingPathError(error: unknown): boolean {
+  const code = errnoCode(error)
+  return code === "ENOENT" || code === "ENOTDIR"
 }
 
 /**
@@ -104,14 +109,14 @@ async function resolveTarget(lexicalPath: string, isWindows: boolean, conditiona
       const stats = await fs.promises.lstat(real, { bigint: true })
       return { targetPath: real, parentPath: path.dirname(real), existing: true, stats }
     } catch (error) {
-      if (errnoCode(error) !== "ENOENT") throw error
+      if (!isMissingPathError(error)) throw error
     }
 
     let linkStats: fs.BigIntStats | undefined
     try {
       linkStats = await fs.promises.lstat(current, { bigint: true })
     } catch (error) {
-      if (errnoCode(error) !== "ENOENT") throw error
+      if (!isMissingPathError(error)) throw error
     }
 
     if (linkStats?.isSymbolicLink()) {
@@ -120,7 +125,7 @@ async function resolveTarget(lexicalPath: string, isWindows: boolean, conditiona
         if (conditional) throw new FileChangedError()
         throw new Error("Selected path is not a file")
       }
-      current = rawJoin(path.dirname(current), linkTarget)
+      current = rawJoin(path.dirname(current), linkTarget, isWindows)
       continue
     }
 
@@ -133,7 +138,7 @@ async function resolveTarget(lexicalPath: string, isWindows: boolean, conditiona
       const parentPath = await fs.promises.realpath(path.dirname(current))
       return { targetPath: path.join(parentPath, leaf), parentPath, existing: false }
     } catch (error) {
-      if (conditional && errnoCode(error) === "ENOENT") throw new FileChangedError()
+      if (conditional && isMissingPathError(error)) throw new FileChangedError()
       throw error
     }
   }
@@ -291,14 +296,26 @@ export async function writeVersionedFile(
       throw new Error("Selected path is not a file")
     }
 
-    const parentStats = await fs.promises.stat(target.parentPath, { bigint: true })
-    const assertDestinationCurrent = async () => {
+    let parentStats: fs.BigIntStats
+    try {
+      parentStats = await fs.promises.stat(target.parentPath, { bigint: true })
+    } catch (error) {
+      if (conditional && isMissingPathError(error)) throw new FileChangedError()
+      throw error
+    }
+    const assertDestinationCurrent = async (expectedIdentity?: { dev: bigint; ino: bigint }) => {
       const currentParent = await fs.promises.stat(target.parentPath, { bigint: true }).catch(() => undefined)
       if (!currentParent || currentParent.dev !== parentStats.dev || currentParent.ino !== parentStats.ino) {
         throw new FileChangedError()
       }
       const latest = await resolveTarget(lexicalPath, options.isWindows, conditional)
       if (latest.targetPath !== target.targetPath) {
+        throw new FileChangedError()
+      }
+      if (
+        expectedIdentity
+        && (!latest.existing || !latest.stats || latest.stats.dev !== expectedIdentity.dev || latest.stats.ino !== expectedIdentity.ino)
+      ) {
         throw new FileChangedError()
       }
       return latest
@@ -360,7 +377,8 @@ export async function writeVersionedFile(
       }
       await verifyHandleVersion(opened.handle, expectedVersion)
       if (originalStats.nlink > 1n) {
-        await assertDestinationCurrent()
+        await assertDestinationCurrent(originalStats)
+        await verifyHandleVersion(opened.handle, expectedVersion)
         await writeAllToHandle(opened.handle, bytes)
         return nextVersion
       }
@@ -375,7 +393,7 @@ export async function writeVersionedFile(
         if (current.stats.dev !== originalStats.dev || current.stats.ino !== originalStats.ino) {
           throw new FileChangedError()
         }
-        await assertDestinationCurrent()
+        await assertDestinationCurrent(current.stats)
         await verifyHandleVersion(current.handle, expectedVersion)
         await writeAllToHandle(current.handle, bytes)
       } finally {

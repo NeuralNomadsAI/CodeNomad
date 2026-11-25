@@ -248,18 +248,18 @@ describe("workspace file version & optimistic concurrency", () => {
       assert.equal(tooLarge.statusCode, 400)
       assert.equal(tooLarge.json().code, "file_too_large")
 
-      // A valid <= 5 MiB file whose JSON-escaped body exceeds 8 MiB still succeeds.
-      const newlineHeavy = "\n".repeat(4_500_000)
-      const savedHeavy = await f.put("newlines.txt", { contents: newlineHeavy })
+      // A valid <= 5 MiB file whose JSON-escaped body exceeds 16 MiB (6x control-char expansion) still succeeds.
+      const escapedHeavy = "\u0001".repeat(3_000_000)
+      const savedHeavy = await f.put("escaped.txt", { contents: escapedHeavy })
       assert.equal(savedHeavy.statusCode, 204)
-      assert.equal(savedHeavy.headers.etag, shaTag(newlineHeavy))
+      assert.equal(savedHeavy.headers.etag, shaTag(escapedHeavy))
     } finally {
       await chmod(readonlyFile, 0o666).catch(() => {})
       await f.close()
     }
   })
 
-  it("returns 409 when a file's parent directory was deleted and falls back in place when staging cannot create a temp file", async (t) => {
+  it("returns 409 when a file's parent is deleted or replaced by a file, and verifies inode before hardlink in-place writes", async (t) => {
     const f = await createFixture()
     try {
       const subDir = path.join(f.root, "sub")
@@ -272,6 +272,34 @@ describe("workspace file version & optimistic concurrency", () => {
       const missingParent = await f.put("sub/note.txt", { contents: "v2", expectedVersion: v1 })
       assert.equal(missingParent.statusCode, 409)
       assert.deepEqual(missingParent.json(), { error: "File changed on disk" })
+
+      // Parent directory replaced by a regular file (ENOTDIR) also returns 409.
+      await writeFile(subDir, "now-a-file", "utf-8")
+      const fileParent = await f.put("sub/note.txt", { contents: "v2", expectedVersion: v1 })
+      assert.equal(fileParent.statusCode, 409)
+      assert.deepEqual(fileParent.json(), { error: "File changed on disk" })
+
+      // Hardlink destination replaced at the same path after opening must not mutate the old inode.
+      const hlA = path.join(f.root, "hl-a.txt")
+      const hlB = path.join(f.root, "hl-b.txt")
+      await writeFile(hlA, "orig", "utf-8")
+      await link(hlA, hlB)
+      const origOpen = fs.promises.open.bind(fs.promises)
+      let swapped = false
+      t.mock.method(fs.promises, "open", async (...args: Parameters<typeof fs.promises.open>) => {
+        const handle = await origOpen(...args)
+        if (!swapped && path.resolve(String(args[0])) === path.resolve(hlA)) {
+          swapped = true
+          await unlink(hlA)
+          await writeFile(hlA, "replaced-inode", "utf-8")
+        }
+        return handle
+      })
+      const swappedRes = await f.put("hl-a.txt", { contents: "stale-in-place", expectedVersion: shaTag("orig") })
+      t.mock.restoreAll()
+      assert.equal(swappedRes.statusCode, 409)
+      assert.equal(await readFile(hlA, "utf-8"), "replaced-inode")
+      assert.equal(await readFile(hlB, "utf-8"), "orig")
 
       const target = path.join(f.root, "fallback.txt")
       await writeFile(target, "before", "utf-8")

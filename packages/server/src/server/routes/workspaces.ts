@@ -262,7 +262,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.put<{
     Params: { id: string }
     Querystring: { path?: string; worktree?: string }
-  }>("/api/workspaces/:id/files/content", { bodyLimit: 16 * 1024 * 1024 }, async (request, reply) => {
+  }>("/api/workspaces/:id/files/content", { bodyLimit: 32 * 1024 * 1024 }, async (request, reply) => {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
       const body = WorkspaceFileContentBodySchema.parse(request.body ?? {})
