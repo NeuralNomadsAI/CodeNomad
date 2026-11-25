@@ -10,6 +10,7 @@ import {setTimeout as sleep} from 'node:timers/promises'
 import {chromium} from 'playwright'
 import {signInFixture} from '../../packages/rune-app/fixtures/fixture-host.mjs'
 import {privateEnvironment} from '../../packages/rune-app/fixtures/private-profile.mjs'
+import {assertWorktreeTestRoot} from './web-workspace-policy.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const binary = process.env.RUNE_SERVER_EXE
@@ -19,8 +20,8 @@ const ui = path.join(root, 'target/rune-web')
 const manifest = JSON.parse(await readFile(path.join(ui, 'bundle-manifest.json'), 'utf8'))
 assert.equal(manifest.generator, 'scripts/rune/bundle-web.mjs')
 assert.equal(manifest.testSupport,true,'Build WASM with --features test-support and bundle with --test-support before this synthetic fixture')
-await mkdir(path.join(root, 'target/rune-web-tests'), {recursive: true})
-const profile = await mkdtemp(path.join(root, 'target/rune-web-tests/trial-'))
+const {testsReal} = await assertWorktreeTestRoot(root)
+const profile = await mkdtemp(path.join(testsReal, 'trial-'))
 const workspace = path.join(profile, 'workspace'), forbidden = path.join(profile, 'forbidden')
 await mkdir(workspace); await mkdir(forbidden)
 await writeFile(path.join(forbidden, 'private-marker.txt'), 'This synthetic directory stays outside workspace authority.\n')

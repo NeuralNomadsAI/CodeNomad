@@ -1,8 +1,47 @@
 import assert from 'node:assert/strict'
-import {readFile,realpath,lstat,writeFile} from 'node:fs/promises'
+import {constants as fsConstants} from 'node:fs'
+import {lstat,mkdir,open,readdir,readFile,realpath} from 'node:fs/promises'
 import path from 'node:path'
 
 const inside=(parent,value)=>{const relative=path.relative(parent,value);return relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith(`..${path.sep}`)}
+
+export async function assertWorktreeTestRoot(root){
+  const rootReal=await realpath(root)
+  const targetPath=path.join(rootReal,'target')
+  const targetStat=await lstat(targetPath).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+  if(targetStat){
+    assert(!targetStat.isSymbolicLink()&&targetStat.isDirectory(),`Fixture target path must be a real directory inside the worktree: ${targetPath}`)
+    assert(inside(rootReal,await realpath(targetPath)),`Fixture target path escapes canonical worktree: ${targetPath}`)
+  }
+  const testsPath=path.join(targetPath,'rune-web-tests')
+  const testsStat=await lstat(testsPath).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+  if(testsStat){
+    assert(!testsStat.isSymbolicLink()&&testsStat.isDirectory(),`Fixture test root must be a real directory inside the worktree: ${testsPath}`)
+    assert(inside(rootReal,await realpath(testsPath)),`Fixture test root escapes canonical worktree: ${testsPath}`)
+  }
+  await mkdir(testsPath,{recursive:true})
+  const testsReal=await realpath(testsPath)
+  assert(inside(rootReal,testsReal),`Fixture test root escapes canonical worktree: ${testsReal}`)
+  return {rootReal,testsReal}
+}
+
+export async function createPrivateOutputDir(out,allowedRoot){
+  const rootReal=await realpath(allowedRoot)
+  const resolved=path.resolve(out)
+  const parentReal=await realpath(path.dirname(resolved))
+  assert(parentReal===rootReal||inside(rootReal,parentReal),`Output parent escapes allowed fixture root: ${parentReal}`)
+  const existing=await lstat(resolved).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+  if(existing){
+    assert(!existing.isSymbolicLink()&&existing.isDirectory(),`Output path must be an empty non-symlink directory: ${resolved}`)
+    const entries=await readdir(resolved)
+    assert.equal(entries.length,0,`Refusing to write into non-empty output directory: ${resolved}`)
+  }else{
+    await mkdir(resolved)
+  }
+  const outReal=await realpath(resolved)
+  assert(inside(rootReal,outReal),`Output link escapes fixture root: ${outReal}`)
+  return outReal
+}
 
 export async function writePrivateFile(filePath,content,allowedRoot){
   const rootReal=await realpath(allowedRoot)
@@ -11,7 +50,9 @@ export async function writePrivateFile(filePath,content,allowedRoot){
   assert(dirReal===rootReal||inside(rootReal,dirReal),`Output directory escapes allowed fixture root: ${dirReal}`)
   const existing=await lstat(resolved).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
   assert(!existing||(!existing.isSymbolicLink()&&existing.isFile()),`Refusing to overwrite symlink or non-file output: ${resolved}`)
-  await writeFile(resolved,content)
+  const flags=fsConstants.O_WRONLY|fsConstants.O_CREAT|fsConstants.O_TRUNC|(fsConstants.O_NOFOLLOW??0)
+  const handle=await open(resolved,flags,0o600)
+  try{await handle.writeFile(content)}finally{await handle.close()}
 }
 
 export async function privateWebFixture({root,project,storageState,out,origin}){

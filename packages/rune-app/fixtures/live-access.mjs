@@ -358,10 +358,13 @@ export async function acquireProfileLock(lease){
     },
     async close(){
       if(closed)return
+      let removed=false
       if(acquired){
         withLeaseDb(dbPath,db=>{
-          db.prepare('DELETE FROM lease WHERE id = 1 AND nonce = ?').run(nonce)
+          const info=db.prepare('DELETE FROM lease WHERE id = 1 AND nonce = ?').run(nonce)
+          removed=info.changes===1
         },5000)
+        if(removed)await unlink(lease).catch(()=>{})
       }
       closed=true
       heldLeases.delete(key)

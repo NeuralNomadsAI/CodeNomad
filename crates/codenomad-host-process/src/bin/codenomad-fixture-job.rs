@@ -200,7 +200,301 @@ fn report_pid(pid: u32, pid_file: Option<&PathBuf>, #[cfg(unix)] pid_fd: Option<
     let _ = stderr.flush();
 }
 
+fn json_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+#[cfg(windows)]
+fn probe_system_dir() -> io::Result<i32> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
+    let name: Vec<u16> = "kernel32.dll\0".encode_utf16().collect();
+    // SAFETY: kernel32.dll is permanently loaded in every Win32 process.
+    let module = unsafe { GetModuleHandleW(name.as_ptr()) };
+    if module.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let mut buf = vec![0u16; 32768];
+    // SAFETY: writing into our owned UTF-16 buffer of length buf.len().
+    let len = unsafe { GetModuleFileNameW(module, buf.as_mut_ptr(), buf.len() as u32) } as usize;
+    if len == 0 || len >= buf.len() {
+        return Err(io::Error::last_os_error());
+    }
+    let dll_path = PathBuf::from(OsString::from_wide(&buf[..len]));
+    let dir = dll_path
+        .parent()
+        .ok_or_else(|| io::Error::other("kernel32.dll path has no parent directory"))?;
+    println!("{}", dir.to_string_lossy());
+    Ok(0)
+}
+
+#[cfg(windows)]
+fn probe_pid(pid: u32) -> io::Result<i32> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, FILETIME, GetLastError,
+        STILL_ACTIVE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
+    };
+    // Exact millisecond offset between 0001-01-01 (.NET DateTime.Ticks / 10000) and 1601-01-01 (Win32 FILETIME).
+    const FILETIME_EPOCH_OFFSET_MS: u64 = 50_491_123_200_000;
+    if pid == 0 {
+        println!(r#"{{"status":"dead"}}"#);
+        return Ok(0);
+    }
+    // SAFETY: OpenProcess with read-only PROCESS_QUERY_LIMITED_INFORMATION.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        let err = unsafe { GetLastError() };
+        if err == ERROR_INVALID_PARAMETER {
+            println!(r#"{{"status":"dead"}}"#);
+        } else if err == ERROR_ACCESS_DENIED {
+            println!(r#"{{"status":"unknown"}}"#);
+        } else {
+            println!(r#"{{"status":"unknown"}}"#);
+        }
+        return Ok(0);
+    }
+    struct HandleGuard(windows_sys::Win32::Foundation::HANDLE);
+    impl Drop for HandleGuard {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+    let _guard = HandleGuard(handle);
+    let mut exit_code: u32 = 0;
+    // SAFETY: querying exit code of opened process handle.
+    if unsafe { GetExitCodeProcess(handle, &mut exit_code) } == 0 {
+        println!(r#"{{"status":"unknown"}}"#);
+        return Ok(0);
+    }
+    if exit_code != STILL_ACTIVE as u32 {
+        println!(r#"{{"status":"dead"}}"#);
+        return Ok(0);
+    }
+    let mut creation = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let mut exit = creation;
+    let mut kernel = creation;
+    let mut user = creation;
+    // SAFETY: querying process timestamps into stack FILETIME structs.
+    if unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) } == 0 {
+        println!(r#"{{"status":"unknown"}}"#);
+        return Ok(0);
+    }
+    let ticks_100ns = ((creation.dwHighDateTime as u64) << 32) | (creation.dwLowDateTime as u64);
+    let start_ms = (ticks_100ns / 10_000) + FILETIME_EPOCH_OFFSET_MS;
+    let mut image_buf = vec![0u16; 32768];
+    let mut image_len = image_buf.len() as u32;
+    // SAFETY: querying Win32 image path into owned UTF-16 buffer.
+    let exe =
+        if unsafe { QueryFullProcessImageNameW(handle, 0, image_buf.as_mut_ptr(), &mut image_len) }
+            != 0
+            && (image_len as usize) < image_buf.len()
+        {
+            Some(
+                OsString::from_wide(&image_buf[..image_len as usize])
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        } else {
+            None
+        };
+    let exe_json = match exe {
+        Some(path) => json_escape(&path),
+        None => "null".to_owned(),
+    };
+    println!(
+        r#"{{"status":"ok","startId":"{start_ms}","createdAt":"{start_ms}","exe":{exe_json}}}"#
+    );
+    Ok(0)
+}
+
+#[cfg(target_os = "macos")]
+fn probe_pid(pid: u32) -> io::Result<i32> {
+    let Ok(pid_i32) = i32::try_from(pid) else {
+        println!(r#"{{"status":"dead"}}"#);
+        return Ok(0);
+    };
+    if pid_i32 <= 0 {
+        println!(r#"{{"status":"dead"}}"#);
+        return Ok(0);
+    }
+    let mut mib = [
+        libc::CTL_KERN,
+        libc::KERN_PROC,
+        libc::KERN_PROC_PID,
+        pid_i32,
+    ];
+    let mut info: libc::kinfo_proc = unsafe { std::mem::zeroed() };
+    let mut size = std::mem::size_of::<libc::kinfo_proc>();
+    // SAFETY: querying read-only kinfo_proc for pid_i32 into stack struct.
+    let rc = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            4,
+            (&mut info as *mut libc::kinfo_proc).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || size == 0 {
+        let err = io::Error::last_os_error().raw_os_error();
+        if err == Some(libc::ESRCH) || size == 0 {
+            println!(r#"{{"status":"dead"}}"#);
+        } else {
+            println!(r#"{{"status":"unknown"}}"#);
+        }
+        return Ok(0);
+    }
+    let ppid = info.kp_eproc.e_ppid;
+    let tv = info.kp_proc.p_un.__p_starttime;
+    let start_us = (tv.tv_sec as i128) * 1_000_000 + (tv.tv_usec as i128);
+    let mut arg_mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid_i32];
+    let mut arg_size: usize = 256 * 1024;
+    let mut buf = vec![0u8; arg_size];
+    let (exe_json, argv_json) = if unsafe {
+        libc::sysctl(
+            arg_mib.as_mut_ptr(),
+            3,
+            buf.as_mut_ptr().cast(),
+            &mut arg_size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } == 0
+        && arg_size > 0
+    {
+        if let Some((exec_path, argv)) =
+            codenomad_host_process::procargs::parse_procargs2_exec_and_argv(
+                &buf[..arg_size.min(buf.len())],
+            )
+        {
+            let args_encoded: Vec<String> = argv.iter().map(|a| json_escape(a)).collect();
+            (
+                json_escape(&exec_path),
+                format!("[{}]", args_encoded.join(",")),
+            )
+        } else {
+            ("null".to_owned(), "null".to_owned())
+        }
+    } else {
+        ("null".to_owned(), "null".to_owned())
+    };
+    println!(
+        r#"{{"status":"ok","ppid":{ppid},"startId":"{start_us}","createdAt":"{start_us}","exe":{exe_json},"argv":{argv_json}}}"#
+    );
+    Ok(0)
+}
+
+#[cfg(target_os = "linux")]
+fn probe_pid(pid: u32) -> io::Result<i32> {
+    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            println!(r#"{{"status":"dead"}}"#);
+            return Ok(0);
+        }
+        Err(_) => {
+            println!(r#"{{"status":"unknown"}}"#);
+            return Ok(0);
+        }
+    };
+    let Some(rparen) = stat.rfind(')') else {
+        println!(r#"{{"status":"unknown"}}"#);
+        return Ok(0);
+    };
+    let fields: Vec<&str> = stat[rparen + 1..].split_whitespace().collect();
+    let (Some(ppid), Some(start_id)) = (
+        fields.get(1).and_then(|v| v.parse::<i32>().ok()),
+        fields.get(19),
+    ) else {
+        println!(r#"{{"status":"unknown"}}"#);
+        return Ok(0);
+    };
+    let exe_json = std::fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .map(|p| json_escape(&p.to_string_lossy()))
+        .unwrap_or_else(|| "null".to_owned());
+    let cwd_json = std::fs::read_link(format!("/proc/{pid}/cwd"))
+        .ok()
+        .map(|p| json_escape(&p.to_string_lossy()))
+        .unwrap_or_else(|| "null".to_owned());
+    let argv_json = std::fs::read(format!("/proc/{pid}/cmdline"))
+        .ok()
+        .map(|bytes| {
+            let mut parts: Vec<String> = bytes
+                .split(|&b| b == 0)
+                .map(|slice| String::from_utf8_lossy(slice).into_owned())
+                .collect();
+            while parts.last().is_some_and(String::is_empty) {
+                parts.pop();
+            }
+            let encoded: Vec<String> = parts.iter().map(|a| json_escape(a)).collect();
+            format!("[{}]", encoded.join(","))
+        })
+        .unwrap_or_else(|| "null".to_owned());
+    println!(
+        r#"{{"status":"ok","ppid":{ppid},"startId":{},"createdAt":{},"exe":{exe_json},"cwd":{cwd_json},"argv":{argv_json}}}"#,
+        json_escape(start_id),
+        json_escape(start_id)
+    );
+    Ok(0)
+}
+
+#[cfg(all(unix, not(target_os = "linux"), not(target_os = "macos")))]
+fn probe_pid(_pid: u32) -> io::Result<i32> {
+    println!(r#"{{"status":"unknown"}}"#);
+    Ok(0)
+}
+
 fn run() -> io::Result<i32> {
+    {
+        let mut quick = std::env::args_os().skip(1);
+        if let Some(first) = quick.next() {
+            if first == "--probe-pid" {
+                let raw = quick
+                    .next()
+                    .ok_or_else(|| io::Error::other("Expected PID after --probe-pid"))?;
+                let pid: u32 = raw
+                    .to_string_lossy()
+                    .parse()
+                    .map_err(|_| io::Error::other("Invalid PID for --probe-pid"))?;
+                return probe_pid(pid);
+            }
+            #[cfg(windows)]
+            if first == "--system-dir" {
+                return probe_system_dir();
+            }
+        }
+    }
     #[cfg(target_os = "linux")]
     unsafe {
         // Adopt orphaned grandchildren so waitpid reaps them and family_is_empty observes clean exit.

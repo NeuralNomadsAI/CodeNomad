@@ -234,6 +234,12 @@ async function journey(kind) {
   }
   const launch = async (cold = false) => {
     assert(!child || child.exitCode !== null || child.signalCode !== null, "Never run two service incarnations against this DB")
+    if (child) {
+      const prior = children.find(entry => entry.child === child)
+      assert(child.exitCode !== 86, "Refusing to start new service after incomplete prior tree termination (exit 86)")
+      assert(!prior || prior.hardKilled || !child.signalCode || child.signalCode === "SIGTERM",
+        `Refusing to start new service after unverified signal exit (${child.signalCode})`)
+    }
     credentialsChild = undefined; nativeErrorLength = 0; nativeErrorTruncated = false
     child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", "0"], { cwd: project, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
     const current = { child, closed: new Promise(resolve => child.once("close", resolve)) }; children.push(current)
@@ -297,7 +303,19 @@ async function journey(kind) {
     await attestedFetch?.close().catch(() => {})
     attestedFetch = undefined
     const owned = children.find(entry => entry.child === child)
-    if (owned && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, owned.closed)
+    if (owned) {
+      if (child.exitCode === null && child.signalCode === null) {
+        await stopFixtureChild(child, owned.closed)
+      } else {
+        await owned.closed
+        if (child.exitCode === 86) {
+          throw new Error(`Fixture supervisor ${child.pid} exited with incomplete child tree termination (86)`)
+        }
+        if (!owned.hardKilled && child.signalCode && child.signalCode !== "SIGTERM") {
+          throw new Error(`Fixture supervisor ${child.pid} terminated unexpectedly with signal ${child.signalCode}`)
+        }
+      }
+    }
     client = undefined; endpoint = undefined
   }
   const yaml = path.join(root, "profile.yaml"), human = { sessionId: randomUUID(), username: "fixture-human" }
@@ -309,14 +327,17 @@ async function journey(kind) {
   secrets.add(cookie); secrets.add(human.sessionId)
   let appFetch
   const closeBackend = async () => {
-    await appFetch?.close().catch(() => {}); appFetch = undefined
-    await managerRelay?.close().catch(() => {}); managerRelay = undefined; managerEndpoint = undefined
-    await attestedFetch?.close().catch(() => {}); attestedFetch = undefined
-    await plugin?.stop(); plugin = undefined
-    await removeBridge?.(); removeBridge = undefined
-    await app?.close(); app = undefined
-    await manager?.shutdown(); manager = undefined
+    const errors = []
+    const runStep = async (fn) => { try { await fn() } catch (err) { errors.push(err) } }
+    await runStep(() => appFetch?.close()); appFetch = undefined
+    await runStep(() => managerRelay?.close()); managerRelay = undefined; managerEndpoint = undefined
+    await runStep(() => attestedFetch?.close()); attestedFetch = undefined
+    await runStep(() => plugin?.stop()); plugin = undefined
+    await runStep(() => removeBridge?.()); removeBridge = undefined
+    await runStep(() => app?.close()); app = undefined
+    await runStep(() => manager?.shutdown()); manager = undefined
     client = undefined; endpoint = undefined
+    if (errors.length) throw errors[0]
   }
   const http = async (suffix, payload, allowPending = false) => {
     assert(appFetch, "Expected attested Fastify HTTP client")
@@ -671,6 +692,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       const killedPID = await fixtureChildPid(child), owned = children.find(entry => entry.child === child)
       assert(Number.isSafeInteger(killedPID) && killedPID > 0, "Expected owned child PID before hard kill")
       await hardKillFixtureChild(child, owned.closed)
+      owned.hardKilled = true
       await attestedFetch?.close().catch(() => {}); attestedFetch = undefined
       client = undefined; endpoint = undefined
       for (const deadline = Date.now() + 5000; providerOpen.size > 0;) { assert(Date.now() < deadline, "Killed provider connection did not close"); await delay(10) }
@@ -851,6 +873,9 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
           : entry.closed.then(() => {
               if (entry.child.exitCode === 86) {
                 throw new Error(`Fixture supervisor ${entry.child.pid} exited with incomplete child tree termination (86)`)
+              }
+              if (!entry.hardKilled && entry.child.signalCode && entry.child.signalCode !== "SIGTERM") {
+                throw new Error(`Fixture supervisor ${entry.child.pid} terminated unexpectedly by signal ${entry.child.signalCode}`)
               }
             })))
       provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))

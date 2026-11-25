@@ -4,7 +4,7 @@ import { accessSync, constants, existsSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { isLocalAbsolutePath, processIdentityOf, resolveLocalExecutable } from "./native-fixture-http.mjs"
+import { isLocalAbsolutePath, pidAlive, probeProcessIdentity, processIdentityOf, resolveLocalExecutable } from "./native-fixture-http.mjs"
 
 const jobs = new WeakMap()
 const jobIdentities = new WeakMap()
@@ -243,12 +243,14 @@ export async function hardKillFixtureChild(child, stopped, timeoutMs = 5_000) {
     while (Date.now() < deadline) {
       if (!pidAlive(innerPid)) return
       if (expected?.startId) {
-        const current = await processIdentityOf(innerPid, { refresh: true }).catch(() => null)
-        if (!current || current.startId !== expected.startId) return
+        const res = await probeProcessIdentity(innerPid, { refresh: true }).catch(() => ({ status: "unknown", identity: null }))
+        if (res.status === "dead") return
+        if (res.status === "ok" && res.identity?.startId !== expected.startId) return
+        // Never treat 'unknown' as gone; keep waiting until confirmed dead/recycled or deadline.
       }
       await new Promise(resolve => setTimeout(resolve, 25))
     }
-    throw new Error(`Owned fixture child PID ${innerPid} remained alive after hard kill`)
+    throw new Error(`Owned fixture child PID ${innerPid} remained alive or unconfirmed after hard kill`)
   }
   if (process.platform === "win32") {
     // Terminating the Windows job wrapper closes the kernel Job Object and kills its exact child without PID addressing.

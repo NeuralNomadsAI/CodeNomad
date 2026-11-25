@@ -1,5 +1,4 @@
 // POSIX fallback supervisor when the Rust fixture job binary is not built in JS-only CI jobs.
-import { randomUUID } from "node:crypto"
 import { execFileSync, spawn } from "node:child_process"
 import { closeSync, existsSync, readSync, renameSync, writeFileSync, writeSync } from "node:fs"
 
@@ -10,13 +9,9 @@ const pidFd = Number.isSafeInteger(rawPidFd) && rawPidFd > 2 ? rawPidFd : null
 delete process.env.CODENOMAD_FIXTURE_PID_FD
 const rawGrace = Number(process.env.CODENOMAD_FIXTURE_GRACE_MS || 0)
 const graceBudgetMs = Number.isFinite(rawGrace) && rawGrace >= 50 && rawGrace <= 2000 ? rawGrace : 400
-const treeMarkerKey = process.platform === "darwin" ? `CODENOMAD_FIXTURE_TREE_JS_${process.pid}` : null
-const treeMarkerVal = treeMarkerKey ? randomUUID() : null
-const treeMarkerEntry = treeMarkerKey ? `${treeMarkerKey}=${treeMarkerVal}` : null
 const childEnv = {
   ...process.env,
   CODENOMAD_FIXTURE_GRACE_MS: String(Math.max(50, Math.floor(graceBudgetMs / 4))),
-  ...(treeMarkerKey ? { [treeMarkerKey]: treeMarkerVal } : {}),
 }
 const rawArgs = process.argv.slice(2)
 let sameGroup = false
@@ -132,24 +127,6 @@ function familyPeers() {
       knownDescendants.delete(knownPid)
     } else {
       seeds.push(knownPid)
-    }
-  }
-  if (treeMarkerEntry && psBin) {
-    try {
-      const envOut = execFileSync(psBin, ["-ax", "-E", "-ww", "-o", "pid=,command="], {
-        env: { ...process.env, LC_ALL: "C" }, encoding: "utf8", timeout: 1000, maxBuffer: 8 * 1024 * 1024,
-      })
-      for (const line of envOut.split(/\r?\n/)) {
-        if (!line.includes(treeMarkerEntry)) continue
-        const match = /^\s*(\d+)\s+/.exec(line)
-        if (!match) continue
-        const pid = Number(match[1])
-        if (Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid && byPid.has(pid)) {
-          seeds.push(pid)
-        }
-      }
-    } catch {
-      return { peers: [...peers.entries()], psOk: false, rootReused }
     }
   }
   const visited = new Set()

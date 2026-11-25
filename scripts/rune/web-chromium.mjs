@@ -42,24 +42,35 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
     cdpRelay=await createAttestedTcpRelay(Number(port),pid,{requireClientAttestation:true,allowedClientPids:[process.pid]})
     browser=await chromium.connectOverCDP(`ws://127.0.0.1:${cdpRelay.port}${id}`,{timeout:15000})
   }catch(error){
-    try{await browser?.close()}catch{}
-    try{await cdpRelay?.close()}catch{}
-    try{await host?.stop()}finally{await guard?.close()}
+    const cleanupErrors=[]
+    try{await browser?.close()}catch(e){cleanupErrors.push(`browser.close: ${e.message}`)}
+    try{await cdpRelay?.close()}catch(e){cleanupErrors.push(`cdpRelay.close: ${e.message}`)}
+    try{await host?.stop()}catch(e){cleanupErrors.push(`host.stop: ${e.message}`)}
+    try{await guard?.close()}catch(e){cleanupErrors.push(`guard.close: ${e.message}`)}
+    if(cleanupErrors.length)console.error(`Chromium launch cleanup errors: ${cleanupErrors.join('; ')}`)
     throw error
   }
-  return {browser,pid,setTargetPid:nextPid=>guard?.setTargetPid(nextPid),async close(){
-    try{
+  return {
+    browser,
+    pid,
+    setTargetPid:nextPid=>guard?.setTargetPid(nextPid),
+    substituteCookies:header=>guard?guard.substituteCookies(header):header,
+    maskSetCookies:setCookie=>guard?guard.maskSetCookies(setCookie):(Array.isArray(setCookie)?setCookie:(setCookie?[setCookie]:[])),
+    async close(){
+      const errors=[]
       try{
         await host.stop(async()=>{const session=await browser.newBrowserCDPSession();await session.send('Browser.close')})
-      }finally{
-        try{await browser.close()}finally{await cdpRelay?.close()}
+      }catch(e){errors.push(`host.stop: ${e.message}`)}
+      try{await browser.close()}catch(e){errors.push(`browser.close: ${e.message}`)}
+      try{await cdpRelay?.close()}catch(e){errors.push(`cdpRelay.close: ${e.message}`)}
+      try{await guard?.close()}catch(e){errors.push(`guard.close: ${e.message}`)}
+      if(host.child.exitCode!==0){
+        errors.push(`Owned Chromium exited abnormally (code=${host.child.exitCode}, signal=${host.child.signalCode})`)
       }
-    }finally{await guard?.close()}
-    if(host.child.exitCode!==0){
-      throw Error(`Owned Chromium exited abnormally (code=${host.child.exitCode}, signal=${host.child.signalCode})`)
-    }
-    return true
-  }}
+      if(errors.length)throw Error(errors.join('; '))
+      return true
+    },
+  }
 }
 
 export async function activateControl(page,control,{touch=false,rect,timeout}={}){

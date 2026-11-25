@@ -6,9 +6,9 @@ import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import {isExpectedWaitError, now, withBudget} from './web-budget.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation as defaultFulfillWorkspaceCreation,writePrivateFile} from './web-workspace-policy.mjs'
+import {privateWebFixture,bundleAssetPaths,createPrivateOutputDir,workspacePolicy,fulfillWorkspaceCreation as defaultFulfillWorkspaceCreation,writePrivateFile} from './web-workspace-policy.mjs'
 import {activateControl,launchOwnedChromium} from './web-chromium.mjs'
-import {createAttestedFetch,maskSetCookieHeaders,parseCookiePairs,substitutePlaceholderCookies,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
+import {createAttestedFetch,maskSetCookieHeaders,parseCookiePairs,stripFixtureServerSecrets,substitutePlaceholderCookies,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
 import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste, mobileMoreActions, menuPrompt} from './web-paste.mjs'
@@ -57,16 +57,21 @@ const fulfillWorkspaceCreation=async(route,policy,context)=>{
   const req=route.request()
   const headers={...(await req.allHeaders())}
   delete headers['host'];delete headers['content-length']
-  if(url.protocol==='http:'&&headers['cookie']&&realCookieMap.size){
-    headers['cookie']=substitutePlaceholderCookies(headers['cookie'],realCookieMap)
+  if(url.protocol==='http:'&&headers['cookie']){
+    headers['cookie']=ownedBrowser
+      ?ownedBrowser.substituteCookies(headers['cookie'])
+      :(realCookieMap.size?substitutePlaceholderCookies(headers['cookie'],realCookieMap):headers['cookie'])
   }
   const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
   const bytes=Buffer.from(await res.arrayBuffer())
   assert(bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
   if(res.ok)policy.admit(req.postDataJSON(),JSON.parse(bytes.toString('utf8')),req.url())
   const outHeaders=Object.fromEntries(res.headers.entries())
-  if(url.protocol==='http:'&&outHeaders['set-cookie']&&realCookieMap.size){
-    outHeaders['set-cookie']=maskSetCookieHeaders(outHeaders['set-cookie'],realCookieMap).join(', ')
+  const rawSetCookies=res.headers.getSetCookie?.()??(outHeaders['set-cookie']?[outHeaders['set-cookie']]:[])
+  if(rawSetCookies.length){
+    outHeaders['set-cookie']=(url.protocol==='http:'
+      ?(ownedBrowser?ownedBrowser.maskSetCookies(rawSetCookies):(realCookieMap.size?maskSetCookieHeaders(rawSetCookies,realCookieMap):rawSetCookies))
+      :rawSetCookies).join('\n')
   }
   await route.fulfill({status:res.status,headers:outHeaders,body:bytes})
   return {status:res.status,admitted:res.ok}
@@ -115,8 +120,7 @@ try {
   }
   await verifyLoopbackListenerOwner(Number(url.port),currentTargetPid)
   await verifyPrivateFixtureServer({targetPid:currentTargetPid,launcherPid,profile:browserProfile,root})
-  await mkdir(out, {recursive: true})
-  assert(insideRoot(outputRootReal,await realpath(out)),'Output link escapes fixture')
+  await createPrivateOutputDir(out,outputRootReal)
   outputAuthorized=true
   if(values['storage-state']){
     const rawStorage=JSON.parse(await readFile(values['storage-state'],'utf8'))
@@ -136,7 +140,7 @@ try {
   ownedBrowser=await launchOwnedChromium({
     executablePath:values.executable,
     profile:browserProfile,
-    env:process.env,
+    env:stripFixtureServerSecrets(process.env),
     origin:url.origin,
     targetPid:currentTargetPid,
     ...(url.protocol==='http:'&&realCookieHeader?{injectCookie:realCookieHeader}:{}),
@@ -147,10 +151,11 @@ try {
     assert(Number.isSafeInteger(nextPid)&&nextPid>0,'Restarted fixture must report owned server PID')
     await verifyLoopbackListenerOwner(Number(url.port),nextPid)
     await verifyPrivateFixtureServer({targetPid:nextPid,launcherPid,profile:browserProfile,root})
+    const previousFetch = attestedFetch
     currentTargetPid = nextPid
-    ownedBrowser?.setTargetPid(nextPid)
-    await attestedFetch?.close().catch(() => {})
     attestedFetch = createAttestedFetch(url.origin, Number(url.port), currentTargetPid, caCert ? {ca: caCert} : {allowSelfSigned: url.protocol === 'https:'})
+    ownedBrowser?.setTargetPid(nextPid)
+    await previousFetch?.close().catch(() => {})
   }
   const attestedGet = async (pathname, ctx) => {
     const cookie = await cookieHeaderFor(ctx)
@@ -804,7 +809,7 @@ try {
         assert(canvas.width <= width + 1 && canvas.height <= height + 1, 'Canvas must follow the supplied viewport')
         const snapshot = await page.locator('body').ariaSnapshot()
         assert(snapshot.includes(messages['rune.latest']), 'Latest control must appear in the real accessibility mirror')
-        await writeFile(path.join(out, `${name}-${colorScheme}.aria.yml`), snapshot)
+        await writePrivateFile(path.join(out, `${name}-${colorScheme}.aria.yml`), snapshot, outputRootReal)
         if(!values.connected)await page.waitForLoadState('networkidle', {timeout: 30_000})
         const png = await page.screenshot({path: path.join(out, `${name}-${colorScheme}.png`),scale:'css'})
         const textRegions = await page.evaluate(title => {
@@ -917,8 +922,8 @@ try {
         await bestEffort('failure screenshot',ms=>page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`),timeout:Math.max(1,ms)}))
         const mirror=await bestEffort('failure mirror',ms=>page.locator('body').ariaSnapshot({timeout:Math.max(1,ms)}))
         const marks=await bestEffort('failure marks',()=>page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))) ?? []
-        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,settlements,streamEvents,clientDiagnostics,measured,
-          mirror,touches,lastPress,marks}, null, 2)).catch(writeError => console.error(`Failed to write failure artifact: ${writeError.message}`))
+        await writePrivateFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,settlements,streamEvents,clientDiagnostics,measured,
+          mirror,touches,lastPress,marks}, null, 2), outputRootReal).catch(writeError => console.error(`Failed to write failure artifact: ${writeError.message}`))
         throw error
        } finally {
          missions?.release();releaseRecall();releaseLinked?.()

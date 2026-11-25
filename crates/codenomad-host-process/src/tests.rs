@@ -39,6 +39,11 @@ fn fixture_child() {
         let _ = child.wait();
     } else {
         fs::write(root.join("grandchild-ready"), b"owned").unwrap();
+        fs::write(
+            root.join(format!("grandchild-ready-{}", std::process::id())),
+            b"owned",
+        )
+        .unwrap();
         loop {
             thread::sleep(Duration::from_secs(1));
         }
@@ -124,11 +129,19 @@ fn reusing_command_isolates_separate_owned_families() {
         .stderr(Stdio::null());
     let mut first = OwnedProcess::spawn(&mut shared).unwrap();
     let mut second = OwnedProcess::spawn(&mut shared).unwrap();
+    assert!(
+        !shared.get_envs().any(
+            |(k, v)| k.to_string_lossy().starts_with("CODENOMAD_FIXTURE_TREE_") && v.is_some()
+        ),
+        "Reused Command must not retain per-spawn tree markers"
+    );
+    let first_ready = root.join(format!("grandchild-ready-{}", first.id()));
+    let second_ready = root.join(format!("grandchild-ready-{}", second.id()));
     let deadline = Instant::now() + Duration::from_secs(10);
-    while !root.join("grandchild-ready").exists() {
+    while !first_ready.exists() || !second_ready.exists() {
         assert!(
             Instant::now() < deadline,
-            "Reused command child became ready"
+            "Both reused-command children became ready"
         );
         thread::sleep(Duration::from_millis(10));
     }

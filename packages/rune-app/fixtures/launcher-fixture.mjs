@@ -20,6 +20,7 @@ import {seedGitImages} from '../../../scripts/rune/web-git-images.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
 import {launchWeb} from './launcher-web.mjs'
 import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
+import {assertWorktreeTestRoot} from '../../../scripts/rune/web-workspace-policy.mjs'
 const webMoreActions=process.argv.includes('--web-mobile-more-actions')
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||webMoreActions||process.argv.includes('--web-mobile')
 const mobileSessionSearch=process.argv.includes('--mobile-session-search')
@@ -70,7 +71,10 @@ const restoreFileDrafts=process.argv.includes('--file-draft-restart')
 const draftOutput=restoreFileDrafts?process.env.RUNE_TEST_FILES_OUTPUT:undefined
 if(draftOutput)assert(path.isAbsolute(draftOutput),'Files fixture output must be absolute')
 const here=path.resolve(import.meta.dirname,'..')
-const output=draftOutput??gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'))
+let output=draftOutput??gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'))
+if(web&&!draftOutput&&!gitOutput){
+  output=(await assertWorktreeTestRoot(root)).testsReal
+}
 const run=`launcher-${randomUUID()}`
 let profile=path.join(output,run)
 if(webSearch){

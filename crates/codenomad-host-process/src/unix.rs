@@ -80,7 +80,7 @@ impl Family {
     pub fn sample_descendants(&self) {
         let _ = self.descendants();
     }
-    fn descendants(&self) -> Option<Vec<(i32, String)>> {
+    fn descendants(&self) -> Option<Descendants> {
         let mut known = self
             .known_descendants
             .lock()
@@ -128,7 +128,7 @@ impl Family {
             }
         }
         match self.descendants() {
-            Some(list) => Ok(list.is_empty()),
+            Some(found) => Ok(found.complete && found.list.is_empty()),
             None => Ok(false),
         }
     }
@@ -140,8 +140,8 @@ impl Family {
     }
     fn signal(&self, sig: libc::c_int) -> io::Result<()> {
         let mut first_err = None;
-        if let Some(descendants) = self.descendants() {
-            for (pid, expected_start) in descendants {
+        if let Some(found) = self.descendants() {
+            for (pid, expected_start) in found.list {
                 if start_id_of(pid).as_deref() != Some(expected_start.as_str()) {
                     continue;
                 }
@@ -181,6 +181,11 @@ impl Family {
     }
 }
 
+struct Descendants {
+    list: Vec<(i32, String)>,
+    complete: bool,
+}
+
 fn descendants_of(
     root: i32,
     leader_start_id: Option<&str>,
@@ -188,7 +193,7 @@ fn descendants_of(
     include_subreaper_children: bool,
     tree_marker: Option<&str>,
     known_descendants: &mut HashMap<i32, String>,
-) -> Option<Vec<(i32, String)>> {
+) -> Option<Descendants> {
     let self_pid = std::process::id() as i32;
     let rows = process_table()?;
     let mut by_pid: HashMap<i32, &str> = HashMap::new();
@@ -222,6 +227,7 @@ fn descendants_of(
     known_descendants
         .retain(|pid, expected_start| by_pid.get(pid).copied() == Some(expected_start.as_str()));
     seeds.extend(known_descendants.keys().copied());
+    let mut complete = true;
     #[cfg(target_os = "macos")]
     if let Some(marker) = tree_marker {
         let mut scratch = vec![0u8; macos_argmax()];
@@ -231,8 +237,8 @@ fn descendants_of(
                 match process_has_env_entry(*pid, marker, &mut scratch) {
                     Ok(true) => seeds.push(*pid),
                     Ok(false) => {}
-                    // Fail closed if kernel env inspection failed unexpectedly so family_is_empty stays false.
-                    Err(()) => return None,
+                    // Record incomplete scan without discarding already-verified descendants.
+                    Err(()) => complete = false,
                 }
             }
         }
@@ -257,7 +263,10 @@ fn descendants_of(
             queue.extend(kids.iter().copied());
         }
     }
-    Some(out)
+    Some(Descendants {
+        list: out,
+        complete,
+    })
 }
 
 #[cfg(target_os = "linux")]

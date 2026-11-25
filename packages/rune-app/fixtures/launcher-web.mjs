@@ -5,7 +5,7 @@ import {chmod,readFile} from 'node:fs/promises'
 import {chromium} from 'playwright'
 import path from 'node:path'
 import {spawnFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {createAttestedTcpRelay,resolveLoopbackListenerPid,stripFixtureServerSecrets,verifyLoopbackListenerOwner} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedTcpRelay,resolveLoopbackListenerPid,stripFixtureServerSecrets,verifyExecutableMatches,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../../../scripts/native-fixture-http.mjs'
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 import {serverBinary} from './fixture-binaries.mjs'
@@ -61,9 +61,10 @@ export async function launchWeb({
   const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
   if(webAndroid){
     androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
-    // Validate ADB config and resolve the private ADB server PID before opening the attested TCP relay.
+    // Validate ADB config and attest the private ADB server PID and executable before opening the TCP relay.
     const device=androidDevice(androidEnv)
     const adbPid=await resolveLoopbackListenerPid(Number(device.port))
+    await verifyExecutableMatches(adbPid,androidEnv.RUNE_ANDROID_ADB)
     const androidRelay=await createAttestedTcpRelay(Number(new URL(uiOrigin).port),serverPid,{
       requireClientAttestation:true,
       allowedClientPids:[adbPid],
@@ -72,7 +73,6 @@ export async function launchWeb({
     const lease=androidLease(device,uiOrigin,{
       localPort:androidRelay.port,
       closeRelay:()=>androidRelay.close(),
-      lockDir:path.join(root,'target/rune-web-tests/android-locks'),
     })
     try{
       await lease.open()
@@ -100,6 +100,7 @@ export async function launchWeb({
           http=resumed.http
           if(state.androidRelay){
             await verifyLoopbackListenerOwner(Number(new URL(uiOrigin).port),resumed.value.serverPid)
+            await verifyPrivateFixtureServer({targetPid:resumed.value.serverPid,launcherPid:process.pid,profile,root})
             state.androidRelay.setTargetPid(resumed.value.serverPid)
           }
           return {value:resumed.value}

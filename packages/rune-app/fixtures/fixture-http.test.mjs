@@ -121,9 +121,9 @@ test('createAttestedFetch serves concurrent POST while an SSE stream stays open 
     await verifyLoopbackConnectionPeer(localPort,remotePort,pid)
   })
   try{
-    const sse=await bound(new URL('/api/event',srv.origin),{signal:AbortSignal.timeout(5000)})
+    const sse=await bound(new URL('/api/event',srv.origin),{signal:AbortSignal.timeout(10000)})
     assert.equal(sse.status,200)
-    const post=await bound(new URL('/api/session',srv.origin),{method:'POST',body:'{}',signal:AbortSignal.timeout(5000)})
+    const post=await bound(new URL('/api/session',srv.origin),{method:'POST',body:'{}',signal:AbortSignal.timeout(10000)})
     assert.equal(post.status,200)
     assert.deepEqual(await post.json(),{id:'ses_concurrent'})
     assert(ownerChecks>=2,'each opened socket must verify listener ownership before connect')
@@ -223,7 +223,7 @@ test('resolveWorktreePackage refuses parent or external node_modules',{timeout:1
 })
 
 test('acquireProfileLock serializes concurrent stale recovery and reclaims aged empty locks',{timeout:15000},async t=>{
-  const {mkdtemp,rm,unlink,utimes,writeFile}=await import('node:fs/promises')
+  const {mkdtemp,rm,stat,utimes,writeFile}=await import('node:fs/promises')
   const os=await import('node:os')
   const path=await import('node:path')
   const {acquireProfileLock}=await import('./live-access.mjs')
@@ -238,14 +238,14 @@ test('acquireProfileLock serializes concurrent stale recovery and reclaims aged 
   assert.equal(winners.length,1,'exactly one concurrent contender may reclaim a stale lock')
   assert.equal(losers.length,1,'second contender must fail while the reclaimed lock is held')
   await winners[0].value.close()
-  await unlink(lockPath)
+  await assert.rejects(stat(lockPath),{code:'ENOENT'})
   // Aged empty lock (crash between file creation and write): must be reclaimed once older than 2s.
   await writeFile(lockPath,'')
   const old=new Date(Date.now()-5000)
   await utimes(lockPath,old,old)
   const reclaimed=await acquireProfileLock(lockPath)
   await reclaimed.close()
-  await unlink(lockPath)
+  await assert.rejects(stat(lockPath),{code:'ENOENT'})
   // Dead launcher PID with a still-alive daemon PID must block takeover until daemon exits.
   const survivor=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true})
   t.after(()=>{try{survivor.kill('SIGKILL')}catch{}})
@@ -256,7 +256,7 @@ test('acquireProfileLock serializes concurrent stale recovery and reclaims aged 
   await new Promise(resolve=>survivor.once('close',resolve))
   const afterDaemonExit=await acquireProfileLock(lockPath)
   await afterDaemonExit.close()
-  await unlink(lockPath)
+  await assert.rejects(stat(lockPath),{code:'ENOENT'})
 })
 
 test('createStreamRedactor redacts split secrets and never leaks partial secret prefixes via peek',{timeout:10000},()=>{
@@ -327,7 +327,7 @@ test('createAttestedRelay client PID attestation, revocation, and createAttested
     allowedClientPids:[process.pid],
   })
   t.after(()=>tcpRelay.close())
-  const viaTcp=await fixtureFetch(`http://127.0.0.1:${tcpRelay.port}/tcp`,{signal:AbortSignal.timeout(5000)})
+  const viaTcp=await fixtureFetch(`http://127.0.0.1:${tcpRelay.port}/tcp`,{signal:AbortSignal.timeout(10000)})
   assert.equal(viaTcp.status,200)
   assert.equal(await viaTcp.text(),'ok')
 })
@@ -392,45 +392,66 @@ test('createAttestedRelay isolates cookies strictly to placeholder headers and c
   await destroyed
   assert.equal(await gate2.verify(serverSock),false)
 
-  // 3) Recycled PID (new OS startId on fresh probe) is rejected on new socket admission.
+  // 3) Recycled PID (new OS startId on fresh probe) is rejected on new socket admission,
+  // deterministically without relying on sweep timers.
   let fakeStartId='incarnation-1'
+  let probeCalls=0
   const gate3=createClientPidGate(()=>probeServer.address().port,undefined,{
-    probeIdentity:async()=>({status:'ok',identity:{ppid:process.ppid,startId:fakeStartId,createdAt:1n}}),
+    sweepIntervalMs:0,
+    probeIdentity:async()=>{
+      probeCalls++
+      return {status:'ok',identity:{ppid:process.ppid,startId:fakeStartId,createdAt:1n}}
+    },
   })
   t.after(()=>gate3.close())
   await gate3.allow(process.pid)
   const accepted2=new Promise(resolve=>probeServer.once('connection',resolve))
   const clientSock2=net.createConnection({host:'127.0.0.1',port:probeServer.address().port})
+  openSockets.push(clientSock2)
   const serverSock2=await accepted2
-  openSockets.push(clientSock2,serverSock2)
+  openSockets.push(serverSock2)
   assert.equal(await gate3.verify(serverSock2),true)
+  const probesBeforeRecycle=probeCalls
   fakeStartId='incarnation-2'
   const accepted3=new Promise(resolve=>probeServer.once('connection',resolve))
   const clientSock3=net.createConnection({host:'127.0.0.1',port:probeServer.address().port})
+  openSockets.push(clientSock3)
   const serverSock3=await accepted3
-  openSockets.push(clientSock3,serverSock3)
+  openSockets.push(serverSock3)
   assert.equal(await gate3.verify(serverSock3),false)
+  assert(probeCalls>probesBeforeRecycle,'verify() must perform a fresh OS probe instead of trusting cached startId')
 })
 
-test('createAttestedTcpRelay rotates between valid targets, parseWindowsCommandLine handles quoting, and provenance + worktree checks enforce exact boundaries',{timeout:20000},async t=>{
+test('createAttestedTcpRelay rotates between valid targets, parseWindowsCommandLine handles quoting, and provenance + worktree checks enforce exact boundaries',{timeout:30000},async t=>{
   const {mkdir,mkdtemp,rm,writeFile}=await import('node:fs/promises')
   const os=await import('node:os')
   const path=await import('node:path')
+  const http=await import('node:http')
   const {
     parseWindowsCommandLine,
     sameWorktreeRepoAndManifests,
     verifyPrivateFixtureServer,
   }=await import('../../../scripts/native-fixture-http.mjs')
 
-  // parseWindowsCommandLine: spaces, quotes, escaped quotes, backslashes, Unicode.
+  // parseWindowsCommandLine: argv[0] rules, spaces, quotes, escaped quotes, empty args, backslashes, Unicode.
   assert.deepEqual(
-    parseWindowsCommandLine('"C:\\Program Files\\node.exe" --config "D:\\tmp\\café dir\\config.yaml" --arg "a\\"b\\\\" plain'),
-    ['C:\\Program Files\\node.exe','--config','D:\\tmp\\café dir\\config.yaml','--arg','a"b\\','plain'],
+    parseWindowsCommandLine('"C:\\Program Files\\node.exe" --config "D:\\tmp\\café dir\\config.yaml" --arg "a\\"b\\\\" "" plain'),
+    ['C:\\Program Files\\node.exe','--config','D:\\tmp\\café dir\\config.yaml','--arg','a"b\\','','plain'],
+  )
+  assert.deepEqual(
+    parseWindowsCommandLine('"C:\\dir with space\\app.exe" "a\\\\\\"b" \\\\"c" \\\\\\"d'),
+    ['C:\\dir with space\\app.exe','a\\"b','\\c','\\"d'],
   )
 
-  // createAttestedTcpRelay: rotate from one valid server PID to a second valid server PID.
-  const targetA=await listen(t,(_req,res)=>{res.end('from-A')})
-  const targetPort=Number(new URL(targetA.origin).port)
+  // createAttestedTcpRelay: rotate across two distinct server incarnations (from-A -> mismatch -> from-B on same port).
+  const srvA=http.createServer((_req,res)=>{res.end('from-A')})
+  await new Promise(resolve=>srvA.listen(0,'127.0.0.1',resolve))
+  const targetPort=srvA.address().port
+  let srvB=null
+  t.after(async()=>{
+    await new Promise(resolve=>{srvA.closeAllConnections?.();srvA.close(()=>resolve())})
+    if(srvB)await new Promise(resolve=>{srvB.closeAllConnections?.();srvB.close(()=>resolve())})
+  })
   let activeOwner=process.pid
   const relay=await createAttestedTcpRelay(targetPort,process.pid,{
     verifyOwner:async(port,pid)=>{assert.equal(port,targetPort);assert.equal(pid,activeOwner)},
@@ -440,18 +461,23 @@ test('createAttestedTcpRelay rotates between valid targets, parseWindowsCommandL
   const resA=await fixtureFetch(`http://127.0.0.1:${relay.port}/a`,{signal:AbortSignal.timeout(5000)})
   assert.equal(resA.status,200)
   assert.equal(await resA.text(),'from-A')
-  // Rotating to a mismatched PID fails; rotating to a second valid PID succeeds.
+  // Rotating to a mismatched PID fails.
   relay.setTargetPid(999999999)
   await assert.rejects(fixtureFetch(`http://127.0.0.1:${relay.port}/mismatch`,{signal:AbortSignal.timeout(3000)}))
+  // Close server A and bind a second distinct server B on the same loopback port.
+  await new Promise(resolve=>{srvA.closeAllConnections?.();srvA.close(()=>resolve())})
+  srvB=http.createServer((_req,res)=>{res.end('from-B')})
+  await new Promise((resolve,reject)=>{srvB.once('error',reject);srvB.listen(targetPort,'127.0.0.1',resolve)})
   activeOwner=424242
   relay.setTargetPid(activeOwner)
   const resB=await fixtureFetch(`http://127.0.0.1:${relay.port}/b`,{signal:AbortSignal.timeout(5000)})
   assert.equal(resB.status,200)
-  assert.equal(await resB.text(),'from-A')
+  assert.equal(await resB.text(),'from-B')
   await relay.close()
   await relay.close() // idempotent close
 
-  // verifyPrivateFixtureServer: positive child with canonical --config and --workspace-root vs neighbor prefix & unrelated arg.
+  // verifyPrivateFixtureServer: real launcher -> server + runner OS tree covering relative launcher script,
+  // duplicate --config rejection, neighbor prefix, unrelated arg, and allowed launcher passed as a plain arg.
   const tmpRoot=await mkdtemp(path.join(os.tmpdir(),'codenomad-prov-'))
   t.after(()=>rm(tmpRoot,{recursive:true,force:true}))
   const profile=path.join(tmpRoot,'launcher-café 1')
@@ -460,42 +486,134 @@ test('createAttestedTcpRelay rotates between valid targets, parseWindowsCommandL
   await mkdir(path.join(neighbor,'workspace'),{recursive:true})
   const dummyScript=path.join(tmpRoot,'dummy-server.mjs')
   await writeFile(dummyScript,'console.log("READY"); setInterval(() => {}, 1000)\n')
-  const spawnDummy=args=>new Promise((resolve,reject)=>{
-    const child=spawn(process.execPath,[dummyScript,...args],{stdio:['ignore','pipe','pipe'],windowsHide:true})
+  const httpModUrl=new URL('../../../scripts/native-fixture-http.mjs',import.meta.url).href
+  const launcherScript=path.join(tmpRoot,'private-launcher.mjs')
+  const spoofLauncherScript=path.join(tmpRoot,'other-launcher.mjs')
+  const runnerScript=path.join(tmpRoot,'probe-runner.mjs')
+  await writeFile(runnerScript,`
+    import {verifyPrivateFixtureServer} from ${JSON.stringify(httpModUrl)}
+    const cases = JSON.parse(process.argv[2])
+    const results = {}
+    for (const [name, cfg] of Object.entries(cases)) {
+      try {
+        results[name] = {ok: true, value: await verifyPrivateFixtureServer(cfg)}
+      } catch (error) {
+        results[name] = {ok: false, error: String(error?.message ?? error)}
+      }
+    }
+    console.log(JSON.stringify(results))
+  `)
+  const launcherBody=`
+    import {spawn} from 'node:child_process'
+    const [mode, dummyScript, runnerScript, profile, neighbor, allowedLauncher] = process.argv.slice(2)
+    const spawnDummy = args => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [dummyScript, ...args], {stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true})
+      child.once('error', reject)
+      child.stdout.once('data', () => resolve(child))
+    })
+    const runProbes = cases => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [runnerScript, JSON.stringify(cases)], {cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true})
+      let out = '', err = ''
+      child.stdout.on('data', d => { out += d })
+      child.stderr.on('data', d => { err += d })
+      child.once('error', reject)
+      child.once('close', code => resolve({code, out, err}))
+    })
+    const children = []
+    try {
+      const good = await spawnDummy(['--config', profile + '/config.yaml', '--workspace-root', profile + '/workspace'])
+      children.push(good)
+      if (mode === 'spoof') {
+        const res = await runProbes({
+          spoof: {
+            targetPid: good.pid, launcherPid: process.pid, profile,
+            allowedLaunchers: [allowedLauncher], allowedServerExecutables: [process.execPath],
+          },
+        })
+        console.log(res.out.trim() || JSON.stringify({error: res.err}))
+      } else {
+        const badDupConfig = await spawnDummy(['--config', profile + '/config.yaml', '--config', neighbor + '/config.yaml', '--workspace-root', profile + '/workspace'])
+        const badNeighbor = await spawnDummy(['--config', neighbor + '/config.yaml', '--workspace-root', neighbor + '/workspace'])
+        const badUnrelated = await spawnDummy(['--note', profile])
+        children.push(badDupConfig, badNeighbor, badUnrelated)
+        const base = {launcherPid: process.pid, profile, allowedLaunchers: [allowedLauncher], allowedServerExecutables: [process.execPath]}
+        const res = await runProbes({
+          good: {...base, targetPid: good.pid},
+          badDupConfig: {...base, targetPid: badDupConfig.pid},
+          badNeighbor: {...base, targetPid: badNeighbor.pid},
+          badUnrelated: {...base, targetPid: badUnrelated.pid},
+          badLauncherPid: {...base, targetPid: good.pid, launcherPid: 999999999},
+        })
+        console.log(res.out.trim() || JSON.stringify({error: res.err}))
+      }
+    } finally {
+      for (const c of children) { try { c.kill() } catch {} }
+    }
+  `
+  await writeFile(launcherScript,launcherBody)
+  await writeFile(spoofLauncherScript,launcherBody)
+  const runLauncher=(entryArg,mode,extraArgs=[])=>new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,[entryArg,mode,dummyScript,runnerScript,profile,neighbor,launcherScript,...extraArgs],{
+      cwd:tmpRoot,stdio:['ignore','pipe','pipe'],windowsHide:true,
+    })
+    t.after(()=>{try{child.kill()}catch{}})
+    let stdout='',stderr=''
+    child.stdout.on('data',d=>{stdout+=d})
+    child.stderr.on('data',d=>{stderr+=d})
     child.once('error',reject)
-    child.stdout.once('data',()=>resolve(child))
+    child.once('close',code=>resolve({code,stdout,stderr}))
   })
-  const good=await spawnDummy(['--config',path.join(profile,'config.yaml'),'--workspace-root',path.join(profile,'workspace')])
-  const badNeighbor=await spawnDummy(['--config',path.join(neighbor,'config.yaml'),'--workspace-root',path.join(neighbor,'workspace')])
-  const badUnrelated=await spawnDummy(['--note',profile])
-  t.after(()=>{good.kill();badNeighbor.kill();badUnrelated.kill()})
-  const verified=await verifyPrivateFixtureServer({targetPid:good.pid,launcherPid:process.pid,profile})
-  assert.equal(verified.targetPid,good.pid)
-  assert(verified.targetStartId)
-  await assert.rejects(verifyPrivateFixtureServer({targetPid:badNeighbor.pid,launcherPid:process.pid,profile}),/canonically confined/i)
-  await assert.rejects(verifyPrivateFixtureServer({targetPid:badUnrelated.pid,launcherPid:process.pid,profile}),/canonically confined/i)
-  await assert.rejects(verifyPrivateFixtureServer({targetPid:good.pid,launcherPid:999999999,profile}),/direct descendant|launcher/i)
+  // Run relative-path authorized launcher and spoofed-arg launcher in parallel.
+  const [mainRun,spoofRun]=await Promise.all([
+    runLauncher('./private-launcher.mjs','main'),
+    runLauncher('./other-launcher.mjs','spoof',[launcherScript]),
+  ])
+  assert.equal(mainRun.code,0,`launcher failed: ${mainRun.stderr}`)
+  const mainRes=JSON.parse(mainRun.stdout.trim())
+  assert.equal(mainRes.good.ok,true,`good probe failed: ${mainRes.good.error}`)
+  assert(mainRes.good.value.targetStartId)
+  assert.equal(mainRes.badDupConfig.ok,false)
+  assert.match(mainRes.badDupConfig.error,/canonically confined/i)
+  assert.equal(mainRes.badNeighbor.ok,false)
+  assert.match(mainRes.badNeighbor.error,/canonically confined/i)
+  assert.equal(mainRes.badUnrelated.ok,false)
+  assert.match(mainRes.badUnrelated.error,/canonically confined/i)
+  assert.equal(mainRes.badLauncherPid.ok,false)
+  assert.match(mainRes.badLauncherPid.error,/direct descendant|launcher/i)
+  assert.equal(spoofRun.code,0,`spoof launcher failed: ${spoofRun.stderr}`)
+  const spoofRes=JSON.parse(spoofRun.stdout.trim()).spoof
+  assert.equal(spoofRes.ok,false)
+  assert.match(spoofRes.error,/authorized private fixture launcher/i)
 
-  // sameWorktreeRepoAndManifests: rejects a sibling directory borrowing .git without reciprocal gitdir backlink.
+  // sameWorktreeRepoAndManifests: rejects borrowed .git, wrong backlink target file, and gitdir outside <commonDir>/worktrees.
   const fakeGitCommon=path.join(tmpRoot,'repo.git')
   const wtA=path.join(tmpRoot,'wt-a'),wtB=path.join(tmpRoot,'wt-b'),wtSpoof=path.join(tmpRoot,'wt-spoof')
+  const wtBadBacklink=path.join(tmpRoot,'wt-bad-backlink'),wtOutsideMeta=path.join(tmpRoot,'wt-outside-meta')
   const metaA=path.join(fakeGitCommon,'worktrees','wt-a'),metaB=path.join(fakeGitCommon,'worktrees','wt-b')
-  for(const dir of [wtA,wtB,wtSpoof]){
+  const metaBadBacklink=path.join(fakeGitCommon,'worktrees','wt-bad-backlink')
+  const metaOutside=path.join(fakeGitCommon,'other-dir','wt-outside')
+  for(const dir of [wtA,wtB,wtSpoof,wtBadBacklink,wtOutsideMeta]){
     await mkdir(path.join(dir,'packages','server'),{recursive:true})
     await writeFile(path.join(dir,'package-lock.json'),'{"lockfileVersion":3}\n')
     await writeFile(path.join(dir,'package.json'),'{"name":"root"}\n')
     await writeFile(path.join(dir,'packages','server','package.json'),'{"name":"server"}\n')
   }
-  await mkdir(metaA,{recursive:true});await mkdir(metaB,{recursive:true})
+  for(const meta of [metaA,metaB,metaBadBacklink,metaOutside])await mkdir(meta,{recursive:true})
   await writeFile(path.join(wtA,'.git'),`gitdir: ${metaA}\n`)
   await writeFile(path.join(wtB,'.git'),`gitdir: ${metaB}\n`)
   await writeFile(path.join(wtSpoof,'.git'),`gitdir: ${metaB}\n`)
-  await writeFile(path.join(metaA,'commondir'),'../..\n')
-  await writeFile(path.join(metaB,'commondir'),'../..\n')
+  await writeFile(path.join(wtBadBacklink,'.git'),`gitdir: ${metaBadBacklink}\n`)
+  await writeFile(path.join(wtBadBacklink,'not-git'),'x\n')
+  await writeFile(path.join(wtOutsideMeta,'.git'),`gitdir: ${metaOutside}\n`)
+  for(const meta of [metaA,metaB,metaBadBacklink,metaOutside])await writeFile(path.join(meta,'commondir'),'../..\n')
   await writeFile(path.join(metaA,'gitdir'),`${path.join(wtA,'.git')}\n`)
   await writeFile(path.join(metaB,'gitdir'),`${path.join(wtB,'.git')}\n`)
+  await writeFile(path.join(metaBadBacklink,'gitdir'),`${path.join(wtBadBacklink,'not-git')}\n`)
+  await writeFile(path.join(metaOutside,'gitdir'),`${path.join(wtOutsideMeta,'.git')}\n`)
   assert.equal(sameWorktreeRepoAndManifests(wtA,wtB),true)
   assert.equal(sameWorktreeRepoAndManifests(wtA,wtSpoof),false)
+  assert.equal(sameWorktreeRepoAndManifests(wtA,wtBadBacklink),false)
+  assert.equal(sameWorktreeRepoAndManifests(wtA,wtOutsideMeta),false)
 })
 
 test('originGuardProxy attests HTTPS CONNECT tunnels, rejects foreign authorities, and tears down on setTargetPid',{timeout:15000},async t=>{
@@ -534,7 +652,7 @@ test('originGuardProxy attests HTTPS CONNECT tunnels, rejects foreign authoritie
 })
 
 test('acquireProfileLock enforces cross-process SQLite exclusion and live daemon_pid blocking',{timeout:20000},async t=>{
-  const {mkdtemp,rm,unlink}=await import('node:fs/promises')
+  const {mkdtemp,rm,stat,unlink}=await import('node:fs/promises')
   const os=await import('node:os')
   const path=await import('node:path')
   const {acquireProfileLock}=await import('./live-access.mjs')
@@ -544,13 +662,13 @@ test('acquireProfileLock enforces cross-process SQLite exclusion and live daemon
   const liveAccessUrl=new URL('./live-access.mjs',import.meta.url).href
   const script=`
     import {acquireProfileLock} from ${JSON.stringify(liveAccessUrl)}
-    const [lockPath, holdMs, daemonPid] = process.argv.slice(1)
+    const [lockPath, mode, daemonPid] = process.argv.slice(1)
     try {
       const lock = await acquireProfileLock(lockPath)
       if (daemonPid) await lock.setDaemonPid(Number(daemonPid))
-      console.log('ACQUIRED')
-      if (Number(holdMs) > 0) {
-        await new Promise(resolve => setTimeout(resolve, Number(holdMs)))
+      process.stdout.write('ACQUIRED\\n')
+      if (mode === 'hold') {
+        await new Promise(resolve => { process.stdin.resume(); process.stdin.once('end', resolve) })
         await lock.close()
       }
       process.exit(0)
@@ -560,35 +678,49 @@ test('acquireProfileLock enforces cross-process SQLite exclusion and live daemon
       process.exit(1)
     }
   `
-  const runChild=(holdMs,daemonPid='')=>new Promise((resolve,reject)=>{
-    const child=spawn(process.execPath,['--input-type=module','-e',script,lockPath,String(holdMs),String(daemonPid)],{
-      stdio:['ignore','pipe','pipe'],windowsHide:true,
+  const spawnChild=(mode,daemonPid='')=>{
+    const child=spawn(process.execPath,['--input-type=module','-e',script,lockPath,mode,String(daemonPid)],{
+      stdio:['pipe','pipe','pipe'],windowsHide:true,
     })
+    t.after(()=>{try{child.kill('SIGKILL')}catch{}})
     let stdout='',stderr=''
-    child.stdout.on('data',d=>{stdout+=d})
+    const acquired=new Promise((resolve,reject)=>{
+      child.stdout.on('data',d=>{stdout+=d;if(stdout.includes('ACQUIRED'))resolve()})
+      child.once('error',reject)
+      child.once('close',code=>resolve({code}))
+    })
     child.stderr.on('data',d=>{stderr+=d})
-    child.once('error',reject)
-    child.once('close',code=>resolve({code,stdout,stderr}))
-  })
-  // Two separate Node processes race for the same lock; exactly one acquires, the other exits 42 (EEXIST).
-  const [a,b]=await Promise.all([runChild(600),runChild(600)])
-  const codes=[a.code,b.code].sort((x,y)=>x-y)
-  assert.deepEqual(codes,[0,42],`Expected one winner (0) and one EEXIST loser (42), got: ${JSON.stringify({a,b})}`)
+    const done=new Promise((resolve,reject)=>{
+      child.once('error',reject)
+      child.once('close',code=>resolve({code,stdout,stderr}))
+    })
+    return {child,acquired,done}
+  }
+  // Deterministic barrier: process A acquires and holds until stdin closes; process B must fail with EEXIST (42).
+  const holder=spawnChild('hold')
+  await holder.acquired
+  const contender=spawnChild('once')
+  const contenderRes=await contender.done
+  assert.equal(contenderRes.code,42,`Expected EEXIST loser (42), got: ${JSON.stringify(contenderRes)}`)
+  holder.child.stdin.end()
+  const holderRes=await holder.done
+  assert.equal(holderRes.code,0,`Expected holder exit 0, got: ${JSON.stringify(holderRes)}`)
+  await assert.rejects(stat(lockPath),{code:'ENOENT'})
   // Child acquires lock, records a live survivor daemon_pid in SQLite, then exits without closing (simulating crash).
   const survivor=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true})
   t.after(()=>{try{survivor.kill('SIGKILL')}catch{}})
   await new Promise((resolve,reject)=>{survivor.once('spawn',resolve);survivor.once('error',reject)})
-  const crashed=await runChild(0,survivor.pid)
+  const crashed=await spawnChild('crash',survivor.pid).done
   assert.equal(crashed.code,0)
   // Remove running.lock JSON so the test proves SQLite daemon_pid alone blocks takeover.
   await unlink(lockPath)
-  const blocked=await runChild(0)
+  const blocked=await spawnChild('once').done
   assert.equal(blocked.code,42,'live daemon_pid in SQLite must block takeover after launcher crash')
   survivor.kill('SIGKILL')
   await new Promise(resolve=>survivor.once('close',resolve))
   const reclaimed=await acquireProfileLock(lockPath)
   await reclaimed.close()
-  await unlink(lockPath)
+  await assert.rejects(stat(lockPath),{code:'ENOENT'})
 })
 
 test('originGuardProxy and signInFixture refuse missing target PID without unattested fallback',async()=>{

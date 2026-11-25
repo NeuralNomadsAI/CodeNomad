@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { fixtureChildPid, fixturePaginationGuard, spawnFixtureChild, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, fixturePaginationGuard, hardKillFixtureChild, spawnFixtureChild, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
 import { execFileSync, spawn } from "node:child_process"
 import { once } from "node:events"
 import fs from "node:fs"
@@ -204,6 +204,26 @@ test("fixture job terminates child and grandchild when parent dies and hides COD
     }
     for (const pid of [leafPid, childPid]) {
       if (pid && alive(pid)) try { process.kill(pid, "SIGKILL") } catch {}
+    }
+  }
+})
+
+test("hardKillFixtureChild terminates a stubborn owned child tree and confirms its exit", { timeout: 20_000 }, async () => {
+  const child = spawnFixtureChild(process.execPath, ["-e", `
+    process.on("SIGTERM", () => {})
+    console.log("READY")
+    setInterval(() => {}, 1000)
+  `], { env: isolated, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+  const closed = once(child, "close")
+  try {
+    await once(child.stdout, "data", { signal: AbortSignal.timeout(10_000) })
+    const innerPid = await fixtureChildPid(child)
+    assert.equal(alive(innerPid), true)
+    await hardKillFixtureChild(child, closed, 5_000)
+    assert.equal(alive(innerPid), false)
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      await stopFixtureChild(child, closed).catch(() => {})
     }
   }
 })

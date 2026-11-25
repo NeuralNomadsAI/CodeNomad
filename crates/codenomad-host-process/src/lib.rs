@@ -19,8 +19,7 @@ mod date;
 #[cfg(any(unix, test))]
 #[path = "date/posix.rs"]
 mod posix_date;
-#[cfg(any(target_os = "macos", test))]
-mod procargs;
+pub mod procargs;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]

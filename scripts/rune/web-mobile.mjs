@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {mkdir,readFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
 import path from 'node:path'
-import {createAttestedFetch,verifyLoopbackListenerOwner} from '../native-fixture-http.mjs'
+import {createAttestedFetch,stripFixtureServerSecrets,verifyLoopbackListenerOwner} from '../native-fixture-http.mjs'
 import {launchOwnedChromium} from './web-chromium.mjs'
 import {bundleAssetPaths} from './web-workspace-policy.mjs'
 import {isExpectedWaitError, now, withBudget} from './web-budget.mjs'
@@ -42,7 +42,7 @@ export async function pairFixture({origin, targetPid, profile: fixtureProfile, p
   const ca = await readFile(path.join(fixtureProfile, 'identity.data/tls/ca-cert.pem')).catch(() => undefined)
   let ownedBrowser, attestedFetch, primaryError = null
   try {
-    ownedBrowser = await launchOwnedChromium({profile: pairProfile, env: process.env, origin, targetPid})
+    ownedBrowser = await launchOwnedChromium({profile: pairProfile, env: stripFixtureServerSecrets(process.env), origin, targetPid})
     attestedFetch = createAttestedFetch(origin, Number(url.port), targetPid, ca ? {ca} : {allowSelfSigned: true})
     const browser = ownedBrowser.browser
     const context = await browser.newContext({...mobileContext(browser), ignoreHTTPSErrors:true})

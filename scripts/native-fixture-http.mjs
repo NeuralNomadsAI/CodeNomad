@@ -10,6 +10,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url'
 import {
   attestPeerWithRetry,
   createClientPidGate,
+  extractNodeEntryScript,
   isPidInOwnedTree,
   parseWindowsCommandLine,
   pidAlive,
@@ -17,6 +18,7 @@ import {
   processIdentityOf,
   resolveLoopbackListenerPid,
   resolveLoopbackPeerPid,
+  verifyExecutableMatches,
   verifyLoopbackConnectionPeer,
   verifyLoopbackListenerOwner,
   verifyPrivateFixtureServer,
@@ -25,6 +27,7 @@ import {
 export {
   attestPeerWithRetry,
   createClientPidGate,
+  extractNodeEntryScript,
   isPidInOwnedTree,
   parseWindowsCommandLine,
   pidAlive,
@@ -32,6 +35,7 @@ export {
   processIdentityOf,
   resolveLoopbackListenerPid,
   resolveLoopbackPeerPid,
+  verifyExecutableMatches,
   verifyLoopbackConnectionPeer,
   verifyLoopbackListenerOwner,
   verifyPrivateFixtureServer,
@@ -70,8 +74,10 @@ export function sameWorktreeRepoAndManifests(dirA,dirB){
     const backlinkFile=path.join(gitDir,'gitdir')
     if(!existsSync(commonFile)||!existsSync(backlinkFile))return null
     const commonDir=realpathSync(path.resolve(gitDir,readFileSync(commonFile,'utf8').trim()))
+    const worktreesRoot=path.join(commonDir,'worktrees')
+    if(!isWithin(worktreesRoot,gitDir)||gitDir===worktreesRoot)return null
     const backlinkDotGit=realpathSync(path.resolve(gitDir,readFileSync(backlinkFile,'utf8').trim()))
-    if(path.dirname(backlinkDotGit)!==dirReal)return null
+    if(backlinkDotGit!==dotGit)return null
     return commonDir
   }
   try{
@@ -136,11 +142,8 @@ export function maskSetCookieHeaders(setCookie,cookieMap){
 
 export function stripFixtureServerSecrets(env){
   return Object.fromEntries(Object.entries(env??{}).filter(([key])=>
-    key!=='CNRS_SERVER_PASSWORD'
-    &&key!=='CNRS_FIXTURE_PASSWORD'
-    &&key!=='CNRS_FIXTURE_URL'
-    &&key!=='CODENOMAD_SERVER_PASSWORD'
-    &&key!=='OPENCODE_SERVER_PASSWORD'))
+    !/^(CNRS_|CODENOMAD_SERVER_PASSWORD$|OPENCODE_SERVER_PASSWORD$)/i.test(key)
+    &&!/(?:^|_)(PASSWORD|SECRET|TOKEN|API_KEY)$/i.test(key)))
 }
 
 export function worktreeDependencyRoots(nodeModulesDir=worktreeNodeModules){
@@ -295,7 +298,9 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
   const isHttps=base.protocol==='https:'
   const targetPort=Number(base.port)
   let currentTargetPid=targetPid
+  let generation=0
   let closed=false
+  let closePromise=null
   let agent=isHttps?null:createAttestedHttpAgent(targetPort,currentTargetPid)
   const injectCookieMap=parseCookiePairs(injectCookie)
   let proxyPort=0
@@ -314,18 +319,25 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
     let target
     try{target=new URL(req.url,localOrigin)}catch{res.writeHead(403);res.end();return}
     if(target.origin!==localOrigin){res.writeHead(403);res.end('Foreign browser origin forbidden');return}
+    const reqGen=generation
     if(requireClientAttestation){
       req.pause()
       const ok=await clientGate.verify(req.socket)
-      if(res.destroyed||req.destroyed)return
-      if(!ok){res.writeHead(403);res.end('Attested browser client PID required');return}
+      if(res.destroyed||req.socket.destroyed)return
+      if(!ok){req.resume();res.writeHead(403,{connection:'close'});res.end('Attested browser client PID required');return}
     }
+    if(closed||reqGen!==generation||!agent){
+      if(!res.headersSent)res.writeHead(502)
+      res.end('Target rotated during request admission')
+      return
+    }
+    const reqAgent=agent
     const headers={...req.headers}
     delete headers['proxy-connection']
     if(injectCookieMap.size&&typeof headers.cookie==='string'){
       headers.cookie=substitutePlaceholderCookies(headers.cookie,injectCookieMap)
     }
-    const upstream=httpRequest(target,{agent,method:req.method,headers:{...headers,host:target.host}},response=>{
+    const upstream=httpRequest(target,{agent:reqAgent,method:req.method,headers:{...headers,host:target.host}},response=>{
       const location=response.headers.location
       if(response.statusCode>=300&&response.statusCode<400&&location){
         let redirected
@@ -348,7 +360,8 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
     upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end()})
     req.on('aborted',()=>upstream.destroy())
     res.on('close',()=>upstream.destroy())
-    req.pipe(upstream)
+    if(req.readableEnded)upstream.end()
+    else req.pipe(upstream)
   })
   server.on('connect',(req,socket,head)=>{
     if(!isHttps||req.url!==`127.0.0.1:${targetPort}`){
@@ -401,8 +414,11 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
   return {
     port:proxyPort,
     allowClientPid:clientGate.allow,
+    substituteCookies:header=>substitutePlaceholderCookies(header,injectCookieMap),
+    maskSetCookies:setCookie=>maskSetCookieHeaders(setCookie,injectCookieMap),
     setTargetPid(nextPid){
       assert(Number.isSafeInteger(nextPid)&&nextPid>0,'Attested origin guard target PID required')
+      generation++
       currentTargetPid=nextPid
       for(const socket of [...tunnelSockets]){try{socket.destroy()}catch{}}
       tunnelSockets.clear()
@@ -412,6 +428,7 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
       }
     },
     close:()=>{
+      if(closePromise)return closePromise
       closed=true
       clientGate.close()
       for(const socket of [...detachedSockets,...tunnelSockets]){try{socket.destroy()}catch{}}
@@ -419,7 +436,11 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
       tunnelSockets.clear()
       agent?.destroy()
       server.closeAllConnections()
-      return new Promise(resolve=>server.close(resolve))
+      closePromise=new Promise((resolve,reject)=>server.close(err=>{
+        if(err&&err.code!=='ERR_SERVER_NOT_RUNNING')reject(err)
+        else resolve()
+      }))
+      return closePromise
     },
   }
 }
@@ -516,11 +537,14 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
       },error=>cb(error,null))
     },
   })
+  let closePromise=null
   const close=()=>{
+    if(closePromise)return closePromise
     closed=true
     for(const entry of [...pendingSockets])entry.fail(Error('Attested pool is closed'))
     pendingSockets.clear()
-    return pool.destroy().catch(()=>{})
+    closePromise=pool.destroy()
+    return closePromise
   }
   return {pool,close}
 }
@@ -673,7 +697,7 @@ export async function createAttestedRelay(targetOrigin,pid,options){
   const base=new URL(targetOrigin)
   assert(base.protocol==='http:'&&base.hostname==='127.0.0.1'&&base.port,'Expected a loopback HTTP target for attested relay')
   const agent=createAttestedHttpAgent(Number(base.port),pid)
-  let relayPort=0
+  let relayPort=0,closePromise=null
   const relayCookieMap=new Map()
   const clientGate=createClientPidGate(()=>relayPort)
   const server=createServer(async(req,res)=>{
@@ -682,9 +706,10 @@ export async function createAttestedRelay(targetOrigin,pid,options){
     if(requireClientAttestation){
       req.pause()
       const ok=await clientGate.verify(req.socket)
-      if(res.destroyed||req.destroyed)return
+      if(res.destroyed||req.socket.destroyed)return
       if(!ok){
-        res.writeHead(403)
+        req.resume()
+        res.writeHead(403,{connection:'close'})
         res.end('Attested client PID required')
         return
       }
@@ -742,14 +767,25 @@ export async function createAttestedRelay(targetOrigin,pid,options){
     upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end()})
     req.on('aborted',()=>upstream.destroy())
     res.on('close',()=>upstream.destroy())
-    req.pipe(upstream)
+    if(req.readableEnded)upstream.end()
+    else req.pipe(upstream)
   })
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
   relayPort=server.address().port
   return {
     origin:`http://127.0.0.1:${relayPort}`,
     allowClientPid:clientGate.allow,
-    close:()=>{clientGate.close();agent.destroy();server.closeAllConnections();return new Promise(resolve=>server.close(resolve))},
+    close:()=>{
+      if(closePromise)return closePromise
+      clientGate.close()
+      agent.destroy()
+      server.closeAllConnections()
+      closePromise=new Promise((resolve,reject)=>server.close(err=>{
+        if(err&&err.code!=='ERR_SERVER_NOT_RUNNING')reject(err)
+        else resolve()
+      }))
+      return closePromise
+    },
   }
 }
 

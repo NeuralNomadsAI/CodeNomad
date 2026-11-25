@@ -3,7 +3,7 @@ import {appendFile,writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {maskSetCookieHeaders,parseCookiePairs,substitutePlaceholderCookies} from '../native-fixture-http.mjs'
 
-export async function pendingBrowser({values,m,out,browser,storageState,realCookieHeader,attestedFetch}) {
+export async function pendingBrowser({values,m,out,browser,ownedBrowser,storageState,realCookieHeader,attestedFetch}) {
   assert(browser&&typeof attestedFetch==='function','Attested browser and attestedFetch required for pendingBrowser')
   const parsedUrl=new URL(values.url)
   const origin=parsedUrl.origin,isHttp=parsedUrl.protocol==='http:',results=[]
@@ -13,14 +13,19 @@ export async function pendingBrowser({values,m,out,browser,storageState,realCook
     const req=route.request()
     const headers={...(await req.allHeaders())}
     delete headers['host'];delete headers['content-length']
-    if(isHttp&&headers['cookie']&&realCookieMap.size){
-      headers['cookie']=substitutePlaceholderCookies(headers['cookie'],realCookieMap)
+    if(isHttp&&headers['cookie']){
+      headers['cookie']=ownedBrowser
+        ?ownedBrowser.substituteCookies(headers['cookie'])
+        :(realCookieMap.size?substitutePlaceholderCookies(headers['cookie'],realCookieMap):headers['cookie'])
     }
     const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
     const body=Buffer.from(await res.arrayBuffer())
     const outHeaders=Object.fromEntries(res.headers.entries())
-    if(isHttp&&outHeaders['set-cookie']&&realCookieMap.size){
-      outHeaders['set-cookie']=maskSetCookieHeaders(outHeaders['set-cookie'],realCookieMap).join(', ')
+    const rawSetCookies=res.headers.getSetCookie?.()??(outHeaders['set-cookie']?[outHeaders['set-cookie']]:[])
+    if(rawSetCookies.length){
+      outHeaders['set-cookie']=(isHttp
+        ?(ownedBrowser?ownedBrowser.maskSetCookies(rawSetCookies):(realCookieMap.size?maskSetCookieHeaders(rawSetCookies,realCookieMap):rawSetCookies))
+        :rawSetCookies).join('\n')
     }
     return {status:res.status,headers:outHeaders,body,json:()=>JSON.parse(body.toString('utf8'))}
   }
