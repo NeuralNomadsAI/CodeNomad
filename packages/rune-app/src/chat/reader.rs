@@ -13,6 +13,25 @@ use std::sync::{
     atomic::{AtomicU64, Ordering::SeqCst},
 };
 
+struct SyncUndo {
+    generation: u64,
+    connection: u64,
+    page: crate::history::Page,
+    version: u64,
+    bookmark: Bookmark,
+    bookmark_width: f32,
+    width_grew_while_deferred: bool,
+    resume_manual_seq: Option<u64>,
+    gap: bool,
+    messages: Vec<crate::history::Row>,
+    can_older: bool,
+    history_detached: bool,
+    phase: crate::Phase,
+    trimmed_older: bool,
+    trimmed_newer: bool,
+    age: u8,
+}
+
 pub(crate) struct Reader {
     request: Demand,
     events: Receiver<(u64, u64, Event)>,
@@ -23,7 +42,9 @@ pub(crate) struct Reader {
     width_grew_while_deferred: bool,
     resume_manual_seq: Option<u64>,
     reconciled_manual_scroll: bool,
-    deferred_sync: Option<(u64, u64, Event, u8)>,
+    last_taken: Option<(u64, u64)>,
+    deferred_sync: Option<(u64, u64, Event, u8, u64)>,
+    sync_undo: Option<SyncUndo>,
     awaiting_manual_probe: u8,
     hidden: bool,
     resume_pending: bool,
@@ -60,7 +81,9 @@ impl Reader {
                 width_grew_while_deferred: false,
                 resume_manual_seq: None,
                 reconciled_manual_scroll: false,
+                last_taken: None,
                 deferred_sync: None,
+                sync_undo: None,
                 awaiting_manual_probe: 0,
                 hidden: false,
                 resume_pending: false,
@@ -85,10 +108,72 @@ impl Reader {
     pub(crate) fn stop_content(&mut self) {
         self.hidden = true;
         self.pending_scroll = false;
+        self.last_taken = None;
         self.deferred_sync = None;
+        self.sync_undo = None;
         self.awaiting_manual_probe = 0;
         self.generation = self.request.publish(None);
         self.drain();
+    }
+
+    pub(crate) fn clear_sync_undo(&mut self) {
+        self.sync_undo = None;
+    }
+
+    pub(crate) fn is_resuming(&self) -> bool {
+        !self.hidden && self.resume_pending
+    }
+
+    #[cfg(test)]
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn has_gap(&self) -> bool {
+        self.gap
+    }
+
+    pub(crate) fn can_undo_sync(&self, wants_older: bool, wants_newer: bool) -> bool {
+        self.sync_undo.as_ref().is_some_and(|undo| {
+            (wants_older && undo.trimmed_older) || (wants_newer && undo.trimmed_newer)
+        })
+    }
+
+    pub(crate) fn save_sync_undo(
+        &mut self,
+        page: crate::history::Page,
+        version: u64,
+        messages: Vec<crate::history::Row>,
+        can_older: bool,
+        history_detached: bool,
+        phase: crate::Phase,
+        trimmed_older: bool,
+        trimmed_newer: bool,
+    ) {
+        let Some((generation, connection)) = self.last_taken else {
+            return;
+        };
+        if generation != self.generation || connection != self.connection.load(SeqCst) {
+            return;
+        }
+        self.sync_undo = Some(SyncUndo {
+            generation,
+            connection,
+            page,
+            version,
+            bookmark: self.bookmark.clone(),
+            bookmark_width: self.bookmark_width,
+            width_grew_while_deferred: self.width_grew_while_deferred,
+            resume_manual_seq: self.resume_manual_seq,
+            gap: self.gap,
+            messages,
+            can_older,
+            history_detached,
+            phase,
+            trimmed_older,
+            trimmed_newer,
+            age: 0,
+        });
     }
 
     pub(crate) fn take_next(
@@ -96,23 +181,29 @@ impl Reader {
         defer_sync: bool,
         reading: &Reading,
         history_bounds: [f32; 4],
+        cached_gap: bool,
     ) -> Option<Event> {
-        if let Some((generation, connection, event, stage)) = self.deferred_sync.take() {
+        self.last_taken = None;
+        if let Some((generation, connection, event, stage, min_seq)) = self.deferred_sync.take() {
             if !self.hidden
                 && generation == self.generation
                 && connection == self.connection.load(SeqCst)
             {
                 if !defer_sync || !self.resume_pending {
+                    self.last_taken = Some((generation, connection));
                     return Some(event);
                 }
-                let ready = reading.top_is_fresh()
-                    || reading
-                        .live_bookmark_fresh(history_bounds, self.gap)
-                        .is_some();
-                if ready || stage >= 3 {
+                let seq_ready = reading.scroll_seq() >= min_seq;
+                let ready = seq_ready
+                    && (reading.top_is_fresh()
+                        || reading
+                            .live_bookmark_fresh(history_bounds, cached_gap)
+                            .is_some());
+                if ready || stage >= 4 {
+                    self.last_taken = Some((generation, connection));
                     return Some(event);
                 }
-                self.deferred_sync = Some((generation, connection, event, stage + 1));
+                self.deferred_sync = Some((generation, connection, event, stage + 1, min_seq));
                 return None;
             }
         }
@@ -122,9 +213,10 @@ impl Reader {
                 && connection == self.connection.load(SeqCst)
             {
                 if defer_sync && self.resume_pending && matches!(event, Event::ReaderSync { .. }) {
-                    self.deferred_sync = Some((generation, connection, event, 0));
+                    self.deferred_sync = Some((generation, connection, event, 0, 0));
                     return None;
                 }
+                self.last_taken = Some((generation, connection));
                 return Some(event);
             }
         }
@@ -186,7 +278,9 @@ impl Reader {
         self.parked = false;
         self.resume_pending = true;
         self.pending_scroll = false;
+        self.last_taken = None;
         self.deferred_sync = None;
+        self.sync_undo = None;
         self.awaiting_manual_probe = 0;
         self.resume_manual_seq = None;
         self.reconciled_manual_scroll = false;
@@ -238,7 +332,9 @@ impl Reader {
 
     fn reconnecting(&mut self, reading: &Reading, paging: bool, history_bounds: [f32; 4]) {
         self.activity = None;
+        self.last_taken = None;
         self.deferred_sync = None;
+        self.sync_undo = None;
         if !self.hidden && (self.resume_pending || paging) {
             if self.resume_pending {
                 let manual_seq = self.resume_manual_seq;
@@ -298,7 +394,7 @@ impl Reader {
             if self.user_scrolled_while_resuming(reading) {
                 if let Some(live) = reading.live_bookmark_fresh(history_bounds, self.gap) {
                     let live_valid = match &live {
-                        Bookmark::Latest => true,
+                        Bookmark::Latest => !self.gap,
                         Bookmark::Message { id, .. } => messages.iter().any(|row| &row.id == id),
                     };
                     if live_valid {
@@ -393,9 +489,58 @@ pub(crate) fn settle_bookmark(s: &mut State, attempted: &str, confirmed: Option<
     }
 }
 
+pub(crate) fn expire_sync_undo(s: &mut State) {
+    let keep = s.transcript_display.reading().has_pending_restore_probe();
+    if let Some(reader) = &mut s.reader
+        && let Some(undo) = &mut reader.sync_undo
+    {
+        if !keep || undo.age >= 1 {
+            reader.sync_undo = None;
+        } else {
+            undo.age += 1;
+        }
+    }
+}
+
+pub(crate) fn undo_sync_for_manual_scroll(s: &mut State, min_scroll_seq: u64, tx: &mut Tx) -> bool {
+    let Some(undo) = s.reader.as_mut().and_then(|reader| reader.sync_undo.take()) else {
+        return false;
+    };
+    let manual_seq = s.transcript_display.reading().manual_scroll_seq();
+    s.messages = undo.messages;
+    s.can_older = undo.can_older;
+    s.history_detached = undo.history_detached;
+    s.phase = undo.phase;
+    crate::composer::reconcile(s);
+    if let Some(reader) = &mut s.reader {
+        reader.bookmark = undo.bookmark;
+        reader.bookmark_width = undo.bookmark_width;
+        reader.width_grew_while_deferred = undo.width_grew_while_deferred;
+        reader.resume_manual_seq = Some(undo.resume_manual_seq.unwrap_or(manual_seq));
+        reader.gap = undo.gap;
+        reader.resume_pending = true;
+        reader.pending_scroll = false;
+        reader.reconciled_manual_scroll = false;
+        reader.awaiting_manual_probe = 0;
+        reader.deferred_sync = Some((
+            undo.generation,
+            undo.connection,
+            Event::ReaderSync {
+                page: undo.page,
+                version: undo.version,
+            },
+            0,
+            min_scroll_seq,
+        ));
+    }
+    tx.wake_after(std::time::Duration::ZERO);
+    true
+}
+
 pub(crate) fn reconcile_bookmark(s: &mut State, page: &crate::history::Page) -> bool {
     let rows = &page.rows;
     let history_bounds = s.tool_diff_preferences.history_bounds.get();
+    let cached_gap = s.history_detached || s.reader.as_ref().is_some_and(|reader| reader.gap);
     let reading = s.transcript_display.reading();
     let user_scrolled = s.reader.as_ref().is_some_and(|reader| {
         reader.resume_pending && reader.user_scrolled_while_resuming(reading)
@@ -405,9 +550,9 @@ pub(crate) fn reconcile_bookmark(s: &mut State, page: &crate::history::Page) -> 
             reader.reconciled_manual_scroll = true;
         }
         let reading = s.transcript_display.reading();
-        if let Some(live) = reading.live_bookmark_fresh(history_bounds, false) {
+        if let Some(live) = reading.live_bookmark_fresh(history_bounds, cached_gap) {
             let live_valid = match &live {
-                Bookmark::Latest => true,
+                Bookmark::Latest => page.newer.is_none(),
                 Bookmark::Message { id, .. } => rows.iter().any(|row| &row.id == id),
             };
             if live_valid {
@@ -420,26 +565,30 @@ pub(crate) fn reconcile_bookmark(s: &mut State, page: &crate::history::Page) -> 
                 }
                 return false;
             }
-            if let Bookmark::Message { id, .. } = &live {
-                let live_pos = s.messages.iter().position(|row| &row.id == id);
-                let first_pos = rows
-                    .first()
-                    .and_then(|first| s.messages.iter().position(|row| row.id == first.id));
-                let last_pos = rows
-                    .last()
-                    .and_then(|last| s.messages.iter().position(|row| row.id == last.id));
-                let outside_window = page.older.is_some()
-                    || page.newer.is_some()
-                    || live_pos.zip(first_pos).is_some_and(|(l, f)| l < f)
-                    || live_pos.zip(last_pos).is_some_and(|(l, e)| l > e);
-                if outside_window {
-                    if let Some(reader) = &mut s.reader {
-                        reader.bookmark_width = 0.0;
-                        reader.width_grew_while_deferred = false;
-                        reader.resume_watching(live, reading);
+            let outside_window = match &live {
+                Bookmark::Latest => page.newer.is_some(),
+                Bookmark::Message { id, .. } => {
+                    let live_pos = s.messages.iter().position(|row| &row.id == id);
+                    let first_pos = rows
+                        .first()
+                        .and_then(|first| s.messages.iter().position(|row| row.id == first.id));
+                    let last_pos = rows
+                        .last()
+                        .and_then(|last| s.messages.iter().position(|row| row.id == last.id));
+                    match (live_pos, first_pos, last_pos) {
+                        (Some(l), Some(f), _) if l < f => page.older.is_some(),
+                        (Some(l), _, Some(e)) if l > e => page.newer.is_some(),
+                        _ => page.older.is_some() || page.newer.is_some(),
                     }
-                    return true;
                 }
+            };
+            if outside_window {
+                if let Some(reader) = &mut s.reader {
+                    reader.bookmark_width = 0.0;
+                    reader.width_grew_while_deferred = false;
+                    reader.resume_watching(live, reading);
+                }
+                return true;
             }
             if let Some(reader) = &mut s.reader {
                 reader.resume_manual_seq = Some(reading.manual_scroll_seq());
@@ -541,6 +690,7 @@ pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
         reader.width_grew_while_deferred = false;
         reader.resume_manual_seq = None;
         reader.deferred_sync = None;
+        reader.sync_undo = None;
         reader.awaiting_manual_probe = 0;
     } else {
         if let Some(reader) = &mut s.reader {
@@ -550,6 +700,7 @@ pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
             reader.width_grew_while_deferred = false;
             reader.resume_manual_seq = None;
             reader.deferred_sync = None;
+            reader.sync_undo = None;
             reader.awaiting_manual_probe = 0;
         }
         Reading::restore(&Bookmark::Latest, tx);
@@ -2859,5 +3010,341 @@ mod tests {
             Some(target_above.as_str()),
             "re-requested page must stay anchored on {target_above}"
         );
+
+        // 5. Consumption-frame wheel aiming outside a trimmed deferred ReaderSync [16..26]
+        // must roll back the trimmed rows for 1 frame, land on the cached destination (<= sync-14),
+        // and re-request Target::Around(dest).
+        rt.set_viewport((390.0, 420.0), 1.0);
+        rt.state.messages = make_rows("Full40", 0..40);
+        rt.state.history_detached = false;
+        rt.state.reader.as_mut().unwrap().gap = false;
+        rt.state.revision += 1;
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("sync-20", 0.0);
+        });
+        for _ in 0..25 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g_trim = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        lane.events
+            .try_send((
+                g_trim,
+                conn,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim16_26", 16..26),
+                        older: Some(serde_json::json!("older-trim")),
+                        newer: Some(serde_json::json!("newer-trim")),
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 11,
+                },
+            ))
+            .unwrap();
+        rt.frame(0.02);
+        assert!(
+            rt.state.reader.as_ref().unwrap().has_deferred_sync(),
+            "trimmed ReaderSync must defer on first poll"
+        );
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Queue two upward wheel_events (processed AFTER poll consumes ReaderSync [16..26])
+        // on the consumption frame to reach well above sync-16.
+        rt.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
+        rt.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let trim_dest = top_key(&rt).expect("visible row after consumption-frame wheel");
+        let trim_idx: usize = trim_dest.strip_prefix("sync-").unwrap().parse().unwrap();
+        assert!(
+            trim_idx < 16,
+            "consumption-frame wheel past trimmed window [16..26] must reach cached row < sync-16: got {trim_dest}"
+        );
+        let g_trim_retry = rt.state.reader.as_ref().unwrap().generation;
+        assert!(
+            g_trim_retry > g_trim && rt.state.reader.as_ref().unwrap().blocks_send(),
+            "rolled-back out-of-window wheel must bump generation and re-request around {trim_dest}"
+        );
+        assert_eq!(
+            lane.demand.current().target,
+            Some(Target::Around(trim_dest.clone())),
+            "reader must request Target::Around({trim_dest})"
+        );
+        lane.events
+            .try_send((
+                g_trim_retry,
+                conn,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("AroundTrimDest", 0..24),
+                        older: None,
+                        newer: Some(serde_json::json!("newer-trim-2")),
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 12,
+                },
+            ))
+            .unwrap();
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        // Detached window (newer: Some) keeps gap == true and blocks_send() == true until Latest
+        // (composer::actions::can_send).
+        assert!(
+            !rt.state.reader.as_ref().unwrap().resume_pending
+                && rt.state.reader.as_ref().unwrap().gap
+                && rt.state.reader.as_ref().unwrap().blocks_send()
+                && rt.state.messages[0].body.starts_with("AroundTrimDest"),
+            "re-requested detached page around {trim_dest} must install cleanly"
+        );
+        assert_eq!(
+            top_key(&rt).as_deref(),
+            Some(trim_dest.as_str()),
+            "re-requested page must remain anchored on {trim_dest}"
+        );
+
+        // 6a. FromBottom with short cached page (max == 0) + overflowing ReaderSync:
+        // a consumption-frame wheel that cannot move the short cached page must NOT cancel
+        // Reading::restore(&Bookmark::Latest) or jump to sync-00.
+        rt.state.messages = make_rows("Short2", 0..2);
+        rt.state.history_detached = false;
+        rt.state.reader.as_mut().unwrap().gap = false;
+        rt.state.revision += 1;
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            latest(s, tx);
+        });
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g_short = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        send_page(&lane, g_short, conn, make_rows("Overflow32", 0..32), None);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.wheel_event(rune::WheelEvent::new(0.0, 120.0).at(wx, wy));
+        rt.wheel_event(rune::WheelEvent::new(0.0, -120.0).at(wx, wy));
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert!(
+            !rt.state.reader.as_ref().unwrap().blocks_send()
+                && rt.state.messages.len() == 32
+                && rt.state.messages[0].body.starts_with("Overflow32"),
+            "overflowing ReaderSync must install"
+        );
+        assert_eq!(
+            rt.scroll_at_bottom("history"),
+            Some(true),
+            "no-op consumption-frame wheel on short cached page must stay at Latest bottom, got top={:?}",
+            top_key(&rt)
+        );
+
+        // 6b. FromBottom with overflowing cached page [0..20] + longer ReaderSync [0..36]:
+        // a queued upward wheel_event on the consumption frame must step 120 px above the NEW
+        // bottom rather than jumping to the old page's absolute offset.
+        rt.state.messages = make_rows("Base20", 0..20);
+        rt.state.history_detached = false;
+        rt.state.reader.as_mut().unwrap().gap = false;
+        rt.state.revision += 1;
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            latest(s, tx);
+        });
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        assert_eq!(rt.scroll_at_bottom("history"), Some(true));
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g_grow = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        send_page(&lane, g_grow, conn, make_rows("Grown36", 0..36), None);
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        rt.wheel_event(rune::WheelEvent::new(0.0, 120.0).at(wx, wy));
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert_eq!(
+            rt.scroll_at_bottom("history"),
+            Some(false),
+            "6b post-poll upward wheel_event must leave bottom: top={:?}",
+            top_key(&rt)
+        );
+        let grown_top = top_key(&rt).expect("visible row after FromBottom upward wheel");
+        let grown_idx: usize = grown_top.strip_prefix("sync-").unwrap().parse().unwrap();
+        assert!(
+            grown_idx >= 24,
+            "FromBottom upward wheel_event on grown page [0..36] must land near the new bottom (not old absolute offset): got {grown_top}"
+        );
+
+        // 7. Detached cached window [10..40] (gap == true) scrolled to its bottom during
+        // resume_pending + delayed detached ReaderSync [0..26] (newer: Some) must NOT collapse to
+        // Bookmark::Latest or jump into [0..26]; it must preserve the bottom row and request
+        // Target::Around(bottom_top).
+        rt.state.messages = make_rows("Detached10_40", 10..40);
+        rt.state.history_detached = true;
+        rt.state.reader.as_mut().unwrap().gap = true;
+        rt.state.revision += 1;
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("sync-20", 0.0);
+        });
+        for _ in 0..25 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g_det = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        for _ in 0..20 {
+            rt.wheel(wx, wy, -280.0);
+            for _ in 0..8 {
+                rt.frame(0.02);
+            }
+            if rt.scroll_at_bottom("history") == Some(true) {
+                break;
+            }
+        }
+        assert_eq!(rt.scroll_at_bottom("history"), Some(true));
+        let det_bottom_top = top_key(&rt).expect("top row at bottom of detached cached window");
+        let det_idx: usize = det_bottom_top
+            .strip_prefix("sync-")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            det_idx >= 28,
+            "detached window bottom top row must be >= sync-28: got {det_bottom_top}"
+        );
+        lane.events
+            .try_send((
+                g_det,
+                conn,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("DelayedDetached", 0..26),
+                        older: None,
+                        newer: Some(serde_json::json!("newer-det")),
+                        running: false,
+                        user_file_references: false,
+                    },
+                    version: 13,
+                },
+            ))
+            .unwrap();
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert_eq!(
+            top_key(&rt).as_deref(),
+            Some(det_bottom_top.as_str()),
+            "delayed detached page [0..26] must not hijack bottom of detached cached window {det_bottom_top}"
+        );
+        assert_eq!(
+            lane.demand.current().target,
+            Some(Target::Around(det_bottom_top.clone())),
+            "bottom of detached cached window must request Target::Around({det_bottom_top}), not Latest"
+        );
+
+        // 8. Zero-inertia touch pan concurrent with width rotation OR viewport height growth
+        // during resume_pending must be detected and survive ReaderSync.
+        for (start_size, next_size, label) in [
+            ((320.0, 420.0), (844.0, 390.0), "rotation"),
+            ((390.0, 260.0), (390.0, 460.0), "height-grow"),
+        ] {
+            rt.set_viewport(start_size, 1.0);
+            rt.state.messages = make_rows("PrePanResize", 0..32);
+            rt.state.history_detached = false;
+            rt.state.reader.as_mut().unwrap().gap = false;
+            rt.state.revision += 1;
+            for _ in 0..20 {
+                rt.frame(0.02);
+            }
+            rt.update(|_, tx| {
+                tx.instant();
+                tx.scroll_key_to("sync-20", 0.0);
+            });
+            for _ in 0..25 {
+                rt.frame(0.02);
+            }
+            rt.update(|s, tx| {
+                suspend(s);
+                resume(s, tx);
+            });
+            let g_pan = rt.state.reader.as_ref().unwrap().generation;
+            for _ in 0..10 {
+                rt.frame(0.02);
+            }
+            let hr = rt
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some("history"))
+                .unwrap()
+                .rect;
+            let (px, py) = (hr[0] + hr[2] / 2.0, hr[1] + hr[3] / 2.0);
+            rt.touch(21, rune::TouchPhase::Started, px, py, 9.0);
+            rt.touch(21, rune::TouchPhase::Moved, px, py + 140.0, 9.02);
+            rt.touch(21, rune::TouchPhase::Ended, px, py + 140.0, 9.35);
+            rt.set_viewport(next_size, 1.0);
+            rt.frame(0.02);
+            rt.frame(0.02);
+            send_page(&lane, g_pan, conn, make_rows("PostPanResize", 0..32), None);
+            for _ in 0..30 {
+                rt.frame(0.02);
+            }
+            assert!(
+                !rt.state.reader.as_ref().unwrap().blocks_send()
+                    && rt.state.messages[0].body.starts_with("PostPanResize"),
+                "ReaderSync must install after concurrent touch pan + {label}"
+            );
+            let pan_top = top_key(&rt).expect("visible row after concurrent pan + resize");
+            let pan_idx: usize = pan_top.strip_prefix("sync-").unwrap().parse().unwrap();
+            assert!(
+                pan_idx < 20,
+                "zero-inertia touch pan concurrent with {label} during resume_pending must not jump back to sync-20: got {pan_top}"
+            );
+        }
     }
 }

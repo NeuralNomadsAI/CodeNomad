@@ -74,6 +74,22 @@ pub(crate) fn focused_control_key(
     }
     let key = focused?;
     let a = s.agent.as_ref()?;
+    if matches!(key, "model-picker" | "controls-refresh" | "stop-response") {
+        return Some((key.to_string(), None));
+    }
+    if matches!(key, "pending-prev" | "pending-next") && a.ids().len() > 1 {
+        return Some((key.to_string(), None));
+    }
+    if matches!(key, "allow_once" | "allow_always" | "reject")
+        && a.permissions.iter().any(|p| p.id == a.selected)
+    {
+        return Some((key.to_string(), None));
+    }
+    if matches!(key, "answer-question" | "cancel-question")
+        && a.forms.iter().any(|f| f.id == a.selected)
+    {
+        return Some((key.to_string(), None));
+    }
     if a.picker
         && a.models
             .iter()

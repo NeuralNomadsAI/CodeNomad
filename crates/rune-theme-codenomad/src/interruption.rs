@@ -287,8 +287,11 @@ mod tests {
         assert_eq!(scrolled_history_min(56.0, 27.0), 29.0);
         assert_eq!(scrolled_history_min(20.0, 27.0), 0.0);
         assert_eq!(scrolled_history_min(111.0, 27.0), 64.0);
-        // Solid parity without interruption: fieldSpace < 44 triggers crowding, and empty
-        // composer floor follows minimumForViewport(viewport_h) rather than forcing 104px.
+        // Without an active interruption, Rune applies the same fieldSpace < 44 crowding rule on
+        // any tight viewport (including Chrome Android resizes-content and compact desktop windows,
+        // whereas Solid limits fieldSpace crowding to coarse-pointer visualViewport occlusion),
+        // keeps the empty composer floor at min(minimumForViewport(viewport_h), composer_max), and
+        // caps auto-growth at 320px (MAX_COMPOSER_HEIGHT; no manual 60% drag handle).
         assert_eq!(
             non_expanded_layout(260.0, 500.0, 160.0, 27.0),
             SessionLayout {

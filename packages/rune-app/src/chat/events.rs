@@ -34,9 +34,11 @@ pub(crate) fn poll_chat_for_window(s: &mut State, limit: usize, defer_reader_syn
         let event = observation.or_else(|| {
             let history_bounds = s.tool_diff_preferences.history_bounds.get();
             let reading = s.transcript_display.reading();
-            s.reader
-                .as_mut()
-                .and_then(|reader| reader.take_next(defer_reader_sync, reading, history_bounds))
+            let cached_gap =
+                s.history_detached || s.reader.as_ref().is_some_and(chat::reader::Reader::has_gap);
+            s.reader.as_mut().and_then(|reader| {
+                reader.take_next(defer_reader_sync, reading, history_bounds, cached_gap)
+            })
         });
         let Some(event) = event else { break };
         let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
@@ -179,13 +181,70 @@ pub(crate) fn poll_chat_for_window(s: &mut State, limit: usize, defer_reader_syn
                 }
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
-            Event::Sync(page) | Event::ReaderSync { page, .. } => {
+            event @ (Event::Sync(_) | Event::ReaderSync { .. }) => {
+                let (page, reader_version) = match event {
+                    Event::Sync(page) => (page, None),
+                    Event::ReaderSync { page, version } => (page, Some(version)),
+                    _ => unreachable!(),
+                };
                 if chat::reader::reconcile_bookmark(s, &page) {
                     s.revision += 1;
                     changed = true;
                     continue;
                 }
+                let sync_undo = if let Some(version) = reader_version
+                    && !s.messages.is_empty()
+                    && s.reader
+                        .as_ref()
+                        .is_some_and(chat::reader::Reader::is_resuming)
+                {
+                    let trimmed_older = page.older.is_some()
+                        && s.messages
+                            .first()
+                            .is_some_and(|first| !page.rows.iter().any(|r| r.id == first.id));
+                    let trimmed_newer = page.newer.is_some()
+                        && s.messages
+                            .last()
+                            .is_some_and(|last| !page.rows.iter().any(|r| r.id == last.id));
+                    (trimmed_older || trimmed_newer).then(|| {
+                        (
+                            version,
+                            page.clone(),
+                            std::mem::take(&mut s.messages),
+                            s.can_older,
+                            s.history_detached,
+                            s.phase,
+                            trimmed_older,
+                            trimmed_newer,
+                        )
+                    })
+                } else {
+                    None
+                };
                 if let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                    if let Some((
+                        version,
+                        page_copy,
+                        prev_rows,
+                        prev_can_older,
+                        prev_detached,
+                        prev_phase,
+                        trimmed_older,
+                        trimmed_newer,
+                    )) = sync_undo
+                    {
+                        reader.save_sync_undo(
+                            page_copy,
+                            version,
+                            prev_rows,
+                            prev_can_older,
+                            prev_detached,
+                            prev_phase,
+                            trimmed_older,
+                            trimmed_newer,
+                        );
+                    }
                     reader.install(page.newer.is_some());
                     reader.sync_activity(stale_activity);
                 }
@@ -228,6 +287,7 @@ pub(crate) fn poll_chat_for_window(s: &mut State, limit: usize, defer_reader_syn
                     s.attachments.cancel();
                     s.history_detached = page.newer.is_some();
                     if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
                         reader.install(s.history_detached);
                     }
                     s.messages = page.rows;
@@ -285,11 +345,17 @@ pub(crate) fn poll_chat_for_window(s: &mut State, limit: usize, defer_reader_syn
                 }
             }
             Event::History(messages) => {
+                if let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                }
                 s.messages = messages;
                 s.phase = Phase::Ready;
             }
             Event::Message(m) => {
                 if !s.messages.iter().any(|existing| existing.id == m.id) {
+                    if let Some(reader) = &mut s.reader {
+                        reader.clear_sync_undo();
+                    }
                     s.messages.push(m.into());
                 }
             }

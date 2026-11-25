@@ -1217,21 +1217,32 @@ fn inactive_tab_git_preview_close_does_not_scroll_active_tab_and_session_moved_c
     use codenomad_client::git::Diff;
     use rune::{Env, ImageCache, Runtime};
 
+    let make_tab_rows = |prefix: &str| -> Vec<crate::history::Row> {
+        (0..32)
+            .map(|i| {
+                crate::Message {
+                    usage: None,
+                    id: format!("{prefix}-{i:02}"),
+                    role: "assistant".into(),
+                    completed: true,
+                    body: format!("{prefix} passage {i:02} line one.\nLine two for scroll depth."),
+                    parts: vec![],
+                }
+                .into()
+            })
+            .collect()
+    };
+    let tab_a_rows = make_tab_rows("git-tab-a");
+    let tab_b_rows = make_tab_rows("git-tab-b");
+
     let mut s = crate::init();
+    let mut ws = crate::workspace::Ui::new();
+    ws.mark_ready();
+    s.workspace = Some(ws);
     s.phase = crate::Phase::Ready;
-    s.messages = (0..32)
-        .map(|i| {
-            crate::Message {
-                usage: None,
-                id: format!("git-tab-{i:02}"),
-                role: "assistant".into(),
-                completed: true,
-                body: format!("Git tab passage {i:02} line one.\nLine two for scroll depth."),
-                parts: vec![],
-            }
-            .into()
-        })
-        .collect();
+    s.messages = tab_a_rows.clone();
+    let (reader_a, lane_a) = crate::chat::reader::Reader::open();
+    s.reader = Some(reader_a);
     let mut git_ui = ui();
     git_ui.online = true;
     git_ui.shown = true;
@@ -1248,14 +1259,15 @@ fn inactive_tab_git_preview_close_does_not_scroll_active_tab_and_session_moved_c
     for _ in 0..25 {
         rt.frame(0.02);
     }
+    // Anchor Tab A on git-tab-a-12, then open its Git diff preview.
     rt.update(|_, tx| {
         tx.instant();
-        tx.scroll_key_to("git-tab-12", -6.0);
+        tx.scroll_key_to("git-tab-a-12", -6.0);
     });
     for _ in 0..25 {
         rt.frame(0.02);
     }
-    let top_row = |rt: &Runtime<crate::State>| -> Option<(String, f32)> {
+    let top_row = |rt: &Runtime<crate::State>, prefix: &str| -> Option<(String, f32)> {
         let h = rt
             .elements()
             .into_iter()
@@ -1264,26 +1276,20 @@ fn inactive_tab_git_preview_close_does_not_scroll_active_tab_and_session_moved_c
         let probe = h[1] + 0.5;
         rt.elements().into_iter().find_map(|e| {
             let k = e.key?;
-            (k.starts_with("git-tab-")
+            (k.starts_with(prefix)
                 && e.rect[3] > 0.0
                 && e.rect[1] <= probe
                 && e.rect[1] + e.rect[3] > probe)
                 .then_some((k, e.rect[1] - h[1]))
         })
     };
-    let (before_id, before_off) = top_row(&rt).expect("active tab anchored on git-tab-12");
-    assert_eq!(before_id, "git-tab-12");
+    let (tab_a_before_id, tab_a_before_off) =
+        top_row(&rt, "git-tab-a-").expect("Tab A anchored on git-tab-a-12");
+    assert_eq!(tab_a_before_id, "git-tab-a-12");
 
-    // Mount an open preview on an INACTIVE Git owner (owner.active = false) while reader
-    // bookmark is Bookmark::Latest: closing the inactive owner via poll_notices must NOT
-    // call restore_position and jump the active tab away from git-tab-12.
-    let (mut reader, _lane) = crate::chat::reader::Reader::open();
-    reader.stop_content();
-    rt.state.reader = Some(reader);
     {
         let cache = ImageCache::new(rt.state.wake.clone());
         let owner = rt.state.git.owner.as_mut().unwrap();
-        owner.active = false;
         owner.replace_preview(preview_target.clone());
         let _ = owner.reader.replace(
             Diff::Text {
@@ -1295,25 +1301,97 @@ fn inactive_tab_git_preview_close_does_not_scroll_active_tab_and_session_moved_c
             &cache,
         );
     }
+    assert!(has_preview(&rt.state));
+
+    // Switch to a second tab (Tab B), stashing Tab A in workspace cache with owner.active = false.
     rt.update(|s, tx| {
-        let owner = s.git.owner.as_mut().unwrap();
-        let rev = owner.index_revision;
-        owner
-            .requests
-            .deliver_read(Lane::Changes, Ok(Value::Changes(vec![], None, rev)));
-        assert!(poll_notices(s, tx));
+        crate::workspace::new_tab(s, tx);
+        s.screen = crate::Screen::Chat { launcher: None };
+        s.phase = crate::Phase::Ready;
+        s.messages = tab_b_rows.clone();
+        s.revision += 1;
     });
     for _ in 0..25 {
         rt.frame(0.02);
     }
-    let (after_id, after_off) = top_row(&rt).expect("active tab still visible");
-    assert_eq!(
-        after_id, before_id,
-        "inactive tab Git preview close via poll_notices must not scroll active tab"
-    );
-    assert!((after_off - before_off).abs() <= 1.0);
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_key_to("git-tab-b-12", -6.0);
+    });
+    for _ in 0..25 {
+        rt.frame(0.02);
+    }
+    let (before_b_id, before_b_off) =
+        top_row(&rt, "git-tab-b-").expect("Tab B anchored on git-tab-b-12");
+    assert_eq!(before_b_id, "git-tab-b-12");
 
-    // Exercise SessionMoved delivered through real chat::events::poll_chat closing an open preview.
+    // Deliver an empty Changes read to cached Tab A (already stashed with owner.active = false),
+    // then run real workspace::poll (poll_cached swaps Tab A's cache onto State with shared Tx,
+    // closes Tab A's stale Git preview via git::poll, and restores Tab B).
+    rt.update(|s, tx| {
+        s.workspace
+            .as_mut()
+            .unwrap()
+            .with_cached_git("tab-0", |git| {
+                let owner = git.owner.as_mut().unwrap();
+                assert!(!owner.active);
+                let rev = owner.index_revision;
+                owner
+                    .requests
+                    .deliver_read(Lane::Changes, Ok(Value::Changes(vec![], None, rev)));
+            });
+        assert!(crate::workspace::poll(s, 1.0, tx));
+    });
+    for _ in 0..25 {
+        rt.frame(0.02);
+    }
+    let (after_b_id, after_b_off) = top_row(&rt, "git-tab-b-").expect("Tab B still visible");
+    assert_eq!(
+        after_b_id, before_b_id,
+        "cached Tab A Git preview close via workspace::poll must not scroll active Tab B"
+    );
+    assert!((after_b_off - before_b_off).abs() <= 1.0);
+
+    // Return to Tab A: its Git preview must already be closed and git-tab-a-12 must be restored.
+    rt.update(|s, tx| {
+        crate::workspace::select(s, "tab-0", tx);
+    });
+    assert!(
+        !has_preview(&rt.state),
+        "Tab A preview must have been closed while cached in workspace::poll"
+    );
+    let gen_return = rt.state.reader.as_ref().unwrap().generation();
+    let conn_a = lane_a.connection.load(std::sync::atomic::Ordering::SeqCst);
+    lane_a
+        .events
+        .try_send((
+            gen_return,
+            conn_a,
+            crate::transport::Event::ReaderSync {
+                page: crate::history::Page {
+                    rows: tab_a_rows.clone(),
+                    older: None,
+                    newer: None,
+                    running: false,
+                    user_file_references: false,
+                },
+                version: 1,
+            },
+        ))
+        .unwrap();
+    for _ in 0..25 {
+        rt.update(|s, tx| {
+            crate::poll(s, 2.0, tx);
+        });
+        rt.frame(0.02);
+    }
+    let (tab_a_after_id, tab_a_after_off) =
+        top_row(&rt, "git-tab-a-").expect("Tab A restored on return");
+    assert_eq!(tab_a_after_id, tab_a_before_id);
+    assert!((tab_a_after_off - tab_a_before_off).abs() <= 1.0);
+
+    // Exercise SessionMoved delivered through real chat::events::poll_chat closing an open preview
+    // and preserving the saved bookmark across the subsequent rebind ReaderSync.
     let (tx_ev, rx_ev) = codenomad_client::bounded(4);
     rt.state.incoming = Some(rx_ev);
     let workspace_id = rt
@@ -1356,4 +1434,36 @@ fn inactive_tab_git_preview_close_does_not_scroll_active_tab_and_session_moved_c
         !has_preview(&rt.state),
         "SessionMoved delivered via poll_chat must close open Git preview"
     );
+    assert!(rt.state.messages.is_empty());
+    rt.update(|s, tx| {
+        crate::chat::reader::resume(s, tx);
+    });
+    let gen_rebind = rt.state.reader.as_ref().unwrap().generation();
+    lane_a
+        .events
+        .try_send((
+            gen_rebind,
+            conn_a,
+            crate::transport::Event::ReaderSync {
+                page: crate::history::Page {
+                    rows: tab_a_rows,
+                    older: None,
+                    newer: None,
+                    running: false,
+                    user_file_references: false,
+                },
+                version: 2,
+            },
+        ))
+        .unwrap();
+    for _ in 0..25 {
+        rt.update(|s, tx| {
+            crate::poll(s, 3.0, tx);
+        });
+        rt.frame(0.02);
+    }
+    let (rebound_id, rebound_off) = top_row(&rt, "git-tab-a-")
+        .expect("Tab A reading anchor restored after SessionMoved rebind");
+    assert_eq!(rebound_id, tab_a_before_id);
+    assert!((rebound_off - tab_a_before_off).abs() <= 1.0);
 }

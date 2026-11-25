@@ -2792,4 +2792,65 @@ fn wheel_after_bottom_clamped_resize_and_dynamic_dock_reveals() {
             && bool_33[1] + bool_33[3] <= stack_33[1] + stack_33[3] + 1.0,
         "Tab focusing bool-confirm-true inside pending-content must reveal it in 56px session-stack: bool={bool_33:?}, stack={stack_33:?}"
     );
+
+    // 34. Shrinking the viewport while a direct agent-panel footer button (reject) holds Tab
+    // focus must keep reject focused and reveal it inside the narrowed 56px session-stack.
+    let mut s = state();
+    seed_passages(&mut s, 16);
+    let ui = s.agent.as_mut().unwrap();
+    ui.selected = "perm-34".into();
+    ui.permissions.push(Permission {
+        id: "perm-34".into(),
+        action: "edit".into(),
+        resources: vec!["/synthetic/footer-focus.rs".into()],
+        message: "Keep footer action visible when viewport shrinks.".into(),
+        supported: true,
+    });
+    ui.reasons.insert("perm-34".into(), TextEdit::new(""));
+    let mut rt = Runtime::new(s, view, (390.0, 600.0), Env::new(false, 1.0));
+    rt.poll = Some(crate::poll);
+    settle(&mut rt);
+    rt.update(|_, tx| {
+        tx.focus("controls-refresh", true);
+    });
+    settle(&mut rt);
+    let tab_34 = rune::KeyEvent {
+        key: rune::Key::Tab,
+        mods: rune::Mods::default(),
+    };
+    let mut reached_reject = false;
+    for _ in 0..32 {
+        rt.key(tab_34.clone());
+        rt.key_up(tab_34.clone());
+        settle(&mut rt);
+        rt.update(|_, tx| {
+            reached_reject = tx.focused() == Some("reject");
+        });
+        if reached_reject {
+            break;
+        }
+    }
+    assert!(reached_reject, "Tab navigation must reach reject button");
+    assert_eq!(
+        rt.state.tool_diff_preferences.focused_agent_control_key(),
+        Some("reject"),
+        "sync_focused_agent_control must record direct dock footer button reject"
+    );
+    let header_34 = element_rect(&rt, "session-stack")[1];
+    resize(&mut rt, (390.0, header_34 + 56.0));
+    let mut still_reject = false;
+    rt.update(|_, tx| {
+        still_reject = tx.focused() == Some("reject");
+    });
+    assert!(
+        still_reject,
+        "viewport shrink must keep Tab focus on reject"
+    );
+    let stack_34 = element_rect(&rt, "session-stack");
+    let reject_34 = element_rect(&rt, "reject");
+    assert!(
+        reject_34[1] >= stack_34[1] - 1.0
+            && reject_34[1] + reject_34[3] <= stack_34[1] + stack_34[3] + 1.0,
+        "shrinking viewport with Tab focus on reject must scroll reject into 56px session-stack: reject={reject_34:?}, stack={stack_34:?}"
+    );
 }

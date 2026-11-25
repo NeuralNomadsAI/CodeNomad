@@ -80,7 +80,7 @@ struct State {
     history_error: bool,
     history_detached: bool,
 }
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum Phase {
     Loading,
     Ready,
@@ -201,6 +201,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 }
 
 fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
+    chat::reader::expire_sync_undo(s);
     let defer_reader_sync = !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)

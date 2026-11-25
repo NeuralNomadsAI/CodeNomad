@@ -35,7 +35,8 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 tx.live_only();
             }
         });
-    let surface = if scroll_stack && s.agent.is_some() {
+    chat::reading::probe_resuming_scroll(s, cx);
+    let surface = if s.agent.is_some() {
         surface.on_key(|s: &mut State, event, tx| {
             if !s.screen.is_launcher()
                 && event.key == rune::Key::Tab

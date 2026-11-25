@@ -49,7 +49,7 @@ pub(crate) fn resolve_reference_viewport_height(
     ) else {
         return visible_height;
     };
-    if scale.is_finite() && (scale - 1.0).abs() <= 0.01 && inner_h - visual_h >= 100.0 {
+    if scale == 1.0 && inner_h - visual_h >= 100.0 {
         let delta = (inner_h - visual_h) as f32;
         Some(visible_height.map_or(inner_h as f32, |visible| visible + delta))
     } else {
@@ -478,6 +478,17 @@ mod tests {
                 Some(800.0),
                 Some(480.0),
                 1.0
+            ),
+            Some(420.0)
+        );
+        assert_eq!(
+            resolve_reference_viewport_height(
+                Some(420.0),
+                true,
+                true,
+                Some(800.0),
+                Some(480.0),
+                1.005
             ),
             Some(420.0)
         );

@@ -184,6 +184,11 @@ impl Preferences {
         self.history_bounds.set([0.0; 4]);
     }
 
+    #[cfg(test)]
+    pub(crate) fn focused_agent_control_key(&self) -> Option<&str> {
+        self.focused_agent_control.as_deref()
+    }
+
     pub(crate) fn sync_focused_agent_control(s: &mut State, focused: Option<&str>) -> bool {
         let next = if s.screen.is_launcher() {
             None

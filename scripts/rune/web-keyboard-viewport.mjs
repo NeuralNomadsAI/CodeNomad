@@ -362,7 +362,7 @@ export async function keyboardViewport(page, m, {kind, prefix, heading, headerHe
   // Scroll the transcript up to a non-tail passage whose lower body sits inside the short reserve.
   let beforeList = await scrollHistoryToTopOfStack()
   const {x, top} = await paneGeometry()
-  const pickAnchor = list => list.find(item => item.index > 0 && item.index <= 26 && item.bottom >= 12 && item.top < 32)
+  const pickAnchor = list => list.find(item => item.index > 0 && item.index <= 26 && item.top <= 0.5 && item.bottom >= 12)
   let scrolledUp = false
   for (let i = 0; i < 16; i++) {
     if (scrolledUp && pickAnchor(beforeList)) break

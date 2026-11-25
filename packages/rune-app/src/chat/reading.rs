@@ -26,6 +26,7 @@ struct ScrollObserved {
     manual_seq: u64,
     ignore_manual_once: bool,
     ignore_remount_bottom: bool,
+    pending_scroll_commit: bool,
 }
 
 impl ScrollObserved {
@@ -103,6 +104,7 @@ pub(crate) struct Reading {
     resize_anchor: Option<ResizeAnchor>,
     frame_restore_epoch: u64,
     frame_restore: Option<FrameRestore>,
+    last_touch_probe_seq: Cell<u64>,
     scroll_state: Rc<Cell<ScrollObserved>>,
     live_rows: Rc<RefCell<HashMap<String, (Weak<()>, DrawnRect)>>>,
 }
@@ -119,6 +121,7 @@ impl Default for Reading {
             resize_anchor: None,
             frame_restore_epoch: 0,
             frame_restore: None,
+            last_touch_probe_seq: Cell::new(0),
             scroll_state: Rc::new(Cell::new(ScrollObserved::default())),
             live_rows: Rc::new(RefCell::new(HashMap::new())),
         }
@@ -140,6 +143,16 @@ impl Reading {
 
     pub(super) fn manual_scroll_seq(&self) -> u64 {
         self.scroll_state.get().manual_seq
+    }
+
+    pub(super) fn scroll_seq(&self) -> u64 {
+        self.scroll_state.get().seq
+    }
+
+    pub(super) fn has_pending_restore_probe(&self) -> bool {
+        self.frame_restore.as_ref().is_some_and(|fr| {
+            !fr.handled && fr.probe_live && matches!(fr.checked.get(), None | Some(Some(_)))
+        })
     }
 
     pub(super) fn top_is_fresh(&self) -> bool {
@@ -168,9 +181,15 @@ impl Reading {
         gap: bool,
     ) -> Option<Bookmark> {
         if self.top_is_fresh() || self.resize_anchor.is_some() {
-            return Some(self.bookmark(gap));
+            let bookmark = self.bookmark(gap);
+            if !gap || !matches!(bookmark, Bookmark::Latest) {
+                return Some(bookmark);
+            }
         }
         let cur = self.scroll_state.get();
+        if cur.pending_scroll_commit {
+            return None;
+        }
         if !gap && cur.seq > 0 && cur.at_bottom() {
             return Some(Bookmark::Latest);
         }
@@ -250,6 +269,14 @@ impl Reading {
         let mut cur = self.scroll_state.get();
         cur.manual_seq += 1;
         cur.ignore_remount_bottom = false;
+        self.scroll_state.set(cur);
+    }
+
+    fn note_pending_manual_scroll(&self) {
+        let mut cur = self.scroll_state.get();
+        cur.manual_seq += 1;
+        cur.ignore_remount_bottom = false;
+        cur.pending_scroll_commit = true;
         self.scroll_state.set(cur);
     }
 
@@ -352,7 +379,7 @@ impl Reading {
         };
     }
 
-    fn on_at_bottom(&mut self, at_bottom: bool, pending_resize: bool) {
+    fn on_at_bottom(&mut self, at_bottom: bool, pending_resize: bool, gap: bool) {
         let seq = self.scroll_state.get().seq;
         if let Some(anchor) = &mut self.resize_anchor
             && anchor.settling
@@ -377,7 +404,9 @@ impl Reading {
             }
         } else if !pending_resize && !in_flight {
             self.following = true;
-            self.top_manual_seq = self.scroll_state.get().manual_seq;
+            if !gap {
+                self.top_manual_seq = self.scroll_state.get().manual_seq;
+            }
             self.resize_anchor = None;
         } else if !pending_resize
             && let Some(anchor) = &mut self.resize_anchor
@@ -579,6 +608,7 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
                 manual_seq: prev.manual_seq,
                 ignore_manual_once: false,
                 ignore_remount_bottom: false,
+                pending_scroll_commit: false,
             };
             if next.user_moved_from(prev) {
                 next.manual_seq = prev.manual_seq + 1;
@@ -607,9 +637,13 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
                     || s.reader
                         .as_ref()
                         .is_some_and(crate::chat::reader::Reader::awaiting_manual_probe);
+                let gap = s.history_detached
+                    || s.reader
+                        .as_ref()
+                        .is_some_and(crate::chat::reader::Reader::has_gap);
                 s.transcript_display
                     .reading_mut()
-                    .on_at_bottom(following, pending_resize);
+                    .on_at_bottom(following, pending_resize, gap);
             }
             false
         });
@@ -629,10 +663,53 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
             && reading.scroll_state.get().seq == fr.obs_seq
         {
             let obs_max = fr.obs_max;
+            let obs_seq = fr.obs_seq;
             let target = (fr.obs_offset - ev.dy).clamp(0.0, obs_max);
             let delta = fr.obs_offset - target;
             let moved_history = delta.abs() > 0.5;
+            if !moved_history && matches!(fr.target, FrameRestoreTarget::FromBottom) {
+                return false;
+            }
+            let wants_older = ev.dy > 0.0;
+            let wants_newer = ev.dy < 0.0;
+            if moved_history
+                && s.reader
+                    .as_ref()
+                    .is_some_and(|reader| reader.can_undo_sync(wants_older, wants_newer))
+                && crate::chat::reader::undo_sync_for_manual_scroll(s, obs_seq + 1, tx)
+            {
+                let reading = s.transcript_display.reading_mut();
+                if let Some(fr) = reading.frame_restore.as_mut() {
+                    fr.target = FrameRestoreTarget::Offset;
+                    fr.obs_offset = target;
+                    fr.handled = true;
+                    fr.checked.set(Some(None));
+                }
+                reading.resize_anchor = None;
+                reading.bump_manual_scroll();
+                let at_bottom = obs_max <= 0.5 || target >= obs_max - 0.5;
+                reading.at_bottom = at_bottom;
+                reading.following = at_bottom;
+                s.revision += 1;
+                s.transcript_display
+                    .reading_mut()
+                    .advance_row_guard(s.revision);
+                tx.instant();
+                tx.scroll_to_y("history", target);
+                return true;
+            }
+            let reading = s.transcript_display.reading_mut();
+            let fr = reading.frame_restore.as_mut().unwrap();
             fr.obs_offset = target;
+            if matches!(fr.target, FrameRestoreTarget::FromBottom) {
+                fr.probe_live = true;
+                fr.handled = false;
+                fr.checked.set(Some(Some(target)));
+                reading.resize_anchor = None;
+                reading.bump_manual_scroll();
+                s.revision += 1;
+                return true;
+            }
             fr.handled = true;
             let anchor = match &mut fr.target {
                 FrameRestoreTarget::Anchor(id, anchor_offset) => {
@@ -663,12 +740,58 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
         let cur = reading.scroll_state.get();
         let target = (cur.offset - ev.dy).clamp(0.0, cur.max);
         if cur.seq > 0 && (target - cur.offset).abs() > 0.5 {
-            reading.bump_manual_scroll();
+            reading.note_pending_manual_scroll();
             reading.resize_anchor = None;
             reading.frame_restore = None;
         }
         false
     })
+}
+
+fn live_history_offset(cx: &rune::Cx<State>) -> Option<f32> {
+    // Query all four layout subscriptions unconditionally so Rune registers them in one frame.
+    let rows_unscrolled = rune_theme_codenomad::layout::layout_rect(cx, "rows");
+    let rows_scrolled = rune_theme_codenomad::layout::window_layout(cx, "rows");
+    let hist_unscrolled = rune_theme_codenomad::layout::layout_rect(cx, "history");
+    let hist_scrolled = rune_theme_codenomad::layout::window_layout(cx, "history");
+    let (Some(rows_unscrolled), Some(rows_scrolled), Some(hist_unscrolled), Some(hist_scrolled)) = (
+        rows_unscrolled,
+        rows_scrolled,
+        hist_unscrolled,
+        hist_scrolled,
+    ) else {
+        return None;
+    };
+    let live_offset =
+        (rows_unscrolled[1] - rows_scrolled[1]) - (hist_unscrolled[1] - hist_scrolled[1]);
+    live_offset.is_finite().then_some(live_offset)
+}
+
+pub(crate) fn probe_resuming_scroll(s: &State, cx: &rune::Cx<State>) {
+    if s.screen.is_launcher()
+        || !s
+            .reader
+            .as_ref()
+            .is_some_and(crate::chat::reader::Reader::is_resuming)
+    {
+        return;
+    }
+    let reading = s.transcript_display.reading();
+    let cur = reading.scroll_state.get();
+    if cur.seq <= 1
+        || cur.ignore_manual_once
+        || cur.coasting()
+        || reading.last_touch_probe_seq.get() == cur.seq
+    {
+        return;
+    }
+    let Some(live_offset) = live_history_offset(cx) else {
+        return;
+    };
+    if (live_offset - cur.offset).abs() > 0.5 {
+        reading.last_touch_probe_seq.set(cur.seq);
+        reading.note_pending_manual_scroll();
+    }
 }
 
 pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El> {
@@ -685,27 +808,8 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                 fr.checked.set(Some(None));
                 return None;
             }
-            let rows_unscrolled = rune_theme_codenomad::layout::layout_rect(cx, "rows");
-            let rows_scrolled = rune_theme_codenomad::layout::window_layout(cx, "rows");
-            let hist_unscrolled = rune_theme_codenomad::layout::layout_rect(cx, "history");
-            let hist_scrolled = rune_theme_codenomad::layout::window_layout(cx, "history");
-            let (
-                Some(rows_unscrolled),
-                Some(rows_scrolled),
-                Some(hist_unscrolled),
-                Some(hist_scrolled),
-            ) = (
-                rows_unscrolled,
-                rows_scrolled,
-                hist_unscrolled,
-                hist_scrolled,
-            )
-            else {
-                return None;
-            };
-            let live_offset =
-                (rows_unscrolled[1] - rows_scrolled[1]) - (hist_unscrolled[1] - hist_scrolled[1]);
-            let detected = (live_offset.is_finite() && (live_offset - fr.obs_offset).abs() > 0.5)
+            let live_offset = live_history_offset(cx)?;
+            let detected = ((live_offset - fr.obs_offset).abs() > 0.5)
                 .then(|| live_offset.clamp(0.0, fr.obs_max));
             fr.checked.set(Some(detected));
             detected?
@@ -734,6 +838,30 @@ pub(crate) fn wheel_restore_probe(s: &State, cx: &rune::Cx<State>) -> Option<El>
                 let fr = reading.frame_restore.take().unwrap();
                 reading.resize_anchor = None;
                 let cur = reading.scroll_state.get();
+                let wants_older = target < obs_offset - 0.5;
+                let wants_newer = target > obs_offset + 0.5;
+                if s.reader
+                    .as_ref()
+                    .is_some_and(|reader| reader.can_undo_sync(wants_older, wants_newer))
+                    && crate::chat::reader::undo_sync_for_manual_scroll(s, cur.seq + 1, tx)
+                {
+                    let reading = s.transcript_display.reading_mut();
+                    reading.bump_manual_scroll();
+                    let at_bottom = max <= 0.5 || target >= max - 0.5;
+                    reading.at_bottom = at_bottom;
+                    reading.following = at_bottom;
+                    s.revision += 1;
+                    s.transcript_display
+                        .reading_mut()
+                        .advance_row_guard(s.revision);
+                    tx.instant();
+                    tx.scroll_to_y("history", target);
+                    return;
+                }
+                if let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                }
+                let reading = s.transcript_display.reading_mut();
                 match fr.target {
                     FrameRestoreTarget::Anchor(id, anchor_offset) => {
                         let delta = obs_offset - target;
@@ -937,7 +1065,7 @@ mod tests {
     #[test]
     fn resize_guard_blocks_stale_rows_clamps_rotation_and_keeps_clamped_anchor() {
         let mut reading = Reading::default();
-        reading.on_at_bottom(false, false);
+        reading.on_at_bottom(false, false, false);
         reading.record_for_revision(4, "anchor", 100.0, [0.0, 88.0, 360.0, 60.0], |_, _| false);
         reading.arm_resize_anchor(5, "anchor".into(), -12.0, false);
         // An off-probe overscan row at revision 5 must not admit stale revision 4 rows.
@@ -982,7 +1110,7 @@ mod tests {
         // across a resize even if an earlier row lands at probe while at_bottom=true.
         reading.record_for_revision(5, "anchor", 100.0, [0.0, 88.0, 360.0, 60.0], |_, _| false);
         reading.arm_resize_anchor(6, "anchor".into(), -12.0, true);
-        reading.on_at_bottom(true, true);
+        reading.on_at_bottom(true, true, false);
         assert_eq!(
             reading
                 .record_for_revision(6, "earlier", 100.0, [0.0, 96.0, 720.0, 50.0], |_, _| false),
@@ -997,10 +1125,10 @@ mod tests {
         );
 
         // Height-only resize with < 24px visible of the anchored row must not drift when row height is unchanged.
-        reading.on_at_bottom(false, false);
+        reading.on_at_bottom(false, false, false);
         reading.record_for_revision(7, "shallow", 100.0, [0.0, 8.0, 390.0, 100.0], |_, _| false);
         reading.arm_resize_anchor(8, "shallow".into(), -92.0, false);
-        reading.on_at_bottom(true, true);
+        reading.on_at_bottom(true, true, false);
         assert_eq!(
             reading
                 .record_for_revision(8, "shallow", 100.0, [0.0, 8.0, 390.0, 100.0], |_, _| false),
@@ -1016,7 +1144,7 @@ mod tests {
 
         // An off-probe overscan row at the new revision must not clear resize_anchor before
         // the shortened anchored row delivers its drawn callback.
-        reading.on_at_bottom(false, false);
+        reading.on_at_bottom(false, false, false);
         reading.record_for_revision(9, "long", 100.0, [0.0, -50.0, 320.0, 190.0], |_, _| false);
         reading.arm_resize_anchor(10, "long".into(), -150.0, true);
         assert_eq!(
@@ -1044,12 +1172,12 @@ mod tests {
         // If a very tall paragraph shortens out of overscan AND clamps at bottom on width growth,
         // rescue it even while at_bottom=true, keep rescued state across the jump away from bottom,
         // then clamp to -floor without letting a subsequent bottom clamp reset following=true.
-        reading.on_at_bottom(false, false);
+        reading.on_at_bottom(false, false, false);
         reading.record_for_revision(11, "huge", 100.0, [0.0, -1070.0, 320.0, 1200.0], |_, _| {
             false
         });
         reading.arm_resize_anchor(12, "huge".into(), -1170.0, true);
-        reading.on_at_bottom(true, true);
+        reading.on_at_bottom(true, true, false);
         assert_eq!(
             reading.record_for_revision(
                 12,
@@ -1062,7 +1190,7 @@ mod tests {
         );
         reading.advance_row_guard(13);
         // Moving up to huge:0.0 leaves bottom before huge delivers its drawn callback.
-        reading.on_at_bottom(false, false);
+        reading.on_at_bottom(false, false, false);
         assert_eq!(
             reading
                 .record_for_revision(13, "huge", 100.0, [0.0, 100.0, 844.0, 200.0], |_, _| false),
@@ -1070,7 +1198,7 @@ mod tests {
         );
         reading.advance_row_guard(14);
         // Even if the clamp returns to bottom, settling protects following=false until the row commits.
-        reading.on_at_bottom(true, false);
+        reading.on_at_bottom(true, false, false);
         assert_eq!(
             reading.bookmark(false),
             Bookmark::Message {
@@ -1085,12 +1213,12 @@ mod tests {
         );
 
         // Reaching bottom outside a pending resize resumes following immediately.
-        reading.on_at_bottom(true, false);
+        reading.on_at_bottom(true, false, false);
         assert_eq!(reading.bookmark(false), Bookmark::Latest);
 
         // Frame-1 width-growth eviction rescue also works when the first trailing row reports
         // with the prior tree's revision before the rebuilt tree deduplicates its rect.
-        reading.on_at_bottom(false, false);
+        reading.on_at_bottom(false, false, false);
         reading.record_for_revision(15, "evicted", 100.0, [0.0, -476.0, 320.0, 500.0], |_, _| {
             false
         });
@@ -1156,7 +1284,7 @@ mod tests {
     #[test]
     fn same_width_restored_message_preserves_at_bottom_and_expires_settling() {
         let mut reading = Reading::default();
-        reading.on_at_bottom(true, false);
+        reading.on_at_bottom(true, false, false);
         reading.apply_restored(
             &Bookmark::Message {
                 id: "passage-28".into(),
@@ -1189,7 +1317,7 @@ mod tests {
         );
         assert!(reading.resize_anchor.is_some());
         // Manual scroll away from bottom then clears the anchor cleanly.
-        reading.on_at_bottom(false, false);
+        reading.on_at_bottom(false, false, false);
         assert!(reading.resize_anchor.is_none());
         // If restore stays off bottom without DrawnLayout firing, a later scroll advances seq
         // past settle_seq so reaching bottom resumes following.
@@ -1207,7 +1335,7 @@ mod tests {
             seq: 2,
             ..ScrollObserved::default()
         });
-        reading.on_at_bottom(true, false);
+        reading.on_at_bottom(true, false, false);
         assert_eq!(reading.bookmark(false), Bookmark::Latest);
     }
 }
