@@ -272,7 +272,8 @@ test("real editor adopts discovered project before creation; lost Play remains r
     const recovered = await page.evaluate(() => (window as any).realCreationStartFixture.held())
     assert.equal(recovered.requestID, play.requestID); assert.equal(recovered.minimumRevision, f.revision)
     assert.deepEqual(f.posts.map(post => post.action ?? "activation"), ["create", "activation", "play"], "receipt recovery must never send another Play")
-    assert.deepEqual(f.failedRequests, [{ method: "POST", path: "/api/workspaces/fixture/missions/msn_created/schedule" }])
+    assert.deepEqual(f.failedRequests.filter(request => request.method === "POST"),
+      [{ method: "POST", path: "/api/workspaces/fixture/missions/msn_created/schedule" }])
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })

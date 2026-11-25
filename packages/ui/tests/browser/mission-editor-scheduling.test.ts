@@ -91,7 +91,12 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
     }
     if (pathname.endsWith("/schedule") || pathname.includes("/requests/")) {
       const requestID = link.searchParams.get("requestID") ?? (pathname.includes("/requests/") ? pathname.split("/").at(-1) : undefined)
-      return route.fulfill({ json: requestID && original && proof ? receipt(original) : { ...missionScheduleView(doc), ...(requestID ? { pending: true } : {}) } })
+      if (requestID && (!original || requestID !== original.requestID)) {
+        errors.push(`unexpected receipt requestID: ${requestID} (expected ${original?.requestID ?? "none"})`)
+        return route.fulfill({ status: 400, json: { error: "foreign requestID" } })
+      }
+      return route.fulfill({ json: requestID && original && requestID === original.requestID && proof
+        ? receipt(original) : { ...missionScheduleView(doc), ...(requestID ? { pending: true } : {}) } })
     }
     return route.fulfill({ json: { available: true, projectID: "project", missions: [], cleanups: [], generatedAt: 1 } })
   })
@@ -943,7 +948,12 @@ for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its
     await page.clock.fastForward(5_000)
     await form(page).waitFor({ state: "detached" })
     assert.equal(f.posts.length, 1)
-    assert.ok(f.reads.some(read => read.searchParams.get("requestID") === f.posts[0].requestID || read.pathname.endsWith(`/requests/${f.posts[0].requestID}`)))
+    const receiptReads = f.reads.filter(read => read.searchParams.has("requestID") || read.pathname.includes("/requests/"))
+    assert.ok(receiptReads.length >= 3)
+    for (const read of receiptReads) {
+      const actual = read.searchParams.get("requestID") ?? read.pathname.split("/").at(-1)
+      assert.equal(actual, f.posts[0].requestID)
+    }
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })

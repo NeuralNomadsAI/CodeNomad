@@ -313,16 +313,16 @@ function scheduleScope(api: Record<string, any>) {
   const scope: Record<string, any> = { ...env, accepted, released, doc, mission, target: "m", unified: true,
     props: { instanceId: id, directory: "/repo", action: {}, active: () => true, scope: () => "scope",
       captureDraft: () => ({}), onSaved: (...args: any[]) => accepted.push(args), onLoad: (value: any) => accepted.push(value) },
-    capture: () => env.captureBackendOperation(id).current, held: () => undefined, reading: () => false, retryable: () => true,
+    capture: () => env.captureBackendOperation(id).current, held: () => undefined, reading: () => false,
     owner: () => ({ signal: env.captureBackendOperation(id).signal }),
     captureOwner: (controller: AbortController) => () => !controller.signal.aborted,
-    reconcileRead: undefined, stopReconcile: () => {},
+    reconcileRead: undefined,
     document: () => doc, journal: () => mission, holdMissionScheduleEditor: () => true,
     releaseMissionScheduleEditor: (_scope: string, request: string) => released.push(request), retainMissionScheduleEditor: () => {},
     resumeMissionScheduleEditor: () => true,
     exactMissionScheduleEditorReceipt: () => true, refusedMissionScheduleReceipt: () => false,
     HttpResponseError: class extends Error {}, MissionMutationError: class extends Error {},
-    setReading: () => {}, setRetryable: () => {}, setFailed: () => {}, setReady: () => {}, setConflict: () => {}, setDocument: () => {},
+    setReading: () => {}, setFailed: () => {}, setReady: () => {}, setConflict: () => {}, setDocument: () => {},
     setPreviousDraft: () => {}, comparison: () => "draft", setJournal: () => {}, adopt: (value: any) => accepted.push(value),
     readText: async () => configuration,
     readBody: async (_mission: any, selector: any) => ({ after: selector.field === "objective" ? "objective" : "notes" }),
@@ -400,17 +400,21 @@ for (const kind of ["journal", "unified-journal", "configure", "create"] as cons
   })
 }
 
-test("schedule retry preparation reads the original receipt then dispatches the original remote retry", async () => {
+test("schedule reconcile automatically retries a positively recorded partial preparation once", async () => {
   const calls: any[] = [], request = { action: "configure", missionID: "m", requestID: "r", expectedRevision: 1, directory: "/repo" }
+  const partial = { pending: true, document: { ...scopeDoc(), control: { action: "configure", requestID: "r", expectedRevision: 1, pending: true } } }
+  const complete = { pending: false, document: { ...scopeDoc(), revision: 2, control: { action: "configure", requestID: "r", expectedRevision: 1, pending: false } } }
+  function scopeDoc() { return { id: "m", revision: 1, kind: "one-time", configuration: { objective: "objective", notes: "notes" }, edit: { reason: null }, observation: { state: "complete" } } }
   const scope = scheduleScope({
-    fetchMissionSchedule: async (...args: any[]) => { calls.push(["read", ...args]); return { document: scope.doc } },
-    saveMissionSchedule: async (...args: any[]) => { calls.push(["retry", ...args]); return { document: scope.doc } },
+    fetchMissionSchedule: async (...args: any[]) => { calls.push(["read", ...args]); return partial },
+    saveMissionSchedule: async (...args: any[]) => { calls.push(["retry", ...args]); return complete },
   })
   let hold = { payload: JSON.stringify(request), state: "uncertain" as "pending" | "uncertain" }
   scope.held = () => hold
+  scope.exactMissionScheduleEditorReceipt = (_request: any, result: any) => result === complete
   scope.resumeMissionScheduleEditor = () => { hold = { ...hold, state: "pending" }; return true }
   scope.retainMissionScheduleEditor = () => { hold = { ...hold, state: "uncertain" } }
-  await production("./mission-editor-schedule.ts", "retryPreparation", scope)()
+  await production("./mission-editor-schedule.ts", "reconcile", scope)()
   assert.deepEqual(calls.map(call => call[0]), ["read", "retry"])
   assert.deepEqual(calls[0].slice(1, 4), [id, "m", { directory: "/repo", requestID: "r" }])
   assert.ok(calls[0][4] instanceof AbortSignal)

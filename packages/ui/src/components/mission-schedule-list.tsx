@@ -78,8 +78,8 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
         ?? (["pause", "resume", "play"] as const).find(action => doc().availableActions.includes(action))
       const action = (name: "play" | "resume" | "pause" | "stop" | "run-now") => ({ key: name, label: controls.label(name),
         disabled: !controls.capable(name), busy: controls.pendingAction() === name, onSelect: () => controls.act(name) })
-      const status = () => controls.progress() ?? (controls.held() ? controls.busy() ? undefined
-        : controls.publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain"
+      const status = () => controls.progress() ?? (controls.held()
+        ? controls.publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain"
         : controls.feedback() ?? (controls.refusal() ? "missions.scheduleList.activationRefused"
         : controls.capability() === "missing" ? "missions.scheduling.capability.missing"
         : controls.capability() === "activatable" ? "missions.scheduleList.runNowRequiresEnabled" : undefined))

@@ -148,7 +148,7 @@ test("real owner: lost edit response keeps its request and reconciles automatica
   } finally { await page.close() }
 })
 
-test("real owner: positive partial preparation enables only an explicit original retry; automatic reread and remount never resend", async () => {
+test("real owner: positive partial preparation retries its exact original request automatically once and settles without Play", async () => {
   const page = await browser.newPage()
   await page.clock.install({ time: Date.now() })
   const f = await setup(page)
@@ -161,37 +161,10 @@ test("real owner: positive partial preparation enables only an explicit original
     await form.getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
     await pendingRead
     assert.equal(await form.getByRole("button", { name: "Refresh saved request", exact: true }).count(), 0)
-    const retry = form.locator(".window-footer").getByRole("button", { name: "Try again", exact: true })
-    assert.equal(await retry.count(), 0)
+    assert.equal(await form.locator(".window-footer").getByRole("button", { name: "Try again", exact: true }).count(), 0)
+    assert.equal(f.writes.length, 1); assert.equal(f.admissions.length, 0)
     f.pendingReceipt = false
     await page.clock.fastForward(5_000)
-    await retry.waitFor()
-    assert.equal(f.writes.length, 1); assert.equal(f.admissions.length, 0)
-    // Polling must not clear retryable or disable the focused Try again button mid-poll.
-    await retry.focus()
-    const retryElement = await retry.elementHandle()
-    assert.ok(retryElement)
-    let releasePoll!: () => void
-    const pollStarted = new Promise<void>(resolve => {
-      const pollGate = new Promise<void>(done => { releasePoll = done })
-      void page.route("**/api/workspaces/fixture/missions/**/schedule?*", async route => {
-        if (route.request().method() === "GET" && new URL(route.request().url()).searchParams.has("requestID")) {
-          resolve()
-          await pollGate
-        }
-        return route.fallback()
-      })
-    })
-    await page.clock.fastForward(5_000)
-    await pollStarted
-    assert.equal(await retryElement.evaluate(element => element.isConnected && !element.hasAttribute("disabled") && document.activeElement === element), true,
-      "background receipt polling must keep the focused Try again button mounted, enabled and focused")
-    releasePoll()
-    await page.unroute("**/api/workspaces/fixture/missions/**/schedule?*")
-    await page.evaluate(() => window.schedulingEditor.mount(false)); await page.evaluate(() => window.schedulingEditor.mount(true))
-    await retry.waitFor()
-    assert.equal(f.writes.length, 1); assert.equal(f.admissions.length, 0)
-    await retry.click()
     await form.waitFor({ state: "detached" })
     assert.equal(f.writes.length, 2)
     assert.deepEqual(f.writes[1], { ...f.writes[0], retry: true })
@@ -201,7 +174,7 @@ test("real owner: positive partial preparation enables only an explicit original
   } finally { await page.close() }
 })
 
-test("real owner: in-flight Try again keeps the shared hold pending across close and reopen without auto-reread or duplicate retry", async () => {
+test("real owner: in-flight automatic partial retry keeps the shared hold pending across close and reopen without auto-reread or duplicate retry", async () => {
   const page = await browser.newPage()
   await page.clock.install({ time: Date.now() })
   const f = await setup(page)
@@ -209,10 +182,6 @@ test("real owner: in-flight Try again keeps the shared hold pending across close
   const retryGate = new Promise<void>(resolve => { releaseRetry = resolve })
   try {
     f.fail("native-after")
-    const form = await edit(page)
-    await form.getByRole("button", { name: "Save", exact: true }).click()
-    const retry = form.locator(".window-footer").getByRole("button", { name: "Try again", exact: true })
-    await retry.waitFor()
     let receiptGetsWhileRetrying = 0, retryInFlight = false
     const retryPosted = new Promise<void>(resolve => {
       void page.route("**/api/workspaces/fixture/missions/**/schedule*", async route => {
@@ -226,14 +195,17 @@ test("real owner: in-flight Try again keeps the shared hold pending across close
         return route.fallback()
       })
     })
-    await retry.click()
+    const form = await edit(page)
+    await form.getByRole("button", { name: "Save", exact: true }).click()
     await retryPosted
+    assert.equal(await form.locator(".window-footer").getByRole("button", { name: "Try again", exact: true }).count(), 0)
     assert.equal((await page.evaluate(() => window.schedulingEditor.held()))?.state, "pending")
     await page.evaluate(() => window.schedulingEditor.mount(false))
     await page.evaluate(() => window.schedulingEditor.mount(true))
     await page.clock.fastForward(10_000)
-    assert.equal(receiptGetsWhileRetrying, 0, "automatic reread must not run while Try again POST is in flight")
-    assert.equal(await retry.count(), 0, "reopened editor must not offer another Try again while retry is in flight")
+    assert.equal(receiptGetsWhileRetrying, 0, "automatic reread must not run while automatic retry POST is in flight")
+    assert.equal(await form.locator(".window-footer").getByRole("button", { name: "Try again", exact: true }).count(), 0)
+    assert.equal(f.writes.length, 1, "reopened editor must not send a second retry while the first retry is in flight")
     assert.equal((await page.evaluate(() => window.schedulingEditor.held()))?.state, "pending")
     releaseRetry()
     await page.waitForFunction(() => !window.schedulingEditor.held())

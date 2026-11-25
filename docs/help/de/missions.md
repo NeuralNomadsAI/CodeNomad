@@ -152,7 +152,7 @@ Einige Koordinations- und Wiederherstellungsaktionen benötigen den CodeNomad-Se
 
 Einmalige Pause lässt aktuelle Schritte ohne neue Arbeit enden; sofortiges Unterbrechen fordert Unterbrechung an. Stopp ist endgültig und benötigt Bestätigung. Zeitplan-Pause sperrt neue Starts und fordert Unterbrechung des aktuellen Durchlaufs an. Werkzeugwirkungen können weiterlaufen.
 
-Behalten Sie unbestätigte Originalanfragen. Nutzen Sie Statusprüfung, Quittungsaktualisierung oder den angebotenen Wiederholungsversuch statt einer Ersatzaktion.
+Behalten Sie unbestätigte Originalanfragen: Solange die Zeitplan- oder Bearbeitungsansicht der Mission geöffnet ist, liest CodeNomad sie automatisch erneut bis zur Klärung und wiederholt eine aufgezeichnete Teiländerung selbstständig. Nutzen Sie für Steuerungen einmaliger Missionen **Status prüfen**, wenn angeboten; erstellen Sie keine Ersatzaktion.
 
 ## Bearbeiten, löschen und Unterhaltungen bereinigen {#cleanup}
 

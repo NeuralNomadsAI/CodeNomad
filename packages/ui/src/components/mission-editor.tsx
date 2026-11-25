@@ -671,8 +671,6 @@ export function MissionEditor(props: {
         if (mode() === "recurring") props.onRecurrenceRefresh?.()
         else void reconcileCreation()
       }}>{t("missions.control.refresh")}</button></Show>
-      <Show when={uncertain() && schedule.retryable()}><button type="button" class="button-secondary" disabled={schedule.reading()}
-        onClick={() => void schedule.retryPreparation()}>{t("missions.control.retry")}</button></Show>
       <Show when={kind === "create"} fallback={
           <button type="submit" class="button-primary" disabled={locked() || !isActive() || (kind !== "delete" && (textLocked() || !objective().trim() || !structuralLocked() && !policyReady()))}>
           {t(pending() ? "missions.control.mutation.pending" : kind === "delete"

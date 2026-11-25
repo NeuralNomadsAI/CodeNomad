@@ -300,9 +300,9 @@ their controls and observations; every read revalidates project ownership.
 The panel publishes its loaded inventory and cursor independently of the selected
 document's point read. A partial selected receipt keeps uncertainty visible beside
 the valid inventory. Scoped retained controls keep their display and original
-request/revision for explicit read-only reconciliation. Only successfully read
+request/revision for automatic read-only reconciliation while the view is active. Only successfully read
 documents enable new controls or representation changes; retained display metadata
-and partial error-body receipts keep the original reconciliation available. Selection,
+and partial error-body receipts keep the original reconciliation active. Selection,
 scope, connection and disposal fence late selected reads, including ABA changes.
 Exact complete control or activation confirmation retains a minimum publication
 revision R with its confirmed outcome in per-window memory across remounts. New

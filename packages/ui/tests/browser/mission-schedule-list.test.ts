@@ -305,11 +305,16 @@ for (const lost of ["play", "pause", "run-now", "stop", "delete"]) test(`lost ${
     assert.equal(await button(page, "Refresh saved request").count(), 0)
     assert.equal(f.posts.length, count)
     f.proof = true
+    const settledRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).searchParams.get("requestID") === original.requestID)
     await page.clock.fastForward(5_000)
+    await settledRead
     if (lost === "delete") await detail(page).waitFor({ state: "detached" })
     else {
       await unconfirmed.waitFor({ state: "detached" })
       await page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "Action confirmed" }).waitFor({ state: "detached" })
+      const postAction = { play: "Pause", pause: "Resume", "run-now": "Pause", stop: "Delete selected mission…" }[lost]!
+      await page.locator(".mission-picker-selection-actions").getByRole("button", { name: postAction, exact: true, disabled: false }).waitFor()
     }
     assert.equal(f.posts.length, count)
     assert.ok(f.reads.some(url => url.includes(`requestID=${original.requestID}`)))

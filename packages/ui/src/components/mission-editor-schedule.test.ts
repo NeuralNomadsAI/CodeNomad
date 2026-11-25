@@ -125,47 +125,46 @@ function mountEditor(scope: string, options: { active?: () => boolean; owner?: (
   return { controller, dispose }
 }
 
-test("retryPreparation marks the shared hold pending across remount so automatic reread and duplicate retries wait until settlement", async t => {
+test("automatic reread retries a positively recorded partial preparation once and keeps the shared hold pending across remount", async t => {
   t.mock.timers.enable({ apis: ["setInterval"] })
-  const scope = "scope-retry-pending"
+  const scope = "scope-auto-retry-pending"
   releaseMissionScheduleEditor(scope, baseRequest.requestID)
   holdMissionScheduleEditor(scope, baseRequest, draft)
   retainMissionScheduleEditor(scope, baseRequest.requestID)
 
-  let receiptCalls = 0, postCalls = 0, saved = 0
+  let receiptCalls = 0, saved = 0
+  const retryInputs: any[] = []
   const postGate = deferred<MissionScheduleRead>()
   fixture.fetchSchedule = async (_instance, _id, input) => {
     if (input?.requestID) { receiptCalls++; return partialRead }
     return partialRead
   }
-  fixture.saveSchedule = async () => { postCalls++; return postGate.promise }
+  fixture.saveSchedule = async (_instance, input) => { retryInputs.push(input); return postGate.promise }
 
   const first = mountEditor(scope, { onSaved: () => { saved++ } })
   try {
     await flush()
-    assert.equal(first.controller.retryable(), true)
-    const retrying = first.controller.retryPreparation()
-    await flush()
-    assert.equal(postCalls, 1)
+    assert.equal(receiptCalls, 1)
+    assert.equal(retryInputs.length, 1)
+    assert.deepEqual(retryInputs[0], { ...baseRequest, retry: true })
     assert.equal(missionScheduleEditorHold(scope)?.state, "pending")
 
-    // Close and reopen while retry POST is still in flight.
-    const readsBeforeReopen = receiptCalls
+    // Close and reopen while the automatic retry POST is still in flight.
     first.dispose()
     const reopened = mountEditor(scope, { onSaved: () => { saved++ } })
     try {
       await flush()
       t.mock.timers.tick(MISSION_HELD_REREAD_MS * 3)
       await flush()
-      assert.equal(receiptCalls, readsBeforeReopen, "reopened editor must not auto-reread while retry POST is pending")
-      assert.equal(reopened.controller.retryable(), false, "reopened editor must not offer another retry while first POST is in flight")
+      assert.equal(receiptCalls, 1, "reopened editor must not auto-reread while retry POST is pending")
+      assert.equal(retryInputs.length, 1, "reopened editor must not send a second retry while first POST is in flight")
       assert.equal(missionScheduleEditorHold(scope)?.state, "pending")
 
       postGate.resolve(completeRead)
-      await retrying
       await flush()
       assert.equal(missionScheduleEditorHold(scope), undefined, "completed retry releases the shared hold")
-      assert.equal(postCalls, 1)
+      assert.equal(retryInputs.length, 1)
+      assert.equal(saved, 0, "disposed editor does not invoke onSaved after unmount")
     } finally { reopened.dispose() }
   } finally {
     first.dispose()
@@ -173,39 +172,43 @@ test("retryPreparation marks the shared hold pending across remount so automatic
   }
 })
 
-test("automatic receipt polling keeps retryable stable mid-poll and only changes it on response", async t => {
+test("failed automatic partial retry keeps the exact original identity and retries again only after the next reread", async t => {
   t.mock.timers.enable({ apis: ["setInterval"] })
-  const scope = "scope-retryable-stable"
+  const scope = "scope-retry-failure-identity"
   releaseMissionScheduleEditor(scope, baseRequest.requestID)
   holdMissionScheduleEditor(scope, baseRequest, draft)
   retainMissionScheduleEditor(scope, baseRequest.requestID)
 
-  let receiptCalls = 0
-  const secondPoll = deferred<MissionScheduleRead>()
+  let receiptCalls = 0, saved = 0
+  const retryInputs: any[] = []
   fixture.fetchSchedule = async (_instance, _id, input) => {
-    if (!input?.requestID) return partialRead
-    receiptCalls++
-    if (receiptCalls === 1) return partialRead
-    return secondPoll.promise
+    if (input?.requestID) { receiptCalls++; return partialRead }
+    return partialRead
+  }
+  fixture.saveSchedule = async (_instance, input) => {
+    retryInputs.push(input)
+    if (retryInputs.length === 1) throw new Error("connection reset")
+    return completeRead
   }
 
-  const mounted = mountEditor(scope)
+  const mounted = mountEditor(scope, { onSaved: () => { saved++ } })
   try {
     await flush()
     assert.equal(receiptCalls, 1)
-    assert.equal(mounted.controller.retryable(), true)
+    assert.equal(retryInputs.length, 1, "failed retry must not spin immediately before the next reread interval")
+    assert.deepEqual(retryInputs[0], { ...baseRequest, retry: true })
+    const heldAfterFailure = missionScheduleEditorHold(scope)
+    assert.equal(heldAfterFailure?.state, "uncertain")
+    assert.deepEqual(JSON.parse(heldAfterFailure!.payload), baseRequest)
 
     t.mock.timers.tick(MISSION_HELD_REREAD_MS)
     await flush()
     assert.equal(receiptCalls, 2)
-    assert.equal(mounted.controller.retryable(), true, "retryable must stay true while the next poll is in flight")
-    assert.equal(mounted.controller.reading(), false, "background polling must not disable the Try again button")
-
-    secondPoll.resolve({ pending: true, document: null })
-    await flush()
-    assert.equal(mounted.controller.retryable(), false, "retryable clears only when the response says it is no longer partial")
+    assert.equal(retryInputs.length, 2)
+    assert.deepEqual(retryInputs[1], { ...baseRequest, retry: true }, "retry never mints a new request ID")
+    assert.equal(missionScheduleEditorHold(scope), undefined)
+    assert.equal(saved, 1)
   } finally {
-    secondPoll.resolve({ pending: true, document: null })
     mounted.dispose()
     releaseMissionScheduleEditor(scope, baseRequest.requestID)
   }
