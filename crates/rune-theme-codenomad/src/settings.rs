@@ -10,6 +10,7 @@ use rune_kit::{Checkbox, SegmentedControl, Select, SelectAppearance, Sidebar, Si
 
 pub const WINDOW_SIZE: (f32, f32) = (1100.0, 760.0);
 pub const WINDOW_MIN: (f32, f32) = (760.0, 560.0);
+pub const SAVE_WARNING_SIZE: (f32, f32) = (460.0, 150.0);
 
 pub fn spec<S: 'static>(
     title: &'static str,
@@ -30,7 +31,7 @@ pub fn save_warning_spec<S: 'static>(
 ) -> AppSpec<S> {
     AppSpec {
         families: layout::font_families(),
-        ..AppSpec::new(title, (460.0, 150.0), init, view)
+        ..AppSpec::new(title, SAVE_WARNING_SIZE, init, view)
     }
 }
 

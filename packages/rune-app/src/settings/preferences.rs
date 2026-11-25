@@ -542,7 +542,7 @@ impl Preferences {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn documents_draining(&self) -> bool {
+    pub(in crate::settings) fn documents_draining(&self) -> bool {
         self.config.draining() || self.state.draining() || self.server.draining()
     }
     pub fn bind(&mut self, owner: Option<Backend>) -> bool {
@@ -859,7 +859,7 @@ impl Preferences {
     pub fn poll(&mut self) -> bool {
         let disconnected = self.observe_transport_drops() | self.take_invalidations();
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some((last_revs, shutdown, expired)) = {
+        if let Some((last_revs, shutdown, was_expired)) = {
             let (stall_budget, total_budget) = self.drain_budgets();
             self.close_drain.as_ref().map(|drain| {
                 (
@@ -870,16 +870,16 @@ impl Preferences {
             })
         } {
             let rev_changed = self.preferences_revisions() != last_revs;
-            if !expired && (disconnected || rev_changed) {
-                self.prepare_all_drains(rev_changed, false);
-            }
-            let (changed, dropped_mid_poll, unconfirmed_settled) =
-                self.poll_documents_inner(!shutdown, !expired);
+            // Settle arrived replies first without dispatching new unconfirmed work; step_close_drain
+            // counts settlements and enforces stall/total/op-cap budgets before any next dispatch.
+            let (changed, dropped_mid_poll, settled_count) =
+                self.poll_documents_inner(!shutdown, false);
             let drain_changed = self.step_close_drain(
                 disconnected,
                 rev_changed,
                 dropped_mid_poll,
-                unconfirmed_settled,
+                settled_count,
+                was_expired,
             );
             return disconnected | changed | dropped_mid_poll | drain_changed;
         }
@@ -933,13 +933,13 @@ impl Preferences {
         &mut self,
         revalidate_idle: bool,
         allow_dispatch: bool,
-    ) -> (bool, bool, bool) {
+    ) -> (bool, bool, u32) {
         let install = self.opencode_install.poll();
         if self.authentication_required {
-            return (install, false, false);
+            return (install, false, 0);
         }
         let Some(backend) = self.backend.clone() else {
-            return (install, false, false);
+            return (install, false, 0);
         };
         let active_client_ids = self.active_client_ids(&backend);
         let seen_drops = self.seen_drops_sum(&active_client_ids);
@@ -1038,11 +1038,12 @@ impl Preferences {
                 .poll_review(&backend, self.provider_target.as_ref(), &main, &window)
             | install;
         #[cfg(not(target_arch = "wasm32"))]
-        let unconfirmed_settled = (config_unconfirmed && config_settled)
-            | (state_unconfirmed && state_settled)
-            | (server_unconfirmed && server_settled);
+        let unconfirmed_settled = u32::from(config_unconfirmed && config_settled)
+            + u32::from(state_unconfirmed && state_settled)
+            + u32::from(server_unconfirmed && server_settled);
         #[cfg(target_arch = "wasm32")]
-        let unconfirmed_settled = config_settled | state_settled | server_settled;
+        let unconfirmed_settled =
+            u32::from(config_settled) + u32::from(state_settled) + u32::from(server_settled);
         let dropped_mid_poll = self.observe_transport_drops();
         if changed {
             self.revision += 1;

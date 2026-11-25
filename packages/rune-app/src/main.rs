@@ -351,6 +351,8 @@ fn main() {
     run_app();
 }
 fn run_app() {
+    #[cfg(not(target_arch = "wasm32"))]
+    rune_theme_codenomad::shell::on_fast_exit(platform::finish);
     platform::titlebar::run_with_quit(
         AppSpec {
             setup: Some(setup),

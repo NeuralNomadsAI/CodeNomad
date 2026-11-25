@@ -81,6 +81,13 @@ impl Preferences {
         self.drain_budgets = Some((stall, total));
     }
 
+    #[cfg(test)]
+    pub(super) fn set_close_drain_settled_ops(&mut self, settled_ops: u32) {
+        if let Some(drain) = &mut self.close_drain {
+            drain.settled_ops = settled_ops;
+        }
+    }
+
     pub(in crate::settings) fn has_unconfirmed(&self) -> bool {
         self.config.has_unconfirmed()
             || self.state.has_unconfirmed()
@@ -99,6 +106,19 @@ impl Preferences {
         self.close_drain = None;
         self.pending_save_warning = None;
         self.clear_drain_wake();
+    }
+
+    pub(in crate::settings) fn abort_close_drain(&mut self) {
+        self.close_drain = None;
+        self.pending_save_warning = None;
+        self.clear_drain_wake();
+        self.abandon_unconfirmed();
+    }
+
+    fn abandon_unconfirmed(&mut self) {
+        self.config.fail_unconfirmed();
+        self.state.fail_unconfirmed();
+        self.server.fail_unconfirmed();
     }
 
     pub(in crate::settings) fn take_save_warning(&mut self) -> Option<&'static str> {
@@ -132,24 +152,26 @@ impl Preferences {
         if self.backend.is_some() && !self.authentication_required {
             self.observe_transport_drops();
             self.take_invalidations();
-            if !already_expired {
-                self.prepare_all_drains(true, true);
-            }
+            // Settle arrived replies first without dispatching new unconfirmed work.
+            let (_, _, settled) = self.poll_documents_inner(!shutdown, false);
+            initial_settled = initial_settled.saturating_add(settled);
+        }
+        if !self.has_unconfirmed() {
+            self.close_drain = None;
+            self.pending_save_warning = None;
+            self.clear_drain_wake();
+            return CloseOutcome::Confirmed;
+        }
+        let pre_dispatch_expired = already_expired
+            || self.close_drain.as_ref().is_some_and(|drain| {
+                drain.is_expired(stall_budget, total_budget)
+                    || drain.settled_ops.saturating_add(initial_settled) >= 16
+            });
+        if !pre_dispatch_expired && self.backend.is_some() && !self.authentication_required {
+            self.prepare_all_drains(true, true);
             if self.documents_draining() {
-                let (_, dropped_mid_poll, settled) =
-                    self.poll_documents_inner(!shutdown, !already_expired);
-                if settled {
-                    initial_settled += 1;
-                }
-                if !already_expired && (dropped_mid_poll || settled) {
-                    self.prepare_all_drains(false, false);
-                    if self.documents_draining() {
-                        let (_, _, settled_next) = self.poll_documents_inner(!shutdown, true);
-                        if settled_next {
-                            initial_settled += 1;
-                        }
-                    }
-                }
+                let (_, _, settled_next) = self.poll_documents_inner(!shutdown, true);
+                initial_settled = initial_settled.saturating_add(settled_next);
             }
         }
         if !self.has_unconfirmed() {
@@ -158,7 +180,7 @@ impl Preferences {
             self.clear_drain_wake();
             return CloseOutcome::Confirmed;
         }
-        let expired = already_expired
+        let expired = pre_dispatch_expired
             || self.close_drain.as_ref().is_some_and(|drain| {
                 drain.is_expired(stall_budget, total_budget)
                     || drain.settled_ops.saturating_add(initial_settled) >= 16
@@ -168,11 +190,12 @@ impl Preferences {
             || !self.documents_draining()
             || expired
         {
+            let locale = self.locale().unwrap_or_else(strings::locale);
             self.close_drain = None;
             self.pending_save_warning = None;
             self.clear_drain_wake();
-            let _ = self.take_notification_failure();
-            return CloseOutcome::Failed(self.locale().unwrap_or_else(strings::locale));
+            self.abandon_unconfirmed();
+            return CloseOutcome::Failed(locale);
         }
         let revs = self.preferences_revisions();
         let wake = self.main_wake.clone();
@@ -180,6 +203,9 @@ impl Preferences {
             drain.shutdown |= shutdown;
             drain.last_revs = revs;
             drain.settled_ops = drain.settled_ops.saturating_add(initial_settled);
+            if initial_settled > 0 {
+                drain.last_progress = Instant::now();
+            }
             drain.arm_deadline(wake.clone(), stall_budget, total_budget);
         } else {
             let mut drain = CloseDrain::new(revs, shutdown, initial_settled);
@@ -197,19 +223,33 @@ impl Preferences {
         transport_or_watch: bool,
         rev_changed: bool,
         dropped_mid_poll: bool,
-        unconfirmed_settled: bool,
+        settled_count: u32,
+        was_expired: bool,
     ) -> bool {
         if self.close_drain.is_none() {
             return false;
         }
+        if !self.has_unconfirmed() {
+            self.close_drain = None;
+            self.clear_drain_wake();
+            return true;
+        }
         let (stall_budget, total_budget) = self.drain_budgets();
+        if was_expired {
+            let locale = self.locale().unwrap_or_else(strings::locale);
+            self.close_drain = None;
+            self.clear_drain_wake();
+            self.abandon_unconfirmed();
+            self.pending_save_warning = Some(locale);
+            return true;
+        }
         let revs = self.preferences_revisions();
         let mut rearm = false;
         let mut shutdown = false;
         if let Some(drain) = &mut self.close_drain {
             shutdown = drain.shutdown;
-            if unconfirmed_settled {
-                drain.settled_ops = drain.settled_ops.saturating_add(1);
+            if settled_count > 0 {
+                drain.settled_ops = drain.settled_ops.saturating_add(settled_count);
                 if !rev_changed && !dropped_mid_poll {
                     drain.last_progress = Instant::now();
                     rearm = true;
@@ -217,21 +257,20 @@ impl Preferences {
             }
             drain.last_revs = revs;
         }
-        if !self.has_unconfirmed() {
-            self.close_drain = None;
-            self.clear_drain_wake();
-            return true;
-        }
         let expired = self
             .close_drain
             .as_ref()
             .is_some_and(|drain| drain.is_expired(stall_budget, total_budget));
-        if !expired && (dropped_mid_poll || unconfirmed_settled) {
-            self.prepare_all_drains(false, false);
+        if !expired {
+            if transport_or_watch || rev_changed || dropped_mid_poll || settled_count > 0 {
+                self.prepare_all_drains(rev_changed, false);
+            }
             if self.documents_draining() {
                 let (_, _, settled_next) = self.poll_documents_inner(!shutdown, true);
-                if settled_next && let Some(drain) = &mut self.close_drain {
-                    drain.settled_ops = drain.settled_ops.saturating_add(1);
+                if settled_next > 0
+                    && let Some(drain) = &mut self.close_drain
+                {
+                    drain.settled_ops = drain.settled_ops.saturating_add(settled_next);
                     if !rev_changed && !dropped_mid_poll {
                         drain.last_progress = Instant::now();
                         rearm = true;
@@ -252,17 +291,18 @@ impl Preferences {
                 .as_ref()
                 .is_some_and(|drain| drain.is_expired(stall_budget, total_budget));
         if finished_failed {
+            let locale = self.locale().unwrap_or_else(strings::locale);
             self.close_drain = None;
             self.clear_drain_wake();
-            let _ = self.take_notification_failure();
-            self.pending_save_warning = Some(self.locale().unwrap_or_else(strings::locale));
+            self.abandon_unconfirmed();
+            self.pending_save_warning = Some(locale);
             return true;
         }
         let wake = self.main_wake.clone();
         if rearm && let Some(drain) = &mut self.close_drain {
             drain.arm_deadline(wake.clone(), stall_budget, total_budget);
         }
-        if (transport_or_watch || rev_changed || dropped_mid_poll || unconfirmed_settled)
+        if (transport_or_watch || rev_changed || dropped_mid_poll || settled_count > 0)
             && let Some(wake) = wake
         {
             wake();
@@ -270,10 +310,10 @@ impl Preferences {
         false
     }
 
-    pub(in crate::settings) fn flush_on_quit(&mut self) -> bool {
+    pub(in crate::settings) fn flush_on_quit_warning(&mut self) -> Option<&'static str> {
         match self.begin_close_drain(true) {
-            CloseOutcome::Confirmed => return true,
-            CloseOutcome::Failed(_) => return false,
+            CloseOutcome::Confirmed => return None,
+            CloseOutcome::Failed(locale) => return Some(locale),
             CloseOutcome::Draining => {}
         }
         platform::block_on(async {
@@ -284,8 +324,20 @@ impl Preferences {
                 }
             }
         });
-        let failed = self.take_save_warning().is_some();
-        !failed && !self.has_unconfirmed()
+        if let Some(locale) = self.take_save_warning() {
+            return Some(locale);
+        }
+        if self.has_unconfirmed() {
+            let locale = self.locale().unwrap_or_else(strings::locale);
+            self.abandon_unconfirmed();
+            return Some(locale);
+        }
+        None
+    }
+
+    #[cfg(test)]
+    pub(in crate::settings) fn flush_on_quit(&mut self) -> bool {
+        self.flush_on_quit_warning().is_none()
     }
 
     #[cfg(test)]

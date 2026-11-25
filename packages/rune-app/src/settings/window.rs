@@ -173,9 +173,15 @@ pub(crate) fn quit(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         close_preferences_child(s);
-        let mut prefs = s.settings.shared.borrow_mut();
-        if prefs.has_unconfirmed() {
-            let _ = prefs.flush_on_quit();
+        let failed = {
+            let mut prefs = s.settings.shared.borrow_mut();
+            prefs
+                .has_unconfirmed()
+                .then(|| prefs.flush_on_quit_warning())
+                .flatten()
+        };
+        if let Some(locale) = failed {
+            warn_save_failed(locale);
         }
     }
     #[cfg(target_arch = "wasm32")]

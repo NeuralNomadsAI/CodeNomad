@@ -277,6 +277,7 @@ pub trait Layout {
     fn pad(self, space: Space) -> Self;
     fn separate(self, space: Space) -> Self;
     fn reading_surface(self) -> Self;
+    fn overlay_surface(self) -> Self;
     fn field_surface(self) -> Self;
     fn inset_surface(self) -> Self;
     fn text_role(self, role: TextRole) -> Self;
@@ -552,6 +553,10 @@ impl Layout for El {
     }
     fn reading_surface(self) -> Self {
         self.fill(tokens(dark()).color("surface-canvas"))
+            .color(tokens(dark()).color("text-primary"))
+    }
+    fn overlay_surface(self) -> Self {
+        self.fill(tokens(dark()).color("surface-overlay"))
             .color(tokens(dark()).color("text-primary"))
     }
     fn field_surface(self) -> Self {

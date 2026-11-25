@@ -630,6 +630,10 @@ fn healthy_missions_watch_keeps_saves_working_after_background_conversation_drop
             patch.body,
             json!({"settings":{"diagnosticsExpansion":"hidden"}})
         );
+        // Changing the active conversation set while the request is in flight must not falsely
+        // invalidate settlement: settlement compares against the flight's captured client IDs.
+        prefs.observe_conversation_clients(&[(tab_a_id.clone(), false), (tab_b_id.clone(), true)]);
+        prefs.observe_conversation_clients(&[(tab_a_id.clone(), false)]);
         patch
             .reply(
                 200,
@@ -641,6 +645,7 @@ fn healthy_missions_watch_keeps_saves_working_after_background_conversation_drop
             prefs.transcript_mode(Row::Diagnostics, false) == "hidden" && !prefs.config.refreshing()
         })
         .await;
+        assert!(!prefs.config.refreshing());
 
         // Once the Missions watch closes while A is still unhealthy, A's unseen drop is detected.
         prefs.unwatch();

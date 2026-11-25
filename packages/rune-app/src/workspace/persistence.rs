@@ -408,9 +408,13 @@ impl Persistence {
     }
 }
 pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
+    if s.workspace.as_ref().is_some_and(|ui| ui.finished) {
+        return;
+    }
     super::capture_files_mode(s);
     super::capture(s);
     if let Some(mut ui) = s.workspace.take() {
+        ui.finished = true;
         ui.openings.close();
         let snapshot = ui.snapshot();
         let drafts_saved = ui.persistence.flush_file_drafts(&s.documents);

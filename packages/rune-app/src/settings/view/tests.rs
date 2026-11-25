@@ -1021,7 +1021,7 @@ fn close_drain_window_shows_status_then_transitions_to_save_failed_alert() {
     let mut rt = Runtime::new(
         CloseDrainWindow::new(shared.clone(), None),
         spec.view,
-        spec.size,
+        chrome::SAVE_WARNING_SIZE,
         Env::new(false, 1.0),
     );
     rt.frame(0.0);
@@ -1035,10 +1035,42 @@ fn close_drain_window_shows_status_then_transitions_to_save_failed_alert() {
         "draining window must not render an alert before failure: {draining_tree}"
     );
 
-    // Manually dismissing the loading window while a write is still unconfirmed emits a warning.
+    // Manually dismissing the loading window while a write is still unconfirmed emits a warning
+    // and halts active draining while preserving the failed choice for Retry.
     shared.borrow_mut().set_locale("he");
     assert_eq!(rt.state.dismiss_warning(), Some("en"));
+    assert!(!shared.borrow().documents_draining());
 
+    // An explicit quit while an unconfirmed write fails transitions the drain window to the alert
+    // instead of silently discarding the failure.
+    let quit_shared = Rc::new(RefCell::new(Preferences::default()));
+    {
+        let mut prefs = quit_shared.borrow_mut();
+        prefs.fixture_locale("en");
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+        prefs.set_locale("he");
+        prefs.backend = None;
+    }
+    let mut quit_rt = Runtime::new(
+        CloseDrainWindow::new(quit_shared.clone(), None),
+        spec.view,
+        chrome::SAVE_WARNING_SIZE,
+        Env::new(false, 1.0),
+    );
+    quit_rt.update(|s, tx| {
+        close_drain_quit(s, tx);
+    });
+    quit_rt.frame(0.02);
+    let quit_tree = quit_rt.accessibility_json().to_string();
+    assert!(
+        quit_tree.contains("\"role\":\"alert\"")
+            && quit_tree.contains("Could not save the preference."),
+        "failed explicit quit must render the save-failed alert: {quit_tree}"
+    );
+    assert!(!quit_shared.borrow().documents_draining());
+
+    // An async close-drain failure surfaces in-place via poll().
     shared.borrow_mut().fixture_save_warning("en");
     rt.update(|s, tx| {
         assert!(spec.poll.unwrap()(s, 0.0, tx));
@@ -1053,4 +1085,18 @@ fn close_drain_window_shows_status_then_transitions_to_save_failed_alert() {
     );
     // Once the alert has already been shown, dismissing does not open a duplicate warning.
     assert_eq!(rt.state.dismiss_warning(), None);
+
+    // A confirmed drain (no warning, no active close drain) keeps no alert and closes cleanly.
+    let confirmed = Rc::new(RefCell::new(Preferences::default()));
+    confirmed.borrow_mut().fixture_locale("en");
+    let mut confirmed_rt = Runtime::new(
+        CloseDrainWindow::new(confirmed.clone(), None),
+        spec.view,
+        chrome::SAVE_WARNING_SIZE,
+        Env::new(false, 1.0),
+    );
+    confirmed_rt.update(|s, tx| {
+        assert!(!spec.poll.unwrap()(s, 0.0, tx));
+    });
+    assert_eq!(confirmed_rt.state.dismiss_warning(), None);
 }

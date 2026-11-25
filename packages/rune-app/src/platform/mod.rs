@@ -280,13 +280,31 @@ pub fn preferences_save_warning(
     view: fn(&&'static str, &mut rune::Cx<&'static str>) -> rune::El,
 ) {
     use crate::strings::{locale as current_locale, t, with_locale};
+    use std::sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    };
+    static SAVE_WARNING: OnceLock<Mutex<Option<rune::WindowHandle>>> = OnceLock::new();
+    static NEXT_WARNING_ID: AtomicU64 = AtomicU64::new(1);
     let spec = rune_theme_codenomad::settings::save_warning_spec(
         with_locale(locale, || t("settings.title")),
         current_locale,
         view,
     );
-    // A normal close can open an acknowledgement after Rune hides the originating window.
-    rune::open_window(rune::WindowSpec::new("settings-save-warning", spec).state(locale));
+    let id = NEXT_WARNING_ID.fetch_add(1, Ordering::Relaxed);
+    let key = format!("settings-save-warning-{id}");
+    // Close any earlier acknowledgement (including a minimized one) and open a fresh key so
+    // Rune never silently ignores a subsequent warning due to a duplicate window key.
+    let mut slot = SAVE_WARNING
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(previous) = slot.take() {
+        previous.close();
+    }
+    *slot = Some(rune::open_window(
+        rune::WindowSpec::new(key, spec).state(locale),
+    ));
 }
 
 #[cfg(not(target_arch = "wasm32"))]

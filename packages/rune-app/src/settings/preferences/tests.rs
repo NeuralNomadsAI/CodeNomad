@@ -865,9 +865,10 @@ fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfi
         assert_eq!(handoff_prefs.locale(), Some("he"));
     });
 
-    // A delayed wake past the total deadline must NOT dispatch a newly queued PATCH before failing.
+    // A delayed wake past the stall deadline (while the total deadline is still active) must NOT
+    // revive the expired drain or dispatch a newly queued PATCH before failing.
     let (expired_listener, mut expired_prefs) = platform::block_on(fixture());
-    expired_prefs.set_drain_budgets(Duration::from_millis(50), Duration::from_millis(80));
+    expired_prefs.set_drain_budgets(Duration::from_millis(50), Duration::from_secs(5));
     expired_prefs.set_locale("he");
     expired_prefs.poll();
     platform::block_on(async {
@@ -879,9 +880,9 @@ fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfi
             expired_prefs.begin_close_drain(true),
             crate::settings::preferences::CloseOutcome::Draining
         );
-        platform::sleep(Duration::from_millis(100)).await;
-        // Reply 200 to the first PATCH right as the deadline has already expired: poll() may
-        // consume the arrived reply, but must NOT dispatch a new PATCH for "fr" before failing.
+        platform::sleep(Duration::from_millis(75)).await;
+        // Reply 200 to the first PATCH after the stall budget expired but well before total budget:
+        // poll() may settle the arrived reply, must NOT revive last_progress, and must NOT send "fr".
         first_write
             .reply(200, json!({"settings":{"locale":"he"}}))
             .await;
@@ -889,11 +890,80 @@ fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfi
         expired_prefs.poll();
         assert!(!expired_prefs.has_close_drain());
         assert_eq!(expired_prefs.take_save_warning(), Some("he"));
+        assert!(!expired_prefs.documents_draining());
+        assert!(expired_prefs.config.write_failed());
+        // Subsequent polls must not resume the abandoned queue or emit a second failure toast.
+        expired_prefs.poll();
+        assert!(!expired_prefs.take_notification_failure());
         assert!(
             timeout(Duration::from_millis(80), expired_listener.accept())
                 .await
                 .is_err(),
             "expired close drain must not dispatch a follow-up PATCH"
+        );
+    });
+
+    // After a Preferences-only timeout, a late rejection on the timed-out PATCH must NOT trigger a
+    // second toast or resume the remaining queued edits on the main window's ordinary poll.
+    let (pref_timeout_listener, mut pref_timeout_prefs) = platform::block_on(fixture());
+    pref_timeout_prefs.set_drain_budgets(Duration::from_millis(45), Duration::from_secs(5));
+    pref_timeout_prefs.set_locale("he");
+    pref_timeout_prefs.poll();
+    platform::block_on(async {
+        let held_write = request(&pref_timeout_listener).await;
+        assert_eq!(held_write.body, json!({"settings":{"locale":"he"}}));
+        pref_timeout_prefs.set_locale("fr");
+        assert_eq!(
+            pref_timeout_prefs.begin_close_drain(false),
+            crate::settings::preferences::CloseOutcome::Draining
+        );
+        platform::sleep(Duration::from_millis(70)).await;
+        pref_timeout_prefs.poll();
+        assert!(!pref_timeout_prefs.has_close_drain());
+        assert_eq!(pref_timeout_prefs.take_save_warning(), Some("en"));
+        assert!(!pref_timeout_prefs.documents_draining());
+        assert!(pref_timeout_prefs.config.write_failed());
+        assert_eq!(pref_timeout_prefs.locale_display(), Some("fr"));
+        held_write.reply(500, json!({"error":"boom"})).await;
+        platform::sleep(Duration::from_millis(25)).await;
+        pref_timeout_prefs.poll();
+        assert!(!pref_timeout_prefs.take_notification_failure());
+        assert!(
+            timeout(Duration::from_millis(80), pref_timeout_listener.accept())
+                .await
+                .is_err(),
+            "ordinary poll after Preferences-only drain timeout must not resume abandoned writes"
+        );
+    });
+
+    // Reaching the 16-operation cap during settlement must fail before dispatching a 17th operation.
+    let (cap_listener, mut cap_prefs) = platform::block_on(fixture());
+    cap_prefs.set_drain_budgets(Duration::from_secs(5), Duration::from_secs(10));
+    cap_prefs.set_locale("he");
+    cap_prefs.poll();
+    platform::block_on(async {
+        let op16 = request(&cap_listener).await;
+        assert_eq!(op16.body, json!({"settings":{"locale":"he"}}));
+        cap_prefs.set_locale("fr");
+        assert_eq!(
+            cap_prefs.begin_close_drain(true),
+            crate::settings::preferences::CloseOutcome::Draining
+        );
+        cap_prefs.set_close_drain_settled_ops(15);
+        op16.reply(200, json!({"settings":{"locale":"he"}})).await;
+        wait_until(|| {
+            cap_prefs.poll();
+            !cap_prefs.has_close_drain()
+        })
+        .await;
+        assert_eq!(cap_prefs.take_save_warning(), Some("he"));
+        assert!(!cap_prefs.documents_draining());
+        assert!(cap_prefs.config.write_failed());
+        assert!(
+            timeout(Duration::from_millis(80), cap_listener.accept())
+                .await
+                .is_err(),
+            "settling the 16th operation must not dispatch a 17th PATCH inline"
         );
     });
 

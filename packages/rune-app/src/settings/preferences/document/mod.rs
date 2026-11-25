@@ -500,6 +500,62 @@ impl Document {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn fail_unconfirmed(&mut self) {
+        self.notification_failure = false;
+        if !self.has_unconfirmed() {
+            return;
+        }
+        for flight in [self.barrier.take(), self.flight.take()]
+            .into_iter()
+            .flatten()
+        {
+            match flight.operation {
+                Operation::Write(sent) => {
+                    for (choice, value) in sent {
+                        if is_transcript(choice) {
+                            if !self.transcript_superseded(choice) {
+                                self.write.requested.insert(choice, value);
+                                self.write.failed.insert(choice);
+                            }
+                        } else if self.write.requested.get(&choice) == Some(&value)
+                            || !self.write.requested.contains_key(&choice)
+                        {
+                            self.write.requested.insert(choice, value);
+                            self.write.failed.insert(choice);
+                        }
+                    }
+                }
+                Operation::Read { retry } => {
+                    self.write.failed.extend(retry);
+                }
+            }
+        }
+        for (choice, value) in std::mem::take(&mut self.write.uncertain) {
+            if is_transcript(choice) {
+                if !self.transcript_superseded(choice) {
+                    self.write.requested.insert(choice, value);
+                    self.write.failed.insert(choice);
+                }
+            } else {
+                self.write.requested.entry(choice).or_insert(value);
+                self.write.failed.insert(choice);
+            }
+        }
+        for batch in self.write.transcript_queue.drain(..) {
+            for (choice, value) in batch {
+                self.write.requested.insert(choice, value);
+                self.write.failed.insert(choice);
+            }
+        }
+        for choice in std::mem::take(&mut self.write.pending) {
+            self.write.failed.insert(choice);
+        }
+        for choice in std::mem::take(&mut self.write.retry) {
+            self.write.failed.insert(choice);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn prepare_drain(
         &mut self,
         current_rev: Option<u64>,

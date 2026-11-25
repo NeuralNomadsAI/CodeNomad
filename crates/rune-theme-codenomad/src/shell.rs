@@ -121,6 +121,11 @@ pub fn app_with_quit<S: 'static>(
     app
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub fn on_fast_exit(last: fn()) {
+    rune::fast_exit(last);
+}
+
 pub fn native_locale(locale: &'static str) {
     rune::labels::set_locale(locale);
     rune::labels::set_direction(if crate::catalogue::direction(locale) == "rtl" {

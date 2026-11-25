@@ -201,7 +201,7 @@ pub(in crate::settings) fn save_warning(locale: &&'static str, cx: &mut Cx<&'sta
             col()
                 .full_width()
                 .full_height()
-                .reading_surface()
+                .overlay_surface()
                 .pad(Space::Lg)
                 .separate(Space::Md)
                 .child(text(t("settings.preferenceSaveFailed")).role("alert"))
@@ -221,7 +221,7 @@ pub(in crate::settings) fn save_warning(locale: &&'static str, cx: &mut Cx<&'sta
 pub(in crate::settings) struct CloseDrainWindow {
     shared: std::rc::Rc<std::cell::RefCell<super::Preferences>>,
     failed_locale: Option<&'static str>,
-    _host: Option<crate::platform::LocalHost>,
+    host: Option<crate::platform::LocalHost>,
 }
 
 impl CloseDrainWindow {
@@ -232,7 +232,7 @@ impl CloseDrainWindow {
         Self {
             shared,
             failed_locale: None,
-            _host: host,
+            host,
         }
     }
 
@@ -241,7 +241,11 @@ impl CloseDrainWindow {
         let unconfirmed = self.failed_locale.is_none()
             && (prefs.has_unconfirmed() || prefs.take_save_warning().is_some());
         let locale = prefs.locale().unwrap_or_else(crate::strings::locale);
-        prefs.cancel_close_drain();
+        if unconfirmed {
+            prefs.abort_close_drain();
+        } else {
+            prefs.cancel_close_drain();
+        }
         unconfirmed.then_some(locale)
     }
 }
@@ -278,15 +282,25 @@ pub(in crate::settings) fn close_drain_closed(s: &mut CloseDrainWindow, _: &mut 
     if let Some(locale) = s.dismiss_warning() {
         super::super::warn_save_failed(locale);
     }
+    s.host = None;
 }
 
-pub(in crate::settings) fn close_drain_quit(s: &mut CloseDrainWindow, _: &mut rune::Tx) {
+pub(in crate::settings) fn close_drain_quit(s: &mut CloseDrainWindow, tx: &mut rune::Tx) {
     if s.failed_locale.is_none() {
-        let mut prefs = s.shared.borrow_mut();
-        if prefs.has_unconfirmed() {
-            let _ = prefs.flush_on_quit();
+        let failed = {
+            let mut prefs = s.shared.borrow_mut();
+            prefs
+                .has_unconfirmed()
+                .then(|| prefs.flush_on_quit_warning())
+                .flatten()
+        };
+        if let Some(locale) = failed {
+            s.failed_locale = Some(locale);
+        } else {
+            tx.close_window();
         }
     }
+    s.host = None;
 }
 
 fn close_drain_view(s: &CloseDrainWindow, cx: &mut Cx<CloseDrainWindow>) -> El {
@@ -302,7 +316,7 @@ fn close_drain_view(s: &CloseDrainWindow, cx: &mut Cx<CloseDrainWindow>) -> El {
             let body = col()
                 .full_width()
                 .full_height()
-                .reading_surface()
+                .overlay_surface()
                 .pad(Space::Lg)
                 .separate(Space::Md);
             if s.failed_locale.is_some() {

@@ -590,6 +590,9 @@ impl Document {
                     }
                 }
             }
+            if sender.is_closed() {
+                return;
+            }
             // A lost receipt gets one readback, never an automatic replay.
             if skipped == Skip::None && !rejected && snapshot.is_none() {
                 let transport_changed = epoch_guard.load(Ordering::Acquire) != transport_epoch
@@ -628,7 +631,7 @@ impl Document {
                     }
                 }
             }
-            let _ = sender
+            if sender
                 .send((
                     patched,
                     uncertain_transport,
@@ -636,16 +639,28 @@ impl Document {
                     (read_rev, read_inv, read_drops, read_gen),
                     snapshot,
                 ))
-                .await;
-            for wake in [main, window].into_iter().flatten() {
-                wake();
+                .await
+                .is_err()
+            {
+                return;
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let wake = drain_wake.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                if let Some(wake) = wake {
+                let drain = drain_wake.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                if let Some(wake) = drain {
                     wake();
+                    if let Some(window) = window {
+                        window();
+                    }
+                } else {
+                    for wake in [main, window].into_iter().flatten() {
+                        wake();
+                    }
                 }
+            }
+            #[cfg(target_arch = "wasm32")]
+            for wake in [main, window].into_iter().flatten() {
+                wake();
             }
         });
         (true, settled)
