@@ -47,7 +47,7 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
     try{await host?.stop()}finally{await guard?.close()}
     throw error
   }
-  return {browser,pid,async close(){
+  return {browser,pid,setTargetPid:nextPid=>guard?.setTargetPid(nextPid),async close(){
     try{
       try{
         await host.stop(async()=>{const session=await browser.newBrowserCDPSession();await session.send('Browser.close')})

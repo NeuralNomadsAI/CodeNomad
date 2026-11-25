@@ -49,7 +49,7 @@ export async function openSessionSearch(page, sidebar, messages, tap) {
   }
 }
 
-export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
+export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y),onRestart,attestedGet}){
   const text=value=>page.getByText(value,{exact:true})
   const connecting=text(messages['instanceShell.connection.connecting'])
   const before=eventSources()
@@ -99,7 +99,9 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
       return match&&!previous.includes(match[1])&&response.ok()&&response.request().postDataJSON()?.sessionID==='ses_existing'
     },{timeout:45000})
     void newHistory.catch(()=>{})
-    const {older,witness}=await command('restart')
+    const {older,witness,serverPid}=await command('restart')
+    assert(Number.isSafeInteger(serverPid)&&serverPid>0,'Restarted fixture must report its new owned server PID')
+    if(onRestart)await onRestart(serverPid)
     assert(previous.length&&previous.every(id=>older.includes(id)),'Fixture had the browser-owned workspaces before reboot')
     assert.equal((await (await newHistory).json()).status,'window','Rebind the conversation while search is open')
     assert.equal(await search.getAttribute('aria-expanded'),'true','Search must stay open through restart')
@@ -109,8 +111,9 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     await hit(left)
     await text('Mobile Rust restart history').waitFor({timeout:45000})
     await connecting.waitFor({state:'hidden'})
-    const inventory=await context.request.get(`${url.origin}/api/workspaces`)
-    assert(inventory.ok())
+    assert(typeof attestedGet==='function','Attested GET helper required for mobileLive inventory check')
+    const inventory=await attestedGet('/api/workspaces',context)
+    assert(inventory.ok)
     const ids=(await inventory.json()).map(row=>row.id)
     assert(older.every(id=>!ids.includes(id)),'The restarted listener must not still have the old workspace ids')
     assert(ids.includes(witness),'Reopening by folder must leave the other occurrence intact')

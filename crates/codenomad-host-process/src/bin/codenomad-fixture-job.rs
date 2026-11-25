@@ -322,6 +322,8 @@ fn run() -> io::Result<i32> {
     };
     #[cfg(target_os = "linux")]
     child.track_subreaper();
+    #[cfg(all(unix, not(target_os = "linux")))]
+    let mut sample_ticks: u32 = 0;
     let pause = Duration::from_millis(10);
     let status = loop {
         if let Some(status) = child.try_wait()? {
@@ -333,6 +335,13 @@ fn run() -> io::Result<i32> {
         }
         if parent.as_ref().is_some_and(ParentWatch::exited) {
             break None;
+        }
+        #[cfg(all(unix, not(target_os = "linux")))]
+        {
+            sample_ticks = sample_ticks.wrapping_add(1);
+            if sample_ticks % 20 == 1 {
+                child.refresh_descendants();
+            }
         }
         sleep(pause);
     };

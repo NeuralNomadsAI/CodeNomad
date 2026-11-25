@@ -4,9 +4,10 @@ import { accessSync, constants, existsSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { isLocalAbsolutePath, resolveLocalExecutable } from "./native-fixture-http.mjs"
+import { isLocalAbsolutePath, processIdentityOf, resolveLocalExecutable } from "./native-fixture-http.mjs"
 
 const jobs = new WeakMap()
+const jobIdentities = new WeakMap()
 
 export function fixtureJobExecutable({ required = process.platform === "win32" } = {}) {
   const root = fileURLToPath(new URL("../", import.meta.url))
@@ -95,7 +96,11 @@ export function spawnFixtureChild(command, args, options) {
         // On Windows the job launcher writes line 1 before ResumeThread; on POSIX fd 3 is private to the supervisor.
         const firstLine = line.slice(0, newline + 1)
         const match = /^CODENOMAD_FIXTURE_PID=(\d+)\r?\n$/.exec(firstLine)
-        finish(match ? Number(match[1]) : undefined)
+        const parsedPid = match ? Number(match[1]) : undefined
+        if (usePrivatePidFd && Number.isSafeInteger(parsedPid) && parsedPid > 0) {
+          jobIdentities.set(child, processIdentityOf(parsedPid).catch(() => null))
+        }
+        finish(parsedPid)
         return
       }
       if (line.length > 256) finish(undefined)
@@ -182,7 +187,12 @@ export async function stopFixtureChild(child, stopped, graceMs = 1_000, forceMs 
   if (isJob) {
     if (options.close && child.exitCode === null && child.signalCode === null) {
       await completesWithin(Promise.resolve().then(options.close).catch(() => {}), graceMs)
-      if (await completesWithin(stopped, graceMs)) return
+      if (await completesWithin(stopped, graceMs)) {
+        if (child.exitCode === 86) {
+          throw new Error(`Fixture supervisor ${child.pid} reported incomplete child tree termination`)
+        }
+        return
+      }
     }
     // Node holds the wrapper handle; on Windows terminating it closes the kernel job,
     // while on POSIX the supervisor needs its full 5 s family verification window before outer SIGKILL.
@@ -201,14 +211,15 @@ export async function stopFixtureChild(child, stopped, graceMs = 1_000, forceMs 
   if (isJob && process.platform !== "win32" && (child.signalCode === "SIGKILL" || handleError)) {
     const innerPid = await fixtureChildPid(child, 200).catch(() => undefined)
     if (Number.isSafeInteger(innerPid) && innerPid > 0) {
-      let groupAlive = false
-      let leaderAlive = false
-      try { process.kill(-innerPid, 0); groupAlive = true } catch (e) { groupAlive = e.code === "EPERM" }
-      try { process.kill(innerPid, 0); leaderAlive = true } catch (e) { leaderAlive = e.code === "EPERM" }
-      if (groupAlive || leaderAlive) {
+      const expected = await Promise.resolve(jobIdentities.get(child)).catch(() => null)
+      const current = expected?.startId ? await processIdentityOf(innerPid).catch(() => null) : null
+      if (expected?.startId && current?.startId === expected.startId) {
         try { process.kill(-innerPid, "SIGKILL") } catch {}
         try { process.kill(innerPid, "SIGKILL") } catch {}
         throw new Error(`Fixture supervisor was force-killed while child group ${innerPid} remained alive`)
+      }
+      if (!expected?.startId) {
+        throw new Error(`Fixture supervisor ${child.pid} was force-killed without verified child identity for PID ${innerPid}`)
       }
     }
   }

@@ -62,6 +62,7 @@ export function desktopPlugin(presence,artifacts){return Plugin.define({id:"code
  }).pipe(Effect.scoped)});
 });}})}
 `)
+const entryReal = realpathSync(entry)
 const repoRootReal = realpathSync(path.resolve("."))
 const nodeModulesReal = realpathSync(path.resolve("node_modules"))
 const withinDir = (base, target) => {
@@ -73,7 +74,7 @@ const worktreeOnlyPlugin = {
   setup(buildApi) {
     buildApi.onLoad({ filter: /.*/ }, args => {
       const real = realpathSync(args.path)
-      if (!withinDir(repoRootReal, real) && !withinDir(nodeModulesReal, real)) {
+      if (real !== entryReal && !withinDir(repoRootReal, real) && !withinDir(nodeModulesReal, real)) {
         throw new Error(`Bundled module escapes worktree root: ${real}`)
       }
       return null
@@ -91,7 +92,7 @@ try {
   const providerModule = await import(pathToFileURL(providerFile).href)
   assert.throws(() => providerModule.createNativeScheduleCarrierProvider().languageModel(), /schedule-carrier-language-unavailable/)
   const payload = readFileSync(bundleFile), provider = readFileSync(providerFile)
-  stopPresence = await installDesktopPluginPresence("missions", payload, { config, data }, () => {}, provider)
+  stopPresence = await installDesktopPluginPresence("missions", payload, { config, data }, () => {}, () => "", provider)
   const source = readFileSync(path.join(config, "plugins", "codenomad-missions.ts"), "utf8")
   const [, artifacts] = JSON.parse(`[${/export default desktopPlugin\((.+)\)\n$/.exec(source)[1]}]`)
   child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", "0"], { cwd: project, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })

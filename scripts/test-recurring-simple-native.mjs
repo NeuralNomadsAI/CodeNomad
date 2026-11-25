@@ -436,9 +436,9 @@ try {
   await closeBackend().catch(error => { evidence.backendCleanupError = error.message })
   await managerRelay?.close().catch(() => {}); managerRelay = undefined; managerEndpoint = undefined
   await attestedFetch?.close().catch(() => {})
-  if (child && child.exitCode === null && child.signalCode === null) {
-    const pid = await fixtureChildPid(child)
-    await stopFixtureChild(child, closed).then(() => { evidence.stoppedPIDs.push(pid) })
+  if (child) {
+    const pid = await fixtureChildPid(child, 2000).catch(() => undefined)
+    await stopFixtureChild(child, closed).then(() => { if (pid) evidence.stoppedPIDs.push(pid) })
       .catch(error => { evidence.serviceCleanupError = error.message; process.exitCode = 1 })
   }
   provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))

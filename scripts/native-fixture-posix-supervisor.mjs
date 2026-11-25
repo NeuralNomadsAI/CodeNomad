@@ -55,9 +55,14 @@ let childStartId = null
 function parsePsRows() {
   if (!psBin) return null
   try {
-    const out = execFileSync(psBin, ["-ax", "-o", "pid=,pgid=,ppid=,lstart=,comm="], { encoding: "utf8", timeout: 1000 })
+    const out = execFileSync(psBin, ["-ax", "-o", "pid=,pgid=,ppid=,lstart=,comm="], {
+      env: { ...process.env, LC_ALL: "C" }, encoding: "utf8", timeout: 1000,
+    })
     const rows = []
+    let nonEmpty = 0
     for (const line of out.split(/\r?\n/)) {
+      if (!line.trim()) continue
+      nonEmpty++
       const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+?)\s*$/.exec(line)
       if (!match) continue
       const pid = Number(match[1]), pgid = Number(match[2]), ppid = Number(match[3]), startId = match[4].trim(), comm = match[5]
@@ -65,7 +70,20 @@ function parsePsRows() {
       if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) continue
       rows.push({ pid, pgid, ppid, startId })
     }
+    if (nonEmpty > 0 && rows.length === 0) return null
     return rows
+  } catch {
+    return null
+  }
+}
+
+function currentStartIdOf(pid) {
+  if (!psBin || !Number.isSafeInteger(pid) || pid <= 0) return null
+  try {
+    const out = execFileSync(psBin, ["-o", "lstart=", "-p", String(pid)], {
+      env: { ...process.env, LC_ALL: "C" }, encoding: "utf8", timeout: 1000,
+    }).trim()
+    return out || null
   } catch {
     return null
   }
@@ -127,7 +145,9 @@ function familyPeers() {
 function signalFamily(signal) {
   if (!child.pid) return
   const { peers, rootReused } = familyPeers()
-  for (const [pid] of peers) {
+  for (const [pid, expectedStart] of peers) {
+    if (!expectedStart) continue
+    if (currentStartIdOf(pid) !== expectedStart) continue
     try { process.kill(pid, signal) } catch {}
   }
   if (sameGroup) {
@@ -136,7 +156,7 @@ function signalFamily(signal) {
     }
     return
   }
-  if (!rootReused) {
+  if (!rootReused && childStartId && currentStartIdOf(child.pid) === childStartId) {
     try { process.kill(-child.pid, signal) } catch {}
   }
 }
@@ -144,9 +164,10 @@ function signalFamily(signal) {
 function familyAlive() {
   if (!child.pid) return false
   const { peers, psOk, rootReused } = familyPeers()
-  if (sameGroup) return !psOk || peers.length > 0
+  if (!psOk) return true
   if (peers.length > 0) return true
-  if (rootReused) return false
+  if (sameGroup || rootReused) return false
+  if (childStartId && currentStartIdOf(child.pid) !== childStartId) return false
   try { process.kill(-child.pid, 0); return true } catch (error) { return error.code === "EPERM" }
 }
 

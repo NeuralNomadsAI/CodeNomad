@@ -168,6 +168,10 @@ impl OwnedProcess {
     pub fn track_subreaper(&mut self) {
         self.family.track_subreaper();
     }
+    #[cfg(unix)]
+    pub fn refresh_descendants(&self) {
+        self.family.sample_descendants();
+    }
     /// Includes remaining owned descendants after the direct child has exited.
     pub fn family_is_empty(&self) -> io::Result<bool> {
         self.family.empty()

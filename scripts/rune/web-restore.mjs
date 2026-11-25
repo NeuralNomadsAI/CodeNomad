@@ -4,38 +4,67 @@ import {mkdir,readFile,realpath,writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
-import {chromium} from 'playwright'
+import {createAttestedFetch,verifyLoopbackListenerOwner} from '../native-fixture-http.mjs'
+import {launchOwnedChromium} from './web-chromium.mjs'
 import {pendingBrowser} from './web-pending-open.mjs'
 import {fileWrapBrowser} from './web-file-wrap.mjs'
 import {outlineRestore} from './web-outline-restore.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
+import {privateWebFixture,bundleAssetPaths,workspacePolicy} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
-const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},outline:{type:'boolean'}}})
+const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},'target-pid':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},outline:{type:'boolean'}}})
 assert(values.url&&values.project&&values['storage-state']&&values.out,'Pass --url --project --storage-state --out')
 const url=new URL(values.url)
 assert(['127.0.0.1','localhost','[::1]'].includes(url.hostname)&&['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&url.pathname==='/'&&!url.hash,'Explicit isolated loopback root required')
+const targetPid=Number(values['target-pid'])
+assert(Number.isSafeInteger(targetPid)&&targetPid>0,'Connected web-restore requires --target-pid <owned server PID>')
+await verifyLoopbackListenerOwner(Number(url.port),targetPid)
 url.search='?locale=fr'
 const out=path.resolve(values.out)
 const {profile,storage,inside}=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
 await mkdir(out,{recursive:true});assert(inside(profile,await realpath(out)),'Output link escapes fixture')
+const rawStorage=JSON.parse(await readFile(storage,'utf8'))
+const realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
+const browserStorageState=url.protocol==='http:'
+  ?{...rawStorage,cookies:(rawStorage?.cookies??[]).map(c=>({...c,value:'fixture-relay-placeholder'}))}
+  :rawStorage
 const m=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/catalogues/fr.json'),'utf8'))
-if(values['pending-open']){await pendingBrowser({values,m,out,storage});process.exit(0)}
-if(values['file-wrap']){await fileWrapBrowser({values,m,out,storage,url,root});process.exit(0)}
+let attestedFetch,ownedBrowser
+const results=[]
+let wroteSummary=false
+const attestedFulfillWorkspaceCreation=async(route,policy)=>{
+  const req=route.request()
+  const headers={...(await req.allHeaders())}
+  delete headers['host'];delete headers['content-length']
+  if(realCookieHeader)headers['cookie']=realCookieHeader
+  const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
+  const bytes=Buffer.from(await res.arrayBuffer())
+  assert(bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
+  if(res.ok)policy.admit(req.postDataJSON(),JSON.parse(bytes.toString('utf8')),req.url())
+  await route.fulfill({status:res.status,headers:Object.fromEntries(res.headers.entries()),body:bytes})
+  return {status:res.status,admitted:res.ok}
+}
+try {
+  attestedFetch=createAttestedFetch(url.origin,Number(url.port),targetPid,{allowSelfSigned:url.protocol==='https:'})
+  ownedBrowser=await launchOwnedChromium({
+    executablePath:values.executable,profile,env:process.env,origin:url.origin,targetPid,
+    ...(url.protocol==='http:'?{injectCookie:realCookieHeader}:{}),
+  })
+  const browser=ownedBrowser.browser
+  if(values['pending-open']){await pendingBrowser({values,m,out,browser,storageState:browserStorageState,realCookieHeader,attestedFetch});wroteSummary=true}
+  else if(values['file-wrap']){await fileWrapBrowser({values,m,out,browser,storageState:browserStorageState,fulfillWorkspaceCreation:attestedFulfillWorkspaceCreation,url,root});wroteSummary=true}
+  else {
 const KEY='codenomad.rune.alpha.client-state.v1',RELEASED='codenomad.rune.alpha.records-released'
 const PROOF='codenomad.fixture.rune.web-restore-proof.v1'
 const draftA='Brouillon Alpha\nété · 日本語 · 🦀',draftB='Brouillon Beta\nשלום · e\u0301 · 🧭'
 const retryDraft='Brouillon Beta enregistré après retry 🦀',unsaved='Dernière saisie volontairement non enregistrée 🧪'
-const browser=await chromium.launch({headless:true,...(values.executable?{executablePath:values.executable}:{}),args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
-const results=[]
 const palette=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/theme.json'),'utf8'))
 const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected'))
 const imagePage=await browser.newPage()
-try {
   for(const spec of [{name:'desktop-light',width:values.outline?1400:1100,height:900,colorScheme:'light',touch:false},{name:'phone-dark',width:390,height:844,colorScheme:'dark',touch:true}]) {
     if(values.outline&&spec.touch)continue
-    const context=await browser.newContext({viewport:{width:spec.width,height:spec.height},deviceScaleFactor:1,colorScheme:spec.colorScheme,isMobile:spec.touch,hasTouch:spec.touch,storageState:storage})
+    const context=await browser.newContext({viewport:{width:spec.width,height:spec.height},deviceScaleFactor:1,colorScheme:spec.colorScheme,isMobile:spec.touch,hasTouch:spec.touch,storageState:browserStorageState})
     const page=await context.newPage();page.setDefaultTimeout(20000)
     const record={context:spec.name,phoneEmulated:spec.touch,requests:[],eventSource:[],storage:[],storageLocal:[],history:[],errors:[],forbidden:[],stages:[]}
     results.push(record)
@@ -130,7 +159,7 @@ try {
       if(!allowed){record.forbidden.push(entry);return route.abort('blockedbyclient')}
        if(method==='POST'&&p==='/api/workspaces'){
         try {
-          Object.assign(entry,await fulfillWorkspaceCreation(route,policy))
+          Object.assign(entry,await attestedFulfillWorkspaceCreation(route,policy))
           return
         }catch{
           record.errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'})
@@ -358,5 +387,10 @@ try {
     }catch(error){record.result='fail';record.failure=error.message;await capture('failure').catch(()=>{});throw error}
     finally{forbidRelease=false;try{await localProof(await page.evaluate(()=>globalThis.__runeRestoreProofDocumentId))}catch{}await context.close();await writeFile(path.join(out,`${spec.name}-proof.json`),JSON.stringify(record,null,2))}
   }
-}finally{await browser.close();await writeFile(path.join(out,'summary.json'),JSON.stringify({runner:'web-restore',origin:url.origin,contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure})),scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions'},null,2))}
+  }
+}finally{
+  await attestedFetch?.close().catch(()=>{})
+  await ownedBrowser?.close().catch(()=>{})
+  if(!wroteSummary)await writeFile(path.join(out,'summary.json'),JSON.stringify({runner:'web-restore',origin:url.origin,contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure})),scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions'},null,2))
+}
 console.log(JSON.stringify({runner:'web-restore',contexts:results.map(r=>({context:r.context,result:r.result})),out}))

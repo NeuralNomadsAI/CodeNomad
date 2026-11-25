@@ -332,6 +332,80 @@ test('createAttestedRelay client PID attestation, revocation, and createAttested
   assert.equal(await viaTcp.text(),'ok')
 })
 
+test('createAttestedRelay isolates cookies strictly to placeholder headers and clientGate fences in-flight allow after close',{timeout:15000},async t=>{
+  const {createClientPidGate}=await import('../../../scripts/native-fixture-http.mjs')
+  const seenCookies=[]
+  const target=await listen(t,(req,res)=>{
+    seenCookies.push(req.headers.cookie??null)
+    if(req.url==='/login')res.setHeader('set-cookie','codenomad_session=real-secret-token; Path=/; HttpOnly')
+    res.end('ok')
+  })
+  const relay=await createAttestedRelay(target.origin,process.pid,{
+    requireClientAttestation:true,
+    isolateSessionCookie:true,
+  })
+  t.after(()=>relay.close())
+  relay.allowClientPid(process.pid)
+  const loginRes=await fixtureFetch(new URL('/login',relay.origin),{signal:AbortSignal.timeout(5000)})
+  assert.equal(loginRes.status,200)
+  assert.match(loginRes.headers.get('set-cookie')??'',/codenomad_session=fixture-relay-placeholder/)
+  // Unauthenticated request (no Cookie header) must NOT receive the real session cookie.
+  const noCookieRes=await fixtureFetch(new URL('/unauth',relay.origin),{signal:AbortSignal.timeout(5000)})
+  assert.equal(noCookieRes.status,200)
+  assert.equal(seenCookies.at(-1),null)
+  // Request carrying the placeholder cookie receives the real session cookie upstream.
+  const withPlaceholder=await fixtureFetch(new URL('/auth',relay.origin),{
+    headers:{cookie:'codenomad_session=fixture-relay-placeholder'},
+    signal:AbortSignal.timeout(5000),
+  })
+  assert.equal(withPlaceholder.status,200)
+  assert.equal(seenCookies.at(-1),'codenomad_session=real-secret-token')
+  // Closing clientGate invalidates an in-flight allow() and safely handles a rejected exitPromise.
+  const gate=createClientPidGate(()=>0)
+  const deferredPid=Promise.withResolvers()
+  const rejectedExit=Promise.reject(new Error('expected exit rejection'))
+  const allowTask=gate.allow(deferredPid.promise,rejectedExit)
+  gate.close()
+  deferredPid.resolve(process.pid)
+  await allowTask
+  await new Promise(resolve=>setTimeout(resolve,20))
+})
+
+test('originGuardProxy attests HTTPS CONNECT tunnels, rejects foreign authorities, and tears down on setTargetPid',{timeout:15000},async t=>{
+  const net=await import('node:net')
+  const {originGuardProxy}=await import('../../../scripts/native-fixture-http.mjs')
+  const echo=net.createServer(socket=>{socket.on('data',chunk=>socket.write(chunk))})
+  await new Promise(resolve=>echo.listen(0,'127.0.0.1',resolve))
+  t.after(()=>new Promise(resolve=>{echo.closeAllConnections?.();echo.close(resolve)}))
+  const targetPort=echo.address().port
+  const guard=await originGuardProxy(`https://127.0.0.1:${targetPort}`,process.pid,{
+    requireClientAttestation:true,
+    allowedClientPids:[process.pid],
+  })
+  t.after(()=>guard.close())
+  const connectTo=(authority)=>new Promise((resolve,reject)=>{
+    const sock=net.createConnection({host:'127.0.0.1',port:guard.port})
+    let buf=''
+    sock.on('error',reject)
+    sock.once('connect',()=>sock.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`))
+    sock.on('data',chunk=>{
+      buf+=chunk.toString('utf8')
+      if(buf.includes('\r\n\r\n'))resolve({statusLine:buf.split('\r\n')[0],socket:sock})
+    })
+  })
+  const foreign=await connectTo(`127.0.0.1:${targetPort+1}`)
+  assert.match(foreign.statusLine,/^HTTP\/1\.1 403 /)
+  foreign.socket.destroy()
+  const ok=await connectTo(`127.0.0.1:${targetPort}`)
+  assert.match(ok.statusLine,/^HTTP\/1\.1 200 /)
+  const closed=new Promise(resolve=>ok.socket.once('close',resolve))
+  guard.setTargetPid(999999999)
+  await closed
+  const afterPidChange=await connectTo(`127.0.0.1:${targetPort}`)
+  assert.match(afterPidChange.statusLine,/^HTTP\/1\.1 502 /)
+  afterPidChange.socket.destroy()
+})
+
 test('acquireProfileLock enforces cross-process SQLite exclusion and live daemon_pid blocking',{timeout:20000},async t=>{
   const {mkdtemp,rm,unlink}=await import('node:fs/promises')
   const os=await import('node:os')

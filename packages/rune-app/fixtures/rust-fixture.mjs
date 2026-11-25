@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {execFileSync} from 'node:child_process'
 import {fixtureChildPid,spawnFixtureChild as spawn,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {createAttestedFetch,createAttestedRelay,RELAY_PLACEHOLDER_PASSWORD,verifyLoopbackListenerOwner} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedRelay,RELAY_PLACEHOLDER_PASSWORD,stripFixtureServerSecrets,verifyLoopbackListenerOwner} from '../../../scripts/native-fixture-http.mjs'
 import {mkdir, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {createHash,randomUUID} from 'node:crypto'
@@ -213,10 +213,26 @@ try {
   rustRelay=await createAttestedRelay(origin,serverPid,{requireClientAttestation:true,substitutePassword:backendPassword,isolateSessionCookie:true})
   const args=process.argv.slice(2)
   const runeArgs=history?['--probe-slash']:fresh?['--probe-fresh']:args.includes('--window')?args.filter(arg=>arg!=='--window'):args.length?args:['--probe-contract']
+  const clientEnv=stripFixtureServerSecrets(env)
   const run = (stage = {}) => {
     child=spawn(clientBinary,runeArgs,{
-      cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_WORKSPACE:workspace.id,
+      cwd:profile,windowsHide:true,stdio:['ignore','inherit','pipe'],env:{...clientEnv,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_WORKSPACE:workspace.id,
         RUNE_SESSION:session,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0',...(linked?{RUNE_HISTORY_WORKTREE:'1'}:{}),...stage},
+    })
+    let awaitPidLine=process.platform==='win32',stderrBuf=''
+    child.stderr.on('data',chunk=>{
+      if(awaitPidLine){
+        stderrBuf+=chunk
+        const nl=stderrBuf.indexOf('\n')
+        if(nl<0)return
+        awaitPidLine=false
+        const first=stderrBuf.slice(0,nl+1),rest=stderrBuf.slice(nl+1)
+        if(!/^CODENOMAD_FIXTURE_PID=\d+\r?\n$/.test(first))process.stderr.write(first)
+        if(rest)process.stderr.write(rest)
+        stderrBuf=''
+        return
+      }
+      process.stderr.write(chunk)
     })
     childClosed=new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
     rustRelay.allowClientPid(fixtureChildPid(child),childClosed)
@@ -251,14 +267,19 @@ try {
   assert.equal(result,0,'Rune client exit')
   console.log(JSON.stringify({fixture:'real-rust-server-synthetic-opencode',exitCode:result,requests},null,2))
 } finally {
-  if(child&&child.exitCode===null&&child.signalCode===null)await stopFixtureChild(child,childClosed).catch(()=>{})
-  await rustRelay?.close().catch(()=>{})
-  await rustFetch?.close().catch(()=>{})
+  let cleanupError
+  if(child)await stopFixtureChild(child,childClosed).catch(error=>{cleanupError??=error})
+  await rustRelay?.close().catch(error=>{cleanupError??=error})
+  await rustFetch?.close().catch(error=>{cleanupError??=error})
   try{server.stdin.write('shutdown\n')}catch{}
-  if(server.exitCode===null&&server.signalCode===null)await stopFixtureChild(server,serverClosed,5000).catch(()=>{})
+  await stopFixtureChild(server,serverClosed,5000).catch(error=>{cleanupError??=error})
   for(const stream of upstreamStreams)stream.end()
   upstream.closeAllConnections();upstream.close()
   await writeFile(path.join(profile,'server.log'),log)
   await writeFile(path.join(profile,'upstream-requests.json'),JSON.stringify(requests,null,2))
+  if(cleanupError){
+    result=1
+    console.error(cleanupError.message)
+  }
 }
 process.exitCode=result??1

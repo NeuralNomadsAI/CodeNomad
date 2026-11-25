@@ -53,6 +53,7 @@ export default Plugin.define({id:"codenomad.provider-registration-qualification"
  });
 });}});
 `)
+const entryReal = realpathSync(entry)
 const repoRootReal = realpathSync(path.resolve("."))
 const nodeModulesReal = realpathSync(path.resolve("node_modules"))
 const withinDir = (base, target) => {
@@ -64,7 +65,7 @@ const worktreeOnlyPlugin = {
   setup(buildApi) {
     buildApi.onLoad({ filter: /.*/ }, args => {
       const real = realpathSync(args.path)
-      if (!withinDir(repoRootReal, real) && !withinDir(nodeModulesReal, real)) {
+      if (real !== entryReal && !withinDir(repoRootReal, real) && !withinDir(nodeModulesReal, real)) {
         throw new Error(`Bundled module escapes worktree root: ${real}`)
       }
       return null

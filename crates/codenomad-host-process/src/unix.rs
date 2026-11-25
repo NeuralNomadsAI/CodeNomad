@@ -7,11 +7,13 @@ use std::{
     io,
     os::unix::process::CommandExt,
     process::{Child, Command},
+    sync::Mutex,
 };
 pub(super) struct Family {
     leader: i32,
     leader_start_id: Option<String>,
     leader_reaped: bool,
+    known_descendants: Mutex<HashMap<i32, String>>,
     #[cfg(target_os = "linux")]
     include_subreaper_children: bool,
 }
@@ -27,6 +29,7 @@ impl Family {
             leader,
             leader_start_id,
             leader_reaped: false,
+            known_descendants: Mutex::new(HashMap::new()),
             #[cfg(target_os = "linux")]
             include_subreaper_children: false,
         })
@@ -37,6 +40,22 @@ impl Family {
     #[cfg(target_os = "linux")]
     pub fn track_subreaper(&mut self) {
         self.include_subreaper_children = true;
+    }
+    pub fn sample_descendants(&self) {
+        let _ = self.descendants();
+    }
+    fn descendants(&self) -> Option<Vec<(i32, String)>> {
+        let mut known = self
+            .known_descendants
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        descendants_of(
+            self.leader,
+            self.leader_start_id.as_deref(),
+            self.leader_reaped,
+            self.subreaper_enabled(),
+            &mut known,
+        )
     }
     fn leader_reused(&self) -> bool {
         match (&self.leader_start_id, start_id_of(self.leader)) {
@@ -67,13 +86,10 @@ impl Family {
                 return Ok(false);
             }
         }
-        Ok(descendants_of(
-            self.leader,
-            self.leader_start_id.as_deref(),
-            self.leader_reaped,
-            self.subreaper_enabled(),
-        )
-        .is_empty())
+        match self.descendants() {
+            Some(list) => Ok(list.is_empty()),
+            None => Ok(false),
+        }
     }
     pub fn terminate(&self) -> io::Result<()> {
         self.signal(libc::SIGKILL)
@@ -83,21 +99,18 @@ impl Family {
     }
     fn signal(&self, sig: libc::c_int) -> io::Result<()> {
         let mut first_err = None;
-        for (pid, expected_start) in descendants_of(
-            self.leader,
-            self.leader_start_id.as_deref(),
-            self.leader_reaped,
-            self.subreaper_enabled(),
-        ) {
-            if start_id_of(pid).as_deref() != Some(expected_start.as_str()) {
-                continue;
-            }
-            // SAFETY: pid was enumerated as a descendant of our own spawned process group/root
-            // and its OS birth identity was re-verified immediately before signaling.
-            if unsafe { libc::kill(pid, sig) } != 0 {
-                let err = io::Error::last_os_error();
-                if err.raw_os_error() != Some(libc::ESRCH) && first_err.is_none() {
-                    first_err = Some(err);
+        if let Some(descendants) = self.descendants() {
+            for (pid, expected_start) in descendants {
+                if start_id_of(pid).as_deref() != Some(expected_start.as_str()) {
+                    continue;
+                }
+                // SAFETY: pid was enumerated as a descendant of our own spawned process group/root
+                // and its OS birth identity was re-verified immediately before signaling.
+                if unsafe { libc::kill(pid, sig) } != 0 {
+                    let err = io::Error::last_os_error();
+                    if err.raw_os_error() != Some(libc::ESRCH) && first_err.is_none() {
+                        first_err = Some(err);
+                    }
                 }
             }
         }
@@ -132,9 +145,10 @@ fn descendants_of(
     leader_start_id: Option<&str>,
     leader_reaped: bool,
     include_subreaper_children: bool,
-) -> Vec<(i32, String)> {
+    known_descendants: &mut HashMap<i32, String>,
+) -> Option<Vec<(i32, String)>> {
     let self_pid = std::process::id() as i32;
-    let rows = process_table();
+    let rows = process_table()?;
     let mut by_pid: HashMap<i32, &str> = HashMap::new();
     let mut children_by_parent: HashMap<i32, Vec<i32>> = HashMap::new();
     for (pid, ppid, _, start_id) in &rows {
@@ -163,6 +177,10 @@ fn descendants_of(
             }
         }
     }
+    known_descendants.retain(|pid, expected_start| {
+        by_pid.get(pid).copied() == Some(expected_start.as_str())
+    });
+    seeds.extend(known_descendants.keys().copied());
     let mut seen = HashSet::new();
     let mut queue = seeds;
     let mut out = Vec::new();
@@ -172,14 +190,16 @@ fn descendants_of(
         }
         if current != root && current != self_pid {
             if let Some(start_id) = by_pid.get(&current) {
-                out.push((current, (*start_id).to_owned()));
+                let start_owned = (*start_id).to_owned();
+                known_descendants.insert(current, start_owned.clone());
+                out.push((current, start_owned));
             }
         }
         if let Some(kids) = children_by_parent.get(&current) {
             queue.extend(kids.iter().copied());
         }
     }
-    out
+    Some(out)
 }
 
 #[cfg(target_os = "linux")]
@@ -196,6 +216,7 @@ fn start_id_of(pid: i32) -> Option<String> {
         .into_iter()
         .find(|p| Path::new(p).is_file())?;
     let output = Command::new(ps)
+        .env("LC_ALL", "C")
         .args(["-o", "lstart=", "-p", &pid.to_string()])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -209,11 +230,9 @@ fn start_id_of(pid: i32) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn process_table() -> Vec<(i32, i32, i32, String)> {
+fn process_table() -> Option<Vec<(i32, i32, i32, String)>> {
     let mut rows = Vec::new();
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return rows;
-    };
+    let entries = std::fs::read_dir("/proc").ok()?;
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Ok(pid) = name.to_string_lossy().parse::<i32>() else {
@@ -237,54 +256,79 @@ fn process_table() -> Vec<(i32, i32, i32, String)> {
         };
         rows.push((pid, ppid, pgid, (*start_id).to_owned()));
     }
-    rows
+    Some(rows)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn process_table() -> Vec<(i32, i32, i32, String)> {
+fn parse_ps_table(raw: &str, ps_pid: i32) -> Option<Vec<(i32, i32, i32, String)>> {
+    let mut non_empty = 0usize;
+    let mut rows = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        non_empty += 1;
+        let Some(pid_str) = trimmed.split_whitespace().next() else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<i32>() else {
+            continue;
+        };
+        if pid == ps_pid {
+            continue;
+        }
+        let Some(rest) = trimmed.strip_prefix(pid_str).map(str::trim_start) else {
+            continue;
+        };
+        let Some(ppid_str) = rest.split_whitespace().next() else {
+            continue;
+        };
+        let Ok(ppid) = ppid_str.parse::<i32>() else {
+            continue;
+        };
+        let Some(rest) = rest.strip_prefix(ppid_str).map(str::trim_start) else {
+            continue;
+        };
+        let Some(pgid_str) = rest.split_whitespace().next() else {
+            continue;
+        };
+        let Ok(pgid) = pgid_str.parse::<i32>() else {
+            continue;
+        };
+        let Some(start_id) = rest
+            .strip_prefix(pgid_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        else {
+            continue;
+        };
+        rows.push((pid, ppid, pgid, start_id.to_owned()));
+    }
+    if non_empty > 0 && rows.is_empty() {
+        return None;
+    }
+    Some(rows)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_table() -> Option<Vec<(i32, i32, i32, String)>> {
     let ps = ["/bin/ps", "/usr/bin/ps"]
         .into_iter()
-        .find(|p| Path::new(p).is_file());
-    let Some(ps) = ps else {
-        return Vec::new();
-    };
-    let Ok(ps_child) = Command::new(ps)
+        .find(|p| Path::new(p).is_file())?;
+    let ps_child = Command::new(ps)
+        .env("LC_ALL", "C")
         .args(["-ax", "-o", "pid=,ppid=,pgid=,lstart="])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-    else {
-        return Vec::new();
-    };
+        .ok()?;
     let ps_pid = ps_child.id() as i32;
-    let Ok(output) = ps_child.wait_with_output() else {
-        return Vec::new();
-    };
+    let output = ps_child.wait_with_output().ok()?;
     if !output.status.success() {
-        return Vec::new();
+        return None;
     }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            let mut parts = trimmed.splitn(4, char::is_whitespace);
-            let pid = parts.next()?.trim().parse::<i32>().ok()?;
-            if pid == ps_pid {
-                return None;
-            }
-            let rest = trimmed.strip_prefix(&pid.to_string())?.trim_start();
-            let ppid_str = rest.split_whitespace().next()?;
-            let ppid = ppid_str.parse::<i32>().ok()?;
-            let rest = rest.strip_prefix(ppid_str)?.trim_start();
-            let pgid_str = rest.split_whitespace().next()?;
-            let pgid = pgid_str.parse::<i32>().ok()?;
-            let start_id = rest.strip_prefix(pgid_str)?.trim().to_owned();
-            if start_id.is_empty() {
-                return None;
-            }
-            Some((pid, ppid, pgid, start_id))
-        })
-        .collect()
+    parse_ps_table(&String::from_utf8_lossy(&output.stdout), ps_pid)
 }
 
 fn query_error(error: io::Error) -> io::Result<bool> {

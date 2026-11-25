@@ -26,7 +26,7 @@ export async function launchWeb({
     if(!webAndroid){
       const issue=await http.post('/api/remote-control/pairings')
       assert.equal(issue.status(),200)
-      paired=await pairFixture({origin:uiOrigin,pairingUrl:(await issue.json()).url,storage,manifest,ui,fromLink:!sameOriginPairing})
+      paired=await pairFixture({origin:uiOrigin,targetPid:serverPid,profile,pairingUrl:(await issue.json()).url,storage,manifest,ui,fromLink:!sameOriginPairing})
     }
   }else await http.storageState({path:storage})
   let workspace
@@ -44,7 +44,7 @@ export async function launchWeb({
   state.staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,backend:ts?'ts':'rust',serverBinary:ts?.args[0]??serverBinary,ui:solid||ui,paired}
 
   const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
-  const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(runner==='web-smoke.mjs'&&Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
+  const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
   if(webTimeline)args.push(webTouchHistory?'--touch-history':'--timeline')
   if(webSearch)args.push('--history-search')
   if(webOutline)args.push('--outline')

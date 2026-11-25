@@ -97,6 +97,15 @@ test("Windows job permits immediate graceful shutdown over stdin", windows, asyn
   assert.equal(root.exitCode, 0)
 })
 
+test("stopFixtureChild rejects supervisor exit code 86 even after graceful close callback", { timeout: 15_000 }, async () => {
+  const root = own(`process.stdin.resume(); process.stdin.once("end", () => process.exit(86))`)
+  const stopped = once(root, "close")
+  await assert.rejects(
+    stopFixtureChild(root, stopped, 5000, 2000, { close: () => root.stdin.end() }),
+    /incomplete child tree termination/,
+  )
+})
+
 test("Windows enclosing bench job keeps its daemon across backend exits but kills it on close", windows, async () => {
   const root = own(`
     const {spawn} = require("node:child_process")

@@ -40,30 +40,17 @@ const messages = JSON.parse(await readFile(path.join(root, `crates/rune-theme-co
 const out = path.resolve(root, values.out)
 const relativeOut = path.relative(path.join(root, 'target'), out)
 assert(relativeOut && relativeOut !== '..' && !relativeOut.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeOut), 'Smoke output must stay inside this checkout target directory')
-let privateScope, ownedBrowser, attestedFetch, browserStorageState, realCookieHeader
-if(values.connected){
-  privateScope=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
-  const targetPid=Number(values['target-pid'])
-  assert(Number.isSafeInteger(targetPid)&&targetPid>0,'Connected web smoke requires --target-pid <owned server PID>')
-  await verifyLoopbackListenerOwner(Number(url.port),targetPid)
-  const rawStorage=JSON.parse(await readFile(values['storage-state'],'utf8'))
-  realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
-  if(url.protocol==='http:'){
-    browserStorageState={
-      ...rawStorage,
-      cookies:(rawStorage?.cookies??[]).map(c=>({...c,value:'fixture-relay-placeholder'})),
-    }
-    attestedFetch=createAttestedFetch(url.origin,Number(url.port),targetPid)
-  }else{
-    browserStorageState=rawStorage
-  }
-}
-const fulfillWorkspaceCreation=async(route,policy)=>{
+let privateScope, ownedBrowser, browser, attestedFetch, browserStorageState, realCookieHeader, currentTargetPid
+const cookieHeaderFor = async context => url.protocol === 'http:'
+  ? realCookieHeader
+  : (await context.cookies(url.origin)).map(c => `${c.name}=${c.value}`).join('; ')
+const fulfillWorkspaceCreation=async(route,policy,context)=>{
   if(!attestedFetch)return defaultFulfillWorkspaceCreation(route,policy)
   const req=route.request()
   const headers={...(await req.allHeaders())}
   delete headers['host'];delete headers['content-length']
-  if(realCookieHeader)headers['cookie']=realCookieHeader
+  const cookie=await cookieHeaderFor(context)
+  if(cookie)headers['cookie']=cookie
   const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
   const bytes=Buffer.from(await res.arrayBuffer())
   assert(bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
@@ -72,26 +59,59 @@ const fulfillWorkspaceCreation=async(route,policy)=>{
   await route.fulfill({status:res.status,headers:outHeaders,body:bytes})
   return {status:res.status,admitted:res.ok}
 }
-await mkdir(out, {recursive: true})
-if(privateScope)assert(privateScope.inside(privateScope.profile,await realpath(out)),'Output link escapes fixture')
-let browser
-if(values.connected&&url.protocol==='http:'){
-  const targetPid=Number(values['target-pid'])
-  ownedBrowser=await launchOwnedChromium({executablePath:values.executable,profile:privateScope.profile,env:process.env,origin:url.origin,targetPid,injectCookie:realCookieHeader})
-  browser=ownedBrowser.browser
-}else{
-  browser=await launchChromium(values.executable)
-}
 const records = []
-const imagePage = await browser.newPage()
 const palette = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/theme.json'), 'utf8'))
 // The authenticated fixture returns an empty UI state, selecting the product's default palettes.
 const connectedPalettes = values.connected
   ? JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/palettes.json'), 'utf8'))
   : null
-  const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??(values.connected?'target/rune-web-connected':'target/rune-web')))
-  if(values.mobile)assets.add('/remote-pair')
+const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??(values.connected?'target/rune-web-connected':'target/rune-web')))
+if(values.mobile)assets.add('/remote-pair')
+await mkdir(out, {recursive: true})
 try {
+  if(values.connected){
+    privateScope=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
+    assert(privateScope.inside(privateScope.profile,await realpath(out)),'Output link escapes fixture')
+    currentTargetPid=Number(values['target-pid'])
+    assert(Number.isSafeInteger(currentTargetPid)&&currentTargetPid>0,'Connected web smoke requires --target-pid <owned server PID>')
+    await verifyLoopbackListenerOwner(Number(url.port),currentTargetPid)
+    const rawStorage=JSON.parse(await readFile(values['storage-state'],'utf8'))
+    realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
+    if(url.protocol==='http:'){
+      browserStorageState={
+        ...rawStorage,
+        cookies:(rawStorage?.cookies??[]).map(c=>({...c,value:'fixture-relay-placeholder'})),
+      }
+    }else{
+      browserStorageState=rawStorage
+    }
+    attestedFetch=createAttestedFetch(url.origin,Number(url.port),currentTargetPid,{allowSelfSigned:url.protocol==='https:'})
+    ownedBrowser=await launchOwnedChromium({
+      executablePath:values.executable,
+      profile:privateScope.profile,
+      env:process.env,
+      origin:url.origin,
+      targetPid:currentTargetPid,
+      ...(url.protocol==='http:'?{injectCookie:realCookieHeader}:{}),
+    })
+    browser=ownedBrowser.browser
+  }else{
+    browser=await launchChromium(values.executable)
+  }
+  const imagePage = await browser.newPage()
+  const onRestart = async nextPid => {
+    currentTargetPid = nextPid
+    ownedBrowser?.setTargetPid(nextPid)
+    await attestedFetch?.close().catch(() => {})
+    attestedFetch = createAttestedFetch(url.origin, Number(url.port), currentTargetPid, {allowSelfSigned: url.protocol === 'https:'})
+  }
+  const attestedGet = async (pathname, ctx) => {
+    const cookie = await cookieHeaderFor(ctx)
+    return attestedFetch(new URL(pathname, url).href, {
+      headers: cookie ? {cookie} : undefined,
+      signal: AbortSignal.timeout(15000),
+    })
+  }
   const android=mobileContext(browser)
   const sizes=values.missions||values['git-images']?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
@@ -168,7 +188,7 @@ try {
           assert(routes.length<4000,'Protected browser request bound')
           const entry={at:performance.now(),method:req.method(),path:p,query:requested.search,cookie:true};routes.push(entry)
           if(req.method()==='POST'&&p==='/api/workspaces'){
-            try{Object.assign(entry,await fulfillWorkspaceCreation(route,policy));return}
+            try{Object.assign(entry,await fulfillWorkspaceCreation(route,policy,context));return}
             catch{errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'});return route.abort('blockedbyclient')}
           }
           if(missions&&await missions.route(route,p))return
@@ -181,7 +201,8 @@ try {
           if(typeof attestedFetch!=='undefined'&&attestedFetch){
             const headers={...(await req.allHeaders())}
             delete headers['host'];delete headers['content-length']
-            if(realCookieHeader)headers['cookie']=realCookieHeader
+            const cookie=await cookieHeaderFor(context)
+            if(cookie)headers['cookie']=cookie
             const res=await attestedFetch(req.url(),{method:req.method(),headers,signal:AbortSignal.timeout(15000)})
             const bytes=Buffer.from(await res.arrayBuffer())
             markRecall(res.status)
@@ -714,7 +735,7 @@ try {
           assert(Math.abs(backingWidth-width*measured.viewport.dpr)<=1 && Math.abs(backingHeight-height*measured.viewport.dpr)<=1)
           assert.equal(measured.android.touchScroll.moved,true,'Physical touch dispatch must move the portrait transcript')
           measured.live=await mobileLive({page,context,url,messages,revoke:control,
-            eventSources:()=>eventSource,workspaces:policy.workspaces,fromLink:!values['same-origin-pairing'],tap})
+            eventSources:()=>eventSource,workspaces:policy.workspaces,fromLink:!values['same-origin-pairing'],tap,onRestart,attestedGet})
          }
          assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
         assert.equal(errors.length, 0, 'Web app must initialize and handle multiline input without JS exceptions')
@@ -744,7 +765,7 @@ try {
                return ()=>{held.resolve();holdPreview=undefined}
              },
            })
-          const inventory=async()=>{const response=await context.request.get(new URL('/api/workspaces',url).href);assert(response.ok());const rows=await response.json();assert(Array.isArray(rows)&&rows.length<=128);return rows.map(row=>row.id)}
+          const inventory=async()=>{const response=await attestedGet('/api/workspaces',context);assert(response.ok,`Inventory request failed with status ${response.status}`);const rows=await response.json();assert(Array.isArray(rows)&&rows.length<=128);return rows.map(row=>row.id)}
           const before=await inventory(),owned=[...policy.workspaces],retained=before.filter(id=>!policy.workspaces.has(id))
           assert(owned.length>0&&owned.every(id=>before.includes(id)),'Browser must own its admitted occurrences')
           // Closing a browser context skips pagehide; use the product's ordinary departure first.
@@ -787,8 +808,8 @@ try {
   }
 } finally {
   await attestedFetch?.close().catch(() => {})
-  if (ownedBrowser) await ownedBrowser.close()
-  else await browser.close()
+  if (ownedBrowser) await ownedBrowser.close().catch(() => {})
+  else if (browser) await browser.close().catch(() => {})
   await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
     scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
 }

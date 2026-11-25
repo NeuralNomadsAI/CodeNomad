@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
-import {spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {spawnFixtureChild,stopFixtureChild,fixtureChildPid} from '../../../scripts/native-fixture-guards.mjs'
+import {RELAY_PLACEHOLDER_PASSWORD,createAttestedRelay,stripFixtureServerSecrets} from '../../../scripts/native-fixture-http.mjs'
 import {promisify} from 'node:util'
 import {mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
@@ -425,7 +426,7 @@ Object.assign(env,{CNRS_SERVER_PASSWORD:backendPassword,CNRS_FIXTURE_URL:`http:/
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
-let host,server,log='',client,androidCleanup,result=1,http,expired=false
+let host,server,log='',client,clientRelay,androidCleanup,result=1,http,expired=false
 const webState={diagnostic:''}
 async function startServer(){
   host=launchFixture(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],
@@ -456,27 +457,31 @@ async function restartWeb(previous,uiOrigin){
   assert.equal((await (await http.get('/api/meta')).json()).serverId,serverId)
   const opened=await http.post('/api/workspaces',{data:{path:project}})
   assert(opened.ok())
-  return {http,value:{older,witness:(await opened.json()).id}}
+  return {http,value:{older,witness:(await opened.json()).id,serverPid:await host.pid()}}
 }
 try{
   const origin=await startServer()
+  const serverPid=await host.pid()
+  const clientEnv=stripFixtureServerSecrets(env)
   if(web){
     await signIn(origin)
-    const serverPid=await host.pid()
     await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,serverPid,runLog:host.stdout(),http,mobile,restart:restartWeb,
       webMobile,webAndroid,mobileSessionSearch,historyReturnOnly,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
     client=webState.client
   }else if(pendingOpen){
-    await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
+    await pendingOpenFixture({origin,serverPid,backendPassword,profile,project,env,clientBinary});result=0
   }else if(restoreState){
     if(restoreFileDrafts)await signIn(origin)
+    clientRelay=await createAttestedRelay(origin,serverPid,{requireClientAttestation:true,substitutePassword:backendPassword,isolateSessionCookie:true})
     for(const stage of ['prepare','resume','verify']){
       if(restoreFileDrafts&&stage==='verify')await writeFile(path.join(project,'draft.txt'),'external')
       clientLines=''
-      client=spawnFixtureChild(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:backendPassword,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
+      client=spawnFixtureChild(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...clientEnv,RUNE_BACKEND:`${clientRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
+      const stageClosed=new Promise((resolve,reject)=>{client.on('close',resolve);client.on('error',reject)})
+      clientRelay.allowClientPid(fixtureChildPid(client),stageClosed)
       client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
       const timer=setTimeout(()=>client.kill(),120000)
-      try{result=await new Promise((resolve,reject)=>{client.on('close',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
+      try{result=await stageClosed}finally{clearTimeout(timer)}
       assert.equal(result,0,`Restore stage ${stage}`)
       assert.equal(restoreStages.at(-1)?.stage,stage,'Each process publishes its stage proof')
       if(restoreFileDrafts){
@@ -489,8 +494,11 @@ try{
     }
   }else {
     if(gitPanel)await signIn(origin)
+    clientRelay=await createAttestedRelay(origin,serverPid,{requireClientAttestation:true,substitutePassword:backendPassword,isolateSessionCookie:true})
     const args=gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'
-    client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:backendPassword,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
+    client=spawnFixtureChild(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...clientEnv,RUNE_BACKEND:`${clientRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
+    const clientClosed=new Promise(resolve=>client.once('exit',resolve))
+    clientRelay.allowClientPid(fixtureChildPid(client),clientClosed)
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
@@ -547,6 +555,7 @@ try{
     androidCleanup=await webState.deviceLease.close()
   }
   await webState.mobileAction
+  await clientRelay?.close().catch(()=>{})
   await http?.dispose()
   await stopServer()
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()

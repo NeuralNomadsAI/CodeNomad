@@ -1,16 +1,34 @@
 import assert from 'node:assert/strict'
-import {execFile} from 'node:child_process'
 import {createHash} from 'node:crypto'
 import {existsSync,lstatSync,readFileSync,realpathSync} from 'node:fs'
-import {readdir,readFile,readlink} from 'node:fs/promises'
 import {Agent as HttpAgent,createServer,request as httpRequest} from 'node:http'
 import {createRequire} from 'node:module'
 import net from 'node:net'
 import path from 'node:path'
+import tls from 'node:tls'
 import {fileURLToPath,pathToFileURL} from 'node:url'
-import {promisify} from 'node:util'
+import {
+  attestPeerWithRetry,
+  createClientPidGate,
+  isPidInOwnedTree,
+  pidAlive,
+  processIdentityOf,
+  resolveLoopbackPeerPid,
+  verifyLoopbackConnectionPeer,
+  verifyLoopbackListenerOwner,
+} from './native-fixture-process.mjs'
 
-const execFileAsync=promisify(execFile)
+export {
+  attestPeerWithRetry,
+  createClientPidGate,
+  isPidInOwnedTree,
+  pidAlive,
+  processIdentityOf,
+  resolveLoopbackPeerPid,
+  verifyLoopbackConnectionPeer,
+  verifyLoopbackListenerOwner,
+}
+
 const repoRoot=path.resolve(fileURLToPath(new URL('..',import.meta.url)))
 const repoRootReal=realpathSync(repoRoot)
 const worktreesDir=path.dirname(repoRootReal)
@@ -34,6 +52,63 @@ function sameLockfile(dirA,dirB){
 }
 
 export const RELAY_PLACEHOLDER_PASSWORD='attested-loopback-relay'
+export const RELAY_PLACEHOLDER_COOKIE='fixture-relay-placeholder'
+
+export function parseCookiePairs(header){
+  const map=new Map()
+  if(typeof header!=='string')return map
+  for(const part of header.split(';')){
+    const eq=part.indexOf('=')
+    if(eq<=0)continue
+    const name=part.slice(0,eq).trim()
+    const value=part.slice(eq+1).trim()
+    if(name)map.set(name,value)
+  }
+  return map
+}
+
+export function substitutePlaceholderCookies(cookieHeader,cookieMap){
+  if(typeof cookieHeader!=='string'||!cookieHeader.includes(RELAY_PLACEHOLDER_COOKIE)||!cookieMap.size){
+    return cookieHeader
+  }
+  return cookieHeader.split(';').map(part=>{
+    const trimmed=part.trim()
+    const eq=trimmed.indexOf('=')
+    if(eq<=0)return trimmed
+    const name=trimmed.slice(0,eq).trim()
+    const value=trimmed.slice(eq+1).trim()
+    if(value===RELAY_PLACEHOLDER_COOKIE&&cookieMap.has(name)){
+      return `${name}=${cookieMap.get(name)}`
+    }
+    return trimmed
+  }).join('; ')
+}
+
+export function maskSetCookieHeaders(setCookie,cookieMap){
+  if(!setCookie)return setCookie
+  const list=Array.isArray(setCookie)?setCookie:[setCookie]
+  const masked=[]
+  for(const item of list){
+    const [pair,...attrs]=item.split(';')
+    const eq=pair.indexOf('=')
+    if(eq>0){
+      const name=pair.slice(0,eq).trim()
+      const value=pair.slice(eq+1).trim()
+      if(name){
+        cookieMap.set(name,value)
+        masked.push([`${name}=${RELAY_PLACEHOLDER_COOKIE}`,...attrs].join(';'))
+        continue
+      }
+    }
+    masked.push(item)
+  }
+  return masked
+}
+
+export function stripFixtureServerSecrets(env){
+  return Object.fromEntries(Object.entries(env??{}).filter(([key])=>
+    key!=='CNRS_SERVER_PASSWORD'&&key!=='CNRS_FIXTURE_PASSWORD'&&key!=='CNRS_FIXTURE_URL'))
+}
 
 export function worktreeDependencyRoots(nodeModulesDir=worktreeNodeModules){
   assert(existsSync(nodeModulesDir),'Worktree node_modules is required; parent checkout dependencies are forbidden')
@@ -174,243 +249,27 @@ export function createStreamRedactor(secrets=[]){
   }
 }
 
-const netstatBin=()=>{
-  const systemRoot=process.env.SystemRoot||process.env.WINDIR||'C:\\Windows'
-  assert(/^[A-Za-z]:\\Windows$/i.test(systemRoot),`Unexpected SystemRoot for netstat.exe: ${systemRoot}`)
-  assert(!lstatSync(systemRoot).isSymbolicLink(),`SystemRoot must not be a symbolic link: ${systemRoot}`)
-  const system32=path.win32.join(systemRoot,'System32')
-  assert(!lstatSync(system32).isSymbolicLink(),`System32 must not be a symbolic link: ${system32}`)
-  const candidate=path.win32.join(system32,'netstat.exe')
-  assert(existsSync(candidate)&&!lstatSync(candidate).isSymbolicLink(),`Expected system netstat executable at ${candidate}`)
-  return candidate
-}
-const lsofBin=()=>{
-  for(const candidate of ['/usr/sbin/lsof','/usr/bin/lsof']){
-    if(existsSync(candidate))return candidate
-  }
-  throw Error('Expected system lsof executable at /usr/sbin/lsof or /usr/bin/lsof')
-}
-
 const {Agent,Pool,buildConnector,fetch:undiciFetch}=await import(resolveWorktreePackage('undici'))
 
 const dispatcher=new Agent()
 export const fixtureHttpAgent=new HttpAgent({keepAlive:true,proxyEnv:{}})
 
-export async function verifyLoopbackListenerOwner(port,pid,forbidden='the shared OpenCode service is forbidden'){
-  assert(Number.isSafeInteger(port)&&port>0&&port<=65535,'Invalid loopback port')
-  assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID')
-  if(process.platform==='win32'){
-    const {stdout}=await execFileAsync(netstatBin(),['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
-    const owners=new Set()
-    for(const line of stdout.split(/\r?\n/)){
-      const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+0\.0\.0\.0:0\s+\S+\s+(\d+)\s*$/i.exec(line)
-      if(match&&Number(match[1])===port)owners.add(Number(match[2]))
-    }
-    assert(owners.size===1&&owners.has(pid),`Loopback port 127.0.0.1:${port} is not owned by fixture PID ${pid}; ${forbidden}`)
-    return
-  }
-  if(process.platform==='linux'){
-    const target=`0100007F:${port.toString(16).toUpperCase().padStart(4,'0')}`
-    const table=await readFile('/proc/net/tcp','utf8')
-    const inodes=new Set()
-    for(const line of table.split('\n').slice(1)){
-      const cols=line.trim().split(/\s+/)
-      if(cols[1]===target&&cols[3]==='0A'&&cols[9])inodes.add(`socket:[${cols[9]}]`)
-    }
-    assert.equal(inodes.size,1,`Loopback port 127.0.0.1:${port} must have a single listening socket; ${forbidden}`)
-    const [inode]=inodes
-    let fds
-    try{fds=await readdir(`/proc/${pid}/fd`)}catch{
-      throw Error(`Loopback port 127.0.0.1:${port} is not owned by fixture PID ${pid}; ${forbidden}`)
-    }
-    for(const fd of fds){
-      try{if(await readlink(`/proc/${pid}/fd/${fd}`)===inode)return}catch{}
-    }
-    throw Error(`Loopback port 127.0.0.1:${port} is not owned by fixture PID ${pid}; ${forbidden}`)
-  }
-  const {stdout}=await execFileAsync(lsofBin(),['-nP',`-iTCP:${port}`,'-sTCP:LISTEN','-Fpn'],{timeout:10000})
-  const owners=new Set()
-  let currentPid=null
-  for(const line of stdout.split(/\r?\n/)){
-    if(line.startsWith('p'))currentPid=Number(line.slice(1))
-    else if(line.startsWith('n')&&line.slice(1)===`127.0.0.1:${port}`&&Number.isSafeInteger(currentPid))owners.add(currentPid)
-  }
-  assert(owners.size===1&&owners.has(pid),`Loopback port 127.0.0.1:${port} is not owned by fixture PID ${pid}; ${forbidden}`)
-}
-
-export async function verifyLoopbackConnectionPeer(localPort,remotePort,pid,forbidden='the shared OpenCode service is forbidden'){
-  assert(Number.isSafeInteger(localPort)&&localPort>0&&localPort<=65535,'Invalid local loopback port')
-  assert(Number.isSafeInteger(remotePort)&&remotePort>0&&remotePort<=65535,'Invalid remote loopback port')
-  assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID')
-  if(process.platform==='win32'){
-    const {stdout}=await execFileAsync(netstatBin(),['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
-    const owners=new Set()
-    for(const line of stdout.split(/\r?\n/)){
-      const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+127\.0\.0\.1:(\d+)\s+ESTABLISHED\s+(\d+)\s*$/i.exec(line)
-      if(match&&Number(match[1])===remotePort&&Number(match[2])===localPort)owners.add(Number(match[3]))
-    }
-    assert(owners.size===1&&owners.has(pid),`Established loopback connection 127.0.0.1:${localPort}->127.0.0.1:${remotePort} is not owned by fixture PID ${pid}; ${forbidden}`)
-    return
-  }
-  if(process.platform==='linux'){
-    const localHex=`0100007F:${remotePort.toString(16).toUpperCase().padStart(4,'0')}`
-    const peerHex=`0100007F:${localPort.toString(16).toUpperCase().padStart(4,'0')}`
-    const table=await readFile('/proc/net/tcp','utf8')
-    const inodes=new Set()
-    for(const line of table.split('\n').slice(1)){
-      const cols=line.trim().split(/\s+/)
-      if(cols[1]===localHex&&cols[2]===peerHex&&cols[3]==='01'&&cols[9])inodes.add(`socket:[${cols[9]}]`)
-    }
-    assert.equal(inodes.size,1,`Established loopback connection 127.0.0.1:${localPort}->127.0.0.1:${remotePort} must have a single peer socket; ${forbidden}`)
-    const [inode]=inodes
-    let fds
-    try{fds=await readdir(`/proc/${pid}/fd`)}catch{
-      throw Error(`Established loopback connection 127.0.0.1:${localPort}->127.0.0.1:${remotePort} is not owned by fixture PID ${pid}; ${forbidden}`)
-    }
-    for(const fd of fds){
-      try{if(await readlink(`/proc/${pid}/fd/${fd}`)===inode)return}catch{}
-    }
-    throw Error(`Established loopback connection 127.0.0.1:${localPort}->127.0.0.1:${remotePort} is not owned by fixture PID ${pid}; ${forbidden}`)
-  }
-  const {stdout}=await execFileAsync(lsofBin(),['-nP',`-iTCP:${remotePort}`,'-sTCP:ESTABLISHED','-Fpn'],{timeout:10000})
-  const owners=new Set()
-  let currentPid=null
-  const expected=`127.0.0.1:${remotePort}->127.0.0.1:${localPort}`
-  for(const line of stdout.split(/\r?\n/)){
-    if(line.startsWith('p'))currentPid=Number(line.slice(1))
-    else if(line.startsWith('n')&&line.slice(1)===expected&&Number.isSafeInteger(currentPid))owners.add(currentPid)
-  }
-  assert(owners.size===1&&owners.has(pid),`Established loopback connection 127.0.0.1:${localPort}->127.0.0.1:${remotePort} is not owned by fixture PID ${pid}; ${forbidden}`)
-}
-
-async function attestPeerWithRetry(localPort,remotePort,pid,checkPeer,isClosed){
-  let lastError
-  for(let attempt=0;attempt<6;attempt++){
-    if(isClosed())throw Error('Attested transport is closed')
-    try{
-      await checkPeer(localPort,remotePort,pid)
-      return
-    }catch(error){
-      lastError=error
-      if(attempt<5&&!isClosed())await new Promise(resolve=>setTimeout(resolve,20))
-    }
-  }
-  throw lastError
-}
-
-function pidAlive(pid){
-  if(!Number.isSafeInteger(pid)||pid<=0)return false
-  try{process.kill(pid,0);return true}catch(error){return error.code==='EPERM'}
-}
-
-const psSystemBin=()=>['/bin/ps','/usr/bin/ps'].find(candidate=>existsSync(candidate))
-
-async function processIdentityOf(pid){
-  if(!Number.isSafeInteger(pid)||pid<=0)return null
-  if(process.platform==='linux'){
-    try{
-      const statText=await readFile(`/proc/${pid}/stat`,'utf8')
-      const closeParen=statText.lastIndexOf(')')
-      if(closeParen<0)return null
-      const fields=statText.slice(closeParen+2).trim().split(/\s+/)
-      const ppid=Number(fields[1])
-      const startId=fields[19]
-      if(!Number.isSafeInteger(ppid)||ppid<=0||!startId)return null
-      return {ppid,startId}
-    }catch{return null}
-  }
-  if(process.platform==='win32'){
-    const systemRoot=process.env.SystemRoot||process.env.WINDIR||'C:\\Windows'
-    const powershell=path.win32.join(systemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe')
-    if(!existsSync(powershell)||lstatSync(powershell).isSymbolicLink())return null
-    try{
-      const {stdout}=await execFileAsync(powershell,['-NoProfile','-NonInteractive','-Command',`$p=Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}'; if($p){"$($p.ParentProcessId)|$($p.CreationDate.ToUniversalTime().Ticks)"}`],{timeout:5000,windowsHide:true})
-      const [rawPpid,startId]=stdout.trim().split('|')
-      const ppid=Number(rawPpid)
-      if(!Number.isSafeInteger(ppid)||ppid<=0||!startId)return null
-      return {ppid,startId}
-    }catch{return null}
-  }
-  const psBin=psSystemBin()
-  if(!psBin)return null
-  try{
-    const {stdout}=await execFileAsync(psBin,['-o','ppid=,lstart=','-p',String(pid)],{timeout:5000})
-    const trimmed=stdout.trim()
-    const match=/^(\d+)\s+(.+)$/.exec(trimmed)
-    if(!match)return null
-    const ppid=Number(match[1])
-    const startId=match[2].trim()
-    if(!Number.isSafeInteger(ppid)||ppid<=0||!startId)return null
-    return {ppid,startId}
-  }catch{return null}
-}
-
-async function isPidInOwnedTree(peerPid,rootPid){
-  const peerInfo=await processIdentityOf(peerPid)
-  if(!peerInfo)return null
-  if(peerPid===rootPid)return peerInfo.startId
-  let current=peerInfo.ppid
-  if(current===rootPid)return peerInfo.startId
-  for(let depth=1;depth<8&&current>1;depth++){
-    const info=await processIdentityOf(current)
-    if(!info||info.ppid===current)return null
-    if(info.ppid===rootPid)return peerInfo.startId
-    current=info.ppid
-  }
-  return null
-}
-
-async function resolveLoopbackPeerPid(localPort,remotePort){
-  if(process.platform==='win32'){
-    const {stdout}=await execFileAsync(netstatBin(),['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
-    const owners=new Set()
-    for(const line of stdout.split(/\r?\n/)){
-      const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+127\.0\.0\.1:(\d+)\s+ESTABLISHED\s+(\d+)\s*$/i.exec(line)
-      if(match&&Number(match[1])===remotePort&&Number(match[2])===localPort)owners.add(Number(match[3]))
-    }
-    return owners.size===1?[...owners][0]:null
-  }
-  if(process.platform==='linux'){
-    const peerAddr=`0100007F:${remotePort.toString(16).toUpperCase().padStart(4,'0')}`
-    const localAddr=`0100007F:${localPort.toString(16).toUpperCase().padStart(4,'0')}`
-    const table=await readFile('/proc/net/tcp','utf8')
-    const inodes=new Set()
-    for(const line of table.split('\n').slice(1)){
-      const cols=line.trim().split(/\s+/)
-      if(cols.length>=10&&cols[1]===peerAddr&&cols[2]===localAddr&&cols[3]==='01')inodes.add(`socket:[${cols[9]}]`)
-    }
-    if(inodes.size!==1)return null
-    const [inode]=inodes
-    const entries=await readdir('/proc').catch(()=>[])
-    for(const entry of entries){
-      if(!/^\d+$/.test(entry))continue
-      const fds=await readdir(`/proc/${entry}/fd`).catch(()=>[])
-      for(const fd of fds){
-        try{if(await readlink(`/proc/${entry}/fd/${fd}`)===inode)return Number(entry)}catch{}
-      }
-    }
-    return null
-  }
-  const {stdout}=await execFileAsync(lsofBin(),['-nP',`-iTCP:${remotePort}`,'-sTCP:ESTABLISHED','-Fpn'],{timeout:10000})
-  const owners=new Set()
-  let currentPid=null
-  const expected=`127.0.0.1:${remotePort}->127.0.0.1:${localPort}`
-  for(const line of stdout.split(/\r?\n/)){
-    if(line.startsWith('p'))currentPid=Number(line.slice(1))
-    else if(line.startsWith('n')&&line.slice(1)===expected&&Number.isSafeInteger(currentPid))owners.add(currentPid)
-  }
-  return owners.size===1?[...owners][0]:null
-}
-
 export async function originGuardProxy(localOrigin,targetPid,options={}){
   const {requireClientAttestation=false,allowDescendants=false,allowedClientPids=[],injectCookie}=options
   if(!Number.isSafeInteger(targetPid)||targetPid<=0)throw Error('Attested origin guard target PID required')
   const base=new URL(localOrigin)
-  const agent=createAttestedHttpAgent(Number(base.port),targetPid)
+  assert(['http:','https:'].includes(base.protocol)&&base.hostname==='127.0.0.1'&&base.port,'Expected a loopback HTTP(S) origin for originGuardProxy')
+  const isHttps=base.protocol==='https:'
+  const targetPort=Number(base.port)
+  let currentTargetPid=targetPid
+  let closed=false
+  let agent=isHttps?null:createAttestedHttpAgent(targetPort,currentTargetPid)
+  const injectCookieMap=parseCookiePairs(injectCookie)
   let proxyPort=0
   const clientGate=createClientPidGate(()=>proxyPort,verifyLoopbackConnectionPeer,{allowDescendants})
   for(const clientPid of allowedClientPids)clientGate.allow(clientPid)
   const detachedSockets=new Set()
+  const tunnelSockets=new Set()
   const rejectDetached=(_req,socket)=>{
     detachedSockets.add(socket)
     socket.once('close',()=>detachedSockets.delete(socket))
@@ -418,6 +277,7 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
     socket.end('HTTP/1.1 403 Forbidden\r\n\r\n',()=>{try{socket.destroy()}catch{}})
   }
   const server=createServer(async(req,res)=>{
+    if(isHttps){res.writeHead(403);res.end('HTTPS origin requires CONNECT tunnel');return}
     let target
     try{target=new URL(req.url,localOrigin)}catch{res.writeHead(403);res.end();return}
     if(target.origin!==localOrigin){res.writeHead(403);res.end('Foreign browser origin forbidden');return}
@@ -429,7 +289,9 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
     }
     const headers={...req.headers}
     delete headers['proxy-connection']
-    if(injectCookie)headers.cookie=injectCookie
+    if(injectCookieMap.size&&typeof headers.cookie==='string'){
+      headers.cookie=substitutePlaceholderCookies(headers.cookie,injectCookieMap)
+    }
     const upstream=httpRequest(target,{agent,method:req.method,headers:{...headers,host:target.host}},response=>{
       const location=response.headers.location
       if(response.statusCode>=300&&response.statusCode<400&&location){
@@ -451,18 +313,74 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
     res.on('close',()=>upstream.destroy())
     req.pipe(upstream)
   })
-  server.on('connect',rejectDetached)
+  server.on('connect',(req,socket,head)=>{
+    if(!isHttps||req.url!==`127.0.0.1:${targetPort}`){
+      rejectDetached(req,socket)
+      return
+    }
+    let upstream
+    const teardown=(status)=>{
+      if(status&&!socket.destroyed){
+        socket.end(`HTTP/1.1 ${status}\r\n\r\n`,()=>{try{socket.destroy()}catch{}})
+      }else{
+        try{socket.destroy()}catch{}
+      }
+      try{upstream?.destroy()}catch{}
+    }
+    tunnelSockets.add(socket)
+    socket.once('close',()=>{tunnelSockets.delete(socket);try{upstream?.destroy()}catch{}})
+    socket.once('error',()=>teardown())
+    if(closed){teardown('503 Service Unavailable');return}
+    socket.pause()
+    const pid=currentTargetPid
+    const gate=requireClientAttestation?clientGate.verify(socket):Promise.resolve(true)
+    gate.then(allowed=>{
+      if(!allowed||closed||socket.destroyed){teardown('403 Forbidden');return}
+      return verifyLoopbackListenerOwner(targetPort,pid).then(()=>{
+        if(closed||socket.destroyed||pid!==currentTargetPid){teardown('502 Bad Gateway');return}
+        upstream=net.createConnection({host:'127.0.0.1',port:targetPort})
+        tunnelSockets.add(upstream)
+        upstream.once('close',()=>{tunnelSockets.delete(upstream);try{socket.destroy()}catch{}})
+        upstream.once('error',()=>teardown('502 Bad Gateway'))
+        upstream.once('connect',()=>{
+          if(closed||socket.destroyed||upstream.destroyed||!upstream.localPort||pid!==currentTargetPid){
+            teardown('502 Bad Gateway');return
+          }
+          attestPeerWithRetry(upstream.localPort,targetPort,pid,verifyLoopbackConnectionPeer,()=>closed||socket.destroyed||upstream.destroyed||pid!==currentTargetPid).then(()=>{
+            if(closed||socket.destroyed||upstream.destroyed||pid!==currentTargetPid){teardown('502 Bad Gateway');return}
+            socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+            if(head?.length)upstream.write(head)
+            socket.pipe(upstream)
+            upstream.pipe(socket)
+            socket.resume()
+          },()=>teardown('502 Bad Gateway'))
+        })
+      },()=>teardown('502 Bad Gateway'))
+    },()=>teardown('403 Forbidden')).catch(()=>teardown('502 Bad Gateway'))
+  })
   server.on('upgrade',rejectDetached)
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
   proxyPort=server.address().port
   return {
     port:proxyPort,
     allowClientPid:clientGate.allow,
+    setTargetPid(nextPid){
+      assert(Number.isSafeInteger(nextPid)&&nextPid>0,'Attested origin guard target PID required')
+      currentTargetPid=nextPid
+      for(const socket of [...tunnelSockets]){try{socket.destroy()}catch{}}
+      tunnelSockets.clear()
+      if(!isHttps){
+        agent?.destroy()
+        agent=createAttestedHttpAgent(targetPort,currentTargetPid)
+      }
+    },
     close:()=>{
+      closed=true
       clientGate.close()
-      for(const socket of [...detachedSockets]){try{socket.destroy()}catch{}}
+      for(const socket of [...detachedSockets,...tunnelSockets]){try{socket.destroy()}catch{}}
       detachedSockets.clear()
-      agent.destroy()
+      tunnelSockets.clear()
+      agent?.destroy()
       server.closeAllConnections()
       return new Promise(resolve=>server.close(resolve))
     },
@@ -472,9 +390,15 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
 let attestedConnectDepth=0
 export function isInsideAttestedConnect(){return attestedConnectDepth>0}
 
-export function createAttestedPool(origin,port,pid,verifyOwner=verifyLoopbackListenerOwner,verifyPeer){
-  const checkPeer=verifyPeer??(verifyOwner===verifyLoopbackListenerOwner?verifyLoopbackConnectionPeer:(_local,remote,expectedPid)=>verifyOwner(remote,expectedPid))
-  const connector=buildConnector({})
+export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLoopbackListenerOwner,verifyPeerArg){
+  const opts=typeof verifyOwnerOrOptions==='function'
+    ?{verifyOwner:verifyOwnerOrOptions,verifyPeer:verifyPeerArg}
+    :(verifyOwnerOrOptions??{})
+  const verifyOwner=opts.verifyOwner??verifyLoopbackListenerOwner
+  const checkPeer=opts.verifyPeer??(verifyOwner===verifyLoopbackListenerOwner?verifyLoopbackConnectionPeer:(_local,remote,expectedPid)=>verifyOwner(remote,expectedPid))
+  const allowSelfSigned=opts.allowSelfSigned===true
+  const isHttps=new URL(origin).protocol==='https:'
+  const connector=isHttps?null:buildConnector({})
   let closed=false
   const pendingSockets=new Set()
   const pool=new Pool(origin,{
@@ -486,6 +410,38 @@ export function createAttestedPool(origin,port,pid,verifyOwner=verifyLoopbackLis
         if(closed){cb(Error('Attested pool is closed'),null);return}
         attestedConnectDepth++
         try{
+          if(isHttps){
+            const tcpSocket=net.createConnection({host:'127.0.0.1',port})
+            let settled=false
+            const done=(err,sock)=>{
+              if(settled)return
+              settled=true
+              tcpSocket.off('close',onEarlyClose)
+              tcpSocket.off('error',onEarlyError)
+              pendingSockets.delete(entry)
+              if(err){try{tcpSocket.destroy()}catch{}}
+              cb(err,sock)
+            }
+            const onEarlyClose=()=>done(Error('Socket closed during peer attestation'),null)
+            const onEarlyError=err=>done(err,null)
+            const entry={socket:tcpSocket,fail:err=>done(err,null)}
+            pendingSockets.add(entry)
+            tcpSocket.once('close',onEarlyClose)
+            tcpSocket.once('error',onEarlyError)
+            tcpSocket.once('connect',()=>{
+              if(closed||tcpSocket.destroyed||!tcpSocket.localPort){
+                done(Error('Socket connection closed before peer attestation'),null)
+                return
+              }
+              attestPeerWithRetry(tcpSocket.localPort,port,pid,checkPeer,()=>closed||tcpSocket.destroyed).then(()=>{
+                if(closed||tcpSocket.destroyed){done(Error('Socket closed during peer attestation'),null);return}
+                const tlsSocket=tls.connect({socket:tcpSocket,servername:'127.0.0.1',rejectUnauthorized:!allowSelfSigned})
+                tlsSocket.once('secureConnect',()=>done(null,tlsSocket))
+                tlsSocket.once('error',err=>done(err,null))
+              },postError=>done(postError,null))
+            })
+            return
+          }
           connector(opts,(error,socket)=>{
             if(closed||error||!socket||socket.destroyed||!socket.localPort){
               try{socket?.destroy()}catch{}
@@ -526,14 +482,14 @@ export function createAttestedPool(origin,port,pid,verifyOwner=verifyLoopbackLis
   return {pool,close}
 }
 
-export function createAttestedFetch(origin,port,pid,verifyOwner=verifyLoopbackListenerOwner,verifyPeer){
-  const {pool,close}=createAttestedPool(origin,port,pid,verifyOwner,verifyPeer)
+export function createAttestedFetch(origin,port,pid,verifyOwnerOrOptions=verifyLoopbackListenerOwner,verifyPeerArg){
+  const {pool,close}=createAttestedPool(origin,port,pid,verifyOwnerOrOptions,verifyPeerArg)
   const fetchBound=(input,init={})=>{
     if(input instanceof Request){
       const {url,method,headers,body,signal}=input
       return fetchBound(url,{method,headers,body,signal,...init})
     }
-    return undiciFetch(input,{...init,duplex:'half',dispatcher:pool,redirect:'error'})
+    return undiciFetch(input,{...init,duplex:'half',dispatcher:pool,redirect:init.redirect??'error'})
   }
   fetchBound.close=close
   return fetchBound
@@ -592,206 +548,6 @@ export function createAttestedHttpAgent(port,pid,verifyOwner=verifyLoopbackListe
     originalDestroy()
   }
   return agent
-}
-
-function isLoopbackIpv4Address(addr){
-  return addr==='127.0.0.1'||addr==='::ffff:127.0.0.1'
-}
-
-export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionPeer,options={}) {
-  const {allowDescendants=false}=options
-  const allowedEntries=new Map()
-  const pendingPids=new Set()
-  const attestedSockets=new WeakMap()
-  const socketsByPid=new Map()
-  const descendantEntries=new Map()
-  let sweepTimer=null,sweeping=false
-  const isAllowed=pid=>{
-    const entry=allowedEntries.get(pid)
-    return Boolean(entry&&entry.tokens.size>0&&entry.startId&&pidAlive(pid))
-  }
-  const hasTrackedSockets=()=>socketsByPid.size>0||descendantEntries.size>0
-  const stopSweepIfIdle=()=>{
-    if(sweepTimer&&!hasTrackedSockets()){clearInterval(sweepTimer);sweepTimer=null}
-  }
-  const destroyDescendant=peerPid=>{
-    const entry=descendantEntries.get(peerPid)
-    if(!entry)return
-    descendantEntries.delete(peerPid)
-    for(const socket of [...entry.sockets]){try{socket.destroy()}catch{}}
-    stopSweepIfIdle()
-  }
-  const destroyPidSockets=pid=>{
-    const set=socketsByPid.get(pid)
-    if(set){
-      socketsByPid.delete(pid)
-      for(const socket of [...set]){try{socket.destroy()}catch{}}
-    }
-    for(const [peerPid,entry] of [...descendantEntries.entries()]){
-      if(entry.rootPid===pid)destroyDescendant(peerPid)
-    }
-    stopSweepIfIdle()
-  }
-  const ensureSweep=()=>{
-    if(sweepTimer||!hasTrackedSockets())return
-    sweepTimer=setInterval(()=>{
-      if(sweeping||!hasTrackedSockets())return
-      sweeping=true
-      void (async()=>{
-        try{
-          for(const rootPid of [...socketsByPid.keys()]){
-            const allowed=allowedEntries.get(rootPid)
-            if(!allowed||allowed.tokens.size===0||!allowed.startId||!pidAlive(rootPid)){
-              allowedEntries.delete(rootPid);destroyPidSockets(rootPid);continue
-            }
-            const info=await processIdentityOf(rootPid).catch(()=>null)
-            if(!info||info.startId!==allowed.startId){
-              allowedEntries.delete(rootPid);destroyPidSockets(rootPid)
-            }
-          }
-          for(const [peerPid,entry] of [...descendantEntries.entries()]){
-            const rootAllowed=allowedEntries.get(entry.rootPid)
-            if(!isAllowed(entry.rootPid)||!pidAlive(peerPid)){destroyDescendant(peerPid);continue}
-            const rootInfo=await processIdentityOf(entry.rootPid).catch(()=>null)
-            if(!rootInfo||rootInfo.startId!==rootAllowed.startId){
-              allowedEntries.delete(entry.rootPid);destroyPidSockets(entry.rootPid);continue
-            }
-            const currentStart=await isPidInOwnedTree(peerPid,entry.rootPid).catch(()=>null)
-            if(!currentStart||currentStart!==entry.startId)destroyDescendant(peerPid)
-          }
-        }finally{sweeping=false;stopSweepIfIdle()}
-      })()
-    },500)
-    sweepTimer.unref?.()
-  }
-  const trackSocket=(rootPid,peerPid,startId,socket)=>{
-    let set=socketsByPid.get(rootPid)
-    if(!set){set=new Set();socketsByPid.set(rootPid,set)}
-    set.add(socket)
-    let descEntry=null
-    if(allowDescendants&&peerPid!==rootPid){
-      descEntry=descendantEntries.get(peerPid)
-      if(descEntry&&descEntry.startId!==startId){destroyDescendant(peerPid);descEntry=null}
-      if(!descEntry){descEntry={rootPid,startId,sockets:new Set()};descendantEntries.set(peerPid,descEntry)}
-      descEntry.sockets.add(socket)
-    }
-    ensureSweep()
-    socket.once('close',()=>{
-      const current=socketsByPid.get(rootPid)
-      if(current){current.delete(socket);if(current.size===0)socketsByPid.delete(rootPid)}
-      if(descEntry){
-        descEntry.sockets.delete(socket)
-        if(descEntry.sockets.size===0)descendantEntries.delete(peerPid)
-      }
-      stopSweepIfIdle()
-    })
-  }
-  const allow=(pidOrPromise,exitPromise)=>{
-    const token=Symbol('relay-client')
-    let revoked=false,resolvedPid=null
-    const revoke=()=>{
-      if(revoked)return
-      revoked=true
-      if(resolvedPid!==null){
-        const entry=allowedEntries.get(resolvedPid)
-        if(entry){
-          entry.tokens.delete(token)
-          if(entry.tokens.size===0){
-            allowedEntries.delete(resolvedPid)
-            destroyPidSockets(resolvedPid)
-          }
-        }
-      }
-    }
-    const task=Promise.resolve(pidOrPromise).then(async resolved=>{
-      if(revoked||!Number.isSafeInteger(resolved)||resolved<=0)return
-      const info=await processIdentityOf(resolved).catch(()=>null)
-      if(revoked||!info?.startId||!pidAlive(resolved))return
-      resolvedPid=resolved
-      let entry=allowedEntries.get(resolved)
-      if(entry&&entry.startId!==info.startId){
-        destroyPidSockets(resolved)
-        entry=null
-      }
-      if(!entry){entry={tokens:new Set(),startId:info.startId};allowedEntries.set(resolved,entry)}
-      entry.tokens.add(token)
-    },()=>{})
-    pendingPids.add(task)
-    void task.finally(()=>pendingPids.delete(task))
-    if(exitPromise)void Promise.resolve(exitPromise).finally(revoke)
-    return Object.assign(task,{revoke})
-  }
-  const verify=async socket=>{
-    if(socket.destroyed)return false
-    if(!isLoopbackIpv4Address(socket.localAddress)||!isLoopbackIpv4Address(socket.remoteAddress))return false
-    const known=attestedSockets.get(socket)
-    if(known!==undefined){
-      const rootEntry=allowedEntries.get(known.rootPid)
-      const rootValid=Boolean(rootEntry&&rootEntry.tokens.size>0&&rootEntry.startId&&pidAlive(known.rootPid)&&rootEntry.startId===known.rootStartId)
-      const descValid=!allowDescendants||known.peerPid===known.rootPid
-        ||descendantEntries.get(known.peerPid)?.startId===known.startId
-      if(rootValid&&pidAlive(known.peerPid)&&descValid)return true
-      if(known.peerPid!==known.rootPid)destroyDescendant(known.peerPid)
-      else destroyPidSockets(known.rootPid)
-      socket.destroy()
-      return false
-    }
-    if(pendingPids.size>0)await Promise.allSettled([...pendingPids])
-    const localPort=getPort()
-    const remotePort=socket.remotePort
-    if(!localPort||!remotePort||!allowedEntries.size||socket.destroyed)return false
-    for(let attempt=0;attempt<6;attempt++){
-      if(socket.destroyed)return false
-      const candidates=[...allowedEntries.keys()].filter(isAllowed)
-      if(!candidates.length)return false
-      if(allowDescendants&&verifyPeer===verifyLoopbackConnectionPeer){
-        const peerPid=await resolveLoopbackPeerPid(localPort,remotePort).catch(()=>null)
-        if(peerPid&&pidAlive(peerPid)){
-          for(const rootPid of candidates){
-            const rootEntry=allowedEntries.get(rootPid)
-            if(!rootEntry?.startId)continue
-            const rootInfo=await processIdentityOf(rootPid).catch(()=>null)
-            if(!rootInfo||rootInfo.startId!==rootEntry.startId){
-              allowedEntries.delete(rootPid);destroyPidSockets(rootPid);continue
-            }
-            const startId=await isPidInOwnedTree(peerPid,rootPid)
-            if(startId&&isAllowed(rootPid)&&!socket.destroyed){
-              if(peerPid===rootPid&&rootEntry.startId!==startId)continue
-              attestedSockets.set(socket,{rootPid,rootStartId:rootEntry.startId,peerPid,startId})
-              trackSocket(rootPid,peerPid,startId,socket)
-              return true
-            }
-          }
-        }
-      }else{
-        try{
-          const matchedPid=await Promise.any(candidates.map(clientPid=>
-            verifyPeer(localPort,remotePort,clientPid).then(()=>clientPid)))
-          if(socket.destroyed||!isAllowed(matchedPid))return false
-          const rootEntry=allowedEntries.get(matchedPid)
-          if(!rootEntry?.startId)return false
-          const info=await processIdentityOf(matchedPid).catch(()=>null)
-          if(!info||info.startId!==rootEntry.startId){
-            allowedEntries.delete(matchedPid);destroyPidSockets(matchedPid);return false
-          }
-          attestedSockets.set(socket,{rootPid:matchedPid,rootStartId:rootEntry.startId,peerPid:matchedPid,startId:rootEntry.startId})
-          trackSocket(matchedPid,matchedPid,rootEntry.startId,socket)
-          return true
-        }catch{}
-      }
-      if(attempt<5&&!socket.destroyed)await new Promise(resolve=>setTimeout(resolve,20))
-    }
-    return false
-  }
-  const close=()=>{
-    if(sweepTimer){clearInterval(sweepTimer);sweepTimer=null}
-    for(const pid of [...allowedEntries.keys()]){
-      allowedEntries.delete(pid)
-      destroyPidSockets(pid)
-    }
-    for(const peerPid of [...descendantEntries.keys()])destroyDescendant(peerPid)
-  }
-  return {allow,verify,close}
 }
 
 export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verifyPeerArg){
@@ -863,7 +619,7 @@ export async function createAttestedRelay(targetOrigin,pid,options){
   assert(base.protocol==='http:'&&base.hostname==='127.0.0.1'&&base.port,'Expected a loopback HTTP target for attested relay')
   const agent=createAttestedHttpAgent(Number(base.port),pid)
   let relayPort=0
-  let relaySessionCookie=null
+  const relayCookieMap=new Map()
   const clientGate=createClientPidGate(()=>relayPort)
   const server=createServer(async(req,res)=>{
     const url=relayTarget(req,res,base.origin)
@@ -886,7 +642,9 @@ export async function createAttestedRelay(targetOrigin,pid,options){
     if(onRequest&&onRequest(req,res,url)===false)return
     const headers={...req.headers,host:url.host}
     if(injectAuthorization)headers.authorization=injectAuthorization
-    if(isolateSessionCookie&&relaySessionCookie)headers.cookie=relaySessionCookie
+    if(isolateSessionCookie&&typeof headers.cookie==='string'){
+      headers.cookie=substitutePlaceholderCookies(headers.cookie,relayCookieMap)
+    }
     const handleResponse=response=>{
       if(response.statusCode>=300&&response.statusCode<400){
         response.destroy()
@@ -896,20 +654,7 @@ export async function createAttestedRelay(targetOrigin,pid,options){
       }
       const outHeaders={...response.headers}
       if(isolateSessionCookie&&outHeaders['set-cookie']){
-        const list=Array.isArray(outHeaders['set-cookie'])?outHeaders['set-cookie']:[outHeaders['set-cookie']]
-        const pairs=[],masked=[]
-        for(const item of list){
-          const [pair,...attrs]=item.split(';')
-          const eq=pair.indexOf('=')
-          if(eq>0){
-            pairs.push(pair.trim())
-            masked.push([`${pair.slice(0,eq).trim()}=fixture-relay-placeholder`,...attrs].join(';'))
-          }
-        }
-        if(pairs.length){
-          relaySessionCookie=pairs.join('; ')
-          outHeaders['set-cookie']=masked
-        }
+        outHeaders['set-cookie']=maskSetCookieHeaders(outHeaders['set-cookie'],relayCookieMap)
       }
       res.writeHead(response.statusCode,outHeaders)
       response.on('close',()=>{if(!response.complete)res.destroy()})

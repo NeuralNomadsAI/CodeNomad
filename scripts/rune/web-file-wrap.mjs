@@ -1,21 +1,20 @@
 import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {chromium} from 'playwright'
-import {bundleAssetPaths, fulfillWorkspaceCreation, workspacePolicy} from './web-workspace-policy.mjs'
+import {bundleAssetPaths, workspacePolicy} from './web-workspace-policy.mjs'
 
 const file='wrap.txt', key='opencode-session-right-panel-files-word-wrap-v1'
 const windowKey='codenomad.rune.alpha.client-state.v1'
 const wrapKey=on=>`instanceShell.filesShell.${on?'disable':'enable'}WordWrap`
 
-export async function fileWrapBrowser({values,m,out,storage,url,root}) {
+export async function fileWrapBrowser({values,m,out,browser,storageState,fulfillWorkspaceCreation,url,root}) {
+  assert(browser&&typeof fulfillWorkspaceCreation==='function','Attested browser and fulfillWorkspaceCreation required for fileWrapBrowser')
   const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected'))
   const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
-  const browser=await chromium.launch({headless:true,executablePath:values.executable,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
   const proof={headless:true,origin:url.origin,stages:[],refused:[],reads:[],errors:[]}
   let context
   try {
-    context=await browser.newContext({viewport:{width:1280,height:900},colorScheme:'light',storageState:storage})
+    context=await browser.newContext({viewport:{width:1280,height:900},colorScheme:'light',storageState})
     await context.route('**/*',async route=>{
       const req=route.request(),u=new URL(req.url()),p=u.pathname
       let allowed=await policy.request(req)
@@ -135,7 +134,6 @@ export async function fileWrapBrowser({values,m,out,storage,url,root}) {
     throw error
   }finally{
     try{await context?.close()}finally{
-      await browser.close()
       await writeFile(path.join(out,'file-wrap-proof.json'),JSON.stringify(proof,null,2))
     }
   }

@@ -1,17 +1,26 @@
 import assert from 'node:assert/strict'
 import {appendFile,writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {chromium} from 'playwright'
 
-export async function pendingBrowser({values,m,out,storage}) {
+export async function pendingBrowser({values,m,out,browser,storageState,realCookieHeader,attestedFetch}) {
+  assert(browser&&typeof attestedFetch==='function','Attested browser and attestedFetch required for pendingBrowser')
   const origin=new URL(values.url).origin,results=[]
-  const browser=await chromium.launch({headless:true,executablePath:values.executable,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
+  const authHeaders=realCookieHeader?{cookie:realCookieHeader}:{}
+  const forwardRoute=async route=>{
+    const req=route.request()
+    const headers={...(await req.allHeaders())}
+    delete headers['host'];delete headers['content-length']
+    if(realCookieHeader)headers['cookie']=realCookieHeader
+    const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
+    const body=Buffer.from(await res.arrayBuffer())
+    return {status:res.status,headers:Object.fromEntries(res.headers.entries()),body,json:()=>JSON.parse(body.toString('utf8'))}
+  }
   try {for(const mode of ['post','ack','quota','corrupt']) {
     let held,oldClaim,oldRecord,created=0,heldRoute,heldResponse,heldBody,latePostStatus
     const owned=new Set(),network=[]
     const stage=async value=>writeFile(path.join(out,`pending-${mode}-stage.json`),JSON.stringify({stage:value,network},null,2))
     const base=origin+'/'
-    const context=await browser.newContext({viewport:{width:1100,height:900},storageState:storage})
+    const context=await browser.newContext({viewport:{width:1100,height:900},storageState})
     await context.route(`${origin}/api/workspaces`,async route=>{
       const req=route.request();if(req.method()!=='POST')return route.continue()
       const body=req.postDataJSON();assert.equal(body.path,values.project);assert.equal(typeof body.requestId,'string')
@@ -19,11 +28,11 @@ export async function pendingBrowser({values,m,out,storage}) {
       if(created===2){
         oldClaim=body.requestId;heldRoute=route;heldBody=body
         if(mode==='post'){held=true;return}
-        heldResponse=await route.fetch({maxRedirects:0});assert.equal(heldResponse.status(),201)
-        oldRecord=(await heldResponse.json()).id;owned.add(oldRecord);held=true;return
+        heldResponse=await forwardRoute(route);assert.equal(heldResponse.status,201)
+        oldRecord=heldResponse.json().id;owned.add(oldRecord);held=true;return
       }
-      const response=await route.fetch({maxRedirects:0});assert.equal(response.status(),201)
-      owned.add((await response.json()).id);await route.fulfill({response})
+      const response=await forwardRoute(route);assert.equal(response.status,201)
+      owned.add(response.json().id);await route.fulfill({status:response.status,headers:response.headers,body:response.body})
     })
     const page=await context.newPage();page.setDefaultTimeout(20000)
     let errors=0
@@ -43,7 +52,7 @@ export async function pendingBrowser({values,m,out,storage}) {
     const press=async locator=>{await locator.waitFor({state:'attached'});for(const end=Date.now()+20000;await locator.evaluate(el=>el.disabled||el.getAttribute('aria-disabled')==='true');){assert(Date.now()<end,'control disabled');await page.waitForTimeout(20)}await locator.click({force:true})}
     const boot=()=>page.waitForFunction(()=>globalThis.__codenomadRuneBoot?.state==='ready',undefined,{timeout:60000})
     const type=async(label,text)=>{for(let i=0;i<64;i++){const field=page.locator('textarea:focus');if(await field.count()&&await field.getAttribute('aria-label')===label){await field.fill(text);return}await page.keyboard.press('Tab');await page.waitForTimeout(20)}throw Error('Missing product field')}
-    const inventory=async()=>{const r=await context.request.get(`${origin}/api/workspaces`);assert(r.ok());return (await r.json()).map(r=>r.id)}
+    const inventory=async()=>{const r=await attestedFetch(`${origin}/api/workspaces`,{headers:authHeaders,signal:AbortSignal.timeout(15000)});assert(r.ok);return (await r.json()).map(row=>row.id)}
     try {
       await stage('boot');await page.goto(base+'?locale=fr',{waitUntil:'domcontentloaded',timeout:60000});await boot()
       await stage('connect');await press(button(m['folderSelection.servers.dialog.connect']))
@@ -56,8 +65,8 @@ export async function pendingBrowser({values,m,out,storage}) {
       if(mode==='quota')await page.evaluate(()=>globalThis.__pendingQuota=true)
       await stage('reload-held');await page.reload({waitUntil:'domcontentloaded'});await boot();await stage('reloaded')
       if(mode==='post'){
-        const late=await context.request.post(`${origin}/api/workspaces`,{data:heldBody})
-        latePostStatus=late.status();assert.equal(latePostStatus,400,'early cancellation fences the delayed exact POST')
+        const late=await attestedFetch(`${origin}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',...authHeaders},body:JSON.stringify(heldBody),signal:AbortSignal.timeout(15000)})
+        latePostStatus=late.status;assert.equal(latePostStatus,400,'early cancellation fences the delayed exact POST')
       }
       await heldRoute.abort().catch(()=>{})
       let after;for(const end=Date.now()+5000;;){after=await inventory();if(!after.includes(oldRecord)&&after.length===(['quota','corrupt'].includes(mode)?1:0))break;assert(Date.now()<end,'departure cleanup inventory');await page.waitForTimeout(30)}
@@ -80,10 +89,8 @@ export async function pendingBrowser({values,m,out,storage}) {
       results.push({mode,before:before.length,after:after.length,successorProtected:true,oldClaimDispatched:true,receiptUnavailableAtDeparture:true,departedDocumentReceiptDelivered:false,latePostStatus,proof,network})
     }catch(error){await writeFile(path.join(out,`pending-${mode}-failure.yml`),await page.locator('body').ariaSnapshot().catch(()=>''));await stage(String(error));throw error}finally {
       await context.close()
-      const cleanup=await browser.newContext({storageState:storage})
-      for(const id of owned){const r=await cleanup.request.delete(`${origin}/api/workspaces/${id}`);assert(r.ok())}
-      await cleanup.close()
+      for(const id of owned){const r=await attestedFetch(`${origin}/api/workspaces/${id}`,{method:'DELETE',headers:authHeaders,signal:AbortSignal.timeout(15000)});assert(r.ok)}
     }
-  }}finally{await browser.close();await writeFile(path.join(out,'pending-open-proof.json'),JSON.stringify(results,null,2))}
+  }}finally{await writeFile(path.join(out,'pending-open-proof.json'),JSON.stringify(results,null,2))}
   console.log(JSON.stringify({pendingBrowser:true,cases:results.length,success:true}))
 }
