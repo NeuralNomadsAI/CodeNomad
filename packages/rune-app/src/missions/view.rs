@@ -86,13 +86,20 @@ pub(crate) fn panel_body<S: 'static>(
                 .child(
                     theme::icon_button(
                         &theme::EYE,
-                        format!("{} · {name}", t("filesPanel.viewer")),
+                        format!("{} · {name}", t("missionsPanel.overview")),
                         false,
                         Some(active_eye),
                         move |state, tx| {
                             if let Some(panel) = scoped_eye.get(state).0 {
+                                let eye_key = format!("mission-row-eye-{eye_id}");
                                 if panel.toggle_overview(&eye_id) {
+                                    panel.reader.capture_return_focus(
+                                        tx.focused().unwrap_or(&eye_key).to_owned(),
+                                    );
                                     on_reader_open(state);
+                                    tx.focus("mission-reader-close", tx.focus_visible());
+                                } else if let Some(back) = panel.reader.take_return_focus() {
+                                    tx.focus(back, tx.focus_visible());
                                 }
                                 tx.instant();
                             }
@@ -311,8 +318,15 @@ fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>, on_reader_open: fn(&mut S)) 
         let on_open: super::task_rows::TaskOpen<S> = Rc::new(
             move |s: &mut S, task_id: String, task_key: String, tx: &mut Tx| {
                 if let Some(panel) = task_owner.get(s).0 {
+                    let eye_key = format!("mission-task-eye-{task_id}");
                     if panel.toggle_task(&mission_id, &task_id, &task_key) {
+                        panel
+                            .reader
+                            .capture_return_focus(tx.focused().unwrap_or(&eye_key).to_owned());
                         on_reader_open(s);
+                        tx.focus("mission-reader-close", tx.focus_visible());
+                    } else if let Some(back) = panel.reader.take_return_focus() {
+                        tx.focus(back, tx.focus_visible());
                     }
                     tx.instant();
                 }

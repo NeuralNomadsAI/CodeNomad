@@ -15,7 +15,7 @@ use codenomad_client::{
 use std::collections::{HashMap, HashSet};
 
 pub(super) const MAX_BODY_CACHE_BYTES: usize = 4 * 1024 * 1024;
-pub(super) const MAX_WHOLE_BODY_UNITS: u64 = (MAX_BODY_CACHE_BYTES / 2) as u64;
+pub(crate) const MAX_WHOLE_BODY_UNITS: u64 = (MAX_BODY_CACHE_BYTES / 2) as u64;
 const MAX_RETAINED_BODIES: usize = 128;
 const MAX_RESTARTS: u8 = 4;
 
@@ -102,26 +102,25 @@ impl BodyEntry {
         body.utf16_len >= body.characters || body.utf16_len >= self.need
     }
 
+    fn satisfies(&self, body: &LoadedBody) -> bool {
+        self.expected.as_ref().is_none_or(|(exp_rev, exp_digest)| {
+            &body.digest == exp_digest || body.revision >= *exp_rev
+        })
+    }
+
     fn fresh(&self) -> bool {
         if self.stale {
             return false;
         }
-        let Some((exp_rev, exp_digest)) = &self.expected else {
-            return true;
-        };
-        self.display
+        self.pending
             .as_ref()
-            .is_some_and(|b| &b.digest == exp_digest && b.revision >= *exp_rev)
+            .or(self.display.as_ref())
+            .is_none_or(|body| self.satisfies(body))
     }
 
     fn promote(&mut self) {
         let should_promote = self.pending.as_ref().is_some_and(|pending| {
-            let need_met = self.covers(pending);
-            let digest_ok = self
-                .expected
-                .as_ref()
-                .is_none_or(|(_, d)| d == &pending.digest);
-            need_met && digest_ok
+            self.satisfies(pending) && (self.display.is_none() || self.covers(pending))
         });
         if should_promote {
             self.display = self.pending.take();
@@ -207,13 +206,18 @@ impl BodyCache {
         )
     }
 
-    pub(super) fn complete_text(&self, key: &BodyKey) -> Option<&str> {
+    pub(super) fn complete_text(
+        &self,
+        key: &BodyKey,
+        expected_digest: Option<&str>,
+    ) -> Option<&str> {
         let entry = self.entries.get(key)?;
         if !entry.fresh() {
             return None;
         }
         let body = entry.display.as_ref()?;
-        (body.utf16_len >= body.characters.min(MAX_WHOLE_BODY_UNITS)).then_some(body.text.as_str())
+        let digest_ok = expected_digest.is_none_or(|digest| body.digest == digest);
+        (digest_ok && body.utf16_len >= body.characters).then_some(body.text.as_str())
     }
 
     pub(super) fn need_for_paged(&self, key: &BodyKey, desc: &BodyDescriptor, page: usize) -> u64 {
@@ -359,33 +363,34 @@ impl BodyCache {
             }
 
             let new_expected = Some((revision, descriptor.digest.clone()));
-            let digest_changed = entry
+            let expected_changed = entry
                 .expected
                 .as_ref()
-                .is_some_and(|(_, old)| old != &descriptor.digest);
-            if entry
-                .expected
-                .as_ref()
-                .is_none_or(|(old_rev, old_d)| revision > *old_rev || old_d != &descriptor.digest)
-            {
+                .is_none_or(|(old_rev, old_d)| revision > *old_rev || old_d != &descriptor.digest);
+            if expected_changed {
+                let digest_changed = entry
+                    .expected
+                    .as_ref()
+                    .is_some_and(|(_, old)| old != &descriptor.digest);
                 entry.expected = new_expected;
                 if digest_changed {
                     entry.parked = false;
                     entry.restarts = 0;
-                    if entry
-                        .pending
-                        .as_ref()
-                        .is_some_and(|p| p.digest != descriptor.digest)
-                    {
-                        entry.pending = None;
-                    }
-                    if entry
+                }
+                if entry
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| !entry.satisfies(pending))
+                {
+                    entry.pending = None;
+                }
+                if digest_changed
+                    && entry
                         .flight
                         .as_ref()
                         .is_some_and(|f| f.digest.as_deref() != Some(descriptor.digest.as_str()))
-                    {
-                        entry.cancel();
-                    }
+                {
+                    entry.cancel();
                 }
             }
 
@@ -517,7 +522,8 @@ fn accept_slice(entry: &mut BodyEntry, offset: u64, revision: u64, slice: Conten
         && pending.digest == slice.digest
         && pending.utf16_len == offset
     {
-        if pending.json != slice.json {
+        if pending.json != slice.json || pending.characters != slice.characters || slice_units == 0
+        {
             entry.pending = None;
             entry.status = BodyStatus::Error;
             entry.parked = true;
@@ -530,7 +536,8 @@ fn accept_slice(entry: &mut BodyEntry, offset: u64, revision: u64, slice: Conten
         && display.digest == slice.digest
         && display.utf16_len == offset
     {
-        if display.json != slice.json {
+        if display.json != slice.json || display.characters != slice.characters || slice_units == 0
+        {
             entry.status = BodyStatus::Error;
             entry.parked = true;
             return;

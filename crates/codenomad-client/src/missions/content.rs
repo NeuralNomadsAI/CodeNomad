@@ -13,12 +13,11 @@ use crate::{
 };
 use reqwest::Url;
 use serde::Deserialize;
-#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 const SAFE: u64 = (1 << 53) - 1;
+const MAX_QUERY_OFFSET: u64 = 999_999_999_999_999;
 const CONTENT_MAX_BYTES: usize = 512 * 1024;
-#[cfg(not(target_arch = "wasm32"))]
 const CONTENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq)]
@@ -134,7 +133,7 @@ impl ContentSelector {
             Self::Mission { .. } => field_ok,
             Self::Task { task_key, .. } => field_ok && valid_task_key(task_key),
             Self::Report { report_id, .. } => field_ok && valid_field(report_id, 240),
-            Self::Change { change, .. } => field_ok && (1..=SAFE).contains(change),
+            Self::Change { change, .. } => field_ok && (1..=MAX_QUERY_OFFSET).contains(change),
         }
     }
 }
@@ -239,7 +238,7 @@ impl Backend {
             || !panel_id(project_id)
             || !valid_field(mission_id, 100)
             || !selector.valid()
-            || offset > SAFE
+            || offset > MAX_QUERY_OFFSET
             || (offset > 0 && digest.is_none())
             || digest.is_some_and(|value| !digest_id(value))
         {
@@ -278,15 +277,21 @@ impl Backend {
                 pairs.append_pair("digest", digest);
             }
         }
-        let request = self.client.get(url);
-        #[cfg(not(target_arch = "wasm32"))]
-        let request = request.timeout(CONTENT_TIMEOUT);
-        let response = request.send().await?;
-        if response.status().as_u16() == 401 {
+        let response = crate::runtime::timeout(CONTENT_TIMEOUT, async {
+            let response = self.client.get(url).send().await?;
+            if response.status().as_u16() == 401 {
+                return Ok(None);
+            }
+            let response = response.error_for_status()?;
+            read_json_limited(response, CONTENT_MAX_BYTES)
+                .await
+                .map(Some)
+        })
+        .await
+        .ok_or("Mission content request timed out")??;
+        let Some(raw) = response else {
             return Ok(ContentOutcome::AuthExpired);
-        }
-        let response = response.error_for_status()?;
-        let raw = read_json_limited(response, CONTENT_MAX_BYTES).await?;
+        };
         let envelope: ContentEnvelope =
             serde_json::from_value(raw).map_err(|_| "invalid Mission content envelope")?;
         if !envelope.available
@@ -321,13 +326,14 @@ impl Backend {
 }
 
 fn valid_field(value: &str, max_len: usize) -> bool {
-    !value.is_empty() && value.len() <= max_len && !value.chars().any(char::is_control)
+    !value.is_empty() && utf16_len(value) <= max_len && !value.chars().any(char::is_control)
 }
 
 fn valid_task_key(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    let bytes = value.as_bytes();
+    (2..=64).contains(&bytes.len())
+        && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+        && bytes.iter().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-' | b'.')
+        })
 }

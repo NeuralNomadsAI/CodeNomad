@@ -6,7 +6,7 @@ use crate::{
 };
 use codenomad_client::{
     bounded,
-    missions::{ContentSelector, MapHeader, Task},
+    missions::{ContentSelector, MapHeader, Report, Task},
 };
 use rune::{Env, Runtime};
 use serde_json::{Value, json};
@@ -19,12 +19,20 @@ use std::{
     },
 };
 
-fn header_with(mission_id: &str, revision: u64, bodies: Value, tasks: Vec<Task>) -> Snapshot {
+pub(super) fn header_with_reports(
+    mission_id: &str,
+    revision: u64,
+    bodies: Value,
+    tasks: Vec<Task>,
+    reports: Vec<Report>,
+    total_override: Option<u64>,
+) -> Snapshot {
     let descriptor = json!({"characters":0,"digest":"0".repeat(43),"total":0,"array":true});
-    let total = tasks.len() as u64;
+    let loaded = tasks.len() as u64;
+    let total = total_override.unwrap_or(loaded);
     let mut counts = serde_json::Map::new();
     if total > 0 {
-        counts.insert("ready".into(), json!(total));
+        counts.insert("completed".into(), json!(total));
     }
     let header: MapHeader = serde_json::from_value(json!({
         "root": {
@@ -52,10 +60,10 @@ fn header_with(mission_id: &str, revision: u64, bodies: Value, tasks: Vec<Task>)
             "page": {
                 "order": "a".repeat(43),
                 "offset": 0,
-                "end": total,
+                "end": loaded,
                 "total": total,
                 "counts": counts,
-                "reports": 0,
+                "reports": reports.len(),
             },
             "pins": [],
             "reportPins": [],
@@ -63,22 +71,47 @@ fn header_with(mission_id: &str, revision: u64, bodies: Value, tasks: Vec<Task>)
         }
     }))
     .unwrap();
+    let report_map = reports
+        .into_iter()
+        .map(|report| (report.id.clone(), report))
+        .collect();
     Snapshot {
         header,
         tasks: Rc::new(TaskRows::new(tasks)),
-        end: total,
+        reports: report_map,
+        end: loaded,
         attention_end: 0,
     }
 }
 
-fn task_json(id: &str, key: &str, title: &str, blocked_by: &[&str], order: u64) -> Task {
+pub(super) fn header_with(
+    mission_id: &str,
+    revision: u64,
+    bodies: Value,
+    tasks: Vec<Task>,
+) -> Snapshot {
+    header_with_reports(mission_id, revision, bodies, tasks, vec![], None)
+}
+
+/// Real compact-map wire shape: `task.report` omits `bodies`, which live on the top-level
+/// `TaskWindow.reports` entry returned alongside the task.
+pub(super) fn task_and_report(
+    id: &str,
+    key: &str,
+    title: &str,
+    status: &str,
+    outcome: &str,
+    blocked_by: &[&str],
+    order: u64,
+) -> (Task, Report) {
     let digest = "c".repeat(43);
-    serde_json::from_value(json!({
+    let report_id = format!("rep_{id}");
+    let task: Task = serde_json::from_value(json!({
         "id": id,
         "key": key,
         "title": title,
         "role": "specialist",
-        "status": "ready",
+        "status": status,
         "blockedBy": blocked_by,
         "order": order,
         "createdAt": 1,
@@ -90,23 +123,34 @@ fn task_json(id: &str, key: &str, title: &str, blocked_by: &[&str], order: u64) 
             "brief": { "characters": 12, "digest": digest }
         },
         "report": {
-            "id": format!("rep_{id}"),
+            "id": report_id,
             "taskKey": key,
             "sessionId": "ses_task",
-            "outcome": "completed",
-            "createdAt": 2,
-            "bodies": {
-                "summary": { "characters": 11, "digest": digest },
-                "evidence": { "characters": 16, "digest": digest },
-                "next": { "characters": 12, "digest": digest },
-                "artifact": { "characters": 11, "digest": digest }
-            }
+            "outcome": outcome,
+            "excerpt": format!("Excerpt for {key}"),
+            "createdAt": 2
         }
     }))
-    .unwrap()
+    .unwrap();
+    let report: Report = serde_json::from_value(json!({
+        "id": format!("rep_{id}"),
+        "taskKey": key,
+        "sessionId": "ses_task",
+        "outcome": outcome,
+        "excerpt": format!("Excerpt for {key}"),
+        "createdAt": 2,
+        "bodies": {
+            "summary": { "characters": 11, "digest": digest },
+            "evidence": { "characters": 17, "digest": digest },
+            "next": { "characters": 12, "digest": digest },
+            "artifact": { "characters": 23, "digest": digest }
+        }
+    }))
+    .unwrap();
+    (task, report)
 }
 
-fn query_params(header: &str) -> HashMap<String, String> {
+pub(super) fn query_params(header: &str) -> HashMap<String, String> {
     let path = header
         .lines()
         .next()
@@ -120,7 +164,7 @@ fn query_params(header: &str) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
-async fn spawn_http(
+pub(super) async fn spawn_http(
     handler: impl Fn(HashMap<String, String>) -> (u16, Value) + Send + Sync + 'static,
 ) -> Backend {
     let http = Http::new().await;
@@ -139,7 +183,7 @@ async fn spawn_http(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn slice_reply(
+pub(super) fn slice_reply(
     revision: u64,
     kind: &str,
     field: &str,
@@ -243,7 +287,9 @@ fn multi_slice_body_pages_and_copies_whole_digest() {
 
         assert_eq!(requests.load(Ordering::SeqCst), 2);
         let key = ("project".into(), "msn_1".into(), sel);
-        let copied = reader.request_copy(key).expect("full body loaded");
+        let copied = reader
+            .request_copy(key, Some(digest), total_units as u64)
+            .expect("full body loaded");
         assert_eq!(copied, full);
     });
 }
@@ -396,6 +442,10 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
         })
         .to_string();
         let briefing_len = briefing_json.encode_utf16().count();
+        let brief_requests = Arc::new(AtomicUsize::new(0));
+        let artifact_requests = Arc::new(AtomicUsize::new(0));
+        let brief_c = brief_requests.clone();
+        let artifact_c = artifact_requests.clone();
         let d_c = digest.clone();
         let b_c = briefing_json.clone();
         let backend = spawn_http(move |params| {
@@ -424,17 +474,20 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
                     60_000,
                     false,
                 ),
-                ("task", "brief") => slice_reply(
-                    5,
-                    "task",
-                    "brief",
-                    json!({ "taskKey": params.get("taskKey").cloned().unwrap_or_default() }),
-                    &d_c,
-                    "Task brief!!",
-                    0,
-                    60_000,
-                    false,
-                ),
+                ("task", "brief") => {
+                    brief_c.fetch_add(1, Ordering::SeqCst);
+                    slice_reply(
+                        5,
+                        "task",
+                        "brief",
+                        json!({ "taskKey": params.get("taskKey").cloned().unwrap_or_default() }),
+                        &d_c,
+                        "Task brief!!",
+                        0,
+                        60_000,
+                        false,
+                    )
+                }
                 ("report", "summary") => slice_reply(
                     5,
                     "report",
@@ -468,17 +521,20 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
                     60_000,
                     true,
                 ),
-                ("report", "artifact") => slice_reply(
-                    5,
-                    "report",
-                    "artifact",
-                    json!({ "reportId": params.get("reportId").cloned().unwrap_or_default() }),
-                    &d_c,
-                    "{\"ok\":true}",
-                    0,
-                    60_000,
-                    true,
-                ),
+                ("report", "artifact") => {
+                    artifact_c.fetch_add(1, Ordering::SeqCst);
+                    slice_reply(
+                        5,
+                        "report",
+                        "artifact",
+                        json!({ "reportId": params.get("reportId").cloned().unwrap_or_default() }),
+                        &d_c,
+                        "{\"artifactMarker\":true}",
+                        0,
+                        60_000,
+                        true,
+                    )
+                }
                 _ => (404, json!({})),
             }
         })
@@ -490,17 +546,34 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
         });
         let mut panel = Panel::new(backend, Some("project".into()), Reads::default(), wake);
         panel.detail.observe("msn_1", 5);
-        panel.detail.snapshot = Some(header_with(
+        let (task_a, rep_a) = task_and_report(
+            "tsk_a",
+            "task-a",
+            "Build Reader",
+            "completed",
+            "completed",
+            &["task-b"],
+            0,
+        );
+        let (task_b, rep_b) = task_and_report(
+            "tsk_b",
+            "task-b",
+            "Wire Client",
+            "completed",
+            "completed",
+            &[],
+            1,
+        );
+        panel.detail.snapshot = Some(header_with_reports(
             "msn_1",
             5,
             json!({
                 "objective": { "characters": 26, "digest": digest },
                 "briefing": { "characters": briefing_len, "digest": digest },
             }),
-            vec![
-                task_json("tsk_a", "task-a", "Build Reader", &["task-b"], 0),
-                task_json("tsk_b", "task-b", "Wire Client", &[], 1),
-            ],
+            vec![task_a, task_b],
+            vec![rep_a, rep_b],
+            None,
         ));
         panel.selected = Some("msn_1".into());
         panel.reader.open_overview("msn_1".into());
@@ -512,7 +585,9 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
                     super::view::view(
                         p,
                         |p: &mut Panel| Some(p),
-                        |p: &mut Panel, _| p.close_reader(),
+                        |p: &mut Panel, _| {
+                            let _ = p.close_reader();
+                        },
                     )
                 })
             },
@@ -552,6 +627,9 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
             .expect("briefing task link");
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
         wait(async {
             loop {
                 rt.update(|p, _| {
@@ -561,9 +639,9 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
                     rt.frame(1.0 / 60.0);
                 }
                 let tree = rt.accessibility_json().to_string();
-                if tree.contains("Task brief!!")
-                    && tree.contains("All passed!")
+                if tree.contains("All passed!")
                     && tree.contains("cargo test ok")
+                    && tree.contains("ship it!")
                 {
                     break;
                 }
@@ -571,6 +649,45 @@ fn runtime_renders_stale_briefing_navigates_to_task_and_closes() {
             }
         })
         .await;
+
+        // Task brief and report artifact must stay closed and unrequested until opened.
+        assert_eq!(brief_requests.load(Ordering::SeqCst), 0);
+        assert_eq!(artifact_requests.load(Ordering::SeqCst), 0);
+
+        let (x, y) = rt
+            .find("mission-reader-toggle-task-brief")
+            .expect("brief disclosure");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
+        let (x, y) = rt
+            .find("mission-reader-toggle-report-artifact")
+            .expect("artifact disclosure");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
+        wait(async {
+            loop {
+                rt.update(|p, _| {
+                    p.poll();
+                });
+                for _ in 0..4 {
+                    rt.frame(1.0 / 60.0);
+                }
+                let tree = rt.accessibility_json().to_string();
+                if tree.contains("Task brief!!") && tree.contains("artifactMarker") {
+                    break;
+                }
+                wake_rx.recv().await.unwrap();
+            }
+        })
+        .await;
+        assert_eq!(brief_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(artifact_requests.load(Ordering::SeqCst), 1);
 
         let (x, y) = rt
             .find("mission-reader-dep-task-b")
@@ -647,7 +764,9 @@ fn pagination_controls_and_hidden_panel_keep_reader_alive() {
                     super::view::view(
                         p,
                         |p: &mut Panel| Some(p),
-                        |p: &mut Panel, _| p.close_reader(),
+                        |p: &mut Panel, _| {
+                            let _ = p.close_reader();
+                        },
                     )
                 })
             },

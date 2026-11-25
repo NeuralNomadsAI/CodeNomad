@@ -104,12 +104,13 @@ pub(crate) fn mission_has_reader(s: &State) -> bool {
         && mission_owner(s).is_some_and(missions::Panel::has_reader)
 }
 
-pub(crate) fn close_mission_reader(s: &mut State) {
+pub(crate) fn close_mission_reader(s: &mut State) -> Option<String> {
     if let Some(ui) = &mut s.workspace
         && let Some(panel) = &mut ui.entries[ui.active].missions
     {
-        panel.close_reader();
+        return panel.close_reader();
     }
+    None
 }
 
 pub(crate) fn mission_reader(s: &State) -> El {
@@ -120,11 +121,14 @@ pub(crate) fn mission_reader(s: &State) -> El {
         return rune::el();
     };
     missions::reader_view(panel, mission_reader_owner, |s: &mut State, tx| {
-        close_mission_reader(s);
+        let back = close_mission_reader(s);
         if s.screen.is_launcher() {
             tx.instant();
         } else {
             crate::chat::reading::restore_position(s, tx);
+        }
+        if let Some(focus) = back {
+            tx.focus(focus, tx.focus_visible());
         }
     })
 }

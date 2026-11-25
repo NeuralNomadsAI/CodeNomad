@@ -85,6 +85,13 @@ impl Report {
             .unwrap_or(false)
     }
 
+    pub fn native_call_generation(&self) -> Option<u64> {
+        self.extra
+            .get("nativeCall")
+            .and_then(|value| value.get("generation"))
+            .and_then(Value::as_u64)
+    }
+
     fn valid(&self) -> bool {
         panel_id(&self.id)
             && panel_id(&self.session_id)
@@ -158,7 +165,7 @@ impl TaskPage {
 pub struct TaskWindow {
     pub task_page: TaskPage,
     pub tasks: Vec<Task>,
-    reports: Vec<Report>,
+    pub reports: Vec<Report>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -277,7 +284,7 @@ impl Backend {
         if offset > SAFE {
             return invalid();
         }
-        task_read(self, project, header, offset, None, false)
+        task_read(self, project, header, TaskQuery::Window(offset))
     }
 
     pub fn mission_task_pins(
@@ -289,10 +296,29 @@ impl Backend {
             self,
             project,
             header,
-            0,
-            Some((&header.tasks.pins, &header.tasks.report_pins)),
-            false,
+            TaskQuery::Pins {
+                ids: header.tasks.pins.clone(),
+                reports: header.tasks.report_pins.clone(),
+            },
         )
+    }
+
+    pub fn mission_task_lookup(
+        &self,
+        project: &str,
+        header: &MapHeader,
+        task_id: Option<&str>,
+        task_key: Option<&str>,
+    ) -> Result<DetailRead<TaskWindow>> {
+        let query = match (
+            task_id.filter(|s| !s.is_empty()),
+            task_key.filter(|s| !s.is_empty()),
+        ) {
+            (Some(id), _) if panel_id(id) => TaskQuery::LookupId(id.to_owned()),
+            (None, Some(key)) if panel_id(key) => TaskQuery::LookupKey(key.to_owned()),
+            _ => return invalid(),
+        };
+        task_read(self, project, header, query)
     }
 
     pub fn mission_task_attention(
@@ -311,17 +337,26 @@ impl Backend {
         {
             return invalid();
         }
-        task_read(self, project, header, offset, None, true)
+        task_read(self, project, header, TaskQuery::Attention(offset))
     }
+}
+
+enum TaskQuery {
+    Window(u64),
+    Attention(u64),
+    Pins {
+        ids: Vec<String>,
+        reports: Vec<String>,
+    },
+    LookupId(String),
+    LookupKey(String),
 }
 
 fn task_read(
     backend: &Backend,
     project: &str,
     header: &MapHeader,
-    offset: u64,
-    pins: Option<(&[String], &[String])>,
-    attention: bool,
+    query: TaskQuery,
 ) -> Result<DetailRead<TaskWindow>> {
     let mission = &header.root.id;
     let order = header.tasks.page.order.clone();
@@ -329,12 +364,16 @@ fn task_read(
     let total = header.tasks.page.total;
     let reports = header.tasks.page.reports;
     let counts = header.tasks.page.counts.clone();
-    let task = match pins {
-        Some((ids, reports)) => {
+    let task = match &query {
+        TaskQuery::Pins { ids, reports } => {
             json!({"missionID":mission,"order":order,"ids":ids,"reportIds":reports})
         }
-        None if attention => json!({"missionID":mission,"order":order,"attention":offset}),
-        None => json!({"missionID":mission,"order":order,"offset":offset}),
+        TaskQuery::LookupId(id) => json!({"missionID":mission,"order":order,"ids":[id]}),
+        TaskQuery::LookupKey(key) => json!({"missionID":mission,"order":order,"keys":[key]}),
+        TaskQuery::Attention(offset) => {
+            json!({"missionID":mission,"order":order,"attention":offset})
+        }
+        TaskQuery::Window(offset) => json!({"missionID":mission,"order":order,"offset":offset}),
     };
     let read = PageRead::selected(
         backend,
@@ -343,7 +382,6 @@ fn task_read(
         mission,
         json!({"source":"tasks","task":task}),
     )?;
-    let pins = pins.map(|(ids, reports)| (ids.to_vec(), reports.to_vec()));
     let base = header.tasks.page.attention.clone();
     let excluded = header.tasks.pins.clone();
     Ok(DetailRead {
@@ -356,10 +394,11 @@ fn task_read(
             if row.task_page.order != order {
                 return Err(DirectoryChanged.into());
             }
+            let attention = matches!(query, TaskQuery::Attention(_));
             if row.task_page.total != total
                 || row.task_page.reports != reports
                 || row.task_page.counts != counts
-                || !valid_tasks(&row, offset, pins.as_ref(), attention.then_some(offset))
+                || !valid_tasks(&row, &query)
                 || attention && !super::attention::matches_page(base.as_ref(), &row, &excluded)
             {
                 return invalid();
@@ -452,24 +491,24 @@ fn valid_attention(page: &TaskPage, offset: Option<u64>) -> bool {
     })
 }
 
-fn valid_tasks(
-    row: &TaskWindow,
-    offset: u64,
-    pins: Option<&(Vec<String>, Vec<String>)>,
-    attention: Option<u64>,
-) -> bool {
+fn valid_tasks(row: &TaskWindow, query: &TaskQuery) -> bool {
     let page = &row.task_page;
-    if !page.valid(
-        if attention.is_some() { 0 } else { offset },
-        pins.is_some() || attention.is_some(),
-    ) || !valid_attention(page, attention)
+    let (offset, named, attention) = match query {
+        TaskQuery::Window(offset) => (*offset, false, None),
+        TaskQuery::Attention(offset) => (0, true, Some(*offset)),
+        TaskQuery::Pins { .. } | TaskQuery::LookupId(_) | TaskQuery::LookupKey(_) => {
+            (0, true, None)
+        }
+    };
+    if !page.valid(offset, named)
+        || !valid_attention(page, attention)
         || row.tasks.len() > 50
         || row.reports.len() > 200
         || row.reports.len() as u64 > page.reports
     {
         return false;
     }
-    if pins.is_none() && attention.is_none() && row.tasks.len() as u64 != page.end - page.offset {
+    if matches!(query, TaskQuery::Window(_)) && row.tasks.len() as u64 != page.end - page.offset {
         return false;
     }
     let mut ids = HashSet::new();
@@ -481,7 +520,10 @@ fn valid_tasks(
         .iter()
         .map(|report| (&report.id, report))
         .collect();
-    let named_reports = |id: &String| pins.is_some_and(|(_, reports)| reports.contains(id));
+    let named_reports = |id: &String| match query {
+        TaskQuery::Pins { reports, .. } => reports.contains(id),
+        _ => false,
+    };
     if reports.len() != row.reports.len() || row.reports.iter().any(|report| !report.valid()) {
         return false;
     }
@@ -526,11 +568,13 @@ fn valid_tasks(
                         .is_none_or(|top| !top.same_compact_report(nested))
             })
             || *count > page.counts.get(&task.status).copied().unwrap_or(0)
-            || match pins {
-                Some((ids, _)) => {
+            || match query {
+                TaskQuery::Pins { ids, .. } => {
                     !ids.contains(&task.id) && !own.clone().any(|report| named_reports(&report.id))
                 }
-                None if attention.is_some() => {
+                TaskQuery::LookupId(id) => &task.id != id,
+                TaskQuery::LookupKey(key) => &task.key != key,
+                TaskQuery::Attention(_) => {
                     task.order < 50
                         || !(matches!(task.status, TaskStatus::NeedsInput | TaskStatus::Failed)
                             || own.clone().any(|report| {
@@ -541,7 +585,7 @@ fn valid_tasks(
                             })
                             || task.missing_report())
                 }
-                None => !(page.offset..page.end).contains(&task.order),
+                TaskQuery::Window(_) => !(page.offset..page.end).contains(&task.order),
             }
         {
             return false;
@@ -579,6 +623,17 @@ impl Task {
 
     pub fn outstanding_execution(&self) -> bool {
         self.outstanding_execution
+    }
+
+    pub fn replaced_by_task_key(&self) -> Option<&str> {
+        self.extra
+            .get("replacedByTaskKey")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+    }
+
+    pub fn contract_generation(&self) -> Option<u64> {
+        self.extra.get("contractGeneration").and_then(Value::as_u64)
     }
 
     fn missing_report(&self) -> bool {

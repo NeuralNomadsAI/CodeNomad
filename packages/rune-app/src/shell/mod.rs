@@ -167,11 +167,14 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
         if workspace::mission_has_reader(s) {
-            workspace::close_mission_reader(s);
+            let back = workspace::close_mission_reader(s);
             if s.screen.is_launcher() {
                 tx.instant();
             } else {
                 crate::chat::reading::restore_position(s, tx);
+            }
+            if let Some(focus) = back {
+                tx.focus(focus, tx.focus_visible());
             }
             return true;
         }

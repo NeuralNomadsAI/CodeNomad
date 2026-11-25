@@ -68,6 +68,7 @@ fn panel_at(revision: u64, json: String) -> (Panel, Source) {
     panel.detail.snapshot = Some(Snapshot {
         header,
         tasks: Rc::new(TaskRows::new(vec![])),
+        reports: Default::default(),
         end: 0,
         attention_end: 0,
     });

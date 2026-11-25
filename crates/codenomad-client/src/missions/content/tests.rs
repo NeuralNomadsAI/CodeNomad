@@ -207,3 +207,44 @@ fn mission_content_fetches_slice_refusal_and_auth_expired() {
         assert!(seen[1].contains(&format!("offset=5&digest={DIGEST_A}")));
     });
 }
+
+#[test]
+fn content_request_validation_matches_http_contract() {
+    assert!(!ContentSelector::task("Ab", "brief").valid());
+    assert!(!ContentSelector::task("a", "brief").valid());
+    assert!(!ContentSelector::task("-ab", "brief").valid());
+    assert!(ContentSelector::task("a1", "brief").valid());
+    assert!(ContentSelector::task("task_1.a-b", "brief").valid());
+
+    // 240 UTF-16 units of 'é' (480 UTF-8 bytes) matches TS string.length <= 240.
+    let unicode_id = "é".repeat(240);
+    assert!(ContentSelector::report(unicode_id, "summary").valid());
+    let too_long = "é".repeat(241);
+    assert!(!ContentSelector::report(too_long, "summary").valid());
+
+    // 16-digit change revision / offset exceeds /^\d{1,15}$/.
+    assert!(ContentSelector::change(999_999_999_999_999, "reason").valid());
+    assert!(!ContentSelector::change(1_000_000_000_000_000, "reason").valid());
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let mut backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+        backend.workspace = "ws_1".into();
+        let sel = ContentSelector::mission("objective");
+        assert!(
+            backend
+                .mission_content(
+                    "prj_1",
+                    "msn_1",
+                    &sel,
+                    1_000_000_000_000_000,
+                    Some(DIGEST_A)
+                )
+                .await
+                .is_err()
+        );
+    });
+}

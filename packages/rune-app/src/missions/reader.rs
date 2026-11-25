@@ -1,16 +1,19 @@
 mod body_cache;
+mod sections;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_regressions;
 pub(super) mod view;
 
-use self::body_cache::{BodyCache, MAX_WHOLE_BODY_UNITS};
-pub(super) use self::body_cache::{BodyKey, BodyStatus, BodyView};
+use self::body_cache::BodyCache;
+pub(super) use self::body_cache::{BodyKey, BodyStatus, BodyView, MAX_WHOLE_BODY_UNITS};
 use super::detail::Snapshot;
 use crate::{components::window_close_button::WindowCloseState, platform::reads::Reads};
 use codenomad_client::{
     Wake,
     backend::Backend,
-    missions::{BodyDescriptor, ContentSelector},
+    missions::{BodyDescriptor, ContentSelector, Report, ReportOutcome, Status, Task, TaskStatus},
 };
 use std::collections::{HashMap, HashSet};
 
@@ -34,14 +37,100 @@ impl ReaderTarget {
     }
 }
 
+/// Authoritative current report for a task, matching Solid's `missionTaskReport` and resolving
+/// body descriptors from `Snapshot::reports` (where the compact map projection stores them).
+pub(super) fn current_task_report<'a>(
+    snapshot: &'a Snapshot,
+    task: &'a Task,
+) -> Option<&'a Report> {
+    let nested = task.report()?;
+    if nested.is_late() || nested.task_key != task.key || task.replaced_by_task_key().is_some() {
+        return None;
+    }
+    let expected = match nested.outcome {
+        ReportOutcome::Completed => TaskStatus::Completed,
+        ReportOutcome::Blocked => TaskStatus::NeedsInput,
+        ReportOutcome::Failed => TaskStatus::Failed,
+    };
+    if task.status != expected {
+        return None;
+    }
+    if let Some(generation) = nested.native_call_generation()
+        && Some(generation) != task.contract_generation()
+    {
+        return None;
+    }
+    snapshot.report(&nested.id).or(Some(nested))
+}
+
+/// Retained non-current reports for a task (late or superseded attempts), newest first.
+pub(super) fn task_history_reports<'a>(snapshot: &'a Snapshot, task: &'a Task) -> Vec<&'a Report> {
+    let current_id = current_task_report(snapshot, task).map(|report| report.id.as_str());
+    let mut by_id: HashMap<&str, &'a Report> = HashMap::new();
+    for report in snapshot.task_reports(&task.key) {
+        if Some(report.id.as_str()) != current_id {
+            by_id.insert(report.id.as_str(), report);
+        }
+    }
+    for nested in task.report().into_iter().chain(task.late_reports()) {
+        if nested.task_key == task.key && Some(nested.id.as_str()) != current_id {
+            by_id
+                .entry(nested.id.as_str())
+                .or_insert_with(|| snapshot.report(&nested.id).unwrap_or(nested));
+        }
+    }
+    let mut list: Vec<&'a Report> = by_id.into_values().collect();
+    list.sort_unstable_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    list
+}
+
+/// Overview fallback when a Mission has neither a final summary nor a briefing: top 3 recorded
+/// completed task results and (when active) top 3 open obstacles.
+pub(super) fn overview_progress<'a>(
+    snapshot: &'a Snapshot,
+) -> (Vec<(&'a Task, &'a Report)>, Vec<(&'a Task, &'a Report)>) {
+    let mut recorded = Vec::new();
+    let mut blockers = Vec::new();
+    for task in snapshot.tasks.iter() {
+        if task.status == TaskStatus::Withdrawn || task.replaced_by_task_key().is_some() {
+            continue;
+        }
+        let Some(report) = current_task_report(snapshot, task) else {
+            continue;
+        };
+        if report.outcome == ReportOutcome::Completed {
+            recorded.push((task, report));
+        } else if snapshot.header.root.status == Status::Active
+            && matches!(task.status, TaskStatus::NeedsInput | TaskStatus::Failed)
+        {
+            blockers.push((task, report));
+        }
+    }
+    recorded.sort_unstable_by(|a, b| {
+        b.1.created_at
+            .cmp(&a.1.created_at)
+            .then_with(|| a.0.order.cmp(&b.0.order))
+    });
+    (
+        recorded.into_iter().take(3).collect(),
+        blockers.into_iter().take(3).collect(),
+    )
+}
+
 #[derive(Default)]
 pub(crate) struct Reader {
     target: Option<ReaderTarget>,
     pub(super) close: WindowCloseState,
     cache: BodyCache,
     pages: HashMap<String, usize>,
-    pending_copy: Option<BodyKey>,
+    disclosures: HashSet<String>,
+    pending_copy: Option<(BodyKey, Option<String>)>,
     ready_copy: Option<String>,
+    return_focus: Option<String>,
 }
 
 impl Reader {
@@ -64,8 +153,18 @@ impl Reader {
         matches!(
             &self.target,
             Some(ReaderTarget::Task { mission_id: mid, task_id: tid, .. })
-                if mid == mission_id && tid == task_id
+                if mid == mission_id && !tid.is_empty() && tid == task_id
         )
+    }
+
+    pub(crate) fn capture_return_focus(&mut self, key: String) {
+        if self.return_focus.is_none() && !key.is_empty() {
+            self.return_focus = Some(key);
+        }
+    }
+
+    pub(crate) fn take_return_focus(&mut self) -> Option<String> {
+        self.return_focus.take()
     }
 
     pub(crate) fn open_overview(&mut self, mission_id: String) {
@@ -73,6 +172,7 @@ impl Reader {
         if self.target.as_ref() != Some(&next) {
             self.cache.cancel_all_flights();
             self.pages.clear();
+            self.disclosures.clear();
             self.pending_copy = None;
             self.ready_copy = None;
             self.target = Some(next);
@@ -88,34 +188,28 @@ impl Reader {
         if self.target.as_ref() != Some(&next) {
             self.cache.cancel_all_flights();
             self.pages.clear();
+            self.disclosures.clear();
             self.pending_copy = None;
             self.ready_copy = None;
             self.target = Some(next);
         }
     }
 
-    pub(crate) fn toggle_overview(&mut self, mission_id: String) -> bool {
-        if self.is_overview_open(&mission_id) {
-            self.close();
-            false
-        } else {
-            self.open_overview(mission_id);
-            true
-        }
-    }
-
-    pub(crate) fn toggle_task(
-        &mut self,
-        mission_id: String,
-        task_id: String,
-        task_key: String,
-    ) -> bool {
-        if self.is_task_open(&mission_id, &task_id) {
-            self.close();
-            false
-        } else {
-            self.open_task(mission_id, task_id, task_key);
-            true
+    pub(super) fn bind_task_identity(&mut self, mission_id: &str, id: &str, key: &str) {
+        if let Some(ReaderTarget::Task {
+            mission_id: mid,
+            task_id,
+            task_key,
+        }) = &mut self.target
+            && mid == mission_id
+            && (task_id == id || task_key == key)
+        {
+            if task_id != id {
+                *task_id = id.to_owned();
+            }
+            if task_key != key {
+                *task_key = key.to_owned();
+            }
         }
     }
 
@@ -123,6 +217,7 @@ impl Reader {
         self.cache.cancel_all_flights();
         self.target = None;
         self.pages.clear();
+        self.disclosures.clear();
         self.pending_copy = None;
         self.ready_copy = None;
         self.cache.evict_unused(&HashSet::new());
@@ -157,21 +252,41 @@ impl Reader {
         self.pages.insert(section.to_owned(), page);
     }
 
+    pub(super) fn is_disclosure_open(&self, id: &str) -> bool {
+        self.disclosures.contains(id)
+    }
+
+    pub(super) fn toggle_disclosure(&mut self, id: &str) {
+        if !self.disclosures.remove(id) {
+            self.disclosures.insert(id.to_owned());
+        }
+    }
+
     pub(super) fn retry(&mut self, key: &BodyKey) {
         self.cache.retry(key);
     }
 
-    /// Returns text immediately when the whole digest is already loaded; otherwise queues a
-    /// whole-body fetch whose completion is drained through `take_ready_copy`.
-    pub(super) fn request_copy(&mut self, key: BodyKey) -> Option<String> {
-        if let Some(text) = self.cache.complete_text(&key) {
+    /// Returns text immediately when the whole clicked digest is already loaded; otherwise queues
+    /// a whole-body fetch bound to that digest. Bodies beyond `MAX_WHOLE_BODY_UNITS` are never
+    /// silently truncated into the clipboard.
+    pub(super) fn request_copy(
+        &mut self,
+        key: BodyKey,
+        expected_digest: Option<String>,
+        characters: u64,
+    ) -> Option<String> {
+        if characters > MAX_WHOLE_BODY_UNITS {
+            self.pending_copy = None;
+            return None;
+        }
+        if let Some(text) = self.cache.complete_text(&key, expected_digest.as_deref()) {
             self.pending_copy = None;
             return Some(text.to_owned());
         }
         if self.cache.body_view(&key).status == BodyStatus::Error {
             self.cache.retry(&key);
         }
-        self.pending_copy = Some(key);
+        self.pending_copy = Some((key, expected_digest));
         None
     }
 
@@ -219,10 +334,22 @@ impl Reader {
 
         let revision = snapshot.header.root.revision;
         let demands = self.collect_demands(&target, project_id, snapshot);
+        let active_digests: HashMap<BodyKey, (String, u64)> = demands
+            .iter()
+            .map(|(k, d, _)| (k.clone(), (d.digest.clone(), d.characters)))
+            .collect();
         changed |= self.cache.drive(backend, revision, demands, reads, wake);
 
-        if let Some(copy_key) = self.pending_copy.clone() {
-            if let Some(text) = self.cache.complete_text(&copy_key) {
+        if let Some((copy_key, exp_digest)) = self.pending_copy.clone() {
+            let still_valid = active_digests
+                .get(&copy_key)
+                .is_some_and(|(digest, chars)| {
+                    *chars <= MAX_WHOLE_BODY_UNITS
+                        && exp_digest.as_deref().is_none_or(|exp| exp == digest)
+                });
+            if !still_valid {
+                self.pending_copy = None;
+            } else if let Some(text) = self.cache.complete_text(&copy_key, exp_digest.as_deref()) {
                 self.ready_copy = Some(text.to_owned());
                 self.pending_copy = None;
                 changed = true;
@@ -243,7 +370,7 @@ impl Reader {
         snapshot: &Snapshot,
     ) -> Vec<(BodyKey, BodyDescriptor, u64)> {
         let mut out = Vec::new();
-        let copy_key = self.pending_copy.as_ref();
+        let pending_copy = self.pending_copy.as_ref();
         let push_paged = |out: &mut Vec<(BodyKey, BodyDescriptor, u64)>,
                           section: &str,
                           selector: ContentSelector,
@@ -256,8 +383,13 @@ impl Reader {
                 target.mission_id().to_owned(),
                 selector,
             );
-            let need = if copy_key == Some(&key) {
-                desc.characters.min(MAX_WHOLE_BODY_UNITS)
+            let wants_copy = pending_copy.is_some_and(|(copy_key, exp_digest)| {
+                copy_key == &key
+                    && desc.characters <= MAX_WHOLE_BODY_UNITS
+                    && exp_digest.as_deref().is_none_or(|exp| exp == desc.digest)
+            });
+            let need = if wants_copy {
+                desc.characters
             } else {
                 let page = self.page(section);
                 self.cache.need_for_paged(&key, desc, page)
@@ -282,6 +414,8 @@ impl Reader {
             ReaderTarget::Overview { .. } => {
                 let root = &snapshot.header.root;
                 let has_summary = root.body("summary").is_some_and(|b| b.characters > 0);
+                let has_briefing =
+                    !has_summary && root.body("briefing").is_some_and(|b| b.characters > 0);
                 if has_summary {
                     push_paged(
                         &mut out,
@@ -289,12 +423,23 @@ impl Reader {
                         ContentSelector::mission("summary"),
                         root.body("summary"),
                     );
-                } else if root.body("briefing").is_some_and(|b| b.characters > 0) {
+                } else if has_briefing {
                     push_whole(
                         &mut out,
                         ContentSelector::mission("briefing"),
                         root.body("briefing"),
                     );
+                } else {
+                    let (recorded, blockers) = overview_progress(snapshot);
+                    for (_, report) in recorded.into_iter().chain(blockers) {
+                        if let Some(desc) = report.body("summary") {
+                            push_whole(
+                                &mut out,
+                                ContentSelector::report(report.id.clone(), "summary"),
+                                Some(&desc),
+                            );
+                        }
+                    }
                 }
                 push_paged(
                     &mut out,
@@ -313,13 +458,15 @@ impl Reader {
                 task_id, task_key, ..
             } => {
                 if let Some(task) = snapshot.tasks.find_by_id_or_key(task_id, task_key) {
-                    push_paged(
-                        &mut out,
-                        "brief",
-                        ContentSelector::task(task.key.clone(), "brief"),
-                        task.body("brief"),
-                    );
-                    if let Some(report) = task.report() {
+                    if self.is_disclosure_open("task-brief") {
+                        push_paged(
+                            &mut out,
+                            "brief",
+                            ContentSelector::task(task.key.clone(), "brief"),
+                            task.body("brief"),
+                        );
+                    }
+                    if let Some(report) = current_task_report(snapshot, task) {
                         if let Some(desc) = report.body("summary") {
                             push_paged(
                                 &mut out,
@@ -342,11 +489,41 @@ impl Reader {
                                 Some(&desc),
                             );
                         }
-                        if let Some(desc) = report.body("artifact") {
+                        if self.is_disclosure_open("report-artifact")
+                            && let Some(desc) = report.body("artifact")
+                        {
                             push_paged(
                                 &mut out,
                                 "report-artifact",
                                 ContentSelector::report(report.id.clone(), "artifact"),
+                                Some(&desc),
+                            );
+                        }
+                    }
+                    for report in task_history_reports(snapshot, task) {
+                        let disc = format!("history-report-{}", report.id);
+                        if !self.is_disclosure_open(&disc) {
+                            continue;
+                        }
+                        if let Some(desc) = report.body("summary") {
+                            push_paged(
+                                &mut out,
+                                &format!("history-summary-{}", report.id),
+                                ContentSelector::report(report.id.clone(), "summary"),
+                                Some(&desc),
+                            );
+                        }
+                        if let Some(desc) = report.body("evidence") {
+                            push_whole(
+                                &mut out,
+                                ContentSelector::report(report.id.clone(), "evidence"),
+                                Some(&desc),
+                            );
+                        }
+                        if let Some(desc) = report.body("next") {
+                            push_whole(
+                                &mut out,
+                                ContentSelector::report(report.id.clone(), "next"),
                                 Some(&desc),
                             );
                         }

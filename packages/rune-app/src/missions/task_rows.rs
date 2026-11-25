@@ -36,6 +36,10 @@ impl TaskRows {
         self.keys.get(key).map(|&i| self.rows[i].as_ref())
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = &Task> {
+        self.rows.iter().map(Rc::as_ref)
+    }
+
     pub fn new(mut tasks: Vec<Task>) -> Self {
         tasks.sort_unstable_by_key(|task| task.order);
         let mut own = Self {
@@ -138,7 +142,7 @@ impl TaskRows {
                 .child(
                     theme::icon_button(
                         &theme::EYE,
-                        format!("{} · {title}", t("filesPanel.viewer")),
+                        format!("{} · {title}", t("missions.control.task.details")),
                         false,
                         Some(active),
                         move |s: &mut S, tx| open(s, id.clone(), key.clone(), tx),

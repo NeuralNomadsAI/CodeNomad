@@ -67,6 +67,7 @@ pub(crate) struct Panel {
     pub(super) control_fields: super::control_fields::Fields,
     pub(super) observation: Observation,
     pub(super) reader: Reader,
+    reader_suspended: bool,
 }
 
 const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
@@ -103,6 +104,7 @@ impl Panel {
             control_fields: Default::default(),
             observation: Observation::default(),
             reader: Reader::default(),
+            reader_suspended: false,
         }
     }
 
@@ -110,15 +112,21 @@ impl Panel {
         self.reader.is_open()
     }
 
-    pub(crate) fn close_reader(&mut self) {
+    pub(crate) fn close_reader(&mut self) -> Option<String> {
+        let back = self.reader.take_return_focus();
         self.reader.close();
+        self.reader_suspended = false;
         if !self.visible {
+            self.refresh_due = None;
             self.detail.cancel();
         }
+        back
     }
 
     pub(crate) fn suspend(&mut self) {
+        self.reader_suspended = self.reader.is_open();
         self.show(false);
+        self.refresh_due = None;
         self.detail.cancel();
         self.reader.suspend();
         self.cancel_probe();
@@ -133,21 +141,33 @@ impl Panel {
     }
 
     pub(super) fn toggle_overview(&mut self, id: &str) -> bool {
-        if self.selected.as_deref() != Some(id) {
-            self.select(id);
+        if self.reader.is_overview_open(id) {
+            self.reader.close();
+            false
+        } else {
+            if self.selected.as_deref() != Some(id) {
+                self.select(id);
+            }
+            self.reader.open_overview(id.to_owned());
+            true
         }
-        self.reader.toggle_overview(id.to_owned())
     }
 
     pub(super) fn toggle_task(&mut self, mission_id: &str, task_id: &str, task_key: &str) -> bool {
-        if self.selected.as_deref() != Some(mission_id) {
-            self.select(mission_id);
+        if self.reader.is_task_open(mission_id, task_id) {
+            self.reader.close();
+            false
+        } else {
+            if self.selected.as_deref() != Some(mission_id) {
+                self.select(mission_id);
+            }
+            self.reader.open_task(
+                mission_id.to_owned(),
+                task_id.to_owned(),
+                task_key.to_owned(),
+            );
+            true
         }
-        self.reader.toggle_task(
-            mission_id.to_owned(),
-            task_id.to_owned(),
-            task_key.to_owned(),
-        )
     }
 
     pub(crate) fn show(&mut self, show: bool) {
@@ -158,8 +178,8 @@ impl Panel {
         if show {
             self.refresh();
         } else {
-            self.refresh_due = None;
             if !self.reader.is_open() {
+                self.refresh_due = None;
                 self.detail.cancel();
             }
             self.control_fields.cancel();
@@ -427,6 +447,28 @@ impl Panel {
                 _ => self.lanes[done.kind as usize].failed = Some(done.read),
             }
         }
+        if self.reader_suspended && self.reader.is_open() {
+            self.reader_suspended = false;
+            self.detail.refresh();
+        }
+        if let Some(super::reader::ReaderTarget::Task {
+            mission_id,
+            task_id,
+            task_key,
+        }) = self.reader.target().cloned()
+            && let Some(snapshot) = &self.detail.snapshot
+            && snapshot.header.root.id == mission_id
+        {
+            if let Some(task) = snapshot.tasks.find_by_id_or_key(&task_id, &task_key) {
+                self.reader
+                    .bind_task_identity(&mission_id, &task.id, &task.key);
+            } else {
+                self.detail.lookup_task(
+                    (!task_id.is_empty()).then_some(task_id.as_str()),
+                    (!task_key.is_empty()).then_some(task_key.as_str()),
+                );
+            }
+        }
         if self.visible
             && let (Some(project), Some(id)) = (&self.project, &self.selected)
         {
@@ -473,11 +515,12 @@ impl Panel {
                 .iter()
                 .find(|row| row.id == target_id)
                 .map(|row| row.revision);
+            let floor = self.detail.revision_floor(&target_id, revision);
             changed |= self.detail.poll(
                 &self.backend,
                 &project,
                 &target_id,
-                revision,
+                floor,
                 &self.reads,
                 &self.wake,
             );
@@ -485,6 +528,18 @@ impl Panel {
             self.detail.clear();
             self.observation = Observation::default();
             self.reader.follow_selection(None);
+        }
+        if let Some(super::reader::ReaderTarget::Task {
+            mission_id,
+            task_id,
+            task_key,
+        }) = self.reader.target().cloned()
+            && let Some(snapshot) = &self.detail.snapshot
+            && snapshot.header.root.id == mission_id
+            && let Some(task) = snapshot.tasks.find_by_id_or_key(&task_id, &task_key)
+        {
+            self.reader
+                .bind_task_identity(&mission_id, &task.id, &task.key);
         }
         let reader_project = self.project.as_deref().or_else(|| {
             self.detail
