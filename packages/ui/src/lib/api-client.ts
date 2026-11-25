@@ -630,7 +630,7 @@ export function createServerApi(ctx: BackendHttp) {
         `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
       )
     },
-    writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string; directory?: string; signal?: AbortSignal }): Promise<void> {
+    writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string; directory?: string; signal?: AbortSignal; expectedVersion?: string }): Promise<void> {
       id = parseInstanceKey(id).workspaceId
       const params = new URLSearchParams({ path: relativePath })
       if (options?.directory) params.set("directory", options.directory)
@@ -641,7 +641,7 @@ export function createServerApi(ctx: BackendHttp) {
         `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
         {
           method: "PUT",
-          body: JSON.stringify({ contents }),
+          body: JSON.stringify({ contents, ...(options?.expectedVersion !== undefined ? { expectedVersion: options.expectedVersion } : {}) }),
           signal: options?.signal,
         },
       )

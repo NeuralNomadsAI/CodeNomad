@@ -59,6 +59,7 @@ const cases: { path: string; method?: string; body?: string; call: (api: ServerA
   { path: "/files/preview?path=a.png&directory=%2Frepo", call: (a, id) => a.previewWorkspaceFile(id, "a.png", directory) },
   { path: "/files/content?path=a.png&encoding=base64", call: (a, id) => a.readWorkspaceFile(id, "a.png", { encoding: "base64" }) },
   { path: "/files/content?path=a.txt&directory=%2Frepo&worktree=other", method: "PUT", body: '{"contents":"hello"}', call: (a, id) => a.writeWorkspaceFile(id, "a.txt", "hello", { directory, worktree: "other" }) },
+  { path: "/files/content?path=a.txt&directory=%2Frepo", method: "PUT", body: '{"contents":"hello","expectedVersion":"\\"v1\\""}', call: (a, id) => a.writeWorkspaceFile(id, "a.txt", "hello", { directory, expectedVersion: '"v1"' }) },
   { path: "/worktrees/root/git-status?hideWhitespace=1", call: (a, id) => a.fetchWorktreeGitStatus(id, "root", undefined, { hideWhitespace: true }) },
   { path: "/worktrees/root/git-history?offset=5&head=c", call: (a, id) => a.fetchGitHistory(id, "root", 5, "c") },
   { path: "/worktrees/root/git-history/c", call: (a, id) => a.fetchGitCommit(id, "root", "c") },
@@ -226,4 +227,48 @@ test("Electron and Tauri reject remote workspace targets before local IPC", asyn
     await openWorkspacePath({ instanceId: "w", worktreeSlug: "root", target: "default" })
   }
   assert.equal(calls, 2)
+})
+
+test("real HTTP 409 conflict and file_too_large responses map to localized editor alerts", async t => {
+  let mode: "conflict" | "tooLarge" = "conflict"
+  const owner = await loopbackBackend(t, "fileErrors", async (request, response) => {
+    response.setHeader("Content-Type", "application/json")
+    if (request.url?.includes("/files/preview")) {
+      response.end(JSON.stringify({ contents: "baseline", version: '"v1"' }))
+      return
+    }
+    if (request.method === "PUT") {
+      if (mode === "conflict") {
+        response.statusCode = 409
+        response.end(JSON.stringify({ error: "File changed on disk" }))
+      } else {
+        response.statusCode = 400
+        response.end(JSON.stringify({ error: "Selected file is too large to attach", code: "file_too_large" }))
+      }
+      return
+    }
+    response.statusCode = 404
+    response.end("{}")
+  })
+  const errors: string[] = []
+  const target = { kind: "workspace" as const, slug: "root", sessionId: "s", directory, path: "err.txt" }
+  const h = createRoot(dispose => ({
+    dispose,
+    editor: useWorkspaceFileEditor({
+      instanceId: `${owner.backend.id}~w`,
+      target: () => target,
+      active: () => true,
+      t: key => key,
+      onError: message => errors.push(message),
+      captureOperation: captureBackendOperation,
+    }),
+  }))
+  t.after(() => { h.editor.discard(); h.dispose() })
+  h.editor.adopt("baseline")
+  h.editor.change("edited")
+  await h.editor.save()
+  mode = "tooLarge"
+  await h.editor.save()
+  assert.deepEqual(errors, ["filesPanel.saveConflict", "filesPanel.saveTooLarge"])
+  assert.equal(h.editor.dirty(), true)
 })
