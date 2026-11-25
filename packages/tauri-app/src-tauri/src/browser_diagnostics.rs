@@ -171,7 +171,7 @@ impl Buffer {
             self.lost_messages += 1;
             return;
         }
-        if self.lost_requests.len() >= spec.max_events {
+        if self.lost_requests.len() >= spec.max_events || self.ended_requests.len() >= spec.max_events {
             return;
         }
         if method == "Target.detachedFromTarget" {

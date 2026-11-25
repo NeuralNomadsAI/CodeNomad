@@ -260,7 +260,7 @@ for (const text of ["Frame loaded", "Worker ran"]) waits.push((await tools.brows
 let listed;
 for (let attempt = 0; attempt < 20; attempt++) {
   listed = await tools.browser.network.list({ tabID, urlContains: "/frame-api" });
-  if (listed.requests.every(item => item.state !== "pending")) break;
+  if (listed.requests.length && listed.requests.every(item => item.state !== "pending")) break;
   await tools.browser.wait({ tabID, delayMs: 100 });
 }
 const logged = await tools.browser.console({ tabID, level: "warning" });

@@ -91,3 +91,13 @@ test("only a lost ending event or frame detach ends a request", () => {
   assert.deepEqual(read.lostRequests.sort(), [":r2", "frame:*"])
   assert.equal(read.lost.requests, 3, "every request that lost an event is counted")
 })
+
+test("detach markers are bounded, and a lost WebSocket handshake ends its socket", () => {
+  const buffer = new DiagnosticEventBuffer()
+  for (let index = 0; index < DIAGNOSTICS.maxEvents * 3; index++) buffer.record("Target.detachedFromTarget", { sessionId: `frame-${index}` })
+  assert.ok(buffer.read(0).lostRequests.length <= DIAGNOSTICS.maxEvents)
+  const sockets = new DiagnosticEventBuffer()
+  sockets.record("Network.webSocketHandshakeResponseReceived", { requestId: "ws1" })
+  for (let index = 0; index < DIAGNOSTICS.maxEvents + 1; index++) sockets.record("Network.requestWillBeSentExtraInfo", { requestId: "r9" })
+  assert.deepEqual(sockets.read(0).lostRequests, [":ws1"])
+})

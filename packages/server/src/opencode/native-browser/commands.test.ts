@@ -468,5 +468,29 @@ test("a readout whose tab a concurrent tabs.list replaces fails, and an open lea
     if (action.action === "diagnostics") { registration = "window-b"; await tab.run({ type: "tabs.list" }, undefined, signal) }
     return result
   }
-  assert.equal((await tab.run({ type: "console", tabID: reopened.id }, undefined, signal) as any).code, "operation_failed")
+  assert.equal((await tab.run({ type: "console", tabID: reopened.id }, undefined, signal) as any).code, "document_changed")
+})
+
+test("an open keeps its new page's startup diagnostics, and a readout during a navigation fails", async () => {
+  const { tab, state } = fixture()
+  const host = (tab as any).host as PreviewHost
+  const open = host.open, page = host.page
+  await tab.run({ type: "tabs.open", url: "http://127.0.0.1/first" }, undefined, signal)
+  state.events.push({ method: "Runtime.consoleAPICalled", params: { type: "warning", timestamp: 1, args: [{ type: "string", value: "first page" }] } })
+  // The next open loads a new document, whose startup the host records in a new epoch.
+  host.open = async (...args) => {
+    const opened = await open(...args)
+    state.events.length = 0
+    state.epoch = "buffer:7"
+    state.events.push({ method: "Runtime.consoleAPICalled", params: { type: "warning", timestamp: 2, args: [{ type: "string", value: "next page startup" }] } })
+    return opened
+  }
+  const next = (await tab.run({ type: "tabs.open", url: "http://127.0.0.1/next" }, undefined, signal) as any).result.value
+  assert.deepEqual((await tab.run({ type: "console", tabID: next.id }, undefined, signal) as any).result.value.messages.map((entry: any) => entry.text), ["next page startup"])
+  host.page = async (action, at, deadline, abort) => {
+    const result = await page(action, at, deadline, abort)
+    if (action.action === "diagnostics") { state.target = `doc-${++state.document}`; await tab.run({ type: "tabs.list" }, undefined, signal) }
+    return result
+  }
+  assert.equal((await tab.run({ type: "console", tabID: next.id }, undefined, signal) as any).code, "document_changed")
 })

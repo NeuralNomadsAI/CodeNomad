@@ -24,7 +24,8 @@ export const DIAGNOSTICS = {
   /** The events that feed a console entry, for counting losses; a lost network event loses its request. */
   messageEvents: ["Runtime.consoleAPICalled", "Runtime.exceptionThrown", "Log.entryAdded"],
   /** The events that end a request: losing one leaves the request unable to finish. */
-  endingEvents: ["Network.loadingFinished", "Network.loadingFailed", "Network.webSocketClosed"],
+  endingEvents: ["Network.loadingFinished", "Network.loadingFailed", "Network.webSocketClosed",
+    "Network.webSocketHandshakeResponseReceived", "Network.webSocketFrameError"],
   /** Retained events and their UTF-8 JSON size per class (network events, and the others): the oldest of a class go
    * first, so a console flood never evicts a request's lifecycle. */
   maxEvents: 2_000,
@@ -96,7 +97,8 @@ export class DiagnosticEventBuffer {
 
   private lose(method: string, params: Record<string, unknown>, session: string | undefined): void {
     if (DIAGNOSTICS.messageEvents.includes(method)) return void this.lost.messages++
-    if (this.lostRequests.size >= DIAGNOSTICS.maxEvents) return
+    // Both sets are bounded like the buffer itself.
+    if (this.lostRequests.size >= DIAGNOSTICS.maxEvents || this.endedRequests.size >= DIAGNOSTICS.maxEvents) return
     // A lost detach ends every request of its frame; a lost ending event ends its request. Other lost events only
     // leave a request incomplete, which the loss count reports.
     if (method === "Target.detachedFromTarget" && typeof params.sessionId === "string") this.endedRequests.add(`${params.sessionId}:*`)
