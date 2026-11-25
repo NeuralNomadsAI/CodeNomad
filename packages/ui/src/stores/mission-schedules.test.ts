@@ -204,6 +204,36 @@ test("a successful HTTP response naming a foreign document never publishes the s
   } finally { h.dispose() }
 })
 
+test("remounting on the same live client hydrates cached rows immediately while revalidating", async () => {
+  const h = setup(false)
+  const sharedClient = h.store && fixture.client()
+  fixture.detail = async () => ({ document: selected, pending: false })
+  try {
+    await until(() => h.store.fresh(selected.id))
+    assert.equal(h.store.rows().length, 9)
+    h.dispose()
+    const gate = deferred<MissionScheduleList>()
+    fixture.client = () => sharedClient
+    fixture.generation = () => 0
+    fixture.list = async () => gate.promise
+    let disposeSecond!: () => void
+    const remounted = createRoot(cleanup => {
+      disposeSecond = cleanup
+      return useMissionSchedules({ instanceId: () => "instance", projectID: () => "project", directory: () => "/repo",
+        active: () => true, selected: () => undefined, refresh: () => 0 })
+    })
+    try {
+      assert.equal(remounted.rows().length, 9, "cached rows appear immediately across right-panel tab switches")
+      assert.equal(remounted.next(), "aaa_7")
+      assert.equal(remounted.fresh("aaa_0"), false, "cached rows wait for background revalidation before becoming fresh")
+      gate.resolve({ version: 1, projectID: "project", schedules: page.slice(0, 2) })
+      await until(() => !remounted.loading())
+      assert.equal(remounted.rows().length, 2)
+      assert.equal(remounted.fresh("aaa_0"), true)
+    } finally { disposeSecond() }
+  } finally { h.dispose() }
+})
+
 // Mirror the list's keyed selected owner: a publication hold must retain its sole
 // row and controller until the surviving list publishes the confirmed revision.
 function controlsFor(h: ReturnType<typeof setup>) {

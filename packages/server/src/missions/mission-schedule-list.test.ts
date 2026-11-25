@@ -5,6 +5,7 @@ import { NativeMissionDocumentStore } from "./mission-document-store"
 import { readMissionSchedulePage } from "./mission-schedule-list"
 import { missionScheduleRpcMethods } from "./mission-schedule-contract"
 import { missionDocumentChanges as changes } from "./mission-document-state"
+import { stableToken } from "./receipt-identity"
 import type { MissionConfiguration } from "./launch-policy"
 import type { MissionJsonValue } from "./model"
 
@@ -46,6 +47,34 @@ test("one bounded key-ordered page advances across tombstones and never reads ot
   const validate = new Ajv().compile(missionScheduleRpcMethods.scheduleList.output)
   assert.equal(validate(first), true, JSON.stringify(validate.errors))
   assert.equal(first.schedules[0].kind, "schedule")
+})
+
+test("kind=schedule skips tombstones and one-time documents in one bounded scan and paginates at limit", async () => {
+  const f = await fixture()
+  const oneTimeConfig: MissionConfiguration = { ...f.config, launch: { when: [] } }
+  for (let i = 0; i < 6; i++) {
+    const id = `doc_0${i}_tombstone`
+    await f.store.create(id, f.config, 1000 + i, f.current)
+    let doc = await f.store.change(id, 0, f.current, value => changes.requestDeletion(value, `del_${i}`, 1100 + i))
+    doc = await f.store.change(doc.id, doc.revision, f.current, value => { value.synchronization = null })
+    await f.store.compact(doc.id, doc.revision, 1200 + i, f.current)
+  }
+  for (let i = 0; i < 6; i++) {
+    const req = `req_${i}`, id = `msn_${stableToken(`${f.project.id}\0${req}`, 24)}`
+    await f.store.create(id, oneTimeConfig, 2000 + i, f.current)
+    await f.store.change(id, 0, f.current, value => { value.oneTime = { creationRequestID: req, creationDigest: "a".repeat(64), coordinatorSessionID: `ses_${i}`, location: { directory: "/project" }, firstPlay: null } })
+  }
+  for (const id of ["zzz_20_sched", "zzz_21_sched", "zzz_22_sched"]) await f.store.create(id, f.config, 3000, f.current)
+  const first = await readMissionSchedulePage(f.storage, f.project, { limit: 2, kind: "schedule" })
+  assert.deepEqual(first.schedules.map(item => item.id), ["zzz_20_sched", "zzz_21_sched"])
+  assert.equal(first.next, "zzz_21_sched")
+  assert.equal(f.scans.length, 1)
+  const rest = await readMissionSchedulePage(f.storage, f.project, { after: first.next, limit: 2, kind: "schedule" })
+  assert.deepEqual(rest.schedules.map(item => item.id), ["zzz_22_sched"])
+  assert.equal(rest.next, undefined)
+  assert.equal(f.scans.length, 2)
+  const validate = new Ajv().compile(missionScheduleRpcMethods.scheduleList.output)
+  assert.equal(validate(first), true, JSON.stringify(validate.errors))
 })
 
 test("invalid input, foreign identities, page overflow/order/cursor corruption fail closed", async () => {

@@ -33,7 +33,7 @@ export function registerMissionScheduleList(app: FastifyInstance, deps: Deps) {
         const call = { ...options, signal: lifetime.signal }
         if (!capability) {
           const query = listQuery.parse(request.query)
-          const page = await lifetime.wait(rpc.scheduleList({ after: query.after, limit: query.limit }, call)) as MissionScheduleList
+          const page = await lifetime.wait(rpc.scheduleList({ after: query.after, limit: query.limit, ...(query.kind ? { kind: query.kind } : {}) }, call)) as MissionScheduleList
           await owned.refresh()
           if (page.projectID !== owned.projectID) throw new Error("Foreign Mission schedule list")
           return page

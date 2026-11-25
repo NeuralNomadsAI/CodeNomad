@@ -21,6 +21,34 @@ const [holdVersion, setHoldVersion] = createSignal(0)
 export const changedUnifiedScheduleHolds = () => setHoldVersion(value => value + 1)
 export function unifiedScheduleHold(key: string) { holdVersion(); return unifiedScheduleHolds.get(key) }
 
+type ScheduleListCacheEntry = {
+  rows: UnifiedMissionSchedule[]
+  next?: string
+  pages: number
+  client: unknown
+  generation: number
+  attachment: AbortSignal
+}
+const SCHEDULE_LIST_CACHE_LIMIT = 32
+const scheduleListCache = new Map<string, ScheduleListCacheEntry>()
+
+function readScheduleListCache(scope: string, owner: { client: unknown; generation: number; attachment: AbortSignal }) {
+  const entry = scheduleListCache.get(scope)
+  if (!entry || entry.client !== owner.client || entry.generation !== owner.generation
+    || entry.attachment !== owner.attachment || owner.attachment.aborted) return undefined
+  return entry
+}
+
+function writeScheduleListCache(scope: string, entry: ScheduleListCacheEntry) {
+  if (entry.attachment.aborted) return
+  if (scheduleListCache.has(scope)) scheduleListCache.delete(scope)
+  scheduleListCache.set(scope, entry)
+  if (scheduleListCache.size > SCHEDULE_LIST_CACHE_LIMIT) {
+    const oldest = scheduleListCache.keys().next().value
+    if (oldest !== undefined) scheduleListCache.delete(oldest)
+  }
+}
+
 /** Panel-owned bounded pages. Refresh revalidates only pages explicitly loaded;
  * selecting an object outside them uses a point read, never an inventory scan. */
 export function useMissionSchedules(props: { instanceId: () => string; projectID: () => string | undefined;
@@ -69,17 +97,20 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
       const collected = new Map<string, UnifiedMissionSchedule>()
       let after: string | undefined = append ? next() : undefined
       for (let page = 0; page < (append ? 1 : pages); page++) {
-        const value = await api.fetchMissionSchedules(workspaceId, { directory: owner.directory, after, limit: 8 }, signal)
+        const value = await api.fetchMissionSchedules(workspaceId, { directory: owner.directory, after, limit: 8, kind: "schedule" }, signal)
         if (!current()) return
         if (value.projectID !== owner.project || value.version !== 1 || value.next && value.next === after) throw new Error("Foreign schedule page")
         for (const row of value.schedules) collected.set(row.id, row)
         after = value.next
         if (!after) break
       }
+      const scope = JSON.stringify([owner.instance, owner.project, owner.directory])
       if (append) {
         pages++
-        setRows([...new Map([...snapshot(), ...collected.values()].map(row => [row.id, row])).values()])
+        const merged = [...new Map([...snapshot(), ...collected.values()].map(row => [row.id, row])).values()]
+        setRows(merged)
         setNext(after); setFresh(previous => new Set([...previous, ...collected.keys()])); setError(false)
+        writeScheduleListCache(scope, { rows: merged, next: after, pages, client: owner.client, generation: owner.generation, attachment: owner.attachment })
         published(owner, [...collected.values()])
         return
       }
@@ -88,8 +119,10 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
       const previous = snapshot().find(row => row.id === selected && !collected.has(row.id))
       // Inventory and its cursor are valid independently of the selected read.
       // Keep the selected display/pointer target while its revalidation runs.
-      setRows([...collected.values(), ...(previous ? [previous] : [])]); setNext(after)
+      const nextRows = [...collected.values(), ...(previous ? [previous] : [])]
+      setRows(nextRows); setNext(after)
       setFresh(new Set([...collected.keys(), ...(previous && fresh().has(previous.id) ? [previous.id] : [])])); setError(false)
+      writeScheduleListCache(scope, { rows: nextRows, next: after, pages, client: owner.client, generation: owner.generation, attachment: owner.attachment })
       published(owner, [...collected.values()])
       if (selected && !collected.has(selected)) {
         try {
@@ -97,7 +130,9 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
           if (!selectedCurrent()) return
           if (value.document && value.document.id !== selected) throw new Error("Foreign selected schedule")
           if (value.document) collected.set(selected, value.document)
-          setRows([...collected.values()])
+          const resolvedRows = [...collected.values()]
+          setRows(resolvedRows)
+          writeScheduleListCache(scope, { rows: resolvedRows, next: after, pages, client: owner.client, generation: owner.generation, attachment: owner.attachment })
           setSelectionError(value.pending ? "pending" : undefined)
           setFresh(previous => new Set([...previous].filter(id => id !== selected).concat(!value.pending && value.document ? [selected] : [])))
           if (!value.pending && value.document) published(owner, [value.document])
@@ -123,7 +158,12 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
     const owner = binding()
     epoch++; controller?.abort(); controller = undefined; trailing = false
     const scope = JSON.stringify([owner.instance, owner.project, owner.directory])
-    if (scope !== displayScope) { setRows([]); setNext(undefined); pages = 1 }
+    if (scope !== displayScope) {
+      const cached = readScheduleListCache(scope, owner)
+      setRows(cached ? cached.rows : [])
+      setNext(cached?.next)
+      pages = cached?.pages ?? 1
+    }
     displayScope = scope
     scheduler.cancel("list"); setError(false); setSelectionError(undefined); setFresh(new Set<string>()); setLoading(false)
     if (owner.active) untrack(() => void read())
