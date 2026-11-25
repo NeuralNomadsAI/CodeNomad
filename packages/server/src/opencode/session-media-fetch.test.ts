@@ -47,7 +47,7 @@ test("media processor receives the original non-JSON error before compatibility 
   }
 })
 
-test("ordinary non-JSON errors still await their sole cancel and preserve its rejection", async t => {
+test("ordinary non-JSON errors cancel their body once and answer without waiting for it", async t => {
   const endpoint = { url: "http://127.0.0.1:4321" }
   rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   let cancel = 0, reject!: (error: Error) => void, settled = false
@@ -62,9 +62,14 @@ test("ordinary non-JSON errors still await their sole cancel and preserve its re
   try {
     await setImmediate()
     assert.equal(cancel, 1)
-    assert.equal(settled, false)
+    // A cancel that never settles must not stall the caller (Usage reads share this transport).
+    assert.equal(settled, true)
+    const response = await pending
+    assert.equal(response.status, 400)
+    assert.equal((await response.json())._tag, "OpenCodeContractError")
     reject(failure)
-    await assert.rejects(pending, error => error === failure)
+    await setImmediate()
+    assert.equal(cancel, 1, "the body is cancelled once and a late cancel rejection is absorbed")
   } finally { reject(failure); await pending.catch(() => {}); await service.shutdown() }
 })
 
