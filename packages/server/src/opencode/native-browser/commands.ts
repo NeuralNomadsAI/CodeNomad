@@ -302,7 +302,8 @@ export class PreviewTab {
         this.urlTarget = undefined
         await this.refresh(deadline, signal)
         if (!this.target || this.id !== tab) return gone()
-        if (matchesURL(this.url, String(action.url ?? ""))) return this.success(this.tab())
+        // Only an address read just now counts: a failed read leaves the cached one.
+        if (this.urlTarget === this.target && matchesURL(this.url, String(action.url ?? ""))) return this.success(this.tab())
         if (Date.now() - started >= timeout) return failure("condition_unmet", `The address did not match ${String(action.url ?? "")} in time.`)
         await sleep(LOAD_POLL_MS, undefined, { signal })
       }
@@ -311,7 +312,7 @@ export class PreviewTab {
       // The native host reports a main-frame load from its start, before the new document commits.
       for (;;) {
         await this.refresh(deadline, signal)
-        if (!this.target) return failure("operation_failed", "This tab is no longer shown. Call browser.tabs.list({}).")
+        if (!this.target || this.id !== tab) return gone()
         if (!this.loading) return this.success(this.tab())
         if (Date.now() - started >= timeout) return failure("condition_unmet", "The page is still loading.")
         await sleep(LOAD_POLL_MS, undefined, { signal })
