@@ -6,6 +6,7 @@ import { EventBus } from "../../events/bus"
 import { modernContractFixture } from "../compatibility/contract-fixture"
 import { rememberRuntime } from "../compatibility/runtime"
 import { BROWSER_CONTROL_EVENT, NativeBrowserAttachments } from "./attachments"
+import { RECOMMENDED, BELOW_MINIMUM } from "../runtime-version-fixture"
 
 const until = async (condition: () => boolean, label: string, timeout = 5_000) => {
   for (const end = Date.now() + timeout; !condition();) {
@@ -25,7 +26,7 @@ test("NativeBrowserAttachments attaches through an owner, runs each command once
   const attachedReady = new Promise<string>(resolve => { attached = resolve })
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
-  app.get("/api/info", async () => info("2.4.1"))
+  app.get("/api/info", async () => info(RECOMMENDED))
   app.get("/api/session/:id", async request => ({
     data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } },
   }))
@@ -46,7 +47,7 @@ test("NativeBrowserAttachments attaches through an owner, runs each command once
     await app.close()
   })
   const endpoint = { url: address, auth: undefined }
-  rememberRuntime(endpoint, { version: "2.4.1", pid: 1234, discovery: "status" })
+  rememberRuntime(endpoint, { version: RECOMMENDED, pid: 1234, discovery: "status" })
   const client = OpenCode.make({ baseUrl: address, fetch: globalThis.fetch })
   const connection = { endpoint, client, fetch: globalThis.fetch, assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
   const eventBus = new EventBus()
@@ -108,7 +109,7 @@ test("a reconnect to OpenCode ends the attachment made on the replaced connectio
   const attaches: Array<{ connectionID: string; release: (outcome: string) => void }> = []
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
-  app.get("/api/info", async () => info("2.4.1"))
+  app.get("/api/info", async () => info(RECOMMENDED))
   app.get("/api/session/:id", async request => ({ data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } } }))
   app.post("/api/rpc/:rpcID/:method", async (request, reply) => {
     const { method } = request.params as { rpcID: string; method: string }
@@ -123,7 +124,7 @@ test("a reconnect to OpenCode ends the attachment made on the replaced connectio
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
   t.after(async () => { for (const attach of attaches) attach.release("replaced"); await app.close() })
   const endpoint = { url: address, auth: undefined }
-  rememberRuntime(endpoint, { version: "2.4.1", pid: 1234, discovery: "status" })
+  rememberRuntime(endpoint, { version: RECOMMENDED, pid: 1234, discovery: "status" })
   const connect = () => {
     const connection = { endpoint, client: OpenCode.make({ baseUrl: address, fetch: globalThis.fetch }), fetch: globalThis.fetch, stale: false,
       assertCurrent: () => { if (connection.stale) throw new Error("OpenCode connection changed; refresh before retrying") },
@@ -156,7 +157,7 @@ test("ownership is checked when a queued command's turn comes, and a failed inve
   const attachedReady = new Promise<string>(resolve => { attached = resolve })
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
-  app.get("/api/info", async () => info("2.4.1"))
+  app.get("/api/info", async () => info(RECOMMENDED))
   app.get("/api/session/:id", async request => ({ data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } } }))
   app.post("/api/rpc/:rpcID/:method", async (request, reply) => {
     const { method } = request.params as { rpcID: string; method: string }
@@ -174,7 +175,7 @@ test("ownership is checked when a queued command's turn comes, and a failed inve
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
   t.after(async () => { releaseAttach("replaced"); await app.close() })
   const endpoint = { url: address, auth: undefined }
-  rememberRuntime(endpoint, { version: "2.4.1", pid: 1234, discovery: "status" })
+  rememberRuntime(endpoint, { version: RECOMMENDED, pid: 1234, discovery: "status" })
   const connection = { endpoint, client: OpenCode.make({ baseUrl: address, fetch: globalThis.fetch }), fetch: globalThis.fetch,
     assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
   const eventBus = new EventBus()
@@ -223,7 +224,7 @@ test("a daemon reporting OpenCode older than 2.4 or a custom label is never atta
   const rpcCalls: Array<{ method: string; input: Record<string, unknown> }> = []
   const probes: Array<Record<string, unknown>> = []
   let releaseAttach: (outcome: string) => void = () => {}
-  let live = "2.3.2"
+  let live = BELOW_MINIMUM
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
   app.get("/api/info", async () => info(live))
@@ -245,7 +246,7 @@ test("a daemon reporting OpenCode older than 2.4 or a custom label is never atta
       assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
   }
   // The shared service admitted 2.4.1; a same-address replacement now answers.
-  const connection = runtime("2.4.1")
+  const connection = runtime(RECOMMENDED)
   const eventBus = new EventBus()
   const attachments = new NativeBrowserAttachments({
     workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
@@ -277,7 +278,7 @@ test("a daemon reporting OpenCode older than 2.4 or a custom label is never atta
   custom.close()
   assert.equal(rpcCalls.some(call => call.method === "attach"), false, "a custom label gives no evidence of the browser permission check")
 
-  live = "2.4.1"
+  live = RECOMMENDED
   const current = new NativeBrowserAttachments({
     workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
     eventBus,
@@ -310,7 +311,7 @@ test("a session moved before a queued command's turn refuses it, and inventories
   const attachedReady = new Promise<string>(resolve => { attached = resolve })
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
-  app.get("/api/info", async () => info("2.4.1"))
+  app.get("/api/info", async () => info(RECOMMENDED))
   app.get("/api/session/:id", async request => ({ data: { id: (request.params as { id: string }).id, location: { directory } } }))
   app.post("/api/rpc/:rpcID/:method", async request => {
     const { method } = request.params as { rpcID: string; method: string }
@@ -325,7 +326,7 @@ test("a session moved before a queued command's turn refuses it, and inventories
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
   t.after(async () => { releaseAttach("replaced"); await app.close() })
   const endpoint = { url: address, auth: undefined }
-  rememberRuntime(endpoint, { version: "2.4.1", pid: 1234, discovery: "status" })
+  rememberRuntime(endpoint, { version: RECOMMENDED, pid: 1234, discovery: "status" })
   const connection = { endpoint, client: OpenCode.make({ baseUrl: address, fetch: globalThis.fetch }), fetch: globalThis.fetch,
     assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
   const eventBus = new EventBus()
@@ -375,7 +376,7 @@ test("a command whose ownership check fails is settled as failed", async t => {
   const attachedReady = new Promise<string>(resolve => { attached = resolve })
   const app = Fastify({ logger: false })
   app.get("/openapi.json", async () => modernContractFixture)
-  app.get("/api/info", async () => info("2.4.1"))
+  app.get("/api/info", async () => info(RECOMMENDED))
   app.get("/api/session/:id", async (request, reply) => ++reads > 1
     ? reply.code(503).send({ error: "unavailable" })
     : { data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } } })
@@ -390,7 +391,7 @@ test("a command whose ownership check fails is settled as failed", async t => {
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
   t.after(async () => { releaseAttach("replaced"); await app.close() })
   const endpoint = { url: address, auth: undefined }
-  rememberRuntime(endpoint, { version: "2.4.1", pid: 1234, discovery: "status" })
+  rememberRuntime(endpoint, { version: RECOMMENDED, pid: 1234, discovery: "status" })
   const connection = { endpoint, client: OpenCode.make({ baseUrl: address, fetch: globalThis.fetch }), fetch: globalThis.fetch,
     assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
   const eventBus = new EventBus()
