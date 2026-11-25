@@ -2014,21 +2014,17 @@ fn main() {
     launch_queue.enqueue(first_intent);
     let singleton_queue = Arc::clone(&launch_queue);
     let second_launch_config = std::path::PathBuf::from(&scope.config_identity);
+    let forwarded_launches = launch::ForwardedLaunchWorker::new(
+        second_launch_config,
+        cfg!(windows),
+        move |app: AppHandle, intent| {
+            if singleton_queue.enqueue(intent) {
+                schedule_launch_drain(app, Arc::clone(&singleton_queue));
+            }
+        },
+    );
     let single_instance = tauri_plugin_single_instance::init(move |app, args, callback_cwd| {
-        let cwd = std::path::PathBuf::from(callback_cwd);
-        let arguments = args.into_iter().skip(1).collect::<Vec<_>>();
-        if arguments == [developer_relaunch::MARKER] {
-            return;
-        }
-        #[cfg(windows)]
-        let intent = launch::parse_windows_forwarded_launch_intent(&arguments, &cwd);
-        #[cfg(not(windows))]
-        let intent = launch::parse_launch_intent(&arguments, &cwd);
-        singleton_queue.enqueue(launch::prepare_second_launch_intent(
-            intent,
-            &second_launch_config,
-        ));
-        schedule_launch_drain(app.clone(), Arc::clone(&singleton_queue));
+        forwarded_launches.enqueue(app.clone(), args, callback_cwd);
     });
 
     let navigation_guard: TauriPlugin<Wry, ()> = PluginBuilder::new("external-link-guard")
@@ -2245,6 +2241,7 @@ fn main() {
                 app.state::<local_windows::LocalWindows>()
                     .defer_startup_restore();
             }
+            setup_queue.mark_ready();
             schedule_launch_drain(app.handle().clone(), Arc::clone(&setup_queue));
             update_fullscreen_shortcut(&app.handle());
 

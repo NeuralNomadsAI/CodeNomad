@@ -38,7 +38,7 @@ import { CliProcessManager, setBackendProfileScope } from "./process-manager"
 import { loadNewRemoteWindow, navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, DeferredRestore, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, readForwardedLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createForwardedLaunchQueue, createLaunchIntentQueue, DeferredRestore, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
 import { InvalidProfileError } from "./data-profile"
 import { stripPrivateRelaunchEnvironment, sweepSelectionFolders } from "./profile-selection-cleanup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
@@ -412,6 +412,7 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     return createWindow(identity.id, identity.persisted)
   }
   const handleIntent = async (intent: LaunchIntent) => {
+    if (navigationLifecycle.stopped) return
     if (isConnectOnlyLaunch(intent) && !registry.mruRecord()) {
       // Nothing to run the connection in: a hidden, unpersisted window runs it and closes once it settles.
       const record = createWindow(randomUUID(), false, true)
@@ -554,18 +555,18 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     },
   })
   lifecycle.registerAppEvents()
+  const forwardedLaunches = createForwardedLaunchQueue(
+    storageScope.configIdentity,
+    (intent) => intentQueue.enqueue(intent),
+    (error) => console.error("[electron-startup] forwarded launch failed", error),
+    { argvSliceIndex: (argv) => process.defaultApp ? readElectronEntry(argv)?.nextIndex ?? 2 : 1 },
+  )
   app.on("second-instance", (_event, argv, workingDirectory, additionalData) => {
-    if ((additionalData as { automationRelaunch?: unknown } | undefined)?.automationRelaunch === true) return
-    const intent = readForwardedLaunchIntent(additionalData) ?? parseLaunchIntent(
-      argv.slice(process.defaultApp ? readElectronEntry(argv)?.nextIndex ?? 2 : 1),
-      workingDirectory || process.cwd(),
-    )
-    void intentQueue.enqueue(prepareSecondLaunchIntent(intent, storageScope.configIdentity)).catch(() => {})
+    void forwardedLaunches.enqueueSecondInstance(argv, workingDirectory, additionalData).catch(() => {})
   })
   app.on("open-file", (event, path) => {
     event.preventDefault()
-    const intent = parseLaunchIntent([path], process.cwd())
-    if (intent.folders.length) void intentQueue.enqueue(intent).catch(() => {})
+    void forwardedLaunches.enqueueOpenFile(path).catch(() => {})
   })
   app.on("certificate-error", (event, contents, url, error, _certificate, callback) => {
     if (contents && isRemoteCertificateAllowed(contents.id, url, insecureOrigins)) {

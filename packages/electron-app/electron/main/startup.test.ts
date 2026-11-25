@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, DeferredRestore, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, readForwardedLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createForwardedLaunchQueue, createLaunchIntentQueue, DeferredRestore, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, readForwardedLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
 import { stripPrivateRelaunchEnvironment } from "./profile-selection-cleanup"
 import type { TransitionResult } from "./profile-transition"
 
@@ -244,4 +244,158 @@ test("bootstrap waits for a same-generation URL and token and discards late comp
   release(true)
   await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(calls, ["exchange:http://old:old-token", "exchange:http://new:new-token", "navigate:http://new"])
+})
+
+test("forwarded second-instance callbacks enqueue without running filesystem work and preserve FIFO order", async () => {
+  const root = join(tmpdir(), `codenomad-forwarded-queue-${process.pid}`)
+  const slowFolder = join(root, "slow")
+  const fastFolder = join(root, "fast")
+  const configPath = join(root, "config.yaml")
+  let inCallback = false
+  let fsCallsDuringCallback = 0
+  const events: string[] = []
+  let releaseSlow!: (exists: boolean) => void
+  const slowGate = new Promise<boolean>((resolve) => { releaseSlow = resolve })
+  const delivered: LaunchIntent[] = []
+  let configReads = 0
+
+  const queue = createForwardedLaunchQueue(
+    configPath,
+    (intent) => { delivered.push(intent) },
+    (error) => assert.fail(String(error)),
+    {
+      isDirectory: async (path) => {
+        if (inCallback) fsCallsDuringCallback++
+        events.push(`stat:${path}`)
+        if (path === slowFolder) return slowGate
+        return path === fastFolder
+      },
+      readConfig: async (path) => {
+        if (inCallback) fsCallsDuringCallback++
+        assert.equal(path, configPath)
+        events.push(`config:${configReads}`)
+        if (configReads++ === 0) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" })
+        return "ui:\n  settings:\n    focusExistingWindowOnSecondLaunch: true\n"
+      },
+      argvSliceIndex: () => 1,
+      fallbackCwd: () => root,
+    },
+  )
+
+  inCallback = true
+  const first = queue.enqueueSecondInstance(
+    ["CodeNomad", "--folder", "slow", "--connect-server", "prod"],
+    root,
+    undefined,
+  )
+  const second = queue.enqueueSecondInstance(
+    ["CodeNomad", "--folder", "fast"],
+    root,
+    undefined,
+  )
+  inCallback = false
+
+  assert.equal(fsCallsDuringCallback, 0, "native callback must not invoke filesystem checks synchronously")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(delivered, [], "second launch must wait behind the first slow launch")
+  assert.deepEqual(events, [`stat:${slowFolder}`], "second launch must not start stat before the first finishes")
+
+  releaseSlow(true)
+  await Promise.all([first, second, queue.idle()])
+  assert.deepEqual(delivered, [
+    { newWindow: true, folders: [slowFolder], connectServer: "prod" },
+    { newWindow: false, folders: [fastFolder] },
+  ])
+})
+
+test("forwarded queue validates additionalData off-turn, skips automation relaunch, and orders open-file", async () => {
+  const root = join(tmpdir(), `codenomad-forwarded-data-${process.pid}`)
+  const existing = join(root, "existing")
+  const openedDir = join(root, "opened-dir")
+  const openedFile = join(root, "opened-file.txt")
+  const configPath = join(root, "config.yaml")
+  let inCallback = false
+  let fsCallsDuringCallback = 0
+  let configReads = 0
+  let releaseFirst!: (exists: boolean) => void
+  const firstGate = new Promise<boolean>((resolve) => { releaseFirst = resolve })
+  const delivered: LaunchIntent[] = []
+  const errors: unknown[] = []
+
+  const queue = createForwardedLaunchQueue(
+    configPath,
+    (intent) => { delivered.push(intent) },
+    (error) => { errors.push(error) },
+    {
+      isDirectory: async (path) => {
+        if (inCallback) fsCallsDuringCallback++
+        if (path === existing) return firstGate
+        if (path === join(root, "boom")) throw new Error("disk error")
+        return path === openedDir
+      },
+      readConfig: async () => {
+        if (inCallback) fsCallsDuringCallback++
+        configReads++
+        return ""
+      },
+      fallbackCwd: () => root,
+    },
+  )
+
+  inCallback = true
+  const relaunch = queue.enqueueSecondInstance(["CodeNomad"], root, { automationRelaunch: true })
+  const fromPayload = queue.enqueueSecondInstance(
+    ["CodeNomad", "ignored"],
+    root,
+    forwardedLaunchData({ newWindow: false, folders: [existing, "relative", join(root, "missing")], connectServer: " prod " }),
+  )
+  const connectOnly = queue.enqueueSecondInstance(
+    ["CodeNomad"],
+    root,
+    forwardedLaunchData({ newWindow: false, folders: [], connectServer: "remote-box" }),
+  )
+  const failing = queue.enqueueSecondInstance(["CodeNomad", "boom"], root, undefined)
+  const openDir = queue.enqueueOpenFile(openedDir)
+  const openFile = queue.enqueueOpenFile(openedFile)
+  inCallback = false
+
+  assert.equal(fsCallsDuringCallback, 0)
+  releaseFirst(true)
+  await relaunch
+  await fromPayload
+  await connectOnly
+  await assert.rejects(failing, /disk error/)
+  await openDir
+  await openFile
+  await queue.idle()
+
+  assert.equal(errors.length, 1)
+  assert.equal(configReads, 1, "only non-connect-only second-instance launches read config.yaml")
+  assert.deepEqual(delivered, [
+    { newWindow: true, folders: [existing], connectServer: "prod" },
+    { newWindow: false, folders: [], connectServer: "remote-box" },
+    { newWindow: false, folders: [openedDir] },
+  ])
+})
+
+test("forwarded queue resolves real directories and config.yaml asynchronously off the callback turn", async () => {
+  const root = join(tmpdir(), `codenomad-forwarded-real-${process.pid}`)
+  const folder = join(root, "workspace")
+  const config = join(root, "config.yaml")
+  mkdirSync(folder, { recursive: true })
+  writeFileSync(config, "ui:\n  settings:\n    focusExistingWindowOnSecondLaunch: true\n")
+  try {
+    const delivered: LaunchIntent[] = []
+    const queue = createForwardedLaunchQueue(
+      config,
+      (intent) => { delivered.push(intent) },
+      (error) => assert.fail(String(error)),
+    )
+    const pending = queue.enqueueSecondInstance(["CodeNomad", "--folder", "workspace"], root, undefined)
+    assert.deepEqual(delivered, [], "must not deliver synchronously on the callback turn")
+    await pending
+    assert.deepEqual(delivered, [{ newWindow: false, folders: [folder] }])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

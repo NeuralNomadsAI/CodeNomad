@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{mpsc, Mutex};
 
 use serde::Deserialize;
 
@@ -39,16 +39,28 @@ fn connect_server_argument(arguments: &[String], index: usize) -> Option<(String
     )
 }
 
-fn directory(value: &str, cwd: &Path) -> Option<String> {
+fn directory_with(
+    value: &str,
+    cwd: &Path,
+    is_dir: &mut impl FnMut(&Path) -> bool,
+) -> Option<String> {
     let path = if Path::new(value).is_absolute() {
         PathBuf::from(value)
     } else {
         cwd.join(value)
     };
-    path.is_dir().then(|| path.to_string_lossy().into_owned())
+    is_dir(&path).then(|| path.to_string_lossy().into_owned())
 }
 
 pub(crate) fn parse_launch_intent(arguments: &[String], cwd: &Path) -> LaunchIntent {
+    parse_launch_intent_with(arguments, cwd, &mut |path| path.is_dir())
+}
+
+fn parse_launch_intent_with(
+    arguments: &[String],
+    cwd: &Path,
+    is_dir: &mut impl FnMut(&Path) -> bool,
+) -> LaunchIntent {
     let mut intent = LaunchIntent::default();
     let mut seen = HashSet::new();
     let mut index = 0;
@@ -65,20 +77,20 @@ pub(crate) fn parse_launch_intent(arguments: &[String], cwd: &Path) -> LaunchInt
                 .filter(|folder| !folder.starts_with('-'))
             {
                 index += 1;
-                if let Some(folder) = directory(folder, cwd) {
+                if let Some(folder) = directory_with(folder, cwd, is_dir) {
                     if seen.insert(folder.clone()) {
                         intent.folders.push(folder);
                     }
                 }
             }
         } else if let Some(value) = value.strip_prefix("--folder=") {
-            if let Some(folder) = directory(value, cwd) {
+            if let Some(folder) = directory_with(value, cwd, is_dir) {
                 if seen.insert(folder.clone()) {
                     intent.folders.push(folder);
                 }
             }
         } else if !value.starts_with('-') {
-            if let Some(folder) = directory(value, cwd) {
+            if let Some(folder) = directory_with(value, cwd, is_dir) {
                 if seen.insert(folder.clone()) {
                     intent.folders.push(folder);
                 }
@@ -89,9 +101,18 @@ pub(crate) fn parse_launch_intent(arguments: &[String], cwd: &Path) -> LaunchInt
     intent
 }
 
+#[cfg(any(windows, test))]
 pub(crate) fn parse_windows_forwarded_launch_intent(
     arguments: &[String],
     cwd: &Path,
+) -> LaunchIntent {
+    parse_windows_forwarded_launch_intent_with(arguments, cwd, &mut |path| path.is_dir())
+}
+
+fn parse_windows_forwarded_launch_intent_with(
+    arguments: &[String],
+    cwd: &Path,
+    is_dir: &mut impl FnMut(&Path) -> bool,
 ) -> LaunchIntent {
     let mut intent = LaunchIntent::default();
     let mut seen = HashSet::new();
@@ -111,14 +132,14 @@ pub(crate) fn parse_windows_forwarded_launch_intent(
                 .filter(|folder| !folder.starts_with('-'))
             {
                 index += 1;
-                if let Some(folder) = directory(folder, cwd) {
+                if let Some(folder) = directory_with(folder, cwd, is_dir) {
                     if seen.insert(folder.clone()) {
                         intent.folders.push(folder);
                     }
                 }
             }
         } else if let Some(value) = value.strip_prefix("--folder=") {
-            if let Some(folder) = directory(value, cwd) {
+            if let Some(folder) = directory_with(value, cwd, is_dir) {
                 if seen.insert(folder.clone()) {
                     intent.folders.push(folder);
                 }
@@ -165,14 +186,24 @@ struct LaunchConfig {
 }
 
 pub(crate) fn prepare_second_launch_intent(
+    intent: LaunchIntent,
+    config_path: &Path,
+) -> LaunchIntent {
+    prepare_second_launch_intent_with(intent, config_path, &mut |path| {
+        std::fs::read_to_string(path)
+    })
+}
+
+fn prepare_second_launch_intent_with(
     mut intent: LaunchIntent,
     config_path: &Path,
+    read_config: &mut impl FnMut(&Path) -> std::io::Result<String>,
 ) -> LaunchIntent {
     // A connection runs in an existing window; a new window would be left empty beside the remote one.
     if intent.is_connect_only() {
         return intent;
     }
-    let focus_existing = std::fs::read_to_string(config_path)
+    let focus_existing = read_config(config_path)
         .ok()
         .and_then(|content| serde_yaml::from_str::<LaunchConfig>(&content).ok())
         .and_then(|config| config.ui)
@@ -186,24 +217,102 @@ pub(crate) fn prepare_second_launch_intent(
 }
 
 #[derive(Default)]
+struct LaunchQueueState {
+    pending: VecDeque<LaunchIntent>,
+    ready: bool,
+}
+
+#[derive(Default)]
 pub(crate) struct LaunchQueue {
-    pending: Mutex<VecDeque<LaunchIntent>>,
+    state: Mutex<LaunchQueueState>,
 }
 
 impl LaunchQueue {
-    pub(crate) fn enqueue(&self, intent: LaunchIntent) {
-        self.pending
+    /// Enqueues a launch intent and returns whether startup has already enabled draining.
+    pub(crate) fn enqueue(&self, intent: LaunchIntent) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.pending.push_back(intent);
+        state.ready
+    }
+
+    /// Enables draining once startup restoration has completed.
+    pub(crate) fn mark_ready(&self) {
+        self.state
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .push_back(intent);
+            .ready = true;
     }
 
     pub(crate) fn drain(&self) -> Vec<LaunchIntent> {
-        self.pending
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if !state.ready {
+            return Vec::new();
+        }
+        state.pending.drain(..).collect()
+    }
+}
+
+type RawForwardedLaunch<T> = (T, Vec<String>, String);
+
+pub(crate) struct ForwardedLaunchWorker<T> {
+    // Only admission is locked; filesystem work runs on the dedicated FIFO worker thread.
+    admission: Mutex<mpsc::Sender<RawForwardedLaunch<T>>>,
+}
+
+impl<T: Send + 'static> ForwardedLaunchWorker<T> {
+    pub(crate) fn new(
+        config_path: PathBuf,
+        windows_forwarding: bool,
+        dispatch: impl FnMut(T, LaunchIntent) + Send + 'static,
+    ) -> Self {
+        Self::with_io(
+            config_path,
+            windows_forwarding,
+            |path| path.is_dir(),
+            |path| std::fs::read_to_string(path),
+            dispatch,
+        )
+    }
+
+    fn with_io(
+        config_path: PathBuf,
+        windows_forwarding: bool,
+        mut is_dir: impl FnMut(&Path) -> bool + Send + 'static,
+        mut read_config: impl FnMut(&Path) -> std::io::Result<String> + Send + 'static,
+        mut dispatch: impl FnMut(T, LaunchIntent) + Send + 'static,
+    ) -> Self {
+        let (send, receive) = mpsc::channel::<RawForwardedLaunch<T>>();
+        std::thread::Builder::new()
+            .name("forwarded-launch".into())
+            .spawn(move || {
+                for (context, args, callback_cwd) in receive {
+                    let arguments = args.into_iter().skip(1).collect::<Vec<_>>();
+                    if arguments == [crate::developer_relaunch::MARKER] {
+                        continue;
+                    }
+                    let cwd = PathBuf::from(callback_cwd);
+                    let intent = if windows_forwarding {
+                        parse_windows_forwarded_launch_intent_with(&arguments, &cwd, &mut is_dir)
+                    } else {
+                        parse_launch_intent_with(&arguments, &cwd, &mut is_dir)
+                    };
+                    let intent =
+                        prepare_second_launch_intent_with(intent, &config_path, &mut read_config);
+                    dispatch(context, intent);
+                }
+            })
+            .expect("start forwarded launch worker");
+        Self {
+            admission: Mutex::new(send),
+        }
+    }
+
+    pub(crate) fn enqueue(&self, context: T, args: Vec<String>, cwd: String) {
+        let _ = self
+            .admission
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .drain(..)
-            .collect()
+            .send((context, args, cwd));
     }
 }
 
@@ -387,5 +496,228 @@ mod tests {
         assert!(!prepare_second_launch_intent(intent.clone(), &config).new_window);
         std::fs::write(&config, "ui: [invalid").unwrap();
         assert!(prepare_second_launch_intent(intent, &config).new_window);
+    }
+
+    #[test]
+    fn forwarded_launch_callback_enqueues_without_disk_io_and_preserves_order() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc, Arc,
+        };
+        use std::time::Duration;
+
+        let caller_thread = std::thread::current().id();
+        let timeout = Duration::from_secs(5);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (dispatch_tx, dispatch_rx) = mpsc::channel();
+        let worker_threads = Arc::new(Mutex::new(Vec::new()));
+        let dir_threads = Arc::clone(&worker_threads);
+        let config_threads = Arc::clone(&worker_threads);
+        let config_reads = Arc::new(AtomicUsize::new(0));
+        let config_reads_in_worker = Arc::clone(&config_reads);
+        let root = tempfile::tempdir().unwrap();
+        let slow_path = root.path().join("slow");
+        let fast_path = root.path().join("fast");
+        let expected_slow = slow_path.to_string_lossy().into_owned();
+        let expected_fast = fast_path.to_string_lossy().into_owned();
+        let expected_config = root.path().join("config.yaml");
+
+        let worker = ForwardedLaunchWorker::with_io(
+            expected_config.clone(),
+            true,
+            move |path| {
+                let current = std::thread::current().id();
+                assert_ne!(
+                    current, caller_thread,
+                    "directory validation must not run on the native callback thread"
+                );
+                dir_threads.lock().unwrap().push(current);
+                if path == slow_path {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv_timeout(timeout).unwrap();
+                    true
+                } else {
+                    path == fast_path
+                }
+            },
+            move |path| {
+                let current = std::thread::current().id();
+                assert_ne!(
+                    current, caller_thread,
+                    "config read must not run on the native callback thread"
+                );
+                assert_eq!(path, expected_config);
+                config_threads.lock().unwrap().push(current);
+                let read_index = config_reads_in_worker.fetch_add(1, Ordering::SeqCst);
+                if read_index == 0 {
+                    Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+                } else {
+                    Ok("ui:\n  settings:\n    focusExistingWindowOnSecondLaunch: true\n".into())
+                }
+            },
+            move |tag: &'static str, intent| {
+                dispatch_tx.send((tag, intent)).unwrap();
+            },
+        );
+
+        let cwd = root.path().to_string_lossy().into_owned();
+        worker.enqueue(
+            "first",
+            vec![
+                "codenomad.exe".into(),
+                "--folder".into(),
+                "slow".into(),
+                "--connect-server".into(),
+                "prod".into(),
+            ],
+            cwd.clone(),
+        );
+        entered_rx.recv_timeout(timeout).unwrap();
+        // A second forwarded launch must enqueue without waiting on the blocked disk check.
+        worker.enqueue(
+            "second",
+            vec!["codenomad.exe".into(), "--folder".into(), "fast".into()],
+            cwd,
+        );
+        assert!(dispatch_rx.try_recv().is_err());
+
+        release_tx.send(()).unwrap();
+        let first = dispatch_rx.recv_timeout(timeout).unwrap();
+        let second = dispatch_rx.recv_timeout(timeout).unwrap();
+        assert_eq!(
+            first,
+            (
+                "first",
+                LaunchIntent {
+                    new_window: true,
+                    folders: vec![expected_slow],
+                    connect_server: Some("prod".into()),
+                }
+            )
+        );
+        assert_eq!(
+            second,
+            (
+                "second",
+                LaunchIntent {
+                    new_window: false,
+                    folders: vec![expected_fast],
+                    connect_server: None,
+                }
+            )
+        );
+        let threads = worker_threads.lock().unwrap();
+        assert_eq!(threads.len(), 4);
+        assert!(threads.iter().all(|id| *id == threads[0]));
+        assert_eq!(config_reads.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn forwarded_launch_worker_skips_automation_relaunch_and_connect_only_config_read() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc, Arc,
+        };
+        use std::time::Duration;
+
+        let timeout = Duration::from_secs(5);
+        let dir_checks = Arc::new(AtomicUsize::new(0));
+        let config_reads = Arc::new(AtomicUsize::new(0));
+        let dir_checks_worker = Arc::clone(&dir_checks);
+        let config_reads_worker = Arc::clone(&config_reads);
+        let (dispatch_tx, dispatch_rx) = mpsc::channel();
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("workspace");
+        let expected_folder = folder.to_string_lossy().into_owned();
+
+        let worker = ForwardedLaunchWorker::with_io(
+            root.path().join("config.yaml"),
+            false,
+            move |path| {
+                dir_checks_worker.fetch_add(1, Ordering::SeqCst);
+                path == folder
+            },
+            move |_| {
+                config_reads_worker.fetch_add(1, Ordering::SeqCst);
+                Ok(String::new())
+            },
+            move |tag: &'static str, intent| {
+                dispatch_tx.send((tag, intent)).unwrap();
+            },
+        );
+
+        let cwd = root.path().to_string_lossy().into_owned();
+        worker.enqueue(
+            "relaunch",
+            vec!["codenomad".into(), crate::developer_relaunch::MARKER.into()],
+            cwd.clone(),
+        );
+        worker.enqueue(
+            "connect-only",
+            vec![
+                "codenomad".into(),
+                "--connect-server".into(),
+                "https://server.example.com".into(),
+            ],
+            cwd.clone(),
+        );
+        worker.enqueue(
+            "positional-folder",
+            vec!["codenomad".into(), "workspace".into()],
+            cwd,
+        );
+
+        assert_eq!(
+            dispatch_rx.recv_timeout(timeout).unwrap(),
+            (
+                "connect-only",
+                LaunchIntent {
+                    new_window: false,
+                    folders: Vec::new(),
+                    connect_server: Some("https://server.example.com".into()),
+                }
+            )
+        );
+        assert_eq!(
+            dispatch_rx.recv_timeout(timeout).unwrap(),
+            (
+                "positional-folder",
+                LaunchIntent {
+                    new_window: true,
+                    folders: vec![expected_folder],
+                    connect_server: None,
+                }
+            )
+        );
+        assert_eq!(dir_checks.load(Ordering::SeqCst), 1);
+        assert_eq!(config_reads.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn launch_queue_holds_intents_until_ready_and_preserves_order() {
+        let queue = LaunchQueue::default();
+        let first = LaunchIntent {
+            new_window: false,
+            folders: vec!["first".into()],
+            connect_server: None,
+        };
+        let second = LaunchIntent {
+            new_window: true,
+            folders: vec!["second".into()],
+            connect_server: None,
+        };
+        let third = LaunchIntent {
+            new_window: true,
+            folders: vec!["third".into()],
+            connect_server: None,
+        };
+        assert!(!queue.enqueue(first.clone()));
+        assert!(!queue.enqueue(second.clone()));
+        assert!(queue.drain().is_empty());
+        queue.mark_ready();
+        assert_eq!(queue.drain(), vec![first, second]);
+        assert!(queue.enqueue(third.clone()));
+        assert_eq!(queue.drain(), vec![third]);
     }
 }
