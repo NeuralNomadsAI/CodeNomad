@@ -131,7 +131,11 @@ impl Document {
             // Info has an independent authoritative metadata read after every feed gesture.
             // Settle a refused preflight so that read can proceed; retry needs a new gesture.
             if self.read.failed {
-                for choice in [Choice::UpdateFeed, Choice::Environment] {
+                for choice in [
+                    Choice::UpdateFeed,
+                    Choice::Environment,
+                    Choice::PaletteMutation,
+                ] {
                     if self.write.pending.remove(&choice) {
                         self.write.failed.insert(choice);
                     }

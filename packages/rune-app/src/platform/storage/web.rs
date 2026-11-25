@@ -1,4 +1,4 @@
-use super::{ClearOutcome, FILE_DRAFT_BYTES, MAX_BYTES, OUTLINE_BYTES, Result};
+use super::{ClearOutcome, FILE_DRAFT_BYTES, MAX_BYTES, OUTLINE_BYTES, RestoreMode, Result};
 
 #[derive(Clone)]
 pub struct Store {
@@ -10,7 +10,7 @@ struct BrowserStage {
     window: web_sys::Window,
     storage: web_sys::Storage,
     payload: std::cell::RefCell<(Vec<u8>, Vec<(String, String)>)>,
-    restore_enabled: std::cell::Cell<bool>,
+    restore: std::cell::Cell<RestoreMode>,
     snapshot_suppressed: std::cell::Cell<bool>,
     frozen: std::cell::Cell<bool>,
     generation: std::cell::Cell<u64>,
@@ -19,10 +19,13 @@ struct BrowserStage {
 }
 impl BrowserStage {
     fn admit(&self) -> Option<u64> {
-        (!self.frozen.get() && self.restore_enabled.get()).then(|| self.generation.get())
+        (!self.frozen.get() && self.restore.get() == RestoreMode::Enabled)
+            .then(|| self.generation.get())
     }
     fn allows(&self, generation: u64) -> bool {
-        !self.frozen.get() && self.restore_enabled.get() && self.generation.get() == generation
+        !self.frozen.get()
+            && self.restore.get() == RestoreMode::Enabled
+            && self.generation.get() == generation
     }
     fn bump_generation(&self) {
         self.generation.set(self.generation.get().wrapping_add(1));
@@ -32,10 +35,10 @@ impl BrowserStage {
             return;
         }
         let current = self.payload.try_borrow();
-        let release_records = if self.frozen.get() {
-            // An unconfirmed startup-state mutation is still in flight; keep workspace records.
+        let release_records = if self.frozen.get() || self.restore.get() == RestoreMode::Unknown {
+            // An unconfirmed startup-state mutation or unreadable preference must keep records.
             false
-        } else if self.restore_enabled.get() && !self.snapshot_suppressed.get() {
+        } else if self.restore.get() == RestoreMode::Enabled && !self.snapshot_suppressed.get() {
             current.as_ref().ok().is_some_and(|current| {
                 !current.0.is_empty()
                     && std::str::from_utf8(&current.0).is_ok_and(|text| {
@@ -101,15 +104,16 @@ impl Store {
             .session_storage()
             .map_err(|_| "state store unavailable")?
             .ok_or("state store unavailable")?;
-        let restore_enabled = match storage.get_item(Self::RESTORE_DISABLED) {
-            Ok(None) => true,
-            Ok(Some(_)) | Err(_) => false,
+        let restore = match storage.get_item(Self::RESTORE_DISABLED) {
+            Ok(None) => RestoreMode::Enabled,
+            Ok(Some(v)) if v == "true" => RestoreMode::Disabled,
+            Ok(Some(_)) | Err(_) => RestoreMode::Unknown,
         };
         let staged = std::rc::Rc::new(BrowserStage {
             window: window.clone(),
             storage: storage.clone(),
             payload: Default::default(),
-            restore_enabled: std::cell::Cell::new(restore_enabled),
+            restore: std::cell::Cell::new(restore),
             snapshot_suppressed: std::cell::Cell::new(false),
             frozen: std::cell::Cell::new(false),
             generation: std::cell::Cell::new(0),
@@ -148,19 +152,22 @@ impl Store {
         Ok(raw.map(String::into_bytes))
     }
     pub async fn restore_enabled(&self) -> Result<bool> {
-        let disabled = self
-            .storage
-            .get_item(Self::RESTORE_DISABLED)
-            .map_err(|_| "state read failed")?;
-        let enabled = match disabled.as_deref() {
-            None => true,
-            Some("true") => false,
+        let disabled = match self.storage.get_item(Self::RESTORE_DISABLED) {
+            Ok(value) => value,
+            Err(_) => {
+                self.staged.restore.set(RestoreMode::Unknown);
+                return Err("state read failed".into());
+            }
+        };
+        let (mode, enabled) = match disabled.as_deref() {
+            None => (RestoreMode::Enabled, true),
+            Some("true") => (RestoreMode::Disabled, false),
             Some(_) => {
-                self.staged.restore_enabled.set(false);
+                self.staged.restore.set(RestoreMode::Unknown);
                 return Err("invalid restore preference".into());
             }
         };
-        self.staged.restore_enabled.set(enabled);
+        self.staged.restore.set(mode);
         Ok(enabled)
     }
     pub fn begin_startup_mutation(&self) {
@@ -172,7 +179,11 @@ impl Store {
         self.staged.frozen.set(true);
         self.staged.bump_generation();
         if enabled {
-            if !self.staged.restore_enabled.get() && !self.remove_startup_keys().all_ok() {
+            // Only purge leftover startup keys when transitioning from a confirmed Disabled state;
+            // an unreadable/malformed preference must not erase user data on enable.
+            if self.staged.restore.get() == RestoreMode::Disabled
+                && !self.remove_startup_keys().all_ok()
+            {
                 self.staged.frozen.set(false);
                 return Err("startup state cleanup failed".into());
             }
@@ -180,7 +191,7 @@ impl Store {
                 self.staged.frozen.set(false);
                 return Err("state write failed".into());
             }
-            self.staged.restore_enabled.set(true);
+            self.staged.restore.set(RestoreMode::Enabled);
             self.staged.snapshot_suppressed.set(false);
             self.staged.bump_generation();
             self.staged.frozen.set(false);
@@ -194,7 +205,7 @@ impl Store {
                 self.staged.frozen.set(false);
                 return Err("state write failed".into());
             }
-            self.staged.restore_enabled.set(false);
+            self.staged.restore.set(RestoreMode::Disabled);
             self.staged.snapshot_suppressed.set(false);
             self.staged.bump_generation();
             self.staged.payload.borrow_mut().0.clear();
@@ -239,7 +250,7 @@ impl Store {
         Ok(raw.map(String::into_bytes))
     }
     pub fn save_file_drafts(&self, bytes: &[u8]) -> Result<()> {
-        if self.staged.frozen.get() || !self.staged.restore_enabled.get() {
+        if self.staged.frozen.get() || self.staged.restore.get() != RestoreMode::Enabled {
             return Ok(());
         }
         if bytes.len() > FILE_DRAFT_BYTES {
@@ -303,7 +314,7 @@ impl Store {
         self.start_save(bytes).await
     }
     fn save_now(&self, bytes: &[u8]) -> Result<()> {
-        if self.staged.frozen.get() || !self.staged.restore_enabled.get() {
+        if self.staged.frozen.get() || self.staged.restore.get() != RestoreMode::Enabled {
             return Ok(());
         }
         if self.staged.departing.get() {
@@ -325,7 +336,7 @@ impl Store {
         payload.1 = records.to_vec();
         if bytes.is_empty() {
             payload.0.clear();
-        } else if !self.staged.frozen.get() && self.staged.restore_enabled.get() {
+        } else if !self.staged.frozen.get() && self.staged.restore.get() == RestoreMode::Enabled {
             payload.0 = bytes.to_vec();
             self.staged.snapshot_suppressed.set(false);
         }

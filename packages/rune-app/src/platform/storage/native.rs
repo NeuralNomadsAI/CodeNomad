@@ -174,25 +174,25 @@ impl Files {
 
 pub(super) struct WriteGate {
     pub(super) generation: u64,
-    pub(super) restore_enabled: bool,
+    pub(super) restore: RestoreMode,
     pub(super) frozen: bool,
 }
 
 impl WriteGate {
-    fn new(restore_enabled: bool) -> Self {
+    fn new(restore: RestoreMode) -> Self {
         Self {
             generation: 0,
-            restore_enabled,
+            restore,
             frozen: false,
         }
     }
 
     pub(super) fn admit(&self) -> Option<u64> {
-        (!self.frozen && self.restore_enabled).then_some(self.generation)
+        (!self.frozen && self.restore == RestoreMode::Enabled).then_some(self.generation)
     }
 
     pub(super) fn allows(&self, generation: u64) -> bool {
-        !self.frozen && self.restore_enabled && self.generation == generation
+        !self.frozen && self.restore == RestoreMode::Enabled && self.generation == generation
     }
 }
 
@@ -254,12 +254,16 @@ impl Store {
     }
 
     pub async fn open(directory: PathBuf) -> Result<Self> {
-        let (files, restore_enabled) = tokio::task::spawn_blocking(move || {
+        let (files, restore) = tokio::task::spawn_blocking(move || {
             let files = Files::open(directory)?;
-            // Only an absent marker defaults to enabled; unreadable/malformed files block writes
-            // until restore_enabled() or set_restore_enabled() resolves them.
-            let restore_enabled = files.restore_enabled().unwrap_or(false);
-            Ok::<_, Box<dyn std::error::Error + Send + Sync>>((files, restore_enabled))
+            // Only an absent marker defaults to enabled; unreadable/malformed files stay Unknown
+            // so writes stay blocked without being mistaken for an explicit Disable.
+            let restore = match files.restore_enabled() {
+                Ok(true) => RestoreMode::Enabled,
+                Ok(false) => RestoreMode::Disabled,
+                Err(_) => RestoreMode::Unknown,
+            };
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>((files, restore))
         })
         .await??;
         Ok(Self {
@@ -268,7 +272,7 @@ impl Store {
             file_drafts_lock: Default::default(),
             staged: Default::default(),
             file_drafts_queue: Default::default(),
-            gate: std::sync::Arc::new(std::sync::Mutex::new(WriteGate::new(restore_enabled))),
+            gate: std::sync::Arc::new(std::sync::Mutex::new(WriteGate::new(restore))),
         })
     }
     pub async fn load(&self) -> Result<Option<Vec<u8>>> {
@@ -288,7 +292,11 @@ impl Store {
             let _guard = state_lock.lock().map_err(|_| "state store unavailable")?;
             let result = files.restore_enabled();
             if let Ok(mut gate) = gate.lock() {
-                gate.restore_enabled = matches!(result, Ok(true));
+                gate.restore = match &result {
+                    Ok(true) => RestoreMode::Enabled,
+                    Ok(false) => RestoreMode::Disabled,
+                    Err(_) => RestoreMode::Unknown,
+                };
             }
             result
         })
@@ -345,10 +353,10 @@ impl Store {
         let queue = self.file_drafts_queue.clone();
         let gate = self.gate.clone();
         tokio::task::spawn_blocking(move || {
-            let was_enabled = if let Ok(mut gate) = gate.lock() {
+            let previous = if let Ok(mut gate) = gate.lock() {
                 gate.frozen = true;
                 gate.generation = gate.generation.wrapping_add(1);
-                gate.restore_enabled
+                gate.restore
             } else {
                 return Err("state store unavailable".into());
             };
@@ -356,9 +364,9 @@ impl Store {
                 state.cancel_all();
             }
             if enabled {
-                if !was_enabled {
-                    // Purge any leftover files from a prior partial Disable before publishing
-                    // restoreEnabled = true so stale data cannot be restored on next launch.
+                // Only purge leftover files when transitioning from a confirmed Disabled state;
+                // an unreadable/malformed preference must not erase user files on enable.
+                if previous == RestoreMode::Disabled {
                     let cleaned = Self::remove_startup_files(
                         &files,
                         &state_lock,
@@ -379,7 +387,7 @@ impl Store {
                 };
                 if let Ok(mut gate) = gate.lock() {
                     if saved.is_ok() {
-                        gate.restore_enabled = true;
+                        gate.restore = RestoreMode::Enabled;
                         gate.generation = gate.generation.wrapping_add(1);
                     }
                     gate.frozen = false;
@@ -398,7 +406,7 @@ impl Store {
                 return Err(err);
             }
             if let Ok(mut gate) = gate.lock() {
-                gate.restore_enabled = false;
+                gate.restore = RestoreMode::Disabled;
                 gate.generation = gate.generation.wrapping_add(1);
             }
             let cleaned =

@@ -39,6 +39,7 @@ pub(super) struct Persistence {
     saving_file_drafts: Option<(u64, Receiver<(u64, bool)>)>,
     saved: u64,
     cleared_revision: Option<u64>,
+    mutation_baseline: Option<(u64, u64, u64)>,
     saved_file_drafts: u64,
     attempted_file_drafts: u64,
     #[cfg(not(target_arch = "wasm32"))]
@@ -71,6 +72,7 @@ impl Persistence {
             saving_file_drafts: None,
             saved: 0,
             cleared_revision: None,
+            mutation_baseline: None,
             saved_file_drafts: 0,
             attempted_file_drafts: 0,
             #[cfg(not(target_arch = "wasm32"))]
@@ -225,12 +227,7 @@ impl Persistence {
         });
     }
     pub fn retry(&mut self) {
-        if self.restore_read_error {
-            self.store = None;
-            self.read_error = false;
-            self.restore_read_error = false;
-            self.file_draft_read_error = false;
-        } else if self.store.is_none() {
+        if self.store.is_none() {
             self.read_error = false;
         }
         self.write_error = false;
@@ -243,12 +240,52 @@ impl Persistence {
         }
     }
     pub fn retry_file_drafts(&mut self, wake: rune::Waker) {
-        if !self.file_draft_read_error || self.retrying_file_drafts.is_some() {
-            return;
-        }
         let Some(store) = self.store.clone() else {
             return;
         };
+        if self.restore_read_error {
+            if self.loading {
+                return;
+            }
+            // Re-read the restore preference and saved data on the existing Store without
+            // dropping it (dropping Store on Web cancels openings; on desktop it can collide
+            // with Preferences' lock clone).
+            self.loading = true;
+            self.read_error = false;
+            let (out, input) = bounded(1);
+            self.loaded = Some(input);
+            crate::platform::spawn(async move {
+                let result = async {
+                    let restore_enabled = store.restore_enabled().await.ok();
+                    let (snapshot, drafts) = match restore_enabled {
+                        Some(true) => {
+                            let snapshot = store.load().await.and_then(|bytes| {
+                                bytes
+                                    .map(|bytes| {
+                                        decode(&bytes).map_err(|_| "invalid saved workspace".into())
+                                    })
+                                    .transpose()
+                            });
+                            let drafts = store.load_file_drafts().await;
+                            (snapshot, drafts)
+                        }
+                        Some(false) => (Ok(None), Ok(None)),
+                        None => (
+                            Err("invalid restore preference".into()),
+                            Err("invalid restore preference".into()),
+                        ),
+                    };
+                    Ok((store, restore_enabled, snapshot, drafts))
+                }
+                .await;
+                let _ = out.send(result).await;
+                wake();
+            });
+            return;
+        }
+        if !self.file_draft_read_error || self.retrying_file_drafts.is_some() {
+            return;
+        }
         let (out, input) = bounded(1);
         self.retrying_file_drafts = Some(input);
         crate::platform::spawn(async move {
@@ -284,7 +321,12 @@ impl Persistence {
         }
         true
     }
-    pub fn begin_startup_mutation(&mut self, outlines: &mut super::outlines::Cache) {
+    pub fn begin_startup_mutation(
+        &mut self,
+        current_revision: u64,
+        documents: &Documents,
+        outlines: &mut super::outlines::Cache,
+    ) {
         self.mutating = true;
         self.saving = None;
         self.retrying_file_drafts = None;
@@ -296,10 +338,16 @@ impl Persistence {
         if let Some(store) = &self.store {
             store.begin_startup_mutation();
         }
-        outlines.reset_persistence();
+        let outlines_version = outlines.begin_freeze();
+        self.mutation_baseline = Some((
+            current_revision,
+            documents.file_draft_revision(),
+            outlines_version,
+        ));
     }
     pub fn cancel_startup_mutation(&mut self, outlines: &mut super::outlines::Cache) {
         self.mutating = false;
+        self.mutation_baseline = None;
         self.saving = None;
         self.due = 0.0;
         self.attempted_file_drafts = self.saved_file_drafts;
@@ -310,7 +358,7 @@ impl Persistence {
             self.file_draft_retry_requested = true;
         }
         if self.restore_enabled {
-            outlines.mark_dirty_if_nonempty();
+            outlines.restore_after_failed_mutation();
         }
     }
     pub fn apply_restore_enabled(
@@ -321,6 +369,7 @@ impl Persistence {
         outlines: &mut super::outlines::Cache,
     ) {
         self.mutating = false;
+        self.mutation_baseline = None;
         self.restore_enabled = enabled;
         self.restore_read_error = false;
         self.read_error = false;
@@ -380,31 +429,57 @@ impl Persistence {
             self.saving_file_drafts = None;
             self.file_drafts_first_dirty = None;
         }
+        let (base_rev, base_drafts, base_outlines) = self.mutation_baseline.take().unwrap_or((
+            current_revision,
+            documents.file_draft_revision(),
+            outlines.version(),
+        ));
         if outcome.state_ok {
             self.read_error = self.restore_read_error;
             self.write_error = false;
             self.partial = false;
-            self.saved = current_revision;
-            self.cleared_revision = Some(current_revision);
+            if current_revision > base_rev {
+                // Workspace edits arrived while Clear was running: re-arm persistence instead of
+                // swallowing them into the cleared baseline.
+                self.saved = base_rev;
+                self.cleared_revision = None;
+                self.due = 0.0;
+            } else {
+                self.saved = current_revision;
+                self.cleared_revision = Some(current_revision);
+            }
         } else {
             self.due = 0.0;
         }
         if outcome.outlines_ok {
-            outlines.clear_saved();
+            outlines.clear_saved_before(base_outlines);
         } else if self.restore_enabled {
-            outlines.mark_dirty_if_nonempty();
+            outlines.restore_after_failed_mutation();
         }
         if outcome.drafts_ok {
             documents.discard_unopened_saved_drafts();
             let drafts_rev = documents.file_draft_revision();
             self.file_draft_error = false;
             self.file_draft_read_error = self.restore_read_error;
-            self.saved_file_drafts = drafts_rev;
-            self.attempted_file_drafts = drafts_rev;
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                self.file_drafts_dirty_revision = drafts_rev;
-                self.file_draft_retry_requested = false;
+            if drafts_rev > base_drafts {
+                // File edits arrived while Clear was running: keep them dirty so they checkpoint
+                // and trigger recovery if unsaved on exit.
+                self.saved_file_drafts = base_drafts;
+                self.attempted_file_drafts = base_drafts;
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.file_drafts_dirty_revision = drafts_rev;
+                    self.file_drafts_due = 0.0;
+                    self.file_draft_retry_requested = true;
+                }
+            } else {
+                self.saved_file_drafts = drafts_rev;
+                self.attempted_file_drafts = drafts_rev;
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.file_drafts_dirty_revision = drafts_rev;
+                    self.file_draft_retry_requested = false;
+                }
             }
             if !self.restore_read_error {
                 documents.block_file_draft_updates(false);

@@ -520,3 +520,124 @@ fn legacy_system_light_scheme_infers_light_appearance_from_surface_luminance() {
     assert_eq!(light_slot.builtin_id, Some("custom"));
     assert_eq!(light_slot.colors.as_ref(), Some(&light_colors));
 }
+
+#[test]
+fn legacy_inline_custom_scheme_is_materialized_and_edit_never_resurrects_deleted_preset() {
+    platform::block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend = Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+            .await
+            .unwrap();
+        let mut prefs = Preferences {
+            backend: Some(backend),
+            ..Preferences::default()
+        };
+        prefs.fixture();
+        let legacy_colors = ColorSchemeColors::default_custom()
+            .with(ColorField::AccentPrimary, "#12AB34")
+            .unwrap();
+        let preset_colors = ColorSchemeColors::default_custom()
+            .with(ColorField::AccentPrimary, "#FF6600")
+            .unwrap();
+        prefs.state.snapshot = Some(json!({
+            "colorScheme": {
+                "id": "custom",
+                "appearance": "dark",
+                "colors": legacy_colors.to_json()
+            },
+            "appearancePreferences": { "mode": "dark" },
+            "colorSchemePresets": {
+                "p1": { "name": "Amber", "appearance": "dark", "colors": preset_colors.to_json() }
+            }
+        }));
+        let options = prefs.palette_options(true);
+        let preset_opt = options
+            .iter()
+            .find(|opt| opt.preset_id.as_deref() == Some("p1"))
+            .unwrap()
+            .clone();
+        assert!(prefs.select_palette_option(&preset_opt));
+        let patch = poll_next_request(&mut prefs, &listener).await;
+        assert!(patch.first.starts_with("PATCH "));
+        assert_eq!(
+            patch.body["customColorScheme"]["colors"]["accentPrimary"], "#12AB34",
+            "selecting a preset must materialize legacy inline customColorScheme: {}",
+            patch.body
+        );
+        let custom_scheme = patch.body["customColorScheme"].clone();
+        patch
+            .reply(
+                200,
+                json!({
+                    "appearancePreferences": {
+                        "mode": "dark",
+                        "dark": {
+                            "scheme": { "id": "custom", "appearance": "dark", "colors": preset_colors.to_json() },
+                            "presetId": "p1"
+                        }
+                    },
+                    "activeColorSchemePresetId": "p1",
+                    "customColorScheme": custom_scheme,
+                    "colorSchemePresets": {
+                        "p1": { "name": "Amber", "appearance": "dark", "colors": preset_colors.to_json() }
+                    }
+                }),
+            )
+            .await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while prefs.palette_saving() {
+            prefs.poll();
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(!prefs.palette_save_failed());
+
+        // Editing p1 when another window already deleted it must fail cleanly without resurrecting.
+        assert!(
+            prefs
+                .save_palette_preset(
+                    "Amber",
+                    true,
+                    preset_colors.clone(),
+                    Some("p1".into()),
+                    false
+                )
+                .is_some()
+        );
+        let pre_edit_get = poll_next_request(&mut prefs, &listener).await;
+        assert!(pre_edit_get.first.starts_with("GET "));
+        pre_edit_get
+            .reply(
+                200,
+                json!({
+                    "appearancePreferences": { "mode": "dark" },
+                    "colorSchemePresets": {}
+                }),
+            )
+            .await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while prefs.palette_saving() {
+            prefs.poll();
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(prefs.palette_save_failed());
+
+        // A failed pre-write GET must settle palette_saving = false instead of wedging navigation.
+        assert!(
+            prefs
+                .save_palette_preset("Fresh", true, preset_colors, None, true)
+                .is_some()
+        );
+        let failed_get = poll_next_request(&mut prefs, &listener).await;
+        assert!(failed_get.first.starts_with("GET "));
+        failed_get.reply(503, json!({"error": "unavailable"})).await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while prefs.palette_saving() {
+            prefs.poll();
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(prefs.palette_save_failed());
+    });
+}

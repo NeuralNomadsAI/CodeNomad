@@ -206,7 +206,7 @@ impl Panel {
         if !self.general.busy(prefs)
             && let Some(after) = self.after_palette_save.take()
         {
-            if !self.general.dirty() {
+            if !self.general.dirty() && !prefs.palette_save_failed() {
                 match after {
                     AfterPaletteSave::Close => close_panel(self, prefs),
                     AfterPaletteSave::Section(section) => apply_web_section(self, prefs, section),

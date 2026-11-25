@@ -194,7 +194,7 @@ impl StartupState {
             changed = true;
             if let Some(store) = store.filter(|_| primary) {
                 if let Some(ui) = s.workspace.as_mut() {
-                    ui.begin_startup_mutation(&mut s.saved_outlines);
+                    ui.begin_startup_mutation(&s.documents, &mut s.saved_outlines);
                 }
                 let (tx, rx) = bounded(1);
                 let wake = s.wake.clone();
@@ -245,6 +245,8 @@ impl StartupState {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn wait_for_flight(s: &mut crate::State, timeout: std::time::Duration) {
+    // Promote any already-accepted pending command into flight before bounded shutdown wait.
+    StartupState::poll_main(s);
     let flight = s.settings.shared.borrow_mut().startup.flight.take();
     let Some((command, rx)) = flight else {
         return;

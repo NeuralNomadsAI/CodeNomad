@@ -134,6 +134,7 @@ pub(super) enum PaletteOp {
         name: String,
         dark: bool,
         colors: ColorSchemeColors,
+        allow_new: bool,
     },
     DeletePreset {
         preset_id: String,
@@ -161,27 +162,37 @@ impl PaletteOp {
     }
 }
 
+fn is_valid_mode(value: &Value) -> bool {
+    matches!(value.as_str(), Some("light" | "dark" | "system"))
+}
+
 impl PaletteMutation {
     pub(super) fn target_dark(&self) -> Option<bool> {
         self.op.target_dark()
     }
 
-    pub(super) fn needs_fresh_snapshot(&self, snapshot: &Value) -> bool {
-        match &self.op {
-            PaletteOp::DeletePreset { .. } => true,
-            PaletteOp::SavePreset { preset_id, .. } => {
-                !snapshot["colorSchemePresets"][preset_id].is_object()
-            }
-            _ => false,
-        }
+    pub(super) fn needs_fresh_snapshot(&self, _snapshot: &Value) -> bool {
+        matches!(
+            self.op,
+            PaletteOp::DeletePreset { .. } | PaletteOp::SavePreset { .. }
+        )
     }
 
     pub(super) fn reject_before_send(&self, snapshot: &Value) -> bool {
-        if let PaletteOp::SavePreset { preset_id, .. } = &self.op {
-            let existing = normalize_presets(snapshot)
-                .iter()
-                .any(|p| p.id == *preset_id);
-            if !existing && normalize_presets(snapshot).len() >= MAX_PRESETS {
+        if let PaletteOp::SavePreset {
+            preset_id,
+            allow_new,
+            ..
+        } = &self.op
+        {
+            let presets = normalize_presets(snapshot);
+            let existing = presets.iter().any(|p| p.id == *preset_id);
+            if *allow_new {
+                if !existing && presets.len() >= MAX_PRESETS {
+                    return true;
+                }
+            } else if !existing {
+                // Never resurrect a preset that was deleted elsewhere while editing.
                 return true;
             }
         }
@@ -190,8 +201,8 @@ impl PaletteMutation {
 
     pub(super) fn put(&self, patch: &mut Value, snapshot: &Value) {
         let legacy = legacy_scheme(snapshot, &self.legacy_config);
-        if !snapshot["appearancePreferences"]["mode"].is_string()
-            && !patch["appearancePreferences"]["mode"].is_string()
+        if !is_valid_mode(&snapshot["appearancePreferences"]["mode"])
+            && !is_valid_mode(&patch["appearancePreferences"]["mode"])
         {
             let mode = legacy
                 .as_ref()
@@ -202,12 +213,35 @@ impl PaletteMutation {
             let sibling_dark = !target_dark;
             let sibling_mode = mode_str(sibling_dark);
             if snapshot["appearancePreferences"][sibling_mode].is_null()
+                && patch["appearancePreferences"][sibling_mode].is_null()
                 && legacy.as_ref().is_some_and(|l| l.dark == sibling_dark)
             {
                 let resolved =
                     resolve_slot(snapshot, &self.legacy_config, legacy.as_ref(), sibling_dark);
                 patch["appearancePreferences"][sibling_mode] = resolved.to_slot_json();
             }
+        }
+        // Materialize a legacy inline custom scheme into customColorScheme before overwriting
+        // top-level colorScheme so selecting a preset or built-in does not lose those colors.
+        if !matches!(
+            self.op,
+            PaletteOp::SelectCustom { .. }
+                | PaletteOp::SaveCustom { .. }
+                | PaletteOp::DeletePreset { .. }
+        ) && snapshot["customColorScheme"].is_null()
+            && self.legacy_config["customColorScheme"].is_null()
+            && snapshot["activeColorSchemePresetId"].is_null()
+            && let Some(LegacyScheme {
+                id: "custom",
+                dark,
+                colors: Some(legacy_colors),
+            }) = legacy.as_ref()
+        {
+            patch["customColorScheme"] = json!({
+                "id": "custom",
+                "appearance": mode_str(*dark),
+                "colors": legacy_colors.to_json(),
+            });
         }
         match &self.op {
             PaletteOp::SelectBuiltIn { id, dark, colors } => {
@@ -303,6 +337,7 @@ impl PaletteMutation {
                 name,
                 dark,
                 colors,
+                ..
             } => {
                 let mode = mode_str(*dark);
                 let colors_json = colors.to_json();
@@ -426,6 +461,7 @@ impl PaletteMutation {
                 name,
                 dark,
                 colors,
+                ..
             } => {
                 let mode = mode_str(*dark);
                 let slot = &appearance[mode];
@@ -595,12 +631,23 @@ pub(super) fn custom_scheme(state: &Value, config: &Value) -> (bool, ColorScheme
     let candidate = state
         .get("customColorScheme")
         .filter(|v| !v.is_null())
-        .or_else(|| config.get("customColorScheme"))
-        .unwrap_or(&Value::Null);
-    let dark = candidate["appearance"].as_str() != Some("light");
-    let colors = ColorSchemeColors::from_legacy_json(&candidate["colors"])
-        .unwrap_or_else(ColorSchemeColors::default_custom);
-    (dark, colors)
+        .or_else(|| config.get("customColorScheme").filter(|v| !v.is_null()));
+    if let Some(candidate) = candidate {
+        let dark = candidate["appearance"].as_str() != Some("light");
+        let colors = ColorSchemeColors::from_legacy_json(&candidate["colors"])
+            .unwrap_or_else(ColorSchemeColors::default_custom);
+        return (dark, colors);
+    }
+    if state["activeColorSchemePresetId"].is_null()
+        && let Some(LegacyScheme {
+            id: "custom",
+            dark,
+            colors: Some(colors),
+        }) = legacy_scheme(state, config)
+    {
+        return (dark, colors);
+    }
+    (true, ColorSchemeColors::default_custom())
 }
 
 pub(super) fn resolve_slot(

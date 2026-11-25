@@ -1407,6 +1407,7 @@ impl Preferences {
             name: trimmed,
             dark,
             colors,
+            allow_new: allow_new_id,
         });
         self.state.stage_palette_mutation(mutation);
         Some(id)

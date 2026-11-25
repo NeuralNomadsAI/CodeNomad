@@ -225,9 +225,20 @@ fn startup_state_card_renders_and_controls_native_persistence() {
         "re-enabling Restore must purge leftover files before publishing true"
     );
 
-    // Malformed restore-enabled.json is treated as read error rather than silently enabled.
+    // Malformed restore-enabled.json is treated as Unknown (read error) and enabling Restore
+    // from Unknown must NOT purge existing saved startup files on disk.
+    std::fs::write(
+        root.join("state.json"),
+        b"{\"revision\":2,\"savedAt\":2,\"tabs\":[]}",
+    )
+    .unwrap();
     std::fs::write(root.join("restore-enabled.json"), b"{bad json").unwrap();
     assert!(crate::platform::block_on(store.restore_enabled()).is_err());
+    assert!(crate::platform::block_on(store.set_restore_enabled(true)).unwrap());
+    assert!(
+        root.join("state.json").exists(),
+        "enabling Restore from unreadable preference must not erase saved state"
+    );
 
     // Unopened restored file drafts are dropped on Clear without altering active editors.
     let docs = crate::files::document::store::Store::default();

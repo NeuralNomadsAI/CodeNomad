@@ -30,6 +30,13 @@ pub(crate) fn set_browser_file_wrap(wrap: bool) {
 
 const FILE_DRAFT_BYTES: usize = 256 * 1024;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RestoreMode {
+    Enabled,
+    Disabled,
+    Unknown,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClearOutcome {
     pub state_ok: bool,

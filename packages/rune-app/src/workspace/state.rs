@@ -263,8 +263,13 @@ impl Ui {
     pub(crate) fn restore_enabled(&self) -> bool {
         self.persistence.restore_enabled
     }
-    pub(crate) fn begin_startup_mutation(&mut self, outlines: &mut super::outlines::Cache) {
-        self.persistence.begin_startup_mutation(outlines);
+    pub(crate) fn begin_startup_mutation(
+        &mut self,
+        documents: &crate::files::document::store::Store,
+        outlines: &mut super::outlines::Cache,
+    ) {
+        self.persistence
+            .begin_startup_mutation(self.revision, documents, outlines);
         self.staged_revision = None;
         self.stage();
     }

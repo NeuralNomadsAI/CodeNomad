@@ -81,6 +81,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 if !s.general.busy(&prefs)
                     && let Some(after) = s.after_palette_save.take()
                     && !s.general.dirty()
+                    && !prefs.palette_save_failed()
                 {
                     drop(prefs);
                     match after {
