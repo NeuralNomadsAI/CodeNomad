@@ -70,7 +70,7 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
     const frame = nodes.find((node: any) => node.role === "Iframe")
     await performAction(session, { kind: "click", ref: "frame", backendNodeId: frame.node })
     await page.waitForFunction(() => (document.querySelector("iframe")!.contentDocument!.body.dataset.clicked === "true"))
-    await performAction(session, { kind: "scroll", target: { ref: "frame", backendNodeId: frame.node }, direction: "down", amount: 200 })
+    await performAction(session, { kind: "scroll", target: { ref: "frame", backendNodeId: frame.node }, delta: { x: 0, y: 200 } })
     await page.waitForFunction(() => document.querySelector("iframe")!.contentWindow!.scrollY > 0)
     // A frame owns its document's hit; an ancestor outside the frame does not.
     assert.deepEqual(await page.evaluate(source => {
