@@ -272,7 +272,7 @@ fn boundary_pagination_keeps_keyboard_focus_and_non_authoritative_disables_contr
                 view(&s.fields, &s.control, s.ready, &s.source, act)
             })
         },
-        (480.0, 720.0),
+        (480.0, 16000.0),
         Env::new(false, 1.0),
     );
     rt.frame(1.0 / 60.0);
@@ -283,9 +283,31 @@ fn boundary_pagination_keeps_keyboard_focus_and_non_authoritative_disables_contr
         "receipt code block carries a stable key"
     );
 
+    let dimmed = |rt: &Runtime<Scene>, key: &str| {
+        let [x, y, w, h] = rt
+            .elements()
+            .into_iter()
+            .find(|el| el.key.as_deref() == Some(key))
+            .unwrap()
+            .rect;
+        rt.instances.iter().any(|i| {
+            let [ix, iy, iw, ih] = i.rect;
+            ix <= x + 1.0
+                && iy <= y + 1.0
+                && ix + iw >= x + w - 1.0
+                && iy + ih >= y + h - 1.0
+                && iw <= w + 32.0
+                && ih <= h + 32.0
+                && i.fill[0..3] == [0.0, 0.0, 0.0]
+                && i.fill[3] > 0.0
+                && i.fill[3] < 1.0
+        })
+    };
     let tree = rt.accessibility_json();
     assert!(has_state(&tree, "receipt-prev-r1", "disabled"));
+    assert!(dimmed(&rt, "receipt-prev-r1"));
     assert!(!has_state(&tree, "receipt-next-r1", "disabled"));
+    assert!(!dimmed(&rt, "receipt-next-r1"));
 
     // Keyboard Next to last page disables Next while keeping focus on it.
     rt.update(|_, tx| tx.focus("receipt-next-r1", true));
@@ -298,7 +320,9 @@ fn boundary_pagination_keeps_keyboard_focus_and_non_authoritative_disables_contr
     assert_eq!(rt.state.fields.receipt.as_ref().unwrap().page, 1);
     let tree = rt.accessibility_json();
     assert!(!has_state(&tree, "receipt-prev-r1", "disabled"));
+    assert!(!dimmed(&rt, "receipt-prev-r1"));
     assert!(has_state(&tree, "receipt-next-r1", "disabled"));
+    assert!(dimmed(&rt, "receipt-next-r1"));
     assert!(has_state(&tree, "receipt-next-r1", "focused"));
 
     // Pressing Enter again on the disabled Next button does nothing.

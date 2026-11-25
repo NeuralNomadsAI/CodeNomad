@@ -114,13 +114,7 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>, touch: bool) -> El {
                         |s: &mut State| s.settings.shared.borrow_mut().retry_transcript(),
                     ))
             }))
-            .child(chrome::build_picker_accessible(
-                preset,
-                &name,
-                disabled,
-                t("commands.common.disabled"),
-                &mut selects,
-            ))
+            .child(chrome::build_picker(preset, &mut selects))
             .children(TranscriptRow::all().map(|row| {
                 let title = row_label(row);
                 let mode = filters
