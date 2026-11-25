@@ -28,7 +28,7 @@ pub(crate) fn control(path: &str) -> Value {
             .build()
             .unwrap()
             .post(format!("{base}{path}"))
-            .timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(20))
             .send()
             .await
             .unwrap()

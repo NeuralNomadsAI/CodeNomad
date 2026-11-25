@@ -489,7 +489,7 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
     keepAliveTimeout:60_000,
     connect(opts,cb){
       if(closed){cb(Error('Attested pool is closed'),null);return}
-      verifyOwner(port,pid).then(()=>checkIncarnation()).then(()=>{
+      verifyOwner(port,pid).then(()=>{
         if(closed){cb(Error('Attested pool is closed'),null);return}
         attestedConnectDepth++
         try{
@@ -632,7 +632,7 @@ export function createAttestedHttpAgent(port,pid,verifyOwnerOrOptions=verifyLoop
     const onClose=()=>finish(Error('Socket closed during peer attestation'))
     const entry={fail:err=>finish(err)}
     pending.add(entry)
-    verifyOwner(port,pid).then(()=>checkIncarnation()).then(()=>{
+    verifyOwner(port,pid).then(()=>{
       if(closed||settled){finish(Error('Attested HTTP agent is closed'));return}
       socket=net.createConnection({host:'127.0.0.1',port})
       socket.once('error',onError)
