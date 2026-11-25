@@ -41,7 +41,7 @@ Avec le même bundle produit et `RUNE_SERVER_EXE` pointant vers le serveur Rust 
 node packages/rune-app/fixtures/launcher-fixture.mjs --web-mobile
 ```
 
-Il vérifie l'appairage HTTPS depuis une autre origine, les sessions du dossier et des worktrees liés sans recherche, la recherche hors page, le SSE et sa reprise après la coupure de l'amont puis après un vrai redémarrage du serveur Rust sur le même port. Le toucher au centre, l'IME injectée, le redimensionnement et la conservation du brouillon lors du redémarrage et du réappairage sont vérifiés. Le profil Chromium Android portrait couvre clair, sombre et DPR 1 ; « Anciens » est signalé comme écart connu si le miroir accessible le présente comme actif ([Rune #118](https://github.com/anomalyco/rune/issues/118)).
+Il vérifie l'appairage HTTPS depuis une autre origine, les sessions du dossier et des worktrees liés sans recherche, la recherche hors page, le SSE et sa reprise après la coupure de l'amont puis après un vrai redémarrage du serveur Rust sur le même port. Le toucher au centre, l'IME injectée, le redimensionnement et la conservation du brouillon lors du redémarrage et du réappairage sont vérifiés. Le profil Chromium Android portrait couvre clair, sombre et DPR 1 ; le bouton « Messages précédents » est vérifié désactivé dans le miroir accessible pendant la reconnexion.
 
 Le contrôle `--web-mobile --same-origin-pairing` ouvre les liens sans page référente ; son rapport distingue ce contrôle du parcours complet avec `Referer`.
 

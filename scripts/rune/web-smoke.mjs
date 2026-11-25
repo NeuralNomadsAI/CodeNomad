@@ -327,18 +327,23 @@ try {
             if (await toggle.getAttribute('aria-expanded') !== 'true') await press(right)
             await drawer.waitFor()
             const sourceHeight = palette.metrics[colorScheme].tabActive.height
+            const rightTablist = drawer.getByRole('tablist', {name:right, exact:true})
+            await rightTablist.waitFor()
             const tabHeights = []
             for (const key of ['status', 'files']) {
-              const tab = drawer.getByRole('tab', {name:messages[`instanceShell.rightPanel.tabs.${key}`], exact:true})
+              const tab = rightTablist.getByRole('tab', {name:messages[`instanceShell.rightPanel.tabs.${key}`], exact:true})
               await tab.waitFor()
               const box = await tab.boundingBox()
               assert(box && Math.abs(box.height - sourceHeight) <= 1, `${key}: height ${box?.height}, Solid ${sourceHeight}`)
               tabHeights.push({key, height:box.height})
             }
             await page.screenshot({path:path.join(out, `${name}-${colorScheme}-right-panel.png`), scale:'css'})
-            await writeFile(path.join(out, `${name}-${colorScheme}-right-panel.json`),JSON.stringify({sourceHeight,tabHeights}))
+            await writeFile(path.join(out, `${name}-${colorScheme}-right-panel.json`),JSON.stringify({sourceHeight,tabHeights,tablistGrouped:true}))
             await press(right)
             await drawer.waitFor({state:'hidden'})
+            const projectTablist = page.getByRole('tablist', {name:messages['instanceShell.rightPanel.customize.tabs'], exact:true})
+            await projectTablist.waitFor()
+            await projectTablist.getByRole('tab', {name:values.project, exact:true, selected:true}).waitFor()
             tabBar = await mobileTabBar(page, [
               messages['instanceTabs.new.ariaLabel'], messages['settings.title'],
               messages['toastHistory.title'],
@@ -825,9 +830,7 @@ try {
         }
         await flushTouches()
         records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,tabBar,touches,...measured,
-          ...(values.mobile?{requiredChecksPassed:true,knownGaps:[
-            ...(measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]),
-          ]}:{pass:true})})
+          ...(values.mobile?{requiredChecksPassed:true,knownGaps:[]}:{pass:true})})
       } catch (error) {
         primaryError = error
         const bestEffort=(label,fn)=>withBudget(now()+2000,label,fn).catch(()=>null)

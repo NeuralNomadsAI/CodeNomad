@@ -276,7 +276,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
         }
         requestAnimationFrame(frame)
       })))
-      // Post-scroll accessibility mirror updates defer for SCROLL_SETTLE + IDLE_TIMEOUT (#1670).
+      // Post-scroll accessibility mirror updates flush off-rAF after scroll settle and idle timeout.
       let after = [], moved = false
       const settleDeadline = now() + 1500
       while (now() < settleDeadline) {
@@ -301,6 +301,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       const focus = await center(composer)
       await page.touchscreen.tap(focus.x,focus.y)
       await editor.waitFor({state:'attached',timeout:2500})
+      assert.equal(await page.locator('[data-rune-menu]').count(),0,'Primary tap on composer must not open a long-press menu')
       blank=await capture(inkClip(await fieldRect()))
       await cdp.send('Input.insertText',{text})
       await waitValue(text)
@@ -372,7 +373,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
         left:visualViewport.offsetLeft,right:visualViewport.offsetLeft+visualViewport.width}))
       const {top,bottom,left,right}=viewportBounds
       let settled = null, lastField = null, lastButton = null
-      // Mirror updates defer off rAF after resize/scroll settle (#1670).
+      // Accessibility mirror updates flush off-rAF after viewport resize settles.
       for(const until=now()+2000;;){
         const remaining=until-now()
         if(remaining<=0) break
