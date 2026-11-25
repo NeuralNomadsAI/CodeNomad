@@ -97,6 +97,9 @@ jobs:
           cargo fmt --manifest-path packages/server-rs/Cargo.toml -- --check
           cargo clippy --locked -p codenomad-client -p codenomad-rune-app -- -D clippy::correctness -D clippy::suspicious
           cargo clippy --locked --manifest-path packages/server-rs/Cargo.toml -- -D clippy::correctness -D clippy::suspicious
+          if [[ "$RUNNER_OS" != Windows ]]; then
+            cargo test --no-run --locked --manifest-path packages/server-rs/Cargo.toml
+          fi
           cargo test --locked --workspace
           cargo run --locked -p rune-style-policy -- packages/rune-app/src
           cargo build --locked -p codenomad-rune-app --bin codenomad-rune

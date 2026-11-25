@@ -14,13 +14,10 @@ pub(super) async fn settings(app: &App, endpoint: &Arc<Endpoint>, w: &Workspace,
 }
 
 pub(super) async fn view(app: &App, endpoint: &Arc<Endpoint>, w: &Workspace, dir: &str) -> Result<files::View, Error> {
-    let flag = async {
-        tokio::time::timeout(Duration::from_secs(5), flag(app, endpoint, w)).await.map_err(|_| unavailable())?
-    };
-    let (flag, entries) = tokio::try_join!(flag, capability::config_entries(app, endpoint, dir))?;
-    let settings = Settings::from_native(&entries.entries, &flag, dir).ok_or_else(unavailable)?;
+    let (flag, entries) = tokio::try_join!(flag(app, endpoint, w), capability::config_entries(app, endpoint, dir))?;
+    Settings::from_native(&entries.entries, &flag, dir).ok_or_else(unavailable)?;
     let dir = dir.to_owned();
-    tokio::task::spawn_blocking(move || files::View::load(dir, entries, settings)).await.map_err(|_| unavailable())?
+    tokio::task::spawn_blocking(move || files::View::load(dir, entries, flag)).await.map_err(|_| unavailable())?
 }
 
 pub(super) struct Settings {
@@ -33,12 +30,32 @@ pub(super) struct Settings {
 
 impl Settings {
     fn from_native(entries: &[Value], flag: &Value, directory: &str) -> Option<Self> {
-        let style = Style::of(directory);
+        Self::resolve(Style::of(directory), entries, flag, directory, None)
+    }
+
+    pub(super) fn from_documents(
+        style: Style,
+        entries: &[Value],
+        flag: &Value,
+        directory: &str,
+        documents: &[(bool, &str, Option<&'static str>)],
+    ) -> Option<Self> {
+        Self::resolve(style, entries, flag, directory, Some(documents))
+    }
+
+    fn resolve(
+        style: Style,
+        entries: &[Value],
+        flag: &Value,
+        directory: &str,
+        documents: Option<&[(bool, &str, Option<&'static str>)]>,
+    ) -> Option<Self> {
         if entries.iter().any(|entry| match entry["type"].as_str() {
             Some("directory") => !path(entry).is_some_and(|p| style.valid_absolute(p)),
             Some("document") => {
                 !entry["info"].is_object()
                     || entry.get("path").is_some() && !path(entry).is_some_and(|p| style.valid_absolute(p))
+                    || entry["info"].get("automations").is_some_and(|value| !value.is_boolean())
                     || capability::experimental(entry).is_some_and(|block| {
                         !block.is_object()
                             || ["automations", "schedules", "all_flags"]
@@ -48,6 +65,9 @@ impl Settings {
             }
             _ => true,
         }) {
+            return None;
+        }
+        if !super::valid_flag(flag) {
             return None;
         }
         let enabled = flag["enabled"].as_bool()?;
@@ -69,42 +89,88 @@ impl Settings {
         });
         let global_file = global.and_then(selected);
         let project_file = selected(&nested).or_else(|| (!inherited).then(|| selected(directory)).flatten());
-
-        // Inspect every *reported* document before trusting even an ON result.
-        // Raw-file revalidation (watcher lag and duplicates) belongs to the shared
-        // JSONC transaction before any future configuration write.
-        let explicit_off = entries.iter().find(|entry| {
-            capability::experimental(entry).is_some_and(|block| {
-                block.get("automations").or_else(|| block.get("schedules")) == Some(&Value::Bool(false))
-            })
-        });
-        let refusal = if let Some(entry) = explicit_off {
-            let path = path(entry);
-            let layer = match path {
-                None => "imposed",
-                Some(p) if global_file.as_ref().is_some_and(|f| style.same(f, p)) => "global",
-                Some(p) if project_file.as_ref().is_some_and(|f| style.same(f, p)) => "project",
-                Some(_) => "inherited",
-            };
-            Some(refusal("explicit-off", "experimental-block", layer, path))
-        } else if !enabled && provenance == "environment" {
-            Some(refusal("explicit-off", "environment", "environment", None))
-        } else if !enabled {
-            let target = project_file.clone().unwrap_or_else(|| style.join(&nested, "opencode.jsonc"));
-            let first_above = target_position(style, entries, &target, directory).map(|(_, after)| after);
-            first_above
-                .and_then(|i| entries[i..].iter().find(|e| capability::experimental(e).is_some()))
-                .map(|entry| refusal("masked", "experimental-block", "imposed", path(entry)))
-        } else {
-            None
+        let layer = |p: Option<&str>| match p {
+            None => "imposed",
+            Some(p) => {
+                if let Some(docs) = documents {
+                    match docs.iter().find(|(_, doc_path, _)| style.same(doc_path, p)) {
+                        Some((true, _, _)) => "project",
+                        Some((false, _, _)) => "global",
+                        None => "inherited",
+                    }
+                } else if global_file.as_ref().is_some_and(|f| style.same(f, p)) {
+                    "global"
+                } else if project_file.as_ref().is_some_and(|f| style.same(f, p)) {
+                    "project"
+                } else {
+                    "inherited"
+                }
+            }
         };
-        Some(Self {
-            enabled,
-            provenance: provenance.into(),
-            origin: capability::origin(entries, provenance).map(str::to_owned),
-            refusal,
-            target: None,
-        })
+        let finish = |refusal: Option<Value>, target: Option<String>| {
+            Some(Self {
+                enabled,
+                provenance: provenance.into(),
+                origin: capability::origin(entries, flag).map(str::to_owned),
+                refusal,
+                target,
+            })
+        };
+
+        // Inspect every discovered layer (including OFF hidden by a higher ON), then owned raw
+        // documents to fence watcher lag, then environment and daemon-reported hidden OFFs.
+        for entry in entries.iter().filter(|e| e["type"] == "document") {
+            let p = path(entry);
+            if entry["info"].get("automations") == Some(&Value::Bool(false)) {
+                return finish(Some(refusal("explicit-off", "automations-setting", layer(p), p)), None);
+            }
+            if capability::experimental(entry).is_some_and(|block| {
+                block.get("automations").or_else(|| block.get("schedules")) == Some(&Value::Bool(false))
+            }) {
+                return finish(Some(refusal("explicit-off", "experimental-block", layer(p), p)), None);
+            }
+        }
+        if let Some(docs) = documents {
+            for &(is_project, p, off) in docs {
+                if let Some(off_provenance) = off {
+                    return finish(
+                        Some(refusal("explicit-off", off_provenance, if is_project { "project" } else { "global" }, Some(p))),
+                        None,
+                    );
+                }
+            }
+        }
+        if !enabled && provenance == "environment" {
+            return finish(Some(refusal("explicit-off", "environment", "environment", None)), None);
+        }
+        if let Some(first_hidden) = flag.get("hiddenOff").and_then(Value::as_array).and_then(|a| a.first()).and_then(Value::as_str) {
+            let src = capability::source_path(first_hidden);
+            return finish(Some(refusal("explicit-off", "experimental-block", layer(src), src)), None);
+        }
+        if enabled {
+            return finish(None, None);
+        }
+        // Runtimes with the top-level setting are on unless a source turns them off; never write the legacy block there.
+        if provenance == "automations-setting" || flag["path"].is_string() {
+            let src = flag["path"].as_str().and_then(capability::source_path);
+            return finish(Some(refusal("explicit-off", provenance, layer(src), src)), None);
+        }
+        if let Some(docs) = documents {
+            let Some((_, project_path, _)) = docs.iter().find(|(is_project, _, _)| *is_project) else {
+                return finish(None, None);
+            };
+            let (_, after) = target_position(style, entries, project_path, directory)?;
+            if let Some(imposed) = entries[after..].iter().find(|entry| capability::experimental(entry).is_some()) {
+                return finish(Some(refusal("masked", "experimental-block", "imposed", path(imposed))), None);
+            }
+            return finish(None, Some((*project_path).to_owned()));
+        }
+        let target = project_file.clone().unwrap_or_else(|| style.join(&nested, "opencode.jsonc"));
+        let first_above = target_position(style, entries, &target, directory).map(|(_, after)| after);
+        let masked = first_above
+            .and_then(|i| entries[i..].iter().find(|e| capability::experimental(e).is_some()))
+            .map(|entry| refusal("masked", "experimental-block", "imposed", path(entry)));
+        finish(masked, None)
     }
 
     pub fn diagnostic(&self, api: bool) -> Value {
@@ -592,5 +658,224 @@ mod tests {
         assert_eq!(admit(&ready, &exact, AUTHORITY).unwrap(), Admission::VerifyReady);
         assert_eq!(admit(&ready, &new, AUTHORITY).unwrap(), Admission::VerifyReady);
         assert!(admit(&ready, &new, "different authority").is_err());
+    }
+
+    #[test]
+    fn top_level_setting_runtimes_refuse_explicit_and_hidden_off_without_writing() {
+        let global = json!({"type":"directory","path":"/profile"});
+        let gdoc = json!({"type":"document","path":GLOBAL,"info":{"experimental":{"subagent_depth":2}}});
+        let pdoc = json!({"type":"document","path":PROJECT,"info":{"experimental":{"subagent_depth":8}}});
+        let base = [global.clone(), gdoc.clone(), pdoc.clone()];
+
+        let on = Settings::from_native(&base, &json!({"enabled":true,"provenance":"channel-default"}), DIRECTORY).unwrap();
+        assert_eq!(on.diagnostic(true), json!({"available":true,"targets":[]}));
+        assert_eq!(on.origin, None);
+
+        let legacy_off = Settings::from_native(
+            &base,
+            &json!({"enabled":false,"provenance":"experimental-block","path":GLOBAL,"hiddenOff":[]}),
+            DIRECTORY,
+        )
+        .unwrap();
+        assert_eq!(legacy_off.origin.as_deref(), Some(GLOBAL));
+        assert_eq!(
+            legacy_off.diagnostic(true)["refusal"],
+            json!({"reason":"explicit-off","provenance":"experimental-block","layer":"global","path":GLOBAL,"openable":false})
+        );
+
+        let top_off = Settings::from_native(
+            &base,
+            &json!({"enabled":false,"provenance":"automations-setting","path":PROJECT,"hiddenOff":[]}),
+            DIRECTORY,
+        )
+        .unwrap();
+        assert_eq!(top_off.origin.as_deref(), Some(PROJECT));
+        assert_eq!(
+            top_off.diagnostic(true)["refusal"],
+            json!({"reason":"explicit-off","provenance":"automations-setting","layer":"project","path":PROJECT,"openable":false})
+        );
+
+        for pathless in [capability::INLINE_CONFIG_SOURCE, capability::REMOTE_CONFIG_SOURCE] {
+            let imposed = Settings::from_native(
+                &base,
+                &json!({"enabled":false,"provenance":"automations-setting","path":pathless,"hiddenOff":[]}),
+                DIRECTORY,
+            )
+            .unwrap();
+            assert_eq!(imposed.origin, None);
+            assert_eq!(
+                imposed.diagnostic(true)["refusal"],
+                json!({"reason":"explicit-off","provenance":"automations-setting","layer":"imposed","openable":false})
+            );
+        }
+
+        let entry_off = [
+            global.clone(),
+            json!({"type":"document","path":GLOBAL,"info":{"automations":false}}),
+            pdoc.clone(),
+        ];
+        let hidden_entry = Settings::from_native(
+            &entry_off,
+            &json!({"enabled":true,"provenance":"automations-setting","path":PROJECT,"hiddenOff":[]}),
+            DIRECTORY,
+        )
+        .unwrap();
+        assert_eq!(
+            hidden_entry.diagnostic(true)["refusal"],
+            json!({"reason":"explicit-off","provenance":"automations-setting","layer":"global","path":GLOBAL,"openable":false})
+        );
+
+        let ancestor = "/root/ancestor.jsonc";
+        let hidden_ancestor = Settings::from_native(
+            &base,
+            &json!({"enabled":true,"provenance":"automations-setting","path":PROJECT,"hiddenOff":[ancestor]}),
+            DIRECTORY,
+        )
+        .unwrap();
+        assert_eq!(
+            hidden_ancestor.diagnostic(true)["refusal"],
+            json!({"reason":"explicit-off","provenance":"experimental-block","layer":"inherited","path":ancestor,"openable":false})
+        );
+
+        for pathless in [capability::INLINE_CONFIG_SOURCE, capability::REMOTE_CONFIG_SOURCE] {
+            let hidden_imposed = Settings::from_native(
+                &base,
+                &json!({"enabled":true,"provenance":"channel-default","hiddenOff":[pathless]}),
+                DIRECTORY,
+            )
+            .unwrap();
+            assert_eq!(
+                hidden_imposed.diagnostic(true)["refusal"],
+                json!({"reason":"explicit-off","provenance":"experimental-block","layer":"imposed","openable":false})
+            );
+        }
+
+        // Legacy 2.4 OFF in an unowned ancestor file refuses with layer "inherited" without writing.
+        let inherited_legacy_off = Settings::from_native(
+            &base,
+            &json!({"enabled":false,"provenance":"experimental-block","path":ancestor,"hiddenOff":[]}),
+            DIRECTORY,
+        )
+        .unwrap();
+        assert_eq!(
+            inherited_legacy_off.diagnostic(true)["refusal"],
+            json!({"reason":"explicit-off","provenance":"experimental-block","layer":"inherited","path":ancestor,"openable":false})
+        );
+
+        // Precedence: environment OFF takes precedence over hiddenOff, and discovered entry OFF takes precedence over environment OFF.
+        let env_beats_hidden = Settings::from_native(
+            &base,
+            &json!({"enabled":false,"provenance":"environment","hiddenOff":[ancestor]}),
+            DIRECTORY,
+        )
+        .unwrap();
+        assert_eq!(
+            env_beats_hidden.diagnostic(true)["refusal"],
+            json!({"reason":"explicit-off","provenance":"environment","layer":"environment","openable":false})
+        );
+        let entry_beats_env = Settings::from_native(
+            &entry_off,
+            &json!({"enabled":false,"provenance":"environment","hiddenOff":[ancestor]}),
+            DIRECTORY,
+        )
+        .unwrap();
+        assert_eq!(
+            entry_beats_env.diagnostic(true)["refusal"],
+            json!({"reason":"explicit-off","provenance":"automations-setting","layer":"global","path":GLOBAL,"openable":false})
+        );
+
+        let bad_entry = [global, json!({"type":"document","path":PROJECT,"info":{"automations":"yes"}})];
+        assert!(Settings::from_native(&bad_entry, &json!({"enabled":true,"provenance":"channel-default"}), DIRECTORY).is_none());
+    }
+
+    #[test]
+    fn raw_disk_top_level_and_legacy_off_fence_watcher_lag_and_block_writes() {
+        struct TempGuard(std::path::PathBuf);
+        impl Drop for TempGuard {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = crate::shared::test_dir("calendar-2-4-disk");
+        let _guard = TempGuard(root.clone());
+        let global_dir = root.join("global");
+        let project_dir = root.join("project");
+        std::fs::create_dir_all(&global_dir).unwrap();
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let global_file = global_dir.join("opencode.jsonc");
+        let project_file = project_dir.join("opencode.jsonc");
+        std::fs::write(&global_file, "{\"automations\":false}\n").unwrap();
+        std::fs::write(&project_file, "{\"automations\":true}\n").unwrap();
+
+        let global_dir_str = global_dir.to_string_lossy().into_owned();
+        let project_dir_str = project_dir.to_string_lossy().into_owned();
+        let global_file_str = global_file.to_string_lossy().into_owned();
+        let project_file_str = project_file.to_string_lossy().into_owned();
+
+        let stale_entries = vec![
+            json!({"type":"document","path":global_file_str,"info":{}}),
+            json!({"type":"directory","path":global_dir_str}),
+            json!({"type":"document","path":project_file_str,"info":{"automations":true}}),
+        ];
+        // Raw disk OFF fences watcher lag AND takes precedence over environment OFF / hiddenOff.
+        let config = capability::ConfigEntries {
+            entries: stale_entries.clone(),
+            experimental: vec![None, None, None],
+        };
+        let view = files::View::load(
+            project_dir_str.clone(),
+            config,
+            json!({"enabled":false,"provenance":"environment","hiddenOff":[capability::INLINE_CONFIG_SOURCE]}),
+        )
+        .unwrap();
+        assert_eq!(
+            view.settings.diagnostic(true)["refusal"],
+            json!({"reason":"explicit-off","provenance":"automations-setting","layer":"global","path":global_file_str,"openable":false})
+        );
+
+        // Top-level ON beside a legacy experimental OFF in the same document still refuses.
+        std::fs::write(&global_file, "{}\n").unwrap();
+        std::fs::write(&project_file, "{\"automations\":true,\"experimental\":{\"automations\":false}}\n").unwrap();
+        let config = capability::ConfigEntries {
+            entries: stale_entries.clone(),
+            experimental: vec![None, None, None],
+        };
+        let view = files::View::load(
+            project_dir_str.clone(),
+            config,
+            json!({"enabled":true,"provenance":"automations-setting","path":project_file_str,"hiddenOff":[]}),
+        )
+        .unwrap();
+        assert_eq!(
+            view.settings.diagnostic(true)["refusal"],
+            json!({"reason":"explicit-off","provenance":"experimental-block","layer":"project","path":project_file_str,"openable":false})
+        );
+
+        // Clean 2.4 ON requires no write; 2.4 OFF never plans a legacy experimental write.
+        std::fs::write(&project_file, "{}\n").unwrap();
+        let config_on = capability::ConfigEntries {
+            entries: stale_entries.clone(),
+            experimental: vec![None, None, None],
+        };
+        let view_on = files::View::load(
+            project_dir_str.clone(),
+            config_on,
+            json!({"enabled":true,"provenance":"channel-default","hiddenOff":[]}),
+        )
+        .unwrap();
+        assert!(view_on.planned().unwrap().is_none());
+
+        let config_off = capability::ConfigEntries {
+            entries: stale_entries,
+            experimental: vec![None, None, None],
+        };
+        let view_off = files::View::load(
+            project_dir_str,
+            config_off,
+            json!({"enabled":false,"provenance":"automations-setting","path":project_file_str,"hiddenOff":[]}),
+        )
+        .unwrap();
+        assert_eq!(view_off.settings.diagnostic(true)["refusal"]["provenance"], "automations-setting");
+        assert!(view_off.planned().is_err());
     }
 }

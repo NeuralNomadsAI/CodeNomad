@@ -273,7 +273,10 @@ fn project_root(s: &State) -> Option<&str> {
 }
 
 pub(super) fn conversation_shown(s: &State) -> bool {
-    !s.screen.is_launcher() && !crate::files::has_preview(s) && !crate::git::has_preview(s)
+    !s.screen.is_launcher()
+        && !crate::files::has_preview(s)
+        && !crate::git::has_preview(s)
+        && !crate::workspace::mission_has_reader(s)
 }
 
 pub(crate) fn demanded(s: &State) -> bool {

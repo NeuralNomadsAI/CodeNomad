@@ -48,8 +48,11 @@ fn tree_content(s: &State, width: f32, touch: bool) -> El {
                         .as_mut()
                         .and_then(|ui| ui.toggle_preview(&directory, &path))
                     {
-                        #[cfg(target_arch = "wasm32")]
-                        Some(true) => super::refresh_browser_file_wrap(s),
+                        Some(true) => {
+                            #[cfg(target_arch = "wasm32")]
+                            super::refresh_browser_file_wrap(s);
+                            crate::workspace::close_mission_reader(s);
+                        }
                         Some(false) => crate::chat::reading::restore_position(s, tx),
                         _ => {}
                     }

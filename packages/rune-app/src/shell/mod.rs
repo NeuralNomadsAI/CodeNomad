@@ -106,6 +106,7 @@ fn body(
     let has_project = s.screen.launcher().is_some_and(|l| l.project.is_some());
     let body = match &s.screen {
         Screen::Launcher(_) if crate::git::has_preview(s) => crate::git::reader(s),
+        Screen::Launcher(_) if workspace::mission_has_reader(s) => workspace::mission_reader(s),
         Screen::Launcher(_) => {
             rune_theme_codenomad::shell::empty_conversation(t("instanceShell.empty.title"))
         }
@@ -136,6 +137,8 @@ pub fn reader(s: &State, history: impl FnOnce() -> El) -> El {
         crate::git::reader(s)
     } else if crate::files::has_preview(s) {
         crate::files::view::in_shell(s)
+    } else if workspace::mission_has_reader(s) {
+        workspace::mission_reader(s).remaining()
     } else {
         history()
     }
@@ -209,6 +212,16 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
                 files.close_reader();
             }
             crate::chat::reading::restore_position(s, tx);
+            return true;
+        }
+        if workspace::mission_has_reader(s) {
+            let back = workspace::close_mission_reader(s);
+            if s.screen.is_launcher() {
+                tx.instant();
+            } else {
+                crate::chat::reading::restore_position(s, tx);
+            }
+            workspace::restore_mission_reader_focus(s, back, tx);
             return true;
         }
     }

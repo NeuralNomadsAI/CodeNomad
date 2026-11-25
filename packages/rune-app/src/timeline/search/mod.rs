@@ -114,6 +114,7 @@ fn visible(s: &State) -> bool {
     !s.screen.is_launcher()
         && !crate::files::has_preview(s)
         && !crate::git::has_preview(s)
+        && !crate::workspace::mission_has_reader(s)
         && s.transcript_display.timeline.backend.is_some()
 }
 
