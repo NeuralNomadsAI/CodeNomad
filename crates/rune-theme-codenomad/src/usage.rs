@@ -47,11 +47,23 @@ pub fn metric(label: &str, value: &str, full: &str) -> El {
         )
 }
 
+fn metrics_caption(items: &[Metric<'_>]) -> String {
+    let mut caption = String::new();
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            caption.push_str(", ");
+        }
+        caption.push_str(item.label);
+        caption.push_str(": ");
+        caption.push_str(item.full);
+    }
+    caption
+}
+
 fn summary_strip(key: &str, items: &[Metric<'_>], theme: &Tokens) -> El {
     let mut line = String::new();
     let mut spans = Vec::with_capacity(items.len());
     let mut boxes = Vec::with_capacity(items.len());
-    let mut caption = String::new();
     let value_ink = theme.color("text-primary");
     let chip_box = SpanBox::new()
         .border(theme.color("border-base"), 1.0)
@@ -59,11 +71,7 @@ fn summary_strip(key: &str, items: &[Metric<'_>], theme: &Tokens) -> El {
     for (index, item) in items.iter().enumerate() {
         if index > 0 {
             line.push(' ');
-            caption.push_str(", ");
         }
-        caption.push_str(item.label);
-        caption.push_str(": ");
-        caption.push_str(item.full);
         let start = line.len();
         line.push('\u{00a0}');
         if !item.label.is_empty() {
@@ -87,7 +95,7 @@ fn summary_strip(key: &str, items: &[Metric<'_>], theme: &Tokens) -> El {
         .shrink()
         .min_w(0.0)
         .py(theme.space(Space::Xs).px())
-        .help(caption)
+        .help(metrics_caption(items))
         .key(format!("summary-{key}"))
 }
 
@@ -100,23 +108,25 @@ pub fn disclosure<S: 'static>(
     press: impl Fn(&mut S) + 'static,
 ) -> El {
     let theme = tokens(layout::dark());
-    let glyph = if expanded {
-        &crate::git_panel::CHEVRON_DOWN
+    let (glyph, directional) = if expanded {
+        (&crate::git_panel::CHEVRON_DOWN, false)
     } else {
-        &crate::git_panel::CHEVRON_RIGHT
+        (&crate::git_panel::CHEVRON_RIGHT, true)
     };
     let gap = theme.space(Space::Xs).px();
     let chip_h = chip_height(theme);
     let focus_width = theme.metric("windowIconFocus", "outlineWidth").px();
+    let mut chevron_icon = icon(glyph, CHEVRON_SIZE)
+        .color(theme.color("text-muted"))
+        .a11y_hidden();
+    if directional {
+        chevron_icon = chevron_icon.mirror_in_rtl();
+    }
     let chevron = row()
         .w(16.0)
         .h(chip_h)
         .center()
-        .child(
-            icon(glyph, CHEVRON_SIZE)
-                .color(theme.color("text-muted"))
-                .a11y_hidden(),
-        )
+        .child(chevron_icon)
         .key(format!("chevron-{key}"))
         .a11y_hidden();
 
@@ -130,6 +140,7 @@ pub fn disclosure<S: 'static>(
         .focus_ring(focus_width, -focus_width, theme.color("focus-ring-color"))
         .role("button")
         .label(label)
+        .help(metrics_caption(items))
         .expanded(expanded)
         .focusable(true)
         .on_press_tx(move |s, tx| on_press(s, tx))
