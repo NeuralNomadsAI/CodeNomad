@@ -2,15 +2,16 @@ import { createSignal } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { parseMissionChildTaskKey, parseMissionTaskSessions } from "../../../server/src/missions/task-sessions"
 import type { OpenCodeClient } from "./opencode-client"
-import { listMessageWindow } from "./session-message-pages"
 
-// Only the latest coordinator messages are scanned: older delegations stay unlinked.
-// Long real coordinators exceed 1,000 messages; read lazily, once per revision.
-const COORDINATOR_MESSAGE_BOUND = 3_000
+// Scan coordinator messages newest-first in bounded pages and stop as soon as
+// every task without a recorded actor is linked (never dumping 3,000 full messages).
+const COORDINATOR_PAGE_SIZE = 100
+const COORDINATOR_MESSAGE_BOUND = 400
 // A running subagent call records its child only on completion: while a live task
 // is unlinked, the coordinator's direct children are listed (bounded) and each
-// unseen child's first message is read until one has been admitted.
+// unseen child's first message is read in bounded parallel batches.
 const CHILD_BOUND = 50
+const CHILD_CONCURRENCY = 6
 
 type Root = Pick<OpenCodeClient, "message" | "session">
 export type MissionTaskSessionContext = Pick<MissionPanelMap, "id" | "projectID" | "coordinatorSessionId" | "revision"> & {
@@ -117,28 +118,50 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
     flight.done = (async () => {
       let sessions = known ? new Map(entry.sessions) : undefined
       if (!sessions) {
-        const page = await listMessageWindow(root as OpenCodeClient, mission.coordinatorSessionId,
-          { limit: COORDINATOR_MESSAGE_BOUND, isAuthoritative: current, signal })
-        if (!page || !current()) return
-        // Cache exact assignment candidates once. A newly loaded directory window
-        // can reveal their task keys later; only declared keys are exposed below.
-        sessions = parseMissionTaskSessions(mission.id, mission.coordinatorSessionId, page.messages)
+        sessions = new Map<string, string[]>()
+        const missing = (map: Map<string, string[]>) => observedMission.tasks.some(task => !task.actorSessionId && !map.has(task.key))
+        const seenCursors = new Set<string>()
+        let cursor: string | undefined
+        for (let scanned = 0; scanned < COORDINATOR_MESSAGE_BOUND; ) {
+          const remaining = Math.min(COORDINATOR_PAGE_SIZE, COORDINATOR_MESSAGE_BOUND - scanned)
+          const response = await root.message.list(cursor
+            ? { sessionID: mission.coordinatorSessionId, limit: remaining, cursor }
+            : { sessionID: mission.coordinatorSessionId, limit: remaining, order: "desc" }, { signal })
+          if (!current()) return
+          const batch = response.data ?? []
+          // Process oldest-to-newest within this page, keeping newer pages ahead of older ones.
+          const found = parseMissionTaskSessions(mission.id, mission.coordinatorSessionId, [...batch].reverse())
+          for (const [taskKey, ids] of found) {
+            const newer = sessions.get(taskKey) ?? []
+            sessions.set(taskKey, [...ids.filter(id => !newer.includes(id)), ...newer])
+          }
+          scanned += batch.length
+          const nextCursor = response.cursor?.next ?? undefined
+          if (!nextCursor || seenCursors.has(nextCursor) || !missing(sessions)) break
+          seenCursors.add(nextCursor)
+          cursor = nextCursor
+        }
       }
       const examined = new Set(known ? entry.examined : [])
       if (unlinked(observedMission, sessions)) {
         const children = await root.session.list({ parentID: mission.coordinatorSessionId, project: mission.projectID, limit: CHILD_BOUND }, { signal })
         if (!current()) return
-        for (const child of children.data ?? []) {
-          if (examined.has(child.id) || [...sessions.values()].some(ids => ids.includes(child.id))) continue
-          const first = await root.message.list({ sessionID: child.id, limit: 1, order: "asc" }, { signal })
-          if (!current()) return
-          const message = first.data?.[0]
-          // Not admitted yet: leave unexamined for the next activity pulse.
-          if (!message) continue
-          examined.add(child.id)
-          const task = parseMissionChildTaskKey(mission.id, message)
-          if (task) link(sessions, task, child.id)
-        }
+        const pending = (children.data ?? []).filter(child => !examined.has(child.id) && ![...sessions!.values()].some(ids => ids.includes(child.id)))
+        let index = 0
+        await Promise.all(Array.from({ length: Math.min(CHILD_CONCURRENCY, pending.length) }, async () => {
+          while (index < pending.length) {
+            const child = pending[index++]
+            if (!current()) return
+            const first = await root.message.list({ sessionID: child.id, limit: 1, order: "asc" }, { signal })
+            if (!current()) return
+            const message = first.data?.[0]
+            // Not admitted yet: leave unexamined for the next activity pulse.
+            if (!message) continue
+            examined.add(child.id)
+            const task = parseMissionChildTaskKey(mission.id, message)
+            if (task) link(sessions!, task, child.id)
+          }
+        }))
       }
       const linked = new Set([...sessions].filter(([key]) => taskKeys.has(key)).flatMap(([, ids]) => ids))
       const active = linked.size ? await root.session.active({ signal }) : {}

@@ -121,6 +121,13 @@ export async function projectMissionActivity(input: {
       if (evidence.nativeCall === "active" || evidence.nativeCall === "unknown") unsettledCalls.add(key)
     }
   }
+  // Actors belonging only to completed missions with no open reports or calls do not
+  // walk their recursive session.list family tree; own activity, own forms/permissions
+  // and active-descendant probes still observe them without O(tree) session.list fan-out.
+  const walkFamily = new Set(occurrences.filter(({ mission, actor }) => {
+    const key = `${mission.id}\0${actor.sessionId}`
+    return mission.status !== "completed" || missingReports.has(key) || unsettledCalls.has(key)
+  }).map(({ actor }) => actor.sessionId))
 
   const signal = AbortSignal.timeout(15_000)
   const locationReads = new Map<string, LocationRead>()
@@ -206,6 +213,10 @@ export async function projectMissionActivity(input: {
     }
     authorizedLocations.set(locationKey(read.session.location), read.session.location)
     read.owned = true
+    if (!walkFamily.has(sessionID)) {
+      read.familyFailed = true
+      return
+    }
     const kept = cache?.tree(input.client, read.session)
     if (kept) assertCurrent()
     const family = kept ? { ok: true as const, value: kept } : await settle(() => readNativeMissionFamilyTree(input.client, read.session!, signal, { assertCurrent,

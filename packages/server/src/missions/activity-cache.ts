@@ -5,13 +5,15 @@ import { sameLocation } from "../opencode/compatibility/location"
 import type { NativeMissionFamilyTree } from "./native-session-family"
 
 /** A kept family tree is read again after this long, whatever the events say. */
-export const MISSION_FAMILY_TREE_TTL_MS = 20_000
+export const MISSION_FAMILY_TREE_TTL_MS = 60_000
 const MAX_TREES = 512
 const MAX_MISSING = 4096
 
-/** Native events that can change a family's membership, parents, locations or titles. */
+/** Native events that can change a family's membership, parents, locations or titles.
+ * Ordinary `session.updated` ticks do not alter parent/child topology and must not
+ * flush every mission's cached tree on every model turn. */
 const STRUCTURE_EVENTS = new Set(["session.created", "session.forked", "session.moved", "session.deleted",
-  "session.updated", "session.archived", "session.renamed"])
+  "session.archived", "session.renamed"])
 
 interface ClientCache {
   trees: Map<string, { root: SessionInfo; tree: NativeMissionFamilyTree; at: number; epoch: number }>
