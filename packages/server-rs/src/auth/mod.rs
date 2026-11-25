@@ -284,9 +284,7 @@ impl Auth {
     }
     fn open_session_if_credentials_version(&self, version: u64, username: String) -> Result<String, Error> {
         let credentials = self.credentials.lock().unwrap();
-        if credentials.version != version
-            || credentials.current.as_ref().is_none_or(|c| c.username != username)
-        {
+        if credentials.version != version || credentials.current.as_ref().is_none_or(|c| c.username != username) {
             return Err(error(Status::UNAUTHORIZED, "Invalid credentials"));
         }
         let mut state = self.sessions.lock().unwrap();

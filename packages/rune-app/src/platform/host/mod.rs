@@ -92,7 +92,7 @@ impl ChildHost {
             .as_nanos();
         let cookie = format!("codenomad_session_{}_{nonce}", std::process::id());
         let mut process = OwnedProcess::spawn(&mut config.command(&cookie)?)?;
-        let mut stdin = process
+        let stdin = process
             .take_stdin()
             .ok_or_else(|| io::Error::other("Backend stdin unavailable"))?;
         let stdout = process

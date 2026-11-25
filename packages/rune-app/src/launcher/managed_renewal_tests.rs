@@ -235,12 +235,17 @@ fn managed_renewal_rejects_server_identity_mismatch_and_shows_login() {
         .await;
         let expired = Backend::unauthenticated(&base).unwrap();
         let base_ref = base.clone();
-        let host = crate::platform::LocalHost::fixture(move || {
-            match Backend::connect_with_session_cookie(&base_ref, cookie_name, renewed_value) {
-                Ok(backend) => crate::platform::ManagedRenewal::Renewed(backend),
-                Err(_) => crate::platform::ManagedRenewal::Denied,
-            }
-        });
+        let host =
+            crate::platform::LocalHost::fixture(
+                move || match Backend::connect_with_session_cookie(
+                    &base_ref,
+                    cookie_name,
+                    renewed_value,
+                ) {
+                    Ok(backend) => crate::platform::ManagedRenewal::Renewed(backend),
+                    Err(_) => crate::platform::ManagedRenewal::Denied,
+                },
+            );
 
         let mut s = crate::init();
         let mut l = Launcher::fixture();
@@ -326,7 +331,10 @@ fn attested_managed_renewal_keeps_new_cookie_when_projects_list_fails() {
                         if fail_ref.load(Ordering::SeqCst) {
                             ("500 Internal Server Error", r#"{"error":"transient"}"#)
                         } else {
-                            ("200 OK", r#"[{"id":"ws-recovered","location":{"directory":"/recovered"}}]"#)
+                            (
+                                "200 OK",
+                                r#"[{"id":"ws-recovered","location":{"directory":"/recovered"}}]"#,
+                            )
                         }
                     } else {
                         ("404 Not Found", "{}")
@@ -342,16 +350,17 @@ fn attested_managed_renewal_keeps_new_cookie_when_projects_list_fails() {
         let base = format!("http://127.0.0.1:{port}/");
         let expired = Backend::unauthenticated(&base).unwrap();
         let base_ref = base.clone();
-        let host = crate::platform::LocalHost::fixture(move || {
-            match Backend::connect_with_session_cookie(
-                &base_ref,
-                "codenomad_session_test",
-                "renewed_session_token_012345678901234567890",
-            ) {
-                Ok(backend) => crate::platform::ManagedRenewal::Renewed(backend),
-                Err(_) => crate::platform::ManagedRenewal::Denied,
-            }
-        });
+        let host =
+            crate::platform::LocalHost::fixture(
+                move || match Backend::connect_with_session_cookie(
+                    &base_ref,
+                    "codenomad_session_test",
+                    "renewed_session_token_012345678901234567890",
+                ) {
+                    Ok(backend) => crate::platform::ManagedRenewal::Renewed(backend),
+                    Err(_) => crate::platform::ManagedRenewal::Denied,
+                },
+            );
 
         let mut s = crate::init();
         let mut l = Launcher::fixture();
@@ -386,7 +395,10 @@ fn attested_managed_renewal_keeps_new_cookie_when_projects_list_fails() {
         }
         let l = rt.state.screen.launcher().unwrap();
         assert!(!l.authentication_required, "attested cookie must be kept");
-        assert!(l.projects_stale, "failed project list must remain refreshable");
+        assert!(
+            l.projects_stale,
+            "failed project list must remain refreshable"
+        );
         assert_eq!(l.error, Some("rune.list_error"));
         assert!(
             !l.connection
@@ -408,7 +420,10 @@ fn attested_managed_renewal_keeps_new_cookie_when_projects_list_fails() {
             .projects_refresh
             .is_some()
         {
-            assert!(std::time::Instant::now() < deadline, "projects refresh timed out");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "projects refresh timed out"
+            );
             rt.update(|s, tx| {
                 let _ = poll(s, tx);
             });
@@ -536,16 +551,17 @@ fn renewed_cookie_revoked_on_workspaces_401_is_rejected_and_shows_login() {
         let base = format!("http://127.0.0.1:{port}/");
         let expired = Backend::unauthenticated(&base).unwrap();
         let base_ref = base.clone();
-        let host = crate::platform::LocalHost::fixture(move || {
-            match Backend::connect_with_session_cookie(
-                &base_ref,
-                "codenomad_session_test",
-                "renewed_session_token_012345678901234567890",
-            ) {
-                Ok(backend) => crate::platform::ManagedRenewal::Renewed(backend),
-                Err(_) => crate::platform::ManagedRenewal::Denied,
-            }
-        });
+        let host =
+            crate::platform::LocalHost::fixture(
+                move || match Backend::connect_with_session_cookie(
+                    &base_ref,
+                    "codenomad_session_test",
+                    "renewed_session_token_012345678901234567890",
+                ) {
+                    Ok(backend) => crate::platform::ManagedRenewal::Renewed(backend),
+                    Err(_) => crate::platform::ManagedRenewal::Denied,
+                },
+            );
 
         let mut s = crate::init();
         let mut l = Launcher::fixture();
@@ -577,7 +593,10 @@ fn renewed_cookie_revoked_on_workspaces_401_is_rejected_and_shows_login() {
         }
         assert!(rt.state.screen.is_launcher());
         let l = rt.state.screen.launcher().unwrap();
-        assert!(l.authentication_required, "revoked renewed cookie must not be installed");
+        assert!(
+            l.authentication_required,
+            "revoked renewed cookie must not be installed"
+        );
         assert!(
             l.connection
                 .as_ref()
@@ -604,12 +623,17 @@ fn stale_created_reply_after_renewal_preserves_session_without_binding_expired_b
         expired_session_backend.workspace = "ws-1".into();
         expired_session_backend.session = "ses_created".into();
         let base_ref = base.clone();
-        let host = crate::platform::LocalHost::fixture(move || {
-            match Backend::connect_with_session_cookie(&base_ref, cookie_name, renewed_value) {
-                Ok(backend) => crate::platform::ManagedRenewal::Renewed(backend),
-                Err(_) => crate::platform::ManagedRenewal::Denied,
-            }
-        });
+        let host =
+            crate::platform::LocalHost::fixture(
+                move || match Backend::connect_with_session_cookie(
+                    &base_ref,
+                    cookie_name,
+                    renewed_value,
+                ) {
+                    Ok(backend) => crate::platform::ManagedRenewal::Renewed(backend),
+                    Err(_) => crate::platform::ManagedRenewal::Denied,
+                },
+            );
 
         let mut s = crate::init();
         let mut l = Launcher::fixture();
@@ -632,13 +656,13 @@ fn stale_created_reply_after_renewal_preserves_session_without_binding_expired_b
             &mut rt.state,
             &expired
         ));
-        assert_eq!(rt.state.phase, Phase::Reconnecting);
+        assert!(rt.state.phase == Phase::Reconnecting);
         // Clicking Retry while renewal is in flight keeps the chat view visible.
         rt.update(|s, tx| {
             crate::chat::connection::retry_connection(s, tx);
         });
         assert!(!rt.state.screen.is_launcher());
-        assert_eq!(rt.state.phase, Phase::Reconnecting);
+        assert!(rt.state.phase == Phase::Reconnecting);
 
         // Wait for managed renewal to settle while the old Created job is still pending.
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
@@ -694,8 +718,7 @@ fn stale_created_reply_after_renewal_preserves_session_without_binding_expired_b
             "stale Created reply must re-verify and bind via the renewed connection"
         );
         assert!(
-            rt.state
-                .backend
+            crate::settings::bound_backend(&rt.state)
                 .as_ref()
                 .is_none_or(|b| !b.client.same_connection(&expired.client)),
             "expired backend must never be installed onto the active conversation"
@@ -752,7 +775,10 @@ fn transient_managed_renewal_retries_once_and_recovers() {
             .managed_renewal
             .is_some()
         {
-            assert!(std::time::Instant::now() < deadline, "transient retry timed out");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "transient retry timed out"
+            );
             rt.update(|s, tx| {
                 let _ = poll(s, tx);
             });
