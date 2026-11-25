@@ -12,7 +12,6 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     markdown,
 };
-use std::borrow::Cow;
 
 pub(crate) fn block_key(message: &str, ordinal: usize) -> String {
     format!("reasoning-{message}:{ordinal}")
@@ -37,6 +36,7 @@ pub(super) fn extract_title(text: &str) -> Option<String> {
 
 pub(super) struct GroupView<'a> {
     pub key: &'a str,
+    pub keys: &'a [String],
     pub count: usize,
     pub duration_ms: u64,
     pub title: Option<&'a str>,
@@ -129,29 +129,14 @@ pub(super) fn view_chunk<'a>(
         }
         return any.then_some(container);
     }
-    let base: Cow<'static, str> = if !group.completed {
-        t("messageBlock.reasoning.thinkingLabel").into()
-    } else if group.duration_ms >= 1_000 {
-        let seconds = (group.duration_ms + 500) / 1_000;
-        let (unit, count) = if seconds >= 3_600 {
-            ("hours", seconds / 3_600)
-        } else if seconds >= 60 {
-            ("minutes", seconds / 60)
-        } else {
-            ("seconds", seconds)
-        };
-        catalogue::format(
-            locale(),
-            &format!(
-                "messageBlock.reasoning.thoughtFor.{unit}.{}",
-                if count == 1 { "one" } else { "other" }
-            ),
-            &[("count", &count.to_string())],
-        )
-        .into()
+    let base = t(if group.completed {
+        "messageBlock.reasoning.thoughtLabel"
     } else {
-        t("messageBlock.reasoning.thoughtLabel").into()
-    };
+        "messageBlock.reasoning.thinkingLabel"
+    });
+    let title = group
+        .title
+        .unwrap_or_else(|| t("messageBlock.reasoning.thoughtsFallback"));
     let steps = (group.count > 1).then(|| {
         catalogue::format(
             locale(),
@@ -163,22 +148,24 @@ pub(super) fn view_chunk<'a>(
             &[("count", &group.count.to_string())],
         )
     });
-    let toggle = group.key.to_owned();
+    let duration = super::tools::duration::caption(group.duration_ms, false);
+    let toggle = group.keys.to_vec();
     let expanded = group.expanded;
     let header = layout::action_row()
         .child(
             layout::button(
-                &base,
+                base,
                 false,
                 screen::action(&s.input_scope, move |s| {
-                    Display::set_expanded(s, &toggle, !expanded);
+                    Display::set_group_expanded(s, &toggle, !expanded);
                 }),
             )
             .key(format!("toggle-{}", group.key))
             .expanded(expanded),
         )
-        .children(group.title.map(text))
-        .children(steps.map(text));
+        .child(text(title))
+        .children(steps.map(text))
+        .children(duration.map(text));
     let mut container = col()
         .full_width()
         .pad(Space::Sm)
@@ -294,7 +281,12 @@ fn reasoning_group_uses_native_block_keys_and_reveals_its_parts() {
         rt.frame(1.0 / 60.0);
     }
     let tree = rt.accessibility_json().to_string();
-    assert!(tree.contains("Thought for 3 seconds") && tree.contains("Summary"));
+    assert!(
+        tree.contains("Thought")
+            && tree.contains("Summary")
+            && tree.contains("2 steps")
+            && tree.contains("3s")
+    );
     assert!(!tree.contains("First private thought"));
     assert!(rt.find(&block_key("step", 3)).is_some());
     let key = block_key("step", 1);
@@ -404,14 +396,14 @@ fn reasoning_groups_merge_across_adjacent_messages_and_sum_duration() {
     use rune::{Env, Runtime};
     use serde_json::json;
     let first = crate::history::decode_message(&json!({
-        "id":"step1","type":"assistant","time":{"completed":2500},"content":[
-            {"type":"reasoning","text":"**Initial**\n\nFirst step thought","time":{"created":1000,"completed":2500}}
+        "id":"step1","type":"assistant","time":{"completed":91_000},"content":[
+            {"type":"reasoning","text":"**Initial**\n\nFirst step thought","time":{"created":1_000,"completed":91_000}}
         ]
     }))
     .unwrap();
     let second_live = crate::history::decode_message(&json!({
         "id":"step2","type":"assistant","content":[
-            {"type":"reasoning","text":"**Final plan**\n\nSecond step thought","time":{"created":3000}}
+            {"type":"reasoning","text":"**Final plan**\n\nSecond step thought","time":{"created":92_000}}
         ]
     }))
     .unwrap();
@@ -436,6 +428,7 @@ fn reasoning_groups_merge_across_adjacent_messages_and_sum_duration() {
     assert!(tree.contains("Thinking"));
     assert!(tree.contains("Final plan"));
     assert!(tree.contains("2 steps"));
+    assert!(tree.contains("1m 30s"));
     assert!(!tree.contains("First step thought"));
     assert!(!tree.contains("Second step thought"));
     assert!(rt.find("toggle-reasoning-step1:0").is_some());
@@ -444,8 +437,8 @@ fn reasoning_groups_merge_across_adjacent_messages_and_sum_duration() {
     // Settling the second step updates the shared header to the summed duration across both messages.
     rt.update(|s, _| {
         let second_done = crate::history::decode_message(&json!({
-            "id":"step2","type":"assistant","time":{"completed":5500},"content":[
-                {"type":"reasoning","text":"**Final plan**\n\nSecond step thought","time":{"created":3000,"completed":5500}}
+            "id":"step2","type":"assistant","time":{"completed":95_000},"content":[
+                {"type":"reasoning","text":"**Final plan**\n\nSecond step thought","time":{"created":92_000,"completed":95_000}}
             ]
         }))
         .unwrap();
@@ -456,7 +449,8 @@ fn reasoning_groups_merge_across_adjacent_messages_and_sum_duration() {
         rt.frame(1.0 / 60.0);
     }
     let tree = rt.accessibility_json().to_string();
-    assert!(tree.contains("Thought for 4 seconds"));
+    assert!(tree.contains("Thought"));
+    assert!(tree.contains("1m 33s"));
     assert!(tree.contains("Final plan"));
     assert!(tree.contains("2 steps"));
 
@@ -472,6 +466,38 @@ fn reasoning_groups_merge_across_adjacent_messages_and_sum_duration() {
     assert!(rt.find(&block_key("step1", 0)).is_some());
     assert!(rt.find(&block_key("step2", 0)).is_some());
     assert!(rt.find("toggle-reasoning-step2:0").is_none());
+
+    // Prepending an older page with a contiguous reasoning message keeps the group open under
+    // the new head key, and clicking the new head collapses the whole group.
+    rt.update(|s, _| {
+        let older = crate::history::decode_message(&json!({
+            "id":"step0","type":"assistant","time":{"completed":500},"content":[
+                {"type":"reasoning","text":"Older thought","time":{"created":0,"completed":500}}
+            ]
+        }))
+        .unwrap();
+        s.messages.insert(0, older.into());
+        s.revision += 1;
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("Older thought") && tree.contains("Second step thought"));
+    assert!(rt.find("toggle-reasoning-step0:0").is_some());
+    let (x, y) = rt.find("toggle-reasoning-step0:0").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(!tree.contains("Older thought") && !tree.contains("Second step thought"));
+
+    // Duration rounding never overflows even at u64::MAX.
+    crate::strings::with_locale("en", || {
+        assert!(super::tools::duration::caption(u64::MAX, false).is_some());
+    });
 }
 
 #[cfg(test)]
@@ -514,7 +540,7 @@ fn hidden_tools_and_blank_fragments_are_transparent_for_reasoning_groups() {
         rt.frame(1.0 / 60.0);
     }
     let tree = rt.accessibility_json().to_string();
-    assert!(tree.contains("Thought for 3 seconds"));
+    assert!(tree.contains("Thought") && tree.contains("Thoughts") && tree.contains("3s"));
     assert!(tree.contains("2 steps"));
     assert!(rt.find("toggle-reasoning-m1:0").is_some());
     assert!(rt.find("toggle-reasoning-m2:1").is_none());
@@ -536,18 +562,45 @@ fn hidden_tools_and_blank_fragments_are_transparent_for_reasoning_groups() {
     assert!(rt.find("toggle-reasoning-m1:0").is_some());
     assert!(rt.find("toggle-reasoning-m2:1").is_some());
 
-    // Conversely, a non-empty reasoning fragment splits exploration tools even when thinking is
-    // hidden, whereas a blank reasoning fragment remains transparent.
-    let s = crate::init();
-    let with_real_thought: crate::history::Row = crate::history::decode_message(&json!({
-        "id":"split","type":"assistant","time":{"completed":1},"content":[
-            {"type":"tool","id":"a","name":"read","state":{"status":"completed","input":{}}},
-            {"type":"reasoning","text":"Non-empty thought"},
+    // Hidden rows (hidden thinking, hidden system messages) stay transparent so adjacent tools
+    // still group, matching Solid; visible non-empty reasoning splits them while blank reasoning
+    // stays transparent.
+    let mut s = crate::init();
+    crate::settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":false}));
+    let read_msg: crate::history::Row = crate::history::decode_message(&json!({
+        "id":"t1","type":"assistant","time":{"completed":1},"content":[
+            {"type":"tool","id":"a","name":"read","state":{"status":"completed","input":{}}}
+        ]
+    }))
+    .unwrap()
+    .into();
+    let hidden_thought_msg: crate::history::Row = crate::history::decode_message(&json!({
+        "id":"t2","type":"assistant","time":{"completed":2},"content":[
+            {"type":"reasoning","text":"Hidden thought"}
+        ]
+    }))
+    .unwrap()
+    .into();
+    let hidden_system_msg: crate::history::Row = crate::history::decode_message(&json!({
+        "id":"t3","type":"system","content":[{"type":"text","text":"Hidden system"}]
+    }))
+    .unwrap()
+    .into();
+    let grep_msg: crate::history::Row = crate::history::decode_message(&json!({
+        "id":"t4","type":"assistant","time":{"completed":3},"content":[
             {"type":"tool","id":"b","name":"grep","state":{"status":"completed","input":{}}}
         ]
     }))
     .unwrap()
     .into();
+    let rows = vec![read_msg, hidden_thought_msg, hidden_system_msg, grep_msg];
+    assert_eq!(
+        super::anchors::collapsed_group_target(&s, &rows, 3, 0, 0),
+        Some(("t1".into(), "group-tool-t1:1:a".into()))
+    );
+    crate::settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":true}));
+    assert!(super::anchors::collapsed_group_target(&s, &rows, 3, 0, 0).is_none());
+
     let with_blank_thought: crate::history::Row = crate::history::decode_message(&json!({
         "id":"joined","type":"assistant","time":{"completed":1},"content":[
             {"type":"tool","id":"a","name":"read","state":{"status":"completed","input":{}}},
@@ -557,16 +610,6 @@ fn hidden_tools_and_blank_fragments_are_transparent_for_reasoning_groups() {
     }))
     .unwrap()
     .into();
-    assert!(
-        super::anchors::collapsed_group_target(
-            &s,
-            std::slice::from_ref(&with_real_thought),
-            0,
-            0,
-            0,
-        )
-        .is_none()
-    );
     assert_eq!(
         super::anchors::collapsed_group_target(
             &s,
@@ -608,8 +651,9 @@ fn collapsed_cross_message_reasoning_anchors_and_search_expand_the_shared_group(
         Some(("m1".into(), block_key("m1", 0)))
     );
 
-    // An active search hit inside the second message expands the shared group and exposes m2's key.
-    s.transcript_display.search_highlight = Some(super::search_hit::SearchHit::new(
+    // Search restoration expands the shared group in shared state so the user can collapse it
+    // again even while the search highlight remains active.
+    let mut hit = super::search_hit::SearchHit::new(
         &Hit {
             session: "s1".into(),
             message: "m2".into(),
@@ -620,7 +664,10 @@ fn collapsed_cross_message_reasoning_anchors_and_search_expand_the_shared_group(
         },
         "Needle",
         false,
-    ));
+    );
+    hit.restore_pending = true;
+    s.transcript_display.search_highlight = Some(hit);
+    crate::timeline::restore_search(&mut s);
     assert!(super::anchors::collapsed_group_target(&s, &s.messages, 1, 0, 0).is_none());
 
     let mut rt = Runtime::new(
@@ -638,4 +685,33 @@ fn collapsed_cross_message_reasoning_anchors_and_search_expand_the_shared_group(
             .to_string()
             .contains("Needle in second step")
     );
+
+    // Clicking the group toggle collapses the group even while search_highlight stays active.
+    let (x, y) = rt.find("toggle-reasoning-m1:0").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.find(&block_key("m2", 0)).is_none());
+
+    // A pagination gap inside an active assistant message must not mark its reasoning completed.
+    let mut parts = Vec::with_capacity(super::transcript::PART_LIMIT + 2);
+    for idx in 0..(super::transcript::PART_LIMIT + 2) {
+        parts.push(json!({"type":"reasoning","text":format!("Step {idx}")}));
+    }
+    let streaming = crate::history::decode_message(&json!({
+        "id":"live","type":"assistant","content":parts
+    }))
+    .unwrap();
+    rt.update(|s, _| {
+        s.transcript_display.search_highlight = None;
+        s.messages = vec![streaming.into()];
+        s.revision += 1;
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("Thinking") && !tree.contains("\"Thought\""));
 }

@@ -1,7 +1,7 @@
 use super::{actions::Display, reasoning, tools};
 use crate::{
     State,
-    content::{Part, TextProvenance, Tool},
+    content::{Part, Tool},
     history::Row,
     screen,
     settings::{TranscriptRow, transcript_mode},
@@ -35,6 +35,7 @@ fn kind(tool: &Tool) -> Option<Kind> {
 
 struct Summary {
     key: String,
+    keys: Vec<String>,
     message: String,
     kind: Kind,
     count: usize,
@@ -80,13 +81,15 @@ impl Groups {
         let show_thinking = super::anchors::reasoning_visible(s);
         let mut run: Option<Run> = None;
         for (row, message) in rows.iter().enumerate() {
-            if matches!(message.parts.as_slice(), [Part::SubagentReport(_)]) {
+            if matches!(message.parts.as_slice(), [Part::SubagentReport(_)])
+                || !super::anchors::context_visible(s, &message.role)
+            {
                 continue;
             }
             if message.role != "assistant"
                 || message.parts.is_empty() && !message.body.trim().is_empty()
             {
-                index.finish(run.take(), true, show_thinking);
+                index.finish(run.take(), true);
                 continue;
             }
             let steps = override_steps
@@ -101,22 +104,24 @@ impl Groups {
             let (head, tail) = super::transcript::part_window(message.parts.len(), steps);
             for (part, content) in message.parts.iter().enumerate() {
                 if part >= head && part < tail {
-                    index.finish(run.take(), true, show_thinking);
+                    index.finish(run.take(), false);
                     continue;
                 }
                 match content {
                     Part::Text(text) if text.text.trim().is_empty() => (),
-                    Part::Reasoning(fragment) if !fragment.visible() => (),
+                    Part::Reasoning(fragment) if !show_thinking || !fragment.visible() => (),
                     Part::Reasoning(fragment) => {
                         if run
                             .as_ref()
                             .is_some_and(|run| run.summary.kind != Kind::Reasoning)
                         {
-                            index.finish(run.take(), true, show_thinking);
+                            index.finish(run.take(), true);
                         }
+                        let member = reasoning::block_key(&message.id, fragment.ordinal);
                         let run = run.get_or_insert_with(|| Run {
                             summary: Summary {
-                                key: reasoning::block_key(&message.id, fragment.ordinal),
+                                key: member.clone(),
+                                keys: Vec::new(),
                                 message: message.id.clone(),
                                 kind: Kind::Reasoning,
                                 count: 0,
@@ -128,14 +133,14 @@ impl Groups {
                             },
                             chunks: Vec::new(),
                         });
+                        run.summary.keys.push(member);
                         run.summary.count += 1;
                         run.summary.duration_ms = run
                             .summary
                             .duration_ms
                             .saturating_add(reasoning::duration_ms(fragment));
                         run.summary.title = reasoning::extract_title(&fragment.text);
-                        run.summary.completed =
-                            message.completed || fragment.provenance == TextProvenance::Closed;
+                        run.summary.completed = message.completed;
                         run.summary.search_hit |= super::search_hit::query(
                             s,
                             &message.id,
@@ -149,27 +154,33 @@ impl Groups {
                         }
                     }
                     Part::Tool(tool) if index.awaiting(&message.id, &tool.id) => {
-                        index.finish(run.take(), true, show_thinking)
+                        index.finish(run.take(), true)
                     }
                     Part::Tool(tool) if !tools::visible(s, &message.id, tool) => (),
                     Part::Tool(tool) if group_tools && let Some(kind) = kind(tool) => {
                         if run.as_ref().is_some_and(|run| run.summary.kind != kind) {
-                            index.finish(run.take(), true, show_thinking);
+                            index.finish(run.take(), true);
                         }
-                        let run = run.get_or_insert_with(|| Run {
-                            summary: Summary {
-                                key: format!("group-{}", tools::tool_key(&message.id, &tool.id)),
-                                message: message.id.clone(),
-                                kind,
-                                count: 0,
-                                reads: 0,
-                                duration_ms: 0,
-                                title: None,
-                                completed: false,
-                                search_hit: false,
-                            },
-                            chunks: Vec::new(),
+                        let member = tools::tool_key(&message.id, &tool.id);
+                        let run = run.get_or_insert_with(|| {
+                            let key = format!("group-{member}");
+                            Run {
+                                summary: Summary {
+                                    key: key.clone(),
+                                    keys: vec![key],
+                                    message: message.id.clone(),
+                                    kind,
+                                    count: 0,
+                                    reads: 0,
+                                    duration_ms: 0,
+                                    title: None,
+                                    completed: false,
+                                    search_hit: false,
+                                },
+                                chunks: Vec::new(),
+                            }
                         });
+                        run.summary.keys.push(member);
                         run.summary.count += 1;
                         run.summary.reads += usize::from(tool.name == "read");
                         run.summary.completed = message.completed;
@@ -185,20 +196,20 @@ impl Groups {
                             _ => run.chunks.push((row, part..part + 1)),
                         }
                     }
-                    _ => index.finish(run.take(), true, show_thinking),
+                    _ => index.finish(run.take(), true),
                 }
             }
         }
-        index.finish(run, false, show_thinking);
+        index.finish(run, false);
         index
     }
 
-    fn finish(&mut self, run: Option<Run>, closed: bool, show_thinking: bool) {
+    fn finish(&mut self, run: Option<Run>, closed: bool) {
         let Some(Run {
             mut summary,
             chunks,
         }) = run.filter(|run| match run.summary.kind {
-            Kind::Reasoning => show_thinking && run.summary.count > 0,
+            Kind::Reasoning => run.summary.count > 0,
             Kind::Exploration | Kind::Shell => run.summary.count > 1,
         })
         else {
@@ -241,7 +252,7 @@ impl Groups {
         (!chunk.expanded(s)).then(|| (chunk.summary.message.clone(), chunk.summary.key.clone()))
     }
 
-    pub(super) fn collapsed_anchor(&self, s: &State, message: &str, key: &str) -> Option<String> {
+    fn chunk_for_part_key(&self, s: &State, message: &str, key: &str) -> Option<&Chunk> {
         let rows = s.transcript_display.messages.visible(&s.messages);
         let (row, current) = rows.iter().enumerate().find(|(_, row)| row.id == message)?;
         let part = current.parts.iter().position(|part| match part {
@@ -253,8 +264,25 @@ impl Groups {
             }
             _ => false,
         })?;
-        self.collapsed_target(s, row, part)
-            .map(|(owner, anchor)| format!("{owner}/{anchor}"))
+        self.chunks
+            .iter()
+            .find(|((owner, start), chunk)| *owner == row && *start <= part && part < chunk.end)
+            .map(|(_, chunk)| chunk)
+    }
+
+    pub(super) fn collapsed_anchor(&self, s: &State, message: &str, key: &str) -> Option<String> {
+        let chunk = self.chunk_for_part_key(s, message, key)?;
+        (!chunk.expanded(s)).then(|| format!("{}/{}", chunk.summary.message, chunk.summary.key))
+    }
+
+    pub(super) fn member_group_keys(
+        &self,
+        s: &State,
+        message: &str,
+        key: &str,
+    ) -> Option<Vec<String>> {
+        self.chunk_for_part_key(s, message, key)
+            .map(|chunk| chunk.summary.keys.clone())
     }
 }
 
@@ -274,8 +302,13 @@ fn waiting(s: &State, rows: &[Row]) -> HashMap<String, HashSet<String>> {
             .or_default()
             .insert(target.call.clone());
     }
+    let pool = if s.messages.is_empty() {
+        rows
+    } else {
+        &s.messages
+    };
     if agent.forms.iter().any(|form| form.infer_websearch)
-        && let Some((message, call)) = rows.iter().rev().find_map(|message| {
+        && let Some((message, call)) = pool.iter().rev().find_map(|message| {
             message.parts.iter().rev().find_map(|part| match part {
                 Part::Tool(tool) if tool.name == "websearch" => Some((&message.id, &tool.id)),
                 _ => None,
@@ -296,11 +329,11 @@ impl Chunk {
             Kind::Reasoning => TranscriptRow::Thinking,
             Kind::Exploration | Kind::Shell => TranscriptRow::Groups,
         };
-        self.summary.search_hit
-            || s.transcript_display.expanded(
-                &self.summary.key,
-                transcript_mode(s, default_row) == "expanded",
-            )
+        let default = transcript_mode(s, default_row) == "expanded";
+        match s.transcript_display.group_expanded(&self.summary.keys) {
+            Some(explicit) => explicit,
+            None => self.summary.search_hit || default,
+        }
     }
 
     pub(super) fn view<'a>(
@@ -321,6 +354,7 @@ impl Chunk {
                 start,
                 reasoning::GroupView {
                     key: &summary.key,
+                    keys: &summary.keys,
                     count: summary.count,
                     duration_ms: summary.duration_ms,
                     title: summary.title.as_deref(),
@@ -335,13 +369,13 @@ impl Chunk {
         if !self.first && !expanded {
             return None;
         }
-        let toggle = key.clone();
+        let toggle = summary.keys.clone();
         let header = self.first.then(|| {
             layout::button(
                 &summary.label(),
                 false,
                 screen::action(&s.input_scope, move |s| {
-                    Display::set_expanded(s, &toggle, !expanded);
+                    Display::set_group_expanded(s, &toggle, !expanded);
                 }),
             )
             .key(format!("toggle-{key}"))

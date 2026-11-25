@@ -188,6 +188,10 @@ pub(crate) fn visible_rows(s: &State) -> &[Row] {
     s.transcript_display.messages.visible(&s.messages)
 }
 
+pub(crate) fn visible_slice<'a>(s: &State, rows: &'a [Row]) -> &'a [Row] {
+    s.transcript_display.messages.visible(rows)
+}
+
 pub(crate) fn collapsed_group_target(
     s: &State,
     rows: &[Row],
@@ -197,6 +201,13 @@ pub(crate) fn collapsed_group_target(
 ) -> Option<(String, String)> {
     super::tool_groups::Groups::project_with_steps(s, rows, Some((row_index, shown_steps)))
         .collapsed_target(s, row_index, part)
+}
+
+pub(crate) fn expand_search_group(s: &mut State, message: &str, key: &str) {
+    let keys = super::tool_groups::Groups::project(s).member_group_keys(s, message, key);
+    if let Some(keys) = keys {
+        super::actions::Display::set_group_expanded(s, &keys, true);
+    }
 }
 
 pub(super) fn reasoning_changed(

@@ -165,18 +165,8 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
     cancel_jump(s);
     let serial = owner(s).jump.serial;
     let visible = anchors::visible_rows(s);
-    let local = visible
-        .iter()
-        .position(|row| row.id == target.message)
-        .map(|index| (visible, index))
-        .or_else(|| {
-            s.messages
-                .iter()
-                .position(|row| row.id == target.message)
-                .map(|index| (s.messages.as_slice(), index))
-        });
-    if let Some((rows, index)) = local {
-        match locate(s, rows, index, &target) {
+    if let Some(index) = visible.iter().position(|row| row.id == target.message) {
+        match locate(s, visible, index, &target) {
             JumpLanding::Visible(message, key, steps) => {
                 owner(s).jump.browse = false;
                 settle(s, &target, (message, key, steps));
@@ -185,6 +175,10 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
             JumpLanding::Filtered => refuse_filtered_with_origin(s, !target.id.is_empty()),
             JumpLanding::Missing => owner(s).jump.retry = Some(target),
         }
+        return;
+    }
+    if s.messages.iter().any(|row| row.id == target.message) {
+        refuse_filtered_with_origin(s, !target.id.is_empty());
         return;
     }
     let (cancel, cancelled) = bounded(1);
@@ -314,6 +308,7 @@ fn settle(s: &mut State, m: &Marker, (align_message, key, steps): (String, Strin
             .is_some_and(|hit| hit.message == m.message)
     {
         s.transcript_display.mark_search_revealed(&key);
+        anchors::expand_search_group(s, &m.message, &key);
     }
     let t = owner(s);
     t.changed = true;
@@ -348,13 +343,14 @@ pub(super) fn admit_window(s: &mut State, serial: u64, page: Page, accept: impl 
     let Some((_cancel, target)) = owner(s).jump.flight.take() else {
         return;
     };
-    let landing = page
-        .rows
-        .iter()
-        .position(|row| row.id == target.message)
-        .map_or(JumpLanding::Missing, |index| {
-            locate(s, &page.rows, index, &target)
-        });
+    let visible = anchors::visible_slice(s, &page.rows);
+    let landing = if let Some(index) = visible.iter().position(|row| row.id == target.message) {
+        locate(s, visible, index, &target)
+    } else if page.rows.iter().any(|row| row.id == target.message) {
+        JumpLanding::Filtered
+    } else {
+        JumpLanding::Missing
+    };
     match landing {
         JumpLanding::Visible(message, key, steps) if accept() => {
             reader::install_anchor(s, page);
@@ -409,16 +405,21 @@ pub(crate) fn restore_search(s: &mut State) {
         return;
     }
     let hit = hit.clone();
-    match s
-        .messages
-        .iter()
-        .find(|row| row.id == hit.message)
-        .map_or(Landing::Missing, |row| {
+    let landing = {
+        let visible = anchors::visible_rows(s);
+        if let Some(row) = visible.iter().find(|row| row.id == hit.message) {
             hit.landing(s, row, anchors::steps(s, &row.id))
-        }) {
+        } else if s.messages.iter().any(|row| row.id == hit.message) {
+            Landing::Filtered
+        } else {
+            Landing::Missing
+        }
+    };
+    match landing {
         Landing::Visible(key, steps) => {
             anchors::reveal_parts(s, &hit.message, steps);
             s.transcript_display.mark_search_revealed(&key);
+            anchors::expand_search_group(s, &hit.message, &key);
             owner(s).jump.align = Some((hit.message, key));
         }
         Landing::Filtered => refuse_filtered(s),

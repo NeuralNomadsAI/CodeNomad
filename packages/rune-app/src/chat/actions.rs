@@ -59,7 +59,8 @@ struct StreamRender {
 struct SessionDisplay {
     reading: super::reading::Reading,
     toggled: HashSet<String>,
-    expansion: HashMap<String, bool>,
+    expansion_serial: u64,
+    expansion: HashMap<String, (u64, bool)>,
     revealed: HashMap<String, usize>,
     task_revealed: HashMap<String, usize>,
     task_mount_gen: HashMap<String, u64>,
@@ -156,14 +157,34 @@ impl Display {
     }
 
     pub(super) fn expanded(&self, key: &str, default: bool) -> bool {
-        self.active.expansion.get(key).copied().unwrap_or(default)
+        self.active
+            .expansion
+            .get(key)
+            .map_or(default, |(_, expanded)| *expanded)
+    }
+
+    pub(super) fn group_expanded(&self, keys: &[String]) -> Option<bool> {
+        keys.iter()
+            .filter_map(|key| self.active.expansion.get(key).copied())
+            .max_by_key(|(serial, _)| *serial)
+            .map(|(_, expanded)| expanded)
     }
 
     pub(super) fn set_expanded(s: &mut State, key: &str, expanded: bool) {
-        s.transcript_display
-            .active
-            .expansion
-            .insert(key.into(), expanded);
+        let active = &mut s.transcript_display.active;
+        active.expansion_serial = active.expansion_serial.wrapping_add(1);
+        let serial = active.expansion_serial;
+        active.expansion.insert(key.into(), (serial, expanded));
+        s.revision += 1;
+    }
+
+    pub(super) fn set_group_expanded(s: &mut State, keys: &[String], expanded: bool) {
+        let active = &mut s.transcript_display.active;
+        active.expansion_serial = active.expansion_serial.wrapping_add(1);
+        let serial = active.expansion_serial;
+        for key in keys {
+            active.expansion.insert(key.clone(), (serial, expanded));
+        }
         s.revision += 1;
     }
 
