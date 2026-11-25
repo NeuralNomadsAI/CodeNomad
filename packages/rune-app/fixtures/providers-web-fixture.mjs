@@ -621,6 +621,10 @@ try {
     // Rune uses one private password input for secure editors, also when revealed.
     await page.locator('input[type=password]:focus').waitFor({state:'attached'})
     await page.keyboard.insertText('fixture')
+    await page.keyboard.press('Tab')
+    const valueMirror = mirrorTextbox('Variable value')
+    await valueMirror.waitFor({state:'attached',timeout:15000})
+    assert.equal(await valueMirror.evaluate(el => el.textContent?.includes('fixture') || [...el.attributes].some(attr => attr.value.includes('fixture'))),false,'Blurred password mirror must not expose secret value')
     assert(!(await page.locator('[data-rune-a11y]').innerText()).includes('fixture'),'Mirror must never expose secret value')
     await page.getByRole('button',{name:'Add variable',exact:true}).press('Enter')
     await page.getByRole('button',{name:'Environment Variables (1 variable)',exact:true}).waitFor({state:'attached'})
@@ -719,6 +723,7 @@ try {
     const filterFocused = () => page.evaluate(() =>
       document.activeElement?.getAttribute('aria-label')==='Filter shortcuts')
     const capture = page.getByRole('button',{name:'Press a key combination',exact:true})
+    await mirrorTextbox('Filter shortcuts').waitFor({state:'attached',timeout:15000})
     for (let i=0;i<24 && !await filterFocused();i++) await page.keyboard.press('Tab')
     assert(await filterFocused())
     await filter.waitFor({state:'attached',timeout:15000})
