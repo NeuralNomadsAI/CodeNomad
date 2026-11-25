@@ -546,8 +546,9 @@ try {
       await mirror.waitFor({state:'attached',timeout:15000})
       await mirror.evaluate(el => el.click())
       await focused.waitFor({state:'attached',timeout:15000})
-      assert.equal(await page.getByRole('textbox',{name:label,exact:true}).count(),1,`Focused textbox ${label} must not duplicate its mirror`)
     }
+    await mirror.waitFor({state:'detached',timeout:15000})
+    assert.equal(await page.getByRole('textbox',{name:label,exact:true}).count(),1,`Focused textbox ${label} must not duplicate its mirror`)
     await focused.fill(value)
   }
   await page.goto(`http://127.0.0.1:${server.address().port}/?locale=en`)
@@ -650,17 +651,17 @@ try {
     const reread = page.waitForResponse(response=>new URL(response.url()).pathname==='/api/meta')
     await radio('Stable releases').press('Enter')
     await reread
-    await page.locator('[aria-live="assertive"]').filter({hasText:'Could not save the update feed.'}).waitFor({state:'attached'})
+    await page.locator('[aria-atomic="true"][aria-live="assertive"]').filter({hasText:'Could not save the update feed.'}).waitFor({state:'attached'})
     assert.deepEqual(feedWrites,[{updateFeed:'preview'},{updateFeed:'stable'}])
     assert.equal(infoReads,before+2)
     await page.getByRole('radio',{name:'Previews and stable releases',exact:true,checked:true}).waitFor({state:'attached'})
     const copy = page.getByRole('button',{name:'Copy to clipboard',exact:true})
     await copy.press('Enter')
-    await page.locator('[aria-live="assertive"]').filter({hasText:'Could not copy diagnostics.'}).waitFor({state:'attached'})
+    await page.locator('[aria-atomic="true"][aria-live="assertive"]').filter({hasText:'Could not copy diagnostics.'}).waitFor({state:'attached'})
     assert.equal(await page.evaluate(()=>window.diagnosticClipboard),null)
     await page.evaluate(()=>{window.rejectDiagnosticClipboard=false})
     await copy.press('Enter')
-    await page.locator('[aria-live="polite"]').filter({hasText:'Diagnostics copied.'}).waitFor({state:'attached'})
+    await page.locator('[aria-atomic="true"][aria-live="polite"]').filter({hasText:'Diagnostics copied.'}).waitFor({state:'attached'})
     const report = await page.evaluate(()=>window.diagnosticClipboard)
     assert(report.includes(directory) && report.includes('2.3.2') && report.includes('2.3.1'))
     assert(!report.includes('192.0.2.11'))
@@ -710,13 +711,14 @@ try {
     const inactive = page.getByRole('group',{name:'Open command palette',exact:true})
     assert.equal(await inactive.getAttribute('aria-description'),'This action has no configurable shortcut in Rune yet.')
     assert.equal(await inactive.getByRole('button',{name:'Edit',exact:true}).count(),0)
-    // Rune assigns the browser textbox its accessible label when its field gains focus.
+    const filter = page.locator('textarea:focus').and(page.getByRole('textbox',{name:'Filter shortcuts',exact:true}))
     const filterFocused = () => page.evaluate(() =>
       document.activeElement?.getAttribute('aria-label')==='Filter shortcuts')
     const capture = page.getByRole('button',{name:'Press a key combination',exact:true})
     for (let i=0;i<24 && !await filterFocused();i++) await page.keyboard.press('Tab')
     assert(await filterFocused())
-    const caret = await page.getByRole('textbox',{name:'Filter shortcuts',exact:true}).boundingBox()
+    await filter.waitFor({state:'attached',timeout:15000})
+    const caret = await filter.boundingBox()
     assert(caret)
     await edit.press('Enter')
     await capture.waitFor({state:'attached'})
@@ -741,7 +743,7 @@ try {
     await page.keyboard.press('Space')
     await capture.waitFor({state:'attached',timeout:5000})
     await page.keyboard.press('F8')
-    await page.locator('[aria-live="assertive"]').filter({hasText:'The editor reserves this shortcut.'}).waitFor({state:'attached'})
+    await page.locator('[aria-atomic="true"][aria-live="assertive"]').filter({hasText:'The editor reserves this shortcut.'}).waitFor({state:'attached'})
     assert.deepEqual(writes,[])
     await Promise.all([
       confirm(overrides=>overrides?.['file-save']?.[0]?.key==='f8'),
@@ -749,8 +751,8 @@ try {
     ])
     await save.getByText('Ctrl+F8',{exact:true}).waitFor({state:'attached'})
     // An unrelated failed write must neither announce a conflict nor suppress the next one.
-    const filter = page.getByRole('textbox',{name:'Filter shortcuts',exact:true})
     await page.mouse.click(caret.x + 4, caret.y + caret.height / 2)
+    await filter.waitFor({state:'attached',timeout:15000})
     await filter.press('Control+a')
     await filter.press('Backspace')
     const close = page.getByRole('group',{name:'Close app tab',exact:true})
@@ -766,7 +768,7 @@ try {
       confirm(overrides=>overrides?.['file-save']?.[0]?.key==='n'),
       page.keyboard.press('Control+n'),
     ])
-    await page.locator('[aria-live="polite"]').filter({hasText:'Ctrl+N is also assigned to: New instance'}).waitFor({state:'attached'})
+    await page.locator('[aria-atomic="true"][aria-live="polite"]').filter({hasText:'Ctrl+N is also assigned to: New instance'}).waitFor({state:'attached'})
     assert.equal(await failed.count(),1)
     const reset = confirm(overrides=>overrides===null)
     await page.getByRole('button',{name:'Reset all',exact:true}).press('Enter')
@@ -854,7 +856,7 @@ try {
       id:'toast-fixture',type:'tui.toast.show',data:{title:'Fixture toast',message,variant:'info',duration:2000},
     }}
     stream.write(`data: ${JSON.stringify(envelope)}\n\n`)
-    const live = page.locator('[role="status"][aria-live="polite"]').filter({hasText:message})
+    const live = page.locator('[role="status"][aria-live="polite"][aria-atomic="true"]').filter({hasText:message})
     await live.waitFor({state:'attached'})
     assert.equal(await live.textContent(),`Fixture toast\n${message}`)
     const bubble = page.getByText(message,{exact:true})
