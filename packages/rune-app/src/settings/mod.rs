@@ -381,7 +381,7 @@ pub(crate) fn keep_computer_awake(s: &State) -> bool {
         == Some(true)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(target_os = "windows", test))]
 pub(crate) fn focus_existing_window_on_second_launch(s: &State) -> bool {
     s.settings
         .shared

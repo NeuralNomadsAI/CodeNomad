@@ -29,12 +29,19 @@ impl Controller {
     #[cfg(not(target_arch = "wasm32"))]
     fn apply(&mut self, desired: bool) {
         if self.desired == desired {
+            #[cfg(target_os = "windows")]
+            if let Some(os) = &mut self.os {
+                // Retry a previously failed release while desired stays false.
+                if !desired && os.is_held() {
+                    let _ = os.set_desired(false);
+                }
+            }
             return;
         }
         self.desired = desired;
         #[cfg(target_os = "windows")]
         if let Some(os) = &mut self.os {
-            os.set_desired(desired);
+            let _ = os.set_desired(desired);
         }
         #[cfg(test)]
         self.transitions.push(desired);

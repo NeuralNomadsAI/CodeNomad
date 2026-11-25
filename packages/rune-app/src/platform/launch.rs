@@ -1,140 +1,215 @@
-//! Windows single-instance launch coordination for `focusExistingWindowOnSecondLaunch`.
+//! Windows profile-scoped second-launch coordination for `focusExistingWindowOnSecondLaunch`.
 //!
-//! Reuses Rune's profile-scoped `single_instance` / `on_reopen` handoff so a second launch
-//! either brings the existing window forward (when confirmed `focusExistingWindowOnSecondLaunch`
-//! is enabled on a local desktop window) or opens a new window (`--new-window`), matching Tauri.
+//! New launches (without `--new-window`) ask the current owner for their scope whether to focus
+//! its window (`FOCUS <pid>`) or open independently (`OPEN`). Every live desktop window in the
+//! scope—including `--new-window` windows—runs a zero-CPU takeover coordinator after `on_ready`
+//! so a surviving window takes over focus ownership if the primary window closes.
 #[cfg(any(target_os = "windows", test))]
 use crate::State;
 #[cfg(target_os = "windows")]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
-#[cfg(target_os = "windows")]
-static CLAIMED: AtomicBool = AtomicBool::new(false);
+#[derive(Default)]
+pub(crate) struct Host {
+    #[cfg(target_os = "windows")]
+    focus_existing: Arc<AtomicBool>,
+    #[cfg(target_os = "windows")]
+    coordinator: Option<codenomad_host_process::LaunchCoordinator>,
+}
 
 #[cfg(any(target_os = "windows", test))]
-const APP_ID_BASE: &str = "ai.neuralnomads.codenomad.rune";
-
-#[cfg(any(target_os = "windows", test))]
-fn fnv1a_64(parts: &[&str]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for part in parts {
-        for &byte in part.as_bytes() {
-            hash ^= u64::from(byte);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+fn fnv1a_128(fields: &[(&str, &str)]) -> u128 {
+    let mut hash = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d_u128;
+    const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
+    let feed = |h: &mut u128, bytes: &[u8]| {
+        for &byte in bytes {
+            *h ^= u128::from(byte);
+            *h = h.wrapping_mul(PRIME);
         }
-        hash ^= 0xff;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    };
+    for (tag, value) in fields {
+        feed(&mut hash, tag.as_bytes());
+        feed(&mut hash, b"=");
+        feed(&mut hash, &(value.len() as u64).to_le_bytes());
+        feed(&mut hash, b":");
+        feed(&mut hash, value.as_bytes());
+        feed(&mut hash, &[0]);
     }
     hash
 }
 
+/// Pure lexical Windows-style path normalization (never depends on filesystem existence).
 #[cfg(any(target_os = "windows", test))]
-fn normalized_path_token(raw: &str) -> String {
-    let trimmed = raw.trim();
-    let canonical = std::fs::canonicalize(trimmed).ok();
-    let text = canonical
-        .as_deref()
-        .and_then(|p| p.to_str())
-        .unwrap_or(trimmed);
-    text.replace('\\', "/").to_ascii_lowercase()
+fn normalize_lexical_path(raw: &str) -> String {
+    let trimmed = raw.trim().replace('\\', "/");
+    let stripped = trimmed.strip_prefix("//?/").unwrap_or(trimmed.as_str());
+    let unc = stripped.starts_with("//");
+    let body = if unc {
+        stripped.trim_start_matches('/')
+    } else {
+        stripped
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    let rooted = !unc && body.starts_with('/');
+    for segment in body.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                let keep_prefix =
+                    parts.len() == 1 && parts[0].len() == 2 && parts[0].as_bytes()[1] == b':';
+                if !parts.is_empty() && !keep_prefix {
+                    parts.pop();
+                }
+            }
+            other => parts.push(other),
+        }
+    }
+    let mut out = String::new();
+    if unc {
+        out.push_str("//");
+    } else if rooted {
+        out.push('/');
+    }
+    out.push_str(&parts.join("/"));
+    if out.len() == 2 && out.as_bytes()[1] == b':' {
+        out.push('/');
+    }
+    out.to_ascii_lowercase()
 }
 
-/// Computes the profile-scoped single-instance identifier, or `None` when coordination must be skipped.
 #[cfg(any(target_os = "windows", test))]
-fn resolve_instance_id(
-    args: &[String],
+fn normalize_backend_token(raw: &str) -> String {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if let Some((scheme, rest)) = trimmed.split_once("://") {
+        let (authority, tail) = rest
+            .find(['/', '?', '#'])
+            .map_or((rest, ""), |idx| (&rest[..idx], &rest[idx..]));
+        format!(
+            "{}://{}{}",
+            scheme.to_ascii_lowercase(),
+            authority.to_ascii_lowercase(),
+            tail
+        )
+    } else {
+        trimmed.to_ascii_lowercase()
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn is_qualification_arg(arg: &str) -> bool {
+    arg == "--test-support-info"
+        || arg == "--scene"
+        || arg.starts_with("--scene=")
+        || arg.starts_with("--probe-")
+        || arg.starts_with("--gallery-")
+}
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Default)]
+struct ScopeInputs<'a> {
+    args: &'a [String],
+    allow_new_window: bool,
     headless: bool,
     disabled: bool,
     direct_scoped: bool,
-    profile: Option<&str>,
-    host_root: Option<&str>,
-    state_dir: Option<&str>,
-) -> Option<String> {
-    if headless || disabled || direct_scoped {
+    profile: Option<&'a str>,
+    host_root: Option<&'a str>,
+    state_dir: Option<&'a str>,
+    backend: Option<&'a str>,
+}
+
+/// Resolves the collision-free scope identifier for launch coordination.
+/// `allow_new_window` is `false` for pre-launch handoff (`--new-window` bypasses focusing an
+/// existing window) and `true` for window ownership so surviving `--new-window` windows take over.
+#[cfg(any(target_os = "windows", test))]
+fn resolve_scope_id(input: ScopeInputs<'_>) -> Option<String> {
+    if input.headless || input.disabled || input.direct_scoped {
         return None;
     }
-    if args.iter().any(|arg| {
-        arg == "--new-window"
-            || arg == "--test-support-info"
-            || arg == "--scene"
-            || arg.starts_with("--scene=")
-            || arg.starts_with("--probe-")
-            || arg.starts_with("--gallery-")
-    }) {
+    if input
+        .args
+        .iter()
+        .any(|arg| is_qualification_arg(arg) || (!input.allow_new_window && arg == "--new-window"))
+    {
         return None;
     }
-    let normalized_profile = match profile.map(str::trim).filter(|p| !p.is_empty()) {
+    let profile_key = match input.profile.map(str::trim).filter(|p| !p.is_empty()) {
         Some(raw) => {
             let valid = crate::host::profile_name(raw).ok()?;
-            (!matches!(valid.as_str(), "default" | "stable")).then_some(valid)
+            if matches!(valid.as_str(), "default" | "stable") {
+                String::from("default")
+            } else {
+                valid
+            }
         }
-        None => None,
+        None => String::from("default"),
     };
-    let mut id = match normalized_profile {
-        Some(profile) => format!("{APP_ID_BASE}.scope.{profile}"),
-        None => APP_ID_BASE.to_string(),
-    };
-    let root_token = host_root
+    let root_key = input
+        .host_root
         .filter(|v| !v.trim().is_empty())
-        .map(normalized_path_token);
-    let state_token = state_dir
+        .map(normalize_lexical_path)
+        .unwrap_or_default();
+    let state_key = input
+        .state_dir
         .filter(|v| !v.trim().is_empty())
-        .map(normalized_path_token);
-    if root_token.is_some() || state_token.is_some() {
-        let digest = fnv1a_64(&[
-            root_token.as_deref().unwrap_or(""),
-            state_token.as_deref().unwrap_or(""),
-        ]);
-        id.push_str(&format!(".{digest:016x}"));
-    }
-    Some(id)
+        .map(normalize_lexical_path)
+        .unwrap_or_default();
+    let backend_key = input
+        .backend
+        .filter(|v| !v.trim().is_empty())
+        .map(normalize_backend_token)
+        .unwrap_or_default();
+    let digest = fnv1a_128(&[
+        ("profile", &profile_key),
+        ("root", &root_key),
+        ("state", &state_key),
+        ("backend", &backend_key),
+    ]);
+    Some(format!("s{digest:032x}"))
+}
+
+#[cfg(target_os = "windows")]
+fn current_scope_id(allow_new_window: bool) -> Option<String> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let direct_scoped = ["RUNE_BACKEND", "RUNE_WORKSPACE", "RUNE_SESSION"]
+        .iter()
+        .all(|key| super::setting(key).is_some());
+    let disabled = super::setting("RUNE_DISABLE_SINGLE_INSTANCE").as_deref() == Some("1");
+    let profile = super::setting("CODENOMAD_PROFILE");
+    let host_root = super::setting("RUNE_HOST_ROOT");
+    let state_dir = super::setting("RUNE_STATE_DIR");
+    let backend = super::setting("RUNE_BACKEND");
+    resolve_scope_id(ScopeInputs {
+        args: &args,
+        allow_new_window,
+        headless: rune_theme_codenomad::shell::is_headless(),
+        disabled,
+        direct_scoped,
+        profile: profile.as_deref(),
+        host_root: host_root.as_deref(),
+        state_dir: state_dir.as_deref(),
+        backend: backend.as_deref(),
+    })
 }
 
 #[cfg(any(target_os = "windows", test))]
 pub(crate) fn should_focus_existing(s: &State) -> bool {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        crate::platform::wake_lock::is_local_window(s)
-            && crate::settings::focus_existing_window_on_second_launch(s)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = s;
-        false
-    }
+    crate::platform::wake_lock::is_local_window(s)
+        && crate::settings::focus_existing_window_on_second_launch(s)
 }
 
-/// Claims the profile-scoped single-instance pipe before opening the window.
-/// Returns `false` when an already running instance took ownership of this launch.
-#[cfg(not(target_arch = "wasm32"))]
+/// Checks whether a running instance for this scope wants to take focus for this launch.
+/// Returns `false` when an existing window accepted focus and this process should exit.
 pub(crate) fn enter() -> bool {
     #[cfg(target_os = "windows")]
     {
-        let args: Vec<String> = std::env::args().skip(1).collect();
-        let direct_scoped = ["RUNE_BACKEND", "RUNE_WORKSPACE", "RUNE_SESSION"]
-            .iter()
-            .all(|key| super::setting(key).is_some());
-        let disabled = super::setting("RUNE_DISABLE_SINGLE_INSTANCE").as_deref() == Some("1");
-        let profile = super::setting("CODENOMAD_PROFILE");
-        let host_root = super::setting("RUNE_HOST_ROOT");
-        let state_dir = super::setting("RUNE_STATE_DIR");
-        let Some(id) = resolve_instance_id(
-            &args,
-            rune_theme_codenomad::shell::is_headless(),
-            disabled,
-            direct_scoped,
-            profile.as_deref(),
-            host_root.as_deref(),
-            state_dir.as_deref(),
-        ) else {
+        let Some(scope_id) = current_scope_id(false) else {
             return true;
         };
-        if rune_theme_codenomad::shell::claim_single_instance(&id) {
-            CLAIMED.store(true, Ordering::Release);
-            true
-        } else {
-            false
-        }
+        !codenomad_host_process::LaunchCoordinator::try_focus_existing(&scope_id)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -142,181 +217,222 @@ pub(crate) fn enter() -> bool {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn release() {
-    #[cfg(target_os = "windows")]
-    if CLAIMED.swap(false, Ordering::AcqRel) {
-        rune_theme_codenomad::shell::release_single_instance();
-    }
-}
-
-#[cfg(any(target_os = "windows", test))]
-fn decide_reopen(s: &State, spawn_new_window: impl FnOnce() -> bool) -> bool {
-    if should_focus_existing(s) {
-        // Returning false runs Rune's default reopen: restore if minimized and bring forward.
-        return false;
-    }
-    // Open a new independent window; if spawning fails, fall back to focusing this window.
-    spawn_new_window()
-}
-
+/// Registers this live window as an owner/takeover candidate once its native window is ready.
 #[cfg(target_os = "windows")]
-fn spawn_new_window() -> bool {
-    let Ok(exe) = std::env::current_exe() else {
-        return false;
+pub(crate) fn attach(s: &mut State, window: rune::WindowHandle) {
+    if cfg!(any(test, feature = "test-support")) {
+        return;
+    }
+    let Some(scope_id) = current_scope_id(true) else {
+        return;
     };
-    std::process::Command::new(exe)
-        .arg("--new-window")
-        .spawn()
-        .is_ok()
+    s.launch
+        .focus_existing
+        .store(should_focus_existing(s), Ordering::Release);
+    s.launch.coordinator = codenomad_host_process::LaunchCoordinator::start(
+        &scope_id,
+        Arc::clone(&s.launch.focus_existing),
+        move || {
+            window.open();
+            window.focus();
+        },
+    );
 }
 
-#[cfg(target_os = "windows")]
-pub(crate) fn handle_reopen(s: &mut State, _has_visible_windows: bool, _tx: &mut rune::Tx) -> bool {
-    decide_reopen(s, spawn_new_window)
+pub(crate) fn sync(s: &mut State) {
+    #[cfg(target_os = "windows")]
+    {
+        let focus = should_focus_existing(s);
+        s.launch.focus_existing.store(focus, Ordering::Release);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = s;
+    }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn release(s: &mut State) {
+    #[cfg(target_os = "windows")]
+    {
+        s.launch.focus_existing.store(false, Ordering::Release);
+        s.launch.coordinator = None;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = s;
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::cell::Cell;
 
     #[test]
-    fn scope_id_normalizes_default_profiles_and_isolates_roots() {
-        let base = resolve_instance_id(&[], false, false, false, None, None, None).unwrap();
-        assert_eq!(base, APP_ID_BASE);
+    fn scope_id_normalizes_paths_lexically_and_prevents_field_collisions() {
+        let base = resolve_scope_id(ScopeInputs::default()).unwrap();
         assert_eq!(
-            resolve_instance_id(&[], false, false, false, Some("default"), None, None).as_deref(),
-            Some(APP_ID_BASE)
+            resolve_scope_id(ScopeInputs {
+                profile: Some("default"),
+                ..Default::default()
+            })
+            .as_deref(),
+            Some(base.as_str())
         );
         assert_eq!(
-            resolve_instance_id(&[], false, false, false, Some("STABLE"), None, None).as_deref(),
-            Some(APP_ID_BASE)
+            resolve_scope_id(ScopeInputs {
+                profile: Some("STABLE"),
+                ..Default::default()
+            })
+            .as_deref(),
+            Some(base.as_str())
         );
-        let named =
-            resolve_instance_id(&[], false, false, false, Some("Work"), None, None).unwrap();
-        assert_eq!(named, format!("{APP_ID_BASE}.scope.work"));
 
-        let root_a = resolve_instance_id(
-            &[],
-            false,
-            false,
-            false,
-            Some("trial-alpha"),
-            Some(r"D:\tmp\root-a"),
-            None,
-        )
+        // Non-existent path spellings and extended \\?\ prefixes resolve identically.
+        let root_a = resolve_scope_id(ScopeInputs {
+            profile: Some("trial-alpha"),
+            host_root: Some(r"D:\Tmp\NonExistent\Root\"),
+            ..Default::default()
+        })
         .unwrap();
-        let root_b = resolve_instance_id(
-            &[],
-            false,
-            false,
-            false,
-            Some("trial-alpha"),
-            Some(r"D:\tmp\root-b"),
-            None,
-        )
+        let root_a_extended = resolve_scope_id(ScopeInputs {
+            profile: Some("trial-alpha"),
+            host_root: Some(r"\\?\d:/tmp/sub/../nonexistent/root"),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(root_a, root_a_extended);
+
+        // Distinct roots and distinct RUNE_BACKEND targets produce distinct scopes.
+        let root_b = resolve_scope_id(ScopeInputs {
+            profile: Some("trial-alpha"),
+            host_root: Some(r"D:\Tmp\NonExistent\Other"),
+            ..Default::default()
+        })
         .unwrap();
         assert_ne!(root_a, root_b);
-        assert!(root_a.starts_with(&format!("{APP_ID_BASE}.scope.trial-alpha.")));
+
+        let backend_a = resolve_scope_id(ScopeInputs {
+            backend: Some("http://127.0.0.1:3001/"),
+            ..Default::default()
+        })
+        .unwrap();
+        let backend_b = resolve_scope_id(ScopeInputs {
+            backend: Some("http://127.0.0.1:3002"),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_ne!(backend_a, backend_b);
+        assert_ne!(backend_a, base);
+
+        // A crafted profile name mimicking a digest suffix never collides with a rooted profile.
+        let crafted = format!("trial-alpha.{}", &root_a[1..17]);
+        let forged = resolve_scope_id(ScopeInputs {
+            profile: Some(&crafted),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_ne!(forged, root_a);
     }
 
     #[test]
-    fn coordination_bypasses_new_window_probes_headless_and_invalid_profiles() {
+    fn new_window_skips_handoff_but_retains_owner_scope_for_takeover() {
+        let args = vec!["--new-window".into()];
         assert!(
-            resolve_instance_id(
-                &["--new-window".into()],
-                false,
-                false,
-                false,
-                None,
-                None,
-                None
-            )
-            .is_none()
+            resolve_scope_id(ScopeInputs {
+                args: &args,
+                ..Default::default()
+            })
+            .is_none(),
+            "--new-window must bypass pre-launch focus handoff"
         );
         assert!(
-            resolve_instance_id(
-                &["--probe-window".into()],
-                false,
-                false,
-                false,
-                None,
-                None,
-                None
-            )
-            .is_none()
-        );
-        assert!(
-            resolve_instance_id(
-                &["--gallery-shell".into()],
-                false,
-                false,
-                false,
-                None,
-                None,
-                None
-            )
-            .is_none()
-        );
-        assert!(
-            resolve_instance_id(
-                &["--scene=synthetic".into()],
-                false,
-                false,
-                false,
-                None,
-                None,
-                None
-            )
-            .is_none()
-        );
-        assert!(resolve_instance_id(&[], true, false, false, None, None, None).is_none());
-        assert!(resolve_instance_id(&[], false, true, false, None, None, None).is_none());
-        assert!(resolve_instance_id(&[], false, false, true, None, None, None).is_none());
-        assert!(
-            resolve_instance_id(&[], false, false, false, Some("../bad"), None, None).is_none()
+            resolve_scope_id(ScopeInputs {
+                args: &args,
+                allow_new_window: true,
+                ..Default::default()
+            })
+            .is_some(),
+            "--new-window must still register as a takeover owner"
         );
     }
 
     #[test]
-    fn reopen_focuses_existing_only_when_confirmed_on_local_window() {
+    fn coordination_bypasses_probes_headless_disabled_and_invalid_profiles() {
+        for flag in [
+            "--probe-window",
+            "--gallery-shell",
+            "--scene=synthetic",
+            "--test-support-info",
+        ] {
+            let args = vec![flag.into()];
+            assert!(
+                resolve_scope_id(ScopeInputs {
+                    args: &args,
+                    allow_new_window: true,
+                    ..Default::default()
+                })
+                .is_none()
+            );
+        }
+        assert!(
+            resolve_scope_id(ScopeInputs {
+                allow_new_window: true,
+                headless: true,
+                ..Default::default()
+            })
+            .is_none()
+        );
+        assert!(
+            resolve_scope_id(ScopeInputs {
+                allow_new_window: true,
+                disabled: true,
+                ..Default::default()
+            })
+            .is_none()
+        );
+        assert!(
+            resolve_scope_id(ScopeInputs {
+                allow_new_window: true,
+                direct_scoped: true,
+                ..Default::default()
+            })
+            .is_none()
+        );
+        assert!(
+            resolve_scope_id(ScopeInputs {
+                allow_new_window: true,
+                profile: Some("../bad"),
+                ..Default::default()
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn focus_existing_requires_confirmed_true_on_local_window() {
         let mut s = crate::init();
-        let spawned = Cell::new(0usize);
+        assert!(!should_focus_existing(&s));
 
-        // Default (unset / false) spawns a new window and skips focusing the existing one.
-        assert!(decide_reopen(&s, || {
-            spawned.set(spawned.get() + 1);
-            true
-        }));
-        assert_eq!(spawned.get(), 1);
-
-        // Confirmed true on a local loopback backend focuses the existing window without spawning.
         crate::settings::fixture_config(
             &mut s,
             "http://127.0.0.1:9898/",
             json!({"focusExistingWindowOnSecondLaunch": true}),
         );
-        assert!(!decide_reopen(&s, || {
-            spawned.set(spawned.get() + 1);
-            true
-        }));
-        assert_eq!(spawned.get(), 1);
+        assert!(should_focus_existing(&s));
 
-        // Remote backend config must not hijack local launch behavior.
         crate::settings::fixture_config(
             &mut s,
             "https://remote.example.com:9898/",
             json!({"focusExistingWindowOnSecondLaunch": true}),
         );
-        assert!(decide_reopen(&s, || {
-            spawned.set(spawned.get() + 1);
-            true
-        }));
-        assert_eq!(spawned.get(), 2);
+        assert!(!should_focus_existing(&s));
 
-        // Failed new-window spawn falls back to focusing the existing window.
-        assert!(!decide_reopen(&s, || false));
+        crate::settings::fixture_config(
+            &mut s,
+            "http://127.0.0.1:9898/",
+            json!({"focusExistingWindowOnSecondLaunch": false}),
+        );
+        assert!(!should_focus_existing(&s));
     }
 }

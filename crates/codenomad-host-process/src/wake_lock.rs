@@ -11,7 +11,7 @@ use std::{
 #[cfg(any(windows, test))]
 trait WakeBackend: Send + 'static {
     fn acquire(&mut self) -> bool;
-    fn release(&mut self);
+    fn release(&mut self) -> bool;
 }
 
 #[cfg(windows)]
@@ -28,18 +28,16 @@ impl WakeBackend for WindowsWakeBackend {
         unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) != 0 }
     }
 
-    fn release(&mut self) {
+    fn release(&mut self) -> bool {
         use windows_sys::Win32::System::Power::{ES_CONTINUOUS, SetThreadExecutionState};
         // SAFETY: Clears ES_SYSTEM_REQUIRED on the same worker thread that acquired it.
-        unsafe {
-            let _ = SetThreadExecutionState(ES_CONTINUOUS);
-        }
+        unsafe { SetThreadExecutionState(ES_CONTINUOUS) != 0 }
     }
 }
 
 #[cfg(any(windows, test))]
 enum WakeCommand {
-    Set(bool),
+    Set(bool, mpsc::SyncSender<bool>),
     Stop,
 }
 
@@ -59,19 +57,23 @@ impl Worker {
                 let mut held = false;
                 while let Ok(command) = rx.recv() {
                     match command {
-                        WakeCommand::Set(true) if !held => {
-                            held = backend.acquire();
+                        WakeCommand::Set(true, reply) => {
+                            if !held {
+                                held = backend.acquire();
+                            }
+                            let _ = reply.send(held);
                         }
-                        WakeCommand::Set(false) if held => {
-                            backend.release();
-                            held = false;
+                        WakeCommand::Set(false, reply) => {
+                            if held && backend.release() {
+                                held = false;
+                            }
+                            let _ = reply.send(held);
                         }
-                        WakeCommand::Set(_) => {}
                         WakeCommand::Stop => break,
                     }
                 }
                 if held {
-                    backend.release();
+                    let _ = backend.release();
                 }
             })
             .ok()?;
@@ -81,8 +83,10 @@ impl Worker {
         })
     }
 
-    fn send(&self, desired: bool) -> bool {
-        self.commands.send(WakeCommand::Set(desired)).is_ok()
+    fn apply(&self, desired: bool) -> Option<bool> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        self.commands.send(WakeCommand::Set(desired, tx)).ok()?;
+        rx.recv().ok()
     }
 
     fn stop(mut self) {
@@ -95,6 +99,7 @@ impl Worker {
 
 pub struct WakeLock {
     desired: bool,
+    held: bool,
     #[cfg(any(windows, test))]
     worker: Option<Worker>,
     #[cfg(test)]
@@ -107,7 +112,7 @@ impl WakeBackend for Box<dyn WakeBackend> {
         (**self).acquire()
     }
 
-    fn release(&mut self) {
+    fn release(&mut self) -> bool {
         (**self).release()
     }
 }
@@ -122,6 +127,7 @@ impl WakeLock {
     pub fn new() -> Self {
         Self {
             desired: false,
+            held: false,
             #[cfg(any(windows, test))]
             worker: None,
             #[cfg(test)]
@@ -133,35 +139,47 @@ impl WakeLock {
     fn with_factory(factory: impl FnMut() -> Box<dyn WakeBackend> + Send + 'static) -> Self {
         Self {
             desired: false,
+            held: false,
             worker: None,
             factory: Some(Box::new(factory)),
         }
     }
 
-    pub fn set_desired(&mut self, desired: bool) {
-        if self.desired == desired {
-            return;
+    pub fn is_held(&self) -> bool {
+        self.held
+    }
+
+    pub fn set_desired(&mut self, desired: bool) -> bool {
+        if self.desired == desired && self.held == desired {
+            return self.held;
         }
+        // Avoid retrying a refused acquire on every frame until the desired state changes.
+        if desired && self.desired && !self.held {
+            return false;
+        }
+        self.desired = desired;
         #[cfg(any(windows, test))]
         {
             if desired && self.worker.is_none() {
                 self.worker = self.spawn_worker();
             }
             if let Some(worker) = &self.worker {
-                if worker.send(desired) {
-                    self.desired = desired;
-                } else {
-                    self.worker = None;
-                    self.desired = false;
+                match worker.apply(desired) {
+                    Some(held) => self.held = held,
+                    None => {
+                        self.worker = None;
+                        self.held = false;
+                    }
                 }
-            } else if !desired {
-                self.desired = false;
+            } else {
+                self.held = false;
             }
         }
         #[cfg(not(any(windows, test)))]
         {
-            self.desired = desired;
+            self.held = false;
         }
+        self.held
     }
 
     pub fn release(&mut self) {
@@ -170,6 +188,7 @@ impl WakeLock {
         if let Some(worker) = self.worker.take() {
             worker.stop();
         }
+        self.held = false;
     }
 
     #[cfg(any(windows, test))]
@@ -199,6 +218,7 @@ impl Drop for WakeLock {
 mod tests {
     use super::*;
     use std::{
+        collections::VecDeque,
         sync::{Arc, Mutex},
         thread::ThreadId,
     };
@@ -211,7 +231,8 @@ mod tests {
 
     struct FakeBackend {
         events: Arc<Mutex<Vec<Event>>>,
-        succeed: bool,
+        acquire_results: VecDeque<bool>,
+        release_results: VecDeque<bool>,
     }
 
     impl WakeBackend for FakeBackend {
@@ -220,14 +241,15 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(Event::Acquire(thread::current().id()));
-            self.succeed
+            self.acquire_results.pop_front().unwrap_or(true)
         }
 
-        fn release(&mut self) {
+        fn release(&mut self) -> bool {
             self.events
                 .lock()
                 .unwrap()
                 .push(Event::Release(thread::current().id()));
+            self.release_results.pop_front().unwrap_or(true)
         }
     }
 
@@ -239,19 +261,22 @@ mod tests {
         let mut lock = WakeLock::with_factory(move || {
             Box::new(FakeBackend {
                 events: Arc::clone(&recorded),
-                succeed: true,
+                acquire_results: VecDeque::new(),
+                release_results: VecDeque::new(),
             })
         });
 
         // Initial false is a no-op and spawns no worker thread.
-        lock.set_desired(false);
+        assert!(!lock.set_desired(false));
         assert!(lock.worker.is_none());
 
-        lock.set_desired(true);
-        lock.set_desired(true);
-        lock.set_desired(false);
-        lock.set_desired(false);
-        lock.set_desired(true);
+        assert!(lock.set_desired(true));
+        assert!(lock.is_held());
+        assert!(lock.set_desired(true));
+        assert!(!lock.set_desired(false));
+        assert!(!lock.is_held());
+        assert!(!lock.set_desired(false));
+        assert!(lock.set_desired(true));
         drop(lock);
 
         let log = events.lock().unwrap().clone();
@@ -273,32 +298,72 @@ mod tests {
     }
 
     #[test]
-    fn failed_acquire_does_not_issue_spurious_release_on_drop() {
+    fn failed_acquire_reports_unheld_and_does_not_issue_spurious_release() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&events);
         let mut lock = WakeLock::with_factory(move || {
             Box::new(FakeBackend {
                 events: Arc::clone(&recorded),
-                succeed: false,
+                acquire_results: VecDeque::from([false, true]),
+                release_results: VecDeque::new(),
             })
         });
 
-        lock.set_desired(true);
-        lock.set_desired(false);
+        assert!(!lock.set_desired(true));
+        assert!(!lock.is_held());
+        // Repeated desired=true does not spin-retry every frame.
+        assert!(!lock.set_desired(true));
+        assert!(!lock.set_desired(false));
+        // A later transition retries and succeeds.
+        assert!(lock.set_desired(true));
+        assert!(lock.is_held());
         drop(lock);
 
         let log = events.lock().unwrap().clone();
-        assert_eq!(log.len(), 1);
+        assert_eq!(log.len(), 3);
         assert!(matches!(log[0], Event::Acquire(_)));
+        assert!(matches!(log[1], Event::Acquire(_)));
+        assert!(matches!(log[2], Event::Release(_)));
+    }
+
+    #[test]
+    fn failed_release_keeps_held_truth_and_retries_on_release_or_drop() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&events);
+        let mut lock = WakeLock::with_factory(move || {
+            Box::new(FakeBackend {
+                events: Arc::clone(&recorded),
+                acquire_results: VecDeque::from([true]),
+                release_results: VecDeque::from([false, true]),
+            })
+        });
+
+        assert!(lock.set_desired(true));
+        assert!(lock.is_held());
+        // First release fails: controller still reports held so next release or drop retries.
+        assert!(lock.set_desired(false));
+        assert!(lock.is_held());
+        // Retrying release succeeds.
+        assert!(!lock.set_desired(false));
+        assert!(!lock.is_held());
+        drop(lock);
+
+        let log = events.lock().unwrap().clone();
+        assert_eq!(log.len(), 3);
+        assert!(matches!(log[0], Event::Acquire(_)));
+        assert!(matches!(log[1], Event::Release(_)));
+        assert!(matches!(log[2], Event::Release(_)));
     }
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "exercises real Windows SetThreadExecutionState"]
     fn windows_wake_lock_acquires_and_releases_cleanly() {
         let mut lock = WakeLock::new();
-        lock.set_desired(true);
-        lock.set_desired(false);
-        lock.set_desired(true);
+        assert!(lock.set_desired(true));
+        assert!(lock.is_held());
+        assert!(!lock.set_desired(false));
+        assert!(!lock.is_held());
         lock.release();
     }
 }

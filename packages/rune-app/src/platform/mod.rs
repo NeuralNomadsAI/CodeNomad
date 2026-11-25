@@ -118,10 +118,7 @@ pub fn export_attachment(
 /// Called after Rune releases the event loop; process waits remain outside active UI work.
 pub fn finish() {
     #[cfg(not(target_arch = "wasm32"))]
-    {
-        boot::finish();
-        launch::release();
-    }
+    boot::finish();
 }
 pub fn release_records_on_exit(
     records: Vec<(crate::backend::Backend, String)>,
