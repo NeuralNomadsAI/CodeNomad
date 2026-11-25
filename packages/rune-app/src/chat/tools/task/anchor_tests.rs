@@ -639,6 +639,16 @@ fn reveal_virtual_rows_focus_and_real_selection_protection() {
         "second duplicate must not inherit the evicted first duplicate's key"
     );
     assert!(ids_after[0].starts_with("idx:1"));
+    let mut wide_legacy: Vec<_> = (0..400).map(|_| json!({"tool": "read"})).collect();
+    wide_legacy[0] = json!({"id": "wide_dup", "tool": "read"});
+    wide_legacy[300] = json!({"id": "wide_dup", "tool": "read"});
+    let wide_before = super::legacy_identities(&wide_legacy, 200)[100].clone();
+    wide_legacy.push(json!({"tool": "read"}));
+    let wide_after = super::legacy_identities(&wide_legacy, 201)[99].clone();
+    assert_eq!(
+        wide_before, wide_after,
+        "rendered duplicate must keep its key when an older duplicate slides past 400"
+    );
     let _ = lease;
 }
 
@@ -1155,25 +1165,34 @@ fn expanded_nested_card_keeps_full_budget_outer_release_prunes_nested_and_select
         "expanded nested subagent must hold an active child card demand"
     );
 
-    // Collapsing the outer card must also release the nested descendant card's child demand.
-    outer_lease = None;
-    sub0_lease = None;
+    // Real user collapse gesture on the outer card must trigger Children::release on the next
+    // frame and remove the nested descendant card's demand while its synthetic entry lease stays alive.
     let (ox, oy) = rt
         .find(&format!("toggle-{outer_key}"))
         .expect("outer toggle");
     rt.pointer_down(ox, oy);
     rt.pointer_up(ox, oy);
-    for _ in 0..4 {
-        rt.frame(1.0 / 60.0);
-    }
+    rt.frame(1.0 / 60.0);
     assert!(
         !rt.state.transcript_display.children.has_visible_card(
             Some("child_a"),
             "grand_0",
             &sub0_key
         ),
-        "collapsing outer task card must release nested descendant child watches immediately"
+        "collapsing outer task card must trigger Children::release and drop nested descendant demand"
     );
+    assert!(
+        rt.state
+            .transcript_display
+            .children
+            .has_visible_card(Some("child_a"), "grand_0", "test"),
+        "synthetic test lease remains live, proving removal came from Children::release on collapse"
+    );
+    outer_lease = None;
+    sub0_lease = None;
+    for _ in 0..3 {
+        rt.frame(1.0 / 60.0);
+    }
 
     // Active selection survives >64 visibility reports on other step panes (LRU eviction protection).
     rt.update(|s, _| {

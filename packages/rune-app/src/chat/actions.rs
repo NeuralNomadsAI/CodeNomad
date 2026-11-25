@@ -265,6 +265,17 @@ impl Display {
     }
 
     pub(super) fn set_task_selected(&mut self, key: &str, selected: Vec<String>) -> bool {
+        if !selected.is_empty() {
+            let child_marker = format!("{key}-");
+            for (other_key, other) in &mut self.active.task_anchors {
+                if other_key != key
+                    && !other_key.contains(&child_marker)
+                    && !key.contains(&format!("{other_key}-"))
+                {
+                    other.selected.clear();
+                }
+            }
+        }
         let state = self.task_steps_entry(key);
         let released = !state.selected.is_empty() && selected.is_empty() && state.at_bottom;
         state.selected = selected;

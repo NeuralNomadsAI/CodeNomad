@@ -591,7 +591,8 @@ pub(super) fn body(
         } else {
             legacy.len().saturating_sub(start)
         };
-        let rendered_steps = tail_len.min(*budget);
+        let step_budget = *budget;
+        let rendered_steps = tail_len.min(step_budget);
         let budget_truncated = rendered_steps < tail_len;
         start += tail_len.saturating_sub(rendered_steps);
         let child_budget = if use_child {
@@ -683,9 +684,10 @@ pub(super) fn body(
             );
         }
         if rendered_steps > 0 {
-            let has_reveal = start > 0 && !budget_truncated;
+            let remaining_step_budget = step_budget.min(STEP_LIMIT).saturating_sub(rendered_steps);
+            let reveal_count = start.min(REVEAL).min(remaining_step_budget);
+            let has_reveal = start > 0 && !budget_truncated && reveal_count > 0;
             let offset = usize::from(has_reveal);
-            let reveal_count = start.min(REVEAL);
             let reveal_clears_gap = start <= reveal_count;
             let hidden_total = start;
             let min_extra = step_count
@@ -943,12 +945,21 @@ fn fnv64(text: &str) -> u64 {
 }
 
 fn legacy_identities(legacy_all: &[serde_json::Value], legacy_base: usize) -> Vec<String> {
-    let mut counts: HashMap<u64, usize> = HashMap::new();
-    let lookback = legacy_base.saturating_sub(STEP_LIMIT);
-    for step in &legacy_all[lookback..legacy_base] {
+    let mut visible_counts: HashMap<u64, usize> = HashMap::new();
+    for step in &legacy_all[legacy_base..] {
         let id = string(step, &["id", "callID"]);
         if !id.is_empty() {
-            *counts.entry(fnv64(id)).or_default() += 1;
+            *visible_counts.entry(fnv64(id)).or_default() += 1;
+        }
+    }
+    if legacy_base > 0 && !visible_counts.is_empty() {
+        for step in &legacy_all[..legacy_base] {
+            let id = string(step, &["id", "callID"]);
+            if !id.is_empty()
+                && let Some(count) = visible_counts.get_mut(&fnv64(id))
+            {
+                *count = count.saturating_add(1);
+            }
         }
     }
     legacy_all
@@ -961,13 +972,10 @@ fn legacy_identities(legacy_all: &[serde_json::Value], legacy_base: usize) -> Ve
                 format!("idx:{index}")
             } else {
                 let hash = fnv64(id);
-                let occ = counts.entry(hash).or_default();
-                let current = *occ;
-                *occ += 1;
-                if current == 0 {
-                    format!("id:{hash:016x}")
+                if visible_counts.get(&hash).copied().unwrap_or(0) > 1 {
+                    format!("id:{hash:016x}:{index}")
                 } else {
-                    format!("id:{hash:016x}:{current}")
+                    format!("id:{hash:016x}")
                 }
             }
         })
@@ -1027,24 +1035,28 @@ fn step_contains_link(
     target: &str,
     depth: usize,
 ) -> bool {
-    let output_limit = if step.name == "skill" {
-        super::super::document::PROSE_LIMIT
+    let (output_limit, output_key) = if is_task(step) {
+        (PANE_LIMIT, format!("{row_key}-task-output"))
+    } else if step.name == "skill" {
+        (
+            super::super::document::PROSE_LIMIT,
+            format!("{row_key}-tool_output"),
+        )
     } else {
-        super::super::document::TOOL_LIMIT
+        (
+            super::super::document::TOOL_LIMIT,
+            format!("{row_key}-tool_output"),
+        )
     };
-    if within_displayed(
-        s,
-        &step.output,
-        output_limit,
-        &format!("{row_key}-tool_output"),
-        target,
-    ) || within_displayed(
-        s,
-        string(&step.input, &["prompt"]),
-        PANE_LIMIT,
-        &format!("{row_key}-task-prompt"),
-        target,
-    ) {
+    if within_displayed(s, &step.output, output_limit, &output_key, target)
+        || within_displayed(
+            s,
+            string(&step.input, &["prompt"]),
+            PANE_LIMIT,
+            &format!("{row_key}-task-prompt"),
+            target,
+        )
+    {
         return true;
     }
     if !is_task(step) {
