@@ -540,19 +540,23 @@ pub(super) fn body(
         let revealed = s.transcript_display.task_revealed(&step_key);
         let count = (INITIAL_STEPS + revealed).min(STEP_LIMIT);
         let desired = step_count.saturating_sub(count);
-        let visible_anchor = s
-            .transcript_display
-            .task_anchors(&step_key)
-            .iter()
-            .find_map(|anchor| {
-                if use_child {
-                    visible_live
-                        .iter()
-                        .position(|(msg, step)| format!("{msg}:{}", step.id) == *anchor)
-                } else {
-                    legacy_ids.iter().position(|id| id == anchor)
-                }
-            });
+        let anchors = s.transcript_display.task_anchors(&step_key);
+        let visible_anchor = if anchors.is_empty() {
+            None
+        } else {
+            anchors
+                .iter()
+                .find_map(|anchor| {
+                    if use_child {
+                        visible_live
+                            .iter()
+                            .position(|(msg, step)| format!("{msg}:{}", step.id) == *anchor)
+                    } else {
+                        legacy_ids.iter().position(|id| id == anchor)
+                    }
+                })
+                .or(Some(0))
+        };
         let focused_anchor = s.transcript_display.focused_key().and_then(|focused| {
             row_keys
                 .iter()
@@ -581,6 +585,9 @@ pub(super) fn body(
                         .flatten()
                 })
         });
+        if focused_anchor.is_some() {
+            s.transcript_display.mark_task_focus_pinned();
+        }
         let selected_anchor = s
             .transcript_display
             .task_selected(&step_key)
@@ -695,9 +702,11 @@ pub(super) fn body(
             let has_reveal = start > 0 && !budget_truncated;
             let offset = usize::from(has_reveal);
             let reveal_count = start.min(REVEAL);
-            let next_extra = step_count
+            let hidden_total = start;
+            let min_extra = step_count
                 .saturating_sub(start.saturating_sub(reveal_count))
                 .saturating_sub(INITIAL_STEPS);
+            let next_extra = revealed.saturating_add(REVEAL).max(min_extra);
             let mut virtual_keys = Vec::with_capacity(rendered_steps + offset);
             if has_reveal {
                 virtual_keys.push(format!("reveal-row-{step_key}"));
@@ -716,11 +725,14 @@ pub(super) fn body(
                 let mut next_anc = Vec::with_capacity(ancestors.len() + 1);
                 next_anc.extend(ancestors.iter().map(|&a| a.to_owned()));
                 next_anc.push(cid.to_owned());
+                let steps: Vec<_> = visible_live.into_iter().skip(start).collect();
+                let nested_tasks = steps.iter().filter(|(_, step)| is_task(step)).count();
+                let per_nested_budget = child_budget / nested_tasks.max(1);
                 StepItems::Child {
                     child_id: cid.to_owned(),
                     ancestors: next_anc,
-                    steps: visible_live.into_iter().skip(start).collect(),
-                    child_budget,
+                    steps,
+                    per_nested_budget,
                 }
             } else {
                 StepItems::Legacy {
@@ -733,7 +745,7 @@ pub(super) fn body(
             let key_source = virtual_keys.clone();
             let build_keys = virtual_keys;
             let build_step_key = step_key.clone();
-            let build_clip = pane_clip.clone();
+            let build_clip = s.transcript_display.tool_clock.extend_clip(&pane_clip);
             let active_locale = locale();
             let version = s.revision.wrapping_mul(0x9e37_79b9_7f4a_7c15)
                 ^ s.transcript_display.tool_clock.epoch().wrapping_mul(31)
@@ -763,20 +775,35 @@ pub(super) fn body(
                         crate::strings::with_locale(active_locale, || {
                             if has_reveal && index == 0 {
                                 let toggle = build_step_key.clone();
+                                let hidden_label = catalogue::format(
+                                    active_locale,
+                                    if hidden_total == 1 {
+                                        "messageBlock.hiddenParts.one"
+                                    } else {
+                                        "messageBlock.hiddenParts.other"
+                                    },
+                                    &[("count", &hidden_total.to_string())],
+                                );
                                 let label = catalogue::format(
                                     active_locale,
                                     "messageBlock.hiddenParts.show",
                                     &[("count", &reveal_count.to_string())],
                                 );
                                 return col().key(build_keys[0].clone()).role("listitem").child(
-                                    layout::button(
-                                        &label,
-                                        false,
-                                        screen::action(&s.input_scope, move |s| {
-                                            Display::reveal_task_at_least(s, &toggle, next_extra);
-                                        }),
-                                    )
-                                    .key(format!("reveal-{build_step_key}")),
+                                    layout::action_row()
+                                        .child(text(hidden_label).text_role(TextRole::Label))
+                                        .child(
+                                            layout::button(
+                                                &label,
+                                                false,
+                                                screen::action(&s.input_scope, move |s| {
+                                                    Display::reveal_task_at_least(
+                                                        s, &toggle, next_extra,
+                                                    );
+                                                }),
+                                            )
+                                            .key(format!("reveal-{build_step_key}")),
+                                        ),
                                 );
                             }
                             let item_index = index - offset;
@@ -786,25 +813,28 @@ pub(super) fn body(
                                     child_id,
                                     ancestors,
                                     steps,
-                                    child_budget,
+                                    per_nested_budget,
                                 } => {
                                     let (msg, step) = &steps[item_index];
                                     let owner = format!("child:{child_id}:{msg}");
                                     let anc_refs: Vec<&str> =
                                         ancestors.iter().map(String::as_str).collect();
-                                    let mut row_budget = *child_budget;
-                                    s.transcript_display.tool_clock.with_clip(&build_clip, || {
-                                        col().key(row_key.clone()).role("listitem").child(
-                                            super::render::render_nested(
-                                                s,
-                                                &owner,
-                                                step,
-                                                row_key,
-                                                &anc_refs,
-                                                &mut row_budget,
-                                            ),
-                                        )
-                                    })
+                                    let mut row_budget = *per_nested_budget;
+                                    s.transcript_display.tool_clock.with_active_clip(
+                                        &build_clip,
+                                        || {
+                                            col().key(row_key.clone()).role("listitem").child(
+                                                super::render::render_nested(
+                                                    s,
+                                                    &owner,
+                                                    step,
+                                                    row_key,
+                                                    &anc_refs,
+                                                    &mut row_budget,
+                                                ),
+                                            )
+                                        },
+                                    )
                                 }
                                 StepItems::Legacy { tool, base } => tool.metadata["summary"]
                                     .as_array()
@@ -900,23 +930,19 @@ fn json_bytes(value: &serde_json::Value) -> usize {
 }
 
 fn legacy_identities(legacy_all: &[serde_json::Value], legacy_base: usize) -> Vec<String> {
-    let mut seen = HashMap::<&str, usize>::new();
-    let mut ids = Vec::with_capacity(legacy_all.len().saturating_sub(legacy_base));
-    for (index, step) in legacy_all.iter().enumerate() {
-        let id = string(step, &["id", "callID"]);
-        let key = if id.is_empty() {
-            format!("idx:{index}")
-        } else {
-            let occ = seen.entry(id).or_default();
-            let key = format!("id:{:016x}:{}", fnv64(id), *occ);
-            *occ += 1;
-            key
-        };
-        if index >= legacy_base {
-            ids.push(key);
-        }
-    }
-    ids
+    legacy_all
+        .iter()
+        .enumerate()
+        .skip(legacy_base)
+        .map(|(index, step)| {
+            let id = string(step, &["id", "callID"]);
+            if id.is_empty() {
+                format!("idx:{index}")
+            } else {
+                format!("id:{:016x}:{index}", fnv64(id))
+            }
+        })
+        .collect()
 }
 
 fn key_matches_row(focused: &str, row_key: &str) -> bool {
@@ -999,7 +1025,7 @@ enum StepItems {
         child_id: String,
         ancestors: Vec<String>,
         steps: Vec<(String, Arc<Tool>)>,
-        child_budget: usize,
+        per_nested_budget: usize,
     },
     Legacy {
         tool: Arc<Tool>,

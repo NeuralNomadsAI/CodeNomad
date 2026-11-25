@@ -561,27 +561,12 @@ pub fn steps_pane<S: 'static>(
     on_at_bottom: impl Fn(&mut S, bool) -> bool + 'static,
     on_selection: impl Fn(&mut S, &rune::SelectionChange, &mut rune::Tx) + 'static,
 ) -> El {
-    let appearance = dark();
-    let palette = crate::palettes::current();
-    let t = tokens(appearance);
-    let gap = t.space(Space::Sm).px();
-    let list = rune::col()
+    let gap = tokens(dark()).space(Space::Sm).px();
+    let list = crate::layout::transcript_rows(count, row_key, build)
         .key(format!("{key}-list"))
-        .w_full()
         .role("list")
         .label(label)
         .gap(gap)
-        .growth(rune::GrowthSpec::default())
-        .virtual_rows(
-            count,
-            t.length(crate::Length::TouchTarget).px(),
-            row_key,
-            move |state, index| {
-                crate::palettes::with_palette(palette, || {
-                    crate::layout::with_appearance(appearance, || build(state, index))
-                })
-            },
-        )
         .virtual_rows_version(version)
         .on_visible_rows(on_visible);
     rune::col()

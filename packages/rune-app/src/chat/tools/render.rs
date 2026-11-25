@@ -260,18 +260,10 @@ fn render_body(
     // Per dev-docs/TRANSCRIPT.md, latestChildState drives both status and end time
     // across every launch/continuation card of the same background child.
     let timing = if let Some(delivery) = &task_delivery {
-        let start = tool.started.or(tool.message_created);
         if delivery.running {
-            start.map(|start| (start, None))
+            tool.started.map(|start| (start, None))
         } else {
-            start.zip(delivery.ended.map(Some))
-        }
-    } else if is_task {
-        let start = tool.started.or(tool.message_created);
-        match tool.status.as_str() {
-            "running" => start.map(|start| (start, tool.ended)),
-            "completed" | "error" => start.zip(tool.ended.map(Some)),
-            _ => None,
+            tool.started.zip(delivery.ended.map(Some))
         }
     } else {
         super::duration::tool_timing(tool)

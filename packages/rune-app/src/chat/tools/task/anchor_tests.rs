@@ -457,11 +457,17 @@ fn reveal_virtual_rows_focus_and_real_selection_protection() {
     for _ in 0..8 {
         rt.frame(1.0 / 60.0);
     }
+    rt.update(|_, tx| tx.focus(format!("toggle-{task_key}"), true));
+    rt.frame(1.0 / 60.0);
     rt.update(|s, tx| {
-        tx.focus(format!("toggle-{task_key}"), true);
         Display::poll(s, false, 0.2, tx);
     });
     rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.state.transcript_display.focused_key(),
+        Some(format!("toggle-{task_key}").as_str()),
+        "focus must leave step_0 before testing selection-only protection"
+    );
     let payload_el = rt
         .elements()
         .into_iter()
@@ -524,19 +530,87 @@ fn reveal_virtual_rows_focus_and_real_selection_protection() {
         "real-selected step_0 must stay mounted when newer steps arrive"
     );
 
-    // 5. Collapsing the task card clears its stored step anchor.
+    // 5. Collapsing after selection clears anchors and selection; reopening with 90 steps must
+    //    emit a fresh child reload demand, not re-anchor to step_0, and clicking "Show 60 more" reveals 0..60.
+    let revealed_before_collapse = rt.state.transcript_display.task_revealed(&step_key);
+    lease = None;
     let (tx, ty) = rt.find(&format!("toggle-{task_key}")).expect("task toggle");
     rt.pointer_down(tx, ty);
     rt.pointer_up(tx, ty);
     for _ in 0..4 {
         rt.frame(1.0 / 60.0);
     }
+    assert!(rt.selected_text().is_none());
+    assert!(
+        rt.state
+            .transcript_display
+            .task_selected(&step_key)
+            .is_empty()
+    );
     assert!(
         rt.state
             .transcript_display
             .task_anchors(&step_key)
             .is_empty()
     );
+    assert_eq!(
+        rt.state.transcript_display.task_revealed(&step_key),
+        revealed_before_collapse
+    );
+    rt.state.transcript_display.children.take_started_entries();
+    let (tx, ty) = rt
+        .find(&format!("toggle-{task_key}"))
+        .expect("task toggle reopen");
+    rt.pointer_down(tx, ty);
+    rt.pointer_up(tx, ty);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.state
+            .transcript_display
+            .children
+            .take_started_entries()
+            .contains(&(None, "child".into(), task_key.clone())),
+        "reopening a collapsed task card must emit a fresh child reload demand"
+    );
+    rt.update(|s, _| {
+        lease = Some(
+            s.transcript_display
+                .children
+                .install("child", child_steps_page(90, false, "selectable_step_zero")),
+        );
+        assert!(crate::chat::events::poll_chat(s, 8));
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.selected_text().is_none());
+    assert!(
+        rt.state
+            .transcript_display
+            .task_selected(&step_key)
+            .is_empty()
+    );
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.contains("60 items hidden") && tree.contains("Show 60 more"),
+        "reopening after selection must not re-anchor to step_0"
+    );
+    let (rx, ry) = rt
+        .find(&format!("reveal-{step_key}"))
+        .expect("reveal 60 button after reopen");
+    rt.pointer_down(rx, ry);
+    rt.pointer_up(rx, ry);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(rt.state.transcript_display.task_revealed(&step_key), 100);
+    assert!(rt.find(&format!("reveal-{step_key}")).is_none());
 
     // 6. Disambiguated legacy step identities stay stable when an earlier duplicate slides past 200.
     let mut legacy = vec![json!({"id": "dup", "tool": "read"})];
@@ -812,4 +886,165 @@ fn focused_markdown_link_inside_step_and_grandchild_protects_row_from_eviction()
         ));
     });
     let _ = (lease, gc_lease);
+}
+
+#[test]
+fn reveal_step_persists_across_collapse_and_survives_full_anchor_eviction() {
+    let parent = history::decode_message(&json!({
+        "id": "parent", "type": "assistant", "time": {"completed": 1}, "content": [{
+            "type": "tool", "id": "launch", "name": "subagent", "state": {
+                "status": "completed",
+                "metadata": {"sessionID": "child", "status": "running"}
+            }
+        }]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    crate::settings::fixture_transcript(
+        &mut state,
+        json!({"toolCallExpansionDefaults": {"tools": {"task": "expanded", "read": "collapsed"}}}),
+    );
+    state.messages.push(parent.into());
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| with_locale("en", || crate::view(s, cx)),
+        (1160.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    let task_key = super::super::tool_key("parent", "launch");
+    let step_key = format!("{task_key}-task-steps");
+    let scroll_key = format!("{step_key}-scroll");
+    let mut lease = None;
+    rt.update(|s, _| {
+        lease = Some(
+            s.transcript_display
+                .children
+                .install("child", child_steps_page(90, false, "ok")),
+        );
+        assert!(crate::chat::events::poll_chat(s, 1));
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("60 items hidden") && tree.contains("Show 60 more"));
+    let (rx, ry) = rt
+        .find(&format!("reveal-{step_key}"))
+        .expect("reveal 60 button");
+    rt.pointer_down(rx, ry);
+    rt.pointer_up(rx, ry);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(rt.state.transcript_display.task_revealed(&step_key), 100);
+    rt.update(|s, _| {
+        lease = Some(
+            s.transcript_display
+                .children
+                .install("child", child_steps_page(91, false, "ok")),
+        );
+        assert!(crate::chat::events::poll_chat(s, 2));
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.find(&format!("reveal-{step_key}")).is_none(),
+        "91st step must stay within the 130-step window after revealing 60"
+    );
+
+    // Collapse then reopen: anchor clears, reload demand is emitted, and revealed count persists.
+    lease = None;
+    let (tx, ty) = rt.find(&format!("toggle-{task_key}")).expect("task toggle");
+    rt.pointer_down(tx, ty);
+    rt.pointer_up(tx, ty);
+    for _ in 0..4 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.state
+            .transcript_display
+            .task_anchors(&step_key)
+            .is_empty()
+    );
+    rt.state.transcript_display.children.take_started_entries();
+    let (tx, ty) = rt
+        .find(&format!("toggle-{task_key}"))
+        .expect("task toggle reopen");
+    rt.pointer_down(tx, ty);
+    rt.pointer_up(tx, ty);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.state
+            .transcript_display
+            .children
+            .take_started_entries()
+            .contains(&(None, "child".into(), task_key.clone())),
+        "reopening a collapsed task card must emit a fresh child reload demand"
+    );
+    rt.update(|s, _| {
+        lease = Some(
+            s.transcript_display
+                .children
+                .install("child", child_steps_page(91, false, "ok")),
+        );
+        assert!(crate::chat::events::poll_chat(s, 3));
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|_, tx| tx.scroll_to_instant(scroll_key.clone(), 0.0, 0.0));
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let step0_key = super::super::tool_key(&format!("{step_key}-child:child:child_msg"), "step_0");
+    assert!(
+        rt.elements()
+            .into_iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some(step0_key.as_str())),
+        "reopening must keep step_0 mounted within the persisted revealed window"
+    );
+    assert!(
+        rt.find(&format!("reveal-{step_key}")).is_none(),
+        "reopening must keep all 91 steps revealed"
+    );
+
+    // Full anchor eviction while detached (0..91 -> 100..299): stays anchored on index 0 (step_100).
+    assert!(
+        !rt.state
+            .transcript_display
+            .task_anchors(&step_key)
+            .is_empty()
+    );
+    rt.update(|s, _| {
+        lease = Some(
+            s.transcript_display
+                .children
+                .install("child", child_steps_page_from(100, 200, false, "ok")),
+        );
+        assert!(crate::chat::events::poll_chat(s, 4));
+    });
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    let step100_key =
+        super::super::tool_key(&format!("{step_key}-child:child:child_msg"), "step_100");
+    assert!(
+        rt.elements()
+            .into_iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some(step100_key.as_str())),
+        "full anchor eviction while detached must keep oldest retained step (step_100) mounted"
+    );
+    assert!(
+        rt.find(&format!("reveal-{step_key}")).is_none(),
+        "full anchor eviction while detached must pin oldest retained step (index 0)"
+    );
+    let _ = lease;
 }

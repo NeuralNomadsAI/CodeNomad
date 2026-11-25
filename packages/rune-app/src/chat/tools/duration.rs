@@ -108,6 +108,25 @@ impl Clock {
         ActiveClip(self.active_clip.borrow().clone())
     }
 
+    pub(super) fn extend_clip(&self, clip: &Rc<DrawnRect>) -> ActiveClip {
+        ActiveClip(Some(Rc::new(Clip {
+            rect: clip.clone(),
+            parent: self.active_clip.borrow().clone(),
+        })))
+    }
+
+    pub(super) fn with_active_clip<T>(&self, clip: &ActiveClip, render: impl FnOnce() -> T) -> T {
+        struct Restore<'a>(&'a RefCell<Option<Rc<Clip>>>, Option<Rc<Clip>>);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                *self.0.borrow_mut() = self.1.take();
+            }
+        }
+        let prev = std::mem::replace(&mut *self.active_clip.borrow_mut(), clip.0.clone());
+        let _restore = Restore(&self.active_clip, prev);
+        render()
+    }
+
     pub(super) fn rect_in_view(&self, rect: [f32; 4], bounds: [f32; 4], clip: &ActiveClip) -> bool {
         in_bounds(rect, bounds, self.stack_bounds.get(), clip.0.as_deref())
     }
@@ -123,27 +142,13 @@ impl Clock {
         rect
     }
 
+    #[cfg(test)]
     pub(in crate::chat) fn with_clip<T>(
         &self,
         clip: &Rc<DrawnRect>,
         render: impl FnOnce() -> T,
     ) -> T {
-        struct Restore<'a>(&'a RefCell<Option<Rc<Clip>>>, Option<Rc<Clip>>);
-        impl Drop for Restore<'_> {
-            fn drop(&mut self) {
-                *self.0.borrow_mut() = self.1.take();
-            }
-        }
-        let prev = {
-            let mut current = self.active_clip.borrow_mut();
-            let next = Rc::new(Clip {
-                rect: clip.clone(),
-                parent: current.clone(),
-            });
-            current.replace(next)
-        };
-        let _restore = Restore(&self.active_clip, prev);
-        render()
+        self.with_active_clip(&self.extend_clip(clip), render)
     }
 
     pub(crate) fn pause(&mut self) {

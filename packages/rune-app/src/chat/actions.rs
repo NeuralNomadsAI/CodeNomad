@@ -12,7 +12,6 @@ struct TaskStepsState {
     visible: Vec<String>,
     selected: Vec<String>,
     at_bottom: bool,
-    revealed: usize,
 }
 
 impl Default for TaskStepsState {
@@ -21,7 +20,6 @@ impl Default for TaskStepsState {
             visible: Vec::new(),
             selected: Vec::new(),
             at_bottom: true,
-            revealed: 0,
         }
     }
 }
@@ -45,6 +43,7 @@ pub struct Display {
     pub(crate) receipts: super::receipts::Receipts,
     pub(crate) messages: super::message_actions::Actions,
     focused_key: Option<String>,
+    task_focus_pinned: std::cell::Cell<bool>,
     #[cfg(test)]
     pub(crate) task_row_builds: std::cell::Cell<usize>,
 }
@@ -62,6 +61,7 @@ struct SessionDisplay {
     toggled: HashSet<String>,
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
+    task_revealed: HashMap<String, usize>,
     task_anchors: VecDeque<(String, TaskStepsState)>,
     search_revealed: VecDeque<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
@@ -87,6 +87,8 @@ impl Display {
         self.pictures.clear();
         self.receipts.suspend();
         self.active.task_anchors.clear();
+        self.focused_key = None;
+        self.task_focus_pinned.set(false);
     }
     pub(crate) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
@@ -123,6 +125,8 @@ impl Display {
             self.pictures.clear();
             self.receipts.clear();
             self.diffs = Default::default();
+            self.focused_key = None;
+            self.task_focus_pinned.set(false);
         }
     }
 
@@ -225,6 +229,10 @@ impl Display {
         self.focused_key.as_deref()
     }
 
+    pub(super) fn mark_task_focus_pinned(&self) {
+        self.task_focus_pinned.set(true);
+    }
+
     pub(super) fn task_anchors(&self, key: &str) -> &[String] {
         self.active
             .task_anchors
@@ -243,11 +251,7 @@ impl Display {
     }
 
     pub(super) fn task_revealed(&self, key: &str) -> usize {
-        self.active
-            .task_anchors
-            .iter()
-            .find(|(id, _)| id == key)
-            .map_or(0, |(_, state)| state.revealed)
+        self.active.task_revealed.get(key).copied().unwrap_or(0)
     }
 
     pub(super) fn set_task_visible(&mut self, key: &str, visible: Vec<String>) {
@@ -270,8 +274,13 @@ impl Display {
     }
 
     pub(super) fn reveal_task_at_least(s: &mut State, key: &str, count: usize) {
-        let state = s.transcript_display.task_steps_entry(key);
-        state.revealed = state.revealed.max(count);
+        let entry = s
+            .transcript_display
+            .active
+            .task_revealed
+            .entry(key.into())
+            .or_default();
+        *entry = (*entry).max(count);
         s.revision += 1;
     }
 
@@ -303,9 +312,26 @@ impl Display {
 
     pub(super) fn clear_step_anchors(&mut self, prefix: &str) {
         let nested = format!("{prefix}-");
-        self.active
-            .task_anchors
-            .retain(|(key, _)| key != prefix && !key.starts_with(&nested));
+        let pane = format!("{prefix}-task-steps");
+        let pane_nested = format!("{pane}-");
+        for (key, state) in &mut self.active.task_anchors {
+            if key == prefix
+                || key.starts_with(&nested)
+                || key == &pane
+                || key.contains(&pane_nested)
+            {
+                state.visible.clear();
+                state.selected.clear();
+            }
+        }
+        if self
+            .focused_key
+            .as_deref()
+            .is_some_and(|key| key.contains(&pane_nested) || key.ends_with(&pane))
+        {
+            self.focused_key = None;
+            self.task_focus_pinned.set(false);
+        }
     }
 
     pub(super) fn live_ansi(
@@ -338,9 +364,13 @@ impl Display {
 
     pub fn poll(s: &mut State, changed: bool, now: f64, tx: &mut rune::Tx) -> bool {
         let next_focus = tx.focused().map(str::to_owned);
-        let focus_changed = s.transcript_display.focused_key != next_focus;
-        if focus_changed {
+        let mut focus_released = false;
+        if s.transcript_display.focused_key != next_focus {
             s.transcript_display.focused_key = next_focus;
+            if s.transcript_display.task_focus_pinned.replace(false) {
+                s.revision += 1;
+                focus_released = true;
+            }
         }
         let clock = if !s.history_detached
             && matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming)
@@ -354,7 +384,8 @@ impl Display {
         let timeline = crate::timeline::poll(s, tx)
             | crate::timeline::search::poll(s, now, tx)
             | super::tools::children::Children::poll_actions(s, tx)
-            | clock;
+            | clock
+            | focus_released;
         let stream = &mut s.transcript_display.stream;
         if changed {
             stream.pending = s.messages.last().is_some_and(|row| {

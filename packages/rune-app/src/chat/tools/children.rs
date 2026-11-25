@@ -227,6 +227,8 @@ pub(crate) struct Children {
         Receiver<NavOutcome>,
     )>,
     background_pending: Option<(codenomad_client::Sender<()>, Receiver<bool>)>,
+    #[cfg(test)]
+    started_entries: Vec<(Option<String>, String, String)>,
 }
 
 struct Watcher {
@@ -395,9 +397,9 @@ impl Children {
         let prefix = format!("{key}-");
         let children = &mut s.transcript_display.children;
         children.entries.retain(|_, entry| {
-            entry
-                .cards
-                .retain(|card, _| card != key && !card.starts_with(&prefix));
+            entry.cards.retain(|card, lease| {
+                lease.strong_count() > 0 && card != key && !card.starts_with(&prefix)
+            });
             !entry.cards.is_empty()
         });
         children
@@ -1442,6 +1444,10 @@ impl Children {
 
     fn start_entry(s: &mut State, ck: ChildKey, key: &str, lease: &Rc<()>) -> bool {
         let children = &mut s.transcript_display.children;
+        #[cfg(test)]
+        children
+            .started_entries
+            .push((ck.0.clone(), ck.1.clone(), key.to_owned()));
         let Some(backend) = children.backend.clone() else {
             return false;
         };
@@ -2570,5 +2576,9 @@ impl Children {
         self.entries
             .get(&child_key(parent, id))
             .is_some_and(|entry| entry.cards.get(card).is_some_and(|w| w.strong_count() > 0))
+    }
+
+    pub(super) fn take_started_entries(&mut self) -> Vec<(Option<String>, String, String)> {
+        std::mem::take(&mut self.started_entries)
     }
 }
