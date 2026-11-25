@@ -927,9 +927,9 @@ last capability display during same-owner revalidation, so a passive
 refresh preserves an in-flight pointer click; control dispatch rereads capability.
 `MissionActionBar` retains its primary glyph for an unchanged action key, preserving
 the native pointer target while a fresh action object updates its other fields.
-Play and Resume automatically prepare project-only native activation when a ready
-receipt is missing. An already enabled Location receives a zero-target ready proof
-without configuration writes. Run now requires an enabled
+Play and Resume automatically prepare native activation when a ready
+receipt is missing: an enabled Location receives a ready proof, and no configuration
+is written. Run now requires an enabled
 effective native setting, with an explicit disabled explanation and a fresh
 capability check before reservation. Its click preserves settings activation.
 Explicit OFF exposes a scheduling-settings action only for a server-openable configuration
@@ -1581,14 +1581,11 @@ the next native `experimental` object (`opencode/experimental-layers.ts`) belong
 the Global write target and equals its fresh document, since native entries lag
 behind writes and normalize what they load; otherwise the object stays. The snapshot
 flags such an object (`emptyExperimental`) so Inherit can repair it.
-The shared experimental editor
-(`opencode/native-experimental-settings.ts`) materializes inherited
-`schedules:true` when setting a depth would hide that activation, preserves an
-explicit local false and depth zero. Creating a block for scheduling copies every
-effective experimental option from the target's lower-priority whole block;
-existing blocks retain their own options.
-A remaining schedules
-block selects the native depth default unless it also holds a depth. Native
+The depth editor writes only `experimental.subagent_depth`, preserving depth zero
+and the block's other options; `opencode/native-experimental-settings.ts` refuses a
+block whose Missions settings are malformed or duplicated.
+A remaining block
+selects the native depth default unless it also holds a depth. Native
 settings refuse simultaneous JSON/JSONC files in one layer. The schedule
 capability reader independently recognizes the consumed API shapes and reads the
 effective Location flag and its block origin through the acquired connection.

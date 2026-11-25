@@ -35,7 +35,6 @@ import {
   PluginControlDocumentError,
 } from "./plugin-control-document"
 import { createWslPluginControlDocumentFileSystem } from "./plugin-control-document-wsl"
-import { nativeSettingExpectation } from "./native-experimental-settings"
 import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
 import { MISSIONS_PLUGIN_ID } from "../missions/plugin-id"
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
@@ -68,7 +67,6 @@ export interface PluginDocumentsView {
   otherLoader(source: PluginConfiguredSource): boolean
 }
 
-export interface NativeConfigEdit { scope: PluginControlScope; path: string; expectation: string; updated: string }
 export type NativeConfigDocuments = { location: PluginControlLocation; entries: ConfigEntry[];
   documents: Array<{ scope: PluginControlScope; path: string; document: PluginControlDocument }> }
 
@@ -334,61 +332,6 @@ export class PluginControls {
       this.options.workspaceManager.getServiceWslDistro(workspaceId) ?? null, connection,
       document.exists, document.mode, document.byteOrderMark, document.text,
     ])).digest("hex")
-  }
-
-  /** Prepare both owned files before the first rename. Callers persist the intent
-   * in beforeWrite and each receipt in afterWrite; a partial commit never rolls back. */
-  editConfigDocuments(workspaceId: string, location: PluginControlLocation,
-    edit: (view: NativeConfigDocuments) => NativeConfigEdit[],
-    hooks: { beforeWrite(edits: readonly NativeConfigEdit[]): Promise<void>; beforeCommit?(edit: NativeConfigEdit): Promise<void>;
-      afterWrite(edit: NativeConfigEdit): Promise<void> },
-  ): Promise<void> {
-    return this.serializeMutation(`${workspaceId}\nsettings-batch`, async () => {
-      const context = await this.readContext(workspaceId, location, undefined, true)
-      if (!context.fileSystem.prepare) throw new PluginControlsError("Prepared native configuration editing is unavailable", "unavailable")
-      const identity = await this.options.workspaceManager.getWorktreeIdentityForPath(workspaceId, context.location.directory)
-      if (!identity) throw new PluginControlsError("Location is not owned by an active worktree", "forbidden")
-      const release = this.options.worktreeDeletionFence.enter([identity])
-      if (!release) throw new PluginControlsError("Worktree deletion is in progress", "conflict")
-      const prepared: Array<{ edit: NativeConfigEdit; write: PluginControlDocumentPrepared }> = []
-      try {
-        const documents = await Promise.all(context.targets.map(async target => ({ scope: target.scope,
-          path: target.path, document: await readPluginControlDocument(target.ioPath, context.fileSystem) })))
-        assertCurrentConnection(context.connection)
-        const edits = edit({ location: context.location, entries: context.entries, documents })
-        if (edits.length > 2 || new Set(edits.map(item => item.scope)).size !== edits.length)
-          throw new PluginControlsError("Invalid native configuration edit set", "invalid")
-        // Physical ordering is shared by every batch to avoid lock inversion.
-        const ordered = edits.map(item => {
-          const target = documents.find(target => target.scope === item.scope && target.path === item.path)
-          if (!target || nativeSettingExpectation(target.document) !== item.expectation)
-            throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
-          return { edit: item, document: target.document }
-        }).sort((a, b) => a.document.writePath < b.document.writePath ? -1 : 1)
-        for (const item of ordered) {
-          assertCurrentConnection(context.connection)
-          prepared.push({ edit: item.edit, write: await context.fileSystem.prepare(item.document, item.edit.updated,
-            { beforeCommit: () => assertCurrentConnection(context.connection) }) })
-        }
-        for (const item of prepared) await item.write.verify()
-        assertCurrentConnection(context.connection)
-        await hooks.beforeWrite(edits)
-        // Global and project are separate durable effects, in declared order.
-        for (const item of edits) {
-          assertCurrentConnection(context.connection)
-          const write = prepared.find(target => target.edit.scope === item.scope)!.write
-          await hooks.beforeCommit?.(item)
-          assertCurrentConnection(context.connection)
-          await write.commit()
-          assertCurrentConnection(context.connection)
-          await hooks.afterWrite(item)
-        }
-      } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
-      finally {
-        await Promise.allSettled(prepared.map(item => item.write.dispose()))
-        release()
-      }
-    })
   }
 
   mutate(workspaceId: string, request: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {

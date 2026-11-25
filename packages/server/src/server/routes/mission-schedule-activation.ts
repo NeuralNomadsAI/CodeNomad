@@ -46,8 +46,7 @@ export function registerMissionScheduleActivation(app: FastifyInstance, deps: De
           const previous = before.scheduleActivation
           const same = previous?.requestID === input.data.requestID && previous.expectedRevision === input.data.expectedDocumentRevision
           if (!(previous?.state === "ready" && (same || before.revision === input.data.expectedDocumentRevision)) && !same
-            && (before.revision !== input.data.expectedDocumentRevision
-              || previous && (previous.state !== "failed" || previous.targets.some(target => target.attempted))))
+            && (before.revision !== input.data.expectedDocumentRevision || previous?.state === "prepared"))
             return reply.code(409).send({ error: "Original Mission activation remains unresolved", code: "schedule-activation-conflict" })
           return { document: await prepareMissionScheduleSettings({ adapter, activation: deps.scheduleSettingsActivation,
             workspaceID: selected.data.id, location: options.location, requestID: input.data.requestID,

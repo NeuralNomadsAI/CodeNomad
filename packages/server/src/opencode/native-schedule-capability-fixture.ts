@@ -4,7 +4,7 @@ export function nativeScheduleContractFixture() {
   const struct = (properties: any, required: string[] = []) => ({ type: "object", properties, required })
   const action = () => ({ anyOf: [struct({ type: { type: "string", enum: ["code"] }, code: string }, ["type", "code"])] })
   const schemas = {
-    "Config.InfoEncoded": struct({ experimental: struct({ automations: { type: "boolean" } }) }),
+    "Config.InfoEncoded": struct({ automations: { type: "boolean" } }),
     "Automation.Info": struct({ id: string, name: string, projectID: string, directory: string, sessionID: string,
       trigger: ref("Automation.Trigger"), tz: string, action: action(),
       status: { type: "string", enum: ["active", "paused", "done"] }, runCount: { type: "integer", minimum: 0 },

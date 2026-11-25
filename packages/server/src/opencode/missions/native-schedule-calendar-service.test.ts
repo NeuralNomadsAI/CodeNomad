@@ -64,8 +64,8 @@ async function facade(t: test.TestContext, options: { model?: { providerID: stri
     Effect.provideService(Context.Service<never, unknown>("@opencode/Automation"), schedules),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Location"), location),
     Effect.provideService(Context.Service<never, unknown>("@opencode/LocationLifecycle"), { isClosed: () => state.closed }),
-    Effect.provideService(Context.Service<never, unknown>("@opencode/Config"), { entries: () => Effect.succeed([{ type: "document", info: { experimental: { schedules: state.enabled } } }]) }),
-    Effect.provideService(Context.Service<never, unknown>("@opencode/Flag"), { resolve: () => ({ automations: { enabled: state.enabled, source: "config" } }) }),
+    Effect.provideService(Context.Service<never, unknown>("@opencode/Config"), { entries: () => Effect.succeed([{ type: "document", info: { automations: state.enabled } }]) }),
+    Effect.provideService(Context.Service<never, unknown>("@opencode/Flag"), { resolve: () => ({ part_rows: { enabled: true, source: "default" } }) }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Session"), { remove: () => Effect.void, active: Effect.succeed(new Set()) }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/storage/Database"), { db: { $client: { unsafe: () => ({
       withoutTransform: Effect.succeed([]),

@@ -166,8 +166,7 @@ export class NativeMissionDocumentStore {
       if (doc.revision !== expectedRevision || !doc.deletion || doc.state !== "stopped"
          || doc.pending || doc.synchronization || doc.calendars.length || doc.coordinatorReleases.length || doc.blocked === "unknown" || doc.preparation?.pending || doc.calendarOwner?.operation.textEdit
         || doc.dormantJournal && !doc.dormantJournal.deleted
-        || doc.oneTime?.firstPlay && doc.oneTime.firstPlay.admittedAt === null
-        || doc.scheduleActivation?.targets.some(target => target.attempted && !target.acknowledged)) throw new Error("Mission deletion reconciliation pending")
+        || doc.oneTime?.firstPlay && doc.oneTime.firstPlay.admittedAt === null) throw new Error("Mission deletion reconciliation pending")
       const reservation = await this.reserveDeletionSlot(doc, current)
       const tombstone = missionTombstoneSchema.parse({ version: 1, id, projectID: this.projectID, projectCanonical: this.projectCanonical,
         revision: expectedRevision + 1, requestID: doc.deletion.requestID, expectedRevision: doc.deletion.expectedRevision,

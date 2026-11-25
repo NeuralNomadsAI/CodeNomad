@@ -21,13 +21,13 @@ never upgrade or restart a user's service.
   its own route presence. Never probe support with a write.
 
 Scheduled Missions additionally require the consumed Automation contract and an enabled
-effective native `experimental.automations` flag in the acquired Location. Play/Resume
-prepare project-only activation automatically, preserving every discovered explicit
-OFF and native environment OFF. An already enabled Location receives a ready proof
-without configuration writes. Native flag resolution, targeted activation and exact
-read-back are described in [Missions](MISSIONS.md) and
+effective native `automations` setting in the acquired Location. Play/Resume
+prepare activation automatically, refusing on every discovered explicit
+OFF and native environment OFF. An enabled Location receives a ready proof;
+no configuration is written. The setting read and the activation check
+are described in [Missions](MISSIONS.md) and
 [native contracts](MISSIONS_NATIVE_CONTRACTS.md).
-Missing APIs, explicit OFF, a masking block, failed activation or missing exact
+Missing APIs, explicit OFF, failed activation or missing exact
 calendar registration keep the schedule paused or in an explained error state.
 Play of a Mission without launch criteria follows its own admission path.
 

@@ -78,7 +78,7 @@ async function journey(kind) {
     { WorkspaceManager }, { EventBus }, { rememberRuntime }, { DesktopPluginLifecycle }, { resolveDesktopPluginPaths },
     { createAutomationBridgeRegistration, publishAutomationBridge }, { registerAutomationPluginRoute }, { registerMissionRoutes },
     { WorktreeDeletionFence }, { PluginControls }, { NativeScheduleSettingsActivation }, { missionDocumentPassage },
-    { NativeScheduleTransportRpc, nativeScheduleWakeKey }, { readNativeScheduleIncarnation }, { nativeScheduleCarrierLookupKey }, experimentalEditor] = await Promise.all([
+    { NativeScheduleTransportRpc, nativeScheduleWakeKey }, { readNativeScheduleIncarnation }, { nativeScheduleCarrierLookupKey }, { editNativeSetting }, { readNativeScheduleFlag }] = await Promise.all([
     import("fastify"), import("pino"), import("@opencode/client"), import("@opencode/client/service"),
     import("../packages/server/src/workspaces/manager.ts"), import("../packages/server/src/events/bus.ts"),
     import("../packages/server/src/opencode/compatibility/runtime.ts"), import("../packages/server/src/opencode/desktop-plugin-lifecycle.ts"),
@@ -88,7 +88,7 @@ async function journey(kind) {
     import("../packages/server/src/opencode/native-schedule-settings-activation.ts"), import("../packages/server/src/missions/mission-document-passage-storage.ts"),
     import("../packages/server/src/opencode/missions/native-schedule-transport-contract.ts"), import("../packages/server/src/opencode/missions/native-schedule-transport-identity.ts"),
     import("../packages/server/src/opencode/missions/native-schedule-carrier-binding.ts"),
-    import("../packages/server/src/opencode/native-experimental-settings.ts"),
+    import("../packages/server/src/opencode/native-setting-document.ts"), import("../packages/server/src/opencode/native-schedule-flag.ts"),
   ])
   const bundled = new URL("../packages/server/dist/plugins/missions/plugin.mjs", import.meta.url)
   const result = { kind, root, status: "running", armOnly: !!values["arm-only"], firstAdmissionRaceMode: !!values["first-admission-race"], crashPendingMode: !!values["crash-pending"], productBundleSHA256: hash(await readFile(bundled)), serviceStarts: [], http: [] }
@@ -443,13 +443,11 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     app.post("/fixture/native-schedules", async (request, reply) => {
       if (!auth.getSessionFromRequest(request) || typeof request.body?.enabled !== "boolean") return reply.code(403).send({ code: "fixture-config-refused" })
       try {
-        await controls.editConfigDocuments(workspace.id, { directory: project }, view => {
-          const target = view.documents.find(item => item.scope === "global"), relative = target && path.relative(root, target.document.writePath)
-          assert(target && relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-          return [{ scope: "global", path: target.path, expectation: experimentalEditor.nativeSettingExpectation(target.document),
-            updated: experimentalEditor.editMissionExperimental(target.document, "automations", request.body.enabled,
-              experimentalEditor.inheritedMissionExperimental(view.entries, target.path, view.location.directory), "global") }]
-        }, { beforeWrite: async () => {}, afterWrite: async () => {} })
+        await controls.editConfigDocument(workspace.id, { directory: project }, "global", document => {
+          const relative = path.relative(root, document.writePath)
+          assert(relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+          return editNativeSetting(document, ["automations"], request.body.enabled)
+        })
         return { enabled: request.body.enabled }
       } catch { return reply.code(503).send({ code: "fixture-config-unconfirmed" }) }
     })
@@ -484,7 +482,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
         nativeFlag: async enabled => {
           const response = await fetch(`${baseURL}/fixture/native-schedules`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ enabled }), signal: AbortSignal.timeout(15000) })
           assert.equal(response.status, 200, "Owned fixture config API failed")
-          await until(async () => experimentalEditor.effectiveMissionExperimental(await client.config.get({ location: { directory: project } })).automations === enabled)
+          await until(async () => (await readNativeScheduleFlag(connection, { directory: project })).enabled === enabled)
         } })
       result.calls = calls; result.status = values["diagnose-stop"] || controlTrace ? "diagnostic-only" : "passed"; result.stage = "completed"; return result
     }
