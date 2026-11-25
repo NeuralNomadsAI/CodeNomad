@@ -107,6 +107,11 @@ impl State {
         let _ = self.closed.1.recv().await;
     }
 
+    #[cfg(test)]
+    pub(crate) fn close_stream(&self) {
+        self.closed.0.close();
+    }
+
     async fn notify_preferences(
         &self,
         owner: crate::settings::Owner,

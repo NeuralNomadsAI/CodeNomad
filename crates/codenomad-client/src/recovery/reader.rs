@@ -416,6 +416,9 @@ impl Reader {
                 Ok(_) => {
                     self.quiet = Instant::now() + Duration::from_millis(200);
                 }
+                Err(PageFailure::StreamClosed) => {
+                    return Ok(Turn::Next);
+                }
                 Err(PageFailure::AuthenticationExpired) => {
                     expire_reading(backend, reading, wire, out, wake).await;
                     return Ok(Turn::Stop);
@@ -498,6 +501,7 @@ impl ReadingLane {
 
 enum PageFailure {
     AuthenticationExpired,
+    StreamClosed,
     Read(history::Error),
 }
 
@@ -543,7 +547,7 @@ async fn read_page(
             },
             async {
                 wire.stream_closed().await;
-                None
+                Some(Err(PageFailure::StreamClosed))
             },
         ),
     )
@@ -677,6 +681,28 @@ mod diagnostic_tests {
         assert_eq!(super::read_diagnostic(&unknown), "contract validation");
         let anchor: crate::history::Error = "resident anchor missing".into();
         assert_eq!(super::read_diagnostic(&anchor), "resident anchor missing");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn stream_close_aborts_in_flight_page_with_stream_closed_failure() {
+        use super::{PageFailure, read_page};
+        use crate::{backend::Backend, stream};
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            let wire = std::sync::Arc::new(stream::State::default());
+            let closer = wire.clone();
+            tokio::spawn(async move {
+                tokio::task::yield_now().await;
+                closer.close_stream();
+            });
+            let result = read_page(&backend, None, 0, &wire, std::future::pending()).await;
+            assert!(matches!(result, Some(Err(PageFailure::StreamClosed))));
+        });
     }
 }
 
