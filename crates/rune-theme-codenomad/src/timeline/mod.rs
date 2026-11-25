@@ -36,11 +36,7 @@ pub fn navigation_status(label: &'static str) -> El {
 
 pub fn user_scrolled(at: ScrollPosition) -> bool {
     let (hand, instant, _) = rune::scroll_watch_state();
-    hand && !instant
-        && matches!(
-            at.source,
-            rune::ScrollSource::Direct | rune::ScrollSource::Momentum
-        )
+    hand && !instant && at.source != rune::ScrollSource::EdgeReturn
 }
 
 pub fn rail_scrolled(at: ScrollPosition) -> bool {
@@ -474,8 +470,10 @@ mod tests {
             .find(|n| n.key.as_deref() == Some("m-511"))
             .expect("last marker must mount after growing past a previously measured short band");
         assert!(
-            m511.rect[1] >= 0.0 && m511.rect[1] + m511.rect[3] <= 321.0 && m511.visible[3] > 0.0,
-            "m-511 must be visible inside the rail viewport: rect={:?}, visible={:?}",
+            m511.rect[1] >= 0.0
+                && (m511.rect[1] + m511.rect[3] - 320.0).abs() <= 2.0
+                && m511.visible[3] > 0.0,
+            "m-511 must sit flush with the bottom of the 320px rail viewport: rect={:?}, visible={:?}",
             m511.rect,
             m511.visible
         );
@@ -500,8 +498,10 @@ mod tests {
             .find(|n| n.key.as_deref() == Some("m-64"))
             .expect("m-64 must mount after shrinking back to 65");
         assert!(
-            m64.rect[1] >= 0.0 && m64.rect[1] + m64.rect[3] <= 321.0 && m64.visible[3] > 0.0,
-            "m-64 must be visible inside the rail viewport after shrink: rect={:?}, visible={:?}",
+            m64.rect[1] >= 0.0
+                && (m64.rect[1] + m64.rect[3] - 320.0).abs() <= 2.0
+                && m64.visible[3] > 0.0,
+            "m-64 must sit flush with the bottom of the 320px rail viewport after shrink: rect={:?}, visible={:?}",
             m64.rect,
             m64.visible
         );
