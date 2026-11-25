@@ -271,12 +271,14 @@ fn settings_failed_prompt_keeps_one_sse_subscription_and_one_config_read() {
             }))
             .await
             .unwrap();
-        let prompt = request(&listener).await;
+        let mut prompt = request(&listener).await;
         assert_eq!(
             prompt.first,
             "POST /workspaces/project/instance/api/session/session/prompt HTTP/1.1"
         );
-        prompt.reply(400, json!({})).await;
+        prompt
+            .reply_with_headers(400, json!({}), "x-codenomad-before-dispatch: 1\r\n")
+            .await;
         until(&events, |event| {
             matches!(
                 event,
@@ -583,13 +585,20 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
             status.reply(200, json!({"authenticated":false})).await;
             reconnect.reply(401, json!({})).await;
         } else {
-            let prompt = request(&listener).await;
+            let mut prompt = request(&listener).await;
             assert_eq!(
                 prompt.first,
                 "POST /workspaces/project/instance/api/session/session/prompt HTTP/1.1"
             );
             assert_eq!(prompt.body["text"], "refused prompt");
-            prompt.reply(prompt_reply.unwrap(), json!({})).await;
+            let status = prompt_reply.unwrap();
+            if status == 409 {
+                prompt
+                    .reply_with_headers(status, json!({}), "x-codenomad-before-dispatch: 1\r\n")
+                    .await;
+            } else {
+                prompt.reply(status, json!({})).await;
+            }
             if prompt_reply == Some(401) {
                 let status = request(&listener).await;
                 assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");

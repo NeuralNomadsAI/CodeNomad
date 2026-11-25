@@ -7,6 +7,9 @@ import { MISSION_SCHEDULE_CARRIER_SESSION_PREFIX } from "../../missions/mission-
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { NATIVE_SCHEDULE_CARRIER_MODEL, NATIVE_SCHEDULE_CARRIER_TITLE } from "../../opencode/missions/native-schedule-carrier"
 import { markDispatchHookAwareFetch } from "../../opencode/compatibility/transport"
+import { rememberRuntime } from "../../opencode/compatibility/runtime"
+import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
+import { OpenCodeSharedService } from "../../workspaces/opencode-service"
 import { registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
 
 const apps: FastifyInstance[] = []
@@ -20,6 +23,7 @@ function fixture() {
     owned: false, metadata: undefined as Record<string, unknown> | undefined, directory: "/repo/worktree",
     projectID: "project-a",
     createdAt: 1,
+    fork: undefined as Record<string, unknown> | undefined,
     result: undefined as unknown, failure: undefined as unknown, current: true,
     connectionError: undefined as unknown,
     profileError: undefined as unknown,
@@ -27,12 +31,13 @@ function fixture() {
     afterRead: async () => {},
     beforeFetchCheck: async () => {},
   }
-  const sessions = new Map<string, { id: string; location: { directory: string }; projectID?: string; time?: { created: number }; metadata?: Record<string, unknown>;
+  const sessions = new Map<string, { id: string; location: { directory: string }; projectID?: string; fork?: Record<string, unknown>; time?: { created: number }; metadata?: Record<string, unknown>;
     model?: { providerID: string; id: string }; title?: string }>()
   const missing = new Set<string>()
   const session = (id: string) => sessions.get(id) ?? {
     id,
     projectID: state.projectID,
+    fork: state.fork,
     time: { created: state.createdAt },
     location: { directory: state.directory },
     metadata: state.metadata,
@@ -389,12 +394,25 @@ test("a plain fetch without dispatch-hook support is rejected with marked 502 be
   assert.equal(response.statusCode, 502, response.body)
   assert.equal(response.headers["x-codenomad-before-dispatch"], "1")
   assert.deepEqual(response.json(), { error: "opencode_unavailable_before_send" })
-  assert.deepEqual(f.events, ["environment"], "plain fetch must never be invoked")
+  assert.deepEqual(f.events, [], "plain fetch must be rejected before environment or upstream dispatch")
   assert.deepEqual(f.uncertainSessions, [])
 })
 
-test("a session replaced under the same ID and location before dispatch is rejected with marked 403", async () => {
+test("a session replaced under the same ID and location before dispatch is rejected with marked 403 while reordered fork keys stay allowed", async () => {
   const f = fixture()
+  f.state.fork = { sessionID: "ses_parent", messageID: "msg_1" }
+  f.state.beforeFetchCheck = async () => {
+    f.state.fork = { messageID: "msg_1", sessionID: "ses_parent" }
+  }
+  const reordered = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_reordered_fork/prompt`,
+    payload: { text: "reordered fork keys must stay allowed" },
+  })
+  assert.equal(reordered.statusCode, 200, reordered.body)
+  assert.deepEqual(f.events, ["environment", "forward"])
+
+  f.events.length = 0
   f.state.beforeFetchCheck = async () => {
     f.state.projectID = "project-replaced"
     f.state.createdAt = 999
@@ -408,6 +426,103 @@ test("a session replaced under the same ID and location before dispatch is rejec
   assert.equal(response.headers["x-codenomad-before-dispatch"], "1")
   assert.deepEqual(f.events, ["environment"])
   assert.deepEqual(f.uncertainSessions, [])
+})
+
+test("pre-handler invalid JSON 400 and 426 unsupported runtime carry x-codenomad-before-dispatch", async () => {
+  const f = fixture()
+  const badJson = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_bad_json/prompt`,
+    headers: { "content-type": "application/json" },
+    payload: "{invalid",
+  })
+  assert.equal(badJson.statusCode, 400, badJson.body)
+  assert.equal(badJson.headers["x-codenomad-before-dispatch"], "1")
+
+  f.state.profileError = new UnsupportedOpenCodeError("2.0.0")
+  const upgrade = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_old_runtime/command//`,
+    payload: { name: "build", text: "blocked on 426" },
+  })
+  assert.equal(upgrade.statusCode, 426, upgrade.body)
+  assert.equal(upgrade.headers["x-codenomad-before-dispatch"], "1")
+  assert.equal(upgrade.json().error, "opencode_update_required")
+  assert.deepEqual(f.events, [])
+})
+
+test("a real OpenCodeSharedService connection passes dispatch-hook validation for POST prompt", async () => {
+  const upstream = Fastify()
+  apps.push(upstream)
+  const upstreamCalls: string[] = []
+  upstream.get("/api/doc", async () => ({
+    paths: {
+      "/api/session/{sessionID}": {},
+      "/api/session/{sessionID}/prompt": {},
+      "/api/session/{sessionID}/environment": {},
+      "/api/permission/request": {},
+      "/api/form": {},
+    },
+  }))
+  upstream.post("/api/rpc/codenomad.missions/scheduleCarrierRead", async () => ({ output: { owned: false } }))
+  upstream.get("/api/session/:id", async (request) => ({
+    data: {
+      id: (request.params as { id: string }).id,
+      projectID: "project-live",
+      location: { directory: "/repo" },
+      time: { created: 1, updated: 1 },
+    },
+  }))
+  upstream.put("/api/session/:id/environment", async (_request, reply) => {
+    upstreamCalls.push("environment")
+    return reply.code(204).send()
+  })
+  upstream.post("/api/session/:id/prompt", async () => {
+    upstreamCalls.push("prompt")
+    return { data: { id: "msg_live_ok" } }
+  })
+  await upstream.listen({ host: "127.0.0.1", port: 0 })
+  const port = (upstream.server.address() as { port: number }).port
+  const liveEndpoint = { url: `http://127.0.0.1:${port}` }
+  rememberRuntime(liveEndpoint, { version: "2.3.2" })
+  const shared = new OpenCodeSharedService()
+  await shared.endpoint({
+    kind: "lifecycle",
+    identity: "live-proxy-test",
+    lifecycle: {
+      discover: async () => liveEndpoint,
+      ensure: async () => liveEndpoint,
+    },
+  })
+  const connection = await shared.acquire()
+  const manager: InstanceProxyWorkspaceManager = {
+    get: () => ({ id: "w", path: "/repo" } as never),
+    getSharedServiceConnection: async () => connection,
+    getSharedServiceEndpoint: async () => connection.endpoint,
+    getSharedServiceClient: async () => connection.client,
+    getInstanceAuthorizationHeader: () => undefined,
+    getServiceDirectory: () => "/repo",
+    getServiceDirectoryForPath: async (_id, directory) => directory,
+    getWorktreeIdentityForPath: async () => "/repo",
+    getSessionEnvironment: async () => ({}),
+    ownsLocation: async (_id, location) => location.directory === "/repo",
+    ownsDirectory: async (_id, directory) => directory === "/repo",
+    ownsPath: async () => true,
+  }
+  const app = Fastify()
+  apps.push(app)
+  registerInstanceProxyRoutes(app, {
+    workspaceManager: manager,
+    worktreeDeletionFence: new WorktreeDeletionFence(),
+    logger: { debug() {}, error() {}, isLevelEnabled: () => false } as never,
+  })
+  const response = await app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_real_service/prompt`,
+    payload: { id: "msg_live_ok", text: "real service connection" },
+  })
+  assert.equal(response.statusCode, 200, response.body)
+  assert.deepEqual(upstreamCalls, ["environment", "prompt"])
 })
 
 test("session move fence blocks concurrent prompt posts with 409 before dispatch", async () => {

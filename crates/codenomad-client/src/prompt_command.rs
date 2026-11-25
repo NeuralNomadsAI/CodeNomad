@@ -3,7 +3,8 @@ use serde_json::json;
 
 impl Backend {
     pub async fn prompt_command(&self, name: &str, text: &str) -> Result<(), PromptError> {
-        if !crate::history::valid_id(&self.workspace)
+        if self.client.server_identity_mismatch()
+            || !crate::history::valid_id(&self.workspace)
             || !crate::history::valid_id(&self.session)
             || name.is_empty()
             || name.len() > 1024

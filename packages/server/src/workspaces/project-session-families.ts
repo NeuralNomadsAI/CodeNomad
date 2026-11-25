@@ -139,6 +139,7 @@ export async function moveProjectSessionFamily(params: {
       const sessionIds = family[1].map(({ id }) => id)
       const expectedSignature = familySignature(family[1])
       const move = async (): Promise<{ retry: true } | SessionFamilyMoveResult> => {
+        await assertInactive(context.client, family[1])
         const freshInventory = await listCompleteProjectSessions(context.client, context.project.id)
         const freshFamilies = resolveSessionFamilies(freshInventory)
         const freshFamily = Array.from(freshFamilies.entries()).find(([, members]) => members.some(({ id }) => id === params.sessionId))
@@ -147,11 +148,11 @@ export async function moveProjectSessionFamily(params: {
           return { retry: true }
         }
         assertWorkspaceFamily(freshFamily[1], context.workspaceID)
-        await assertInactive(context.client, freshFamily[1])
         for (const session of freshFamily[1]) await assertOrdinaryMissionScheduleSession(context.client, session)
         if (params.validateTarget && !await params.validateTarget()) {
           throw new ProjectSessionError("Worktree changed before the session move", 409)
         }
+        await assertInactive(context.client, freshFamily[1])
         await moveWithRollback(context, freshFamily[1], target)
         return { rootSessionId: freshFamily[0], sessionIds }
       }

@@ -2061,6 +2061,7 @@ fn unmarked_native_4xx_501_503_are_unconfirmed_while_marked_pre_dispatch_are_rej
 
 #[test]
 fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
+    use crate::prompt::PromptError;
     use crate::transport::{Command, Event, PromptOutcome};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -2077,55 +2078,80 @@ fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
             assert!(backend.client.attest("server-original", Vec::new()));
             let posts = Arc::new(AtomicUsize::new(0));
             let server_posts = posts.clone();
-            let (sse_open_tx, sse_open_rx) = bounded(1);
+            let (stop_tx, stop_rx) = bounded::<()>(1);
             let server = tokio::spawn(async move {
-                let (socket, _) = listener.accept().await.unwrap();
-                let mut req = BufReader::new(socket);
-                let mut head = String::new();
-                assert!(req.read_line(&mut head).await.unwrap() > 0);
-                if head.starts_with("POST ") {
-                    server_posts.fetch_add(1, Ordering::SeqCst);
-                }
+                let mut streams = Vec::new();
                 loop {
-                    let mut line = String::new();
-                    assert!(req.read_line(&mut line).await.unwrap() > 0);
-                    if line == "\r\n" {
-                        break;
-                    }
-                }
-                // Respond to GET /api/meta on initial stream attestation, then open SSE.
-                if head.contains("/api/meta") {
-                    let meta = r#"{"serverId":"server-original","capabilities":[]}"#;
-                    req.get_mut()
-                        .write_all(
-                            format!(
-                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{meta}",
-                                meta.len()
-                            )
-                            .as_bytes(),
-                        )
-                        .await
-                        .unwrap();
-                    let (socket, _) = listener.accept().await.unwrap();
+                    let accept = futures_lite::future::race(
+                        async {
+                            let _ = stop_rx.recv().await;
+                            None
+                        },
+                        async { listener.accept().await.ok() },
+                    )
+                    .await;
+                    let Some((socket, _)) = accept else { break };
                     let mut req = BufReader::new(socket);
-                    let mut sse_head = String::new();
-                    assert!(req.read_line(&mut sse_head).await.unwrap() > 0);
-                    if sse_head.starts_with("POST ") {
+                    let mut head = String::new();
+                    if req.read_line(&mut head).await.unwrap_or(0) == 0 {
+                        continue;
+                    }
+                    if head.starts_with("POST ") {
                         server_posts.fetch_add(1, Ordering::SeqCst);
                     }
                     loop {
                         let mut line = String::new();
-                        assert!(req.read_line(&mut line).await.unwrap() > 0);
-                        if line == "\r\n" {
+                        if req.read_line(&mut line).await.unwrap_or(0) == 0 || line == "\r\n" {
                             break;
                         }
                     }
-                    req.get_mut()
-                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n: ok\n\n")
-                        .await
-                        .unwrap();
-                    let _ = sse_open_tx.try_send(());
-                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    if head.contains("/api/meta") {
+                        let meta =
+                            r#"{"apiContract":1,"serverId":"server-original","capabilities":[]}"#;
+                        let _ = req
+                            .get_mut()
+                            .write_all(
+                                format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{meta}",
+                                    meta.len()
+                                )
+                                .as_bytes(),
+                            )
+                            .await;
+                    } else if head.contains("/api/events") {
+                        let _ = req
+                            .get_mut()
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n: ok\n\n",
+                            )
+                            .await;
+                        // Keep the SSE socket open until the test completes.
+                        streams.push(req);
+                    } else if head.contains("/api/history/window") {
+                        let body = r#"{"status":"window","messages":[],"older":null,"newer":null,"latest":true}"#;
+                        let _ = req
+                            .get_mut()
+                            .write_all(
+                                format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                    body.len()
+                                )
+                                .as_bytes(),
+                            )
+                            .await;
+                    } else {
+                        let body = r#"{"data":{}}"#;
+                        let _ = req
+                            .get_mut()
+                            .write_all(
+                                format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                    body.len()
+                                )
+                                .as_bytes(),
+                            )
+                            .await;
+                    }
                 }
             });
             let (out, events) = bounded(16);
@@ -2136,17 +2162,18 @@ fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
                 let _ = crate::recovery::run_with_reading(run_backend, out, cmd_rx, wake, None)
                     .await;
             });
-            let _ = sse_open_rx.recv().await;
-            // Wait until the stream is established so direct send authority would normally be active.
-            while let Ok(event) = events.recv().await {
-                if matches!(event, Event::Reconnecting) {
-                    continue;
+            // Wait explicitly for AgentHint(true) proving the SSE stream is established.
+            loop {
+                match events.recv().await.unwrap() {
+                    Event::AgentHint(true) => break,
+                    _ => continue,
                 }
-                break;
             }
-            // Simulate a detected replacement server revoking server attestation.
+            // Dropping a stream without an identity mismatch must NOT set server_identity_mismatch.
+            assert!(!backend.client.server_identity_mismatch());
+            // Now simulate a detected replacement server identity mismatch.
             assert!(!backend.client.attest("server-replacement", Vec::new()));
-            assert!(backend.client.attestation_revoked());
+            assert!(backend.client.server_identity_mismatch());
             let attempt = "msg_00000000000000000000000000000099".to_owned();
             cmd_tx
                 .send(Command::Prompt(crate::prompt::Prompt {
@@ -2169,7 +2196,27 @@ fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
                 }
             }
             assert!(saw_rejected);
-            assert_eq!(posts.load(Ordering::SeqCst), 0);
+            // Direct Backend::prompt and Backend::prompt_command calls must also fail closed without HTTP POST.
+            let direct_prompt = backend
+                .prompt(&crate::prompt::Prompt {
+                    id: Some("msg_00000000000000000000000000000098".into()),
+                    text: "direct prompt must fail closed".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(
+                direct_prompt.downcast_ref::<PromptError>(),
+                Some(&PromptError::Rejected)
+            );
+            let direct_cmd = backend.prompt_command("compact", "now").await.unwrap_err();
+            assert_eq!(direct_cmd, PromptError::Rejected);
+            assert_eq!(
+                posts.load(Ordering::SeqCst),
+                0,
+                "active listener must observe zero POSTs after identity mismatch"
+            );
+            let _ = stop_tx.try_send(());
             drop(cmd_tx);
             let _ = transport.await;
             let _ = server.await;

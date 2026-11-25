@@ -17,6 +17,7 @@ struct CapabilityState {
     drop_generation: Arc<AtomicU64>,
     observed: Mutex<(u64, u64, bool, bool)>,
     required: AtomicBool,
+    identity_mismatch: AtomicBool,
     open_streams: Arc<AtomicUsize>,
     probe_seq: AtomicU64,
     stream_drop_epoch: AtomicU64,
@@ -145,6 +146,7 @@ impl Http {
                 drop_generation: Arc::new(AtomicU64::new(0)),
                 observed: Mutex::new((0, 0, false, false)),
                 required: AtomicBool::new(false),
+                identity_mismatch: AtomicBool::new(false),
                 open_streams: Arc::new(AtomicUsize::new(0)),
                 probe_seq: AtomicU64::new(0),
                 stream_drop_epoch: AtomicU64::new(0),
@@ -374,6 +376,7 @@ impl Http {
             .server
             == id;
         if !matched {
+            self.6.identity_mismatch.store(true, Ordering::SeqCst);
             self.6.drop_generation.fetch_add(1, Ordering::SeqCst);
         }
         matched
@@ -394,9 +397,13 @@ impl Http {
             .server
             == id;
         if !matched {
+            self.6.identity_mismatch.store(true, Ordering::SeqCst);
             self.revoke_server_attestation_at(generation, seq);
         }
         matched
+    }
+    pub fn server_identity_mismatch(&self) -> bool {
+        self.6.identity_mismatch.load(Ordering::SeqCst)
     }
     pub fn supports_service_usage(&self) -> bool {
         self.3.load(Ordering::Relaxed)

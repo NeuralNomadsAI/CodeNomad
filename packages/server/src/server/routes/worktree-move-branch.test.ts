@@ -51,6 +51,7 @@ test("a worktree family move blocks concurrent prompts targeting a sibling child
   const childSession = { id: "ses_child", parentID: "ses_root", projectID: "project", location: { directory: repo }, time: { created: 2, updated: 2 } }
   const sessions = new Map([["ses_root", rootSession], ["ses_child", childSession]])
   let releaseMove!: () => void
+  const moveGate = new Promise<void>(resolve => { releaseMove = resolve })
   let moveEntered!: () => void
   const inMove = new Promise<void>(resolve => { moveEntered = resolve })
   const forwarded: string[] = []
@@ -65,7 +66,7 @@ test("a worktree family move blocks concurrent prompts targeting a sibling child
       move: async ({ sessionID, directory }: any) => {
         if (sessionID === "ses_root") {
           moveEntered()
-          await new Promise<void>(resolve => { releaseMove = resolve })
+          await moveGate
         }
         sessions.get(sessionID)!.location = { directory }
       },
@@ -159,6 +160,7 @@ test("a child session created while draining the parent is locked before moving 
   const lateChild = { id: "ses_child_late", parentID: "ses_root", projectID: "project", location: { directory: repo }, time: { created: 2, updated: 2 } }
   const sessions = new Map<string, any>([["ses_root", rootSession]])
   let releaseMove!: () => void
+  const moveGate = new Promise<void>(resolve => { releaseMove = resolve })
   let moveEntered!: () => void
   const inMove = new Promise<void>(resolve => { moveEntered = resolve })
   const forwarded: string[] = []
@@ -166,29 +168,29 @@ test("a child session created while draining the parent is locked before moving 
   // Hold an active in-flight prompt on ses_root while the family move starts draining it.
   const releaseParentPrompt = fence.enterSession("ses_root")!
   assert.ok(releaseParentPrompt)
-  let listCalls = 0
+  let drainStarted!: () => void
+  const draining = new Promise<void>(resolve => { drainStarted = resolve })
+  const origRunSessions = fence.runSessions.bind(fence)
+  let runSessionsCalls = 0
+  fence.runSessions = ((ids, op) => {
+    runSessionsCalls += 1
+    if (runSessionsCalls === 1) {
+      drainStarted()
+    }
+    return origRunSessions(ids, op)
+  }) as typeof fence.runSessions
   const client = {
     rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
     location: { get: async ({ location }: any) => ({ directory: location.directory, project: { id: "project", canonical: repo, directory: repo } }) },
     session: {
       get: async ({ sessionID }: any) => structuredClone(sessions.get(sessionID)),
-      list: async () => {
-        listCalls += 1
-        if (listCalls === 1) {
-          // Spawn the child while the parent prompt is still draining, then let the parent finish.
-          setTimeout(() => {
-            sessions.set("ses_child_late", lateChild)
-            releaseParentPrompt()
-          }, 15)
-        }
-        return { data: Array.from(sessions.values(), s => structuredClone(s)), cursor: {} }
-      },
+      list: async () => ({ data: Array.from(sessions.values(), s => structuredClone(s)), cursor: {} }),
       active: async () => ({}),
       environment: async () => { forwarded.push("env") },
       move: async ({ sessionID, directory }: any) => {
         if (sessionID === "ses_root") {
           moveEntered()
-          await new Promise<void>(resolve => { releaseMove = resolve })
+          await moveGate
         }
         sessions.get(sessionID)!.location = { directory }
       },
@@ -243,6 +245,19 @@ test("a child session created while draining the parent is locked before moving 
       releaseMove?.()
     }
     try {
+      await Promise.race([
+        draining,
+        movePromise.then((res) => {
+          throw new Error(`move completed before entering drainage (${res.statusCode}): ${res.body}`)
+        }),
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(() => reject(new Error("timed out waiting for drainage start")), 25000)
+          timer.unref?.()
+        }),
+      ])
+      // Spawn the child while runSessions is actively draining ses_root, then let the parent finish.
+      sessions.set("ses_child_late", lateChild)
+      releaseParentPrompt()
       await Promise.race([
         inMove,
         movePromise.then((res) => {

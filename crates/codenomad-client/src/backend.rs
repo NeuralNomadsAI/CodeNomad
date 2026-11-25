@@ -308,6 +308,9 @@ impl Backend {
         attempted_id: Option<&str>,
         body: Vec<u8>,
     ) -> Result<crate::prompt::Acknowledgement> {
+        if self.client.server_identity_mismatch() {
+            return Err(crate::prompt::PromptError::Rejected.into());
+        }
         let mut request = self
             .client
             .post(format!(

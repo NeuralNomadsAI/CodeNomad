@@ -101,7 +101,7 @@ fn can_admit_send(
     out: &Sender<Event>,
 ) -> bool {
     !out.is_closed()
-        && !backend.client.attestation_revoked()
+        && !backend.client.server_identity_mismatch()
         && !wire.placement_closed()
         && !wire.auth_expired.load(SeqCst)
         && !reading.is_some_and(|lane| lane.revoked.load(SeqCst))
