@@ -310,17 +310,18 @@ function scheduleScope(api: Record<string, any>) {
   const mission = { id: "m", revision: 1 }
   const configuration = { objective: "objective", notes: "notes" }
   const doc = { id: "m", revision: 1, kind: "one-time", configuration, edit: { reason: null }, observation: { state: "complete" } }
+  const ownerValue = { signal: env.captureBackendOperation(id).signal }
   const scope: Record<string, any> = { ...env, accepted, released, doc, mission, target: "m", unified: true,
     props: { instanceId: id, directory: "/repo", action: {}, active: () => true, scope: () => "scope",
       captureDraft: () => ({}), onSaved: (...args: any[]) => accepted.push(args), onLoad: (value: any) => accepted.push(value) },
     capture: () => env.captureBackendOperation(id).current, held: () => undefined, reading: () => false,
-    owner: () => ({ signal: env.captureBackendOperation(id).signal }),
+    owner: () => ownerValue,
     captureOwner: (controller: AbortController) => () => !controller.signal.aborted,
     reconcileRead: undefined,
     document: () => doc, journal: () => mission, holdMissionScheduleEditor: () => true,
-    releaseMissionScheduleEditor: (_scope: string, request: string) => released.push(request), retainMissionScheduleEditor: () => {},
+    releaseMissionScheduleEditor: (_scope: string, request: string) => { released.push(request); return false }, retainMissionScheduleEditor: () => {},
     resumeMissionScheduleEditor: () => true,
-    exactMissionScheduleEditorReceipt: () => true, refusedMissionScheduleReceipt: () => false,
+    exactMissionScheduleEditorReceipt: () => true, partialMissionScheduleReceipt: () => undefined, refusedMissionScheduleReceipt: () => false,
     HttpResponseError: class extends Error {}, MissionMutationError: class extends Error {},
     setReading: () => {}, setFailed: () => {}, setReady: () => {}, setConflict: () => {}, setDocument: () => {},
     setPreviousDraft: () => {}, comparison: () => "draft", setJournal: () => {}, adopt: (value: any) => accepted.push(value),
@@ -418,7 +419,9 @@ test("schedule reconcile automatically retries a positively recorded partial pre
   assert.deepEqual(calls.map(call => call[0]), ["read", "retry"])
   assert.deepEqual(calls[0].slice(1, 4), [id, "m", { directory: "/repo", requestID: "r" }])
   assert.ok(calls[0][4] instanceof AbortSignal)
-  assert.deepEqual(calls[1].slice(1), [id, { ...request, retry: true }]); assert.deepEqual(scope.released, ["r"])
+  assert.deepEqual(calls[1].slice(1, 3), [id, { ...request, retry: true }])
+  assert.ok(calls[1][3] instanceof AbortSignal)
+  assert.deepEqual(scope.released, ["r"])
 })
 
 function editorScope(api: Record<string, any>, kind: "edit" | "delete") {
@@ -530,6 +533,7 @@ function controlScope(api: Record<string, any>) {
   const scope: Record<string, any> = { ...env, holds, refreshed, doc,
     props: { instanceId: id, directory: "/repo", document: () => doc, active: () => true, refresh: () => refreshed.push("refresh") },
     capable: () => true, capture: () => env.captureBackendOperation(id).current, identity: () => "scope", held: () => undefined,
+    capabilityOwner: () => ({ signal: env.captureBackendOperation(id).signal }), reconcileRead: undefined, stopReconcile: () => {},
     setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, setFeedback: () => {}, bump: () => {}, label: () => "Play", t: (key: string) => key,
     HttpResponseError,
     requiresMissionCalendar: () => true, showConfirmDialog: async () => true,
@@ -568,7 +572,9 @@ test("schedule activation reconciliation uses the read-only settings endpoint", 
   } })
   Object.assign(scope, { held: () => hold, busy: () => false }); scope.holds.set("scope", hold)
   await production("./mission-schedule-controls.ts", "reconcile", scope)()
-  assert.deepEqual(calls, [[id, "m", { requestID: "r", expectedDocumentRevision: 1 }]])
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].slice(0, 4), [id, "m", { requestID: "r", expectedDocumentRevision: 1 }, false])
+  assert.ok(calls[0][4] instanceof AbortSignal)
   assert.ok(scope.refreshed.includes("activation"))
 })
 
@@ -590,7 +596,7 @@ test("schedule control passive capability display is owner routed", async () => 
   let published: string | undefined, dispose!: () => void
   const effect = production("./mission-schedule-controls.ts", "createEffect", { ...env,
     props: { instanceId: id, directory: "/repo", refreshVersion: () => 0, active: () => true },
-    capabilityOwner: () => ({ signal: new AbortController().signal }), previousOwner: undefined,
+    capabilityOwner: () => ({ signal: new AbortController().signal }), previousOwner: undefined, stopReconcile: () => {},
     capture: () => env.captureBackendOperation(id).current, setBusy: () => {}, setPendingAction: () => {}, setRefusal: () => {}, setFeedback: () => {},
     feedback: () => undefined, setCapability: (value: string) => { published = value },
   }, "fetchMissionScheduleCapability")

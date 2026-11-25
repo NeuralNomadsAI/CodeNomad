@@ -100,12 +100,13 @@ for (const name of ["reload", "reconcile"] as const) {
       const backend = attachment(), requests = [deferred(), deferred()]
       let reading = false, reads = 0, writes = 0
       const hold = { payload: JSON.stringify({ action: "configure", missionID: "m", directory: "/repo", requestID: "r" }), state: "uncertain" }
+      const ownerValue = { signal: backend.captureBackendOperation("i").signal }
       const scope = { props: { instanceId: "i", directory: "/repo", action: { scheduleID: "m" }, active: () => true, scope: () => "s" },
         held: () => name === "reload" ? undefined : hold, reading: () => reading, target: "m", unified: true,
         capture: () => backend.captureBackendOperation("i").current,
-        owner: () => ({ signal: backend.captureBackendOperation("i").signal }),
+        owner: () => ownerValue,
         captureOwner: (controller: AbortController) => () => !controller.signal.aborted,
-        reconcileRead: undefined,
+        reconcileRead: undefined, partialMissionScheduleReceipt: () => undefined,
         setReading: (value: boolean) => { reading = value }, setFailed: () => {}, setReady: () => {},
         serverApi: {
           fetchMissionSchedule: () => requests[reads++].promise,

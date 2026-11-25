@@ -995,9 +995,10 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
   await page.clock.install({ time: Date.now() })
   const f = await setup(page, { seed: true, outsidePage: true })
   let originalRevision = f.doc.revision
-  let release!: () => void, releaseReceipt: (() => void) | undefined
+  let release!: () => void, releaseReceipt: (() => void) | undefined, markReceiptStarted: (() => void) | undefined
   const continuation = new Promise<void>(resolve => { release = resolve })
   const receiptGate = new Promise<void>(resolve => { releaseReceipt = resolve })
+  const receiptStarted = new Promise<void>(resolve => { markReceiptStarted = resolve })
   try {
     await select(page); f.partial = "play"; await click(page, "Play")
     const unconfirmed = page.locator(".mission-picker-selection-actions").getByRole("status").filter({ hasText: "This request is unconfirmed" })
@@ -1015,7 +1016,10 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
     })
     if (!negativeFirst) {
       await page.route("**/msn_schedule/schedule*", async route => {
-        if (route.request().method() === "GET" && new URL(route.request().url()).searchParams.has("requestID")) await receiptGate
+        if (route.request().method() === "GET" && new URL(route.request().url()).searchParams.has("requestID")) {
+          markReceiptStarted?.()
+          await receiptGate
+        }
         return route.fallback()
       })
     }
@@ -1044,6 +1048,10 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
       await unconfirmed.waitFor()
       assert.ok(f.reads.some(url => url.includes(`requestID=${original.requestID}`)))
       assert.deepEqual(f.posts, [original], "reopen and automatic reconciliation never replay the control")
+    } else {
+      await receiptStarted
+      await unconfirmed.waitFor()
+      assert.equal(await unconfirmed.isVisible(), true, "action-bar status stays visible while the receipt GET is in flight")
     }
     const before = f.reads.length
     f.resolve()

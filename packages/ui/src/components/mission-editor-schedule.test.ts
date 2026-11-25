@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { registerHooks } from "node:module"
 import { after, test } from "node:test"
 import type { MissionScheduleRead } from "../../../server/src/api-types"
+import { HttpResponseError } from "../lib/retryable-file-search"
 import type { MissionEditorDraft } from "../stores/mission-editor-state"
 
 const attachment = new AbortController()
@@ -12,7 +13,7 @@ const fixture = {
   fetchCreation: async (_instance: string, _requestID: string, _directory?: string, _signal?: AbortSignal): Promise<MissionScheduleRead> => {
     throw new Error("unconfigured")
   },
-  saveSchedule: async (_instance: string, _input: any): Promise<MissionScheduleRead> => {
+  saveSchedule: async (_instance: string, _input: any, _signal?: AbortSignal): Promise<MissionScheduleRead> => {
     throw new Error("unconfigured")
   },
   client: () => ({}),
@@ -125,33 +126,45 @@ function mountEditor(scope: string, options: { active?: () => boolean; owner?: (
   return { controller, dispose }
 }
 
-test("automatic reread retries a positively recorded partial preparation once and keeps the shared hold pending across remount", async t => {
+const partialHttpError = () => new HttpResponseError("Mission schedule action remains unconfirmed", 503, null, "schedule-pending", {
+  ...partialRead,
+  missionID: baseRequest.missionID,
+  pending: true,
+  code: "schedule-pending",
+  error: "Mission schedule action remains unconfirmed",
+})
+
+test("503 schedule-pending partial receipt retries once, stays pending across remount, and notifies the reopened editor on settlement", async t => {
   t.mock.timers.enable({ apis: ["setInterval"] })
   const scope = "scope-auto-retry-pending"
   releaseMissionScheduleEditor(scope, baseRequest.requestID)
   holdMissionScheduleEditor(scope, baseRequest, draft)
   retainMissionScheduleEditor(scope, baseRequest.requestID)
 
-  let receiptCalls = 0, saved = 0
-  const retryInputs: any[] = []
+  let receiptCalls = 0, firstSaved = 0, reopenedSaved = 0
+  const retryInputs: any[] = [], retrySignals: Array<AbortSignal | undefined> = []
   const postGate = deferred<MissionScheduleRead>()
   fixture.fetchSchedule = async (_instance, _id, input) => {
-    if (input?.requestID) { receiptCalls++; return partialRead }
+    if (input?.requestID) { receiptCalls++; throw partialHttpError() }
     return partialRead
   }
-  fixture.saveSchedule = async (_instance, input) => { retryInputs.push(input); return postGate.promise }
+  fixture.saveSchedule = async (_instance, input, signal) => {
+    retryInputs.push(input); retrySignals.push(signal); return postGate.promise
+  }
 
-  const first = mountEditor(scope, { onSaved: () => { saved++ } })
+  const first = mountEditor(scope, { onSaved: () => { firstSaved++ } })
   try {
     await flush()
     assert.equal(receiptCalls, 1)
     assert.equal(retryInputs.length, 1)
     assert.deepEqual(retryInputs[0], { ...baseRequest, retry: true })
+    assert.ok(retrySignals[0] instanceof AbortSignal, "retry POST must receive a bounded AbortSignal")
+    assert.equal(retrySignals[0]!.aborted, false)
     assert.equal(missionScheduleEditorHold(scope)?.state, "pending")
 
     // Close and reopen while the automatic retry POST is still in flight.
     first.dispose()
-    const reopened = mountEditor(scope, { onSaved: () => { saved++ } })
+    const reopened = mountEditor(scope, { onSaved: () => { reopenedSaved++ } })
     try {
       await flush()
       t.mock.timers.tick(MISSION_HELD_REREAD_MS * 3)
@@ -164,7 +177,8 @@ test("automatic reread retries a positively recorded partial preparation once an
       await flush()
       assert.equal(missionScheduleEditorHold(scope), undefined, "completed retry releases the shared hold")
       assert.equal(retryInputs.length, 1)
-      assert.equal(saved, 0, "disposed editor does not invoke onSaved after unmount")
+      assert.equal(firstSaved, 0, "disposed editor does not invoke onSaved after unmount")
+      assert.equal(reopenedSaved, 1, "reopened editor observes settlement and invokes onSaved once")
     } finally { reopened.dispose() }
   } finally {
     first.dispose()
@@ -172,22 +186,65 @@ test("automatic reread retries a positively recorded partial preparation once an
   }
 })
 
-test("failed automatic partial retry keeps the exact original identity and retries again only after the next reread", async t => {
+test("503 schedule-pending with a mismatched partial receipt never retries and keeps the hold", async t => {
   t.mock.timers.enable({ apis: ["setInterval"] })
-  const scope = "scope-retry-failure-identity"
+  const scope = "scope-mismatched-503"
+  releaseMissionScheduleEditor(scope, baseRequest.requestID)
+  holdMissionScheduleEditor(scope, baseRequest, draft)
+  retainMissionScheduleEditor(scope, baseRequest.requestID)
+
+  let receiptCalls = 0, retryCalls = 0
+  fixture.fetchSchedule = async (_instance, _id, input) => {
+    if (input?.requestID) {
+      receiptCalls++
+      throw new HttpResponseError("Mission schedule action remains unconfirmed", 503, null, "schedule-pending", {
+        ...partialRead,
+        missionID: baseRequest.missionID,
+        pending: true,
+        code: "schedule-pending",
+        error: "Mission schedule action remains unconfirmed",
+        document: {
+          ...partialRead.document!,
+          control: { action: "configure", requestID: "req_other", expectedRevision: 1, pending: true },
+        },
+      })
+    }
+    return partialRead
+  }
+  fixture.saveSchedule = async () => { retryCalls++; return completeRead }
+
+  const mounted = mountEditor(scope)
+  try {
+    await flush()
+    t.mock.timers.tick(MISSION_HELD_REREAD_MS)
+    await flush()
+    assert.equal(receiptCalls, 2)
+    assert.equal(retryCalls, 0, "mismatched 503 receipt must never trigger retry")
+    const held = missionScheduleEditorHold(scope)
+    assert.equal(held?.state, "uncertain")
+    assert.deepEqual(JSON.parse(held!.payload), baseRequest)
+  } finally {
+    mounted.dispose()
+    releaseMissionScheduleEditor(scope, baseRequest.requestID)
+  }
+})
+
+test("timed-out automatic partial retry restores uncertain hold and resumes polling without minting a new requestID", async t => {
+  t.mock.timers.enable({ apis: ["setInterval"] })
+  const scope = "scope-retry-timeout-identity"
   releaseMissionScheduleEditor(scope, baseRequest.requestID)
   holdMissionScheduleEditor(scope, baseRequest, draft)
   retainMissionScheduleEditor(scope, baseRequest.requestID)
 
   let receiptCalls = 0, saved = 0
-  const retryInputs: any[] = []
+  const retryInputs: any[] = [], retrySignals: Array<AbortSignal | undefined> = []
   fixture.fetchSchedule = async (_instance, _id, input) => {
-    if (input?.requestID) { receiptCalls++; return partialRead }
+    if (input?.requestID) { receiptCalls++; throw partialHttpError() }
     return partialRead
   }
-  fixture.saveSchedule = async (_instance, input) => {
-    retryInputs.push(input)
-    if (retryInputs.length === 1) throw new Error("connection reset")
+  fixture.saveSchedule = async (_instance, input, signal) => {
+    retryInputs.push(input); retrySignals.push(signal)
+    if (retryInputs.length === 1) throw new DOMException("Timed out", "TimeoutError")
     return completeRead
   }
 
@@ -195,7 +252,8 @@ test("failed automatic partial retry keeps the exact original identity and retri
   try {
     await flush()
     assert.equal(receiptCalls, 1)
-    assert.equal(retryInputs.length, 1, "failed retry must not spin immediately before the next reread interval")
+    assert.equal(retryInputs.length, 1, "timed-out retry must not spin immediately before the next reread interval")
+    assert.ok(retrySignals[0] instanceof AbortSignal)
     assert.deepEqual(retryInputs[0], { ...baseRequest, retry: true })
     const heldAfterFailure = missionScheduleEditorHold(scope)
     assert.equal(heldAfterFailure?.state, "uncertain")
@@ -209,6 +267,49 @@ test("failed automatic partial retry keeps the exact original identity and retri
     assert.equal(missionScheduleEditorHold(scope), undefined)
     assert.equal(saved, 1)
   } finally {
+    mounted.dispose()
+    releaseMissionScheduleEditor(scope, baseRequest.requestID)
+  }
+})
+
+test("successful retry publishes onSaved once even after the earlier receipt-read deadline expires", async () => {
+  const scope = "scope-retry-after-read-deadline"
+  releaseMissionScheduleEditor(scope, baseRequest.requestID)
+  holdMissionScheduleEditor(scope, baseRequest, draft)
+  retainMissionScheduleEditor(scope, baseRequest.requestID)
+
+  const originalTimeout = AbortSignal.timeout
+  const timeouts: AbortController[] = []
+  AbortSignal.timeout = (() => {
+    const controller = new AbortController()
+    timeouts.push(controller)
+    return controller.signal
+  }) as typeof AbortSignal.timeout
+
+  let saved = 0
+  const postGate = deferred<MissionScheduleRead>()
+  let readSignal: AbortSignal | undefined, retrySignal: AbortSignal | undefined
+  fixture.fetchSchedule = async (_instance, _id, input, signal) => {
+    if (input?.requestID) { readSignal = signal; throw partialHttpError() }
+    return partialRead
+  }
+  fixture.saveSchedule = async (_instance, _input, signal) => { retrySignal = signal; return postGate.promise }
+
+  const mounted = mountEditor(scope, { onSaved: () => { saved++ } })
+  try {
+    await flush()
+    assert.ok(readSignal && retrySignal)
+    assert.equal(timeouts.length >= 2, true)
+    // Expire the receipt-read deadline while the retry POST is still in flight.
+    timeouts.at(-2)!.abort(new DOMException("Timed out", "TimeoutError"))
+    assert.equal(readSignal.aborted, true, "receipt-read signal must be expired")
+    assert.equal(retrySignal.aborted, false, "retry POST owns its own deadline")
+    postGate.resolve(completeRead)
+    await flush()
+    assert.equal(missionScheduleEditorHold(scope), undefined)
+    assert.equal(saved, 1, "successful retry must publish onSaved exactly once without double-firing")
+  } finally {
+    AbortSignal.timeout = originalTimeout
     mounted.dispose()
     releaseMissionScheduleEditor(scope, baseRequest.requestID)
   }

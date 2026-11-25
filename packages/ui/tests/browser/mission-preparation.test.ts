@@ -71,13 +71,23 @@ async function setup(page: Page, lose = false, calendar?: Awaited<ReturnType<typ
               state: "ready", targets: [], effectiveOrigin: directory } })
         }
       }
-      catch { return route.fulfill({ status: 503, json: missionScheduleView(await f.read()) }) }
+      catch {
+        const view = missionScheduleView(await f.read())
+        return route.fulfill({ status: 503, json: { ...view, missionID: f.mission.id, pending: true,
+          error: "Mission schedule action remains unconfirmed", code: "schedule-pending" } })
+      }
       if (lose) return route.abort("connectionreset")
     }
     if (pathname.endsWith("/schedule")) {
       const view = missionScheduleView(await f.read())
-      if (pendingReceipt && new URL(request.url()).searchParams.has("requestID"))
-        return route.fulfill({ status: 503, json: { ...view, pending: true, document: view.document ? { ...view.document, control: null } : null } })
+      const isReceipt = new URL(request.url()).searchParams.has("requestID")
+      if (pendingReceipt && isReceipt)
+        return route.fulfill({ status: 503, json: { ...view, missionID: f.mission.id, pending: true,
+          error: "Mission schedule action remains unconfirmed", code: "schedule-pending",
+          document: view.document ? { ...view.document, control: null } : null } })
+      if (isReceipt && view.pending)
+        return route.fulfill({ status: 503, json: { ...view, missionID: f.mission.id, pending: true,
+          error: "Mission schedule action remains unconfirmed", code: "schedule-pending" } })
       return route.fulfill({ json: view })
     }
     const snapshot = await f.control.snapshot()
@@ -153,18 +163,34 @@ test("real owner: positive partial preparation retries its exact original reques
   await page.clock.install({ time: Date.now() })
   const f = await setup(page)
   try {
-    f.fail("native-after"); f.pendingReceipt = true
+    f.fail("native-after")
+    let mismatchReceipt = true
+    await page.route("**/api/workspaces/fixture/missions/**/schedule?*", async route => {
+      const request = route.request()
+      if (mismatchReceipt && request.method() === "GET" && new URL(request.url()).searchParams.has("requestID")) {
+        const view = missionScheduleView(await f.read())
+        return route.fulfill({ status: 503, json: { ...view, missionID: f.mission.id, pending: true,
+          error: "Mission schedule action remains unconfirmed", code: "schedule-pending",
+          document: view.document ? { ...view.document, control: view.document.control ? { ...view.document.control, requestID: "mismatched_req" } : null } : null } })
+      }
+      return route.fallback()
+    })
     const form = await edit(page)
-    const pendingRead = page.waitForResponse(response => response.request().method() === "GET"
-      && new URL(response.url()).searchParams.has("requestID"))
+    const mismatchedRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).searchParams.has("requestID") && response.status() === 503)
     await form.getByRole("button", { name: "Save", exact: true }).click()
     await form.getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
-    await pendingRead
+    await mismatchedRead
     assert.equal(await form.getByRole("button", { name: "Refresh saved request", exact: true }).count(), 0)
     assert.equal(await form.locator(".window-footer").getByRole("button", { name: "Try again", exact: true }).count(), 0)
-    assert.equal(f.writes.length, 1); assert.equal(f.admissions.length, 0)
-    f.pendingReceipt = false
+    assert.equal(f.writes.length, 1, "mismatched 503 receipt must not trigger a retry")
+    assert.equal((await page.evaluate(() => window.schedulingEditor.held()))?.state, "uncertain")
+    assert.equal(f.admissions.length, 0)
+    mismatchReceipt = false
+    const exactPartialRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).searchParams.get("requestID") === f.writes[0].requestID && response.status() === 503)
     await page.clock.fastForward(5_000)
+    await exactPartialRead
     await form.waitFor({ state: "detached" })
     assert.equal(f.writes.length, 2)
     assert.deepEqual(f.writes[1], { ...f.writes[0], retry: true })
@@ -208,10 +234,19 @@ test("real owner: in-flight automatic partial retry keeps the shared hold pendin
     assert.equal(f.writes.length, 1, "reopened editor must not send a second retry while the first retry is in flight")
     assert.equal((await page.evaluate(() => window.schedulingEditor.held()))?.state, "pending")
     releaseRetry()
-    await page.waitForFunction(() => !window.schedulingEditor.held())
+    await form.waitFor({ state: "detached" })
+    await page.waitForFunction(() => !window.schedulingEditor.held() && document.querySelector("output[data-saved]")?.textContent === "1")
     assert.equal(f.writes.length, 2)
     assert.deepEqual(f.writes[1], { ...f.writes[0], retry: true })
-    assert.equal((await f.read()).preparation!.pending, false)
+    const savedDoc = await f.read()
+    assert.equal(savedDoc.preparation!.pending, false)
+    assert.ok(savedDoc.revision > f.writes[0].expectedRevision)
+    assert.equal(savedDoc.configuration.title, "Browser edited preparation")
+    await page.evaluate(mission => window.schedulingEditor.prepared(mission), (await f.control.snapshot()).missions[0])
+    await form.getByLabel("Title", { exact: true }).waitFor()
+    await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+    assert.equal(await form.getByLabel("Title", { exact: true }).inputValue(), "Browser edited preparation")
+    assert.equal(await form.getByLabel("Playbook", { exact: true }).inputValue(), "delivery")
     assert.deepEqual(f.errors, [])
   } finally { releaseRetry?.(); await page.close() }
 })

@@ -12,7 +12,7 @@ import { HttpResponseError } from "../lib/retryable-file-search"
 const fixture = { list: async (): Promise<MissionScheduleList> => { throw new Error("unconfigured") },
    detail: async (_id: string, _signal: AbortSignal, _input?: { requestID?: string }): Promise<MissionScheduleRead> => { throw new Error("unconfigured") },
    control: async (_instance: string, _id: string, _input: any): Promise<MissionScheduleRead> => { throw new Error("unconfigured") },
-   settings: async (_instance: string, _id: string, _input: any, _write?: boolean): Promise<any> => { throw new Error("unconfigured") },
+   settings: async (_instance: string, _id: string, _input: any, _write?: boolean, _signal?: AbortSignal): Promise<any> => { throw new Error("unconfigured") },
    client: () => ({}), generation: () => 0, enabled: true,
    backendEvents: { signalForInstance: (_instance: string) => attachment.signal,
      on: () => () => {}, forInstance: (_instance: unknown) => ({ onOpen: () => () => {} }) } }
@@ -285,34 +285,35 @@ for (const negativeFirst of [false, true]) test(`${negativeFirst ? "negative the
 })
 
 for (const positive of [false, true]) for (const change of ["selection", "selection ABA", "scope", "scope ABA", "client", "generation", "hide", "dispose"] as const)
-test(`late ${positive ? "positive" : "negative"} receipt after ${change} only settles exact bookkeeping`, async () => {
+test(`late ${positive ? "positive" : "negative"} receipt after ${change} is cancelled and ignored`, async () => {
   const h = setup(), gate = deferred<MissionScheduleRead>(), later = deferred<MissionScheduleRead>(), started = deferred()
-  let c: ReturnType<typeof controlsFor> | undefined, receiptCalls = 0
+  let c: ReturnType<typeof controlsFor> | undefined, receiptCalls = 0, firstSignal: AbortSignal | undefined
   try {
     await until(() => !h.store.loading())
-    fixture.detail = async (_id, _signal, input) => {
+    fixture.detail = async (_id, signal, input) => {
       if (input?.requestID) {
-        if (++receiptCalls === 1) { started.resolve(); return gate.promise }
+        if (++receiptCalls === 1) { firstSignal = signal; started.resolve(); return gate.promise }
         return later.promise
       }
       return { pending: false, document: running }
     }
     c = controlsFor(h)
     await started.promise
+    assert.ok(firstSignal instanceof AbortSignal && !firstSignal.aborted)
     if (change.startsWith("selection")) { h.select("retained_other"); if (change.endsWith("ABA")) h.select(selected.id) }
     if (change.startsWith("scope")) { h.setDirectory("/other"); if (change.endsWith("ABA")) h.setDirectory("/repo") }
     if (change === "client") h.setClient({})
     if (change === "generation") h.setGeneration(1)
     if (change === "hide") h.setActive(false)
     if (change === "dispose") c.dispose()
+    assert.equal(firstSignal!.aborted, true, `receipt GET must be aborted on ${change}`)
     const before = { ...c.calls }
     gate.resolve(positive ? confirmed(h.hold) : { pending: true, document: null })
     await new Promise<void>(resolve => setImmediate(resolve))
-    assert.deepEqual(c.calls, before, "old receipt never refreshes or navigates the destination")
+    assert.deepEqual(c.calls, before, "stale receipt never refreshes or navigates the destination")
     assert.equal(holds.has(key()), true)
-    assert.equal(holds.get(key())?.phase, positive ? "publication" : "control")
+    assert.equal(holds.get(key())?.phase, "control", "stale receipt GET must not settle the hold")
     assert.equal(holds.get(key())?.requestID, h.hold.requestID)
-    if (positive) assert.equal(holds.get(key())?.minimumRevision, 8)
   } finally { later.resolve({ pending: true, document: null }); c?.dispose(); h.dispose() }
 })
 
@@ -346,8 +347,8 @@ for (const action of ["activation", "delete"] as const) test(`cold first-positiv
   let c: ReturnType<typeof controlsFor> | undefined
   try {
     await until(() => !h.store.loading())
-    fixture.settings = async (_instance, id, input, write) => {
-      assert.equal(id, selected.id); assert.deepEqual(input, { requestID: "original_request", expectedDocumentRevision: 7 }); assert.equal(write, undefined)
+    fixture.settings = async (_instance, id, input, write, signal) => {
+      assert.equal(id, selected.id); assert.deepEqual(input, { requestID: "original_request", expectedDocumentRevision: 7 }); assert.equal(write, false); assert.ok(signal instanceof AbortSignal)
       return { document: { revision: 8, scheduleActivation: { requestID: hold.requestID, expectedRevision: 7, state: "ready" } } }
     }
     fixture.detail = async (_id, _signal, input) => input?.requestID
@@ -367,41 +368,39 @@ for (const action of ["activation", "delete"] as const) test(`cold first-positiv
 
 for (const action of ["activation", "delete"] as const) for (const positive of [false, true])
 for (const change of ["selection", "scope ABA", "client", "dispose"] as const)
-test(`late ${positive ? "positive" : "negative"} ${action} confirmation after ${change} keeps the destination untouched`, async () => {
+test(`late ${positive ? "positive" : "negative"} ${action} confirmation after ${change} is cancelled and ignored`, async () => {
   const h = setup(), hold = { ...h.hold, phase: action === "activation" ? "activation" as const : "control" as const,
     action: action === "activation" ? "play" as const : "delete" as const }
   holds.set(key(), hold); bump()
   const gate = deferred<any>(), later = deferred<any>(), started = deferred()
-  let c: ReturnType<typeof controlsFor> | undefined, receiptCalls = 0
+  let c: ReturnType<typeof controlsFor> | undefined, receiptCalls = 0, firstSignal: AbortSignal | undefined
   try {
     await until(() => !h.store.loading())
-    fixture.settings = async () => {
-      if (++receiptCalls === 1) { started.resolve(); return gate.promise }
+    fixture.settings = async (_instance, _id, _input, _write, signal) => {
+      if (++receiptCalls === 1) { firstSignal = signal; started.resolve(); return gate.promise }
       return later.promise
     }
-    fixture.detail = async (_id, _signal, input) => {
+    fixture.detail = async (_id, signal, input) => {
       if (input?.requestID) {
-        if (++receiptCalls === 1) { started.resolve(); return gate.promise }
+        if (++receiptCalls === 1) { firstSignal = signal; started.resolve(); return gate.promise }
         return later.promise
       }
       return { pending: false, document: running }
     }
     c = controlsFor(h)
     await started.promise
+    assert.ok(firstSignal instanceof AbortSignal && !firstSignal.aborted)
     if (change === "selection") h.select("retained_other")
     if (change === "scope ABA") { h.setDirectory("/other"); h.setDirectory("/repo") }
     if (change === "client") h.setClient({})
     if (change === "dispose") c.dispose()
+    assert.equal(firstSignal!.aborted, true, `${action} receipt GET must be aborted on ${change}`)
     const before = { ...c.calls }
     gate.resolve(action === "activation" ? { document: { revision: 8, scheduleActivation: { requestID: hold.requestID, expectedRevision: 7, state: positive ? "ready" : "pending" } } }
       : { pending: !positive, document: null, deleted: positive, ...(positive ? { deletionReceipt: { id: selected.id,
         requestID: hold.requestID, expectedRevision: 7, deleteManagedSessions: false } } : {}) })
     await new Promise<void>(resolve => setImmediate(resolve))
-    assert.deepEqual(c.calls, before); assert.equal(holds.has(key()), action === "activation" || !positive)
-    if (positive && action === "activation") {
-      assert.equal(holds.get(key())?.phase, "publication"); assert.equal(holds.get(key())?.minimumRevision, 8)
-      assert.equal(holds.get(key())?.requestID, hold.requestID)
-    }
+    assert.deepEqual(c.calls, before); assert.equal(holds.get(key()), hold, "stale receipt GET must not settle the hold")
   } finally {
     later.resolve(action === "activation" ? { document: { revision: 7, scheduleActivation: null } } : { pending: true, document: null })
     c?.dispose(); h.dispose()
@@ -513,8 +512,8 @@ test("recovered activation retains its exact publication obligation across remou
   let remount: ReturnType<typeof setup> | undefined, mountedControls: ReturnType<typeof controlsFor> | undefined
   try {
     await until(() => !h.store.loading())
-    fixture.settings = async (_instance, id, input, write) => {
-      settings++; assert.equal(write, undefined); assert.equal(id, selected.id)
+    fixture.settings = async (_instance, id, input, write, signal) => {
+      settings++; assert.equal(write, false); assert.ok(signal instanceof AbortSignal); assert.equal(id, selected.id)
       assert.deepEqual(input, { requestID: activation.requestID, expectedDocumentRevision: 7 })
       return { document: { revision: 9, scheduleActivation: { requestID: activation.requestID, expectedRevision: 7, state: "ready" } } }
     }

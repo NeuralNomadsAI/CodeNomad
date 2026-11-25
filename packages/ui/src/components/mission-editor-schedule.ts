@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, on, onCleanup, untrack } from "solid-js"
 import type { MissionPanelMap, MissionScheduleRead } from "../../../server/src/api-types"
-import { refusedMissionScheduleReceipt } from "../lib/mission-schedule-receipt"
+import { partialMissionScheduleReceipt, refusedMissionScheduleReceipt, type MissionScheduleControlReceipt } from "../lib/mission-schedule-receipt"
 import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { HttpResponseError } from "../lib/retryable-file-search"
@@ -9,7 +9,7 @@ import { backendEvents as serverEvents } from "../lib/server-events"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { instances } from "../stores/instances"
 import type { MissionEditorAction, MissionEditorDraft } from "../stores/mission-editor-state"
-import { exactMissionScheduleEditorReceipt, holdMissionScheduleEditor, missionScheduleEditorHold,
+import { exactMissionScheduleEditorReceipt, holdMissionScheduleEditor, missionScheduleEditorHold, onMissionScheduleEditorSettled,
   releaseMissionScheduleEditor, resumeMissionScheduleEditor, retainMissionScheduleEditor, type MissionEditorConfiguration,
   type MissionScheduleEditorRequest, type MissionJournalEditRequest } from "../stores/mission-schedule-editor-holds"
 import { decodeMissionSchedulingPolicy } from "./mission-scheduling-decode"
@@ -258,11 +258,11 @@ export function createMissionEditorScheduling(props: {
   async function reconcile() {
     const hold = held()
     if (!hold || hold.state !== "uncertain" || reading() || reconcileRead || !props.active()) return
-    const viewCurrent = capture(), scope = props.scope()
+    const viewCurrent = capture(), scope = props.scope(), readOwner = owner()
     if (!viewCurrent()) return
     const controller = reconcileRead = new AbortController()
     const owned = captureOwner(controller)
-    const signal = AbortSignal.any([owner().signal, controller.signal, AbortSignal.timeout(30_000)])
+    const signal = AbortSignal.any([readOwner.signal, controller.signal, AbortSignal.timeout(30_000)])
     const current = () => viewCurrent() && owned() && reconcileRead === controller && !signal.aborted
     const request: MissionScheduleEditorRequest | MissionJournalEditRequest = JSON.parse(hold.payload)
     try {
@@ -288,9 +288,10 @@ export function createMissionEditorScheduling(props: {
         if (current()) props.onSaved(mission)
         return
       }
-      const result = request.missionID
-        ? await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, request.missionID, { directory: request.directory, requestID: request.requestID }, signal)
-        : await backendOf(props.instanceId).api.fetchMissionScheduleCreation(props.instanceId, request.requestID, request.directory, signal)
+      const result = await (request.missionID
+        ? backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, request.missionID, { directory: request.directory, requestID: request.requestID }, signal)
+        : backendOf(props.instanceId).api.fetchMissionScheduleCreation(props.instanceId, request.requestID, request.directory, signal))
+        .catch(error => { const partial = partialMissionScheduleReceipt(error); if (partial) return partial; throw error })
       if (!current()) return
       if (exactMissionScheduleEditorReceipt(request, result)) {
         releaseMissionScheduleEditor(scope, request.requestID)
@@ -302,23 +303,32 @@ export function createMissionEditorScheduling(props: {
       if (!resumeMissionScheduleEditor(scope, request.requestID)) return
       let released = false
       try {
-        const retried = await backendOf(props.instanceId).api.saveMissionSchedule(props.instanceId, { ...request, retry: true })
+        const retried = await backendOf(props.instanceId).api.saveMissionSchedule(props.instanceId, { ...request, retry: true },
+          AbortSignal.any([readOwner.signal, AbortSignal.timeout(30_000)]))
         if (!exactMissionScheduleEditorReceipt(request, retried)) return
-        releaseMissionScheduleEditor(scope, request.requestID)
+        const notified = releaseMissionScheduleEditor(scope, request.requestID, { scheduleID: retried.document?.id })
         released = true
-        if (current()) props.onSaved(undefined, retried.document?.id)
+        if (!notified && viewCurrent() && !readOwner.signal.aborted && owner() === readOwner) props.onSaved(undefined, retried.document?.id)
       } finally {
         if (!released) retainMissionScheduleEditor(scope, request.requestID)
       }
     } catch { /* Only a positive original receipt settles an unknown write. */ }
     finally { if (reconcileRead === controller) reconcileRead = undefined }
   }
-  function partialPreparation(request: MissionScheduleEditorRequest, result: MissionScheduleRead) {
+  function partialPreparation(request: MissionScheduleEditorRequest, result: MissionScheduleRead | MissionScheduleControlReceipt) {
     const doc = result.document, receipt = doc?.control
     return request.action === "configure" && (doc?.kind === "one-time" || doc?.dormant === true) && doc.id === request.missionID && result.pending === true
       && receipt?.action === request.action && receipt.requestID === request.requestID
       && receipt.expectedRevision === request.expectedRevision && receipt.pending === true
   }
+  createEffect(() => {
+    const scope = props.scope()
+    onCleanup(onMissionScheduleEditorSettled(scope, (_requestID, settled) => {
+      if (!props.active() || !capture()()) return false
+      props.onSaved(settled.mission, settled.scheduleID)
+      return true
+    }))
+  })
   rereadMissionHoldWhileActive(() => held()?.state === "uncertain", props.active, reconcile)
   return { unified, document, journal, scheduling, setScheduling, previousDraft, ready, failed, conflict, reading, capability, directory,
     revalidating: () => capabilityReading() || documentReading(),

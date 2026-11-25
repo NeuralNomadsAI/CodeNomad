@@ -150,7 +150,7 @@ Algunas acciones de coordinación y recuperación necesitan el servidor CodeNoma
 
 Pausa puntual deja acabar los pasos actuales sin empezar otros; interrumpir solicita interrupción inmediata. Parar es terminal y requiere confirmación. La pausa de programación cierra futuros inicios y pide interrumpir la pasada actual. Los efectos de herramientas pueden continuar.
 
-Conserva la solicitud original no confirmada: mientras la vista de programación o el editor de la Misión esté abierto, CodeNomad la vuelve a leer automáticamente hasta resolverla y reintenta por sí solo un cambio parcial registrado. Para controles de Misiones puntuales, usa **Comprobar estado** cuando se ofrezca; no crees una acción sustitutiva.
+Conserva la solicitud original no confirmada: mientras la vista de una programación nativa o el editor estén abiertos, CodeNomad la vuelve a leer automáticamente hasta resolverla y reintenta por sí solo únicamente una preparación parcial exactamente registrada. Usa **Comprobar estado** para controles de Misiones puntuales o programaciones diarias, y **Actualizar mapa de misión** para una creación puntual ordinaria cuando se ofrezcan; no crees una acción sustitutiva.
 
 ## Editar, eliminar y limpiar conversaciones {#cleanup}
 

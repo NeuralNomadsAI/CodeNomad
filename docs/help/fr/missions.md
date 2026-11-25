@@ -171,7 +171,7 @@ Certaines actions de coordination et de récupération nécessitent le serveur C
 
 La **Pause** ponctuelle laisse les étapes en cours finir sans en démarrer de nouvelles. **Interrompre maintenant** demande une interruption immédiate. **Arrêter** est définitif et demande confirmation. La pause d’un programme natif ferme les lancements futurs et demande l’interruption du passage en cours. Des effets d’outils peuvent continuer après interruption ; vérifiez les résultats partiels.
 
-Conservez la requête d’origine d’une action non confirmée : tant que la vue du programme ou l’éditeur de la Mission est ouvert, CodeNomad la relit automatiquement jusqu’à ce qu’elle soit tranchée et relance de lui-même une modification partielle enregistrée. Pour les commandes d’une Mission ponctuelle, utilisez **Vérifier l’état** lorsqu’il est proposé ; ne créez pas de remplacement pour contourner l’incertitude.
+Conservez la requête d’origine d’une action non confirmée : tant que la vue d’un programme natif ou l’éditeur est ouvert, CodeNomad la relit automatiquement jusqu’à ce qu’elle soit tranchée et ne relance de lui-même qu’une préparation partielle exactement enregistrée. Utilisez **Vérifier l’état** pour les commandes de Mission ponctuelle ou les entrées quotidiennes, et **Actualiser la carte de mission** pour une création ponctuelle ordinaire lorsqu’ils sont proposés ; ne créez pas de remplacement pour contourner l’incertitude.
 
 Une Mission ponctuelle interrompue ou échouée peut proposer **Reprendre la mission interrompue**. Les tâches admissibles proposent la récupération d’un rapport manquant.
 

@@ -150,7 +150,7 @@ Bazı koordinasyon ve kurtarma işlemleri CodeNomad sunucusunu gerektirir.
 
 Tek seferlik Duraklat, yeni iş başlatmadan mevcut adımları bitirir; hemen kesme, doğrudan kesinti ister. Durdur kalıcıdır ve onay gerekir. Programı duraklatmak gelecekteki başlatmaları kapatır ve mevcut geçişin kesilmesini ister. Araç etkileri devam edebilir.
 
-Doğrulanmamış asıl isteği koruyun: Görevin program veya düzenleyici görünümü açıkken CodeNomad sonuçlanana kadar isteği otomatik yeniden okur ve kaydedilmiş kısmi değişikliği kendiliğinden yeniden dener. Tek seferlik Görev denetimleri için sunulduğunda **Durumu denetle** seçeneğini kullanın; yerine başka işlem oluşturmayın.
+Doğrulanmamış asıl isteği koruyun: Yerel program görünümü veya düzenleyici açıkken CodeNomad sonuçlanana kadar isteği otomatik yeniden okur ve yalnızca tam olarak kaydedilmiş kısmi bir hazırlığı kendiliğinden yeniden dener. Sunulduğunda tek seferlik Görev denetimleri veya günlük programlar için **Durumu denetle**, sıradan tek seferlik oluşturma için **Görev haritasını yenile** seçeneğini kullanın; yerine başka işlem oluşturmayın.
 
 ## Düzenleme, silme ve konuşma temizliği {#cleanup}
 

@@ -36,8 +36,9 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   const [busy, setBusy] = createSignal(false), [feedback, setFeedback] = createSignal<string>()
   const [pendingAction, setPendingAction] = createSignal<Action>()
   const [refusal, setRefusal] = createSignal<ActivationRefusal>()
-  let alive = true
-  onCleanup(() => { alive = false })
+  let alive = true, reconcileRead: AbortController | undefined
+  const stopReconcile = () => { reconcileRead?.abort(); reconcileRead = undefined }
+  onCleanup(() => { alive = false; stopReconcile() })
   const held = () => unifiedScheduleHold(identity())
   const publishing = () => held()?.phase === "publication"
   const [capability, setCapability] = createSignal<"loading" | "available" | "activatable" | "missing">("loading")
@@ -55,7 +56,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   createEffect(() => {
     const owner = capabilityOwner(); props.refreshVersion()
     untrack(() => {
-      if (owner !== previousOwner) { setBusy(false); setPendingAction(undefined); setRefusal(undefined); setFeedback(undefined); setCapability("loading"); previousOwner = owner }
+      if (owner !== previousOwner) { stopReconcile(); setBusy(false); setPendingAction(undefined); setRefusal(undefined); setFeedback(undefined); setCapability("loading"); previousOwner = owner }
       if (!props.active()) return
       const currentView = capture(), abort = new AbortController()
       const current = () => currentView() && !abort.signal.aborted
@@ -85,14 +86,13 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
      && (!requiresMissionCalendar(props.document().configuration.launch) || !["play", "resume", "run-now"].includes(action)
         || creation && action === "play" || capability() === "available" || action !== "run-now" && capability() === "activatable")
     && !held()
-  async function receipt(key: string, hold: Hold, current: () => boolean) {
+  async function receipt(key: string, hold: Hold, current: () => boolean, signal?: AbortSignal) {
     if (!current()) return
     const doc = props.document(), result = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, doc.id,
-      { directory: props.directory, requestID: hold.requestID }, AbortSignal.timeout(30_000)).catch(error => {
+      { directory: props.directory, requestID: hold.requestID }, signal ?? AbortSignal.timeout(30_000)).catch(error => {
         const result = partialReceipt(error); if (result) return result; throw error
       })
-    // A dispatched intent owns its exact receipt independently of the view.
-    // Only further reads and view publication require the live operation.
+    if (!current()) return
     if (exactMissionScheduleControl(result, hold, doc.id)) {
       if (holds.get(key) !== hold) return
       const revision = result.document?.revision
@@ -108,20 +108,27 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   }
   async function reconcile() {
     const hold = held(), key = identity(), current = capture()
-    if (!current() || !hold || hold.pending || busy() || !props.active()) return
+    if (!current() || !hold || hold.pending || busy() || reconcileRead || !props.active()) return
+    const abort = reconcileRead = new AbortController()
+    const signal = AbortSignal.any([capabilityOwner().signal, abort.signal, AbortSignal.timeout(30_000)])
+    const stillCurrent = () => current() && reconcileRead === abort && !signal.aborted
     setBusy(true)
     try {
-      if (hold.phase === "publication") { if (current()) props.refresh(); return }
+      if (hold.phase === "publication") { if (stillCurrent()) props.refresh(); return }
       if (hold.phase === "activation") {
         const { document } = await backendOf(props.instanceId).api.missionScheduleSettings(props.instanceId, props.document().id,
-          { requestID: hold.requestID, expectedDocumentRevision: hold.expectedRevision })
+          { requestID: hold.requestID, expectedDocumentRevision: hold.expectedRevision }, false, signal)
+        if (!stillCurrent()) return
         const proof = document.scheduleActivation
         if (Number.isSafeInteger(document.revision) && document.revision >= hold.expectedRevision
-          && proof?.requestID === hold.requestID && proof.expectedRevision === hold.expectedRevision && proof.state === "ready") settle(key, hold, current, document.revision)
-      } else await receipt(key, hold, current)
-      if (current()) props.refresh()
+          && proof?.requestID === hold.requestID && proof.expectedRevision === hold.expectedRevision && proof.state === "ready") settle(key, hold, stillCurrent, document.revision)
+      } else await receipt(key, hold, stillCurrent, signal)
+      if (stillCurrent()) props.refresh()
     } catch { /* Negative or failed reads preserve the original identity. */ }
-    finally { if (current()) setBusy(false) }
+    finally {
+      if (reconcileRead === abort) reconcileRead = undefined
+      if (current()) setBusy(false)
+    }
   }
   async function act(action: Action, creation = false) {
     if (!capable(action, creation)) return

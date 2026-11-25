@@ -1,6 +1,6 @@
 import { HttpResponseError } from "./retryable-file-search"
 
-export type MissionScheduleControlReceipt = { pending: boolean; document: { id: string; revision?: number; control: { requestID: string; expectedRevision: number;
+export type MissionScheduleControlReceipt = { pending: boolean; document: { id: string; revision?: number; kind?: "one-time" | "schedule"; dormant?: boolean; control: { requestID: string; expectedRevision: number;
   action: string; pending: boolean } | null } | null; deleted?: boolean;
   deletionReceipt?: { id: string; requestID: string; expectedRevision: number; deleteManagedSessions: boolean } }
 
@@ -22,6 +22,8 @@ export function partialMissionScheduleReceipt(error: unknown): MissionScheduleCo
     || !Number.isSafeInteger(control.expectedRevision) || control.expectedRevision < 0
     || !["create", "configure", "play", "pause", "resume", "stop", "check", "run-now", "delete"].includes(control.action)
     || typeof control.pending !== "boolean") return
-  return { pending: true, document: { id: doc.id, control: { requestID: control.requestID,
-    expectedRevision: control.expectedRevision, action: control.action, pending: control.pending } } }
+  return { pending: true, document: { id: doc.id,
+    ...(doc.kind === "one-time" || doc.kind === "schedule" ? { kind: doc.kind } : {}),
+    ...(typeof doc.dormant === "boolean" ? { dormant: doc.dormant } : {}),
+    control: { requestID: control.requestID, expectedRevision: control.expectedRevision, action: control.action, pending: control.pending } } }
 }
