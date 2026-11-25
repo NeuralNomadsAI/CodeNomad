@@ -1018,6 +1018,17 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
       })
     }
 
+    instance.addHook("preParsing", (request, reply, payload, done) => {
+      if (request.method === "POST") {
+        const pathOnly = routedPath(request.raw.url ?? "") ?? (request.raw.url ?? "").split(/[?;]/, 1)[0] ?? ""
+        if (/^\/workspaces\/[^/]+\/instance\/api\/session\/[^/]+\/(?:prompt|command)\/\/+$/.test(pathOnly)) {
+          void reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
+          return
+        }
+      }
+      done(null, payload)
+    })
+
     instance.setErrorHandler((error, request, reply) => {
       const pathOnly = routedPath(request.raw.url ?? "") ?? (request.raw.url ?? "").split(/[?;]/, 1)[0] ?? ""
       const isSendInput = request.method === "POST"
@@ -1151,7 +1162,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     return
   }
 
-  const rawInstancePath = (request.raw.url ?? "").split("?", 1)[0]?.match(/\/instance(?:\/(.*))?$/)?.[1] ?? ""
+  const rawInstancePath = (request.raw.url ?? "").split(/[?;]/, 1)[0]?.match(/\/instance(?:\/(.*))?$/)?.[1] ?? ""
   if (/\\|%2f|%5c/i.test(rawInstancePath) || hasDotSegment(rawInstancePath)) {
     sendPreDispatch(400, { error: "Invalid workspace instance path" })
     return

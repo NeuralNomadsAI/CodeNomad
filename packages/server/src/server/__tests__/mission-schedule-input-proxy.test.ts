@@ -507,6 +507,13 @@ test("pre-handler 400/413/426 keep Fastify error envelopes and carry x-codenomad
       payload: { text: "double slash not allowed" },
     })
     assert.equal(refused.statusCode, 403, refused.body)
+    const refusedMalformed = await f.app.inject({
+      method: "POST",
+      url: doubleSlash,
+      headers: { "content-type": "application/json" },
+      payload: "{invalid",
+    })
+    assert.equal(refusedMalformed.statusCode, 403, refusedMalformed.body)
   }
 
   f.state.profileError = new UnsupportedOpenCodeError("2.0.0")

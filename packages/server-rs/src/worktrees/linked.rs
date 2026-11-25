@@ -524,14 +524,16 @@ async fn native_move(app: &App, id: &str, where_to: &str) -> Result<(), Error> {
     native(app, Method::POST, &format!("/api/session/{id}/move"), &[], body, 16384).await.map(drop)
 }
 enum MoveOutcome {
-    Moved,
+    Moved(String, Vec<Value>),
     Retry,
 }
 
-fn family_signature(members: &[Value]) -> Result<Vec<(String, String)>, Error> {
+fn family_signature(members: &[Value]) -> Result<Vec<(String, Option<String>, String)>, Error> {
     let mut sig = members
         .iter()
-        .map(|row| Ok((row_id(row)?.to_owned(), directory(row)?.to_owned())))
+        .map(|row| {
+            Ok((row_id(row)?.to_owned(), row["parentID"].as_str().map(str::to_owned), directory(row)?.to_owned()))
+        })
         .collect::<Result<Vec<_>, Error>>()?;
     sig.sort();
     Ok(sig)
@@ -542,6 +544,7 @@ async fn move_members(
     w: &Workspace,
     cat: &Catalogue,
     evacuating: Option<&Tree>,
+    requested_session: Option<&str>,
     members: &[Value],
     target: &Tree,
     principal: &crate::auth::Principal,
@@ -549,15 +552,19 @@ async fn move_members(
     let keys = members.iter().map(|row| row_id(row).map(super::fence::session)).collect::<Result<Vec<_>, _>>()?;
     let _placing = super::fence::try_block(&keys).ok_or_else(|| conflict("A session request is in progress"))?;
     inactive(app, members).await?;
-    if evacuating.is_none() {
+    let (verified_root, active_members) = if evacuating.is_none() {
         let expected = family_signature(members)?;
         let fresh_rows = sessions(app, &cat.project).await?;
-        let (_, fresh_members) = family(&fresh_rows, row_id(&members[0])?)?;
+        let anchor = requested_session.unwrap_or(row_id(&members[0])?);
+        let (fresh_root, fresh_members) = family(&fresh_rows, anchor)?;
         if family_signature(&fresh_members)? != expected {
             return Ok(MoveOutcome::Retry);
         }
-    }
-    for member in members {
+        (fresh_root, fresh_members)
+    } else {
+        (row_id(&members[0])?.to_owned(), members.to_vec())
+    };
+    for member in &active_members {
         let from = directory(member)?;
         if member_owner(cat, evacuating, from).is_none() {
             return Err(conflict("Session worktree is not owned"));
@@ -570,7 +577,7 @@ async fn move_members(
     }
     let mut attempted = Vec::new();
     let operation = async {
-        for member in members {
+        for member in &active_members {
             let id = row_id(member)?;
             inactive(app, std::slice::from_ref(member)).await?;
             principal.live()?;
@@ -588,8 +595,12 @@ async fn move_members(
             }
         }
         let current = sessions(app, &cat.project).await?;
-        let (_, now) = family(&current, members[0]["id"].as_str().ok_or_else(native_error)?)?;
-        if now.len() != members.len() || now.iter().any(|r| directory(r).ok() != Some(target.service.as_str())) {
+        let anchor = requested_session.unwrap_or(row_id(&active_members[0])?);
+        let (_, now) = family(&current, anchor)?;
+        if now.len() != active_members.len()
+            || !active_members.iter().all(|member| now.iter().any(|row| row["id"] == member["id"]))
+            || now.iter().any(|r| directory(r).ok() != Some(target.service.as_str()))
+        {
             return Err(conflict("Session family changed during the move"));
         }
         Ok(())
@@ -617,7 +628,7 @@ async fn move_members(
         }
         return Err(e);
     }
-    Ok(MoveOutcome::Moved)
+    Ok(MoveOutcome::Moved(verified_root, active_members))
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -646,16 +657,18 @@ async fn place_owned(
     let cat = catalogue(&app, &w, true).await?;
     let target = cat.get(input.worktree_slug.trim())?;
     for _ in 0..3 {
-        let (root, members) = family(&sessions(&app, &cat.project).await?, &session)?;
+        let (_, members) = family(&sessions(&app, &cat.project).await?, &session)?;
         let mut paths = vec![super::fence::identity(target.registered())];
         for member in &members {
             let tree = owner(&cat, directory(member)?).ok_or_else(|| conflict("Session worktree is not owned"))?;
             paths.push(super::fence::identity(tree.registered()));
         }
         let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A session worktree is being removed"))?;
-        if matches!(move_members(&app, &w, &cat, None, &members, target, &principal).await?, MoveOutcome::Moved) {
+        if let MoveOutcome::Moved(root, moved_members) =
+            move_members(&app, &w, &cat, None, Some(&session), &members, target, &principal).await?
+        {
             announce(&app, &w);
-            let ids: Vec<_> = members.iter().map(|m| &m["id"]).collect();
+            let ids: Vec<_> = moved_members.iter().map(|m| &m["id"]).collect();
             return Ok(Json(json!({"rootSessionId": root, "sessionIds": ids, "worktreeSlug": target.slug})));
         }
     }
@@ -867,7 +880,7 @@ async fn remove_owned(
     let removal = async {
         for members in &families {
             principal.live()?;
-            let _ = move_members(&app, &w, &cat, Some(target), members, root, &principal).await?;
+            let _ = move_members(&app, &w, &cat, Some(target), None, members, root, &principal).await?;
             moved.extend(members.iter());
         }
         no_blockers(&app, target, &cat, false).await?;
