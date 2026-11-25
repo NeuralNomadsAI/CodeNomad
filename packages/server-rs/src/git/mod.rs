@@ -35,9 +35,6 @@ use tokio::{process::Command, sync::Semaphore};
 
 const TWO_MIB: usize = 2 * 1024 * 1024;
 static SLOTS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
-pub(crate) async fn slot() -> tokio::sync::SemaphorePermit<'static> {
-    SLOTS.acquire().await.unwrap()
-}
 #[cfg(test)]
 pub(crate) async fn test_git_serial() -> tokio::sync::MutexGuard<'static, ()> {
     static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
@@ -58,6 +55,9 @@ fn missing_git() -> Error {
         "git_required: This Git/worktree operation requires Git in the CodeNomad backend's PATH. Conversations remain available in the explicitly opened folder. Ask your agent to help install Git, then restart CodeNomad after changing PATH.",
         "git_required",
     )
+}
+pub(crate) fn is_missing_git(err: &Error) -> bool {
+    err.0 == Status::SERVICE_UNAVAILABLE && err.1.0.get("code").and_then(Value::as_str) == Some("git_required")
 }
 pub struct Output {
     pub code: i32,
@@ -99,6 +99,8 @@ pub(crate) fn hooks() -> &'static str {
     HOOKS.get().map_or("core.hooksPath=/dev/null", String::as_str)
 }
 pub fn command(dir: &Path, args: &[&str]) -> Command {
+    #[cfg(test)]
+    crate::worktrees::fence_test_trace::record("git command", args.first().copied().unwrap_or(""));
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(dir)
@@ -176,12 +178,12 @@ async fn repo_target(
     slug: &str,
 ) -> Result<(Workspace, crate::worktrees::linked::Tree), Error> {
     let w = app.workspace(id)?;
-    match worktrees::root_only(&w).await? {
-        Some(false) => return Err(missing_git()),
-        Some(true) => return Err(bad("Workspace is not a Git repository")),
-        None => {}
-    }
-    let cat = crate::worktrees::linked::catalogue(app, &w, false).await?;
+    let local = match crate::worktrees::linked::probe_root_checkout(&w).await? {
+        crate::worktrees::linked::RootCheckout::MissingGit => return Err(missing_git()),
+        crate::worktrees::linked::RootCheckout::NonGit => return Err(bad("Workspace is not a Git repository")),
+        crate::worktrees::linked::RootCheckout::Git(res) => *res?,
+    };
+    let cat = crate::worktrees::linked::catalogue_with_local(app, &w, false, local).await?;
     guard_config(&cat.main).await?;
     let tree = cat.get(slug)?;
     if !tree.direct_folder() {

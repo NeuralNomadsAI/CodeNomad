@@ -440,8 +440,23 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         None => None,
     };
+    let placement_verified = if list_slug.is_some() && native_directory == Some(directory) {
+        if directory == opened {
+            true
+        } else {
+            let scope = app.scope.clone();
+            let dir = directory.to_owned();
+            tokio::task::spawn_blocking(move || {
+                crate::files::paths::canonical(&scope, &dir).is_some_and(|path| path.starts_with(&scope))
+            })
+            .await
+            .unwrap_or(false)
+        }
+    } else {
+        false
+    };
     if (allow_subfolder && input_checkout.is_none())
-        || (!allow_subfolder && !crate::worktrees::owns(&app, &workspace, directory).await)
+        || (!allow_subfolder && !placement_verified && !crate::worktrees::owns(&app, &workspace, directory).await)
     {
         return Err(foreign());
     }
@@ -492,7 +507,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             // `x-codenomad-location` only needs to belong to this workspace and agree with any
             // explicit query selector, NOT with the target session's own linked worktree.
             let ctx_dir = context["directory"].as_str().ok_or_else(invalid)?;
-            if !crate::worktrees::owns(&app, &workspace, ctx_dir).await {
+            let ctx_verified = placement_verified && ctx_dir == directory;
+            if !ctx_verified && !crate::worktrees::owns(&app, &workspace, ctx_dir).await {
                 return Err(foreign());
             }
             if let Some(req) = requested.as_deref()

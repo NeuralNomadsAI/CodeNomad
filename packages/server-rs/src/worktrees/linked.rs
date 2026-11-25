@@ -2,6 +2,7 @@
 pub use super::inventory::{
     Catalogue, EventCache, Tree, catalogue, event_catalogue, forget, invalidate, readable_checkout, scope,
 };
+pub(crate) use super::inventory::{RootCheckout, catalogue_with_local, probe_root_checkout};
 use crate::{App, Error, Shared, Workspace, error, files, git, opencode::proxy};
 use axum::{
     Extension, Json,

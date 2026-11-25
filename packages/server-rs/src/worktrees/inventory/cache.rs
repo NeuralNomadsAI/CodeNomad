@@ -342,7 +342,7 @@ async fn cached_catalogue(
                             .ok()
                             .map(Arc::new)
                     } else {
-                        catalogue_in_at(&app, &w, false, false, Some(&endpoint), Duration::from_secs(12))
+                        catalogue_in_at(&app, &w, false, false, Some(&endpoint), Duration::from_secs(12), None)
                             .await
                             .ok()
                             .map(Arc::new)

@@ -43,7 +43,7 @@ struct ConfigStamp {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct Physical {
+pub(crate) struct Physical {
     root: PathBuf,
     common: PathBuf,
     admin: PathBuf,
@@ -159,6 +159,25 @@ impl Physical {
                 _ => false,
             }
     }
+    /// Also verifies that `opened` still canonicalizes to itself and no nested `.git` marker
+    /// appeared between `opened` and `self.root` after a pre-checked probe.
+    fn live_for(&self, opened: &Path) -> bool {
+        if !self.live() || dunce::canonicalize(opened).ok().as_deref() != Some(opened) {
+            return false;
+        }
+        let mut cur = opened.to_path_buf();
+        while cur != self.root {
+            if !std::fs::symlink_metadata(cur.join(".git"))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            {
+                return false;
+            }
+            if !cur.pop() {
+                return false;
+            }
+        }
+        true
+    }
 }
 /// The checkout's `.git`, its `gitdir:` admin directory, or an administrative backlink
 /// (`gitdir` / `commondir`) is missing (`ENOENT`, TS `readCheckoutIdentity` / `native-worktrees.ts:135-150`).
@@ -195,11 +214,10 @@ pub async fn readable_checkout(path: &Path) -> bool {
     if checkout(path).await.is_ok() {
         return true;
     }
-    let _slot = crate::git::slot().await;
-    let mut cmd = crate::git::command(path, &["rev-parse", "--git-common-dir"]);
-    tokio::time::timeout(std::time::Duration::from_secs(3), cmd.output()).await.ok().and_then(Result::ok).is_some_and(
-        |out| !out.status.success() && String::from_utf8_lossy(&out.stderr).contains("not a git repository"),
-    )
+    crate::git::run(path, &["rev-parse", "--git-common-dir"], 16 * 1024)
+        .await
+        .ok()
+        .is_some_and(|out| out.not_a_repository())
 }
 
 fn linked_markers(root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 3], Error> {
@@ -265,10 +283,26 @@ fn pre_config_stamps(path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigSta
                     .ok()
                     .and_then(|t| t.trim_end().strip_prefix("gitdir: "))
                     .filter(|s| !s.is_empty())?;
-                let admin = dunce::canonicalize(cur.join(gitdir)).ok()?;
+                let admin_path = if Path::new(gitdir).is_absolute() {
+                    if !files::paths::local_absolute(gitdir) {
+                        return None;
+                    }
+                    PathBuf::from(gitdir)
+                } else {
+                    cur.join(gitdir)
+                };
+                let admin = dunce::canonicalize(&admin_path).ok()?;
                 let common = if let Ok(cb) = small(&admin.join("commondir")) {
                     let ct = std::str::from_utf8(&cb).ok()?.trim_end();
-                    dunce::canonicalize(admin.join(ct)).ok()?
+                    let common_path = if Path::new(ct).is_absolute() {
+                        if !files::paths::local_absolute(ct) {
+                            return None;
+                        }
+                        PathBuf::from(ct)
+                    } else {
+                        admin.join(ct)
+                    };
+                    dunce::canonicalize(&common_path).ok()?
                 } else {
                     admin.clone()
                 };
@@ -284,18 +318,16 @@ fn pre_config_stamps(path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigSta
     }
 }
 
-async fn checkout(path: &Path) -> Result<Physical, Error> {
-    // Capture config stamps BEFORE `git rev-parse` (TS `git-worktrees.ts:92-135`) so a mid-probe
-    // config edit cannot pair an old `rev-parse` root with a newly written config stamp.
-    let pre = tokio::task::spawn_blocking({
-        let path = path.to_path_buf();
-        move || pre_config_stamps(&path)
-    })
-    .await
-    .ok()
-    .flatten();
-    let text =
-        git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]).await?;
+pub(crate) enum RootCheckout {
+    Git(Result<Box<Physical>, Error>),
+    NonGit,
+    MissingGit,
+}
+
+async fn parse_checkout(
+    text: String,
+    pre: Option<(PathBuf, PathBuf, [Option<ConfigStamp>; 2])>,
+) -> Result<Physical, Error> {
     tokio::task::spawn_blocking(move || {
         let mut lines = text.lines();
         let root = lines.next().and_then(physical).ok_or_else(native_error)?;
@@ -340,6 +372,53 @@ async fn checkout(path: &Path) -> Result<Physical, Error> {
     })
     .await
     .map_err(|_| native_error())?
+}
+
+/// Single `git::run` root probe (`SLOTS` + 15 s) that simultaneously classifies
+/// non-Git / missing-Git workspaces and captures the root `Physical` checkout so
+/// `catalogue` / `repo_target` / `worktrees::list` never spawn `rev-parse` twice.
+pub(crate) async fn probe_root_checkout(workspace: &Workspace) -> Result<RootCheckout, Error> {
+    let path = workspace.path.clone();
+    let (canonical_ok, pre) = tokio::task::spawn_blocking(move || {
+        let ok = dunce::canonicalize(&path).ok().as_ref() == Some(&path);
+        let pre = ok.then(|| pre_config_stamps(&path)).flatten();
+        (ok, pre)
+    })
+    .await
+    .unwrap_or((false, None));
+    if !canonical_ok {
+        crate::bench::route_trace(format_args!("root-proof canonical path changed"));
+        return Err(super::probe_error());
+    }
+    let args = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"];
+    match crate::git::run(&workspace.path, &args, 128 * 1024).await {
+        Ok(out) if out.code == 0 => Ok(RootCheckout::Git(parse_checkout(out.text(), pre).await.map(Box::new))),
+        Ok(out) if out.not_a_repository() => Ok(RootCheckout::NonGit),
+        Err(err) if crate::git::is_missing_git(&err) => Ok(RootCheckout::MissingGit),
+        Ok(out) => {
+            crate::bench::route_trace(format_args!("root-proof git exited {}", out.code));
+            Err(super::probe_error())
+        }
+        Err(_) => {
+            crate::bench::route_trace(format_args!("root-proof git failed"));
+            Err(super::probe_error())
+        }
+    }
+}
+
+async fn checkout(path: &Path) -> Result<Physical, Error> {
+    // Capture config stamps BEFORE `git rev-parse` (TS `git-worktrees.ts:92-135`) so a mid-probe
+    // config edit cannot pair an old `rev-parse` root with a newly written config stamp.
+    let pre = tokio::task::spawn_blocking({
+        let path = path.to_path_buf();
+        move || pre_config_stamps(&path)
+    })
+    .await
+    .ok()
+    .flatten();
+    let text =
+        git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]).await?;
+    parse_checkout(text, pre).await
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tree {
@@ -565,6 +644,7 @@ async fn root_at(
     scoped: bool,
     endpoint: Option<&Arc<crate::opencode::Endpoint>>,
     timeout: std::time::Duration,
+    prechecked_local: Option<Physical>,
 ) -> Result<Root, Error> {
     let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
     let here = catalogue_native(
@@ -580,7 +660,10 @@ async fn root_at(
     )
     .await?;
     let project = here["project"]["id"].as_str().filter(|p| crate::opencode::valid_id(p)).ok_or_else(native_error)?;
-    let local = checkout(&w.path).await?;
+    let local = match prechecked_local {
+        Some(local) => local,
+        None => checkout(&w.path).await?,
+    };
     let main_raw = here["project"]["canonical"].as_str().map(str::to_owned).ok_or_else(native_error)?;
     let here_dir_raw = here["directory"].as_str().map(str::to_owned);
     let project_dir_raw = here["project"]["directory"].as_str().map(str::to_owned);
@@ -601,8 +684,9 @@ async fn root_at(
     {
         return Err(conflict("Workspace and native project do not share a checkout"));
     }
+    let opened_path = w.path.clone();
     let (live_ok, local, main) = tokio::task::spawn_blocking(move || {
-        let ok = local.live() && main.live();
+        let ok = local.live_for(&opened_path) && main.live();
         (ok, local, main)
     })
     .await
@@ -613,17 +697,32 @@ async fn root_at(
     Ok(Root { project: project.into(), local, main })
 }
 /// Root-only session mutations need the opened checkout's proof, independent of sibling inventory size.
-pub async fn root_supported(app: &App, w: &Workspace) -> bool {
-    root_at(app, w, true, None, std::time::Duration::from_secs(12)).await.is_ok()
+pub(crate) async fn root_supported_with(app: &App, w: &Workspace, local: Physical) -> bool {
+    root_at(app, w, true, None, std::time::Duration::from_secs(12), Some(local)).await.is_ok()
 }
 pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalogue, Error> {
-    catalogue_in(app, w, refresh, true).await
+    catalogue_in(app, w, refresh, true, None).await
+}
+pub(crate) async fn catalogue_with_local(
+    app: &App,
+    w: &Workspace,
+    refresh: bool,
+    local: Physical,
+) -> Result<Catalogue, Error> {
+    catalogue_in(app, w, refresh, true, Some(local)).await
 }
 
-async fn catalogue_in(app: &App, w: &Workspace, refresh: bool, scoped: bool) -> Result<Catalogue, Error> {
+async fn catalogue_in(
+    app: &App,
+    w: &Workspace,
+    refresh: bool,
+    scoped: bool,
+    prechecked_local: Option<Physical>,
+) -> Result<Catalogue, Error> {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(12);
     let endpoint = app.native.acquire(deadline).await.map_err(|_| native_error())?;
-    catalogue_in_at(app, w, refresh, scoped, Some(&endpoint), std::time::Duration::from_secs(12)).await
+    catalogue_in_at(app, w, refresh, scoped, Some(&endpoint), std::time::Duration::from_secs(12), prechecked_local)
+        .await
 }
 
 pub(crate) async fn catalogue_at(
@@ -633,7 +732,18 @@ pub(crate) async fn catalogue_at(
     endpoint: Option<&Arc<crate::opencode::Endpoint>>,
     timeout: std::time::Duration,
 ) -> Result<Catalogue, Error> {
-    catalogue_in_at(app, w, refresh, true, endpoint, timeout).await
+    catalogue_at_with_local(app, w, refresh, endpoint, timeout, None).await
+}
+
+pub(crate) async fn catalogue_at_with_local(
+    app: &App,
+    w: &Workspace,
+    refresh: bool,
+    endpoint: Option<&Arc<crate::opencode::Endpoint>>,
+    timeout: std::time::Duration,
+    prechecked_local: Option<Physical>,
+) -> Result<Catalogue, Error> {
+    catalogue_in_at(app, w, refresh, true, endpoint, timeout, prechecked_local).await
 }
 
 async fn catalogue_in_at(
@@ -643,8 +753,9 @@ async fn catalogue_in_at(
     scoped: bool,
     endpoint: Option<&Arc<crate::opencode::Endpoint>>,
     timeout: std::time::Duration,
+    prechecked_local: Option<Physical>,
 ) -> Result<Catalogue, Error> {
-    let Root { project, local, main } = root_at(app, w, scoped, endpoint, timeout).await?;
+    let Root { project, local, main } = root_at(app, w, scoped, endpoint, timeout, prechecked_local).await?;
     // Snapshot effective Git config with `--includes` when `include.path` is present so mid-scan
     // edits inside included config files are detected before publication (TS `git-worktrees.ts:104-135`).
     let effective_config = crate::git::run(&local.root, &["config", "--null", "--list", "--includes"], 4 << 20)
