@@ -859,14 +859,28 @@ impl Preferences {
     pub fn poll(&mut self) -> bool {
         let disconnected = self.observe_transport_drops() | self.take_invalidations();
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(last_revs) = self.close_drain.as_ref().map(|drain| drain.last_revs) {
+        if let Some((last_revs, shutdown, expired)) = {
+            let (stall_budget, total_budget) = self.drain_budgets();
+            self.close_drain.as_ref().map(|drain| {
+                (
+                    drain.last_revs,
+                    drain.shutdown,
+                    drain.is_expired(stall_budget, total_budget),
+                )
+            })
+        } {
             let rev_changed = self.preferences_revisions() != last_revs;
-            if disconnected || rev_changed {
+            if !expired && (disconnected || rev_changed) {
                 self.prepare_all_drains(rev_changed, false);
             }
-            let (changed, dropped_mid_poll, settled) = self.poll_documents_inner(false);
-            let drain_changed =
-                self.step_close_drain(disconnected, rev_changed, dropped_mid_poll, settled);
+            let (changed, dropped_mid_poll, unconfirmed_settled) =
+                self.poll_documents_inner(!shutdown, !expired);
+            let drain_changed = self.step_close_drain(
+                disconnected,
+                rev_changed,
+                dropped_mid_poll,
+                unconfirmed_settled,
+            );
             return disconnected | changed | dropped_mid_poll | drain_changed;
         }
         let polled = self.poll_documents();
@@ -911,11 +925,15 @@ impl Preferences {
     }
 
     fn poll_documents(&mut self) -> bool {
-        let (changed, dropped, _) = self.poll_documents_inner(true);
+        let (changed, dropped, _) = self.poll_documents_inner(true, true);
         changed | dropped
     }
 
-    fn poll_documents_inner(&mut self, revalidate_idle: bool) -> (bool, bool, bool) {
+    fn poll_documents_inner(
+        &mut self,
+        revalidate_idle: bool,
+        allow_dispatch: bool,
+    ) -> (bool, bool, bool) {
         let install = self.opencode_install.poll();
         if self.authentication_required {
             return (install, false, false);
@@ -927,11 +945,17 @@ impl Preferences {
         let seen_drops = self.seen_drops_sum(&active_client_ids);
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         #[cfg(not(target_arch = "wasm32"))]
+        let (config_unconfirmed, state_unconfirmed, server_unconfirmed) = (
+            self.config.has_unconfirmed(),
+            self.state.has_unconfirmed(),
+            self.server.has_unconfirmed(),
+        );
+        #[cfg(not(target_arch = "wasm32"))]
         let (poll_config, poll_state, poll_server) = (
-            revalidate_idle || self.config.has_unconfirmed(),
-            revalidate_idle || self.state.has_unconfirmed(),
+            revalidate_idle || config_unconfirmed,
+            revalidate_idle || state_unconfirmed,
             (self.show_server || self.show_environment || self.server.unsettled())
-                && (revalidate_idle || self.server.has_unconfirmed()),
+                && (revalidate_idle || server_unconfirmed),
         );
         #[cfg(target_arch = "wasm32")]
         let (poll_config, poll_state, poll_server) = (
@@ -939,6 +963,15 @@ impl Preferences {
             true,
             self.show_server || self.show_environment || self.server.unsettled(),
         );
+        #[cfg(not(target_arch = "wasm32"))]
+        let (config_dispatch, state_dispatch, server_dispatch) = (
+            allow_dispatch || !config_unconfirmed,
+            allow_dispatch || !state_unconfirmed,
+            allow_dispatch || !server_unconfirmed,
+        );
+        #[cfg(target_arch = "wasm32")]
+        let (config_dispatch, state_dispatch, server_dispatch) =
+            (allow_dispatch, allow_dispatch, allow_dispatch);
         let (config_changed, config_settled) = if poll_config {
             self.config.poll(
                 &backend,
@@ -946,6 +979,7 @@ impl Preferences {
                 &active_client_ids,
                 seen_drops,
                 self.transport_lost,
+                config_dispatch,
                 &main,
                 &window,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -970,6 +1004,7 @@ impl Preferences {
                 &active_client_ids,
                 seen_drops,
                 self.transport_lost,
+                state_dispatch,
                 &main,
                 &window,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -985,6 +1020,7 @@ impl Preferences {
                 &active_client_ids,
                 seen_drops,
                 self.transport_lost,
+                server_dispatch,
                 &main,
                 &window,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -1001,12 +1037,17 @@ impl Preferences {
                 .memory
                 .poll_review(&backend, self.provider_target.as_ref(), &main, &window)
             | install;
-        let settled = config_settled | state_settled | server_settled;
+        #[cfg(not(target_arch = "wasm32"))]
+        let unconfirmed_settled = (config_unconfirmed && config_settled)
+            | (state_unconfirmed && state_settled)
+            | (server_unconfirmed && server_settled);
+        #[cfg(target_arch = "wasm32")]
+        let unconfirmed_settled = config_settled | state_settled | server_settled;
         let dropped_mid_poll = self.observe_transport_drops();
         if changed {
             self.revision += 1;
         }
-        (changed, dropped_mid_poll, settled)
+        (changed, dropped_mid_poll, unconfirmed_settled)
     }
 
     pub fn locale(&self) -> Option<&'static str> {

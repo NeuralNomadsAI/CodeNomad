@@ -1014,10 +1014,15 @@ fn conversation_preferences_render_presets_headers_and_all_21_rows_in_solid_orde
 #[test]
 fn close_drain_window_shows_status_then_transitions_to_save_failed_alert() {
     let shared = Rc::new(RefCell::new(Preferences::default()));
-    shared.borrow_mut().fixture_locale("en");
+    {
+        let mut prefs = shared.borrow_mut();
+        prefs.fixture_locale("en");
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
     let spec = close_drain_spec("en");
     let mut rt = Runtime::new(
-        CloseDrainWindow::new(shared.clone()),
+        CloseDrainWindow::new(shared.clone(), None),
         spec.view,
         spec.size,
         Env::new(false, 1.0),
@@ -1033,6 +1038,10 @@ fn close_drain_window_shows_status_then_transitions_to_save_failed_alert() {
         "draining window must not render an alert before failure: {draining_tree}"
     );
 
+    // Manually dismissing the loading window while a write is still unconfirmed emits a warning.
+    shared.borrow_mut().set_locale("he");
+    assert_eq!(rt.state.dismiss_warning(), Some("en"));
+
     shared.borrow_mut().fixture_save_warning("en");
     rt.update(|s, tx| {
         assert!(spec.poll.unwrap()(s, 0.0, tx));
@@ -1045,4 +1054,6 @@ fn close_drain_window_shows_status_then_transitions_to_save_failed_alert() {
             && failed_tree.contains("\"name\":\"OK\",\"role\":\"button\""),
         "failed drain must render the save-failed alert and OK button: {failed_tree}"
     );
+    // Once the alert has already been shown, dismissing does not open a duplicate warning.
+    assert_eq!(rt.state.dismiss_warning(), None);
 }

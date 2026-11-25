@@ -56,6 +56,7 @@ type FlightOutcome = (bool, bool, Skip, (u64, u64, u64, u64), Option<Value>);
 struct Flight {
     operation: Operation,
     client: Http,
+    active_client_ids: Vec<String>,
     reply: Receiver<FlightOutcome>,
     transport_epoch: u64,
     #[cfg(not(target_arch = "wasm32"))]

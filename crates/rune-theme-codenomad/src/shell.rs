@@ -103,7 +103,17 @@ pub fn app<S: 'static>(
     native_chrome: bool,
     locale: &'static str,
 ) -> App<S> {
-    let mut app = App::new(spec).on_close(closing).on_quit(closing);
+    app_with_quit(spec, closing, closing, native_chrome, locale)
+}
+
+pub fn app_with_quit<S: 'static>(
+    spec: AppSpec<S>,
+    closing: fn(&mut S, &mut Tx),
+    quitting: fn(&mut S, &mut Tx),
+    native_chrome: bool,
+    locale: &'static str,
+) -> App<S> {
+    let mut app = App::new(spec).on_close(closing).on_quit(quitting);
     if native_chrome {
         native_locale(locale);
         app = app.titlebar(rune::Titlebar::new(titlebar_height()));

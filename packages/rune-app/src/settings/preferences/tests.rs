@@ -768,6 +768,10 @@ fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfi
             "background close drain must wait for settlement before clearing"
         );
         assert_eq!(warned, (!saved).then_some("en"));
+        assert!(
+            !shared.borrow_mut().take_notification_failure(),
+            "failed close drain must not emit a duplicate generic toast"
+        );
         assert_eq!(
             shared.borrow().locale(),
             Some(if saved { "he" } else { "en" })
@@ -776,9 +780,9 @@ fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfi
     }
 
     // With a completely silent server, closing returns immediately without blocking or holding
-    // RefCell, wakes once the drain budget expires, and emits the save-failed warning.
+    // RefCell, wakes via the cancellable deadline timer (without polling), and emits the warning.
     let (silent_listener, mut silent_prefs) = platform::block_on(fixture());
-    let (wake_tx, wake_rx) = bounded(4);
+    let (wake_tx, wake_rx) = bounded(8);
     silent_prefs.main_wake = Some(std::sync::Arc::new(move || {
         let _ = wake_tx.try_send(());
     }));
@@ -794,12 +798,17 @@ fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfi
     assert_eq!(immediate_warn, None);
     assert!(shared_silent.try_borrow_mut().is_ok());
     assert!(shared_silent.borrow().has_close_drain());
+    // Consume the initial begin_close_drain wake so the next wake must come from the deadline timer.
+    while wake_rx.try_recv().is_ok() {}
     platform::block_on(async {
         let _held_patch = request(&silent_listener).await;
         let mut warning = None;
         timeout(Duration::from_secs(2), async {
             while shared_silent.borrow().has_close_drain() {
-                let _ = timeout(Duration::from_millis(40), wake_rx.recv()).await;
+                wake_rx
+                    .recv()
+                    .await
+                    .expect("deadline timer must wake UI without fallback polling");
                 let mut prefs = shared_silent.borrow_mut();
                 prefs.poll();
                 if let Some(locale) = prefs.take_save_warning() {
@@ -810,6 +819,7 @@ fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfi
         .await
         .unwrap();
         assert_eq!(warning, Some("en"));
+        assert!(!shared_silent.borrow_mut().take_notification_failure());
     });
 
     // Reopening Preferences cancels any active close drain without firing a stale warning.
@@ -832,7 +842,7 @@ fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfi
     handoff_prefs.set_locale("he");
     handoff_prefs.poll();
     assert_eq!(
-        handoff_prefs.begin_close_drain(),
+        handoff_prefs.begin_close_drain(true),
         crate::settings::preferences::CloseOutcome::Draining
     );
     let (drain_wake_tx, drain_wake_rx) = bounded(8);
@@ -854,6 +864,100 @@ fn settings_window_close_is_non_blocking_and_warns_only_if_the_choice_is_unconfi
         assert_eq!(handoff_prefs.take_save_warning(), None);
         assert_eq!(handoff_prefs.locale(), Some("he"));
     });
+
+    // A delayed wake past the total deadline must NOT dispatch a newly queued PATCH before failing.
+    let (expired_listener, mut expired_prefs) = platform::block_on(fixture());
+    expired_prefs.set_drain_budgets(Duration::from_millis(50), Duration::from_millis(80));
+    expired_prefs.set_locale("he");
+    expired_prefs.poll();
+    platform::block_on(async {
+        let first_write = request(&expired_listener).await;
+        assert_eq!(first_write.body, json!({"settings":{"locale":"he"}}));
+        // Queue a second Config write while the first PATCH is still in flight.
+        expired_prefs.set_locale("fr");
+        assert_eq!(
+            expired_prefs.begin_close_drain(true),
+            crate::settings::preferences::CloseOutcome::Draining
+        );
+        platform::sleep(Duration::from_millis(100)).await;
+        // Reply 200 to the first PATCH right as the deadline has already expired: poll() may
+        // consume the arrived reply, but must NOT dispatch a new PATCH for "fr" before failing.
+        first_write
+            .reply(200, json!({"settings":{"locale":"he"}}))
+            .await;
+        platform::sleep(Duration::from_millis(20)).await;
+        expired_prefs.poll();
+        assert!(!expired_prefs.has_close_drain());
+        assert_eq!(expired_prefs.take_save_warning(), Some("he"));
+        assert!(
+            timeout(Duration::from_millis(80), expired_listener.accept())
+                .await
+                .is_err(),
+            "expired close drain must not dispatch a follow-up PATCH"
+        );
+    });
+
+    // A non-shutdown Preferences close drain on Config still allows unrelated State SSE refreshes.
+    let (idle_listener, mut idle_prefs) = platform::block_on(fixture());
+    idle_prefs.set_drain_budgets(Duration::from_secs(5), Duration::from_secs(10));
+    idle_prefs.set_locale("he");
+    assert_eq!(
+        idle_prefs.begin_close_drain(false),
+        crate::settings::preferences::CloseOutcome::Draining
+    );
+    platform::block_on(async {
+        let held_config_patch = request(&idle_listener).await;
+        assert_eq!(
+            held_config_patch.first,
+            "PATCH /api/storage/config/ui HTTP/1.1"
+        );
+        idle_prefs.invalidate_from_sse(Owner::State);
+        idle_prefs.poll();
+        let state_read = request(&idle_listener).await;
+        assert_eq!(
+            state_read.first,
+            "GET /api/storage/state/ui?authoritative=1 HTTP/1.1"
+        );
+        state_read
+            .reply(200, json!({"appearancePreferences":{"mode":"dark"}}))
+            .await;
+        wait_until(|| {
+            idle_prefs.poll();
+            idle_prefs.mode() == "dark"
+        })
+        .await;
+        assert!(idle_prefs.has_close_drain());
+        held_config_patch
+            .reply(200, json!({"settings":{"locale":"he"}}))
+            .await;
+        wait_until(|| {
+            idle_prefs.poll();
+            !idle_prefs.has_close_drain()
+        })
+        .await;
+        assert_eq!(idle_prefs.take_save_warning(), None);
+        assert_eq!(idle_prefs.locale(), Some("he"));
+    });
+
+    // Explicit app quit (flush_on_quit) drains both an in-flight PATCH and a queued follow-up edit.
+    let (quit_listener, mut quit_prefs) = platform::block_on(fixture());
+    quit_prefs.set_locale("he");
+    quit_prefs.poll();
+    let (quit_done, quit_rx) = bounded(1);
+    platform::spawn(async move {
+        let first = request(&quit_listener).await;
+        assert_eq!(first.body, json!({"settings":{"locale":"he"}}));
+        platform::sleep(Duration::from_millis(40)).await;
+        first.reply(200, json!({"settings":{"locale":"he"}})).await;
+        let second = request(&quit_listener).await;
+        assert_eq!(second.body, json!({"settings":{"locale":"fr"}}));
+        second.reply(200, json!({"settings":{"locale":"fr"}})).await;
+        quit_done.send(()).await.unwrap();
+    });
+    quit_prefs.set_locale("fr");
+    assert!(quit_prefs.flush_on_quit());
+    assert!(quit_rx.try_recv().is_ok());
+    assert_eq!(quit_prefs.locale(), Some("fr"));
 }
 
 async fn request(listener: &TcpListener) -> Request {

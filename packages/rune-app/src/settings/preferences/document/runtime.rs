@@ -243,6 +243,7 @@ impl Document {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::settings::preferences) fn poll(
         &mut self,
         backend: &Backend,
@@ -250,6 +251,7 @@ impl Document {
         active_client_ids: &[String],
         seen_drops: u64,
         prefs_transport_lost: bool,
+        allow_dispatch: bool,
         main: &Option<rune::Waker>,
         window: &Option<rune::Waker>,
         #[cfg(not(target_arch = "wasm32"))] drain_wake: &Arc<std::sync::Mutex<Option<rune::Waker>>>,
@@ -300,7 +302,8 @@ impl Document {
                         self.mark_transport_lost();
                         self.invalidate();
                     } else if flight_client.preferences_revision(owner) != read_rev
-                        || flight_client.transport_drops_sum(active_client_ids) != read_drops
+                        || flight_client.transport_drops_sum(&flight.active_client_ids)
+                            != read_drops
                     {
                         self.invalidate();
                     }
@@ -352,7 +355,7 @@ impl Document {
                             || flight_client.has_unattested_stream_drop());
                     let rev_changed = flight_client.preferences_revision(owner) != read_rev;
                     let drops_changed =
-                        flight_client.transport_drops_sum(active_client_ids) != read_drops;
+                        flight_client.transport_drops_sum(&flight.active_client_ids) != read_drops;
                     if revoked || uncertain_transport {
                         self.mark_transport_lost();
                         self.invalidate();
@@ -389,6 +392,9 @@ impl Document {
                 changed = true;
                 settled = true;
             }
+        }
+        if !allow_dispatch {
+            return (changed, settled);
         }
         let writes_allowed = !self.read.failed && self.confirmed_epoch == self.transport_epoch;
         let atomic = backend.client.supports_atomic_settings_patches();
@@ -505,9 +511,11 @@ impl Document {
         let snapshot_rev = self.snapshot_rev;
         #[cfg(not(target_arch = "wasm32"))]
         let started_rev = backend.client.preferences_revision(owner);
+        let active_client_ids = active_client_ids.to_vec();
         self.flight = Some(Flight {
             operation,
             client: backend.client.clone(),
+            active_client_ids: active_client_ids.clone(),
             reply,
             transport_epoch,
             #[cfg(not(target_arch = "wasm32"))]
@@ -517,7 +525,6 @@ impl Document {
         let (backend, main, window) = (backend.clone(), main.clone(), window.clone());
         #[cfg(not(target_arch = "wasm32"))]
         let drain_wake = Arc::clone(drain_wake);
-        let active_client_ids = active_client_ids.to_vec();
         #[cfg(test)]
         let pre_patch_gate = if patch.is_some() {
             self.pre_patch_gate.take()
@@ -634,8 +641,11 @@ impl Document {
                 wake();
             }
             #[cfg(not(target_arch = "wasm32"))]
-            if let Some(wake) = drain_wake.lock().unwrap_or_else(|e| e.into_inner()).clone() {
-                wake();
+            {
+                let wake = drain_wake.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                if let Some(wake) = wake {
+                    wake();
+                }
             }
         });
         (true, settled)

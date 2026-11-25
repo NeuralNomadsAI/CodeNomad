@@ -282,11 +282,13 @@ pub fn preferences_close_drain<S: 'static>(
     state: S,
     spec: fn(&'static str) -> rune::AppSpec<S>,
     close: fn(&mut S, &mut rune::Tx),
+    quit: fn(&mut S, &mut rune::Tx),
 ) {
     rune::open_window(
-        rune::WindowSpec::new("settings-save-warning", spec(locale))
+        rune::WindowSpec::new("settings-close-drain", spec(locale))
             .state(state)
-            .on_close(close),
+            .on_close(close)
+            .on_quit(quit),
     );
 }
 #[cfg(feature = "test-support")]

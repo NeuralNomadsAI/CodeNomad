@@ -351,7 +351,7 @@ fn main() {
     run_app();
 }
 fn run_app() {
-    platform::titlebar::run(
+    platform::titlebar::run_with_quit(
         AppSpec {
             setup: Some(setup),
             poll: Some(poll),
@@ -377,6 +377,10 @@ fn run_app() {
         },
         |s, tx| {
             settings::close(s);
+            workspace::finish(s, tx);
+        },
+        |s, tx| {
+            settings::quit(s);
             workspace::finish(s, tx);
         },
     );

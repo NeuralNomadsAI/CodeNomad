@@ -11,10 +11,19 @@ pub fn available() -> bool {
     cfg!(target_os = "windows")
 }
 
+#[cfg(feature = "test-support")]
 pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
+    run_with_quit(spec, closing, closing);
+}
+
+pub fn run_with_quit(
+    spec: AppSpec<State>,
+    closing: fn(&mut State, &mut Tx),
+    quitting: fn(&mut State, &mut Tx),
+) {
     #[cfg(any(target_os = "windows", target_arch = "wasm32"))]
     let init = spec.init;
-    let app = shell::app(spec, closing, available(), locale());
+    let app = shell::app_with_quit(spec, closing, quitting, available(), locale());
     #[cfg(target_os = "windows")]
     let app = {
         let delivery = crate::shell::notifications::native_delivery();

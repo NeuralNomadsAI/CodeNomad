@@ -53,7 +53,7 @@ pub(crate) use delivery::{notification_fixture, notification_test_config};
 pub(crate) use shortcuts::{with_shortcut_label, with_shortcut_label_excluding};
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
-pub(crate) use window::{close, direct_entry, entries, open_providers};
+pub(crate) use window::{close, direct_entry, entries, open_providers, quit};
 #[cfg(not(target_arch = "wasm32"))]
 use window::{launch_preferences, settle_close, warn_save_failed};
 
@@ -293,6 +293,13 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         shared.revision != std::mem::replace(&mut s.settings.last_revision, shared.revision);
     let (reconnected, missions) = shared.mission_changes();
     let locale = shared.locale().unwrap_or_else(strings::locale);
+    #[cfg(not(target_arch = "wasm32"))]
+    let notify_failure = if shared.has_close_drain() {
+        false
+    } else {
+        shared.take_notification_failure()
+    };
+    #[cfg(target_arch = "wasm32")]
     let notify_failure = shared.take_notification_failure();
     let update = shared.notification_update.take();
     #[cfg(not(target_arch = "wasm32"))]

@@ -221,16 +221,28 @@ pub(in crate::settings) fn save_warning(locale: &&'static str, cx: &mut Cx<&'sta
 pub(in crate::settings) struct CloseDrainWindow {
     shared: std::rc::Rc<std::cell::RefCell<super::Preferences>>,
     failed_locale: Option<&'static str>,
+    _host: Option<crate::platform::LocalHost>,
 }
 
 impl CloseDrainWindow {
     pub(in crate::settings) fn new(
         shared: std::rc::Rc<std::cell::RefCell<super::Preferences>>,
+        host: Option<crate::platform::LocalHost>,
     ) -> Self {
         Self {
             shared,
             failed_locale: None,
+            _host: host,
         }
+    }
+
+    pub(in crate::settings) fn dismiss_warning(&self) -> Option<&'static str> {
+        let mut prefs = self.shared.borrow_mut();
+        let unconfirmed = self.failed_locale.is_none()
+            && (prefs.has_unconfirmed() || prefs.take_save_warning().is_some());
+        let locale = prefs.locale().unwrap_or_else(crate::strings::locale);
+        prefs.cancel_close_drain();
+        unconfirmed.then_some(locale)
     }
 }
 
@@ -263,7 +275,18 @@ pub(in crate::settings) fn close_drain_spec(locale: &'static str) -> AppSpec<Clo
 }
 
 pub(in crate::settings) fn close_drain_closed(s: &mut CloseDrainWindow, _: &mut rune::Tx) {
-    s.shared.borrow_mut().cancel_close_drain();
+    if let Some(locale) = s.dismiss_warning() {
+        super::super::warn_save_failed(locale);
+    }
+}
+
+pub(in crate::settings) fn close_drain_quit(s: &mut CloseDrainWindow, _: &mut rune::Tx) {
+    if s.failed_locale.is_none() {
+        let mut prefs = s.shared.borrow_mut();
+        if prefs.has_unconfirmed() {
+            let _ = prefs.flush_on_quit();
+        }
+    }
 }
 
 fn close_drain_view(s: &CloseDrainWindow, cx: &mut Cx<CloseDrainWindow>) -> El {

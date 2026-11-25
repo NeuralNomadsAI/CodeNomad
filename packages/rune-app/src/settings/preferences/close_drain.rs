@@ -14,20 +14,28 @@ pub(super) struct CloseDrain {
     started: Instant,
     last_progress: Instant,
     pub(super) last_revs: Option<(u64, u64, u64)>,
+    pub(super) shutdown: bool,
     settled_ops: u32,
     deadline_cancel: Option<Sender<()>>,
 }
 
 impl CloseDrain {
-    fn new(last_revs: Option<(u64, u64, u64)>, settled_ops: u32) -> Self {
+    fn new(last_revs: Option<(u64, u64, u64)>, shutdown: bool, settled_ops: u32) -> Self {
         let now = Instant::now();
         Self {
             started: now,
             last_progress: now,
             last_revs,
+            shutdown,
             settled_ops,
             deadline_cancel: None,
         }
+    }
+
+    pub(super) fn is_expired(&self, stall_budget: Duration, total_budget: Duration) -> bool {
+        self.started.elapsed() >= total_budget
+            || self.last_progress.elapsed() >= stall_budget
+            || self.settled_ops >= 16
     }
 
     fn arm_deadline(
@@ -57,7 +65,7 @@ impl CloseDrain {
 }
 
 impl Preferences {
-    fn drain_budgets(&self) -> (Duration, Duration) {
+    pub(super) fn drain_budgets(&self) -> (Duration, Duration) {
         #[cfg(test)]
         if let Some(budgets) = self.drain_budgets {
             return budgets;
@@ -114,21 +122,29 @@ impl Preferences {
         wake();
     }
 
-    pub(in crate::settings) fn begin_close_drain(&mut self) -> CloseOutcome {
+    pub(in crate::settings) fn begin_close_drain(&mut self, shutdown: bool) -> CloseOutcome {
+        let (stall_budget, total_budget) = self.drain_budgets();
+        let already_expired = self
+            .close_drain
+            .as_ref()
+            .is_some_and(|drain| drain.is_expired(stall_budget, total_budget));
         let mut initial_settled = 0u32;
         if self.backend.is_some() && !self.authentication_required {
             self.observe_transport_drops();
             self.take_invalidations();
-            self.prepare_all_drains(true, true);
+            if !already_expired {
+                self.prepare_all_drains(true, true);
+            }
             if self.documents_draining() {
-                let (_, dropped_mid_poll, settled) = self.poll_documents_inner(false);
+                let (_, dropped_mid_poll, settled) =
+                    self.poll_documents_inner(!shutdown, !already_expired);
                 if settled {
                     initial_settled += 1;
                 }
-                if dropped_mid_poll || settled {
+                if !already_expired && (dropped_mid_poll || settled) {
                     self.prepare_all_drains(false, false);
                     if self.documents_draining() {
-                        let (_, _, settled_next) = self.poll_documents_inner(false);
+                        let (_, _, settled_next) = self.poll_documents_inner(!shutdown, true);
                         if settled_next {
                             initial_settled += 1;
                         }
@@ -142,12 +158,11 @@ impl Preferences {
             self.clear_drain_wake();
             return CloseOutcome::Confirmed;
         }
-        let (stall_budget, total_budget) = self.drain_budgets();
-        let expired = self.close_drain.as_ref().is_some_and(|drain| {
-            drain.started.elapsed() >= total_budget
-                || drain.last_progress.elapsed() >= stall_budget
-                || drain.settled_ops.saturating_add(initial_settled) >= 16
-        });
+        let expired = already_expired
+            || self.close_drain.as_ref().is_some_and(|drain| {
+                drain.is_expired(stall_budget, total_budget)
+                    || drain.settled_ops.saturating_add(initial_settled) >= 16
+            });
         if self.backend.is_none()
             || self.authentication_required
             || !self.documents_draining()
@@ -156,16 +171,18 @@ impl Preferences {
             self.close_drain = None;
             self.pending_save_warning = None;
             self.clear_drain_wake();
+            let _ = self.take_notification_failure();
             return CloseOutcome::Failed(self.locale().unwrap_or_else(strings::locale));
         }
         let revs = self.preferences_revisions();
         let wake = self.main_wake.clone();
         if let Some(drain) = &mut self.close_drain {
+            drain.shutdown |= shutdown;
             drain.last_revs = revs;
             drain.settled_ops = drain.settled_ops.saturating_add(initial_settled);
             drain.arm_deadline(wake.clone(), stall_budget, total_budget);
         } else {
-            let mut drain = CloseDrain::new(revs, initial_settled);
+            let mut drain = CloseDrain::new(revs, shutdown, initial_settled);
             drain.arm_deadline(wake.clone(), stall_budget, total_budget);
             self.close_drain = Some(drain);
         }
@@ -180,7 +197,7 @@ impl Preferences {
         transport_or_watch: bool,
         rev_changed: bool,
         dropped_mid_poll: bool,
-        settled: bool,
+        unconfirmed_settled: bool,
     ) -> bool {
         if self.close_drain.is_none() {
             return false;
@@ -188,8 +205,10 @@ impl Preferences {
         let (stall_budget, total_budget) = self.drain_budgets();
         let revs = self.preferences_revisions();
         let mut rearm = false;
+        let mut shutdown = false;
         if let Some(drain) = &mut self.close_drain {
-            if settled {
+            shutdown = drain.shutdown;
+            if unconfirmed_settled {
                 drain.settled_ops = drain.settled_ops.saturating_add(1);
                 if !rev_changed && !dropped_mid_poll {
                     drain.last_progress = Instant::now();
@@ -198,10 +217,26 @@ impl Preferences {
             }
             drain.last_revs = revs;
         }
-        if dropped_mid_poll || settled {
+        if !self.has_unconfirmed() {
+            self.close_drain = None;
+            self.clear_drain_wake();
+            return true;
+        }
+        let expired = self
+            .close_drain
+            .as_ref()
+            .is_some_and(|drain| drain.is_expired(stall_budget, total_budget));
+        if !expired && (dropped_mid_poll || unconfirmed_settled) {
             self.prepare_all_drains(false, false);
             if self.documents_draining() {
-                let _ = self.poll_documents_inner(false);
+                let (_, _, settled_next) = self.poll_documents_inner(!shutdown, true);
+                if settled_next && let Some(drain) = &mut self.close_drain {
+                    drain.settled_ops = drain.settled_ops.saturating_add(1);
+                    if !rev_changed && !dropped_mid_poll {
+                        drain.last_progress = Instant::now();
+                        rearm = true;
+                    }
+                }
             }
         }
         if !self.has_unconfirmed() {
@@ -212,14 +247,14 @@ impl Preferences {
         let finished_failed = self.backend.is_none()
             || self.authentication_required
             || !self.documents_draining()
-            || self.close_drain.as_ref().is_some_and(|drain| {
-                drain.started.elapsed() >= total_budget
-                    || drain.last_progress.elapsed() >= stall_budget
-                    || drain.settled_ops >= 16
-            });
+            || self
+                .close_drain
+                .as_ref()
+                .is_some_and(|drain| drain.is_expired(stall_budget, total_budget));
         if finished_failed {
             self.close_drain = None;
             self.clear_drain_wake();
+            let _ = self.take_notification_failure();
             self.pending_save_warning = Some(self.locale().unwrap_or_else(strings::locale));
             return true;
         }
@@ -227,7 +262,7 @@ impl Preferences {
         if rearm && let Some(drain) = &mut self.close_drain {
             drain.arm_deadline(wake.clone(), stall_budget, total_budget);
         }
-        if (transport_or_watch || rev_changed || dropped_mid_poll || settled)
+        if (transport_or_watch || rev_changed || dropped_mid_poll || unconfirmed_settled)
             && let Some(wake) = wake
         {
             wake();
@@ -235,9 +270,8 @@ impl Preferences {
         false
     }
 
-    #[cfg(test)]
-    pub(super) fn flush(&mut self) -> bool {
-        match self.begin_close_drain() {
+    pub(in crate::settings) fn flush_on_quit(&mut self) -> bool {
+        match self.begin_close_drain(true) {
             CloseOutcome::Confirmed => return true,
             CloseOutcome::Failed(_) => return false,
             CloseOutcome::Draining => {}
@@ -252,5 +286,10 @@ impl Preferences {
         });
         let failed = self.take_save_warning().is_some();
         !failed && !self.has_unconfirmed()
+    }
+
+    #[cfg(test)]
+    pub(super) fn flush(&mut self) -> bool {
+        self.flush_on_quit()
     }
 }

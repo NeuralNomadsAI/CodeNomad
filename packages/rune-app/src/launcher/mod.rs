@@ -135,6 +135,10 @@ impl Launcher {
             false
         }
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn take_host(&mut self) -> Option<crate::platform::LocalHost> {
+        self.host.take()
+    }
     pub fn state_directory(&self) -> Option<std::path::PathBuf> {
         #[cfg(not(target_arch = "wasm32"))]
         {

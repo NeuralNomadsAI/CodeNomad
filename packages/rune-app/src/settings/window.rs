@@ -113,7 +113,7 @@ pub(super) fn launch_preferences(
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn settle_close(shared: &RefCell<Preferences>, warn: impl FnOnce(&'static str)) {
-    let outcome = shared.borrow_mut().begin_close_drain();
+    let outcome = shared.borrow_mut().begin_close_drain(false);
     if let CloseOutcome::Failed(locale) = outcome {
         warn(locale);
     }
@@ -124,18 +124,23 @@ pub(super) fn warn_save_failed(locale: &'static str) {
     crate::platform::preferences_save_warning(locale, view::save_warning);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn close_preferences_child(s: &mut State) {
+    #[cfg(target_os = "windows")]
+    crate::platform::preferences_placement::closed();
+    s.notifications.preferences_focused.set(false);
+    s.settings.shared.borrow_mut().hide_opencode();
+    if let Some((window, token, _)) = s.settings.window.take() {
+        token.set(true);
+        window.close();
+    }
+}
+
 pub(crate) fn close(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        #[cfg(target_os = "windows")]
-        crate::platform::preferences_placement::closed();
-        s.notifications.preferences_focused.set(false);
-        s.settings.shared.borrow_mut().hide_opencode();
-        if let Some((window, token, _)) = s.settings.window.take() {
-            token.set(true);
-            window.close();
-        }
-        let outcome = s.settings.shared.borrow_mut().begin_close_drain();
+        close_preferences_child(s);
+        let outcome = s.settings.shared.borrow_mut().begin_close_drain(true);
         match outcome {
             CloseOutcome::Confirmed => {}
             CloseOutcome::Failed(locale) => warn_save_failed(locale),
@@ -146,13 +151,31 @@ pub(crate) fn close(s: &mut State) {
                     .borrow()
                     .locale()
                     .unwrap_or_else(strings::locale);
+                let host = s
+                    .screen
+                    .launcher_mut()
+                    .and_then(crate::launcher::Launcher::take_host);
                 crate::platform::preferences_close_drain(
                     locale,
-                    view::CloseDrainWindow::new(s.settings.shared.clone()),
+                    view::CloseDrainWindow::new(s.settings.shared.clone(), host),
                     view::close_drain_spec,
                     view::close_drain_closed,
+                    view::close_drain_quit,
                 );
             }
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = s;
+}
+
+pub(crate) fn quit(s: &mut State) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        close_preferences_child(s);
+        let mut prefs = s.settings.shared.borrow_mut();
+        if prefs.has_unconfirmed() {
+            let _ = prefs.flush_on_quit();
         }
     }
     #[cfg(target_arch = "wasm32")]
