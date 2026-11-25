@@ -59,7 +59,9 @@ struct StreamRender {
 struct SessionDisplay {
     reading: super::reading::Reading,
     toggled: HashSet<String>,
-    expansion: HashMap<String, bool>,
+    expansion_serial: u64,
+    expansion: HashMap<String, (u64, bool)>,
+    group_search_collapsed: (u64, HashSet<String>),
     revealed: HashMap<String, usize>,
     task_revealed: HashMap<String, usize>,
     task_mount_gen: HashMap<String, u64>,
@@ -156,19 +158,67 @@ impl Display {
     }
 
     pub(super) fn expanded(&self, key: &str, default: bool) -> bool {
-        self.active.expansion.get(key).copied().unwrap_or(default)
+        self.active
+            .expansion
+            .get(key)
+            .map_or(default, |(_, expanded)| *expanded)
+    }
+
+    pub(super) fn group_expanded(&self, keys: &[String]) -> Option<bool> {
+        keys.iter()
+            .filter_map(|key| self.active.expansion.get(key).copied())
+            .max_by_key(|(serial, _)| *serial)
+            .map(|(_, expanded)| expanded)
     }
 
     pub(super) fn set_expanded(s: &mut State, key: &str, expanded: bool) {
-        s.transcript_display
-            .active
-            .expansion
-            .insert(key.into(), expanded);
+        let active = &mut s.transcript_display.active;
+        active.expansion_serial = active.expansion_serial.wrapping_add(1);
+        let serial = active.expansion_serial;
+        active.expansion.insert(key.into(), (serial, expanded));
         s.revision += 1;
     }
 
-    pub(super) fn execute_search_expanded(&self, search_id: u64, key: &str, default: bool) -> bool {
-        if self.active.execute_search.0 == search_id {
+    pub(super) fn set_group_expanded(s: &mut State, keys: &[String], expanded: bool) {
+        let active = &mut s.transcript_display.active;
+        active.expansion_serial = active.expansion_serial.wrapping_add(1);
+        let serial = active.expansion_serial;
+        for key in keys {
+            active.expansion.insert(key.clone(), (serial, expanded));
+        }
+        s.revision += 1;
+    }
+
+    pub(super) fn group_search_collapsed(&self, search_id: u64, keys: &[String]) -> bool {
+        let (id, collapsed) = &self.active.group_search_collapsed;
+        search_id != 0 && *id == search_id && keys.iter().any(|key| collapsed.contains(key))
+    }
+
+    pub(super) fn set_group_search_collapsed(
+        s: &mut State,
+        search_id: u64,
+        keys: &[String],
+        collapsed: bool,
+    ) {
+        let entry = &mut s.transcript_display.active.group_search_collapsed;
+        if entry.0 != search_id {
+            entry.0 = search_id;
+            entry.1.clear();
+        }
+        if collapsed {
+            for key in keys {
+                entry.1.insert(key.clone());
+            }
+        } else {
+            for key in keys {
+                entry.1.remove(key);
+            }
+        }
+        s.revision += 1;
+    }
+
+    pub(super) fn card_search_expanded(&self, search_id: u64, key: &str, default: bool) -> bool {
+        if search_id != 0 && self.active.execute_search.0 == search_id {
             self.active
                 .execute_search
                 .1
@@ -180,7 +230,7 @@ impl Display {
         }
     }
 
-    pub(super) fn set_execute_search_expanded(
+    pub(super) fn set_card_search_expanded(
         s: &mut State,
         search_id: u64,
         key: &str,
@@ -193,6 +243,19 @@ impl Display {
         }
         state.1.insert(key.into(), expanded);
         s.revision += 1;
+    }
+
+    pub(super) fn execute_search_expanded(&self, search_id: u64, key: &str, default: bool) -> bool {
+        self.card_search_expanded(search_id, key, default)
+    }
+
+    pub(super) fn set_execute_search_expanded(
+        s: &mut State,
+        search_id: u64,
+        key: &str,
+        expanded: bool,
+    ) {
+        Self::set_card_search_expanded(s, search_id, key, expanded);
     }
 
     pub(super) fn compact_split(&self, epoch: u64, key: &str) -> bool {

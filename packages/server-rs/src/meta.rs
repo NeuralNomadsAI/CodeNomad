@@ -17,13 +17,6 @@ pub fn routes() -> Router<Shared> {
 
 async fn read(State(app): State<Shared>, channel: Option<Extension<tls::Channel>>) -> Json<Value> {
     let mut meta = app.meta.clone();
-    if config::serve()
-        && app.mission_bridge.is_some()
-        && crate::automation::published()
-        && let Some(capabilities) = meta["capabilities"].as_array_mut()
-    {
-        capabilities.push(json!("missions"));
-    }
     app.releases.update_feed(&app.settings);
     let (feed, update) = app.releases.snapshot();
     meta["updateFeed"] = json!(feed);
@@ -60,7 +53,7 @@ pub fn document(
         "settings-atomic-patches",
         "conversation-permissions",
     ];
-    if bench::missions_run() {
+    if config::serve() || bench::missions_run() {
         capabilities.push("missions");
     }
     let mut meta = json!({
@@ -78,6 +71,7 @@ pub fn document(
         meta["remoteUrl"] = json!(tls.origin);
         meta["remotePort"] = json!(address.port());
         meta["tlsFingerprint"] = json!(tls.fingerprint);
+        meta["addresses"] = json!(tls.addresses);
         // The remote listener's interface, as `serverMeta.host` and `listeningMode` follow it.
         if !address.ip().is_loopback() {
             (meta["host"], meta["hostLabel"], meta["listeningMode"]) =

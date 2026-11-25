@@ -3,6 +3,7 @@ mod activity;
 mod attention;
 mod briefing;
 mod codec;
+mod content;
 mod control_fields;
 mod detail;
 mod directory;
@@ -15,8 +16,15 @@ pub use briefing::{
     accepts_coordinator_message_value, briefing_request_text,
 };
 pub use codec::RevisionChanged;
+pub use content::{
+    BodyDescriptor, BriefingDoc, BriefingItem, ContentOutcome, ContentRefusal, ContentSelector,
+    ContentSlice, FullTaskReport, MarkdownPage, READER_PAGE_SIZE, body_covers, body_need,
+    content_digest, markdown_page, page_count, utf16_len,
+};
 pub use control_fields::{ControlPage, ControlPart, ControlRow, ReceiptContent};
-pub use detail::{DetailRead, Header, MapHeader, Task, TaskPage, TaskStatus, TaskWindow};
+pub use detail::{
+    DetailRead, Header, MapHeader, Report, ReportOutcome, Task, TaskPage, TaskStatus, TaskWindow,
+};
 pub use directory::{DirectoryChanged, DirectoryRead};
 pub use lifecycle::{
     ControlReceipt, LifecycleAction, LifecycleOutcome, LifecycleRequest, LifecycleTarget,

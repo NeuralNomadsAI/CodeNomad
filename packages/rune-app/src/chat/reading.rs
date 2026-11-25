@@ -93,15 +93,29 @@ pub(crate) fn passage_target(s: &State) -> Option<(String, f32)> {
             .mode
             .is_none_or(|row| crate::settings::transcript_mode(s, row) != "hidden")
     {
-        let group = matches!(passage.mode, Some(crate::settings::TranscriptRow::Tool(_)))
-            .then(|| {
-                super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key)
-            })
-            .flatten();
-        Some((
-            group.unwrap_or_else(|| format!("{message}/{}", passage.key)),
-            passage.offset,
-        ))
+        let group = matches!(
+            passage.mode,
+            Some(
+                crate::settings::TranscriptRow::Tool(_)
+                    | crate::settings::TranscriptRow::Thinking
+                    | crate::settings::TranscriptRow::Groups
+            )
+        )
+        .then(|| super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key))
+        .flatten();
+        if let Some(anchor) = group {
+            // Keep small reading offsets (within a header's height) intact so toggling groups
+            // does not jump, but reset deep offsets inside a long collapsed fragment so the
+            // short group header is never pushed off-screen above the viewport.
+            let offset = if passage.offset < -24.0 {
+                0.0
+            } else {
+                passage.offset
+            };
+            Some((anchor, offset))
+        } else {
+            Some((format!("{message}/{}", passage.key), passage.offset))
+        }
     } else {
         None
     }
@@ -180,6 +194,7 @@ fn can_read(s: &State) -> bool {
     !s.screen.is_launcher()
         && !crate::git::has_preview(s)
         && !crate::files::has_preview(s)
+        && !crate::workspace::mission_has_reader(s)
         && matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming)
 }
 
@@ -383,5 +398,41 @@ mod tests {
         assert_eq!(user_target(&s, true).as_deref(), Some("a"));
         assert_eq!(user_target(&s, false).as_deref(), Some("c"));
         assert_eq!(s.draft.text, "draft");
+    }
+
+    #[test]
+    fn collapsed_group_passage_target_resets_negative_offset_to_header_top() {
+        use serde_json::json;
+        let m1 = crate::history::decode_message(&json!({
+            "id":"m1","type":"assistant","time":{"completed":1000},"content":[
+                {"type":"reasoning","text":"First long thought"}
+            ]
+        }))
+        .unwrap();
+        let m2 = crate::history::decode_message(&json!({
+            "id":"m2","type":"assistant","time":{"completed":2000},"content":[
+                {"type":"reasoning","text":"Second long thought"}
+            ]
+        }))
+        .unwrap();
+        let mut s = crate::init();
+        crate::settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":true}));
+        s.messages = vec![m1.into(), m2.into()];
+        let reading = s.transcript_display.reading_mut();
+        reading.following = false;
+        reading.top = Some(("m2".into(), -300.0));
+        reading.passage = Some(Passage {
+            message: "m2".into(),
+            key: super::super::reasoning::block_key("m2", 0),
+            offset: -300.0,
+            mode: Some(crate::settings::TranscriptRow::Thinking),
+        });
+        assert_eq!(
+            passage_target(&s),
+            Some((
+                format!("m1/{}", super::super::reasoning::block_key("m1", 0)),
+                0.0
+            ))
+        );
     }
 }

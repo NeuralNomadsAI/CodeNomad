@@ -7,9 +7,9 @@ use codenomad_client::{
     history::valid_id,
     missions::{Task, TaskStatus},
 };
-use rune::{El, Tx, col, text};
+use rune::{El, Tx, col, row, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue,
+    Space, TextRole, catalogue, git_panel as theme,
     layout::{self, Layout},
 };
 use std::{
@@ -46,6 +46,8 @@ pub(super) fn task_conversation(
     )
 }
 
+pub(super) type TaskOpen<S> = Rc<dyn Fn(&mut S, String, String, &mut Tx)>;
+
 #[derive(Clone)]
 pub(super) struct TaskRows {
     rows: Vec<Rc<Task>>,
@@ -60,6 +62,21 @@ impl TaskRows {
 
     pub fn contains(&self, key: &str) -> bool {
         self.keys.contains_key(key)
+    }
+
+    pub fn find_by_id_or_key(&self, id: &str, key: &str) -> Option<&Task> {
+        self.ids
+            .get(id)
+            .or_else(|| self.keys.get(key))
+            .map(|&i| self.rows[i].as_ref())
+    }
+
+    pub fn find_by_key(&self, key: &str) -> Option<&Task> {
+        self.keys.get(key).map(|&i| self.rows[i].as_ref())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Task> {
+        self.rows.iter().map(Rc::as_ref)
     }
 
     pub fn new(mut tasks: Vec<Task>) -> Self {
@@ -110,22 +127,16 @@ impl TaskRows {
         self.keys.get(key).map_or("", |&i| title(&self.rows[i]))
     }
 
+    #[cfg(test)]
     pub fn view<S: 'static>(self: &Rc<Self>) -> El {
-        self.view_rows::<S>(None)
+        self.view_with_open::<S>(None, None, None)
     }
 
     pub fn view_with_open<S: 'static>(
         self: &Rc<Self>,
-        coordinator: String,
-        actors: Rc<HashSet<String>>,
-        open: OpenTask<S>,
-    ) -> El {
-        self.view_rows::<S>(Some((coordinator, actors, open)))
-    }
-
-    fn view_rows<S: 'static>(
-        self: &Rc<Self>,
-        open: Option<(String, Rc<HashSet<String>>, OpenTask<S>)>,
+        open_task_id: Option<String>,
+        on_open: Option<TaskOpen<S>>,
+        conversation: Option<(String, Rc<HashSet<String>>, OpenTask<S>)>,
     ) -> El {
         let keys = self.clone();
         let rows = self.clone();
@@ -135,18 +146,26 @@ impl TaskRows {
             move |_: &S, i| Cow::Owned(format!("mission-task-{}", keys.rows[i].id)),
             move |_: &S, i| {
                 let task = &rows.rows[i];
-                let action = open.as_ref().and_then(|(coordinator, actors, cb)| {
+                let action = conversation.as_ref().and_then(|(coordinator, actors, cb)| {
                     task_conversation_with_actors(coordinator, actors, task)
                         .map(|session_id| (session_id, cb.clone()))
                 });
-                crate::strings::with_locale(language, || rows.row(task, action))
+                crate::strings::with_locale(language, || {
+                    rows.row(task, open_task_id.as_deref(), on_open.as_ref(), action)
+                })
             },
         )
         .role("list")
         .label(t("missions.control.profiles.role.specialist"))
     }
 
-    fn row<S: 'static>(&self, task: &Task, action: Option<(String, OpenTask<S>)>) -> El {
+    fn row<S: 'static>(
+        &self,
+        task: &Task,
+        open_task_id: Option<&str>,
+        on_open: Option<&TaskOpen<S>>,
+        action: Option<(String, OpenTask<S>)>,
+    ) -> El {
         let title = title(task);
         let state = t(match task.status {
             TaskStatus::Blocked => "missions.control.task.status.blocked",
@@ -158,12 +177,33 @@ impl TaskRows {
             TaskStatus::Failed => "missions.control.task.status.failed",
             TaskStatus::Withdrawn => "missions.control.task.status.superseded",
         });
+        let header = if let Some(open) = on_open {
+            let active = open_task_id == Some(task.id.as_str());
+            let id = task.id.clone();
+            let key = task.key.clone();
+            let open = open.clone();
+            row()
+                .full_width()
+                .child(text(title).wrap_anywhere().remaining())
+                .child(
+                    theme::icon_button(
+                        &theme::EYE,
+                        format!("{} · {title}", t("missions.control.task.details")),
+                        false,
+                        Some(active),
+                        move |s: &mut S, tx| open(s, id.clone(), key.clone(), tx),
+                    )
+                    .key(format!("mission-task-eye-{}", task.id)),
+                )
+        } else {
+            row().full_width().child(text(title).wrap_anywhere())
+        };
         let mut row = col()
             .full_width()
             .pad(Space::Sm)
             .role("listitem")
             .label(title)
-            .child(text(title).wrap_anywhere())
+            .child(header)
             .child(text(state).text_role(TextRole::Small));
         if !task.blocked_by.is_empty() {
             let dependencies = task
@@ -326,5 +366,85 @@ mod tests {
             task_conversation(&header, &obs, &make_task("t5", None)),
             None
         );
+    }
+
+    #[test]
+    fn task_row_coexists_reader_eye_and_worker_conversation_button() {
+        struct Harness {
+            rows: Rc<TaskRows>,
+            actors: Rc<HashSet<String>>,
+            opened_reader: Vec<(String, String)>,
+            opened_conversation: Vec<String>,
+        }
+        let tasks: Vec<Task> = vec![
+            serde_json::from_value(json!({
+                "id": "tsk-worker", "key": "task-worker", "title": "Worker task",
+                "role": "specialist", "status": "queued", "blockedBy": [], "order": 0,
+                "createdAt": 1, "updatedAt": 1, "dependents": 0, "reportCount": 0,
+                "outstandingExecution": false, "actorSessionId": "ses_worker"
+            }))
+            .unwrap(),
+            serde_json::from_value(json!({
+                "id": "tsk-coord", "key": "task-coord", "title": "Coord task",
+                "role": "specialist", "status": "queued", "blockedBy": [], "order": 1,
+                "createdAt": 1, "updatedAt": 1, "dependents": 0, "reportCount": 0,
+                "outstandingExecution": false, "actorSessionId": "ses_coord"
+            }))
+            .unwrap(),
+        ];
+        let mut actors = HashSet::new();
+        actors.insert("ses_worker".to_owned());
+        actors.insert("ses_coord".to_owned());
+        let state = Harness {
+            rows: Rc::new(TaskRows::new(tasks)),
+            actors: Rc::new(actors),
+            opened_reader: Vec::new(),
+            opened_conversation: Vec::new(),
+        };
+        let mut rt = Runtime::new(
+            state,
+            |s, _| {
+                crate::strings::with_locale("en", || {
+                    let on_reader: TaskOpen<Harness> = Rc::new(|h, id, key, _| {
+                        h.opened_reader.push((id, key));
+                    });
+                    let on_conv: OpenTask<Harness> = Rc::new(|h, session_id, _| {
+                        h.opened_conversation.push(session_id);
+                    });
+                    col()
+                        .full_width()
+                        .full_height()
+                        .scroll(ScrollSpec {
+                            stick_bottom: false,
+                        })
+                        .child(s.rows.view_with_open(
+                            Some("tsk-worker".to_owned()),
+                            Some(on_reader),
+                            Some(("ses_coord".to_owned(), s.actors.clone(), on_conv)),
+                        ))
+                })
+            },
+            (360.0, 480.0),
+            Env::new(false, 1.0),
+        );
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
+        let (ex, ey) = rt.find("mission-task-eye-tsk-worker").unwrap();
+        let (ox, oy) = rt.find("mission-task-open-tsk-worker").unwrap();
+        assert!(rt.find("mission-task-eye-tsk-coord").is_some());
+        assert!(rt.find("mission-task-open-tsk-coord").is_none());
+
+        rt.pointer_down(ex, ey);
+        rt.pointer_up(ex, ey);
+        rt.frame(1.0 / 60.0);
+        rt.pointer_down(ox, oy);
+        rt.pointer_up(ox, oy);
+        rt.frame(1.0 / 60.0);
+        assert_eq!(
+            rt.state.opened_reader,
+            vec![("tsk-worker".to_owned(), "task-worker".to_owned())]
+        );
+        assert_eq!(rt.state.opened_conversation, vec!["ses_worker".to_owned()]);
     }
 }

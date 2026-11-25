@@ -306,27 +306,6 @@ pub fn build_picker(control: Select, layers: &mut Vec<El>) -> El {
     control.build(&kit, layers)
 }
 
-pub fn build_picker_accessible(
-    control: Select,
-    name: &str,
-    disabled: bool,
-    disabled_tag: &str,
-    layers: &mut Vec<El>,
-) -> El {
-    let built = build_picker(control, layers);
-    #[cfg(target_arch = "wasm32")]
-    if disabled {
-        return el()
-            .role("button")
-            .disabled(true)
-            .label(name.to_owned())
-            .description(disabled_tag)
-            .child(built);
-    }
-    let _ = (name, disabled, disabled_tag);
-    built
-}
-
 pub fn transcript_popup<S: 'static>(
     trigger: &str,
     label: &str,

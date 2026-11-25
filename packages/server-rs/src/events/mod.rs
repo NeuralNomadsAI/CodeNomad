@@ -188,6 +188,7 @@ mod tests {
     fn stream_keys_are_bound_to_their_principal() {
         let channel = |device: Option<Uuid>| crate::auth::tls::Channel {
             origin: "https://127.0.0.1:1".into(),
+            origins: std::sync::Arc::from(["https://127.0.0.1:1".to_owned()]),
             ingress: false,
             socket: CancellationToken::new(),
             principal: std::sync::Arc::new(std::sync::Mutex::new(device)),

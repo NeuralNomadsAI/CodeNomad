@@ -23,19 +23,6 @@ pub(super) fn inline(value: &Value) -> Option<Vec<u8>> {
     (bytes.len() <= FILE_BYTES).then_some(bytes)
 }
 
-pub(super) fn validate_window(output: &mut Value) -> bool {
-    let Some(root) = output.as_object_mut() else { return false };
-    if root.remove("userFiles").as_ref().and_then(Value::as_str) != Some(REFERENCE) {
-        return false;
-    }
-    let Some(messages) = root.get("messages").and_then(Value::as_array) else { return false };
-    messages.iter().filter(|message| message["type"] == "user").all(|message| {
-        message.get("files").is_none_or(|files| {
-            files.as_array().is_some_and(|files| files.len() <= FILE_COUNT && files.iter().all(reference))
-        })
-    })
-}
-
 fn reference(value: &Value) -> bool {
     let Some(file) = value.as_object() else { return false };
     file.keys().all(|key| matches!(key.as_str(), "name" | "mime" | "source"))

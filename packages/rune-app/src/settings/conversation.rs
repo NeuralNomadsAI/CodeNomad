@@ -98,13 +98,7 @@ pub(super) fn content<S: 'static>(
                         choose(s, Some(row), MODES[i]);
                     }
                 });
-            let control = chrome::build_picker_accessible(
-                control,
-                &name,
-                disabled,
-                t("commands.common.disabled"),
-                layers,
-            );
+            let control = chrome::build_picker(control, layers);
             chrome::setting_table_row(title, control, compact)
         }));
     let controls = col()

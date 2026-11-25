@@ -1,7 +1,7 @@
 //! `codenomad serve` with the reference's grammar and defaults (`parseCliOptions`, `resolveConfigLocation`):
 //! a flag wins over its `CLI_*`/`CODENOMAD_*` variable, which wins over the default; bare words such
 //! as `serve` are ignored. Options with no ported effect are accepted, or refused when ignoring them
-//! would silently drop what was asked (`--launch`, `--upgrade`, all interfaces).
+//! would silently drop what was asked (`--launch`, `--upgrade`).
 use std::{collections::HashMap, env, ffi::OsString, net::IpAddr, path::PathBuf, time::Duration};
 
 use super::{Bind, Launch, ui};
@@ -132,9 +132,6 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
 
     let ip: IpAddr =
         host.parse().map_err(|_| format!("--host {host}: the Rust server listens on IP addresses only"))?;
-    if ip.is_unspecified() {
-        return Err(format!("--host {host}: listening on all interfaces is not supported by the Rust server yet"));
-    }
     let loopback = IpAddr::from([127, 0, 0, 1]);
     // `httpBindHost`: loopback unless HTTP is the only, non-desktop listener.
     let http_ip = if http && !https && !super::native_parent::available() { ip } else { loopback };
@@ -147,7 +144,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     }
     let https = https.then(|| auth::tls::Settings {
         bind: Bind { ip, port: https_port, fallback: !explicit("https-port") },
-        name: if ip == loopback {
+        name: if ip == loopback || ip.is_unspecified() {
             "localhost".into()
         } else if ip.is_ipv6() {
             format!("[{ip}]")
@@ -165,6 +162,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         file: Some(yaml.parent().unwrap_or(&base).join("auth.json")),
         cookie: auth::cookie_name(value("auth-cookie-name").as_deref()),
         token: flag("generate-token")?,
+        managed_local: super::native_parent::available(),
         skip,
         idle: timeout("CODENOMAD_SESSION_IDLE_SECONDS", 86400)?,
         absolute: timeout("CODENOMAD_SESSION_ABSOLUTE_SECONDS", 7 * 86400)?,
@@ -291,6 +289,27 @@ mod tests {
         assert_eq!(launch(&["--host", "LOCALHOST"]).unwrap().https.unwrap().name, "localhost");
         assert_eq!(launch(&["--host", "[::ffff:10.1.2.3]"]).unwrap().https.unwrap().name, "10.1.2.3");
         assert_eq!(launch(&["--host", "::1"]).unwrap().https.unwrap().name, "[::1]");
+        // Tauri's "all interfaces" listening mode (`cli_manager.rs` `resolve_listening_host`).
+        let all_interfaces = launch(&[
+            "serve",
+            "--host",
+            "0.0.0.0",
+            "--auth-cookie-name",
+            cookie,
+            "--generate-token",
+            "--unrestricted-root",
+            "--https",
+            "true",
+            "--http",
+            "true",
+        ])
+        .unwrap();
+        assert_eq!(all_interfaces.http.ip.to_string(), "127.0.0.1");
+        let https_all = all_interfaces.https.unwrap();
+        assert_eq!((https_all.bind.ip.to_string(), https_all.name.as_str()), ("0.0.0.0".into(), "localhost"));
+        let ipv6_all = launch(&["--host", "::", "--https", "true", "--http", "true"]).unwrap();
+        assert_eq!(ipv6_all.http.ip.to_string(), "127.0.0.1");
+        assert_eq!(ipv6_all.https.unwrap().bind.ip.to_string(), "::");
     }
 
     #[test]
@@ -309,8 +328,8 @@ mod tests {
             (&["--upgrade", "1.2.3"], "--upgrade is not supported by the Rust server"),
             (&["--launch"], "--launch is not supported by the Rust server"),
             (
-                &["--host", "0.0.0.0"],
-                "--host 0.0.0.0: listening on all interfaces is not supported by the Rust server yet",
+                &["--host", "0.0.0.0", "--https", "false", "--http", "true"],
+                "--host 0.0.0.0: the Rust server serves HTTP on 127.0.0.1 only",
             ),
             (
                 &["--host", "192.168.1.4", "--https", "false", "--http", "true"],

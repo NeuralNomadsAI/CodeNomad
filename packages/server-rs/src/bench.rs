@@ -1,5 +1,7 @@
 //! Switches reserved for the qualification bench: the positional launch, the injected native
-//! endpoint, fixture-only features and traces. `serve` never reads them.
+//! endpoint, fixture-only features and traces. `serve` ignores the positional launch, fixture
+//! endpoints and Missions feature gates; other explicit `CNRS_FIXTURE_*` switches (startup,
+//! tracing, ingress, PATH and registry guards) still take effect when set in the environment.
 use std::{env, net::SocketAddr, path::PathBuf, sync::LazyLock, time::Duration};
 
 use axum::{body::Body, extract::Request, middleware::Next, response::Response};
@@ -39,6 +41,7 @@ pub fn positional(args: &[String]) -> Result<host::Launch, Box<dyn std::error::E
         file: None,
         cookie: auth::DEFAULT_COOKIE.into(),
         token: false,
+        managed_local: false,
         skip: false,
         idle: Duration::from_secs(86400),
         absolute: Duration::from_secs(7 * 86400),
@@ -144,13 +147,13 @@ pub fn ingress() -> bool {
     on("CNRS_FIXTURE_INGRESS")
 }
 pub fn missions_run() -> bool {
-    on("CNRS_FIXTURE_MISSIONS_RUN")
+    !crate::config::serve() && on("CNRS_FIXTURE_MISSIONS_RUN")
 }
 pub fn missions_read() -> bool {
-    on("CNRS_FIXTURE_MISSIONS_READ")
+    !crate::config::serve() && on("CNRS_FIXTURE_MISSIONS_READ")
 }
 pub fn missions_calendar() -> bool {
-    on("CNRS_FIXTURE_MISSIONS_CALENDAR")
+    !crate::config::serve() && on("CNRS_FIXTURE_MISSIONS_CALENDAR")
 }
 pub fn family_trace() -> bool {
     on("CNRS_FIXTURE_FAMILY_TRACE")

@@ -235,7 +235,12 @@ pub(super) fn tool_timing(tool: &Tool) -> Option<(u64, Option<u64>)> {
     }
 }
 
-pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, status: El) -> El {
+pub(in crate::chat) fn view(
+    s: &State,
+    key: &str,
+    timing: Option<(u64, Option<u64>)>,
+    status: El,
+) -> El {
     let entry_key = format!("{key}-duration");
     let retire = || {
         let clock = &s.transcript_display.tool_clock;
@@ -403,8 +408,8 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, sta
         })
 }
 
-fn caption(ms: u64, live: bool) -> Option<String> {
-    let seconds = (ms >= 1_000).then_some(ms.saturating_add(500) / 1_000)?;
+pub(in crate::chat) fn caption(ms: u64, live: bool) -> Option<String> {
+    let seconds = (ms >= 1_000).then_some(ms / 1_000 + u64::from(ms % 1_000 >= 500))?;
     let locale = locale();
     let unit = |count: u64, name: &str, pad: bool| {
         let count_text = numbers::plain(locale, count, if pad { 2 } else { 1 });

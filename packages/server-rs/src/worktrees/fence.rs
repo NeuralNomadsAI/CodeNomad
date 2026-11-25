@@ -245,6 +245,8 @@ pub fn project_key(workspace: &str, directory: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
 
     #[test]
@@ -264,8 +266,11 @@ mod tests {
         let admitted = enter(&[format!("{root}\\.codenomad\\worktrees\\t")]).unwrap();
         let dirs = vec![format!("{root}\\.codenomad\\worktrees\\t"), root.to_string()];
         let deletion = tokio::spawn(async move { block(&dirs).await });
-        tokio::task::yield_now().await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !is_blocked(&format!("{root}\\sub")) {
+            assert!(Instant::now() < deadline, "deletion must register the blocked root");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
         assert!(is_blocked(&format!("{root}\\sub")), "a subfolder of the blocked root overlaps");
         assert!(enter(&[root.to_string()]).is_none(), "a new write is refused during the deletion");
         assert!(!deletion.is_finished(), "the deletion waits for the admitted write");

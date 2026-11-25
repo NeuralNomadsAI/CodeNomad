@@ -253,6 +253,7 @@ fn session_context_keeps_rules_and_bounds_titles() {
 
 #[tokio::test]
 async fn real_git_records_creation_replacement_and_deletion() {
+    let _git = crate::git::test_git_serial().await;
     let base = temp("store");
     let store = Store::new(&base);
     assert!(store.list(&Namespace::Global, None).await.unwrap().is_empty());
@@ -283,6 +284,7 @@ async fn real_git_records_creation_replacement_and_deletion() {
 
 #[tokio::test]
 async fn journals_recover_before_reads_and_malformed_journals_fail() {
+    let _git = crate::git::test_git_serial().await;
     let base = temp("recover");
     let store = Store::new(&base);
     store
@@ -307,6 +309,7 @@ async fn journals_recover_before_reads_and_malformed_journals_fail() {
 
 #[tokio::test]
 async fn malformed_and_unexpected_files_keep_the_scope_unavailable() {
+    let _git = crate::git::test_git_serial().await;
     let base = temp("malformed");
     let store = Store::new(&base);
     store.mutate(&Namespace::Global, None, |_| async { Ok(Mutation::Save(entry("a", "A", "a"), ())) }).await.unwrap();
@@ -541,13 +544,27 @@ async fn a_cancelled_waiter_leaves_the_owner_and_no_candidate() {
         let (directory, cancel) = (directory.clone(), cancel.clone());
         tokio::spawn(async move { lock::acquire(&directory, Some(&cancel)).await.map(|_| ()) })
     };
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    let candidate_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let candidate = loop {
+        let found = fs::read_dir(&base)
+            .unwrap()
+            .map(|e| e.unwrap())
+            .find(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("memory.lock.")))
+            .map(|e| e.path());
+        if let Some(path) = found {
+            break path;
+        }
+        assert!(std::time::Instant::now() < candidate_deadline, "waiter must publish its candidate before cancel");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    };
     cancel.cancel();
-    assert!(waiter.await.unwrap().is_err());
+    let err = waiter.await.unwrap().unwrap_err();
+    assert_eq!(err.message, "Memory request cancelled");
+    assert!(!candidate.exists(), "cancelled waiter must remove its published candidate");
     assert_eq!(fs::read_to_string(base.join("memory.lock").join("owner")).unwrap(), owner);
     let leftovers: Vec<String> = fs::read_dir(&base)
         .unwrap()
-        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
         .filter(|n| n.starts_with("memory.lock."))
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
@@ -559,6 +576,7 @@ async fn a_cancelled_waiter_leaves_the_owner_and_no_candidate() {
 /// `store.integration.ts`: concurrent decisions in one process are serialized and keep both entries.
 #[tokio::test]
 async fn concurrent_decisions_are_serialized_without_losing_entries() {
+    let _git = crate::git::test_git_serial().await;
     let base = temp("concurrent");
     let store = std::sync::Arc::new(Store::new(&base));
     let mut tasks = Vec::new();

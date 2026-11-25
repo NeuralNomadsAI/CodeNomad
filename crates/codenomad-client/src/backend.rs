@@ -33,6 +33,24 @@ impl Backend {
         Ok(backend)
     }
 
+    /// Establish a loopback connection seeded with a renewed managed-session cookie.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn connect_with_session_cookie(
+        address: &str,
+        cookie_name: &str,
+        session_id: &str,
+    ) -> Result<Self> {
+        Ok(Self {
+            client: Http::with_session_cookie(address, cookie_name, session_id)?,
+            base: endpoint(address)?,
+            workspace: String::new(),
+            session: String::new(),
+            session_directory: None,
+            client_id: client_id()?,
+            fresh_mode: false,
+        })
+    }
+
     pub fn unauthenticated(address: &str) -> Result<Self> {
         Ok(Self {
             client: Http::new()?,
