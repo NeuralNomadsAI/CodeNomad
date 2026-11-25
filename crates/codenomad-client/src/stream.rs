@@ -103,11 +103,17 @@ impl State {
         }
     }
 
+    pub(crate) fn is_placement_changed(&self) -> bool {
+        self.placement
+            .as_ref()
+            .is_some_and(|(_, changed)| changed.is_closed())
+    }
+
     pub(crate) async fn stream_closed(&self) {
         let _ = self.closed.1.recv().await;
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn close_stream(&self) {
         self.closed.0.close();
     }

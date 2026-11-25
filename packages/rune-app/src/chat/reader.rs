@@ -177,11 +177,15 @@ impl Reader {
 }
 
 pub(crate) fn reconnecting(s: &mut State) {
+    let had_explicit_page = s.transcript_display.timeline.paging.is_some();
     if let Some(reader) = &mut s.reader {
-        reader.reconnecting(s.transcript_display.reading_mut(), s.paging);
+        reader.reconnecting(
+            s.transcript_display.reading_mut(),
+            s.paging && !had_explicit_page,
+        );
     }
 
-    cancel_page(s);
+    pages::fail_pending_page(s);
     s.paging = false;
 }
 
@@ -288,6 +292,7 @@ pub(crate) fn retry(s: &mut State, tx: &mut Tx) {
             reader.bookmark = s.transcript_display.reading_mut().bookmark(reader.gap);
         }
         reader.resume(reader.bookmark.clone());
+        cancel_page(s);
         s.history_error = false;
         s.paging = false;
         tx.instant();
