@@ -41,6 +41,11 @@ impl Default for Frame {
     }
 }
 
+#[derive(Clone, Default)]
+struct BodyScroll(
+    std::rc::Rc<std::cell::Cell<(rune_theme_codenomad::timeline::ScrollPosition, Option<f32>)>>,
+);
+
 #[derive(Default)]
 pub(super) struct Search {
     open: bool,
@@ -49,6 +54,8 @@ pub(super) struct Search {
     ranked: bool,
     scope_open: bool,
     frame: Frame,
+    body_frame: Frame,
+    body_scroll: BodyScroll,
     position: Option<[f32; 2]>,
     drag: Option<([f32; 2], Option<[f32; 2]>)>,
     technical: bool,
@@ -62,6 +69,37 @@ pub(super) struct Search {
     open_error: bool,
     labels: labels::Labels,
     preview: preview::Preview,
+}
+
+pub(super) fn covers_point(s: &State, x: f32, y: f32) -> bool {
+    if !is_open(s) {
+        return false;
+    }
+    let [rx, ry, rw, rh] = s.transcript_display.timeline.search.frame.0.get();
+    rw > 0.0 && rh > 0.0 && x >= rx && x <= rx + rw && y >= ry && y <= ry + rh
+}
+
+pub(super) fn forward_wheel(s: &State, x: f32, y: f32, dy: f32, tx: &mut Tx) -> bool {
+    if !covers_point(s, x, y) {
+        return false;
+    }
+    let model = &s.transcript_display.timeline.search;
+    let [bx, by, bw, bh] = model.body_frame.0.get();
+    let (pos, target) = model.body_scroll.0.get();
+    if dy != 0.0
+        && pos.max[1] > 0.0
+        && bw > 0.0
+        && bh > 0.0
+        && x >= bx
+        && x <= bx + bw
+        && y >= by
+        && y <= by + bh
+    {
+        let next = (target.unwrap_or(pos.offset[1]) - dy).clamp(0.0, pos.max[1].max(0.0));
+        model.body_scroll.0.set((pos, Some(next)));
+        tx.scroll_to_instant(view::BODY, pos.offset[0], next);
+    }
+    true
 }
 
 fn state(s: &mut State) -> &mut Search {
@@ -113,6 +151,62 @@ pub(crate) fn fixture_scope_open(
 #[cfg(test)]
 pub(crate) fn fixture_blur(s: &mut State) {
     state(s).query.focused = false;
+}
+
+#[cfg(test)]
+pub(super) fn deliver_result(s: &mut State) {
+    let model = state(s);
+    model.open = true;
+    let (signal, _cancelled) = bounded(1);
+    let (out, events) = bounded(1);
+    let _ = out.try_send(Message::Complete(Ok(Ranked::Unsupported)));
+    model.flight = Some((signal, events));
+}
+
+#[cfg(test)]
+pub(super) fn fixture_hits(s: &mut State, count: usize) {
+    let model = state(s);
+    model.open = true;
+    model.text = "row".into();
+    model.query = TextEdit::new("row");
+    model.results = Some(Ranked::Ranked {
+        version: 1,
+        capped: false,
+        examined_before: 0,
+        exclusions: Vec::new(),
+        page: Page {
+            hits: (0..count)
+                .map(|i| codenomad_client::search::Hit {
+                    session: "s".into(),
+                    message: format!("row-{i}"),
+                    role: "user".into(),
+                    part: 0,
+                    kind: codenomad_client::search::Kind::Text,
+                    excerpt: format!("Long matching row {i} with enough text to overflow results"),
+                })
+                .collect(),
+            cursor: None,
+            scanned: count as u64,
+            skipped: 0,
+        },
+    });
+}
+
+#[cfg(test)]
+pub(super) fn set_position(s: &mut State, pos: [f32; 2]) {
+    state(s).position = Some(pos);
+}
+
+#[cfg(test)]
+pub(super) fn body_scroll_offset(s: &State) -> f32 {
+    s.transcript_display
+        .timeline
+        .search
+        .body_scroll
+        .0
+        .get()
+        .0
+        .offset[1]
 }
 
 pub(crate) fn close(s: &mut State) {

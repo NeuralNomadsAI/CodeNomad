@@ -153,7 +153,7 @@ fn body(s: &State, message: &str, key: &str, part: &Reasoning) -> El {
             s,
             format!("{key}-body"),
             &[&part.text],
-            document::search_limit(query),
+            document::search_limit_for(s, key, query),
             Some((part.retained_units, part.units)),
             |shown, units| {
                 let build = || {

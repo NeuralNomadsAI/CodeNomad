@@ -171,6 +171,9 @@ mod tests {
         for source in [
             "```mermaid\nflowchart LR\n  A[Start] --> B[Finish]\n```",
             "```mmd\nflowchart LR\n  A[Start] --> B[Finish]\n```",
+            "- ```mermaid\n  flowchart LR\n    A[Start] --> B[Finish]\n  ```",
+            "- > ```mermaid\n  > flowchart LR\n  >   A[Start] --> B[Finish]\n  > ```",
+            "10. Diagram\n\n    ```mermaid\n    flowchart LR\n      A[Start] --> B[Finish]\n    ```",
         ] {
             let mut rt = render(source, false);
             let clipboard = rune::clipboard::memory();
@@ -193,6 +196,21 @@ mod tests {
     fn unfinished_streaming_and_unsupported_fences_keep_their_source() {
         for (source, streaming, raw) in [
             ("```mermaid\nflowchart LR\n  A --> B", false, "A --> B"),
+            (
+                "```mermaid\nflowchart LR\n  A --> B\n    ```",
+                false,
+                "A --> B",
+            ),
+            (
+                "> - ```mermaid\n>   flowchart LR\n>     A --> B\n>       ```",
+                false,
+                "A --> B",
+            ),
+            (
+                "```mermaid\nflowchart LR\n  A --> B\n> ```",
+                false,
+                "A --> B",
+            ),
             ("```mermaid\nflowchart LR\n  A --> B\n```", true, "A --> B"),
             ("```mermaid\nunknownDiagram\n```", false, "unknownDiagram"),
         ] {

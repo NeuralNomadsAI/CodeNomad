@@ -2,10 +2,27 @@
 use crate::State;
 use std::{
     cell::RefCell,
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
 };
 
 const RENDER_INTERVAL: f64 = 0.2;
+const TASK_ANCHOR_LIMIT: usize = 64;
+
+struct TaskStepsState {
+    visible: Vec<String>,
+    selected: Vec<String>,
+    at_bottom: bool,
+}
+
+impl Default for TaskStepsState {
+    fn default() -> Self {
+        Self {
+            visible: Vec::new(),
+            selected: Vec::new(),
+            at_bottom: true,
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Display {
@@ -19,10 +36,16 @@ pub struct Display {
     pub(crate) timeline: crate::timeline::Timeline,
     pub(crate) search_highlight: Option<super::search_hit::SearchHit>,
     pub(super) children: super::tools::children::Children,
+    pub(super) task_deliveries: RefCell<super::tools::task::DeliveryCache>,
+    pub(super) tool_clock: super::tools::duration::Clock,
     pub(crate) usage_family: super::usage::family::Totals,
     pub(crate) pictures: super::media::Pictures,
     pub(crate) receipts: super::receipts::Receipts,
     pub(crate) messages: super::message_actions::Actions,
+    focused_key: Option<String>,
+    task_focus_pinned: std::cell::Cell<bool>,
+    #[cfg(test)]
+    pub(crate) task_row_builds: std::cell::Cell<usize>,
 }
 
 #[derive(Default)]
@@ -38,8 +61,14 @@ struct SessionDisplay {
     toggled: HashSet<String>,
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
+    task_revealed: HashMap<String, usize>,
+    task_mount_gen: HashMap<String, u64>,
+    task_anchors: VecDeque<(String, TaskStepsState)>,
+    search_revealed: VecDeque<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     diagram_sources: HashMap<String, BTreeSet<usize>>,
+    diagram_search: (u64, HashMap<String, BTreeMap<usize, bool>>),
+    execute_search: (u64, HashMap<String, bool>),
     compact_diffs: (u64, HashSet<String>),
 }
 impl Display {
@@ -53,9 +82,14 @@ impl Display {
         self.stream = StreamRender::default();
         self.live_ansi.get_mut().clear();
         self.children.clear();
+        self.task_deliveries.get_mut().clear();
+        self.tool_clock.reset();
         self.usage_family.close();
         self.pictures.clear();
         self.receipts.suspend();
+        self.active.task_anchors.clear();
+        self.focused_key = None;
+        self.task_focus_pinned.set(false);
     }
     pub(crate) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
@@ -87,11 +121,34 @@ impl Display {
             self.stream = StreamRender::default();
             self.live_ansi.get_mut().clear();
             self.children.clear();
+            self.tool_clock.reset();
             self.usage_family.close();
             self.pictures.clear();
             self.receipts.clear();
             self.diffs = Default::default();
+            self.focused_key = None;
+            self.task_focus_pinned.set(false);
         }
+    }
+
+    pub(crate) fn mark_search_revealed(&mut self, key: &str) {
+        if key.is_empty() {
+            return;
+        }
+        let entries = &mut self.active.search_revealed;
+        if let Some(pos) = entries.iter().position(|existing| existing == key) {
+            entries.remove(pos);
+        } else if entries.len() >= 64 {
+            entries.pop_front();
+        }
+        entries.push_back(key.into());
+    }
+
+    pub(super) fn search_revealed(&self, key: &str) -> bool {
+        self.active
+            .search_revealed
+            .iter()
+            .any(|existing| existing == key)
     }
 
     pub fn toggled(&self, key: &str) -> bool {
@@ -107,6 +164,34 @@ impl Display {
             .active
             .expansion
             .insert(key.into(), expanded);
+        s.revision += 1;
+    }
+
+    pub(super) fn execute_search_expanded(&self, search_id: u64, key: &str, default: bool) -> bool {
+        if self.active.execute_search.0 == search_id {
+            self.active
+                .execute_search
+                .1
+                .get(key)
+                .copied()
+                .unwrap_or(default)
+        } else {
+            default
+        }
+    }
+
+    pub(super) fn set_execute_search_expanded(
+        s: &mut State,
+        search_id: u64,
+        key: &str,
+        expanded: bool,
+    ) {
+        let state = &mut s.transcript_display.active.execute_search;
+        if state.0 != search_id {
+            state.0 = search_id;
+            state.1.clear();
+        }
+        state.1.insert(key.into(), expanded);
         s.revision += 1;
     }
 
@@ -141,6 +226,134 @@ impl Display {
         self.active.revealed.get(key).copied().unwrap_or_default()
     }
 
+    pub(super) fn focused_key(&self) -> Option<&str> {
+        self.focused_key.as_deref()
+    }
+
+    pub(super) fn mark_task_focus_pinned(&self) {
+        self.task_focus_pinned.set(true);
+    }
+
+    pub(super) fn task_anchors(&self, key: &str) -> &[String] {
+        self.active
+            .task_anchors
+            .iter()
+            .find(|(id, _)| id == key)
+            .filter(|(_, state)| !state.at_bottom)
+            .map_or(&[], |(_, state)| state.visible.as_slice())
+    }
+
+    pub(super) fn task_selected(&self, key: &str) -> &[String] {
+        self.active
+            .task_anchors
+            .iter()
+            .find(|(id, _)| id == key)
+            .map_or(&[], |(_, state)| state.selected.as_slice())
+    }
+
+    pub(super) fn task_revealed(&self, key: &str) -> usize {
+        self.active.task_revealed.get(key).copied().unwrap_or(0)
+    }
+
+    pub(super) fn task_mount_gen(&self, key: &str) -> u64 {
+        self.active.task_mount_gen.get(key).copied().unwrap_or(0)
+    }
+
+    pub(super) fn set_task_visible(&mut self, key: &str, visible: Vec<String>) {
+        let state = self.task_steps_entry(key);
+        state.visible = visible;
+    }
+
+    pub(super) fn set_task_selected(&mut self, key: &str, selected: Vec<String>) -> bool {
+        if !selected.is_empty() {
+            let child_marker = format!("{key}-");
+            for (other_key, other) in &mut self.active.task_anchors {
+                if other_key != key
+                    && !other_key.contains(&child_marker)
+                    && !key.contains(&format!("{other_key}-"))
+                {
+                    other.selected.clear();
+                }
+            }
+        }
+        let state = self.task_steps_entry(key);
+        let released = !state.selected.is_empty() && selected.is_empty() && state.at_bottom;
+        state.selected = selected;
+        released
+    }
+
+    pub(super) fn set_task_at_bottom(&mut self, key: &str, at_bottom: bool) -> bool {
+        let state = self.task_steps_entry(key);
+        let returned_to_bottom = !state.at_bottom && at_bottom;
+        state.at_bottom = at_bottom;
+        returned_to_bottom
+    }
+
+    pub(super) fn reveal_task_at_least(s: &mut State, key: &str, count: usize) {
+        let entry = s
+            .transcript_display
+            .active
+            .task_revealed
+            .entry(key.into())
+            .or_default();
+        *entry = (*entry).max(count);
+        s.revision += 1;
+    }
+
+    fn task_steps_entry(&mut self, key: &str) -> &mut TaskStepsState {
+        if let Some(pos) = self
+            .active
+            .task_anchors
+            .iter()
+            .position(|(id, _)| id == key)
+        {
+            if let Some(entry) = self.active.task_anchors.remove(pos) {
+                self.active.task_anchors.push_back(entry);
+            }
+        } else {
+            if self.active.task_anchors.len() >= TASK_ANCHOR_LIMIT {
+                let evict = self
+                    .active
+                    .task_anchors
+                    .iter()
+                    .position(|(_, state)| state.selected.is_empty())
+                    .unwrap_or(0);
+                self.active.task_anchors.remove(evict);
+            }
+            self.active
+                .task_anchors
+                .push_back((key.into(), TaskStepsState::default()));
+        }
+        &mut self
+            .active
+            .task_anchors
+            .back_mut()
+            .expect("entry pushed above")
+            .1
+    }
+
+    pub(super) fn clear_step_anchors(&mut self, prefix: &str) {
+        let nested = format!("{prefix}-");
+        let pane = format!("{prefix}-task-steps");
+        let pane_nested = format!("{pane}-");
+        self.active.task_anchors.retain(|(key, _)| {
+            key != prefix
+                && !key.starts_with(&nested)
+                && key != &pane
+                && !key.contains(&pane_nested)
+        });
+        let mount_gen = self.active.task_mount_gen.entry(pane.clone()).or_default();
+        *mount_gen = mount_gen.wrapping_add(1);
+        if self
+            .focused_key
+            .as_deref()
+            .is_some_and(|key| key.contains(&pane_nested) || key.ends_with(&pane))
+        {
+            self.focused_key = None;
+            self.task_focus_pinned.set(false);
+        }
+    }
+
     pub(super) fn live_ansi(
         &self,
         key: &str,
@@ -170,7 +383,29 @@ impl Display {
     }
 
     pub fn poll(s: &mut State, changed: bool, now: f64, tx: &mut rune::Tx) -> bool {
-        let timeline = crate::timeline::poll(s, tx) | crate::timeline::search::poll(s, now, tx);
+        let next_focus = tx.focused().map(str::to_owned);
+        let mut focus_released = false;
+        if s.transcript_display.focused_key != next_focus {
+            s.transcript_display.focused_key = next_focus;
+            if s.transcript_display.task_focus_pinned.replace(false) {
+                s.revision += 1;
+                focus_released = true;
+            }
+        }
+        let clock = if !s.history_detached
+            && matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming)
+        {
+            let bounds = s.tool_diff_preferences.history_bounds.get();
+            s.transcript_display.tool_clock.poll(now, bounds, tx)
+        } else {
+            s.transcript_display.tool_clock.pause();
+            false
+        };
+        let timeline = crate::timeline::poll(s, tx)
+            | crate::timeline::search::poll(s, now, tx)
+            | super::tools::children::Children::poll_actions(s, tx)
+            | clock
+            | focus_released;
         let stream = &mut s.transcript_display.stream;
         if changed {
             stream.pending = s.messages.last().is_some_and(|row| {
@@ -218,6 +453,42 @@ impl Display {
 
     pub(super) fn toggle_diagram_source(s: &mut State, key: &str, index: usize) {
         toggle_index(&mut s.transcript_display.active.diagram_sources, key, index);
+        s.revision += 1;
+    }
+
+    pub(super) fn diagram_search_overrides(
+        &self,
+        search_id: u64,
+        key: &str,
+    ) -> BTreeMap<usize, bool> {
+        if search_id == 0 || self.active.diagram_search.0 != search_id {
+            return BTreeMap::new();
+        }
+        self.active
+            .diagram_search
+            .1
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn set_diagram_search_override(
+        s: &mut State,
+        search_id: u64,
+        key: &str,
+        index: usize,
+        source_only: bool,
+    ) {
+        let entry = &mut s.transcript_display.active.diagram_search;
+        if entry.0 != search_id {
+            entry.0 = search_id;
+            entry.1.clear();
+        }
+        entry
+            .1
+            .entry(key.into())
+            .or_default()
+            .insert(index, source_only);
         s.revision += 1;
     }
 

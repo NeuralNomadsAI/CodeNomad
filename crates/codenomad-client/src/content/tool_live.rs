@@ -22,6 +22,7 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
             .zip(fetched.input.as_str())
             .is_some_and(|(live, fetched)| live.len() > fetched.len() && live.starts_with(fetched)),
         ("running", "streaming") => true,
+        ("completed" | "error", "streaming" | "running") => true,
         ("running", "running")
             if no_progress(&fetched.metadata) && !no_progress(&live.metadata) =>
         {
@@ -34,7 +35,7 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
         ("running", "running") if live.name == "execute" && fetched.name == "execute" => {
             let saved = execute_calls(&live.metadata);
             let published = execute_calls(&fetched.metadata);
-            if saved.len() > published.len()
+            if saved.len() >= published.len()
                 && saved
                     .iter()
                     .zip(published)
@@ -45,13 +46,20 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
                     .zip(saved)
                     .map(|(http, sse)| {
                         if http["status"] == "running" && sse["status"] != "running" {
-                            sse
+                            let mut merged = sse.clone();
+                            if let (Some(dst), Some(src)) =
+                                (merged.as_object_mut(), http.as_object())
+                                && !dst.contains_key("input")
+                                && let Some(input) = src.get("input")
+                            {
+                                dst.insert("input".into(), input.clone());
+                            }
+                            merged
                         } else {
-                            http
+                            http.clone()
                         }
                     })
-                    .chain(saved.iter().skip(published.len()))
-                    .cloned()
+                    .chain(saved.iter().skip(published.len()).cloned())
                     .collect();
                 let snapshot = Arc::make_mut(fetched);
                 if let Some(fields) = snapshot.metadata.as_object_mut() {
@@ -65,25 +73,49 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
     };
     if replace {
         let index = fetched.part_index;
+        let fetched_started = fetched.started;
+        let fetched_message_created = fetched.message_created;
         *fetched = live.clone();
-        Arc::make_mut(fetched).part_index = index;
+        let merged = Arc::make_mut(fetched);
+        merged.part_index = index;
+        if merged.started.is_none() {
+            merged.started = fetched_started;
+        }
+        if merged.message_created.is_none() {
+            merged.message_created = fetched_message_created;
+        }
+    } else if matches!(fetched.status.as_str(), "streaming" | "running") {
+        if live.status == "running" && fetched.started.is_none() && live.started.is_some() {
+            Arc::make_mut(fetched).started = live.started;
+        }
+        if fetched.ended.is_none() && live.ended.is_some() {
+            Arc::make_mut(fetched).ended = live.ended;
+        }
     }
 }
 
 pub(crate) enum Fit {
     Applied(Arc<Tool>),
+    Settled(Arc<Tool>),
     Drop,
     Repair,
 }
 
-pub(crate) fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
+#[cfg(test)]
+fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
+    apply_at(row, kind, data, None)
+}
+
+pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u64>) -> Fit {
+    let at = at.filter(|at| *at > 0);
     let Some(id) = data["id"]
         .as_str()
         .filter(|id| !id.is_empty() && id.len() <= 256)
     else {
         return Fit::Repair;
     };
-    if row.role != "assistant" || row.completed {
+    let terminal = matches!(kind, "session.tool.success" | "session.tool.failed");
+    if row.role != "assistant" || (row.completed && !terminal) {
         return Fit::Drop;
     }
     let prior = row.parts.iter_mut().find_map(|part| match part {
@@ -109,7 +141,9 @@ pub(crate) fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
             metadata: Value::Null,
             output: String::new(),
             error: String::new(),
-            started: None,
+            started: at,
+            message_created: None,
+            ended: None,
             pictures: Vec::new(),
             bytes: 0,
             output_bytes: 0,
@@ -142,14 +176,18 @@ pub(crate) fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
             tool.input = Value::String(format!("{prefix}{next}"));
         }
         "session.tool.called" => {
-            if tool.status != "streaming" {
+            if tool.status != "streaming" || tool.ended.is_some() {
                 return Fit::Drop;
             }
             tool.status = "running".into();
+            tool.started = at.or(tool.started);
             tool.input = data["input"].clone();
             tool.metadata = Value::Null;
         }
         "session.tool.progress" => {
+            if tool.ended.is_some() {
+                return Fit::Drop;
+            }
             if tool.status != "running" {
                 return if tool.status == "streaming" {
                     Fit::Repair
@@ -159,18 +197,100 @@ pub(crate) fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
             }
             tool.metadata = data["metadata"].clone();
         }
+        "session.tool.success" | "session.tool.failed" => {
+            if !matches!(tool.status.as_str(), "streaming" | "running") {
+                return Fit::Drop;
+            }
+            let Some(ended) = at.or(tool.ended) else {
+                return Fit::Repair;
+            };
+            tool.ended = Some(ended);
+            if kind == "session.tool.success" {
+                tool.status = "completed".into();
+                if let Some(items) = data["content"].as_array() {
+                    let mut out = String::new();
+                    let mut fits = true;
+                    for text in items
+                        .iter()
+                        .filter(|item| item["type"] == "text")
+                        .filter_map(|item| item["text"].as_str())
+                    {
+                        let add = text.len() + usize::from(!out.is_empty());
+                        if out.len().saturating_add(add) > LIVE_BYTES {
+                            fits = false;
+                            break;
+                        }
+                        if !out.is_empty() {
+                            out.push('\n');
+                        }
+                        out.push_str(text);
+                    }
+                    if fits {
+                        tool.output = out;
+                    }
+                }
+            } else {
+                tool.status = "error".into();
+                if let Some(msg) = data["error"]["message"]
+                    .as_str()
+                    .or_else(|| data["error"].as_str())
+                    && msg.len() <= LIVE_BYTES
+                {
+                    tool.error = msg.into();
+                }
+            }
+            if let Some(meta) = data.get("metadata").filter(|m| !m.is_null()) {
+                let (nodes, bytes) = resident_json(meta);
+                if nodes.saturating_add(bytes) <= LIVE_BYTES {
+                    tool.metadata = meta.clone();
+                }
+            }
+            measure(&mut tool);
+            if tool.bytes.saturating_add(tool.output_bytes) > LIVE_BYTES {
+                // Keep settled status and frozen timer even when payload awaits HTTP.
+                tool.output.clear();
+                tool.error.clear();
+                tool.metadata = Value::Null;
+                measure(&mut tool);
+            }
+            let tool = Arc::new(tool);
+            *prior = tool.clone();
+            return Fit::Settled(tool);
+        }
         _ => return Fit::Repair,
     }
     measure(&mut tool);
     if tool.name == "execute"
         && kind == "session.tool.progress"
         && tool.bytes.saturating_add(tool.output_bytes) > LIVE_BYTES
-        && let Some(calls) = tool.metadata["toolCalls"].as_array_mut()
+        && let Some(calls) = tool
+            .metadata
+            .as_object_mut()
+            .and_then(|fields| fields.get_mut("toolCalls"))
+            .and_then(Value::as_array_mut)
     {
-        // Keep progress visible even when the nested inputs cannot be retained.
-        for call in calls {
-            if let Some(fields) = call.as_object_mut() {
+        // Drop only the largest nested inputs until the progress payload fits LIVE_BYTES.
+        let mut by_size: Vec<(usize, usize)> = calls
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, call)| {
+                let input = call.as_object()?.get("input")?;
+                let (nodes, bytes) = resident_json(input);
+                Some((idx, nodes.saturating_add(bytes)))
+            })
+            .collect();
+        by_size.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut over = tool
+            .bytes
+            .saturating_add(tool.output_bytes)
+            .saturating_sub(LIVE_BYTES);
+        for (idx, size) in by_size {
+            if over == 0 {
+                break;
+            }
+            if let Some(fields) = calls[idx].as_object_mut() {
                 fields.remove("input");
+                over = over.saturating_sub(size);
             }
         }
         measure(&mut tool);
@@ -242,9 +362,38 @@ mod tests {
         assert!(
             execute_calls(&tool.metadata)
                 .iter()
-                .all(|call| call["tool"] == "write" && call.get("input").is_none())
+                .all(|call| call["tool"] == "write")
+        );
+        assert!(
+            execute_calls(&tool.metadata)
+                .iter()
+                .any(|call| call.get("input").is_none())
+        );
+        assert!(
+            execute_calls(&tool.metadata)
+                .iter()
+                .any(|call| call.get("input").is_some())
         );
         assert!(tool.bytes + tool.output_bytes <= LIVE_BYTES);
+
+        // Mixed sizes: only oversized inputs are dropped, keeping smaller call titles intact.
+        let mut mixed = row(json!({}));
+        let Fit::Applied(trimmed) = apply(
+            &mut mixed,
+            "session.tool.progress",
+            &json!({"id":"call","metadata":{"toolCalls":[
+                {"tool":"read","status":"completed","input":{"filePath":"small.rs"}},
+                {"tool":"write","status":"running","input":{"filePath":"big.txt","content":"x".repeat(LIVE_BYTES)}}
+            ]}}),
+        ) else {
+            panic!("mixed progress snapshot was lost")
+        };
+        assert_eq!(
+            trimmed.metadata["toolCalls"][0]["input"]["filePath"],
+            "small.rs"
+        );
+        assert!(trimmed.metadata["toolCalls"][1].get("input").is_none());
+        assert!(trimmed.bytes + trimmed.output_bytes <= LIVE_BYTES);
 
         let mut behind = [Arc::new(row(
             json!({"title":"HTTP title","toolCalls":calls[..1]}),
@@ -327,5 +476,283 @@ mod tests {
             ),
             Fit::Repair
         ));
+    }
+
+    #[test]
+    fn running_http_page_without_timestamp_preserves_live_start() {
+        let mut live =
+            crate::history::decode_message(&json!({"id":"row","type":"assistant"})).unwrap();
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.input.started",
+                &json!({"id":"call","name":"bash"}),
+                Some(1_000)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.called",
+                &json!({"id":"call","input":{"command":"sleep 5"}}),
+                Some(2_000)
+            ),
+            Fit::Applied(_)
+        ));
+        let mut fetched = [Arc::new(
+            crate::history::decode_message(&json!({
+                "id":"row","type":"assistant","content":[
+                    {"type":"tool","id":"call","name":"bash","state":{"status":"running","input":{"command":"sleep 5"}}}
+                ]
+            }))
+            .unwrap(),
+        )];
+        crate::content::merge_page(&[Arc::new(live)], &mut fetched).unwrap();
+        let Part::Tool(tool) = &fetched[0].parts[0] else {
+            panic!("tool part")
+        };
+        assert_eq!(tool.started, Some(2_000));
+    }
+
+    #[test]
+    fn tool_success_and_failed_settle_immediately_with_end_timestamp() {
+        let mut live =
+            crate::history::decode_message(&json!({"id":"row","type":"assistant"})).unwrap();
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.input.started",
+                &json!({"id":"a","name":"bash"}),
+                Some(1_000)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.called",
+                &json!({"id":"a","input":{"command":"echo hi"}}),
+                Some(2_000)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.progress",
+                &json!({"id":"a","metadata":{"output":"hi"}}),
+                Some(2_500)
+            ),
+            Fit::Applied(_)
+        ));
+        let Fit::Settled(done) = apply_at(
+            &mut live,
+            "session.tool.success",
+            &json!({"id":"a","content":[{"type":"text","text":"hi"}]}),
+            Some(5_000),
+        ) else {
+            panic!("expected Settled")
+        };
+        assert_eq!(done.status, "completed");
+        assert_eq!(done.started, Some(2_000));
+        assert_eq!(done.ended, Some(5_000));
+        assert_eq!(done.output, "hi");
+        assert_eq!(done.metadata["output"], "hi");
+
+        // A stale running HTTP page must not revert a settled SSE tool or restart its timer.
+        let mut stale = [Arc::new(
+            crate::history::decode_message(&json!({
+                "id":"row","type":"assistant","content":[
+                    {"type":"tool","id":"a","name":"bash","time":{"ran":2000},"state":{"status":"running","input":{"command":"echo hi"}}}
+                ]
+            }))
+            .unwrap(),
+        )];
+        crate::content::merge_page(&[Arc::new(live.clone())], &mut stale).unwrap();
+        let Part::Tool(merged) = &stale[0].parts[0] else {
+            panic!("tool part")
+        };
+        assert_eq!(merged.status, "completed");
+        assert_eq!(merged.ended, Some(5_000));
+        assert_eq!(merged.output, "hi");
+
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.input.started",
+                &json!({"id":"b","name":"bash"}),
+                Some(6_000)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.called",
+                &json!({"id":"b","input":{"command":"false"}}),
+                Some(6_500)
+            ),
+            Fit::Applied(_)
+        ));
+        let Fit::Settled(failed) = apply_at(
+            &mut live,
+            "session.tool.failed",
+            &json!({"id":"b","error":{"message":"exit 1"}}),
+            Some(8_000),
+        ) else {
+            panic!("expected Settled")
+        };
+        assert_eq!(failed.status, "error");
+        assert_eq!(failed.error, "exit 1");
+        assert_eq!(failed.ended, Some(8_000));
+
+        // Even if `called` was missed and live stayed `streaming`, a running HTTP page inherits `ended`.
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.input.started",
+                &json!({"id":"c","name":"bash"}),
+                Some(9_000)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut live,
+                "session.tool.success",
+                &json!({"id":"c"}),
+                Some(11_000)
+            ),
+            Fit::Settled(_)
+        ));
+        let mut running_c = [Arc::new(
+            crate::history::decode_message(&json!({
+                "id":"row","type":"assistant","content":[
+                    {"type":"tool","id":"c","name":"bash","time":{"ran":9500},"state":{"status":"running","input":{"command":"true"}}}
+                ]
+            }))
+            .unwrap(),
+        )];
+        crate::content::merge_page(&[Arc::new(live)], &mut running_c).unwrap();
+        let merged_c = running_c[0]
+            .parts
+            .iter()
+            .find_map(|part| match part {
+                Part::Tool(tool) if tool.id == "c" => Some(tool),
+                _ => None,
+            })
+            .expect("merged tool c");
+        assert_eq!(merged_c.ended, Some(11_000));
+
+        // A terminal SSE event still settles a running tool on a completed assistant row.
+        let mut done_row = crate::history::decode_message(&json!({
+            "id":"done","type":"assistant","time":{"completed":12_000},"content":[
+                {"type":"tool","id":"late","name":"bash","time":{"ran":10_000},"state":{"status":"running","input":{"command":"sleep 1"}}}
+            ]
+        }))
+        .unwrap();
+        let Fit::Settled(late) = apply_at(
+            &mut done_row,
+            "session.tool.success",
+            &json!({"id":"late"}),
+            Some(13_000),
+        ) else {
+            panic!("expected Settled on completed row")
+        };
+        assert_eq!(late.ended, Some(13_000));
+
+        // Late called, progress or duplicate terminal events after settlement are dropped.
+        assert!(matches!(
+            apply_at(
+                &mut done_row,
+                "session.tool.progress",
+                &json!({"id":"late","metadata":{"output":"overwrite"}}),
+                Some(14_000)
+            ),
+            Fit::Drop
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut done_row,
+                "session.tool.failed",
+                &json!({"id":"late"}),
+                Some(15_000)
+            ),
+            Fit::Drop
+        ));
+        // Completed HTTP page that still reports the tool running preserves SSE ended.
+        let mut stale_done = [Arc::new(
+            crate::history::decode_message(&json!({
+                "id":"done","type":"assistant","time":{"completed":12_000},"content":[
+                    {"type":"tool","id":"late","name":"bash","time":{"ran":10_000},"state":{"status":"running","input":{"command":"sleep 1"}}}
+                ]
+            }))
+            .unwrap(),
+        )];
+        crate::content::merge_page(&[Arc::new(done_row)], &mut stale_done).unwrap();
+        let Part::Tool(merged_late) = &stale_done[0].parts[0] else {
+            panic!("tool part")
+        };
+        assert_eq!(merged_late.ended, Some(13_000));
+
+        // Oversized non-object execute metadata returns Repair without panicking, and equal-length
+        // execute toolCalls preserve HTTP inputs while adopting settled SSE statuses.
+        let mut exec_row =
+            crate::history::decode_message(&json!({"id":"ex","type":"assistant"})).unwrap();
+        assert!(matches!(
+            apply_at(
+                &mut exec_row,
+                "session.tool.input.started",
+                &json!({"id":"e1","name":"execute"}),
+                Some(1_000)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut exec_row,
+                "session.tool.called",
+                &json!({"id":"e1","input":{"code":"1"}}),
+                Some(1_500)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut exec_row,
+                "session.tool.progress",
+                &json!({"id":"e1","metadata":"x".repeat(LIVE_BYTES + 32)}),
+                Some(1_600)
+            ),
+            Fit::Repair
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut exec_row,
+                "session.tool.progress",
+                &json!({"id":"e1","metadata":{"toolCalls":[{"tool":"read","status":"completed"}]}}),
+                Some(1_700)
+            ),
+            Fit::Applied(_)
+        ));
+        let mut exec_http = [Arc::new(
+            crate::history::decode_message(&json!({
+                "id":"ex","type":"assistant","content":[
+                    {"type":"tool","id":"e1","name":"execute","state":{"status":"running",
+                     "metadata":{"toolCalls":[{"tool":"read","status":"running","input":{"filePath":"a.rs"}}]}}}
+                ]
+            }))
+            .unwrap(),
+        )];
+        crate::content::merge_page(&[Arc::new(exec_row)], &mut exec_http).unwrap();
+        let Part::Tool(merged_exec) = &exec_http[0].parts[0] else {
+            panic!("tool part")
+        };
+        assert_eq!(merged_exec.metadata["toolCalls"][0]["status"], "completed");
+        assert_eq!(
+            merged_exec.metadata["toolCalls"][0]["input"]["filePath"],
+            "a.rs"
+        );
     }
 }

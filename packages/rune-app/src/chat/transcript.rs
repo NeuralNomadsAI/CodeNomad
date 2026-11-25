@@ -108,11 +108,20 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
         .separate(Space::Sm)
         .child(header);
     let mut ordinal = 0;
+    let text_claimed = std::cell::Cell::new(false);
     if (m.role == "user" || m.parts.is_empty()) && !m.body.is_empty() {
         let key = format!("body-{}", m.id);
         view = view.child(super::reading::passage(
             s,
-            document::prose(s, &m.id, key.clone(), &m.body, false),
+            document::prose_claimed(
+                s,
+                &m.id,
+                key.clone(),
+                &m.body,
+                false,
+                None,
+                Some(&text_claimed),
+            ),
             &m.id,
             key,
             None,
@@ -179,12 +188,14 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                 if visible && !body.text.trim().is_empty() {
                     Some(super::reading::passage(
                         s,
-                        document::prose(
+                        document::prose_claimed(
                             s,
                             &m.id,
                             key.clone(),
                             &body.text,
                             !m.completed && body.provenance != TextProvenance::Closed,
+                            body.part_index,
+                            Some(&text_claimed),
                         ),
                         &m.id,
                         key,

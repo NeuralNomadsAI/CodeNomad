@@ -233,6 +233,7 @@ fn render_page<S: 'static>(source_text: &str, markdown_text: Option<&str>, raw: 
     markdown::prose::<S>(
         md,
         false,
+        false,
         true,
         None,
         |_, href, tx| open_safe_url(href, tx),

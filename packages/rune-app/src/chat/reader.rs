@@ -33,6 +33,11 @@ pub(crate) struct Reader {
 }
 
 impl Reader {
+    #[cfg(test)]
+    pub(crate) fn fixture_open() -> (Self, ReadingLane) {
+        Self::open()
+    }
+
     pub(super) fn open() -> (Self, ReadingLane) {
         let (request, demand) = demand::open();
         let (out, events) = bounded(8);
