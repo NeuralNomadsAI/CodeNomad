@@ -847,13 +847,18 @@ pub(crate) fn suspend_guard(app: &AppHandle) {
 }
 
 pub(crate) async fn approve_close(app: &AppHandle) -> Result<bool, String> {
-    let dispatch = app.clone();
+    let incarnation = app.state::<PreferencesWindow>().incarnation();
+    let capture_app = app.clone();
     approve_close_with(
         |job| app.run_on_main_thread(job),
         move || {
-            let incarnation = dispatch.state::<PreferencesWindow>().incarnation();
+            // Capture only native geometry on dispatch; shutdown/queue locks stay off-thread.
+            crate::client_state::capture_preferences_window(&capture_app);
+            Ok(())
+        },
+        move || {
             let (done, reply) = tokio::sync::oneshot::channel();
-            if !enqueue_close(&dispatch, incarnation, move |result| {
+            if !enqueue_close_after_capture(app, incarnation, move |result| {
                 let _ = done.send(result);
             })? {
                 return Ok(None);
@@ -866,14 +871,14 @@ pub(crate) async fn approve_close(app: &AppHandle) -> Result<bool, String> {
 
 async fn approve_close_with<E>(
     dispatch: impl FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), E>,
-    capture_and_enqueue: impl FnOnce() -> Result<Option<tokio::sync::oneshot::Receiver<Result<bool, String>>>, String>
-        + Send
-        + 'static,
+    capture_native: impl FnOnce() -> Result<(), String> + Send + 'static,
+    enqueue: impl FnOnce() -> Result<Option<tokio::sync::oneshot::Receiver<Result<bool, String>>>, String>,
 ) -> Result<bool, String>
 where
     E: std::fmt::Display,
 {
-    let Some(reply) = crate::run_on_dispatch(dispatch, capture_and_enqueue).await? else {
+    crate::run_on_dispatch(dispatch, capture_native).await?;
+    let Some(reply) = enqueue()? else {
         return Ok(false);
     };
     reply.await.map_err(|error| error.to_string())?
@@ -886,6 +891,14 @@ fn enqueue_close(
 ) -> Result<bool, String> {
     // The close is only admitted once its last native inputs are captured.
     crate::client_state::capture_preferences_window(app);
+    enqueue_close_after_capture(app, incarnation, complete)
+}
+
+fn enqueue_close_after_capture(
+    app: &AppHandle,
+    incarnation: u64,
+    complete: impl FnOnce(Result<bool, String>) + Send + 'static,
+) -> Result<bool, String> {
     let worker = app.clone();
     let preferences = app.state::<PreferencesWindow>();
     crate::shutdown::with_navigation_authority(app, || {
@@ -1357,11 +1370,16 @@ mod tests {
         let captured_on_dispatch = Arc::clone(&captured);
 
         tauri::async_runtime::block_on(async {
+            let executor_id = std::thread::current().id();
             let mut approving = pin!(approve_close_with(
                 move |job| dispatch_tx.send(job),
                 move || {
                     captured_on_dispatch.store(true, Ordering::SeqCst);
                     capture_thread_tx.send(std::thread::current().id()).unwrap();
+                    Ok(())
+                },
+                move || {
+                    assert_eq!(std::thread::current().id(), executor_id);
                     Ok(Some(worker_reply))
                 },
             ));
@@ -1388,13 +1406,14 @@ mod tests {
             assert!(approving.await.unwrap());
         });
 
-        // A close not admitted on dispatch resolves immediately to Ok(false).
+        // A close not admitted off-thread resolves immediately to Ok(false).
         tauri::async_runtime::block_on(async {
             let approved = approve_close_with(
                 |job| {
                     job();
                     Ok::<(), &str>(())
                 },
+                || Ok(()),
                 || Ok(None),
             )
             .await

@@ -573,23 +573,40 @@ fn open_workspace_target_impl(
     }
 }
 
+async fn require_local_window_with<E, D, U>(
+    dispatch: D,
+    read_url: U,
+    manager: CliProcessManager,
+) -> Result<(), String>
+where
+    E: std::fmt::Display,
+    D: FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), E>,
+    U: FnOnce() -> Result<url::Url, String> + Send + 'static,
+{
+    // Dispatch only the Wry URL read on the native thread; lifecycle-locked
+    // CLI access stays off native dispatch and off the async executor.
+    let current = crate::run_on_dispatch(dispatch, read_url).await?;
+    let config = tauri::async_runtime::spawn_blocking(move || manager.local_cli_access())
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("Local CodeNomad server is unavailable")?;
+    let expected = url::Url::parse(&config.base_url).map_err(|error| error.to_string())?;
+    if current.origin() != expected.origin() {
+        return Err("Workspace open requests require the local CodeNomad origin".into());
+    }
+    Ok(())
+}
+
 async fn require_local_window(webview: &tauri::Webview) -> Result<(), String> {
     crate::identity::local_window_id(webview.label())?;
     let app = webview.app_handle().clone();
-    let webview = webview.clone();
-    crate::run_on_main_thread_async(&app, move || {
-        let state = webview.app_handle().state::<AppState>();
-        let config = state
-            .manager
-            .local_cli_access()
-            .ok_or("Local CodeNomad server is unavailable")?;
-        let expected = url::Url::parse(&config.base_url).map_err(|error| error.to_string())?;
-        let current = webview.url().map_err(|error| error.to_string())?;
-        if current.origin() != expected.origin() {
-            return Err("Workspace open requests require the local CodeNomad origin".into());
-        }
-        Ok(())
-    })
+    let manager = app.state::<AppState>().manager.clone();
+    let target = webview.clone();
+    require_local_window_with(
+        |job| app.run_on_main_thread(job),
+        move || target.url().map_err(|error| error.to_string()),
+        manager,
+    )
     .await
 }
 
@@ -819,5 +836,69 @@ mod tests {
         );
         #[cfg(unix)]
         assert!(default_open_mode(&executable).is_err());
+    }
+
+    #[test]
+    fn held_lifecycle_lock_does_not_block_native_dispatch_callback() {
+        use std::sync::mpsc;
+
+        let manager = CliProcessManager::new();
+        manager.set_ready_local_access_for_test("http://127.0.0.1:43123");
+        let lifecycle = manager.lock_lifecycle_for_test();
+
+        let (native_tx, native_rx) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let native_thread = std::thread::spawn(move || {
+            for job in native_rx {
+                job();
+            }
+        });
+
+        let (dispatched_tx, dispatched_rx) = mpsc::channel();
+        let auth_tx = native_tx.clone();
+        let auth_manager = manager.clone();
+        let auth_handle = std::thread::spawn(move || {
+            tauri::async_runtime::block_on(require_local_window_with(
+                move |job| {
+                    let result = auth_tx.send(job);
+                    let _ = dispatched_tx.send(());
+                    result
+                },
+                || url::Url::parse("http://127.0.0.1:43123/workspace").map_err(|e| e.to_string()),
+                auth_manager,
+            ))
+        });
+
+        dispatched_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (heartbeat_tx, heartbeat_rx) = mpsc::channel();
+        native_tx
+            .send(Box::new(move || {
+                let _ = heartbeat_tx.send(());
+            }))
+            .unwrap();
+
+        let heartbeat = heartbeat_rx.recv_timeout(Duration::from_millis(300));
+        drop(lifecycle);
+        let auth_result = auth_handle.join().unwrap();
+        drop(native_tx);
+        native_thread.join().unwrap();
+
+        assert!(
+            heartbeat.is_ok(),
+            "native dispatch heartbeat blocked while CLI lifecycle lock was held"
+        );
+        assert!(auth_result.is_ok());
+
+        let rejected = tauri::async_runtime::block_on(require_local_window_with(
+            |job| {
+                job();
+                Ok::<(), &str>(())
+            },
+            || url::Url::parse("http://127.0.0.1:9999/workspace").map_err(|e| e.to_string()),
+            manager,
+        ));
+        assert_eq!(
+            rejected.unwrap_err(),
+            "Workspace open requests require the local CodeNomad origin"
+        );
     }
 }

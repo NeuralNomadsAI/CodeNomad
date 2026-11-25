@@ -6,9 +6,11 @@
 //! FIFO worker thread.
 
 use std::sync::{mpsc, OnceLock};
+use std::time::Duration;
 use tauri::{AppHandle, Runtime};
 
 type OpenJob = Box<dyn FnOnce() + Send>;
+static QUEUE: OnceLock<ExternalOpenQueue> = OnceLock::new();
 
 pub(crate) struct ExternalOpenQueue {
     sender: mpsc::Sender<OpenJob>,
@@ -28,6 +30,20 @@ impl ExternalOpenQueue {
         self.sender
             .send(job)
             .map_err(|_| "External URL opener worker stopped".to_string())
+    }
+
+    fn drain_until(&self, timeout: Duration) -> bool {
+        let (done, barrier) = mpsc::sync_channel(1);
+        if self
+            .sender
+            .send(Box::new(move || {
+                let _ = done.send(());
+            }))
+            .is_err()
+        {
+            return false;
+        }
+        barrier.recv_timeout(timeout).is_ok()
     }
 
     fn enqueue_url(
@@ -61,8 +77,14 @@ impl ExternalOpenQueue {
 }
 
 fn queue() -> &'static ExternalOpenQueue {
-    static QUEUE: OnceLock<ExternalOpenQueue> = OnceLock::new();
     QUEUE.get_or_init(ExternalOpenQueue::new)
+}
+
+pub(crate) fn drain_pending(timeout: Duration) -> bool {
+    match QUEUE.get() {
+        Some(queue) => queue.drain_until(timeout),
+        None => true,
+    }
 }
 
 pub(crate) fn enqueue_open_url<R: Runtime>(
@@ -259,5 +281,33 @@ mod tests {
                 "https://example.com/second".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn drain_until_waits_for_queued_handoffs_and_bounds_stalled_openers() {
+        let queue = ExternalOpenQueue::new();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (completed_tx, completed_rx) = mpsc::channel();
+
+        queue.enqueue_url(
+            "https://example.com/slow".into(),
+            move |_| {
+                started_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                completed_tx.send(()).unwrap();
+                Ok(())
+            },
+            |error| panic!("unexpected error: {error}"),
+        );
+
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // A stalled launcher does not block shutdown beyond the drain budget.
+        assert!(!queue.drain_until(Duration::from_millis(30)));
+        assert!(completed_rx.try_recv().is_err());
+
+        release_tx.send(()).unwrap();
+        assert!(queue.drain_until(Duration::from_secs(5)));
+        completed_rx.try_recv().unwrap();
     }
 }

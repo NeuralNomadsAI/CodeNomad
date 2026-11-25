@@ -328,17 +328,27 @@ pub(crate) async fn run_on_main_thread_async<R: Runtime, T: Send + 'static>(
     run_on_dispatch(|job| app.run_on_main_thread(job), task).await
 }
 
+async fn read_webview_url_async(webview: &tauri::Webview) -> Result<Url, String> {
+    let app = webview.app_handle().clone();
+    let webview = webview.clone();
+    run_on_main_thread_async(&app, move || {
+        webview.url().map_err(|error| error.to_string())
+    })
+    .await
+}
+
 pub(crate) async fn require_local_app_webview_async(
     webview: &tauri::Webview,
 ) -> Result<Url, String> {
     identity::local_window_id(webview.label())?;
-    let app = webview.app_handle().clone();
-    let webview = webview.clone();
-    run_on_main_thread_async(&app, move || {
-        let state = webview.app_handle().state::<AppState>();
-        require_local_app_webview(&webview, &state)
-    })
-    .await
+    let current = read_webview_url_async(webview).await?;
+    let state = webview.app_handle().state::<AppState>();
+    let status = state.manager.status();
+    if is_allowed_local_origin(&current, status.url.as_deref()) {
+        Ok(current)
+    } else {
+        Err("Native application commands require a trusted local renderer origin".into())
+    }
 }
 
 pub(crate) async fn require_preferences_or_local_app_webview_async(
@@ -347,13 +357,16 @@ pub(crate) async fn require_preferences_or_local_app_webview_async(
     if webview.label() != preferences_window::LABEL {
         return require_local_app_webview_async(webview).await;
     }
-    let app = webview.app_handle().clone();
-    let webview = webview.clone();
-    run_on_main_thread_async(&app, move || {
-        let state = webview.app_handle().state::<AppState>();
-        require_preferences_or_local_app_webview(&webview, &state)
-    })
-    .await
+    let current = read_webview_url_async(webview).await?;
+    let state = webview.app_handle().state::<AppState>();
+    let status = state.manager.status();
+    if is_allowed_local_origin(&current, status.url.as_deref())
+        || preferences_window::is_trusted_renderer_origin(webview, &current)
+    {
+        Ok(current)
+    } else {
+        Err("Native application commands require a trusted preferences renderer origin".into())
+    }
 }
 
 pub(crate) fn handle_native_request(
@@ -487,43 +500,72 @@ impl WindowControlAction {
     }
 }
 
+async fn run_window_control_with<Auth, AuthFut, Exec, ExecFut>(
+    action: &str,
+    authorize: Auth,
+    execute: Exec,
+) -> Result<(), String>
+where
+    Auth: FnOnce() -> AuthFut,
+    AuthFut: std::future::Future<Output = Result<(), String>>,
+    Exec: FnOnce(WindowControlAction) -> ExecFut,
+    ExecFut: std::future::Future<Output = Result<(), String>>,
+{
+    authorize().await?;
+    let action = WindowControlAction::parse(action)?;
+    execute(action).await
+}
+
 #[tauri::command]
 async fn window_control(
     webview: tauri::Webview,
     app: AppHandle,
     action: String,
 ) -> Result<(), String> {
-    let action = WindowControlAction::parse(&action)?;
-    if action == WindowControlAction::Close && webview.label() == preferences_window::LABEL {
-        require_preferences_or_local_app_webview_async(&webview).await?;
-        if !preferences_window::approve_close(&app).await? {
-            return Ok(());
-        }
-        return run_on_main_thread_async(&app, move || {
-            webview.window().close().map_err(|error| error.to_string())
-        })
-        .await;
-    }
-    run_on_main_thread_async(&app, move || {
-        let state = webview.app_handle().state::<AppState>();
-        require_preferences_or_local_app_webview(&webview, &state)?;
-        let window = webview.window();
-        match action {
-            WindowControlAction::Minimize => {
-                state.browser_controller.revoke_window_visibility(window.label());
-                window.minimize()
-            }
-            WindowControlAction::Maximize => {
-                if window.is_maximized().unwrap_or(false) {
-                    window.unmaximize()
-                } else {
-                    window.maximize()
+    let auth_webview = webview.clone();
+    run_window_control_with(
+        &action,
+        || async move {
+            require_preferences_or_local_app_webview_async(&auth_webview).await?;
+            Ok(())
+        },
+        |action| async move {
+            match action {
+                WindowControlAction::Minimize => {
+                    app.state::<AppState>()
+                        .browser_controller
+                        .revoke_window_visibility(webview.window().label());
+                    run_on_main_thread_async(&app, move || {
+                        webview.window().minimize().map_err(|error| error.to_string())
+                    })
+                    .await
+                }
+                WindowControlAction::Maximize => {
+                    run_on_main_thread_async(&app, move || {
+                        let window = webview.window();
+                        if window.is_maximized().unwrap_or(false) {
+                            window.unmaximize()
+                        } else {
+                            window.maximize()
+                        }
+                        .map_err(|error| error.to_string())
+                    })
+                    .await
+                }
+                WindowControlAction::Close => {
+                    if webview.label() == preferences_window::LABEL
+                        && !preferences_window::approve_close(&app).await?
+                    {
+                        return Ok(());
+                    }
+                    run_on_main_thread_async(&app, move || {
+                        webview.window().close().map_err(|error| error.to_string())
+                    })
+                    .await
                 }
             }
-            WindowControlAction::Close => window.close(),
-        }
-        .map_err(|error| error.to_string())
-    })
+        },
+    )
     .await
 }
 
@@ -556,25 +598,35 @@ impl Drop for NativeMenuAdmission {
     }
 }
 
-async fn run_popup_titlebar_menu_with<E, D, F>(
+async fn run_popup_titlebar_menu_with<E, Auth, AuthFut, D, F>(
     pending: &Arc<AtomicBool>,
+    menu: &str,
+    x: f64,
+    y: f64,
+    authorize: Auth,
     dispatch: D,
     run_on_main: F,
 ) -> Result<(), String>
 where
     E: std::fmt::Display,
+    Auth: FnOnce() -> AuthFut,
+    AuthFut: std::future::Future<Output = Result<Url, String>>,
     D: FnOnce(Box<dyn FnOnce() + Send>) -> Result<(), E>,
-    F: FnOnce() -> Result<(), String> + Send + 'static,
+    F: FnOnce(&'static str, Url) -> Result<(), String> + Send + 'static,
 {
-    // Reserve before posting to native dispatch so concurrent calls fail fast
-    // instead of piling up behind an open popup. Dropping the closure on
-    // scheduling failure also releases admission.
+    // Reserve before any URL/native getter can wait behind an existing popup.
+    // Dropping `admission` on early return or scheduling failure releases it.
     pending
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .map_err(|_| "A native titlebar menu is already open".to_string())?;
     let admission = NativeMenuAdmission(Arc::clone(pending));
+    let admitted_url = authorize().await?;
+    if !x.is_finite() || !y.is_finite() {
+        return Err("Invalid titlebar menu position".into());
+    }
+    let id = titlebar_menu_id(menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
     run_on_dispatch(dispatch, move || {
-        let result = run_on_main();
+        let result = run_on_main(id, admitted_url);
         drop(admission);
         result
     })
@@ -590,18 +642,24 @@ async fn popup_titlebar_menu(
     y: f64,
 ) -> Result<(), String> {
     identity::local_window_id(webview.label())?;
-    if !x.is_finite() || !y.is_finite() {
-        return Err("Invalid titlebar menu position".into());
-    }
-    let id = titlebar_menu_id(&menu).ok_or_else(|| "Unknown titlebar menu".to_string())?;
     let app = webview.app_handle().clone();
     let dispatch_app = app.clone();
+    let auth_webview = webview.clone();
     run_popup_titlebar_menu_with(
         &state.native_menu_popup_pending,
+        &menu,
+        x,
+        y,
+        || async move { require_local_app_webview_async(&auth_webview).await },
         |job| dispatch_app.run_on_main_thread(job),
-        move || {
+        move |id, admitted_url| {
+            let current = webview.url().map_err(|error| error.to_string())?;
+            if current != admitted_url {
+                return Err(
+                    "Native application commands require a trusted local renderer origin".into(),
+                );
+            }
             let state = app.state::<AppState>();
-            require_local_app_webview(&webview, &state)?;
             if state.native_menu_popup_active.load(Ordering::Relaxed) {
                 return Err("A native titlebar menu is already open".to_string());
             }
@@ -3617,21 +3675,55 @@ mod menu_tests {
         }
 
         let pending = Arc::new(AtomicBool::new(false));
+        let trusted_url = Url::parse("http://127.0.0.1:43123/").unwrap();
         let (dispatch_tx, dispatch_rx) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
         tauri::async_runtime::block_on(async {
+            // Origin authorization fails before invalid position or menu ID validation.
+            let unauthorized = super::run_popup_titlebar_menu_with(
+                &pending,
+                "unknown-menu",
+                f64::NAN,
+                f64::NAN,
+                || async {
+                    Err("Native application commands require a trusted local renderer origin"
+                        .to_string())
+                },
+                |_| -> Result<(), &'static str> { panic!("unauthorized popup must not dispatch") },
+                |_, _| Ok(()),
+            )
+            .await;
+            assert_eq!(
+                unauthorized.unwrap_err(),
+                "Native application commands require a trusted local renderer origin"
+            );
+            assert!(!pending.load(Ordering::Acquire));
+
+            let first_url = trusted_url.clone();
             let mut first = pin!(super::run_popup_titlebar_menu_with(
                 &pending,
+                "file",
+                12.0,
+                24.0,
+                || async move { Ok(first_url) },
                 move |job| dispatch_tx.send(job),
-                || Ok(()),
+                |id, url| {
+                    assert_eq!(id, "menu-file");
+                    assert_eq!(url.as_str(), "http://127.0.0.1:43123/");
+                    Ok(())
+                },
             ));
             assert_pending(first.as_mut()).await;
             assert!(pending.load(Ordering::Acquire));
 
-            // A concurrent request fails immediately without touching dispatch.
+            // A concurrent request fails immediately without authorizing or dispatching.
             let second = super::run_popup_titlebar_menu_with(
                 &pending,
+                "file",
+                12.0,
+                24.0,
+                || async { panic!("concurrent popup must not authorize") },
                 |_| -> Result<(), &'static str> { panic!("concurrent popup must not dispatch") },
-                || Ok(()),
+                |_, _| Ok(()),
             )
             .await;
             assert_eq!(second.unwrap_err(), "A native titlebar menu is already open");
@@ -3643,10 +3735,15 @@ mod menu_tests {
             assert!(!pending.load(Ordering::Acquire));
 
             // Dropping the queued closure without executing it also releases admission.
+            let dropped_url = trusted_url.clone();
             let dropped = super::run_popup_titlebar_menu_with(
                 &pending,
+                "file",
+                12.0,
+                24.0,
+                || async move { Ok(dropped_url) },
                 |_job| Ok::<(), &str>(()),
-                || Ok(()),
+                |_, _| Ok(()),
             )
             .await;
             assert!(dropped.is_err());
@@ -3691,19 +3788,42 @@ mod menu_tests {
     }
 
     #[test]
-    fn window_control_action_rejects_unknown_actions_before_dispatch() {
-        assert_eq!(
-            super::WindowControlAction::parse("minimize").unwrap(),
-            super::WindowControlAction::Minimize
-        );
-        assert_eq!(
-            super::WindowControlAction::parse("maximize").unwrap(),
-            super::WindowControlAction::Maximize
-        );
-        assert_eq!(
-            super::WindowControlAction::parse("close").unwrap(),
-            super::WindowControlAction::Close
-        );
-        assert!(super::WindowControlAction::parse("drag").is_err());
+    fn window_control_authorizes_origin_before_validating_action() {
+        tauri::async_runtime::block_on(async {
+            let unauthorized = super::run_window_control_with(
+                "drag",
+                || async {
+                    Err(
+                        "Native application commands require a trusted preferences renderer origin"
+                            .to_string(),
+                    )
+                },
+                |_| async { panic!("unauthorized window_control must not execute") },
+            )
+            .await;
+            assert_eq!(
+                unauthorized.unwrap_err(),
+                "Native application commands require a trusted preferences renderer origin"
+            );
+
+            let invalid = super::run_window_control_with(
+                "drag",
+                || async { Ok(()) },
+                |_| async { panic!("invalid action must not execute") },
+            )
+            .await;
+            assert_eq!(invalid.unwrap_err(), "Invalid window control action");
+
+            let executed = super::run_window_control_with(
+                "maximize",
+                || async { Ok(()) },
+                |action| async move {
+                    assert_eq!(action, super::WindowControlAction::Maximize);
+                    Ok(())
+                },
+            )
+            .await;
+            assert!(executed.is_ok());
+        });
     }
 }

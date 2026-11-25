@@ -11,6 +11,7 @@ const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 const CLOSE_CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 const UPDATE_RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
 const IPC_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+const EXTERNAL_OPEN_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
 const SHUTDOWN_STOP_ATTEMPTS: usize = 2;
 const FLUSH_CANCELLED_EVENT: &str = "client-state:flush-cancelled";
 #[cfg(windows)]
@@ -1026,6 +1027,7 @@ fn start_cleanup(app: AppHandle) {
             return;
         }
         client_state::release(&app);
+        let _ = crate::external_open::drain_pending(EXTERNAL_OPEN_DRAIN_TIMEOUT);
         let restart = coordinator.complete_cleanup();
         if restart {
             #[cfg(target_os = "macos")]

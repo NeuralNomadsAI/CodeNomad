@@ -1290,6 +1290,21 @@ impl CliProcessManager {
         self.local_access.lock().clone()
     }
 
+    #[cfg(test)]
+    pub(crate) fn lock_lifecycle_for_test(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.lifecycle.lock()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_ready_local_access_for_test(&self, base_url: &str) {
+        self.status.lock().state = CliState::Ready;
+        *self.local_access.lock() = Some(LocalCliAccess {
+            base_url: base_url.to_string(),
+            cookie_name: "codenomad_session".to_string(),
+            session_cookie: "secret".to_string(),
+        });
+    }
+
     fn spawn_cli(
         manager: CliProcessManager,
         app: AppHandle,
