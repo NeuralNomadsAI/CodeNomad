@@ -180,6 +180,8 @@ class SessionAttachment {
   private attachment = new AbortController()
   private readonly requests = new Map<string, AbortController>()
   private publishing: Promise<void> = Promise.resolve()
+  /** Aborted when the connection the queued publications target ends. */
+  private publications = new AbortController()
   /** Request IDs already taken: the relay can deliver one control event once per owning workspace. */
   private readonly taken = new Set<string>()
   private readonly tab: PreviewTab
@@ -209,7 +211,9 @@ class SessionAttachment {
   }
 
   control(control: Control): void {
-    if (control.type === "attached") void this.publish().catch(error => this.warn("Browser state publication failed", error))
+    if (control.type === "attached") void this.publish().catch(error => {
+      if ((error as Error)?.name !== "AbortError") this.warn("Browser state publication failed", error)
+    })
     else if (control.type === "command" && control.requestID) {
       if (this.taken.has(control.requestID)) return
       this.taken.add(control.requestID)
@@ -222,6 +226,10 @@ class SessionAttachment {
   private cancelRequests(): void {
     for (const request of this.requests.values()) request.abort()
     this.requests.clear()
+    // A publication stalled on the ended connection must not hold the next one's queue.
+    this.publications.abort()
+    this.publications = new AbortController()
+    this.publishing = Promise.resolve()
   }
 
   /** The holding workspaces that own the session's location now. */
@@ -341,7 +349,8 @@ class SessionAttachment {
   }
   /** Publications run one at a time and each reads the tab when its turn comes: OpenCode replaces its inventory with
    * every one it receives, so an older one must never arrive last. */
-  private async publish(signal = this.stopping.signal): Promise<void> {
+  private async publish(caller = this.stopping.signal): Promise<void> {
+    const signal = AbortSignal.any([caller, this.publications.signal])
     const turn = this.publishing.then(async () => {
       await this.tab.refresh(Date.now() + 5_000, signal)
       await this.rpc("state", { state: this.tab.state() }, signal)
