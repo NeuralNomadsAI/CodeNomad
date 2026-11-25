@@ -441,3 +441,61 @@ async fn shutdown_cancels_pending_plugin_snapshot() {
     assert!(timeout(Duration::from_secs(15), child.wait()).await.unwrap().unwrap().success());
     let _ = fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn serve_declares_missions_capability_without_bench_env() {
+    let executable = Path::new(env!("CARGO_BIN_EXE_codenomad-rs"));
+    let args =
+        ["serve", "--host", "127.0.0.1", "--generate-token", "--http", "true", "--http-port", "0", "--https", "false"];
+    for (label, block_bridge, fixture_run_env) in [
+        ("clean-serve", false, false),
+        ("bridge-unavailable", true, false),
+        ("no-duplicate-with-fixture-env", false, true),
+    ] {
+        let root = scratch(&format!("missions-meta-{label}"));
+        let bridge_path = if cfg!(windows) {
+            root.join("home/AppData/Local/CodeNomad/automation-bridges")
+        } else {
+            root.join("home/.config/codenomad/automation-bridges")
+        };
+        let mut server = Server::start_with(root, executable, &args, |command| {
+            if block_bridge {
+                fs::create_dir_all(bridge_path.parent().unwrap()).unwrap();
+                fs::write(&bridge_path, "blocked").unwrap();
+            }
+            if fixture_run_env {
+                command.env("CNRS_FIXTURE_MISSIONS_RUN", "1");
+            }
+        });
+        let (token, url, _) = server.ready().await;
+        let client = client();
+        let token_response = client
+            .post(format!("{url}/api/auth/token"))
+            .json(&serde_json::json!({ "token": token }))
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(token_response.status(), 200, "{label}");
+        let cookie = token_response.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_owned();
+        let meta: serde_json::Value = client
+            .get(format!("{url}/api/meta"))
+            .header("cookie", &cookie)
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let capabilities = meta["capabilities"].as_array().expect("capabilities array");
+        let missions_count = capabilities.iter().filter(|cap| *cap == "missions").count();
+        assert_eq!(missions_count, 1, "{label}: expected exactly one missions capability, got {capabilities:?}");
+        if block_bridge {
+            assert!(published(&server.bridges(), server.pid).is_empty(), "blocked bridge must not publish");
+        } else {
+            assert_eq!(published(&server.bridges(), server.pid).len(), 1, "clean serve must publish its bridge");
+        }
+        server.stop(b"").await;
+    }
+}

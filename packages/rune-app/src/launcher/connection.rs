@@ -64,6 +64,7 @@ pub(super) fn poll_boot(l: &mut Launcher) -> bool {
                 l.address = TextEdit::new(&backend.base);
                 l.host = Some(host);
                 // Bootstrap owns the authenticated cookie jar even if project listing fails.
+                backend.client.require_attestation();
                 l.connection = Some(backend.clone());
                 l.job("rune.list_error", async move {
                     let server_id = backend.attest_server().await?;

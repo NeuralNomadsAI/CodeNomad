@@ -17,7 +17,7 @@ pub struct Key {
 const LIMIT: usize = 256 * 1024;
 const COUNT: usize = 32;
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct SavedKey {
     pub server: String,
     pub project: String,
@@ -173,7 +173,26 @@ impl Store {
         }
     }
     pub(crate) fn block_file_draft_updates(&self, blocked: bool) {
-        lock(&self.0).read_blocked = blocked;
+        let pending = {
+            let mut store = lock(&self.0);
+            let was_blocked = store.read_blocked;
+            store.read_blocked = blocked;
+            if blocked || !was_blocked {
+                return;
+            }
+            store.live.retain(|_, pointer| pointer.strong_count() > 0);
+            let mut pending: Vec<(SavedKey, Shared)> = store
+                .live
+                .iter()
+                .filter(|(key, _)| !store.saved.iter().any(|row| &row.key == *key))
+                .filter_map(|(key, pointer)| pointer.upgrade().map(|shared| (key.clone(), shared)))
+                .collect();
+            pending.sort_by(|a, b| a.0.cmp(&b.0));
+            pending
+        };
+        for (saved_key, shared) in pending {
+            self.sync_saved_entry(&saved_key, &shared);
+        }
     }
     #[cfg(test)]
     pub(crate) fn file_draft_updates_blocked(&self) -> bool {
@@ -285,9 +304,37 @@ impl Store {
         store.saved = saved;
         true
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn file_draft_revision(&self) -> u64 {
+        lock(&self.0).revision
+    }
     pub(crate) fn file_draft_snapshot(&self, saved_revision: u64) -> Option<(u64, Vec<u8>)> {
         let store = lock(&self.0);
         (saved_revision != store.revision).then(|| (store.revision, Self::encode(&store.saved)))
+    }
+    #[cfg(test)]
+    pub(crate) fn insert_test_file_draft(&self, path: &str, text: &str) {
+        let key = Key {
+            server: "transport".into(),
+            instance: "tab-0".into(),
+            native_project: None,
+            directory: "/project".into(),
+            path: path.into(),
+        };
+        let scope = SavedKey {
+            server: "installation".into(),
+            project: "/project".into(),
+            native_project: None,
+            directory: key.directory.clone(),
+            path: key.path.clone(),
+        };
+        let shared = self.open_saved(&key, Some(&scope));
+        {
+            let mut draft = lock(&shared);
+            draft.original = Some(Snapshot::loaded("original"));
+            draft.text = text.into();
+        }
+        self.sync_saved(&key, Some(&scope), &shared);
     }
     pub(crate) fn has_unretained_file_drafts(&self) -> bool {
         let drafts: Vec<_> = lock(&self.0).drafts.values().cloned().collect();
@@ -320,8 +367,11 @@ impl Store {
     }
     pub(super) fn sync_saved(&self, key: &Key, saved_key: Option<&SavedKey>, shared: &Shared) {
         self.sync(key, shared);
-        let mut draft = lock(shared);
         let Some(saved_key) = saved_key else { return };
+        self.sync_saved_entry(saved_key, shared);
+    }
+    fn sync_saved_entry(&self, saved_key: &SavedKey, shared: &Shared) {
+        let mut draft = lock(shared);
         let mut store = lock(&self.0);
         if store.read_blocked {
             draft.not_retained = draft.dirty();
@@ -546,6 +596,47 @@ mod tests {
         ] {
             assert!(!lock(&reopened.open_saved(&key, Some(&other))).dirty());
         }
+    }
+
+    #[test]
+    fn unblocking_file_drafts_promotes_unconflicted_live_edits() {
+        let store = Store::default();
+        let key = Key {
+            server: "transport".into(),
+            instance: "tab".into(),
+            native_project: None,
+            directory: "/project".into(),
+            path: "edited-while-blocked.rs".into(),
+        };
+        let scope = SavedKey {
+            server: "installation".into(),
+            project: "/project".into(),
+            native_project: None,
+            directory: key.directory.clone(),
+            path: key.path.clone(),
+        };
+        store.block_file_draft_updates(true);
+        let opened = store.open_saved(&key, Some(&scope));
+        {
+            let mut draft = lock(&opened);
+            draft.original = Some(Snapshot::loaded("disk"));
+            draft.text = "live edit before retry".into();
+        }
+        store.sync_saved(&key, Some(&scope), &opened);
+        assert!(lock(&opened).not_retained);
+        assert!(store.file_draft_snapshot(0).is_none());
+
+        assert!(store.hydrate_file_drafts(b"[]"));
+        store.block_file_draft_updates(false);
+        assert!(!lock(&opened).not_retained);
+        let (revision, bytes) = store.file_draft_snapshot(0).unwrap();
+        assert_eq!(revision, 1);
+        let reopened = Store::default();
+        assert!(reopened.hydrate_file_drafts(&bytes));
+        assert_eq!(
+            lock(&reopened.open_saved(&key, Some(&scope))).text,
+            "live edit before retry"
+        );
     }
 
     #[test]

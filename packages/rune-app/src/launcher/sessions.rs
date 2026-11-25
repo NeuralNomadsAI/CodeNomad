@@ -292,6 +292,25 @@ pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
     choose_destination(s, id, None, tx);
 }
 
+pub(crate) fn choose_child_ticket(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
+    if !s.screen.is_launcher()
+        && crate::workspace::active_session(s) == Some(id.as_str())
+        && s.phase != Phase::Failed
+    {
+        if s.shell.floating_sessions().is_some() {
+            s.shell.close_floating(tx);
+        }
+    } else {
+        choose_from_inner(
+            s,
+            vec![(id, None)],
+            s.shell.floating_sessions(),
+            ticket,
+            true,
+        );
+    }
+}
+
 pub(crate) fn choose_destination(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())
@@ -310,13 +329,24 @@ fn choose_from(
     dismiss: Option<u64>,
     ticket: Option<u64>,
 ) {
+    choose_from_inner(s, candidates, dismiss, ticket, false);
+}
+fn choose_from_inner(
+    s: &mut State,
+    candidates: Vec<(String, Option<usize>)>,
+    dismiss: Option<u64>,
+    ticket: Option<u64>,
+    allow_streaming: bool,
+) {
     let recovery = candidates
         .first()
         .is_some_and(|(id, step)| step.is_none() && can_rebind(s, id));
-    if candidates.is_empty()
-        || !crate::workspace::input_ready(s)
-        || !recovery && !can_change_session(s)
-    {
+    let allowed = if allow_streaming {
+        can_open_child_session(s)
+    } else {
+        can_change_session(s)
+    };
+    if candidates.is_empty() || !crate::workspace::input_ready(s) || !recovery && !allowed {
         return;
     }
     let Some(l) = s.screen.launcher_mut() else {
@@ -343,6 +373,7 @@ fn choose_from(
                         missing,
                         Some((bound, session.title, step, started, slug)),
                         dismiss,
+                        allow_streaming,
                     ));
                 }
                 Err(err) if err.is::<SessionMissing>() => missing.push(id),
@@ -350,18 +381,25 @@ fn choose_from(
                 Err(_) => break,
             }
         }
-        Ok(Reply::Selected(missing, None, dismiss))
+        Ok(Reply::Selected(missing, None, dismiss, allow_streaming))
     });
 }
-pub fn can_change_session(s: &State) -> bool {
-    s.phase != Phase::Streaming
-        && !s.composer.blocks_navigation()
+fn session_switch_allowed(s: &State) -> bool {
+    !s.composer.blocks_navigation()
         && !crate::workspace::unconfirmed_drafts_full(s)
         && !s.files.as_ref().is_some_and(|ui| ui.document.pending())
         && !s.transcript_display.messages.pending()
         && !s.status_permissions.settling()
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)
+}
+
+pub fn can_change_session(s: &State) -> bool {
+    s.phase != Phase::Streaming && session_switch_allowed(s)
+}
+
+pub fn can_open_child_session(s: &State) -> bool {
+    s.screen.launcher().is_some() && session_switch_allowed(s)
 }
 
 pub(super) fn can_rebind(s: &State, id: &str) -> bool {

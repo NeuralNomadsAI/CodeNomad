@@ -105,6 +105,88 @@ impl Backend {
             &target,
         )
     }
+    pub(crate) async fn page_raw_tools(
+        &self,
+        target: Value,
+    ) -> Result<(Vec<(String, Vec<Value>)>, Option<Value>)> {
+        let mut v = read_json_limited(
+            self.client
+                .post(format!(
+                    "{}api/workspaces/{}/session-history/window",
+                    self.base, self.workspace
+                ))
+                .header(
+                    "x-codenomad-user-files",
+                    crate::attachments::USER_FILES_REFERENCE,
+                )
+                .json(&json!({"sessionID":self.session,"target":target}))
+                .send()
+                .await?
+                .error_for_status()?,
+            history::WINDOW_BYTES,
+        )
+        .await?;
+        if v["status"] != "window" {
+            return Err("history unavailable or anchor changed".into());
+        }
+        let newer = history::cursor(&v["newer"], "after")?;
+        if v["latest"].as_bool() != Some(newer.is_none()) {
+            return Err("inconsistent latest marker".into());
+        }
+        let rows = v["messages"]
+            .as_array_mut()
+            .filter(|rows| rows.len() <= 200)
+            .ok_or("invalid history window")?;
+        let mut out = Vec::new();
+        for row in rows.iter_mut() {
+            let row_id = row["id"]
+                .as_str()
+                .filter(|id| history::valid_id(id))
+                .ok_or("invalid history row id")?
+                .to_owned();
+            let Some(parts) = row["content"].as_array_mut() else {
+                continue;
+            };
+            let mut tools = Vec::new();
+            for part in parts.iter_mut() {
+                if part["type"] == "tool" {
+                    let mut raw = std::mem::take(part);
+                    if let Some(items) = raw
+                        .get_mut("state")
+                        .and_then(|state| state.get_mut("content"))
+                        .and_then(Value::as_array_mut)
+                    {
+                        for item in items.iter_mut() {
+                            if matches!(item["type"].as_str(), Some("image" | "file"))
+                                && let Some(obj) = item.as_object_mut()
+                            {
+                                obj.remove("data");
+                                obj.remove("uri");
+                                obj.remove("url");
+                            }
+                        }
+                    }
+                    tools.push(raw);
+                }
+            }
+            if !tools.is_empty() {
+                out.push((row_id, tools));
+            }
+        }
+        Ok((out, newer))
+    }
+    pub async fn background(&self) -> Result<()> {
+        self.client
+            .post(format!(
+                "{}workspaces/{}/instance/api/session/{}/background",
+                self.base, self.workspace, self.session
+            ))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
     pub async fn empty(&self) -> Result<Page> {
         let page = self.page(json!({"kind":"latest"})).await?;
         if !page.rows.is_empty() {

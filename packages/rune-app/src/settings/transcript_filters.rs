@@ -1,7 +1,6 @@
 use super::{
     TranscriptRow,
     conversation::{picker_name, preset_label, row_label},
-    preferences::Owner,
     transcript_preset::PRESETS,
 };
 use crate::{
@@ -15,6 +14,7 @@ use rune_theme_codenomad::{
     settings as chrome,
 };
 use std::{
+    cell::Cell,
     collections::BTreeMap,
     rc::{Rc, Weak},
 };
@@ -26,7 +26,7 @@ mod sweep;
 #[derive(Default)]
 pub(super) struct Filters {
     scope: Option<Weak<()>>,
-    preset_open: bool,
+    preset_open: Cell<bool>,
     last_visible: BTreeMap<TranscriptRow, &'static str>,
     sweep: sweep::Sweep,
 }
@@ -36,6 +36,10 @@ impl Filters {
         self.scope
             .as_ref()
             .is_some_and(|owner| owner.ptr_eq(&Rc::downgrade(scope)))
+    }
+
+    pub(super) fn close_preset_menu(&self) {
+        self.preset_open.set(false);
     }
 }
 
@@ -51,10 +55,13 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>, touch: bool) -> El {
     if open {
         let prefs = s.settings.shared.borrow();
         let mut selects = Vec::new();
-        let disabled = prefs.saved(Owner::Config).is_none() || !prefs.can_retry();
+        let disabled = !prefs.transcript_ready();
+        if disabled {
+            filters.preset_open.set(false);
+        }
         let labels = PRESETS.map(preset_label);
-        let preset_open = filters.preset_open;
-        let current = preset_label(prefs.transcript_preset());
+        let preset_open = filters.preset_open.get();
+        let current = preset_label(prefs.transcript_preset_display());
         let name = picker_name(
             t("settings.behavior.expansionPresets.ariaLabel"),
             Some(current),
@@ -64,13 +71,13 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>, touch: bool) -> El {
             .disabled(disabled)
             .open(preset_open)
             .on_toggle(screen::action(&s.input_scope, move |s| {
-                s.settings.transcript_filters.preset_open = !preset_open
+                s.settings.transcript_filters.preset_open.set(!preset_open);
             }))
             .on_close(screen::action(&s.input_scope, |s| {
-                s.settings.transcript_filters.preset_open = false
+                s.settings.transcript_filters.preset_open.set(false);
             }))
             .on_choose(move |s: &mut State, label, _| {
-                s.settings.transcript_filters.preset_open = false;
+                s.settings.transcript_filters.preset_open.set(false);
                 if let Some(i) = labels.iter().position(|option| *option == label) {
                     s.settings
                         .shared
@@ -78,9 +85,26 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>, touch: bool) -> El {
                         .set_transcript(None, PRESETS[i]);
                 }
             });
+        let key_scope = scope.clone();
         let body = col()
             .full_width()
             .pad(Space::Sm)
+            .on_key(move |s: &mut State, event, tx| {
+                if !key_scope.ptr_eq(&Rc::downgrade(&s.input_scope))
+                    || disabled
+                    || preset_open
+                    || event.mods != rune::Mods::default()
+                    || event.key != rune::Key::Enter
+                    || tx.key_repeat()
+                {
+                    return false;
+                }
+                if tx.focused() != Some("filters-preset-trigger") {
+                    return false;
+                }
+                s.settings.transcript_filters.preset_open.set(true);
+                true
+            })
             .children(prefs.transcript_error().map(|error| {
                 layout::action_row()
                     .child(text(t(error)).role("alert"))
@@ -90,7 +114,13 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>, touch: bool) -> El {
                         |s: &mut State| s.settings.shared.borrow_mut().retry_transcript(),
                     ))
             }))
-            .child(chrome::build_picker(preset, &mut selects))
+            .child(chrome::build_picker_accessible(
+                preset,
+                &name,
+                disabled,
+                t("commands.common.disabled"),
+                &mut selects,
+            ))
             .children(TranscriptRow::all().map(|row| {
                 let title = row_label(row);
                 let mode = filters
@@ -141,6 +171,7 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>, touch: bool) -> El {
                         }),
                     ),
                     disabled,
+                    t("commands.common.disabled"),
                     |button, expansion| {
                         if touch || disabled || expansion && !visible {
                             button
@@ -216,6 +247,52 @@ fn the_popup_uses_the_active_occurrence_and_dismisses_on_escape() {
     rt.frame(0.02);
     assert!(rt.find("transcript-filters").is_none());
     open(&mut rt);
+    // Attach an enabled backend + snapshot, genuinely open the preset dropdown via click,
+    // then verify a failed config read closes it and recovery keeps it closed.
+    rt.update(|s, _| {
+        let mut prefs = s.settings.shared.borrow_mut();
+        prefs.fixture();
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:1").unwrap());
+    });
+    rt.frame(0.02);
+    let (px, py) = rt.find("filters-preset-trigger").unwrap();
+    rt.pointer_down(px, py);
+    rt.pointer_up(px, py);
+    rt.frame(0.02);
+    assert!(
+        rt.state.settings.transcript_filters.preset_open.get(),
+        "clicking enabled filters-preset-trigger must open the menu"
+    );
+    rt.update(|s, _| {
+        s.settings
+            .shared
+            .borrow_mut()
+            .fixture_config_read_failed(true);
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.settings.transcript_filters.preset_open.get());
+    rt.update(|s, _| {
+        s.settings
+            .shared
+            .borrow_mut()
+            .fixture_config_read_failed(false);
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.settings.transcript_filters.preset_open.get());
+    // Pressing Enter while the preset trigger has keyboard focus opens the preset menu.
+    rt.update(|_, tx| tx.focus("filters-preset-trigger", true));
+    let enter = KeyEvent {
+        key: Key::Enter,
+        mods: Default::default(),
+    };
+    rt.key(enter.clone());
+    rt.key_up(enter);
+    rt.frame(0.02);
+    assert!(
+        rt.state.settings.transcript_filters.preset_open.get(),
+        "pressing Enter on focused filters-preset-trigger must open the preset menu"
+    );
     rt.update(|s, _| crate::chat::suspend(s));
     rt.frame(0.02);
     assert!(rt.find("transcript-filters").is_none());
