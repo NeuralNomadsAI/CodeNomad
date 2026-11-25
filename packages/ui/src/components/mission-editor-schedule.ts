@@ -15,6 +15,7 @@ import { exactMissionScheduleEditorReceipt, holdMissionScheduleEditor, missionSc
 import { decodeMissionSchedulingPolicy } from "./mission-scheduling-decode"
 import { newMissionSchedulingDraft } from "./mission-scheduling-data"
 import { readMissionEditorBody } from "./mission-editor-body"
+import { rereadMissionHoldWhileActive } from "../lib/mission-held-reread"
 
 type Document = NonNullable<MissionScheduleRead["document"]>
 export function createMissionEditorScheduling(props: {
@@ -253,7 +254,7 @@ export function createMissionEditorScheduling(props: {
   }
   async function reconcile() {
     const hold = held()
-    if (!hold || reading() || !props.active()) return
+    if (!hold || hold.state !== "uncertain" || reading() || !props.active()) return
     const current = capture(), scope = props.scope()
     if (!current()) return
     const request: MissionScheduleEditorRequest | MissionJournalEditRequest = JSON.parse(hold.payload)
@@ -315,6 +316,7 @@ export function createMissionEditorScheduling(props: {
     } catch { /* The original request remains held through any uncertain retry. */ }
     finally { setReading(false) }
   }
+  rereadMissionHoldWhileActive(() => held()?.state === "uncertain", props.active, reconcile)
   return { unified, document, journal, scheduling, setScheduling, previousDraft, ready, failed, conflict, reading, capability, directory,
     revalidating: () => capabilityReading() || documentReading(),
     held, save, saveJournalEdit, reconcile, reload, retryable, retryPreparation, retryRead: () => setRefresh(value => value + 1) }

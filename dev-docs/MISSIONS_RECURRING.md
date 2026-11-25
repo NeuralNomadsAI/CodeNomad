@@ -308,8 +308,8 @@ Exact complete control or activation confirmation retains a minimum publication
 revision R with its confirmed outcome in per-window memory across remounts. New
 mutations and Edit remain disabled until a fully validated document for that object
 and owner publishes at revision >= R. Same-owner revalidation and failed, partial or
-older reads retain the barrier and confirmed feedback. During this phase, Refresh
-saved request requests only the parent's display refresh. Confirmed deletion releases
+older reads retain the barrier and confirmed feedback. During this phase, the active
+view's automatic reread of the held request requests only the parent's display refresh. Confirmed deletion releases
 matching retention and clears the current selection without waiting for publication
 of a deleted document. Chained receipt reads and direct activation continuations retain
 their original view and connection fences. A direct positive activation acknowledgement

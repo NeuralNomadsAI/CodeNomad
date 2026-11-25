@@ -91,7 +91,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.lock.scope": "सुरक्षित कार्यान्वयन मूलहरू यस सम्पादकको डाइरेक्टरी दायराभन्दा फरक छन्। सेटिङ र मस्यौदा पढ्न मात्र मिल्ने गरी राखिएका छन्; सम्पादनअघि स्वामित्वको स्थान खोल्नुहोस्।",
   "missions.scheduling.uncertain": "यो परिवर्तन पुष्टि भएको छैन।",
   "missions.scheduling.uncertainOther": "यस सञ्झ्यालको अर्को परिवर्तन पुष्टि भएको छैन।",
-  "missions.scheduling.readReceipt": "सुरक्षित अनुरोध ताजा गर्नुहोस्",
   "missions.scheduling.lock.journal": "यो मिसनले कार्यान्वयन अभिलेख प्रयोग गर्छ। निर्देशन र टिप्पणी सम्पादन गर्न सकिन्छ; अन्य सेटिङलाई समक्रमित तयारी सम्झौता चाहिन्छ।",
   "missions.scheduling.lock.ever-created-task": "कार्य पहिले नै सिर्जना भएको छ। कार्य सकिए वा हटाइएपछि पनि टेम्प्लेट स्थिर रहन्छ।",
   "missions.scheduling.moreSources": "थप स्रोत लोड गर्नुहोस्",

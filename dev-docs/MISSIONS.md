@@ -906,8 +906,9 @@ and minimum publication revision R in that entry. New mutations and Edit stay
 disabled until a fully validated display document for the same object and owner
 publishes at revision >= R. Remounts, same-owner revalidation and failed, partial or
 older display reads retain this obligation and the confirmed feedback. During this
-wait, Refresh saved request requests only a display refresh; an unresolved request
-uses its exact receipt read. Confirmed deletion releases matching retention and
+wait, the active view rereads the held request every 5 seconds without user action
+(`lib/mission-held-reread.ts`): a confirmed request requests only a display refresh; an
+unresolved request uses its exact receipt read. Confirmed deletion releases matching retention and
 clears the current selection without waiting for publication of a deleted document;
 pending deletion retains a visible
 row even after its inventory entry disappears. A held request, partial or not, admits no

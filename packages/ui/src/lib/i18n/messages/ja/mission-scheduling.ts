@@ -91,7 +91,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.lock.scope": "保存された実行ルートは、このエディターのディレクトリ範囲と異なります。設定と下書きは読み取り専用で保持されます。編集前に所有する場所を開いてください。",
   "missions.scheduling.uncertain": "この変更は未確認です。",
   "missions.scheduling.uncertainOther": "このウィンドウの別の変更が未確認です。",
-  "missions.scheduling.readReceipt": "保存済みリクエストを更新",
   "missions.scheduling.lock.journal": "このミッションは実行ジャーナルを使用します。指示とメモは編集できますが、他の設定には同期された準備契約が必要です。",
   "missions.scheduling.lock.ever-created-task": "タスクが既に作成されています。完了または取り消し後もテンプレートは固定されます。",
   "missions.scheduling.moreSources": "ソースをさらに読み込む",

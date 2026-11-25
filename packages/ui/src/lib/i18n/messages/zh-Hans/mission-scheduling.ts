@@ -91,7 +91,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.lock.scope": "已保存的执行根目录与此编辑器的目录范围不同。配置和草稿保留为只读；请先打开所属位置再编辑。",
   "missions.scheduling.uncertain": "此更改尚未确认。",
   "missions.scheduling.uncertainOther": "此窗口中的另一个更改尚未确认。",
-  "missions.scheduling.readReceipt": "刷新已保存的请求",
   "missions.scheduling.lock.journal": "此任务使用执行日志。可以编辑指令和备注；其他设置需要同步的准备契约。",
   "missions.scheduling.lock.ever-created-task": "已经创建过子任务。即使子任务完成或撤回，模板仍保持固定。",
   "missions.scheduling.moreSources": "加载更多来源",

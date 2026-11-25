@@ -91,7 +91,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.lock.scope": "Kayıtlı yürütme kökleri bu düzenleyicinin dizin kapsamından farklı. Yapılandırma ve taslak salt okunur tutulur; düzenlemeden önce sahip konumu açın.",
   "missions.scheduling.uncertain": "Bu değişiklik doğrulanmadı.",
   "missions.scheduling.uncertainOther": "Bu penceredeki başka bir değişiklik doğrulanmadı.",
-  "missions.scheduling.readReceipt": "Kayıtlı isteği yenile",
   "missions.scheduling.lock.journal": "Bu Görev yürütme günlüğünü kullanıyor. Talimatlar ve notlar düzenlenebilir; diğer ayarlar eşitlenmiş bir hazırlık sözleşmesi gerektirir.",
   "missions.scheduling.lock.ever-created-task": "Bir iş zaten oluşturuldu. İşler tamamlansa veya geri çekilse de şablon sabit kalır.",
   "missions.scheduling.moreSources": "Daha fazla kaynak yükle",

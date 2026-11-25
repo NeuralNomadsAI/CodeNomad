@@ -627,6 +627,7 @@ jobs:
           packages/ui/src/lib/mission-cleanup.test.ts
           packages/ui/src/lib/mission-defaults.test.ts
           packages/ui/src/lib/mission-display.test.ts
+          packages/ui/src/lib/mission-held-reread.test.ts
           packages/ui/src/lib/mission-lifecycle-request.test.ts
           packages/ui/src/lib/mission-markdown-pages.test.ts
           packages/ui/src/lib/mission-model-library.test.ts

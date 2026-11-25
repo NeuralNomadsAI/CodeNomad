@@ -12,6 +12,7 @@ import { requiresMissionCalendar } from "../../../server/src/missions/mission-la
 import { partialMissionScheduleReceipt as partialReceipt, refusedMissionScheduleReceipt, type MissionScheduleControlReceipt as ControlReceipt } from "../lib/mission-schedule-receipt"
 import type { MissionScheduleCapability } from "../../../server/src/api-types"
 import { HttpResponseError } from "../lib/retryable-file-search"
+import { rereadMissionHoldWhileActive } from "../lib/mission-held-reread"
 
 type ActivationRefusal = Extract<MissionScheduleCapability["activation"], { available: false }>["refusal"]
 
@@ -73,7 +74,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
     // The hold can be the selected row's sole display owner. Schedule its parent's
     // fresh read and deletion callback before publication disposes this controller.
     batch(() => {
-      if (revision !== undefined) holds.set(key, { ...hold, phase: "publication", minimumRevision: Math.max(hold.minimumRevision ?? 0, revision) })
+      if (revision !== undefined) holds.set(key, { ...hold, phase: "publication", pending: false, minimumRevision: Math.max(hold.minimumRevision ?? 0, revision) })
       else holds.delete(key)
       if (current()) { props.refresh(); if (revision === undefined && hold.action === "delete") props.onDeleted() }
       bump()
@@ -107,7 +108,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   }
   async function reconcile() {
     const hold = held(), key = identity(), current = capture()
-    if (!current() || !hold || busy() || !props.active()) return
+    if (!current() || !hold || hold.pending || busy() || !props.active()) return
     setBusy(true)
     try {
       if (hold.phase === "publication") { if (current()) props.refresh(); return }
@@ -161,7 +162,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
           // A retained proof keeps its original identity on the server.
           const previous = latest.document.scheduleActivation
           const activation: Hold = { phase: "activation", action, requestID: previous?.state === "ready" ? previous.requestID : generateUUID(),
-            expectedRevision: previous?.state === "ready" ? previous.expectedRevision : revision, partial: false, document: original }
+            expectedRevision: previous?.state === "ready" ? previous.expectedRevision : revision, partial: false, pending: true, document: original }
           holds.set(key, activation); dispatched = activation; bump()
           const value = await backendOf(props.instanceId).api.missionScheduleSettings(props.instanceId, original.id,
             { requestID: activation.requestID, expectedDocumentRevision: revision }, true)
@@ -174,7 +175,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
         }
       }
       if (!current() || holds.size >= 128 && !holds.has(key)) return
-      const request: Hold = { phase: "control", action, requestID: generateUUID(), expectedRevision: revision, partial: false,
+      const request: Hold = { phase: "control", action, requestID: generateUUID(), expectedRevision: revision, partial: false, pending: true,
         document: original, minimumRevision: holds.get(key)?.minimumRevision }
       holds.set(key, request); bump()
       dispatched = request
@@ -206,8 +207,12 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
         if (current()) setFeedback("missions.scheduleList.conflict")
       } else if (current() && !dispatched) setFeedback("missions.scheduleList.readFailed")
     }
-    finally { if (current()) { setBusy(false); setPendingAction(undefined); props.refresh() } }
+    finally {
+      if (current()) { setBusy(false); setPendingAction(undefined); props.refresh() }
+      if (dispatched && holds.get(key) === dispatched) { holds.set(key, { ...dispatched, pending: false }); bump() }
+    }
   }
+  rereadMissionHoldWhileActive(() => { const hold = held(); return !!hold && !hold.pending }, props.active, reconcile)
   const label = (action: Action) => t(action === "delete" ? "missionsPanel.picker.delete" : action === "run-now" ? "missionsPanel.action.runNow"
     : action === "play" ? "missionsPanel.action.start" : `missionsPanel.action.${action}`)
   // Direct creation already has an exact document receipt. Its continuation still

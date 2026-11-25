@@ -666,12 +666,11 @@ export function MissionEditor(props: {
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>
       <Show when={needsSourceLocation() && sourceLocationFailed() && !uncertain()}><button type="button" class="button-secondary"
         onClick={() => setSourceLocationRevision(value => value + 1)}>{t("missions.control.refresh")}</button></Show>
-      <Show when={uncertain()}><button type="button" class="button-secondary" disabled={schedule.reading() || creationReading()} onClick={() => {
+      <Show when={uncertain() && !schedule.held()}><button type="button" class="button-secondary" disabled={creationReading()} onClick={() => {
         if (!isActive()) return
-        if (schedule.held()) void schedule.reconcile()
-        else if (mode() === "recurring") props.onRecurrenceRefresh?.()
+        if (mode() === "recurring") props.onRecurrenceRefresh?.()
         else void reconcileCreation()
-      }}>{t(schedule.held() ? "missions.scheduling.readReceipt" : "missions.control.refresh")}</button></Show>
+      }}>{t("missions.control.refresh")}</button></Show>
       <Show when={uncertain() && schedule.retryable()}><button type="button" class="button-secondary" disabled={schedule.reading()}
         onClick={() => void schedule.retryPreparation()}>{t("missions.control.retry")}</button></Show>
       <Show when={kind === "create"} fallback={

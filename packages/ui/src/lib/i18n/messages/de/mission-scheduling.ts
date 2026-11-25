@@ -91,7 +91,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.lock.scope": "Die gespeicherten Ausführungswurzeln passen nicht zum Verzeichnisbereich dieses Editors. Konfiguration und Entwurf bleiben schreibgeschützt; vor dem Bearbeiten den zugehörigen Ort öffnen.",
   "missions.scheduling.uncertain": "Diese Änderung ist unbestätigt.",
   "missions.scheduling.uncertainOther": "Eine andere Änderung dieses Fensters ist unbestätigt.",
-  "missions.scheduling.readReceipt": "Gespeicherte Anfrage aktualisieren",
   "missions.scheduling.lock.journal": "Diese Mission verwendet das Ausführungsjournal. Anweisungen und Notizen sind bearbeitbar; andere Einstellungen benötigen einen synchronisierten Vorbereitungsvertrag.",
   "missions.scheduling.lock.ever-created-task": "Eine Aufgabe wurde bereits erstellt. Die Vorlage bleibt auch nach Abschluss oder Rücknahme von Aufgaben fest.",
   "missions.scheduling.moreSources": "Weitere Quellen laden",

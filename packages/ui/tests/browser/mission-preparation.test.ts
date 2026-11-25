@@ -24,6 +24,7 @@ after(async () => { try { await browser?.close() } finally { await events?.close
 async function setup(page: Page, lose = false, calendar?: Awaited<ReturnType<typeof ownerFixture>>) {
   const directory = calendar?.directory ?? "/fixture"
   const f = await followedPreparationFixture(directory), writes: Record<string, any>[] = [], errors: string[] = []
+  let pendingReceipt = false
   if (calendar) await f.control.configurePreparation({ ...f.request, requestID: "seed_profiles", configuration: { ...scheduledPreparation(f), launch: f.original.configuration.launch } }, f.native, () => true)
   const owner = calendar?.makeOwner(f.store)
   page.on("pageerror", error => errors.push(error.message))
@@ -73,7 +74,12 @@ async function setup(page: Page, lose = false, calendar?: Awaited<ReturnType<typ
       catch { return route.fulfill({ status: 503, json: missionScheduleView(await f.read()) }) }
       if (lose) return route.abort("connectionreset")
     }
-    if (pathname.endsWith("/schedule")) return route.fulfill({ json: missionScheduleView(await f.read()) })
+    if (pathname.endsWith("/schedule")) {
+      const view = missionScheduleView(await f.read())
+      if (pendingReceipt && new URL(request.url()).searchParams.has("requestID"))
+        return route.fulfill({ status: 503, json: { ...view, pending: true, document: view.document ? { ...view.document, control: null } : null } })
+      return route.fulfill({ json: view })
+    }
     const snapshot = await f.control.snapshot()
     return route.fulfill({ json: { available: true, ...snapshot, mission: snapshot.missions[0], cleanups: [] } })
   })
@@ -81,7 +87,7 @@ async function setup(page: Page, lose = false, calendar?: Awaited<ReturnType<typ
   await page.evaluate(directory => window.schedulingEditor.directory(directory), directory)
   await page.evaluate(mission => window.schedulingEditor.prepared(mission), (await f.control.snapshot()).missions[0])
   await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
-  return { ...f, writes, errors, owner }
+  return { ...f, writes, errors, owner, set pendingReceipt(value: boolean) { pendingReceipt = value } }
 }
 async function edit(page: Page) {
   const form = page.locator("form.mission-editor")
@@ -118,36 +124,52 @@ test("real owner: prepared fields unlock without schedule capability; edit then 
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
-test("real owner: lost edit response keeps its request and reconciles through a read, without another root or Play", async () => {
-  const page = await browser.newPage(), f = await setup(page, true)
+test("real owner: lost edit response keeps its request and reconciles automatically through a read, without another root or Play", async () => {
+  const page = await browser.newPage()
+  await page.clock.install({ time: Date.now() })
+  const f = await setup(page, true)
   try {
+    f.pendingReceipt = true
     const form = await edit(page)
+    const pendingRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).searchParams.has("requestID"))
     await form.getByRole("button", { name: "Save", exact: true }).click()
     await form.getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
+    await pendingRead
+    assert.equal(await form.getByRole("button", { name: "Refresh saved request", exact: true }).count(), 0)
+    assert.equal(await form.locator(".window-footer").getByRole("button", { name: "Refresh", exact: true }).count(), 0)
     const held = await page.evaluate(() => window.schedulingEditor.held())
     assert.equal(JSON.parse(held!.payload).requestID, f.writes[0].requestID)
-    await form.getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    f.pendingReceipt = false
+    await page.clock.fastForward(5_000)
     await form.waitFor({ state: "detached" })
     assert.equal(f.writes.length, 1); assert.equal(f.sessions.size, 2); assert.equal(f.admissions.length, 0)
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
 
-test("real owner: positive partial preparation enables only an explicit original retry; refresh and remount never resend", async () => {
-  const page = await browser.newPage(), f = await setup(page)
+test("real owner: positive partial preparation enables only an explicit original retry; automatic reread and remount never resend", async () => {
+  const page = await browser.newPage()
+  await page.clock.install({ time: Date.now() })
+  const f = await setup(page)
   try {
-    f.fail("native-after")
+    f.fail("native-after"); f.pendingReceipt = true
     const form = await edit(page)
+    const pendingRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).searchParams.has("requestID"))
     await form.getByRole("button", { name: "Save", exact: true }).click()
     await form.getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
+    await pendingRead
+    assert.equal(await form.getByRole("button", { name: "Refresh saved request", exact: true }).count(), 0)
     const retry = form.locator(".window-footer").getByRole("button", { name: "Try again", exact: true })
     assert.equal(await retry.count(), 0)
-    await form.getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    f.pendingReceipt = false
+    await page.clock.fastForward(5_000)
     await retry.waitFor()
     assert.equal(f.writes.length, 1); assert.equal(f.admissions.length, 0)
     await page.evaluate(() => window.schedulingEditor.mount(false)); await page.evaluate(() => window.schedulingEditor.mount(true))
-    assert.equal(await retry.count(), 0)
-    await form.getByRole("button", { name: "Refresh saved request", exact: true }).click()
+    await retry.waitFor()
+    assert.equal(f.writes.length, 1); assert.equal(f.admissions.length, 0)
     await retry.click()
     await form.waitFor({ state: "detached" })
     assert.equal(f.writes.length, 2)
@@ -212,15 +234,24 @@ test("real owners: recurring → immediate → explicit Play uses the restored j
   } finally { await page.close() }
 })
 
-test("real conversion: lost HTTP ACK retains its exact request; receipt refresh never repeats conversion or Play", async t => {
-  const calendar = await ownerFixture(t), page = await browser.newPage(), f = await setup(page, true, calendar)
+test("real conversion: lost HTTP ACK retains its exact request; automatic receipt reread never repeats conversion or Play", async t => {
+  const calendar = await ownerFixture(t), page = await browser.newPage()
+  await page.clock.install({ time: Date.now() })
+  const f = await setup(page, true, calendar)
   try {
+    f.pendingReceipt = true
     const form = await convert(page, "hourly")
+    const pendingRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).searchParams.has("requestID"))
     await form.getByRole("button", { name: "Save", exact: true }).click()
     await form.getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
+    await pendingRead
+    assert.equal(await form.getByRole("button", { name: "Refresh saved request", exact: true }).count(), 0)
     const hold = await page.evaluate(() => window.schedulingEditor.held())
     assert.equal(JSON.parse(hold!.payload).requestID, f.writes[0].requestID)
-    await form.getByRole("button", { name: "Refresh saved request", exact: true }).click(); await form.waitFor({ state: "detached" })
+    f.pendingReceipt = false
+    await page.clock.fastForward(5_000)
+    await form.waitFor({ state: "detached" })
     assert.equal(f.writes.length, 1); assert.equal(calendar.calls.length, 0); assert.equal(f.admissions.length, 0)
     assert.equal((await f.read()).dormantJournal?.deleted, false)
     assert.deepEqual(f.errors, [])
