@@ -12,6 +12,9 @@ export type BrowserPageAction = RefAction | { action: "snapshot"; ref?: string; 
   /** The preview host's console and network events after a sequence number, and a retained response body. */
   | { action: "diagnostics"; after: number }
   | { action: "response-body"; request: string; session?: string }
+/** A host refusal because the leased document or target is no longer the one shown. */
+export const pageMoved = (error: unknown) =>
+  /stale; probe again|document changed|lease is no longer current/i.test(error instanceof Error ? error.message : String(error))
 const OPERATION_MS = 25_000
 const MAX_PENDING = 32
 const MAX_SESSIONS = 128
@@ -108,7 +111,11 @@ export class BrowserPage {
         const snapshot = await snapshotPage(page, () => refs.issuer(generation), { rootBackendNodeId, query: action.query, refLength: refs.refLength, ...(action.budget ? { budget: action.budget } : {}) })
         result = { url, snapshot: snapshot.text, collapsed: snapshot.collapsed }
       } else {
-        const actionResult = await performAction(page, bindRefs(action, ref => refs.resolve(ref, generation)))
+        const actionResult = await performAction(page, bindRefs(action, ref => refs.resolve(ref, generation))).catch(error => {
+          // A click or key press the page received and then left (a followed link, a submitted form) was delivered.
+          if ((action.action === "click" || action.action === "press") && page.inputDelivered && pageMoved(error)) return { pageChanged: true }
+          throw error
+        })
         result = { url, ...actionResult }
       }
     } finally {

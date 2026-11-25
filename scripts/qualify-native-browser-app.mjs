@@ -56,6 +56,9 @@ new Worker("/worker.js").onmessage = () => { document.querySelector("#worker").t
   } else if (req.url === "/oauth") {
     res.setHeader("Content-Type", "text/html")
     res.end("<title>OAuth fixture</title><script>opener.postMessage('oauth-complete',location.origin);setTimeout(()=>close(),300)</script>")
+  } else if (req.url === "/followed") {
+    res.setHeader("Content-Type", "text/html")
+    res.end("<title>Followed</title><h1>Link followed</h1>")
   } else { res.setHeader("Content-Type", "text/html"); res.end(fixtureHtml) }
 })
 const provider = createServer(async (req, res) => {
@@ -269,6 +272,18 @@ return { waits, requests: listed.requests.map(item => [item.method, item.statusC
     assert.deepEqual(frames.requests, [["GET", 200, "completed"]], JSON.stringify(frames))
     assert.ok(frames.warnings.includes(`frame warning ${run}`), JSON.stringify(frames))
   }
+  // The clicks above ran on a page scrolled by a wheel step; these aim far below the fold, then leave the page.
+  const reopened = await step("reopen and snapshot", `const tabID = ${tabID};
+await tools.browser.navigate({ tabID, url: ${JSON.stringify(url)} });
+return { content: (await tools.browser.snapshot({ tabID })).content }`)
+  const below = label => JSON.stringify(ref(reopened.content, label))
+  const followed = await step("below the fold and a followed link", `const tabID = ${tabID};
+await tools.browser.click({ tabID, ref: ${below("Below the fold")} });
+const clicked = (await tools.browser.wait({ tabID, text: "Below clicked", timeout: 5000 })).met;
+await tools.browser.click({ tabID, ref: ${below("Follow link")} });
+return { clicked, arrived: (await tools.browser.wait({ tabID, text: "Link followed", timeout: 5000 })).met }`)
+  assert.equal(followed.clicked, true, "a click on an element the page had to scroll to")
+  assert.equal(followed.arrived, true, "a click that follows a link succeeds")
   const shot = await step("screenshot", `const shot = await tools.browser.screenshot({ tabID: ${tabID} }); return { files: shot.files }`)
   assert.equal(shot.files?.[0]?.mime, "image/png")
   await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, run, sessionID: session.id, project, app: appPath,

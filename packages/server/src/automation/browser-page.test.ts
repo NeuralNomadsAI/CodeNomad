@@ -13,6 +13,8 @@ class Native {
   calls: Array<{ method: string; input: Record<string, any> }> = []
   protocol: Array<{method: string; params: Record<string, unknown>}> = []
   gate?: () => Promise<void>
+  quads: number[][] = []
+  onInput?: (type: unknown) => void
   leases = new Map<string, string>()
   nodes = [{ nodeId: "one", backendDOMNodeId: 42, role: { value: "button" }, name: { value: "Save" } }]
   request = async <T>(method: string, input: Record<string, any>): Promise<T> => {
@@ -31,7 +33,8 @@ class Native {
       if (method === this.failMethod) throw new Error("Native reply uncertain")
       if (method === "Accessibility.getFullAXTree") { await this.gate?.(); return { nodes: this.nodes } }
       if (method === "DOM.resolveNode") return { object: { objectId: "object-1" } }
-      if (method === "DOM.getContentQuads") return { quads: [] }
+      if (method === "DOM.getContentQuads") return { quads: this.quads }
+      if (method === "Input.dispatchMouseEvent") this.onInput?.(params.type)
       if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } }
       if (method === "Runtime.callFunctionOn") return { result: { value: this.fileInput && String(params.functionDeclaration).includes('control.type === "file"') ? true : null } }
       if (method === "Page.getNavigationHistory") return { currentIndex: 1, entries: [{ title: "First" }, { title: "Second" }] }
@@ -60,6 +63,18 @@ test("preview operations use the shared outline/actions without a CodeNomad inpu
   assert.equal(starts.length, 2)
   assert.notEqual(starts[0].input.operationID, starts[1].input.operationID)
   assert.deepEqual(native.calls.filter(call => call.method === "browser.page.end").map(call => call.input.operationID), starts.map(call => call.input.operationID))
+})
+
+test("a click the page received before it moved on is delivered; a page that moved before the press still fails", async () => {
+  const native = new Native(), page = new BrowserPage(native)
+  native.quads = [[10, 10, 30, 10, 30, 30, 10, 30]]
+  let ref = firstRef((await page.execute("a", { action: "snapshot" })).snapshot)
+  native.onInput = type => { if (type === "mouseReleased") native.generation = "run/guest/document-2" }
+  assert.deepEqual(await page.execute("a", { action: "click", ref }), { url: "https://example.test/", pageChanged: true })
+  ref = firstRef((await page.execute("a", { action: "snapshot" })).snapshot)
+  native.onInput = type => { if (type === "mouseMoved") native.generation = "run/guest/document-3" }
+  await assert.rejects(page.execute("a", { action: "click", ref }), /document changed/)
+  assert.equal(native.leases.size, 0)
 })
 
 test("scoped snapshots preserve refs and a new document or another session cannot reuse them", async () => {
