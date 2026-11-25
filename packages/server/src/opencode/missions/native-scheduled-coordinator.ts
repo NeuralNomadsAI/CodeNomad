@@ -12,7 +12,7 @@ import type { NativeMissionSession } from "../../missions/control-types"
 import { abortableNativeEffect } from "./native-invocation"
 import { isReservedMissionScheduleSessionID } from "../../missions/mission-schedule-carrier-identity"
 import { NATIVE_SCHEDULE_CARRIER_MARKER } from "./native-schedule-carrier-binding"
-import { assertAgentScheduledCoordinatorSelection, acquireAgentScheduledCoordinatorValidation } from "./native-scheduled-coordinator-adoption"
+import { assertAgentScheduledCoordinatorSelection } from "./native-scheduled-coordinator-adoption"
 
 /** Explicit coordinator adoption keeps the conversation and all unrelated metadata.
  * State-setting calls reconcile by readback; only admission sends the original input. */
@@ -23,9 +23,9 @@ export async function adoptNativeScheduledCoordinator(ctx: Plugin.Context, run: 
   validate?: () => Promise<() => true>) {
   const pending = doc.pending!, selected = pending.configuration.profiles?.coordinator
   if (!pending.coordinatorReused || !selected?.agent || !selected.model) throw new Error("Existing coordinator selection unavailable")
+  // The full ownership validation runs when the calendar is saved, never per passage.
   assertAgentScheduledCoordinatorSelection(pending.configuration, doc.creation?.author)
-  const agentValidation = doc.creation?.author ? validate
-    ?? (() => run(acquireAgentScheduledCoordinatorValidation(ctx, run, doc, observeCurrent, signal))) : undefined
+  const agentValidation = doc.creation?.author ? validate : undefined
   await agentValidation?.()
   const read = async () => {
     observeCurrent()
