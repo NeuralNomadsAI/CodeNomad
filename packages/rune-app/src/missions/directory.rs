@@ -214,6 +214,12 @@ impl Panel {
         }
     }
 
+    pub(super) fn reconcile_editor_edit(&mut self) {
+        if self.editor.reconcile_edit(&self.backend, &self.wake) {
+            (self.wake)();
+        }
+    }
+
     pub(super) fn retry_editor_prefill(&mut self) {
         self.editor
             .retry_prefill(&self.backend, &self.reads, &self.wake);
@@ -221,7 +227,16 @@ impl Panel {
     }
 
     pub(super) fn reopen_editor(&mut self) {
-        if self.editor.begin_reopen(self.detail.map_reads) {
+        if self
+            .editor
+            .begin_reopen(&self.backend, self.detail.map_reads)
+        {
+            if let Some(mid) = self.editor.editing_mission_id().map(str::to_owned)
+                && self.selected.as_deref() != Some(mid.as_str())
+            {
+                self.selected = Some(mid);
+                self.detail.clear();
+            }
             self.detail.refresh();
             self.refresh();
             (self.wake)();
@@ -255,11 +270,30 @@ impl Panel {
         self.cancel_probe();
     }
 
-    pub(crate) fn take_reader_auth_expired(&mut self) -> Option<Backend> {
-        self.reader
-            .take_auth_expired()
-            .or_else(|| self.detail.take_auth_expired())
-            .or_else(|| self.editor.take_auth_expired())
+    fn has_pending_auth_expired(&self) -> bool {
+        self.reader.has_auth_expired()
+            || self.detail.has_auth_expired()
+            || self.editor.has_auth_expired()
+    }
+
+    pub(crate) fn drain_auth_expired(&mut self) -> Vec<Backend> {
+        let mut expired = Vec::new();
+        for candidate in [
+            self.reader.take_auth_expired(),
+            self.detail.take_auth_expired(),
+            self.editor.take_auth_expired(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if !expired
+                .iter()
+                .any(|known: &Backend| known.client.same_connection(&candidate.client))
+            {
+                expired.push(candidate);
+            }
+        }
+        expired
     }
 
     pub(crate) fn take_editor_initial_focus(&mut self) -> Option<&'static str> {
@@ -818,7 +852,8 @@ impl Panel {
             &self.reads,
             &self.wake,
         );
-        changed |= self.editor.poll(&self.backend, &self.wake);
+        let auth_blocked = self.has_pending_auth_expired();
+        changed |= self.editor.poll(&self.backend, &self.wake, auth_blocked);
         changed |= self.editor.observe_detail(
             self.detail.snapshot.as_ref(),
             self.detail.map_reads,
@@ -833,9 +868,11 @@ impl Panel {
             }
             self.detail.observe(&saved.mission_id, saved.revision);
             self.refresh();
-            self.editor_saved_focus = saved
-                .return_focus
-                .or_else(|| Some("missions-create".into()));
+            if saved.closed_form {
+                self.editor_saved_focus = saved
+                    .return_focus
+                    .or_else(|| Some("missions-create".into()));
+            }
             changed = true;
         }
         changed | self.poll_control_fields()
@@ -910,6 +947,13 @@ impl Panel {
 
     pub(super) fn select(&mut self, id: &str) {
         if self.selected.as_deref() != Some(id) && self.summaries.iter().any(|row| row.id == id) {
+            if self
+                .editor
+                .editing_mission_id()
+                .is_some_and(|mid| mid != id)
+            {
+                self.editor.close();
+            }
             self.control_fields.cancel();
             self.detail.clear();
             self.observation = Observation::default();

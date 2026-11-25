@@ -37,7 +37,8 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
     changed |= poll_cached(s, &mut ui, Some(now), tx);
     changed |= crate::timeline::sync_outline_mutation(s);
-    let (missions_changed, mission_auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
+    let (missions_changed, mission_auth_expired, restore_chat_after_save) =
+        panel_state::poll_missions(&mut ui, s, tx);
     changed |= missions_changed;
     ui.stage();
     let previous_error = (
@@ -53,6 +54,9 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.persistence.partial,
     );
     s.workspace = Some(ui);
+    if restore_chat_after_save && !s.screen.is_launcher() {
+        crate::chat::reading::restore_position(s, tx);
+    }
     if !mission_auth_expired.is_empty() {
         #[cfg(not(target_arch = "wasm32"))]
         for expired in mission_auth_expired {

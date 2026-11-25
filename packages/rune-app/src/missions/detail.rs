@@ -56,6 +56,19 @@ pub(super) struct Snapshot {
     pub attention_end: u64,
 }
 
+#[cfg(test)]
+impl Snapshot {
+    pub(super) fn from_header_for_test(header: MapHeader) -> Self {
+        Self {
+            header,
+            tasks: Rc::new(TaskRows::new(Vec::new())),
+            reports: HashMap::new(),
+            end: 0,
+            attention_end: 0,
+        }
+    }
+}
+
 enum Answer {
     New(MapHeader, Vec<Task>, HashMap<String, Report>, u64),
     Same(MapHeader),
@@ -183,6 +196,10 @@ impl Detail {
             self.pending = None;
         }
     }
+    pub fn has_auth_expired(&self) -> bool {
+        self.auth_expired.is_some()
+    }
+
     pub fn take_auth_expired(&mut self) -> Option<Backend> {
         self.auth_expired.take()
     }

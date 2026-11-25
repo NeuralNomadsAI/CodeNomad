@@ -30,9 +30,10 @@ pub use detail::{
 pub use directory::{DirectoryChanged, DirectoryRead, is_auth_expired};
 pub use editor::{
     CreateAcknowledgement, CreateMissionOutcome, CreateMissionRequest, CreatedMission,
-    CreationReceiptOutcome, EditorBodyOutcome, MISSION_TEXT_MAX, MISSION_TITLE_MAX, MutationCode,
-    StartCreatedOutcome, TaskMode, UpdateMissionOutcome, UpdateMissionRequest,
-    derive_mission_title, valid_notes_input, valid_objective_input, valid_title_input,
+    CreationReceiptOutcome, EditReceiptOutcome, EditorBodyOutcome, MISSION_TEXT_MAX,
+    MISSION_TITLE_MAX, MutationCode, StartCreatedOutcome, TaskMode, UpdateMissionOutcome,
+    UpdateMissionRequest, derive_mission_title, js_trim, valid_notes_input, valid_objective_input,
+    valid_title_input,
 };
 pub use lifecycle::{
     ControlReceipt, LifecycleAction, LifecycleOutcome, LifecycleRequest, LifecycleTarget,

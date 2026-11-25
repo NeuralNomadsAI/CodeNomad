@@ -6,7 +6,7 @@ use super::{
     },
 };
 use crate::{components::window_close_button, strings::t};
-use codenomad_client::missions::{RunState, TaskMode, Template};
+use codenomad_client::missions::{RunState, TaskMode, Template, utf16_len};
 use rune::{El, Tx, col, edit::TextEdit, text};
 use rune_theme_codenomad::{
     Space, TextRole, field_kit, git_panel as theme,
@@ -52,10 +52,15 @@ pub(crate) fn view<S: 'static>(
         owner,
         scope: panel.scope.clone(),
     };
-    let hold = (form.mode == Mode::Create)
+    let creation_hold = (form.mode == Mode::Create)
         .then(|| panel.editor.active_hold(&panel.backend))
         .flatten();
-    let locked = form.fields_locked(hold);
+    let edit_hold = form.edit.as_ref().and_then(|edit| {
+        panel
+            .editor
+            .active_edit_hold(&panel.backend, &edit.mission_id)
+    });
+    let locked = form.fields_locked(creation_hold, edit_hold);
     let structural_locked = locked || form.mode == Mode::Edit;
 
     let heading = match form.mode {
@@ -95,15 +100,13 @@ pub(crate) fn view<S: 'static>(
 
     let mut content = col().full_width().pad(Space::Md).separate(Space::Sm);
 
-    if let Some(hold) = hold {
-        let key = match hold.state {
-            HoldState::Pending => "missions.control.mutation.pending",
-            HoldState::Uncertain => "missions.scheduling.uncertain",
-        };
-        let role = if hold.state == HoldState::Uncertain {
-            "alert"
-        } else {
-            "status"
+    let active_hold_state = creation_hold
+        .map(|h| h.state)
+        .or_else(|| edit_hold.map(|h| h.state));
+    if let Some(state) = active_hold_state {
+        let (key, role) = match state {
+            HoldState::Pending => ("missions.control.mutation.pending", "status"),
+            HoldState::Uncertain => ("missions.scheduling.uncertain", "alert"),
         };
         content = content.child(theme::note(t(key), role));
     }
@@ -316,9 +319,9 @@ pub(crate) fn view<S: 'static>(
         );
     }
 
-    if form.edit_uncertain {
-        content = content.child(theme::note(t("missions.scheduling.uncertain"), "alert"));
-    } else if let Some(err) = form.error {
+    if active_hold_state.is_none()
+        && let Some(err) = form.error
+    {
         content = content.child(theme::note(t(err), "alert"));
     }
 
@@ -331,8 +334,7 @@ pub(crate) fn view<S: 'static>(
         .key("mission-editor-cancel"),
     );
 
-    if form.mode == Mode::Create
-        && let Some(hold) = hold
+    if let Some(hold) = creation_hold
         && hold.state == HoldState::Uncertain
     {
         let rec_owner = scoped.clone();
@@ -351,15 +353,17 @@ pub(crate) fn view<S: 'static>(
         );
     }
 
-    if form.mode == Mode::Edit && form.edit_uncertain {
-        let refresh_owner = scoped.clone();
+    if let Some(hold) = edit_hold
+        && hold.state == HoldState::Uncertain
+    {
+        let rec_owner = scoped.clone();
         actions = actions.child(
             layout::button_tx(
                 t("missions.control.refresh"),
-                false,
+                hold.checking,
                 move |s: &mut S, tx| {
-                    if let Some(p) = refresh_owner.get(s).0 {
-                        p.refresh();
+                    if let Some(p) = rec_owner.get(s).0 {
+                        p.reconcile_editor_edit();
                         tx.instant();
                     }
                 },
@@ -368,7 +372,7 @@ pub(crate) fn view<S: 'static>(
         );
     }
 
-    if form.mode == Mode::Edit && form.edit_conflict {
+    if form.mode == Mode::Edit && form.edit_conflict && edit_hold.is_none() {
         let reopen_owner = scoped.clone();
         actions = actions.child(
             layout::button_tx(
@@ -385,9 +389,7 @@ pub(crate) fn view<S: 'static>(
         );
     }
 
-    let pending = form.starting_created
-        || form.edit_pending
-        || hold.is_some_and(|h| h.state == HoldState::Pending);
+    let pending = form.starting_created || active_hold_state == Some(HoldState::Pending);
     let submit_label = if pending {
         t("missions.control.mutation.pending")
     } else if form.mode == Mode::Create {
@@ -395,7 +397,7 @@ pub(crate) fn view<S: 'static>(
     } else {
         t("missions.control.save")
     };
-    let can_submit = form.can_submit(hold);
+    let can_submit = form.can_submit(creation_hold, edit_hold);
     let submit_btn = if can_submit {
         let submit_owner = scoped;
         layout::button_tx(submit_label, false, move |s: &mut S, tx| {
@@ -424,5 +426,5 @@ pub(crate) fn view<S: 'static>(
 }
 
 fn counter(value: &str, max: usize) -> El {
-    text(format!("{} / {max}", value.chars().count())).text_role(TextRole::Label)
+    text(format!("{} / {max}", utf16_len(value))).text_role(TextRole::Label)
 }

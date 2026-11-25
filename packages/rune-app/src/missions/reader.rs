@@ -372,6 +372,10 @@ impl Reader {
         self.ready_copy.take()
     }
 
+    pub(crate) fn has_auth_expired(&self) -> bool {
+        self.cache.has_auth_expired()
+    }
+
     pub(crate) fn take_auth_expired(&mut self) -> Option<Backend> {
         self.cache.take_auth_expired()
     }

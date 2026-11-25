@@ -529,7 +529,7 @@ fn reader_auth_expired_in_same_poll_abandons_admitted_briefing_without_posting()
         // Start the real off-page task lookup HTTP request via panel-page.
         rt.update(|s, tx| {
             let mut ui = s.workspace.take().unwrap();
-            let (_, auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
+            let (_, auth_expired, _) = panel_state::poll_missions(&mut ui, s, tx);
             s.workspace = Some(ui);
             assert!(auth_expired.is_empty());
         });
@@ -575,7 +575,7 @@ fn reader_auth_expired_in_same_poll_abandons_admitted_briefing_without_posting()
         let mut expired = Vec::new();
         rt.update(|s, tx| {
             let mut ui = s.workspace.take().unwrap();
-            let (_, auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
+            let (_, auth_expired, _) = panel_state::poll_missions(&mut ui, s, tx);
             s.workspace = Some(ui);
             expired = auth_expired;
             for backend in &expired {

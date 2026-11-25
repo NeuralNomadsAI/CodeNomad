@@ -378,10 +378,11 @@ pub(super) fn poll_missions(
     ui: &mut Ui,
     s: &State,
     tx: &mut rune::Tx,
-) -> (bool, Vec<crate::backend::Backend>) {
+) -> (bool, Vec<crate::backend::Backend>, bool) {
     let finished = ui.mission_lifecycle.poll();
     let mut changed = !finished.is_empty();
     let mut auth_expired = Vec::new();
+    let mut restore_chat_after_save = false;
     let mut selection_changed = false;
     let mounted = crate::shell::right_panel_visible(s);
     let replaced = crate::shell::launcher_replaces_project(s);
@@ -473,11 +474,9 @@ pub(super) fn poll_missions(
                 panel.refresh_when_due(ui.clock, tx);
             }
             changed |= panel.poll();
-            let mut reader_auth_expired = false;
-            if let Some(expired) = panel.take_reader_auth_expired() {
-                reader_auth_expired = true;
-                auth_expired.push(expired);
-            }
+            let drained_auth = panel.drain_auth_expired();
+            let reader_auth_expired = !drained_auth.is_empty();
+            auth_expired.extend(drained_auth);
             if let Some(text) = panel.take_reader_copy()
                 && !reader_auth_expired
                 && panel.has_reader()
@@ -495,6 +494,7 @@ pub(super) fn poll_missions(
             if let Some(back) = panel.take_editor_saved_focus()
                 && !panel.has_surface()
             {
+                restore_chat_after_save = true;
                 let target = if visible
                     && (back == "missions-create"
                         || (back == "mission-edit" && panel.selected.is_some()))
@@ -545,7 +545,7 @@ pub(super) fn poll_missions(
         ui.changed();
     }
     auth_expired.extend(ui.mission_briefing.take_auth_expired());
-    (changed, auth_expired)
+    (changed, auth_expired, restore_chat_after_save)
 }
 
 pub(crate) fn suspend_mission_briefing(s: &mut State) {

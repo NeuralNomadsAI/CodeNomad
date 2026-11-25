@@ -1,6 +1,6 @@
 use super::*;
 use crate::{missions::editor_view, platform::reads::Reads, strings::t};
-use codenomad_client::missions::{ContentSelector, MapHeader, content_digest, utf16_len};
+use codenomad_client::missions::{MapHeader, content_digest, utf16_len};
 use rune::{Env, Runtime, edit::TextEdit};
 use serde_json::{Value, json};
 use std::{
@@ -12,7 +12,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
 };
 
 fn noop_wake() -> Wake {
@@ -27,18 +27,20 @@ fn test_backend(base: String) -> Backend {
 
 fn sample_header(
     revision: u64,
-    objective: &str,
+    objective: Option<&str>,
     notes: Option<&str>,
     run_state: &str,
 ) -> MapHeader {
     let mut bodies = serde_json::Map::new();
-    bodies.insert(
-        "objective".into(),
-        json!({
-            "characters": utf16_len(objective),
-            "digest": content_digest(objective),
-        }),
-    );
+    if let Some(obj) = objective {
+        bodies.insert(
+            "objective".into(),
+            json!({
+                "characters": utf16_len(obj),
+                "digest": content_digest(obj),
+            }),
+        );
+    }
     if let Some(n) = notes {
         bodies.insert(
             "notes".into(),
@@ -52,7 +54,7 @@ fn sample_header(
         "root": {
             "id": "msn_alpha123",
             "title": "Existing title",
-            "excerpt": objective,
+            "excerpt": objective.unwrap_or("Truncated excerpt"),
             "status": "active",
             "runState": run_state,
             "revision": revision,
@@ -111,6 +113,39 @@ fn mission_json(revision: u64, run_state: &str) -> Value {
     })
 }
 
+async fn read_http_request(socket: &mut TcpStream) -> String {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let mut header_end = None;
+    let mut content_len = 0usize;
+    loop {
+        let n = socket.read(&mut chunk).await.unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if header_end.is_none()
+            && let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n")
+        {
+            header_end = Some(pos + 4);
+            let headers = String::from_utf8_lossy(&buf[..pos]);
+            for line in headers.lines() {
+                if let Some((name, val)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    content_len = val.trim().parse().unwrap_or(0);
+                }
+            }
+        }
+        if let Some(end) = header_end
+            && buf.len() >= end + content_len
+        {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
 fn start_scripted_server(
     handler: impl Fn(usize, String) -> (String, String) + Send + Sync + 'static,
 ) -> (String, Arc<AtomicUsize>) {
@@ -130,9 +165,7 @@ fn start_scripted_server(
                 let n = calls_bg.fetch_add(1, Ordering::SeqCst);
                 let handler = handler.clone();
                 tokio::spawn(async move {
-                    let mut buf = vec![0u8; 32768];
-                    let read = socket.read(&mut buf).await.unwrap_or(0);
-                    let raw = String::from_utf8_lossy(&buf[..read]).into_owned();
+                    let raw = read_http_request(&mut socket).await;
                     let (status, body) = handler(n, raw);
                     let reply = format!(
                         "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -164,13 +197,19 @@ fn create_validation_blocks_empty_objective_multiline_title_and_compare() {
     let mut editor = Editor::default();
     editor.open_create(&backend, Some("missions-create".into()));
     let form = editor.form.as_mut().unwrap();
-    assert!(!form.can_submit(None), "empty objective cannot submit");
+    assert!(
+        !form.can_submit(None, None),
+        "empty objective cannot submit"
+    );
 
     form.objective = TextEdit::new("Deliver one-time editor");
-    assert!(form.can_submit(None));
+    assert!(form.can_submit(None, None));
 
     form.title = TextEdit::new("Line 1\nLine 2");
-    assert!(!form.can_submit(None), "multiline title must be rejected");
+    assert!(
+        !form.can_submit(None, None),
+        "multiline title must be rejected"
+    );
 
     form.title = TextEdit::new("Valid title");
     form.template = Template::Compare;
@@ -178,7 +217,7 @@ fn create_validation_blocks_empty_objective_multiline_title_and_compare() {
         form.compare_error(),
         Some("missions.compare.compare-models-required")
     );
-    assert!(!form.can_submit(None));
+    assert!(!form.can_submit(None, None));
 }
 
 #[test]
@@ -220,15 +259,77 @@ fn create_fresh_with_start_on_creation_dispatches_single_start_and_selects_missi
     }
     assert!(editor.submit(&backend, &wake));
     wait_until(|| {
-        editor.poll(&backend, &wake);
+        editor.poll(&backend, &wake, false);
         editor.saved.is_some()
     });
     let saved = editor.take_saved().unwrap();
     assert_eq!(saved.mission_id, "msn_alpha123");
     assert_eq!(saved.revision, 2);
     assert!(saved.select);
+    assert!(saved.closed_form);
     assert!(!editor.is_open());
     assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn closing_or_auth_blocked_cancels_auto_start_and_preserves_later_draft() {
+    let (base, calls) = start_scripted_server(|_step, raw| {
+        assert!(raw.starts_with("POST /api/workspaces/ws-1/missions "));
+        std::thread::sleep(Duration::from_millis(60));
+        (
+            "200 OK".into(),
+            json!({
+                "acknowledgement": "fresh",
+                "mission": mission_json(1, "prepared")
+            })
+            .to_string(),
+        )
+    });
+    let backend = test_backend(base.clone());
+    let wake = noop_wake();
+    let mut editor = Editor::default();
+    editor.open_create(&backend, Some("missions-create".into()));
+    {
+        let form = editor.form.as_mut().unwrap();
+        form.objective = TextEdit::new("First draft");
+        form.start_on_creation = true;
+    }
+    assert!(editor.submit(&backend, &wake));
+    // Closing revokes auto_start; reopening creates a newer form generation.
+    editor.close();
+    editor.open_create(&backend, None);
+    wait_until(|| {
+        editor.poll(&backend, &wake, false);
+        editor.saved.is_some()
+    });
+    let saved = editor.take_saved().unwrap();
+    assert_eq!(saved.revision, 1);
+    assert!(!saved.closed_form, "late ACK must not close the newer form");
+    assert!(editor.is_open());
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "must not POST /control after close"
+    );
+
+    // Same-tick 401 from reader/detail (`auth_blocked = true`) also blocks auto-start.
+    let mut editor2 = Editor::default();
+    editor2.open_create(&backend, None);
+    {
+        let form = editor2.form.as_mut().unwrap();
+        form.objective = TextEdit::new("Blocked by 401");
+        form.start_on_creation = true;
+    }
+    assert!(editor2.submit(&backend, &wake));
+    wait_until(|| {
+        editor2.poll(&backend, &wake, true);
+        editor2.saved.is_some()
+    });
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "must not POST /control when auth_blocked"
+    );
 }
 
 #[test]
@@ -270,13 +371,12 @@ fn uncertain_creation_holds_request_across_close_reopen_and_reconciles_without_a
     }
     assert!(editor.submit(&backend, &wake));
     wait_until(|| {
-        editor.poll(&backend, &wake);
+        editor.poll(&backend, &wake, false);
         editor
             .active_hold(&backend)
             .is_some_and(|h| h.state == HoldState::Uncertain)
     });
 
-    // Closing visually retains the uncertain hold; reopening adopts the exact request and blocks new submit.
     editor.close();
     assert!(!editor.is_open());
     assert!(editor.active_hold(&backend).is_some());
@@ -291,10 +391,9 @@ fn uncertain_creation_holds_request_across_close_reopen_and_reconciles_without_a
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-    // Explicit reconciliation settles via GET /creation/{request} and never continues auto-start.
     assert!(editor.reconcile_creation(&backend, &wake));
     wait_until(|| {
-        editor.poll(&backend, &wake);
+        editor.poll(&backend, &wake, false);
         editor.saved.is_some()
     });
     let saved = editor.take_saved().unwrap();
@@ -309,71 +408,72 @@ fn uncertain_creation_holds_request_across_close_reopen_and_reconciles_without_a
 }
 
 #[test]
-fn create_401_releases_hold_preserves_draft_and_surfaces_auth_expired() {
-    let (base, _calls) =
-        start_scripted_server(|_, _| ("401 Unauthorized".into(), "expired".into()));
-    let backend = test_backend(base);
-    let wake = noop_wake();
-    let mut editor = Editor::default();
-    editor.open_create(&backend, None);
-    editor.form.as_mut().unwrap().objective = TextEdit::new("Need sign-in");
-    assert!(editor.submit(&backend, &wake));
-    wait_until(|| {
-        editor.poll(&backend, &wake);
-        editor.auth_expired.is_some()
-    });
-    assert!(editor.take_auth_expired().is_some());
-    assert!(editor.active_hold(&backend).is_none());
-    assert_eq!(editor.form.as_ref().unwrap().objective.text, "Need sign-in");
-}
-
-#[test]
-fn edit_prefills_from_content_and_handles_revision_conflict_and_success() {
+fn uncertain_edit_persists_hold_across_close_and_reconciles_via_history_receipt() {
     let obj = "Full objective body";
-    let notes = "Original notes";
-    let header = sample_header(2, obj, Some(notes), "running");
+    let header = sample_header(2, Some(obj), None, "running");
     let obj_digest = content_digest(obj);
-    let notes_digest = content_digest(notes);
+    let req_id_seen = Arc::new(std::sync::Mutex::new(String::new()));
+    let req_id_bg = req_id_seen.clone();
     let (base, _calls) = start_scripted_server(move |_step, raw| {
         if raw.starts_with("GET /api/workspaces/ws-1/missions/msn_alpha123/content") {
-            let (field, text, digest) = if raw.contains("field=objective") {
-                ("objective", obj, obj_digest.as_str())
-            } else {
-                ("notes", notes, notes_digest.as_str())
-            };
-            (
-                "200 OK".into(),
-                json!({
-                    "available": true,
-                    "version": 1,
-                    "projectID": "prj_1",
-                    "missionID": "msn_alpha123",
-                    "revision": 2,
-                    "content": {
-                        "kind": "mission",
-                        "field": field,
-                        "digest": digest,
-                        "offset": 0,
-                        "characters": utf16_len(text),
-                        "text": text,
-                        "next": null
-                    }
-                })
-                .to_string(),
-            )
-        } else {
-            assert!(raw.starts_with("PATCH /api/workspaces/ws-1/missions/msn_alpha123 "));
-            if raw.contains("trigger-conflict") {
-                (
-                    "409 Conflict".into(),
-                    json!({"error":"changed","code":"revision-conflict"}).to_string(),
-                )
-            } else {
+            if raw.contains("field=objective") {
                 (
                     "200 OK".into(),
-                    json!({"mission": mission_json(3, "running")}).to_string(),
+                    json!({
+                        "available": true,
+                        "version": 1,
+                        "projectID": "prj_1",
+                        "missionID": "msn_alpha123",
+                        "revision": 2,
+                        "content": {
+                            "kind": "mission",
+                            "field": "objective",
+                            "digest": obj_digest,
+                            "offset": 0,
+                            "characters": utf16_len(obj),
+                            "text": obj,
+                            "next": null
+                        }
+                    })
+                    .to_string(),
+                )
+            } else {
+                // Positive absence proof for notes.
+                (
+                    "200 OK".into(),
+                    json!({
+                        "available": true,
+                        "version": 1,
+                        "projectID": "prj_1",
+                        "missionID": "msn_alpha123",
+                        "revision": 2,
+                        "refused": "content-not-found"
+                    })
+                    .to_string(),
                 )
             }
+        } else if raw.starts_with("PATCH /api/workspaces/ws-1/missions/msn_alpha123 ") {
+            let body: Value = serde_json::from_str(raw.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+            *req_id_bg.lock().unwrap() = body["requestId"].as_str().unwrap().to_owned();
+            (
+                "500 Internal Server Error".into(),
+                json!({"error":"lost"}).to_string(),
+            )
+        } else {
+            assert!(raw.starts_with("GET /api/workspaces/ws-1/missions/msn_alpha123 "));
+            let rid = req_id_bg.lock().unwrap().clone();
+            let mut m = mission_json(3, "running");
+            m["history"] = json!([{
+                "revision": 3,
+                "source": "user",
+                "requestID": rid,
+                "objective": { "before": obj, "after": "Edited once" },
+                "notes": { "before": "", "after": "" }
+            }]);
+            (
+                "200 OK".into(),
+                json!({"available": true, "mission": m}).to_string(),
+            )
         }
     });
     let backend = test_backend(base);
@@ -388,30 +488,24 @@ fn edit_prefills_from_content_and_handles_revision_conflict_and_success() {
         Some("mission-edit".into())
     ));
     wait_until(|| {
-        editor.poll(&backend, &wake);
+        editor.poll(&backend, &wake, false);
         editor
             .form
             .as_ref()
             .is_some_and(|f| f.prefill == PrefillState::Ready)
     });
-    assert_eq!(editor.form.as_ref().unwrap().objective.text, obj);
-    assert_eq!(editor.form.as_ref().unwrap().notes.text, notes);
-
-    // 409 revision-conflict locks edit until reopened.
-    editor.form.as_mut().unwrap().objective = TextEdit::new("trigger-conflict");
+    editor.form.as_mut().unwrap().objective = TextEdit::new("Edited once");
     assert!(editor.submit(&backend, &wake));
     wait_until(|| {
-        editor.poll(&backend, &wake);
-        editor.form.as_ref().is_some_and(|f| f.edit_conflict)
+        editor.poll(&backend, &wake, false);
+        editor
+            .active_edit_hold(&backend, "msn_alpha123")
+            .is_some_and(|h| h.state == HoldState::Uncertain)
     });
-    assert_eq!(
-        editor.form.as_ref().unwrap().error,
-        Some("missions.control.mutation.conflict")
-    );
-    assert!(!editor.submit(&backend, &wake));
 
-    // Reopen fresh edit and save cleanly.
-    let _ = ContentSelector::mission("objective");
+    // Closing visually keeps the EditHold; reopening adopts it and forbids Reopen or new submit.
+    editor.close();
+    assert!(editor.active_edit_hold(&backend, "msn_alpha123").is_some());
     assert!(editor.open_edit(
         &header,
         &backend,
@@ -419,23 +513,172 @@ fn edit_prefills_from_content_and_handles_revision_conflict_and_success() {
         &wake,
         Some("mission-edit".into())
     ));
+    assert_eq!(editor.form.as_ref().unwrap().objective.text, "Edited once");
+    assert!(
+        !editor.begin_reopen(&backend, 1),
+        "cannot reopen while EditHold is active"
+    );
+    assert!(
+        !editor.submit(&backend, &wake),
+        "cannot submit second PATCH while EditHold is active"
+    );
+
+    // Reconciling against the exact history entry settles and releases EditHold.
+    assert!(editor.reconcile_edit(&backend, &wake));
     wait_until(|| {
-        editor.poll(&backend, &wake);
-        editor
-            .form
-            .as_ref()
-            .is_some_and(|f| f.prefill == PrefillState::Ready)
-    });
-    editor.form.as_mut().unwrap().objective = TextEdit::new("Updated body");
-    assert!(editor.submit(&backend, &wake));
-    wait_until(|| {
-        editor.poll(&backend, &wake);
+        editor.poll(&backend, &wake, false);
         editor.saved.is_some()
     });
     let saved = editor.take_saved().unwrap();
     assert_eq!(saved.mission_id, "msn_alpha123");
     assert_eq!(saved.revision, 3);
-    assert!(!saved.select);
+    assert!(editor.active_edit_hold(&backend, "msn_alpha123").is_none());
+}
+
+#[test]
+fn missing_objective_descriptor_refuses_prefill_without_exposing_excerpt() {
+    let header = sample_header(2, None, None, "running");
+    let backend = test_backend("http://127.0.0.1:9/".into());
+    let reads = Reads::default();
+    let wake = noop_wake();
+    let mut editor = Editor::default();
+    assert!(editor.open_edit(&header, &backend, &reads, &wake, None));
+    wait_until(|| {
+        editor.poll(&backend, &wake, false);
+        editor
+            .form
+            .as_ref()
+            .is_some_and(|f| f.prefill == PrefillState::Failed)
+    });
+    let form = editor.form.as_ref().unwrap();
+    assert!(
+        form.objective.text.is_empty(),
+        "excerpt must never be copied into objective field"
+    );
+    assert!(!form.can_submit(None, None));
+}
+
+#[test]
+fn create_401_releases_hold_preserves_draft_and_surfaces_auth_expired() {
+    let (base, _calls) =
+        start_scripted_server(|_, _| ("401 Unauthorized".into(), "expired".into()));
+    let backend = test_backend(base);
+    let wake = noop_wake();
+    let mut editor = Editor::default();
+    editor.open_create(&backend, None);
+    editor.form.as_mut().unwrap().objective = TextEdit::new("Need sign-in");
+    assert!(editor.submit(&backend, &wake));
+    wait_until(|| {
+        editor.poll(&backend, &wake, false);
+        editor.auth_expired.is_some()
+    });
+    assert!(editor.take_auth_expired().is_some());
+    assert!(editor.active_hold(&backend).is_none());
+    assert_eq!(editor.form.as_ref().unwrap().objective.text, "Need sign-in");
+}
+
+#[test]
+fn edit_conflict_reopens_from_newer_snapshot_and_saves() {
+    let obj_v2 = "Objective v2";
+    let obj_v3 = "Objective v3";
+    let notes = "Original notes";
+    let header_v2 = sample_header(2, Some(obj_v2), Some(notes), "running");
+    let header_v3 = sample_header(3, Some(obj_v3), Some(notes), "running");
+    let d_v2 = content_digest(obj_v2);
+    let d_v3 = content_digest(obj_v3);
+    let d_notes = content_digest(notes);
+    let (base, _calls) = start_scripted_server(move |_step, raw| {
+        if raw.starts_with("GET /api/workspaces/ws-1/missions/msn_alpha123/content") {
+            let (field, text, digest, rev) = if raw.contains(&d_v3) {
+                ("objective", obj_v3, d_v3.as_str(), 3)
+            } else if raw.contains("field=objective") {
+                ("objective", obj_v2, d_v2.as_str(), 2)
+            } else {
+                ("notes", notes, d_notes.as_str(), 3)
+            };
+            (
+                "200 OK".into(),
+                json!({
+                    "available": true,
+                    "version": 1,
+                    "projectID": "prj_1",
+                    "missionID": "msn_alpha123",
+                    "revision": rev,
+                    "content": {
+                        "kind": "mission",
+                        "field": field,
+                        "digest": digest,
+                        "offset": 0,
+                        "characters": utf16_len(text),
+                        "text": text,
+                        "next": null
+                    }
+                })
+                .to_string(),
+            )
+        } else {
+            assert!(raw.starts_with("PATCH /api/workspaces/ws-1/missions/msn_alpha123 "));
+            if raw.contains("\"expectedRevision\":2") {
+                (
+                    "409 Conflict".into(),
+                    json!({"error":"changed","code":"revision-conflict"}).to_string(),
+                )
+            } else {
+                (
+                    "200 OK".into(),
+                    json!({"mission": mission_json(4, "running")}).to_string(),
+                )
+            }
+        }
+    });
+    let backend = test_backend(base);
+    let reads = Reads::default();
+    let wake = noop_wake();
+    let mut editor = Editor::default();
+    assert!(editor.open_edit(
+        &header_v2,
+        &backend,
+        &reads,
+        &wake,
+        Some("mission-edit".into())
+    ));
+    wait_until(|| {
+        editor.poll(&backend, &wake, false);
+        editor
+            .form
+            .as_ref()
+            .is_some_and(|f| f.prefill == PrefillState::Ready)
+    });
+    assert_eq!(editor.form.as_ref().unwrap().objective.text, obj_v2);
+
+    editor.form.as_mut().unwrap().objective = TextEdit::new("Stale edit");
+    assert!(editor.submit(&backend, &wake));
+    wait_until(|| {
+        editor.poll(&backend, &wake, false);
+        editor.form.as_ref().is_some_and(|f| f.edit_conflict)
+    });
+
+    // Real Reopen flow: begin_reopen -> observe newer snapshot at revision 3 -> prefill v3 -> save v4.
+    assert!(editor.begin_reopen(&backend, 1));
+    let snap_v3 = Snapshot::from_header_for_test(header_v3);
+    assert!(editor.observe_detail(Some(&snap_v3), 2, false, &backend, &reads, &wake));
+    wait_until(|| {
+        editor.poll(&backend, &wake, false);
+        editor
+            .form
+            .as_ref()
+            .is_some_and(|f| f.prefill == PrefillState::Ready)
+    });
+    assert_eq!(editor.form.as_ref().unwrap().objective.text, obj_v3);
+    editor.form.as_mut().unwrap().objective = TextEdit::new("Updated v4");
+    assert!(editor.submit(&backend, &wake));
+    wait_until(|| {
+        editor.poll(&backend, &wake, false);
+        editor.saved.is_some()
+    });
+    let saved = editor.take_saved().unwrap();
+    assert_eq!(saved.revision, 4);
+    assert!(saved.closed_form);
 }
 
 #[test]

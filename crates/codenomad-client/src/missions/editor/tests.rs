@@ -3,7 +3,7 @@ use serde_json::json;
 use std::future::Future;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
 };
 
 fn block_on<F: Future>(future: F) -> F::Output {
@@ -14,15 +14,46 @@ fn block_on<F: Future>(future: F) -> F::Output {
         .block_on(future)
 }
 
+async fn read_http_request(socket: &mut TcpStream) -> String {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let mut header_end = None;
+    let mut content_len = 0usize;
+    loop {
+        let n = socket.read(&mut chunk).await.unwrap();
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if header_end.is_none()
+            && let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n")
+        {
+            header_end = Some(pos + 4);
+            let headers = String::from_utf8_lossy(&buf[..pos]);
+            for line in headers.lines() {
+                if let Some((name, val)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    content_len = val.trim().parse().unwrap_or(0);
+                }
+            }
+        }
+        if let Some(end) = header_end
+            && buf.len() >= end + content_len
+        {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
 async fn spawn_http(status: &str, body: String) -> (String, tokio::task::JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let status = status.to_owned();
     let handle = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
-        let mut buf = vec![0u8; 16384];
-        let n = socket.read(&mut buf).await.unwrap();
-        let req = String::from_utf8_lossy(&buf[..n]).into_owned();
+        let req = read_http_request(&mut socket).await;
         let reply = format!(
             "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
@@ -69,9 +100,9 @@ fn sample_mission(revision: u64, run_state: &str) -> Value {
 }
 
 #[test]
-fn derives_single_line_clause_title_and_bounds_words() {
+fn derives_single_line_clause_title_with_js_trim_and_utf16_bounds() {
     assert_eq!(
-        derive_mission_title("  \n  Fix login. Also clean up"),
+        derive_mission_title("\u{feff}  \n  Fix login. Also clean up"),
         "Fix login"
     );
     assert_eq!(
@@ -79,7 +110,10 @@ fn derives_single_line_clause_title_and_bounds_words() {
         "Ship feature"
     );
     assert_eq!(derive_mission_title("Ready? Yes"), "Ready?");
-    assert_eq!(derive_mission_title("   \n\t  "), "");
+    assert_eq!(derive_mission_title("\u{feff}   \n\t  "), "");
+    // U+0085 is NOT JS whitespace and must not be trimmed away.
+    assert_eq!(js_trim("\u{feff}abc\u{a0}"), "abc");
+    assert_eq!(js_trim("\u{0085}abc"), "\u{0085}abc");
     let long = "Audit every single background synchronization task across the whole desktop client repository";
     let derived = derive_mission_title(long);
     assert!(utf16_len(&derived) <= MISSION_TITLE_MAX);
@@ -88,9 +122,24 @@ fn derives_single_line_clause_title_and_bounds_words() {
 }
 
 #[test]
-fn validates_create_and_update_inputs() {
+fn validates_create_and_update_inputs_with_utf16_surrogates() {
     assert!(
-        CreateMissionRequest::new("   ", None, "", Template::Custom, TaskMode::Native).is_err()
+        CreateMissionRequest::new("\u{feff}   ", None, "", Template::Custom, TaskMode::Native)
+            .is_err()
+    );
+    // 31 emoji = 62 UTF-16 code units (> 60) even though chars().count() == 31.
+    let emoji_title = "😀".repeat(31);
+    assert!(!valid_title_input(&emoji_title));
+    assert!(valid_title_input(&"😀".repeat(30)));
+    assert!(
+        CreateMissionRequest::new(
+            "Valid objective",
+            Some(&emoji_title),
+            "",
+            Template::Custom,
+            TaskMode::Native
+        )
+        .is_err()
     );
     assert!(
         CreateMissionRequest::new(
@@ -102,28 +151,9 @@ fn validates_create_and_update_inputs() {
         )
         .is_err()
     );
-    assert!(
-        CreateMissionRequest::new(
-            "Valid objective",
-            Some(&"x".repeat(MISSION_TITLE_MAX + 1)),
-            "",
-            Template::Custom,
-            TaskMode::Native
-        )
-        .is_err()
-    );
-    assert!(
-        CreateMissionRequest::new(
-            "Valid objective",
-            None,
-            &"y".repeat(MISSION_TEXT_MAX + 1),
-            Template::Custom,
-            TaskMode::Native
-        )
-        .is_err()
-    );
+    assert!(!valid_notes_input(&"😀".repeat(10_001)));
     let ok = CreateMissionRequest::new(
-        "  Ship fix  ",
+        "\u{feff} Ship fix \u{a0}",
         Some("  My title  "),
         "Verbatim notes",
         Template::Debug,
@@ -175,9 +205,7 @@ fn create_mission_fresh_ack_and_auto_start() {
             let addr = listener.local_addr().unwrap();
             let handle = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let mut buf = vec![0u8; 16384];
-                let n = socket.read(&mut buf).await.unwrap();
-                let raw = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let raw = read_http_request(&mut socket).await;
                 let payload: Value =
                     serde_json::from_str(raw.split("\r\n\r\n").nth(1).unwrap()).unwrap();
                 started_mission["control"] = json!({
@@ -206,7 +234,7 @@ fn create_mission_fresh_ack_and_auto_start() {
 }
 
 #[test]
-fn create_mission_maps_uncertain_definitive_rejections_and_401() {
+fn create_mission_maps_uncertain_definitive_rejections_and_unterminated_401() {
     block_on(async {
         let req = CreateMissionRequest::with_request_id(
             "req-2".into(),
@@ -248,9 +276,21 @@ fn create_mission_maps_uncertain_definitive_rejections_and_401() {
             CreateMissionOutcome::Uncertain
         );
 
-        let (base, _t) = spawn_http("401 Unauthorized", "expired".into()).await;
+        // 401 whose body never finishes must still return AuthExpired immediately on status line.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _hold = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let _ = read_http_request(&mut socket).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 9999\r\n\r\npartial")
+                .await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
         assert_eq!(
-            backend(base).create_mission(&req).await,
+            backend(format!("http://{addr}/"))
+                .create_mission(&req)
+                .await,
             CreateMissionOutcome::AuthExpired
         );
     });
@@ -309,7 +349,7 @@ fn creation_receipt_reconciles_created_rejected_unknown_and_401() {
 }
 
 #[test]
-fn update_mission_handles_success_conflict_and_401() {
+fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
     block_on(async {
         let t = target();
         let req =
@@ -342,16 +382,51 @@ fn update_mission_handles_success_conflict_and_401() {
             UpdateMissionOutcome::RevisionConflict
         );
 
-        let (base, _t) = spawn_http("401 Unauthorized", "expired".into()).await;
+        // Reconcile edit matches exact history entry (requestID + expectedRevision + 1 + after bodies).
+        let mut mission = sample_mission(3, "running");
+        mission["history"] = json!([{
+            "revision": 3,
+            "source": "user",
+            "requestID": "upd-1",
+            "objective": { "before": "Old", "after": "New objective" },
+            "notes": { "before": "", "after": "Notes" }
+        }]);
+        let (base, _t) = spawn_http(
+            "200 OK",
+            json!({"available": true, "mission": mission}).to_string(),
+        )
+        .await;
         assert_eq!(
-            backend(base).update_mission(&t, &req).await,
-            UpdateMissionOutcome::AuthExpired
+            backend(base).reconcile_mission_edit(&t, &req).await,
+            EditReceiptOutcome::Applied {
+                mission_id: "msn_alpha123".into(),
+                revision: 3
+            }
+        );
+
+        // Unrelated revision advance with different requestID stays Unconfirmed.
+        let mut other = sample_mission(3, "running");
+        other["history"] = json!([{
+            "revision": 3,
+            "source": "user",
+            "requestID": "other-req",
+            "objective": { "before": "Old", "after": "Different" },
+            "notes": { "before": "", "after": "" }
+        }]);
+        let (base, _t) = spawn_http(
+            "200 OK",
+            json!({"available": true, "mission": other}).to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base).reconcile_mission_edit(&t, &req).await,
+            EditReceiptOutcome::Unconfirmed
         );
     });
 }
 
 #[test]
-fn read_editor_body_verifies_digest_and_detects_change() {
+fn read_editor_body_verifies_digest_and_confirms_absent_notes() {
     block_on(async {
         let text = "Full mission objective";
         let digest = content_digest(text);
@@ -386,6 +461,27 @@ fn read_editor_body_verifies_digest_and_detects_change() {
             .await;
         assert_eq!(outcome, EditorBodyOutcome::Ready(text.into()));
 
+        // Positive absence proof for notes (content-not-found -> Ready("")).
+        let absent_body = json!({
+            "available": true,
+            "version": 1,
+            "projectID": "prj_1",
+            "missionID": "msn_alpha123",
+            "revision": 2,
+            "refused": "content-not-found"
+        });
+        let (base, _t) = spawn_http("200 OK", absent_body.to_string()).await;
+        assert_eq!(
+            backend(base)
+                .confirm_absent_editor_body(
+                    "prj_1",
+                    "msn_alpha123",
+                    &ContentSelector::mission("notes")
+                )
+                .await,
+            EditorBodyOutcome::Ready(String::new())
+        );
+
         let changed_body = json!({
             "available": true,
             "version": 1,
@@ -395,14 +491,16 @@ fn read_editor_body_verifies_digest_and_detects_change() {
             "refused": "content-changed"
         });
         let (base, _t) = spawn_http("200 OK", changed_body.to_string()).await;
-        let outcome = backend(base)
-            .read_editor_body(
-                "prj_1",
-                "msn_alpha123",
-                &ContentSelector::mission("objective"),
-                &descriptor,
-            )
-            .await;
-        assert_eq!(outcome, EditorBodyOutcome::Changed);
+        assert_eq!(
+            backend(base)
+                .read_editor_body(
+                    "prj_1",
+                    "msn_alpha123",
+                    &ContentSelector::mission("objective"),
+                    &descriptor,
+                )
+                .await,
+            EditorBodyOutcome::Changed
+        );
     });
 }

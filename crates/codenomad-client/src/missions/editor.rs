@@ -44,21 +44,45 @@ impl TaskMode {
     }
 }
 
+/// JavaScript `\s` / `String.prototype.trim` whitespace (includes U+FEFF, excludes U+0085).
+fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
+}
+
+pub fn js_trim(s: &str) -> &str {
+    s.trim_matches(is_js_space)
+}
+
 /// First sentence or clause of the first non-empty line, bounded at a word,
 /// matching `packages/server/src/missions/mission-title.ts`.
 pub fn derive_mission_title(text: &str) -> String {
     let Some(line) = text
         .split('\n')
         .map(|raw| raw.trim_end_matches('\r'))
-        .map(|raw| raw.split_whitespace().collect::<Vec<_>>().join(" "))
+        .map(|raw| {
+            raw.split(is_js_space)
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
         .find(|line| !line.is_empty())
     else {
         return String::new();
     };
     let clause_end = first_clause_end(&line);
-    let mut clause = line[..clause_end].trim();
+    let mut clause = js_trim(&line[..clause_end]);
     if let Some(stripped) = clause.strip_suffix(['.', ';', ':']) {
-        clause = stripped.trim();
+        clause = js_trim(stripped);
     }
     if utf16_len(clause) <= MISSION_TITLE_MAX {
         return clause.to_owned();
@@ -68,14 +92,14 @@ pub fn derive_mission_title(text: &str) -> String {
         Some(space) if utf16_len(&cut[..space]) > MISSION_TITLE_MAX / 2 => &cut[..space],
         _ => cut,
     };
-    format!("{}…", bounded.trim_end())
+    format!("{}…", bounded.trim_end_matches(is_js_space))
 }
 
 fn first_clause_end(line: &str) -> usize {
     let mut chars = line.char_indices().peekable();
     while let Some((idx, ch)) = chars.next() {
         if matches!(ch, '.' | '!' | '?' | ';' | ':')
-            && chars.peek().is_some_and(|(_, next)| next.is_whitespace())
+            && chars.peek().is_some_and(|(_, next)| is_js_space(*next))
         {
             return idx + ch.len_utf8();
         }
@@ -98,20 +122,20 @@ fn truncate_utf16(text: &str, max_units: usize) -> &str {
 }
 
 pub fn valid_title_input(title: &str) -> bool {
-    let trimmed = title.trim();
+    let trimmed = js_trim(title);
     if trimmed.is_empty() {
         return true;
     }
-    !trimmed.contains(['\r', '\n', '\0']) && trimmed.chars().count() <= MISSION_TITLE_MAX
+    !trimmed.contains(['\r', '\n', '\0']) && utf16_len(trimmed) <= MISSION_TITLE_MAX
 }
 
 pub fn valid_objective_input(objective: &str) -> bool {
-    let trimmed = objective.trim();
-    !trimmed.is_empty() && !trimmed.contains('\0') && trimmed.chars().count() <= MISSION_TEXT_MAX
+    let trimmed = js_trim(objective);
+    !trimmed.is_empty() && !trimmed.contains('\0') && utf16_len(trimmed) <= MISSION_TEXT_MAX
 }
 
 pub fn valid_notes_input(notes: &str) -> bool {
-    !notes.contains('\0') && notes.chars().count() <= MISSION_TEXT_MAX
+    !notes.contains('\0') && utf16_len(notes) <= MISSION_TEXT_MAX
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -148,9 +172,9 @@ impl CreateMissionRequest {
         template: Template,
         task_mode: TaskMode,
     ) -> Result<Self> {
-        let trimmed_objective = objective.trim().to_owned();
+        let trimmed_objective = js_trim(objective).to_owned();
         let trimmed_title = title
-            .map(str::trim)
+            .map(js_trim)
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
         let notes = (!notes.is_empty()).then(|| notes.to_owned());
@@ -169,9 +193,9 @@ impl CreateMissionRequest {
     pub fn validate(&self) -> Result<()> {
         if !request_id_valid(&self.request_id)
             || !valid_objective_input(&self.objective)
-            || self.objective != self.objective.trim()
+            || self.objective != js_trim(&self.objective)
             || self.title.as_deref().is_some_and(|title| {
-                title.is_empty() || title != title.trim() || !valid_title_input(title)
+                title.is_empty() || title != js_trim(title) || !valid_title_input(title)
             })
             || self
                 .notes
@@ -209,7 +233,7 @@ impl UpdateMissionRequest {
         let request = Self {
             request_id,
             expected_revision,
-            objective: objective.trim().to_owned(),
+            objective: js_trim(objective).to_owned(),
             notes: Some(notes.to_owned()),
         };
         request.validate()?;
@@ -220,7 +244,7 @@ impl UpdateMissionRequest {
         if !request_id_valid(&self.request_id)
             || !(1..=MAX_REVISION).contains(&self.expected_revision)
             || !valid_objective_input(&self.objective)
-            || self.objective != self.objective.trim()
+            || self.objective != js_trim(&self.objective)
             || self
                 .notes
                 .as_deref()
@@ -334,6 +358,13 @@ pub enum UpdateMissionOutcome {
     RevisionConflict,
     Rejected(MutationCode),
     Uncertain,
+    AuthExpired,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EditReceiptOutcome {
+    Applied { mission_id: String, revision: u64 },
+    Unconfirmed,
     AuthExpired,
 }
 
@@ -498,6 +529,196 @@ impl Backend {
         selector: &ContentSelector,
         expected: &BodyDescriptor,
     ) -> EditorBodyOutcome {
+        self.read_bounded_body(
+            project_id,
+            mission_id,
+            selector,
+            expected,
+            MISSION_TEXT_MAX as u64,
+        )
+        .await
+    }
+
+    /// Positively verifies that an optional editable field (`notes`) is absent on the server.
+    pub async fn confirm_absent_editor_body(
+        &self,
+        project_id: &str,
+        mission_id: &str,
+        selector: &ContentSelector,
+    ) -> EditorBodyOutcome {
+        match self
+            .mission_content(project_id, mission_id, selector, 0, None)
+            .await
+        {
+            Ok(ContentOutcome::AuthExpired) => EditorBodyOutcome::AuthExpired,
+            Ok(ContentOutcome::Refused {
+                refusal: ContentRefusal::ContentNotFound,
+                ..
+            }) => EditorBodyOutcome::Ready(String::new()),
+            Ok(ContentOutcome::Slice { .. })
+            | Ok(ContentOutcome::Refused {
+                refusal: ContentRefusal::ContentChanged,
+                ..
+            }) => EditorBodyOutcome::Changed,
+            Ok(ContentOutcome::Refused { .. }) | Err(_) => EditorBodyOutcome::Unavailable,
+        }
+    }
+
+    /// Reconciles an uncertain `PATCH /missions/{id}` by matching the exact user history
+    /// entry (`requestID`, `expectedRevision + 1`) and verifying its recorded `after` bodies.
+    pub async fn reconcile_mission_edit(
+        &self,
+        target: &LifecycleTarget,
+        request: &UpdateMissionRequest,
+    ) -> EditReceiptOutcome {
+        if !valid_id(&self.workspace)
+            || !panel_id(&target.mission)
+            || target.mission.encode_utf16().count() > 100
+            || request.validate().is_err()
+        {
+            return EditReceiptOutcome::Unconfirmed;
+        }
+        let Ok(url) = missions_url(self, &[target.mission.as_str()]) else {
+            return EditReceiptOutcome::Unconfirmed;
+        };
+        let Ok(response) = self.client.get(url).timeout(RECEIPT_TIMEOUT).send().await else {
+            return EditReceiptOutcome::Unconfirmed;
+        };
+        let status = response.status();
+        if status == StatusCode::UNAUTHORIZED {
+            return EditReceiptOutcome::AuthExpired;
+        }
+        if !status.is_success() {
+            return EditReceiptOutcome::Unconfirmed;
+        }
+        let Ok(body) = read_json_limited(response, MAX_RESPONSE_BYTES).await else {
+            return EditReceiptOutcome::Unconfirmed;
+        };
+        if body["available"] != true
+            || body["controlUnavailable"] == true
+            || body["notificationUnavailable"] == true
+        {
+            return EditReceiptOutcome::Unconfirmed;
+        }
+        let mission = &body["mission"];
+        if !target.matches(mission) || !mission["document"].is_null() {
+            return EditReceiptOutcome::Unconfirmed;
+        }
+        let Some(revision) = mission["revision"]
+            .as_u64()
+            .filter(|r| (request.expected_revision.saturating_add(1)..=MAX_REVISION).contains(r))
+        else {
+            return EditReceiptOutcome::Unconfirmed;
+        };
+        let target_change_rev = request.expected_revision.saturating_add(1);
+        let Some(change) = mission["history"].as_array().and_then(|history| {
+            history.iter().find(|entry| {
+                entry["source"] == "user"
+                    && entry["requestID"] == request.request_id
+                    && entry["revision"].as_u64() == Some(target_change_rev)
+            })
+        }) else {
+            return EditReceiptOutcome::Unconfirmed;
+        };
+        let obj_after = match self
+            .read_change_after(
+                &target.project,
+                &target.mission,
+                change,
+                target_change_rev,
+                "objective",
+            )
+            .await
+        {
+            ChangeAfter::Value(v) => v,
+            ChangeAfter::AuthExpired => return EditReceiptOutcome::AuthExpired,
+            ChangeAfter::Unconfirmed => return EditReceiptOutcome::Unconfirmed,
+        };
+        let notes_after = match self
+            .read_change_after(
+                &target.project,
+                &target.mission,
+                change,
+                target_change_rev,
+                "notes",
+            )
+            .await
+        {
+            ChangeAfter::Value(v) => v,
+            ChangeAfter::AuthExpired => return EditReceiptOutcome::AuthExpired,
+            ChangeAfter::Unconfirmed => return EditReceiptOutcome::Unconfirmed,
+        };
+        let expected_notes = request.notes.as_deref().unwrap_or("");
+        if obj_after.as_deref() == Some(request.objective.as_str())
+            && notes_after.as_deref().unwrap_or("") == expected_notes
+        {
+            EditReceiptOutcome::Applied {
+                mission_id: target.mission.clone(),
+                revision,
+            }
+        } else {
+            EditReceiptOutcome::Unconfirmed
+        }
+    }
+
+    async fn read_change_after(
+        &self,
+        project_id: &str,
+        mission_id: &str,
+        change: &Value,
+        change_rev: u64,
+        field: &str,
+    ) -> ChangeAfter {
+        if let Some(inline) = change.get(field).and_then(Value::as_object) {
+            return ChangeAfter::Value(
+                inline
+                    .get("after")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            );
+        }
+        let Some(raw_desc) = change.get("bodies").and_then(|b| b.get(field)) else {
+            return if field == "notes" {
+                ChangeAfter::Value(None)
+            } else {
+                ChangeAfter::Unconfirmed
+            };
+        };
+        let Ok(desc) = serde_json::from_value::<BodyDescriptor>(raw_desc.clone()) else {
+            return ChangeAfter::Unconfirmed;
+        };
+        let max_json_units = (MISSION_TEXT_MAX as u64)
+            .saturating_mul(6)
+            .saturating_add(256);
+        match self
+            .read_bounded_body(
+                project_id,
+                mission_id,
+                &ContentSelector::change(change_rev, field),
+                &desc,
+                max_json_units,
+            )
+            .await
+        {
+            EditorBodyOutcome::AuthExpired => ChangeAfter::AuthExpired,
+            EditorBodyOutcome::Ready(raw) => match serde_json::from_str::<Value>(&raw) {
+                Ok(Value::Object(obj)) => {
+                    ChangeAfter::Value(obj.get("after").and_then(Value::as_str).map(str::to_owned))
+                }
+                _ => ChangeAfter::Unconfirmed,
+            },
+            EditorBodyOutcome::Changed | EditorBodyOutcome::Unavailable => ChangeAfter::Unconfirmed,
+        }
+    }
+
+    async fn read_bounded_body(
+        &self,
+        project_id: &str,
+        mission_id: &str,
+        selector: &ContentSelector,
+        expected: &BodyDescriptor,
+        max_units: u64,
+    ) -> EditorBodyOutcome {
         if expected.characters == 0 {
             return if expected.digest == content_digest("") {
                 EditorBodyOutcome::Ready(String::new())
@@ -505,7 +726,7 @@ impl Backend {
                 EditorBodyOutcome::Changed
             };
         }
-        if expected.characters > (MISSION_TEXT_MAX as u64).saturating_mul(2) {
+        if expected.characters > max_units {
             return EditorBodyOutcome::Unavailable;
         }
         let mut assembled = String::new();
@@ -551,6 +772,12 @@ impl Backend {
         }
         EditorBodyOutcome::Unavailable
     }
+}
+
+enum ChangeAfter {
+    Value(Option<String>),
+    Unconfirmed,
+    AuthExpired,
 }
 
 fn missions_url(backend: &Backend, extra: &[&str]) -> Result<Url> {
