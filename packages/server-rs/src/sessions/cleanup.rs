@@ -22,6 +22,7 @@ use crate::{
 #[derive(Default)]
 struct FenceInner {
     cleaning: HashSet<String>,
+    cleaning_deleted: HashSet<String>,
     mutations: HashMap<String, usize>,
     uncertain: HashSet<String>,
 }
@@ -49,7 +50,9 @@ pub struct CleanupGuard {
 
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
-        self.inner.lock().unwrap().cleaning.remove(&self.id);
+        let mut inner = self.inner.lock().unwrap();
+        inner.cleaning.remove(&self.id);
+        inner.cleaning_deleted.remove(&self.id);
     }
 }
 
@@ -98,8 +101,21 @@ impl Fence {
         self.inner.lock().unwrap().uncertain.insert(id.to_owned());
     }
 
+    pub fn mark_uncertain_unless_absent(&self, id: &str) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.cleaning_deleted.contains(id) {
+            return false;
+        }
+        inner.uncertain.insert(id.to_owned());
+        true
+    }
+
     pub fn observe_absent(&self, id: &str) {
-        self.inner.lock().unwrap().uncertain.remove(id);
+        let mut inner = self.inner.lock().unwrap();
+        inner.uncertain.remove(id);
+        if inner.cleaning.contains(id) {
+            inner.cleaning_deleted.insert(id.to_owned());
+        }
     }
 
     pub fn has_uncertain(&self, id: &str) -> bool {
@@ -188,13 +204,8 @@ pub async fn route(
     };
     let skipped = || Json(json!({"deleted": false})).into_response();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    let slot = tokio::select! {
-        biased;
-        _ = principal.0.cancelled() => return Status::UNAUTHORIZED.into_response(),
-        permit = tokio::time::timeout_at(deadline, app.session_cleanup.slots.clone().acquire_owned()) => match permit {
-            Ok(Ok(permit)) => permit,
-            _ => return skipped(),
-        }
+    let Ok(slot) = app.session_cleanup.slots.clone().try_acquire_owned() else {
+        return skipped();
     };
     let preflight = async {
         if !current(&app, &workspace, &endpoint, &principal) {
@@ -401,8 +412,11 @@ async fn settle_delete(
         let outcome = match response {
             Ok(resp) if matches!(resp.status(), Status::NO_CONTENT | Status::OK) => SettleOutcome::Deleted,
             _ => {
-                fence.mark_uncertain(&session_id);
-                SettleOutcome::Uncertain
+                if fence.mark_uncertain_unless_absent(&session_id) {
+                    SettleOutcome::Uncertain
+                } else {
+                    SettleOutcome::Deleted
+                }
             }
         };
         let _ = tx.send(outcome);
@@ -572,6 +586,14 @@ mod tests {
         server.await.unwrap();
         assert_eq!(resp2.status(), Status::SERVICE_UNAVAILABLE);
         assert!(fence.has_uncertain(&sid2));
+
+        // Observing session.deleted while DELETE is in flight avoids poisoning uncertain on lost reply.
+        let sid3 = "ses_deleted_early";
+        let guard3 = fence.enter_cleanup(sid3).unwrap();
+        fence.observe_absent(sid3);
+        assert!(!fence.mark_uncertain_unless_absent(sid3));
+        drop(guard3);
+        assert!(!fence.has_uncertain(sid3));
     }
 
     #[test]

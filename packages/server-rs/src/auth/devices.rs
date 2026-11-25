@@ -448,7 +448,7 @@ impl Devices {
         Some((id, entry.1.clone()))
     }
     pub fn is_server_device(&self, id: Uuid) -> bool {
-        self.doc.devices.iter().any(|d| d.id == id && d.server)
+        self.doc.devices.iter().any(|d| d.id == id && (d.server || d.name.starts_with("CodeNomad · ")))
     }
 
     fn issue_with_base(&mut self, origin: Option<String>, base: &str) -> Result<Value, Fail> {

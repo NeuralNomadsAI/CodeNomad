@@ -273,12 +273,19 @@ impl Tracker {
     }
 
     fn reset_working_on_reconnect(&mut self) {
-        for marker in self.sessions.values_mut() {
-            marker.working = false;
-        }
         self.parent_lookup = None;
         self.pending_parents.clear();
         self.bound_working = None;
+        let mut requeue = Vec::new();
+        for (id, marker) in &mut self.sessions {
+            marker.working = false;
+            if marker.idle_since.is_some() && !marker.parent_known {
+                requeue.push(id.clone());
+            }
+        }
+        for id in requeue {
+            self.queue_parent_lookup(&id);
+        }
     }
 
     fn apply_parent(&mut self, session_id: &str, parent: Option<Option<String>>) {

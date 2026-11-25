@@ -1,4 +1,4 @@
-use super::{Target, current, directory, mode};
+use super::{Target, current, directory, mode, mode_locked, session_lock};
 use crate::{
     App, Error, Shared, Workspace,
     auth::Principal,
@@ -128,15 +128,23 @@ async fn run(app: &Shared, wid: &str, id: &str, p: &Principal, request: Request)
                 return Err(family());
             }
         }
+        let lock = tokio::select! {
+            biased;
+            _ = p.0.cancelled() => return Err(crate::auth::unauthorized()),
+            lock = timeout_at(deadline, session_lock(&session_id)) => lock.map_err(|_| super::unavailable())?,
+        };
+        let disconnected = tokio_util::sync::CancellationToken::new();
+        let _disconnect_guard = disconnected.clone().drop_guard();
         let (tx, rx) = tokio::sync::oneshot::channel();
         let app_task = app.clone();
         let endpoint_task = endpoint.clone();
         let root_owned = root.clone();
         let p_task = Principal(p.0.clone());
         tokio::spawn(async move {
-            let (_permit, _cleanup_guards) = (permit, cleanup_guards);
+            let (_lock, _permit, _cleanup_guards) = (lock, permit, cleanup_guards);
             let authority = || {
-                Instant::now() < deadline
+                !disconnected.is_cancelled()
+                    && Instant::now() < deadline
                     && p_task.live().is_ok()
                     && current(&app_task, &endpoint_task)
                     && workspace_current(&app_task, &workspace)
@@ -144,7 +152,7 @@ async fn run(app: &Shared, wid: &str, id: &str, p: &Principal, request: Request)
             };
             let target =
                 Target { app: &app_task, endpoint: &endpoint_task, session: &root_owned, authority: &authority };
-            let _ = tx.send(mode(&target, Some(write)).await);
+            let _ = tx.send(mode_locked(&target, Some(write)).await);
         });
         tokio::select! {
             biased;
