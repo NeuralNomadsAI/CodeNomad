@@ -341,3 +341,110 @@ fn visibility_changes_keep_prose_and_explicit_card_disclosures() {
     assert!(rt.find("toggle-tool-turn:1:r-tool_input").is_none());
     assert!(rt.find("toggle-tool-turn:1:g-tool_input").is_some());
 }
+
+#[test]
+fn collapsed_shell_group_exposes_background_action_in_its_header() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    crate::platform::block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (req_tx, req_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n])
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .to_owned();
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+                let _ = req_tx.send(head);
+            }
+        });
+
+        let mut backend =
+            crate::backend::Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+        backend.workspace = "ws".into();
+        backend.session = "ses".into();
+
+        let mut s = crate::init();
+        crate::settings::fixture_transcript(&mut s, json!({"toolGroupVisibility": "collapsed"}));
+        s.transcript_display.children.bind(backend);
+        s.messages = [
+            json!({"id":"m1","type":"assistant","content":[
+                {"type":"tool","id":"s1","name":"bash","state":{"status":"completed","input":{"command":"echo 1"}}}
+            ]}),
+            json!({"id":"m2","type":"assistant","content":[
+                {"type":"tool","id":"s2","name":"bash","state":{"status":"running","input":{"command":"sleep 10"}}}
+            ]}),
+            json!({"id":"m3","type":"assistant","content":[
+                {"type":"tool","id":"r1","name":"read","state":{"status":"completed","input":{}}},
+                {"type":"tool","id":"r2","name":"read","state":{"status":"running","input":{}}}
+            ]}),
+        ]
+        .into_iter()
+        .map(|value| crate::history::decode_message(&value).unwrap().into())
+        .collect();
+
+        let mut rt = Runtime::new(
+            s,
+            |s, _| {
+                crate::strings::with_locale("en", || {
+                    col()
+                        .full_width()
+                        .children((0..s.messages.len()).map(|i| message(s, i)))
+                })
+            },
+            (960.0, 800.0),
+            Env::new(false, 1.0),
+        );
+        rt.frame(0.016);
+
+        let shell_toggle = "toggle-group-tool-m1:2:s1";
+        let shell_bg = "background-group-tool-m1:2:s1";
+        let read_bg = "background-group-tool-m3:2:r1";
+
+        // Shell group stays collapsed while exposing the background button in its header.
+        assert!(rt.find(shell_toggle).is_some());
+        assert!(rt.find("tool-m1:2:s1").is_none());
+        assert!(rt.find("tool-m2:2:s2").is_none());
+        assert!(
+            rt.find(shell_bg).is_some(),
+            "collapsed shell group with a running call must expose background action in header"
+        );
+        // Exploration group with a running read call must not expose a background action.
+        assert!(rt.find("toggle-group-tool-m3:2:r1").is_some());
+        assert!(rt.find(read_bg).is_none());
+
+        // Clicking the header background action triggers the session background endpoint.
+        let (x, y) = rt.find(shell_bg).unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.016);
+
+        let request_line = req_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("clicking shell group background button must POST session background");
+        assert!(
+            request_line.starts_with("POST /workspaces/ws/instance/api/session/ses/background "),
+            "unexpected request line: {request_line}"
+        );
+        server.join().unwrap();
+
+        // Once all shell calls in the group complete, the header background action disappears.
+        rt.update(|s, _| {
+            s.messages[1] = crate::history::decode_message(&json!({"id":"m2","type":"assistant","content":[
+                {"type":"tool","id":"s2","name":"bash","state":{"status":"completed","input":{"command":"sleep 10"}}}
+            ]}))
+            .unwrap()
+            .into();
+        });
+        rt.frame(0.016);
+        assert!(rt.find(shell_toggle).is_some());
+        assert!(rt.find(shell_bg).is_none());
+    });
+}

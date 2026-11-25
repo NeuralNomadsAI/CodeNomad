@@ -5,7 +5,7 @@ use crate::{
     history::Row,
     screen,
     settings::{TranscriptRow, transcript_mode},
-    strings::locale,
+    strings::{locale, t},
 };
 use codenomad_client::search::Kind as SearchKind;
 use rune::{El, col};
@@ -43,6 +43,7 @@ struct Summary {
     duration_ms: u64,
     title: Option<String>,
     completed: bool,
+    backgroundable: bool,
     search_hit: bool,
 }
 
@@ -145,6 +146,7 @@ impl Groups {
                                 duration_ms: 0,
                                 title: None,
                                 completed: false,
+                                backgroundable: false,
                                 search_hit: false,
                             },
                             chunks: Vec::new(),
@@ -189,6 +191,7 @@ impl Groups {
                                 duration_ms: 0,
                                 title: None,
                                 completed: false,
+                                backgroundable: false,
                                 search_hit: false,
                             },
                             chunks: Vec::new(),
@@ -197,6 +200,8 @@ impl Groups {
                         run.summary.count += 1;
                         run.summary.reads += usize::from(tool.name == "read");
                         run.summary.completed = message.completed;
+                        run.summary.backgroundable |=
+                            kind == Kind::Shell && tool.status == "running";
                         run.summary.search_hit |= super::search_hit::query(
                             s,
                             &message.id,
@@ -395,7 +400,7 @@ impl Chunk {
         }
         let header = self.first.then(|| {
             let toggle = summary.keys.clone();
-            layout::button(
+            let toggle_button = layout::button(
                 &summary.label(),
                 false,
                 screen::action(&s.input_scope, move |s| {
@@ -410,7 +415,21 @@ impl Chunk {
                 }),
             )
             .key(format!("toggle-{key}"))
-            .expanded(expanded)
+            .expanded(expanded);
+            if summary.backgroundable {
+                layout::action_row().child(toggle_button).child(
+                    layout::button(
+                        t("promptInput.background.title"),
+                        false,
+                        screen::action(&s.input_scope, |s| {
+                            tools::children::Children::background_session(s);
+                        }),
+                    )
+                    .key(format!("background-{key}")),
+                )
+            } else {
+                toggle_button
+            }
         });
         let mut body = col().full_width().separate(Space::Sm).children(header);
         if expanded {

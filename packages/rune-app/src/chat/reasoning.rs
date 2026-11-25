@@ -247,10 +247,7 @@ fn body(s: &State, message: &str, key: &str, part: &Reasoning) -> El {
                             s.transcript_display.stream_version(),
                             s.transcript_display.steps(&format!("{key}-body")),
                             std::rc::Rc::as_ptr(&s.input_scope) as usize,
-                            s.transcript_display
-                                .search_highlight
-                                .as_ref()
-                                .filter(|hit| hit.message == message),
+                            query.map(|q| (q.terms, q.ranked, q.active)),
                         ),
                         build,
                     )

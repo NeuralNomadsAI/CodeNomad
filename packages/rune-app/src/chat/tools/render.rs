@@ -55,10 +55,7 @@ pub(in crate::chat) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
         locale(),
         live_tick,
         display.search_revealed(&key),
-        display
-            .search_highlight
-            .as_ref()
-            .filter(|hit| hit.message == message),
+        tool_query(s, message, tool).map(|q| (q.terms, q.ranked, q.active)),
         patch_steps,
         [
             settings::transcript_mode(s, TranscriptRow::tool(&tool.name)),

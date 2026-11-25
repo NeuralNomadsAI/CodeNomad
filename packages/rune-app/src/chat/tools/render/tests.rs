@@ -230,7 +230,7 @@ fn running_tool_duration_ticks_through_view_memo_and_stops_when_settled() {
             s,
             "live",
             probe_tool,
-            probe_search.query(Some((codenomad_client::search::Kind::Tool, 0))),
+            probe_search.query("live", Some((codenomad_client::search::Kind::Tool, 0))),
         );
     });
     rt.update(|s, tx| ticked = Display::poll(s, false, 2.2, tx));
@@ -345,28 +345,28 @@ fn active_search_keeps_skill_prose_bounded_and_uses_prose_step() {
         &rt.state,
         "msg",
         tool,
-        output_hit.query(Some((codenomad_client::search::Kind::Tool, 0))),
+        output_hit.query("msg", Some((codenomad_client::search::Kind::Tool, 0))),
     ));
     let link_url_hit = crate::chat::search_hit::SearchHit::new(&hit, "LINK_URL_ONLY", false);
     assert!(super::match_hidden_by_inputs(
         &rt.state,
         "msg",
         tool,
-        link_url_hit.query(Some((codenomad_client::search::Kind::Tool, 0))),
+        link_url_hit.query("msg", Some((codenomad_client::search::Kind::Tool, 0))),
     ));
     let entity_hit = crate::chat::search_hit::SearchHit::new(&hit, "R&D", false);
     assert!(!super::match_hidden_by_inputs(
         &rt.state,
         "msg",
         tool,
-        entity_hit.query(Some((codenomad_client::search::Kind::Tool, 0))),
+        entity_hit.query("msg", Some((codenomad_client::search::Kind::Tool, 0))),
     ));
     let input_hit = crate::chat::search_hit::SearchHit::new(&hit, "INPUT_ONLY_NEEDLE", false);
     assert!(super::match_hidden_by_inputs(
         &rt.state,
         "msg",
         tool,
-        input_hit.query(Some((codenomad_client::search::Kind::Tool, 0))),
+        input_hit.query("msg", Some((codenomad_client::search::Kind::Tool, 0))),
     ));
     // Closing search preserves the revealed Skill prose step once expanded.
     rt.update(|s, _| {
@@ -803,7 +803,7 @@ fn task_search_highlights_and_reveals_deep_prompt_matches() {
         &state,
         "task_msg",
         tool,
-        search.query(Some((codenomad_client::search::Kind::Tool, 0))),
+        search.query("task_msg", Some((codenomad_client::search::Kind::Tool, 0))),
     ));
     let mut rt = Runtime::new(
         state,

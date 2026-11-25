@@ -1,7 +1,7 @@
 use super::*;
 
 impl Children {
-    pub(in crate::chat::tools) fn background_session(s: &mut State) {
+    pub(in crate::chat) fn background_session(s: &mut State) {
         if s.transcript_display.children.background_pending.is_some() {
             return;
         }

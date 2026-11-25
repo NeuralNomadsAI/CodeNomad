@@ -76,15 +76,12 @@ pub(super) fn prose_claimed(
     part_index: Option<usize>,
     claimed: Option<&std::cell::Cell<bool>>,
 ) -> El {
-    let query = s
-        .transcript_display
-        .search_highlight
-        .as_ref()
-        .filter(|hit| hit.message == message)
-        .map(|hit| rune_theme_codenomad::timeline::search::Query {
+    let query = s.transcript_display.search_highlight.as_ref().map(|hit| {
+        rune_theme_codenomad::timeline::search::Query {
             claimed,
-            ..hit.text_query(part_index)
-        });
+            ..hit.text_query(message, part_index)
+        }
+    });
     let revealed = query.is_some_and(|q| q.active)
         || s.transcript_display.search_revealed(&key)
         || s.transcript_display.search_revealed(message);
@@ -159,8 +156,7 @@ fn prose_for(
         s.transcript_display
             .search_highlight
             .as_ref()
-            .filter(|hit| hit.message == message)
-            .map(|hit| hit.text_query(None))
+            .map(|hit| hit.text_query(message, None))
     });
     window(s, key, &[source], limit, |shown, units| {
         let claim_active =

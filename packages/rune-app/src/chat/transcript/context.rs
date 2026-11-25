@@ -24,13 +24,10 @@ pub(super) fn view(s: &State, message: &Message) -> Option<El> {
     if !super::super::anchors::context_visible(s, &message.role) {
         return Some(row);
     }
-    let search = s
-        .transcript_display
-        .search_highlight
-        .as_ref()
-        .filter(|hit| hit.message == message.id);
+    let search = s.transcript_display.search_highlight.as_ref();
+    let active_search = search.is_some_and(|hit| hit.message == message.id);
     let expanded =
-        !system || search.is_some() || s.transcript_display.expanded(&key, mode == "expanded");
+        !system || active_search || s.transcript_display.expanded(&key, mode == "expanded");
     let toggle = key.clone();
     let title = if system {
         layout::button(
@@ -61,12 +58,12 @@ pub(super) fn view(s: &State, message: &Message) -> Option<El> {
                     document::PROSE_LIMIT,
                     |shown, _| {
                         rune_theme_codenomad::markdown::tool_pane(
-                            rune_theme_codenomad::timeline::search::ink(
-                                rune_theme_codenomad::markdown::code(shown, "text", false, true),
+                            rune_theme_codenomad::markdown::search_code(
                                 shown,
-                                search.map(|hit| {
-                                    hit.query(Some((codenomad_client::search::Kind::Text, 0)))
-                                }),
+                                "text",
+                                false,
+                                true,
+                                search.map(|hit| hit.text_query(&message.id, Some(0))),
                             ),
                             true,
                         )

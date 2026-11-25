@@ -40,21 +40,22 @@ impl SearchHit {
         }
     }
 
-    pub(super) fn query(&self, part: Option<(Kind, usize)>) -> Query<'_> {
+    pub(super) fn query(&self, message: &str, part: Option<(Kind, usize)>) -> Query<'_> {
         Query {
             terms: &self.terms,
             ranked: self.ranked,
-            active: part.is_some() && self.part == part,
+            active: self.message == message && part.is_some() && self.part == part,
             claimed: None,
         }
     }
 
-    pub(super) fn text_query(&self, part_index: Option<usize>) -> Query<'_> {
-        let active = match self.part {
-            None => true,
-            Some((Kind::Text, target)) => part_index.is_none_or(|idx| idx == target),
-            Some(_) => false,
-        };
+    pub(super) fn text_query(&self, message: &str, part_index: Option<usize>) -> Query<'_> {
+        let active = self.message == message
+            && match self.part {
+                None => true,
+                Some((Kind::Text, target)) => part_index.is_none_or(|idx| idx == target),
+                Some(_) => false,
+            };
         Query {
             terms: &self.terms,
             ranked: self.ranked,
@@ -106,7 +107,12 @@ impl SearchHit {
             return Landing::Filtered;
         }
         if let Part::Tool(tool) = &row.parts[index]
-            && super::tools::match_hidden_by_inputs(s, &row.id, tool, self.query(self.part))
+            && super::tools::match_hidden_by_inputs(
+                s,
+                &row.id,
+                tool,
+                self.query(&row.id, self.part),
+            )
         {
             return Landing::Filtered;
         }
@@ -156,6 +162,5 @@ pub(super) fn query<'a>(
     s.transcript_display
         .search_highlight
         .as_ref()
-        .filter(|hit| hit.message == message)
-        .map(|hit| hit.query(index.map(|part| (kind, part))))
+        .map(|hit| hit.query(message, index.map(|part| (kind, part))))
 }
