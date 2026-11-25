@@ -39,6 +39,10 @@ impl Default for Panels {
     }
 }
 impl Panels {
+    pub(crate) fn width(&self) -> f32 {
+        self.width
+    }
+
     pub fn restore_widths(&mut self, widths: [Option<u16>; 2]) {
         for (i, width) in widths.into_iter().enumerate() {
             if let Some(width) = width {

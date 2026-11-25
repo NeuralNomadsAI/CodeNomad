@@ -470,6 +470,26 @@ fn legacy_materialization_stale_requeue_and_watch_revalidation() {
             prefs15.has_healthy_watch_stream()
         })
         .await;
+        // Drain the initial Opened(1) refresh so both owners are settled before simulating outage.
+        let mut init_cfg15 = false;
+        let mut init_state15 = false;
+        while !(init_cfg15 && init_state15) {
+            let req15 = poll_next_request(&mut prefs15, &listener15).await;
+            if req15.first == "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" {
+                init_cfg15 = true;
+                req15.reply(200, json!({"settings":{"locale":"en"}})).await;
+            } else if req15.first == "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" {
+                init_state15 = true;
+                req15.reply(200, json!({})).await;
+            } else {
+                panic!("unexpected request during watch startup: {}", req15.first);
+            }
+        }
+        wait_until(|| {
+            prefs15.poll();
+            !prefs15.config.refreshing() && !prefs15.state.refreshing()
+        })
+        .await;
         // Simulate ConnectionLost on the sole background conversation stream while Missions watch
         // remains connected: Preferences must revalidate immediately and keep transcript_ready.
         let conv_id = "conv-bg-a".to_owned();
@@ -482,29 +502,19 @@ fn legacy_materialization_stale_requeue_and_watch_revalidation() {
         prefs15.observe_conversation_clients(&[(conv_id.clone(), false)]);
         let mut saw_cfg15 = false;
         let mut saw_state15 = false;
-        while !(saw_cfg15 && saw_state15 && prefs15.transcript_ready()) {
-            prefs15.poll();
-            if saw_cfg15 && saw_state15 && prefs15.transcript_ready() {
-                break;
-            }
-            if let Ok(req15) = timeout(
-                Duration::from_millis(20),
-                poll_next_request(&mut prefs15, &listener15),
-            )
-            .await
-            {
-                if req15.first == "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" {
-                    saw_cfg15 = true;
-                    req15.reply(200, json!({"settings":{"locale":"en"}})).await;
-                } else if req15.first == "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" {
-                    saw_state15 = true;
-                    req15.reply(200, json!({})).await;
-                } else {
-                    panic!(
-                        "unexpected request during watch revalidation: {}",
-                        req15.first
-                    );
-                }
+        while !(saw_cfg15 && saw_state15) {
+            let req15 = poll_next_request(&mut prefs15, &listener15).await;
+            if req15.first == "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" {
+                saw_cfg15 = true;
+                req15.reply(200, json!({"settings":{"locale":"en"}})).await;
+            } else if req15.first == "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" {
+                saw_state15 = true;
+                req15.reply(200, json!({})).await;
+            } else {
+                panic!(
+                    "unexpected request during watch revalidation: {}",
+                    req15.first
+                );
             }
         }
         wait_until(|| {

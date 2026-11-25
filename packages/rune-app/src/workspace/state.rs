@@ -14,7 +14,8 @@ pub use drafts::{
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
-    observes_notification, open_notification, owns_notification, workspace_notification,
+    observes_notification, open_notification, open_session_tab_target, owns_notification,
+    switch_tab_for_child, workspace_notification,
 };
 #[cfg(target_arch = "wasm32")]
 pub(crate) use observation::poll_cached_notifications;
@@ -31,7 +32,7 @@ pub(crate) use panel_state::{
     right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
     suspend_missions,
 };
-pub use polling::{poll, status};
+pub use polling::{file_draft_status, poll, poll_file_drafts, status};
 pub use strip::strip;
 
 use super::{Snapshot, Tab, Workspace, cache::Cache, persistence::Persistence};
@@ -69,10 +70,9 @@ pub(super) struct Entry {
     pending_drafts: HashSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
 }
-#[cfg(target_arch = "wasm32")]
 pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
     let ui = s.workspace.as_ref()?;
-    let entry = &ui.entries[ui.active];
+    let entry = ui.entries.get(ui.active)?;
     let Tab::Workspace(saved) = &entry.saved else {
         return None;
     };
@@ -113,6 +113,10 @@ impl Ui {
     #[cfg(test)]
     pub(crate) fn fixture_ready(&mut self) {
         self.ready = true;
+    }
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn fixture_store(&mut self, store: crate::platform::storage::Store) {
+        self.persistence.store = Some(store);
     }
     #[cfg(test)]
     pub(crate) fn fixture_hydrate(&mut self, saved: Snapshot) {
@@ -420,6 +424,7 @@ pub fn retry(s: &mut State, tx: &mut Tx) {
         ui.persistence.retry();
         ui.persistence.retry_file_drafts(s.wake.clone());
     }
+    tx.wake_after(std::time::Duration::ZERO);
     connected(s);
     resume(s, tx);
 }

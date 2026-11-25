@@ -173,18 +173,31 @@ fn browser_os(ua: &str, hints: Option<&wasm_bindgen::JsValue>) -> String {
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn copy(text: &str, done: impl FnOnce(bool) + 'static) {
     use wasm_bindgen::JsCast;
-    let pending = web_sys::window().and_then(|window| {
+    let window = web_sys::window();
+    let pending = window.as_ref().and_then(|window| {
         js_sys::Reflect::get(window.navigator().as_ref(), &"clipboard".into())
             .ok()?
             .dyn_into::<web_sys::Clipboard>()
             .ok()
             .map(|clipboard| clipboard.write_text(text))
     });
+    let fallback = pending.is_none().then(|| {
+        window
+            .as_ref()
+            .is_some_and(|w| super::workspace_open::copy_fallback(w, text))
+    });
+    let text = text.to_owned();
     super::spawn(async move {
-        done(match pending {
-            Some(promise) => wasm_bindgen_futures::JsFuture::from(promise).await.is_ok(),
-            None => false,
-        });
+        let copied = match pending {
+            Some(promise) => {
+                wasm_bindgen_futures::JsFuture::from(promise).await.is_ok()
+                    || window
+                        .as_ref()
+                        .is_some_and(|w| super::workspace_open::copy_fallback(w, &text))
+            }
+            None => fallback.unwrap_or(false),
+        };
+        done(copied);
     });
 }
 

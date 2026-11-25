@@ -136,7 +136,8 @@ pub fn unconfirmed_drafts_full(s: &State) -> bool {
 }
 
 pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
-    let text = &s.draft.text;
+    let (edit, draft, missing) = crate::composer::recall::fresh(s);
+    let text = &edit.text;
     let mut changed = false;
     if let Tab::Workspace(saved) = &mut item.saved {
         let key = saved
@@ -148,16 +149,16 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
         });
         if owns_draft {
             let too_long = oversized(text);
-            let has_device_parts = s.composer.draft.inline_usage().0 != 0;
+            let has_device_parts = draft.inline_usage().0 != 0;
             let unconfirmed = s.composer.clone_unconfirmed();
             let has_unconfirmed = unconfirmed.is_some() || s.composer.command_unconfirmed.is_some();
             if too_long || has_device_parts || has_unconfirmed {
                 let live = item.live_drafts.entry(key.into()).or_default();
                 live.text = too_long.then(|| text.clone());
                 live.parts = (too_long || has_device_parts).then(|| {
-                    let mut draft = s.composer.draft.clone();
-                    draft.literal_spans = crate::composer::literal::ranges(&s.draft).collect();
-                    (draft, s.composer.attachments_missing)
+                    let mut draft = draft.clone();
+                    draft.literal_spans = crate::composer::literal::ranges(edit).collect();
+                    (draft, missing)
                 });
                 live.unconfirmed = unconfirmed;
                 live.command_unconfirmed = s.composer.command_unconfirmed.clone();
@@ -167,8 +168,7 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
             if too_long {
                 return false;
             }
-            let parts =
-                SavedParts::capture(&s.composer.draft, s.composer.attachments_missing, &s.draft);
+            let parts = SavedParts::capture(draft, missing, edit);
             changed |= if parts.is_some() {
                 saved.attachment_drafts.insert(key.into())
             } else {
@@ -197,10 +197,12 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
     changed
 }
 pub fn draft_changed(s: &mut State, _: &mut Tx) {
+    s.composer.mark_edited();
     capture(s);
 }
 
 pub fn bound(s: &mut State, backend: &Backend) -> String {
+    crate::composer::recall::restore(s);
     capture(s);
     let same_session =
         !s.screen.is_launcher() && super::active_session(s) == Some(&backend.session);

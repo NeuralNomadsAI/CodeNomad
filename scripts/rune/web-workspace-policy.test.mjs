@@ -101,6 +101,16 @@ test('command catalogue reads require an authenticated owned workspace',async()=
   assert(!await p.request(req('http://localhost:12345','one','private=fixture')))
   assert(!await p.request(req(origin,'one','private=fixture','POST')))
 })
+test('prompt history reads are limited to the fixture folders and an admitted instance',()=>{
+  const p=workspacePolicy({origin,project}),input=creation('own')
+  const route=key=>`/api/storage/instances/${encodeURIComponent(key)}`
+  assert(!p.allows('GET',route(project)))
+  p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
+  assert(p.allows('GET',route(project)))
+  assert(p.allows('GET',route('one')))
+  assert(!p.allows('GET',route('D:/other')))
+  assert(!p.allows('PUT',route(project),{}))
+})
 test('the fetched creation is validated and admitted before browser delivery',async()=>{
   for(const valid of [true,false]){
     const p=workspacePolicy({origin,project}),input=creation('own');p.allows('POST','/api/workspaces',input)
@@ -114,7 +124,7 @@ test('the fetched creation is validated and admitted before browser delivery',as
     assert.equal(fulfilled,valid)
   }
 })
-test('only the Android benchmark may submit its exact prompt on an owned session',()=>{
+test('the Android benchmark may submit only its exact prompt on an owned session',()=>{
   const androidPrompt='private Android fixture text', p=workspacePolicy({origin,project,androidPrompt})
   const input=creation('own')
   p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
@@ -138,4 +148,21 @@ test('Mission control is admitted only to the recorded lifecycle fixture target'
     assert(!p.allows('POST',path,{...intent,action:'stop'}))
     assert(!p.allows('POST',path,{...intent,expectedRevision:0}))
   }
+})
+
+test('the mobile menu scene admits only its queued prompt, fixture file and history write',()=>{
+  const menuPrompt='fixture prompt',p=workspacePolicy({origin,project,menuPrompt}),input=creation('own')
+  const route='/workspaces/one/instance/api/session/ses_existing/prompt'
+  const draft={text:menuPrompt,delivery:'queue',resume:false,
+    files:[{name:'mobile-menu.txt',uri:'data:text/plain;base64,bWVudSBmaWxl'}]}
+  const storage=folder=>`/api/storage/instances/${encodeURIComponent(folder)}`
+  const history={messageHistory:[menuPrompt],agentModelSelections:{}}
+  assert(!p.allows('POST',route,draft))
+  p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
+  assert(p.allows('POST',route,draft))
+  assert(!p.allows('POST',route,{...draft,delivery:'steer'}))
+  assert(!p.allows('POST',route,{...draft,files:[]}))
+  assert(!p.allows('POST',route.replace('ses_existing','ses_another'),draft))
+  assert(p.allows('PUT',storage(project),history))
+  assert(!p.allows('PUT',storage('D:/other'),history))
 })

@@ -30,9 +30,10 @@ use sessions::attach;
 #[cfg(feature = "test-support")]
 pub use sessions::back;
 use sessions::{bind, dismiss_origin_panel, retire_session};
-pub(crate) use sessions::{bind_search, choose_destination};
+pub(crate) use sessions::{bind_search, choose_child_ticket, choose_destination};
 pub use sessions::{
-    can_change_session, can_visit, choose, close_session, create, create_blank, list, visit,
+    can_change_session, can_open_child_session, can_visit, choose, close_session, create,
+    create_blank, list, visit,
 };
 use std::{collections::HashSet, future::Future};
 pub(crate) use visits::Visits;
@@ -88,7 +89,7 @@ enum Reply {
     CreatePrecheckFailed,
     CreateRejected,
     CreateUncertainLinked(String),
-    Selected(Vec<String>, Option<Selection>, Option<u64>),
+    Selected(Vec<String>, Option<Selection>, Option<u64>, bool),
     #[cfg(target_arch = "wasm32")]
     Reopened(crate::workspace::opening::Opening, Backend, String, String),
     Placed(Backend, String, String, bool, bool),
@@ -535,6 +536,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         || s.screen
             .launcher()
             .is_some_and(|l| l.authentication_required);
+    let child_blocked = !can_open_child_session(s)
+        || s.screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required);
     let Some(l) = s.screen.launcher_mut() else {
         return relayed;
     };
@@ -804,7 +809,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 true,
             );
         }
-        Ok(Reply::Selected(missing, selection, dismiss)) => {
+        Ok(Reply::Selected(missing, selection, dismiss, allow_streaming)) => {
+            let selection_blocked = if allow_streaming {
+                child_blocked
+            } else {
+                blocked
+            };
             l.sessions.retain(|row| !missing.contains(&row.id));
             l.linked.rows.retain(|row| !missing.contains(&row.id));
             if let Some(pages) = &mut l.linked.pages {
@@ -831,14 +841,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 !auth_required
                     && !stopped_during_pending_overflow
                     && !stopped_during_pending.contains(&b.workspace)
-                    && (!blocked
+                    && (!selection_blocked
                         || s.phase == Phase::Failed
                             && selected.as_deref() == Some(b.session.as_str()))
             }) {
                 l.show_title = false;
                 dismiss_origin_panel(s, dismiss, tx);
                 bind(s, b, title, visit, &slug, tx);
-            } else if !blocked {
+            } else if !selection_blocked {
                 l.error = Some("sessionList.reload.error");
                 crate::shell::notifications::emit_outcome(
                     s,

@@ -160,7 +160,6 @@ impl std::error::Error for OutlineIdentityChanged {}
 
 impl Backend {
     /// A cold scan publishes only after the last page. Drop the future to cancel the read.
-    #[cfg(test)]
     pub async fn read_outline(&self, revision: &OutlineRevision) -> Result<Outline> {
         self.read_outline_cached(revision, None, None, |_| ()).await
     }

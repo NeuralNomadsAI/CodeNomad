@@ -11,7 +11,7 @@ import {serverBinary} from './fixture-binaries.mjs'
 
 export async function launchWeb({
   root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog,http,mobile,restart,
-  webMobile,webAndroid,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,
+  webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline,
 }, state) {
   if(webTimeline||webSearch||webOutline){
     const config=await http.patch('/api/storage/config/ui',{data:{settings:{showThinkingBlocks:true,systemMessagesVisibility:'expanded',
@@ -50,6 +50,8 @@ export async function launchWeb({
   if(webOutline)args.push('--outline')
   if(mobileSessionSearch)args.push('--mobile-session-search')
   if(webGitImages)args.push('--git-images')
+  if(historyReturnOnly)args.push('--history-return-only')
+  if(webMoreActions)args.push('--more-actions-only')
   const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
   if(webAndroid){
     androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
@@ -63,6 +65,10 @@ export async function launchWeb({
   if(mobile)client.on('message',action=>{
     state.mobileAction=(async()=>{
       try{
+        if(webMoreActions&&action==='menu-live'){
+          menuLive()
+          return {value:true}
+        }
         if(action==='restart'){
           const resumed=await restart(http,uiOrigin)
           http=resumed.http

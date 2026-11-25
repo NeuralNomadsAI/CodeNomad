@@ -194,7 +194,9 @@ impl Cache {
 }
 
 pub(super) fn candidate(tool: &Tool, patch: &str) -> bool {
-    tool.name == "edit" && tool.status == "completed" && structured_candidate(patch)
+    tool.name == "edit"
+        && matches!(tool.status.as_str(), "running" | "completed")
+        && structured_candidate(patch)
 }
 
 pub(super) fn structured_candidate(patch: &str) -> bool {
@@ -324,7 +326,10 @@ fn view(s: &State, key: &str, entry: &Entry, path: Option<&str>) -> El {
                 .child(
                     markdown::copy_button(
                         t("toolCall.diff.copyPatch"),
-                        screen::action_tx(&s.input_scope, move |_, tx| tx.copy(patch.as_str())),
+                        screen::action_tx(&s.input_scope, move |s, tx| {
+                            s.transcript_display.children.cancel_copy();
+                            tx.copy(patch.as_str());
+                        }),
                     )
                     .key(format!("{key}-copy-patch")),
                 )

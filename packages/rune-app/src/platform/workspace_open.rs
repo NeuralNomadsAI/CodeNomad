@@ -23,6 +23,7 @@ pub fn copy_path(
 ) {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        crate::chat::tools::children::note_clipboard_write();
         tx.copy(path);
         let path = path.to_owned();
         let locale = crate::strings::locale();
@@ -35,6 +36,7 @@ pub fn copy_path(
     #[cfg(target_arch = "wasm32")]
     {
         let _ = tx;
+        crate::chat::tools::children::note_clipboard_write();
         web::copy_path(path, out, wake);
     }
 }
@@ -57,6 +59,11 @@ fn copy_feedback(
 
 #[cfg(target_arch = "wasm32")]
 mod web;
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn copy_fallback(window: &web_sys::Window, text: &str) -> bool {
+    web::fallback(window, text)
+}
 
 pub fn windows_default_mode(path: &str) -> DefaultMode {
     let extension = path

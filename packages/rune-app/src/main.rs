@@ -77,6 +77,8 @@ struct State {
     messages: Vec<history::Row>,
     draft: TextEdit,
     composer: composer::Owner,
+    prompt_history: composer::recall::History,
+    command_receipts: composer::command_receipts::CommandReceipts,
     incoming: Option<Receiver<Event>>,
     conversation_client_id: Option<String>,
     conversation_stream_connected: bool,
@@ -139,6 +141,8 @@ fn init() -> State {
         messages: vec![],
         draft: TextEdit::new(""),
         composer: Default::default(),
+        prompt_history: Default::default(),
+        command_receipts: Default::default(),
         incoming: None,
         conversation_client_id: None,
         conversation_stream_connected: false,
@@ -236,7 +240,7 @@ fn latest(s: &mut State, tx: &mut Tx) {
     }
     chat::reader::latest(s, tx);
 }
-fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
+pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     strings::with_locale(settings::app_locale(s), || poll_window(s, now, tx))
 }
 
@@ -255,6 +259,8 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
+    changed |= composer::recall::poll(s);
+    changed |= composer::menu::poll(s, tx);
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);
     changed |= chat::message_actions::poll(s, tx);
@@ -286,9 +292,11 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     changed |= files::poll(s, now, tx);
     changed |= git::poll(s, now, tx);
+    changed |= workspace::poll_file_drafts(s, now, tx);
     changed |= shell::notifications::poll(s, tx);
     changed |= shell::notifications::poll_app_notices(s, now, tx);
     workspace::capture_files_mode(s);
+    timeline::poll_reveal(s, tx, changed);
     if changed {
         tx.instant();
     }

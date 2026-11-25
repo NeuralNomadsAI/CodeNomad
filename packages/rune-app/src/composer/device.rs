@@ -54,8 +54,9 @@ impl Device {
 
 pub fn available(s: &State) -> bool {
     !s.screen.is_launcher()
+        && s.composer.recall.is_none()
+        && !s.composer.editing_locked()
         && s.composer.picker.attachments_supported()
-        && !s.composer.pending()
         && matches!(s.phase, Phase::Ready | Phase::Streaming)
 }
 

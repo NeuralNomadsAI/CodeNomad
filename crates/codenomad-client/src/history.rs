@@ -67,11 +67,28 @@ pub fn decode_message(v: &Value) -> Result<Message> {
         parts,
     })
 }
-fn cursor(v: &Value, kind: &str) -> Result<Option<Value>> {
+fn cursor_fits(v: &Value) -> bool {
+    struct Cap(usize);
+    impl std::io::Write for Cap {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 = self
+                .0
+                .checked_sub(buf.len())
+                .ok_or(std::io::ErrorKind::FileTooLarge)?;
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    serde_json::to_writer(Cap(4096), v).is_ok()
+}
+
+pub(crate) fn cursor(v: &Value, kind: &str) -> Result<Option<Value>> {
     if v.is_null() {
         return Ok(None);
     }
-    if v["kind"] != kind || !v["messageID"].as_str().is_some_and(valid_id) {
+    if v["kind"] != kind || !v["messageID"].as_str().is_some_and(valid_id) || !cursor_fits(v) {
         return Err("invalid history cursor".into());
     }
     Ok(Some(v.clone()))

@@ -15,23 +15,32 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             cx.touch_controls(),
         ))
     });
-    let body = rune_theme_codenomad::interruption::session_surface(expanded)
-        .children(controls)
-        .children(super::message_actions::restore(s))
-        .child(shell::reader(s, || {
-            let history = rune_theme_codenomad::interruption::history(expanded)
-                .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
-                .children(super::receipts::session(s))
-                .child(transcript::rows(s));
-            crate::timeline::view(
-                s,
-                chat::reading::viewport(s, crate::timeline::watch(s, history)),
-                expanded,
-            )
-        }))
-        .child(agent_view::view(s, cx))
-        .children(chat::attachments::error(s))
-        .child(composer::view::view(s, expanded, Some(worktree)));
+    let (more, menu) = composer::menu::view(s);
+    overlays.extend(menu);
+    let body = super::tools::duration::observe_clip(
+        s,
+        rune_theme_codenomad::interruption::session_surface(expanded)
+            .drawn_rect_into(s.transcript_display.tool_clock.stack_bounds())
+            .children(controls)
+            .children(super::message_actions::restore(s))
+            .child(shell::reader(s, || {
+                let history = super::tools::duration::observe_clip(
+                    s,
+                    rune_theme_codenomad::interruption::history(expanded)
+                        .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
+                        .children(super::receipts::session(s))
+                        .child(transcript::rows(s)),
+                );
+                crate::timeline::view(
+                    s,
+                    chat::reading::viewport(s, crate::timeline::watch(s, history)),
+                    expanded,
+                )
+            }))
+            .child(agent_view::view(s, cx))
+            .children(chat::attachments::error(s))
+            .child(composer::view::view(s, expanded, Some(worktree), more)),
+    );
     crate::timeline::search::overlay(s, cx, &mut overlays);
     if s.paging {
         overlays.push(rune_theme_codenomad::timeline::navigation_status(

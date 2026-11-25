@@ -22,6 +22,7 @@ pub(crate) struct Reader {
     connection: Arc<AtomicU64>,
     generation: u64,
     bookmark: Bookmark,
+    installed: bool,
     hidden: bool,
     resume_pending: bool,
     pending_scroll: bool,
@@ -32,6 +33,11 @@ pub(crate) struct Reader {
 }
 
 impl Reader {
+    #[cfg(test)]
+    pub(crate) fn fixture_open() -> (Self, ReadingLane) {
+        Self::open()
+    }
+
     pub(super) fn open() -> (Self, ReadingLane) {
         let (request, demand) = demand::open();
         let (out, events) = bounded(8);
@@ -43,6 +49,7 @@ impl Reader {
                 connection: connection.clone(),
                 generation: 0,
                 bookmark: Bookmark::Latest,
+                installed: false,
                 hidden: false,
                 resume_pending: false,
                 pending_scroll: false,
@@ -86,6 +93,10 @@ impl Reader {
         self.hidden || self.resume_pending || self.gap || self.parked || self.settling
     }
 
+    pub(crate) fn has_visible_window(&self) -> bool {
+        self.installed && !self.hidden && !self.resume_pending
+    }
+
     pub(crate) fn needs_latest(&self) -> bool {
         self.gap || self.resume_pending
     }
@@ -112,6 +123,7 @@ impl Reader {
     }
 
     pub(crate) fn install(&mut self, gap: bool) {
+        self.installed = true;
         self.gap = gap;
         self.parked = false;
         self.pending_scroll |= self.resume_pending;
@@ -165,11 +177,16 @@ impl Reader {
 }
 
 pub(crate) fn reconnecting(s: &mut State) {
+    let preserve_historical_page =
+        s.history_detached && s.transcript_display.timeline.paging.is_some();
     if let Some(reader) = &mut s.reader {
-        reader.reconnecting(s.transcript_display.reading_mut(), s.paging);
+        reader.reconnecting(
+            s.transcript_display.reading_mut(),
+            s.paging && !preserve_historical_page,
+        );
     }
 
-    cancel_page(s);
+    pages::fail_pending_page(s);
     s.paging = false;
 }
 
@@ -184,6 +201,8 @@ pub(crate) fn invalidate(s: &mut State) {
 }
 
 pub(super) fn refresh_after_message_action(s: &mut State) {
+    cancel_page(s);
+    s.history_error = false;
     if let Some(reader) = &mut s.reader {
         reader.resume(Bookmark::Latest);
         s.paging = false;
@@ -226,6 +245,7 @@ pub(crate) fn reconcile_bookmark(s: &mut State, rows: &[crate::history::Row]) {
 
 pub(crate) fn suspend(s: &mut State) {
     cancel_page(s);
+    s.history_error = false;
     crate::timeline::suspend(s);
     crate::settings::transcript_filters::close(s);
     if let Some(reader) = &mut s.reader {
@@ -276,6 +296,7 @@ pub(crate) fn retry(s: &mut State, tx: &mut Tx) {
             reader.bookmark = s.transcript_display.reading_mut().bookmark(reader.gap);
         }
         reader.resume(reader.bookmark.clone());
+        cancel_page(s);
         s.history_error = false;
         s.paging = false;
         tx.instant();
