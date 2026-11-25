@@ -360,12 +360,28 @@ export async function keyboardViewport(page, m, {kind, prefix, heading, headerHe
     await flushMirror()
   }
 
+  const focusInterruptionField = async () => {
+    const focused = page.locator('textarea:focus')
+    if (await focused.count() && await focused.getAttribute('aria-label') === interruptionLabel) {
+      return focused
+    }
+    await focusComposer()
+    for (let i = 0; i < 32; i++) {
+      await page.keyboard.press('Shift+Tab')
+      await page.waitForTimeout(20)
+      if (await focused.count() && await focused.getAttribute('aria-label') === interruptionLabel) {
+        return focused
+      }
+    }
+    return field(interruptionLabel)
+  }
+
   await primary.waitFor({state: 'attached'})
   assert.equal(await button('interruption.previous').count(), 0, 'Single pending request must hide Previous navigation')
   assert.equal(await button('interruption.next').count(), 0, 'Single pending request must hide Next navigation')
 
   // Enter a partial interruption reason / question answer before shrinking.
-  const partialField = await field(interruptionLabel)
+  const partialField = await focusInterruptionField()
   await partialField.fill(partialInput)
   assert.equal(await partialField.inputValue(), partialInput, `${kind}: partial interruption input must accept text`)
 
@@ -505,7 +521,7 @@ export async function keyboardViewport(page, m, {kind, prefix, heading, headerHe
   assert(Math.abs(matched.top - anchor.top) <= 2, `${kind}: reading offset drifted from ${anchor.top} to ${matched.top}`)
 
   // Verify partial interruption input survived both resizes, then clear it.
-  const restoredPartial = await field(interruptionLabel)
+  const restoredPartial = await focusInterruptionField()
   assert.equal(await restoredPartial.inputValue(), partialInput, `${kind}: partial interruption input must survive resize`)
   await restoredPartial.fill('')
 
