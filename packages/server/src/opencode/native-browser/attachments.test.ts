@@ -194,7 +194,9 @@ test("ownership is checked when a queued command's turn comes, and a failed inve
   failState = true
   command("open-1")
   await until(() => results().length === 1, "result despite a failed inventory")
-  assert.equal((results()[0].input.outcome as any).type, "success")
+  // The open ran, but OpenCode could not resolve its tab: the request settles as failed instead of naming it.
+  assert.equal((results()[0].input.outcome as any).type, "failure")
+  assert.match((results()[0].input.outcome as any).message, /could not be published/)
   failState = false
 
   // The project stops owning the session while the open waits behind a pause: it never reaches the preview,
@@ -343,4 +345,43 @@ test("a session moved before a queued command's turn refuses it, and inventories
   await until(() => results().some(call => call.input.requestID === "open"), "refused open")
   assert.match((results().find(call => call.input.requestID === "open")!.input.outcome as any).message, /owns this conversation/)
   assert.deepEqual(dispatched, [], "the moved session's preview is never acted on")
+})
+test("a command whose ownership check fails is settled as failed", async t => {
+  const rpcCalls: Array<{ method: string; input: Record<string, unknown> }> = []
+  let reads = 0
+  let releaseAttach: (outcome: string) => void = () => {}
+  let attached!: (connectionID: string) => void
+  const attachedReady = new Promise<string>(resolve => { attached = resolve })
+  const app = Fastify({ logger: false })
+  app.get("/openapi.json", async () => modernContractFixture)
+  app.get("/api/session/:id", async (request, reply) => ++reads > 1
+    ? reply.code(503).send({ error: "unavailable" })
+    : { data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } } })
+  app.post("/api/rpc/:rpcID/:method", async request => {
+    const { method } = request.params as { rpcID: string; method: string }
+    const input = (request.body as { input: Record<string, unknown> }).input
+    rpcCalls.push({ method, input })
+    if (method === "attach") { attached(String(input.connectionID)); return { output: await new Promise<string>(done => { releaseAttach = done }) } }
+    if (method === "command") return { output: { action: { type: "tabs.list" } } }
+    return { output: { ok: true } }
+  })
+  const address = await app.listen({ host: "127.0.0.1", port: 0 })
+  t.after(async () => { releaseAttach("replaced"); await app.close() })
+  const endpoint = { url: address, auth: undefined }
+  rememberRuntime(endpoint, { version: "2.4.1", pid: 1234, discovery: "status" })
+  const connection = { endpoint, client: OpenCode.make({ baseUrl: address, fetch: globalThis.fetch }), fetch: globalThis.fetch,
+    assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
+  const eventBus = new EventBus()
+  const attachments = new NativeBrowserAttachments({
+    workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
+    eventBus,
+    nativeParent: { available: true, browserAutomationUnavailable: false, request: async () => ({ available: false }) } as never,
+    logger: { warn: () => {}, debug: () => {}, info: () => {}, error: () => {}, trace: () => {}, isLevelEnabled: () => false } as never,
+  })
+  t.after(() => attachments.close())
+  attachments.hold("hold", "ws", "ses-1")
+  const connectionID = await attachedReady
+  eventBus.publish({ type: "instance.event", instanceId: "ws", event: { type: BROWSER_CONTROL_EVENT, data: { type: "command", connectionID, requestID: "list" } } } as any)
+  await until(() => rpcCalls.some(call => call.method === "result"), "settled command")
+  assert.equal((rpcCalls.find(call => call.method === "result")!.input.outcome as any).type, "failure")
 })

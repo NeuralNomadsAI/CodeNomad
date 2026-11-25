@@ -131,7 +131,7 @@ struct Inner {
     renderer_versions: HashMap<String, u64>,
     page_leases: HashMap<String, page::PageLease>,
     /// The webview whose file pickers each page operation intercepts, kept until its end even if the lease goes.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     file_picker_intercepts: HashMap<String, String>,
     navigation_versions: HashMap<String, u64>,
     page_load_sequence: u64,

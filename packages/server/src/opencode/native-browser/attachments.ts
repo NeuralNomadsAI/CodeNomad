@@ -285,17 +285,16 @@ class SessionAttachment {
     const controller = new AbortController()
     this.requests.set(requestID, controller)
     const signal = AbortSignal.any([controller.signal, this.stopping.signal])
+    const failure = (message: string): BrowserOutcome => ({ type: "failure", code: "operation_failed", message: message.slice(0, 2_000) })
+    const reason = (error: unknown) => error instanceof Error ? error.message : String(error)
     let lost = false
+    let settled = false
+    const settle = async (outcome: BrowserOutcome) => {
+      settled = true
+      await this.rpc("result", { requestID, outcome }, signal)
+    }
     try {
-      const command = await this.rpc("command", { requestID }, signal).catch(async error => {
-        // An unreadable command still settles its request, as in OpenCode's desktop browser.
-        if (!signal.aborted && connectionID === this.connectionID) {
-          await this.rpc("result", { requestID, outcome: { type: "failure", code: "operation_failed",
-            message: `The browser command could not be read: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2_000) } }, signal)
-            .catch(() => undefined)
-        }
-        throw error
-      }) as { action: Record<string, unknown> & { type: string }; generation?: number; inspect?: boolean }
+      const command = await this.rpc("command", { requestID }, signal) as { action: Record<string, unknown> & { type: string }; generation?: number; inspect?: boolean }
       // Ownership is checked again when each command's turn comes: a project can stop owning the session while
       // the command waits behind another.
       const admit = async (): Promise<BrowserOutcome | undefined> => {
@@ -306,33 +305,37 @@ class SessionAttachment {
           || location.workspaceID !== this.location.workspaceID
         this.owners = moved ? [] : await this.verifiedOwners(location, signal)
         lost = !this.workspaceID || !this.owners.includes(this.workspaceID)
-        return lost ? { type: "failure", code: "operation_failed", message: "No project shown on this computer owns this conversation's browser." } : undefined
+        return lost ? failure("No project shown on this computer owns this conversation's browser.") : undefined
       }
-      const outcome: BrowserOutcome = command.inspect
+      let outcome: BrowserOutcome = command.inspect
         ? { type: "failure", code: "unsupported", message: "Target inspection is unavailable in the CodeNomad browser." }
         : await this.tab.run(command.action, command.generation, signal, admit)
       if (connectionID !== this.connectionID) return
-      // The server reads tabs from the published inventory, so it precedes every result. A preview this desktop
-      // no longer owns is not read; an inventory OpenCode refuses still lets the result settle the request.
+      // OpenCode resolves tab IDs against the published inventory, so it precedes every result, as in its own desktop
+      // browser: a success whose inventory was refused would name a tab OpenCode cannot use. A preview this desktop no
+      // longer owns is not read.
       if (!lost) await this.publish(signal).catch(error => {
         if (signal.aborted) throw error
         this.warn("Browser state publication failed", error)
+        if (outcome.type === "success") outcome = failure(`The action ran, but the browser tabs could not be published: ${reason(error)}. Call browser.tabs.list({}).`)
       })
-      await this.rpc("result", { requestID, outcome }, signal).catch(async error => {
+      await settle(outcome).catch(async error => {
         // A result OpenCode refuses (for example an oversized file) still settles the request.
         if (signal.aborted) throw error
-        await this.rpc("result", { requestID, outcome: { type: "failure", code: "operation_failed",
-          message: `The browser result could not be delivered: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2_000) } }, signal)
+        await settle(failure(`The browser result could not be delivered: ${reason(error)}`))
       })
     } catch (error) {
-      if (!signal.aborted) this.warn("OpenCode browser command failed", error)
+      if (signal.aborted) return
+      this.warn("OpenCode browser command failed", error)
+      // A command that failed before its result, while reading it or checking ownership, is still settled, as in
+      // OpenCode's desktop browser: nothing waits for its timeout.
+      if (!settled && connectionID === this.connectionID) await settle(failure(`The browser command failed: ${reason(error)}`)).catch(() => undefined)
     } finally {
       this.requests.delete(requestID)
       // The attachment no longer has an owner: it attaches again through a current one.
       if (lost) this.retarget()
     }
   }
-
   /** Publications run one at a time and each reads the tab when its turn comes: OpenCode replaces its inventory with
    * every one it receives, so an older one must never arrive last. */
   private async publish(signal = this.stopping.signal): Promise<void> {

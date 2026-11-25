@@ -5,17 +5,17 @@ import { checkState, keyRefusal, PreviewTab, type PreviewHost } from "./commands
 function fixture() {
   const calls: Record<string, unknown>[] = []
   const state = { target: undefined as string | undefined, document: 0, checked: false, locked: false, loading: 0, locationFailures: 0, locationReads: 0,
-    shot: "iVBORw0KGgo=", onPage: undefined as undefined | ((action: string) => void) }
+    shot: "iVBORw0KGgo=", url: "http://127.0.0.1/page", onPage: undefined as undefined | ((action: string) => void) }
   const host: PreviewHost = {
     probe: async () => {
       if (!state.target) return undefined
       return { target: state.target, loading: state.loading > 0 && state.loading-- > 0 }
     },
-    open: async url => { state.target = `doc-${++state.document}`; return { url } },
-    navigate: async url => { state.target = `doc-${++state.document}`; return { url } },
-    back: async () => { state.target = `doc-${++state.document}`; return { url: "http://127.0.0.1/page" } },
-    forward: async () => { state.target = `doc-${++state.document}`; return { url: "http://127.0.0.1/next" } },
-    reload: async () => { state.target = `doc-${++state.document}`; return { url: "http://127.0.0.1/next" } },
+    open: async url => { state.target = `doc-${++state.document}`; state.url = url; return { url } },
+    navigate: async url => { state.target = `doc-${++state.document}`; state.url = url; return { url } },
+    back: async () => { state.target = `doc-${++state.document}`; state.url = "http://127.0.0.1/page"; return { url: state.url } },
+    forward: async () => { state.target = `doc-${++state.document}`; state.url = "http://127.0.0.1/next"; return { url: state.url } },
+    reload: async () => { state.target = `doc-${++state.document}`; return { url: state.url } },
     screenshot: async () => ({ image: { mime: "image/png", data: state.shot } }),
     page: async (action, at) => {
       // Address reads follow every command; the tests look at what acted on the page.
@@ -24,7 +24,7 @@ function fixture() {
       if (action.action === "location") {
         state.locationReads++
         if (state.locationFailures-- > 0) throw new Error("Native request timed out: browser.page.begin")
-        return { url: "http://127.0.0.1/page", title: "Fixture page", canGoBack: state.document > 1, canGoForward: false }
+        return { url: state.url, title: "Fixture page", canGoBack: state.document > 1, canGoForward: false }
       }
       if (action.action === "snapshot") {
         if (action.ref === "e2") return { url: "", snapshot: `- checkbox "Keep this checked" [e2] ${state.checked ? "checked" : "unchecked"}`, collapsed: false }
@@ -183,6 +183,7 @@ test("a failed address read is retried, and page results keep the address curren
   await tab.run({ type: "tabs.open", url: "http://127.0.0.1/start" }, undefined, signal)
   // The person navigates; the first read of the new document's address fails.
   state.target = "doc-99"
+  state.url = "http://127.0.0.1/page"
   state.locationFailures = 1
   const stale = await tab.run({ type: "tabs.list" }, undefined, signal) as any
   assert.equal(stale.result.value.tabs[0].url, "http://127.0.0.1/start")
@@ -331,4 +332,25 @@ test("an open that ends in another preview fails, and a text wait follows the ta
   }
   const waited = await tab.run({ type: "wait", tabID: tab.id, condition: "text", text: "Saved", timeoutMs: 2_000 }, undefined, signal) as any
   assert.equal(waited.type, "success")
+})
+test("each web open gives a new tab ID, a replaced preview too, and the address read from the preview wins over a receipt", async () => {
+  const { tab, state } = fixture()
+  const host = (tab as any).host as PreviewHost
+  const probe = host.probe, open = host.open
+  let registration = "window-a"
+  host.probe = async (...args) => { const probed = await probe(...args); return probed && { ...probed, registration } }
+  host.open = async (...args) => ({ ...await open(...args), registration })
+  const first = (await tab.run({ type: "tabs.open", url: "http://127.0.0.1/a" }, undefined, signal) as any).result.value.id
+  const second = (await tab.run({ type: "tabs.open", url: "http://127.0.0.1/b" }, undefined, signal) as any).result.value.id
+  assert.notEqual(first, second)
+  assert.equal((await tab.run({ type: "snapshot", tabID: first }, undefined, signal) as any).code, "operation_failed", "the older ID is gone")
+  registration = "window-b"
+  const listed = (await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value
+  assert.notEqual(listed.focusedTabID, second, "another registration is another tab")
+  // Another document committed before the follow-up probe: the tab reports the address it reads.
+  const navigate = host.navigate
+  host.navigate = async (...args) => { const loaded = await navigate(...args); state.url = "http://127.0.0.1/intervening"; return { ...loaded, registration } }
+  const current = (await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value.tabs[0]
+  const moved = await tab.run({ type: "navigate", tabID: current.id, url: "http://127.0.0.1/requested" }, current.generation, signal) as any
+  assert.equal(moved.result.value.url, "http://127.0.0.1/intervening")
 })

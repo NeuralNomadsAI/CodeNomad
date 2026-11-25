@@ -63,7 +63,9 @@ const unsupported = (action: string) => failure("unsupported",
  * Each command keeps the target it started on, so its steps never reach a later document.
  */
 export class PreviewTab {
-  readonly id = `tab_${randomUUID()}`
+  /** A web open and a preview replaced by another registration give a new tab: an older ID names a tab that is gone. */
+  private tabID = `tab_${randomUUID()}`
+  get id(): string { return this.tabID }
   private target: string | undefined
   private url = "about:blank"
   /** The target whose address `url` holds: a failed read is retried on the next refresh. */
@@ -94,6 +96,7 @@ export class PreviewTab {
     this.applied = ticket
     if (!probed) { this.target = undefined; this.registration = undefined; this.loading = false; return }
     this.loading = probed.loading
+    if (this.registration !== undefined && probed.registration !== this.registration) this.tabID = `tab_${randomUUID()}`
     this.registration = probed.registration
     if (probed.target !== this.target) {
       this.target = probed.target
@@ -235,7 +238,10 @@ export class PreviewTab {
       await this.refresh(deadline, signal)
       if (!this.target || opened.registration !== this.registration)
         return failure("operation_failed", "The page opened, but its preview is not the one shown to the agent. Call browser.tabs.list({}).")
-      this.url = opened.url
+      // The address read from the preview is current; the receipt's only stands in when that read failed.
+      if (this.urlTarget !== this.target) this.url = opened.url
+      // OpenCode's web open gives a new tab: the one preview takes a new ID, so the previous one is never retargeted.
+      this.tabID = `tab_${randomUUID()}`
       return this.success(this.tab())
     } catch (error) { return failed(error) }
   }
@@ -246,7 +252,7 @@ export class PreviewTab {
     // The result names a tab only while the inventory still lists the preview that loaded the page.
     if (!this.target || registration !== this.registration)
       return failure("operation_failed", "The page loaded, but its preview is no longer the one shown to the agent. Call browser.tabs.list({}).")
-    this.url = url
+    if (this.urlTarget !== this.target) this.url = url
     return this.success(this.tab())
   }
 
