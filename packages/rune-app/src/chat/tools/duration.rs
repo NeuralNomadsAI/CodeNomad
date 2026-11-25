@@ -176,6 +176,14 @@ impl Clock {
         self.generation = self.generation.wrapping_add(1);
     }
 
+    fn has_visible_in_bounds(&self, bounds: [f32; 4]) -> bool {
+        let stack = self.stack_bounds.get();
+        self.visible.values().any(|(lease, rect, clip)| {
+            lease.upgrade().is_some_and(|active| active.get())
+                && in_bounds(rect.get(), bounds, stack, clip.as_deref())
+        })
+    }
+
     pub(crate) fn poll(&mut self, now: f64, bounds: [f32; 4], tx: &mut Tx) -> bool {
         self.visible
             .retain(|_, (lease, _, _)| lease.upgrade().is_some_and(|active| active.get()));
@@ -183,12 +191,7 @@ impl Clock {
             self.next = None;
             return false;
         }
-        let stack = self.stack_bounds.get();
-        if !self
-            .visible
-            .values()
-            .any(|(_, rect, clip)| in_bounds(rect.get(), bounds, stack, clip.as_deref()))
-        {
+        if !self.has_visible_in_bounds(bounds) {
             self.next = None;
             return false;
         }
@@ -219,7 +222,7 @@ pub(in crate::chat) fn observe_clip(s: &State, el: El) -> El {
             && online(&s.phase)
             && !clock.paused
             && clock.next.is_none()
-            && !clock.visible.is_empty()
+            && clock.has_visible_in_bounds(s.tool_diff_preferences.history_bounds.get())
         {
             tx.wake_after(Duration::ZERO);
         }
