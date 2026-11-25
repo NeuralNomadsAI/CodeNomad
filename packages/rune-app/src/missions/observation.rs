@@ -16,11 +16,12 @@ use rune_theme_codenomad::{
     Space, TextRole, git_panel as theme,
     layout::{self, Layout},
 };
-use std::time::Duration;
+use std::{collections::HashSet, rc::Rc, time::Duration};
 
 #[derive(Default)]
 pub(super) struct Observation {
     pages: Vec<Activity>,
+    current_actors: Rc<HashSet<String>>,
     current_end: Option<u64>,
     revision: Option<u64>,
     seen_revision: Option<u64>,
@@ -32,6 +33,55 @@ pub(super) struct Observation {
 }
 
 impl Observation {
+    #[cfg(test)]
+    pub(super) fn fixture_actor(&mut self, session_id: &str) {
+        use codenomad_client::missions::{Activity, Actor, Window};
+        let actor = Actor {
+            session_id: session_id.into(),
+            title: session_id.into(),
+            state: ActorState::Running,
+            request: None,
+        };
+        if let Some(first) = self.pages.first_mut() {
+            first.actors.push(actor);
+        } else {
+            self.pages.push(Activity {
+                revision: 2,
+                observed_at: 10.0,
+                window: Window {
+                    order: "same".into(),
+                    offset: 0,
+                    end: 1,
+                    total: 1,
+                },
+                coverage: Coverage::Observed,
+                requests: Coverage::Observed,
+                actors: vec![actor],
+            });
+            self.current_end = Some(1);
+        }
+        self.rebuild_current_actors();
+    }
+
+    pub fn includes_actor(&self, session_id: &str) -> bool {
+        self.current_actors.contains(session_id)
+    }
+
+    pub fn current_actors(&self) -> Rc<HashSet<String>> {
+        self.current_actors.clone()
+    }
+
+    fn rebuild_current_actors(&mut self) {
+        let actors: HashSet<String> = self
+            .pages
+            .iter()
+            .filter(|page| self.current(page))
+            .flat_map(|page| &page.actors)
+            .map(|actor| actor.session_id.clone())
+            .collect();
+        self.current_actors = Rc::new(actors);
+    }
+
     pub fn working(&self) -> bool {
         self.pages
             .iter()
@@ -55,7 +105,11 @@ impl Observation {
     }
 
     pub fn observe(&mut self, revision: u64) {
-        self.revision = self.revision.max(Some(revision));
+        let next = self.revision.max(Some(revision));
+        if next != self.revision {
+            self.revision = next;
+            self.rebuild_current_actors();
+        }
     }
 
     pub fn cancel(&mut self) {
@@ -63,6 +117,7 @@ impl Observation {
         self.pending = None;
         self.due = None;
         self.current_end = None;
+        self.rebuild_current_actors();
     }
 
     pub fn invalidate(&mut self, now: f64) {
@@ -88,6 +143,7 @@ impl Observation {
         if advanced {
             self.revision = floor;
             self.refresh();
+            self.rebuild_current_actors();
         }
         if let Some((offset, result)) = self
             .active
@@ -128,6 +184,7 @@ impl Observation {
                 Ok(_) => Some(0),
                 _ => Some(offset),
             };
+            self.rebuild_current_actors();
             return true;
         }
         advanced
@@ -150,6 +207,7 @@ impl Observation {
         if self.revision.is_none_or(|known| revision > known) {
             self.revision = Some(revision);
             self.refresh();
+            self.rebuild_current_actors();
         }
         if self.active.is_some() {
             return false;
@@ -241,6 +299,7 @@ impl Observation {
             self.pages
                 .retain(|page| page.window.offset < end || end == 0 && page.window.offset == 0);
         }
+        self.rebuild_current_actors();
         true
     }
 
@@ -396,6 +455,38 @@ mod tests {
         assert_eq!(state.due, Some(8.0));
         state.cancel();
         assert!(state.due.is_none() && !state.busy());
+    }
+
+    #[test]
+    fn actor_index_stays_in_sync_with_revision_advance_and_offset_zero_failure() {
+        let mut state = Observation::default();
+        state.fixture_actor("ses_worker");
+        assert!(state.includes_actor("ses_worker"));
+
+        // Advancing revision retires older pages from the actor index immediately.
+        state.observe(3);
+        assert!(!state.includes_actor("ses_worker"));
+
+        // Re-adopting at revision 3 restores the actor; an offset-0 failure clears it again.
+        let (send, inbox) = bounded(1);
+        state.active = Some((0, inbox));
+        let mut p = page(3, 100.0, 0, 1);
+        p.actors.push(codenomad_client::missions::Actor {
+            session_id: "ses_worker".into(),
+            title: "worker".into(),
+            state: ActorState::Running,
+            request: None,
+        });
+        send.try_send(Ok(p)).ok().unwrap();
+        let wake: Wake = std::sync::Arc::new(|| {});
+        assert!(state.settle(Some(3), 1.0, &wake));
+        assert!(state.includes_actor("ses_worker"));
+
+        let (send2, inbox2) = bounded(1);
+        state.active = Some((0, inbox2));
+        send2.try_send(Err("network".into())).ok().unwrap();
+        assert!(state.settle(Some(3), 2.0, &wake));
+        assert!(!state.includes_actor("ses_worker"));
     }
 }
 

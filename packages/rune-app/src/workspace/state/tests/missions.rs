@@ -365,3 +365,248 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         drop(conversation_a);
     });
 }
+
+#[test]
+fn reconnect_event_abandons_preparing_briefing_without_posting() {
+    crate::platform::block_on(async {
+        let http = test_http::Http::new().await;
+        let backend = http.backend.clone();
+        let identity = tokio::spawn(async move { backend.attest_server().await });
+        let meta = http.accept().await;
+        meta.reply(200, json!({"apiContract":1,"serverId":"fixture-server"}))
+            .await;
+        assert_eq!(
+            test_http::wait(identity).await.unwrap().unwrap(),
+            "fixture-server"
+        );
+        let mut s = init();
+        crate::gallery::shell::fixture(&mut s);
+        let mut ui = Ui::new();
+        ui.ready = true;
+        s.workspace = Some(ui);
+        let launcher = s.screen.launcher_mut().unwrap();
+        launcher.connection = Some(http.backend.clone());
+        launcher.server_id = Some("fixture-server".into());
+        let project = launcher.project.clone().unwrap();
+        let workspace_id = project.id.clone();
+        opened(&mut s, &project);
+        let mut proj_backend = http.backend.clone();
+        proj_backend.workspace.clone_from(&workspace_id);
+        let panel = crate::missions::Panel::new(
+            proj_backend.clone(),
+            None,
+            s.reads.clone(),
+            s.wake.clone(),
+        );
+        {
+            let ui = s.workspace.as_mut().unwrap();
+            if let Tab::Workspace(saved) = &mut ui.entries[0].saved {
+                saved.view.right_panel = RightPanelTab::Missions;
+            }
+            ui.entries[0].missions = Some(panel);
+        }
+        let mut rt =
+            rune::Runtime::new(s, crate::view, (1400.0, 880.0), rune::Env::new(false, 1.0));
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(rt.state.shell.visible(1), "right panel laid out");
+
+        let header: codenomad_client::missions::MapHeader = serde_json::from_str(HEADER).unwrap();
+        let key = crate::missions::BriefingKey::new(&proj_backend, &header).unwrap();
+
+        // 1. MissionsReconnected for the active project abandons Preparing even with an admitted GET buffered.
+        let (out1, cancelled1) = rt
+            .state
+            .workspace
+            .as_mut()
+            .unwrap()
+            .mission_briefing
+            .fixture_preparing(&key, "req-reconn-1", "tab-0", proj_backend.clone(), &header);
+        out1.try_send(codenomad_client::missions::BriefingAdmissionOutcome::Admitted)
+            .unwrap();
+        let reconnected =
+            codenomad_client::transport::WorkspaceEvent::MissionsReconnected { workspace_id };
+        rt.update(|s, _| mission_event(s, Some(&reconnected)));
+        assert!(
+            cancelled1.is_closed(),
+            "MissionsReconnected must immediately cancel Preparing before reconcile can POST"
+        );
+        assert_eq!(
+            rt.state
+                .workspace
+                .as_ref()
+                .unwrap()
+                .mission_briefing
+                .visible_phase(&key, &header),
+            Some(&crate::missions::BriefingPhase::Error)
+        );
+
+        // 2. Shared/chat SSE reconnect (mission_event None) also abandons Preparing immediately.
+        let (out2, cancelled2) = rt
+            .state
+            .workspace
+            .as_mut()
+            .unwrap()
+            .mission_briefing
+            .fixture_preparing(&key, "req-reconn-2", "tab-0", proj_backend, &header);
+        out2.try_send(codenomad_client::missions::BriefingAdmissionOutcome::Admitted)
+            .unwrap();
+        rt.update(|s, _| mission_event(s, None));
+        assert!(
+            cancelled2.is_closed(),
+            "SSE reconnect must immediately cancel Preparing before reconcile can POST"
+        );
+        assert_eq!(
+            rt.state
+                .workspace
+                .as_ref()
+                .unwrap()
+                .mission_briefing
+                .visible_phase(&key, &header),
+            Some(&crate::missions::BriefingPhase::Error)
+        );
+    });
+}
+
+#[test]
+fn reader_auth_expired_in_same_poll_abandons_admitted_briefing_without_posting() {
+    crate::platform::block_on(async {
+        let http = test_http::Http::new().await;
+        let backend = http.backend.clone();
+        let identity = tokio::spawn(async move { backend.attest_server().await });
+        let meta = http.accept().await;
+        meta.reply(200, json!({"apiContract":1,"serverId":"fixture-server"}))
+            .await;
+        assert_eq!(
+            test_http::wait(identity).await.unwrap().unwrap(),
+            "fixture-server"
+        );
+        let (wake, signal) = bounded(8);
+        let mut s = init();
+        crate::gallery::shell::fixture(&mut s);
+        s.wake = std::sync::Arc::new(move || {
+            let _ = wake.try_send(());
+        });
+        let mut ui = Ui::new();
+        ui.ready = true;
+        s.workspace = Some(ui);
+        let launcher = s.screen.launcher_mut().unwrap();
+        launcher.connection = Some(http.backend.clone());
+        launcher.server_id = Some("fixture-server".into());
+        let project = launcher.project.clone().unwrap();
+        let workspace_id = project.id.clone();
+        opened(&mut s, &project);
+        let mut proj_backend = http.backend.clone();
+        proj_backend.workspace.clone_from(&workspace_id);
+        let header: codenomad_client::missions::MapHeader = serde_json::from_str(HEADER).unwrap();
+        let header_for_panel: codenomad_client::missions::MapHeader =
+            serde_json::from_str(HEADER).unwrap();
+        let key = crate::missions::BriefingKey::new(&proj_backend, &header).unwrap();
+        let mut panel = crate::missions::Panel::new(
+            proj_backend.clone(),
+            None,
+            s.reads.clone(),
+            s.wake.clone(),
+        );
+        panel.fixture_ready_with_lookup(header_for_panel, "tsk-missing", "task-missing");
+        let tab_key = s.workspace.as_ref().unwrap().entries[0].key.clone();
+        {
+            let ui = s.workspace.as_mut().unwrap();
+            if let Tab::Workspace(saved) = &mut ui.entries[0].saved {
+                saved.view.right_panel = RightPanelTab::Missions;
+                saved.view.selected_mission = Some(header.root.id.clone());
+            }
+            ui.entries[0].missions = Some(panel);
+        }
+        let mut rt =
+            rune::Runtime::new(s, crate::view, (1400.0, 880.0), rune::Env::new(false, 1.0));
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(rt.state.shell.visible(1), "right panel laid out");
+
+        // Start the real off-page task lookup HTTP request via panel-page.
+        rt.update(|s, tx| {
+            let mut ui = s.workspace.take().unwrap();
+            let (_, auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
+            s.workspace = Some(ui);
+            assert!(auth_expired.is_empty());
+        });
+        let mut activity_req = None;
+        let mut lookup_req = None;
+        for _ in 0..2 {
+            let req = http.accept().await;
+            assert!(req.header.starts_with("POST /api/workspaces/"));
+            if req.body["source"] == "tasks" {
+                lookup_req = Some(req);
+            } else {
+                activity_req = Some(req);
+            }
+        }
+        let lookup_req = lookup_req.expect("off-page task lookup request");
+        while signal.try_recv().is_ok() {}
+        // Reply with a real non-JSON HTTP 401; Lookup leaves detail.failed == false.
+        lookup_req
+            .send(
+                "HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\nContent-Length: 12\r\nConnection: close\r\n\r\n",
+                b"Unauthorized",
+            )
+            .await;
+        test_http::wait(signal.recv()).await.unwrap();
+
+        // Queue an already-Admitted Preparing briefing before the next poll_missions runs.
+        let (out, cancelled) = rt
+            .state
+            .workspace
+            .as_mut()
+            .unwrap()
+            .mission_briefing
+            .fixture_preparing(
+                &key,
+                "req-401-race",
+                &tab_key,
+                proj_backend.clone(),
+                &header,
+            );
+        out.try_send(codenomad_client::missions::BriefingAdmissionOutcome::Admitted)
+            .unwrap();
+
+        let mut expired = Vec::new();
+        rt.update(|s, tx| {
+            let mut ui = s.workspace.take().unwrap();
+            let (_, auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
+            s.workspace = Some(ui);
+            expired = auth_expired;
+            for backend in &expired {
+                crate::settings::authentication_required(s, backend);
+            }
+            tx.instant();
+        });
+        assert_eq!(expired.len(), 1, "panel-page 401 must surface auth_expired");
+        assert!(
+            cancelled.is_closed(),
+            "panel-page 401 in the same poll must cancel Preparing before reconcile can POST"
+        );
+        assert_eq!(
+            rt.state
+                .workspace
+                .as_ref()
+                .unwrap()
+                .mission_briefing
+                .visible_phase(&key, &header),
+            Some(&crate::missions::BriefingPhase::Error)
+        );
+        assert!(
+            rt.state
+                .screen
+                .launcher()
+                .is_some_and(|l| l.authentication_required),
+            "panel-page 401 must transition the launcher to authentication_required"
+        );
+        if let Some(req) = activity_req {
+            req.disconnected().await;
+        }
+        http.quiet().await;
+    });
+}
