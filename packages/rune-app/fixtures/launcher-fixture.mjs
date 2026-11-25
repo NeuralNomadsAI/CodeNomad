@@ -20,9 +20,13 @@ import {seedGitImages} from '../../../scripts/rune/web-git-images.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
 import {launchWeb} from './launcher-web.mjs'
 import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
-const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
+const webMoreActions=process.argv.includes('--web-mobile-more-actions')
+const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||webMoreActions||process.argv.includes('--web-mobile')
 const mobileSessionSearch=process.argv.includes('--mobile-session-search')
+const historyReturnOnly=process.argv.includes('--history-return-only')
 assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation requires the Chromium mobile smoke')
+assert(!historyReturnOnly || webMobile&&!webAndroid)
+assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes('--web-mobile'))
 if(process.platform==='win32'&&webMobile&&!process.argv.includes('--owned-mobile-worker')){
   const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:'inherit'})
   const closed=new Promise(resolve=>worker.once('close',resolve))
@@ -223,8 +227,8 @@ const upstream=createServer(async(req,res)=>{
     const json=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data))}
     if(useTs&&url.pathname==='/api/info')return json({version:'2.3.2',pid:process.pid})
     if(web){
-      assert(!(url.pathname.endsWith('/interrupt')||url.pathname.endsWith('/prompt')&&!webAndroid)&&
-        !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits one Android prompt only')
+      assert(!(url.pathname.endsWith('/interrupt')||url.pathname.endsWith('/prompt')&&!webAndroid&&!webMoreActions)&&
+        !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits prompts only in the Android and mobile menu scenes')
       if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
       if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:compare?[fixtureModel]:[]})
       if(url.pathname==='/api/command'&&webSearch)return json({location:{directory:project},data:[]})
@@ -369,6 +373,15 @@ const upstream=createServer(async(req,res)=>{
       if(compare&&action==='inbox')return json({data:[]})
       if(compare&&['agent','model'].includes(action)&&req.method==='POST'){res.statusCode=204;res.end();return}
       if(action==='prompt'){
+        if(webMoreActions){
+          const body=JSON.parse(raw)
+          assert.equal(id,'ses_existing')
+          assert.equal(++stats.prompts,1)
+          assert.equal(body.delivery,'queue')
+          assert.equal(body.resume,false)
+          assert.equal(body.files?.[0]?.name,'mobile-menu.txt')
+          return json({data:{id:'inbox-mobile-menu'}})
+        }
         if(webAndroid){
           assert.equal(++stats.prompts,1)
           mobile.androidTurn(record,JSON.parse(raw))
@@ -458,7 +471,7 @@ try{
   if(web){
     await signIn(origin)
     await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog:host.stdout(),http,mobile,restart:restartWeb,
-      webMobile,webAndroid,mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
+      webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
     client=webState.client
   }else if(pendingOpen){
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
@@ -495,7 +508,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,webState.diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||mobileSessionSearch?1:webTouchHistory?4:webMissions||webGitImages?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,webState.diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webMoreActions||webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||mobileSessionSearch||historyReturnOnly||webMoreActions?1:webTouchHistory?4:webMissions||webGitImages?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
     if(!placeWorktree){
       await removeReview

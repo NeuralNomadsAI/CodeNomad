@@ -15,6 +15,8 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             cx.touch_controls(),
         ))
     });
+    let (more, menu) = composer::menu::view(s);
+    overlays.extend(menu);
     let body = rune_theme_codenomad::interruption::session_surface(expanded)
         .children(controls)
         .children(super::message_actions::restore(s))
@@ -31,7 +33,7 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         }))
         .child(agent_view::view(s, cx))
         .children(chat::attachments::error(s))
-        .child(composer::view::view(s, expanded, Some(worktree)));
+        .child(composer::view::view(s, expanded, Some(worktree), more));
     crate::timeline::search::overlay(s, cx, &mut overlays);
     if s.paging {
         overlays.push(rune_theme_codenomad::timeline::navigation_status(
