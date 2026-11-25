@@ -376,8 +376,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         else {
             continue;
         };
-        let (_, clicked, presented) = s.notifications.routes.remove(index).unwrap();
-        drop(presented);
+        let (_, clicked, _) = s.notifications.routes.remove(index).unwrap();
         if ticket != s.notifications.navigation_ticket() {
             continue;
         }
