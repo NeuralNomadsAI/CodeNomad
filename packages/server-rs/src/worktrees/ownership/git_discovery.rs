@@ -1,5 +1,5 @@
 //! Host path resolution and Git common-directory / repository-root discovery.
-use super::media_path::reject_network_path;
+use super::reject_network_path;
 use std::path::{Path, PathBuf};
 pub(super) fn head_cannot_name_repository(path: &Path) -> bool {
     use std::io::{ErrorKind, Read};

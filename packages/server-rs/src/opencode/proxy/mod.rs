@@ -188,7 +188,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     static TRACE_FENCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let trace_fence =
         send_input && *TRACE_FENCE.get_or_init(|| std::env::var_os("CNRS_MUTATION_FENCE_TRACE").is_some());
-    let resolve_media_path = |raw: &str| crate::worktrees::ownership::resolve_media_path(&app.scope, raw);
     let allow_subfolder = send_input || message_list;
     // TS checks every client-supplied directory and ambient context before session lookup or relay
     // (`http-server.ts:1248-1269`).
@@ -341,17 +340,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let directory =
         if send_input { native_directory.or(requested.as_deref()) } else { requested.as_deref().or(native_directory) }
             .unwrap_or(opened);
-    let identity_now = || {
-        let raw = native_directory?;
-        let (resolved, anchor) = if message_list {
-            resolve_media_path(raw)?
-        } else {
-            let path = crate::files::paths::canonical(&app.scope, raw)?;
-            (path.clone(), path)
-        };
-        let identity = crate::files::host_identity(&anchor).ok()?;
-        Some((resolved, anchor, identity))
-    };
     let initial_identity = if message_list {
         if let Some(raw) = native_directory {
             let (scope, raw) = (app.scope.clone(), raw.to_owned());
@@ -378,7 +366,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             None
         }
     } else {
-        allow_subfolder.then(&identity_now).flatten()
+        allow_subfolder.then(|| guards::directory_identity(&app.scope, native_directory, message_list)).flatten()
     };
     // Always verify the session's own resolved location freshly after `session.get` so an
     // alias retargeted between query validation and `session.get` cannot reuse a stale proof.
@@ -616,30 +604,23 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         input_checkout: &input_checkout,
     };
     let mutation::PreparedMutation { fork, root_permissions, input, rules_lock, mutation, receipt } =
-        match mutation::prepare_mutation(
-            &app,
-            &workspace,
-            &endpoint,
-            &principal,
-            &head,
+        match mutation::prepare_mutation(mutation::MutationContext {
+            recheck: &recheck,
+            head: &head,
             route,
-            directory,
             control,
-            session,
             send_input,
             command,
             body_limit,
             declared,
-            &mut pending_body,
-            &mut prompt_input,
-            &prompt_locations,
-            &actual,
+            pending_body: &mut pending_body,
+            prompt_input: &mut prompt_input,
+            prompt_locations: &prompt_locations,
             trace_fence,
             explicit,
             session_list,
-            &mut target,
-            &recheck,
-        )
+            target: &mut target,
+        })
         .await?
         {
             mutation::MutationOutcome::Ready(prepared) => prepared,

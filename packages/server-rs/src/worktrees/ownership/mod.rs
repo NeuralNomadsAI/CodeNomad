@@ -31,11 +31,11 @@ pub struct Owned {
 
 #[derive(Clone)]
 pub(crate) struct DirectoryProof {
-    pub(super) tree: Option<super::inventory::Tree>,
-    pub(super) source: Option<super::inventory::Tree>,
-    pub(super) root: Option<(PathBuf, String)>,
-    pub(super) external: bool,
-    pub(super) media: bool,
+    tree: Option<super::inventory::Tree>,
+    source: Option<super::inventory::Tree>,
+    root: Option<(PathBuf, String)>,
+    external: bool,
+    media: bool,
 }
 
 impl DirectoryProof {
@@ -225,13 +225,13 @@ pub(crate) async fn capture_directory_with_refresh(
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum ProofMode {
+enum ProofMode {
     Live,
     Media,
     History,
 }
 
-pub(super) fn catalogue_proof(
+fn catalogue_proof(
     catalogue: &super::inventory::Catalogue,
     path: &Path,
     external: bool,
@@ -258,6 +258,23 @@ pub(super) fn catalogue_proof(
         external,
         media: matches!(mode, ProofMode::Media),
     })
+}
+
+fn reject_network_path(raw: &str, path: &Path) -> Result<(), ()> {
+    if raw.starts_with("\\\\") || raw.starts_with("//") || raw.starts_with(r"\??\") {
+        return Err(());
+    }
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        if let Some(Component::Prefix(prefix)) = path.components().next()
+            && matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..) | Prefix::DeviceNS(..))
+        {
+            return Err(());
+        }
+    }
+    let _ = path;
+    Ok(())
 }
 
 pub(crate) struct LoadedOwnership {

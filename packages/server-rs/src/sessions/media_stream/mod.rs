@@ -29,9 +29,7 @@ mod syntax;
 mod tests;
 mod validate;
 
-#[allow(unused_imports)]
 pub(crate) use scan::{ExtractedToolMedia, extract_tool_media, may_contain_image_uri, project_item};
-#[allow(unused_imports)]
 pub(super) use scan::{collect_item_patches, for_each_json_array_item, for_each_json_object_field};
 use syntax::JsonSyntax;
 pub(super) use syntax::validate_json_syntax;
@@ -53,8 +51,8 @@ enum State {
 }
 
 pub(crate) struct UndoPatch {
-    pub(super) range: std::ops::Range<usize>,
-    pub(super) original: Box<[u8]>,
+    range: std::ops::Range<usize>,
+    original: Box<[u8]>,
 }
 
 pub(crate) struct MessageListStream {

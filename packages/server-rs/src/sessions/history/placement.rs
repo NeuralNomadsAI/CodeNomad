@@ -51,12 +51,7 @@ pub(in crate::sessions) struct Placement {
 }
 
 impl Placement {
-    pub(in crate::sessions) async fn capture(
-        app: &Shared,
-        id: &str,
-        session: &str,
-        references: bool,
-    ) -> Result<Self, Error> {
+    pub(super) async fn capture(app: &Shared, id: &str, session: &str, references: bool) -> Result<Self, Error> {
         Self::capture_inner(app, id, session, false, false, references).await
     }
 
@@ -64,7 +59,7 @@ impl Placement {
         Self::capture_inner(app, id, session, true, true, false).await
     }
 
-    pub(in crate::sessions) async fn capture_with_media(
+    pub(super) async fn capture_with_media(
         app: &Shared,
         id: &str,
         session: &str,

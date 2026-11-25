@@ -42,7 +42,7 @@ pub(super) struct InputRecheck<'a> {
 }
 
 impl InputRecheck<'_> {
-    pub(super) fn location_live(&self) -> bool {
+    fn location_live(&self) -> bool {
         *self.initial_identity == directory_identity(&self.app.scope, self.native_directory, self.message_list)
             && self
                 .initial_identity
@@ -81,35 +81,44 @@ impl InputRecheck<'_> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn prepare_mutation(
-    app: &Shared,
-    workspace: &Workspace,
-    endpoint: &Arc<Endpoint>,
-    principal: &crate::auth::Principal,
-    head: &axum::http::request::Parts,
-    route: &str,
-    directory: &str,
-    control: Option<controls::Control<'_>>,
-    session: Option<&str>,
-    send_input: bool,
-    command: bool,
-    body_limit: usize,
-    declared: Option<usize>,
-    pending_body: &mut Option<Body>,
-    prompt_input: &mut Option<Value>,
-    prompt_locations: &[(
-        String,
-        crate::opencode::prompt::Location,
-        (Arc<std::sync::atomic::AtomicBool>, tokio::time::Instant),
-    )],
-    actual: &Option<Value>,
-    trace_fence: bool,
-    explicit: bool,
-    session_list: bool,
-    target: &mut reqwest::Url,
-    recheck: &InputRecheck<'_>,
-) -> Result<MutationOutcome, Error> {
+pub(super) struct MutationContext<'a> {
+    pub recheck: &'a InputRecheck<'a>,
+    pub head: &'a axum::http::request::Parts,
+    pub route: &'a str,
+    pub control: Option<controls::Control<'a>>,
+    pub send_input: bool,
+    pub command: bool,
+    pub body_limit: usize,
+    pub declared: Option<usize>,
+    pub pending_body: &'a mut Option<Body>,
+    pub prompt_input: &'a mut Option<Value>,
+    pub prompt_locations:
+        &'a [(String, crate::opencode::prompt::Location, (Arc<std::sync::atomic::AtomicBool>, tokio::time::Instant))],
+    pub trace_fence: bool,
+    pub explicit: bool,
+    pub session_list: bool,
+    pub target: &'a mut reqwest::Url,
+}
+
+pub(super) async fn prepare_mutation(ctx: MutationContext<'_>) -> Result<MutationOutcome, Error> {
+    let MutationContext {
+        recheck,
+        head,
+        route,
+        control,
+        send_input,
+        command,
+        body_limit,
+        declared,
+        pending_body,
+        prompt_input,
+        prompt_locations,
+        trace_fence,
+        explicit,
+        session_list,
+        target,
+    } = ctx;
+    let InputRecheck { app, workspace, endpoint, principal, session, directory, actual, .. } = *recheck;
     let create = route == "/api/session" && head.method == Method::POST;
     let fork = session.is_some() && route.ends_with("/fork") && head.method == Method::POST;
     let permissions_patch = session.is_some() && head.method == Method::PATCH;

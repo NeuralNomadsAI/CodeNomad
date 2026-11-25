@@ -1,24 +1,8 @@
 //! Media-path resolution, anchor discovery, and directory ownership checks for session media/events.
 use super::git_discovery::{shares_common_directory, shares_common_directory_strict};
-use super::{DirectoryProof, ProofMode, catalogue_proof};
+use super::{DirectoryProof, ProofMode, catalogue_proof, reject_network_path};
 use crate::{App, Workspace};
 use std::path::{Path, PathBuf};
-pub(super) fn reject_network_path(raw: &str, path: &Path) -> Result<(), ()> {
-    if raw.starts_with("\\\\") || raw.starts_with("//") || raw.starts_with(r"\??\") {
-        return Err(());
-    }
-    #[cfg(windows)]
-    {
-        use std::path::{Component, Prefix};
-        if let Some(Component::Prefix(prefix)) = path.components().next()
-            && matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..) | Prefix::DeviceNS(..))
-        {
-            return Err(());
-        }
-    }
-    let _ = path;
-    Ok(())
-}
 
 fn component_eq(a: std::path::Component<'_>, b: std::path::Component<'_>) -> bool {
     #[cfg(windows)]
