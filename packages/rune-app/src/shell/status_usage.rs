@@ -2,11 +2,9 @@ use crate::{State, backend::Backend, platform, screen, strings::t};
 use codenomad_client::{
     Receiver, Sender, bounded,
     provider_usage::{Usage, Watch},
-    runtime::Instant,
 };
 use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{Space, layout::Layout, settings};
-use std::time::Duration;
 
 mod date;
 mod view;
@@ -18,7 +16,8 @@ pub(crate) struct Panel {
     expanded: bool,
     watch: Option<Watch>,
     authority: (u64, bool, u64),
-    due: Option<Instant>,
+    due: Option<f64>,
+    scheduled_wake: Option<f64>,
     trailing: bool,
     read: Option<(Sender<()>, Receiver<Option<Usage>>)>,
     usage: Option<Usage>,
@@ -46,6 +45,7 @@ impl Panel {
         self.usage = None;
         self.failed = false;
         self.due = None;
+        self.scheduled_wake = None;
         self.trailing = false;
     }
 
@@ -81,6 +81,7 @@ impl Panel {
                 self.trailing = true;
             } else {
                 self.due = None;
+                self.scheduled_wake = None;
             }
         }
     }
@@ -106,7 +107,6 @@ impl Panel {
         let Some(watch) = self.watch.clone().filter(|_| self.authority.1) else {
             return false;
         };
-        let clock = Instant::now();
         if self.read.is_some() {
             return watch
                 .publish_if_current(self.authority, || {
@@ -122,11 +122,14 @@ impl Panel {
                     self.failed = result.is_none();
                     self.usage = result;
                     self.due = if std::mem::take(&mut self.trailing) {
+                        self.scheduled_wake = None;
                         tx.wake_at(now);
                         None
                     } else {
-                        tx.wake_at(now + 60.0);
-                        Some(clock + Duration::from_secs(60))
+                        let due = now + 60.0;
+                        self.scheduled_wake = Some(due);
+                        tx.wake_at(due);
+                        Some(due)
                     };
                     true
                 })
@@ -136,11 +139,16 @@ impl Panel {
             return false;
         }
         if let Some(due) = self.due
-            && due > clock
+            && due > now
         {
-            tx.wake_at(now + (due - clock).as_secs_f64());
+            if self.scheduled_wake != Some(due) {
+                self.scheduled_wake = Some(due);
+                tx.wake_at(due);
+            }
             return false;
         }
+        self.due = None;
+        self.scheduled_wake = None;
         let (close, cancelled) = bounded(1);
         let (out, reply) = bounded(1);
         self.read = Some((close, reply));
@@ -315,5 +323,60 @@ mod tests {
         assert!(panel.select(None));
         assert!(cancelled.is_closed() && send.is_closed());
         assert!(!panel.select(None));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn status_usage_refresh_wake_tracks_logical_clock_without_drifting() {
+        use crate::files::test_http::Http;
+
+        platform::block_on(async {
+            let http = Http::new().await;
+            let wake: rune::Waker = std::sync::Arc::new(|| {});
+
+            let mut panel = Panel::default();
+            panel.backend = Some(http.backend.clone());
+            panel.watch(Watch::default());
+            panel.authority = (1, true, 0);
+            panel.select(Some(("/fixture/checkout", "openai", "first")));
+            panel.due = Some(65.0);
+
+            let mut rt = rune::Runtime::new(
+                (panel, wake),
+                |_, _| rune::el(),
+                (200.0, 100.0),
+                rune::Env::new(false, 1.0),
+            );
+            rt.poll =
+                Some(|(panel, wake): &mut (Panel, rune::Waker), now, tx| panel.poll(now, tx, wake));
+            rt.frame(5.0);
+            let first_wake = rt
+                .wake_deadline()
+                .expect("waiting refresh must schedule its 60s wake");
+            for _ in 0..180 {
+                rt.frame(1.0 / 60.0);
+                let wake = rt
+                    .wake_deadline()
+                    .expect("refresh wake must remain scheduled before 60s");
+                assert!(
+                    (wake - first_wake).abs() < 1e-6,
+                    "usage refresh wake must stay pinned on logical clock: first={first_wake}, now={wake}"
+                );
+            }
+            // Advancing to the logical 60s deadline must trigger the next read without waiting 60 real seconds.
+            let step = (first_wake - rt.clock).max(0.0);
+            rt.frame(step);
+            assert!(
+                rt.state.0.read.is_some(),
+                "refresh must start once logical clock reaches due (clock={}, due={:?})",
+                rt.clock,
+                rt.state.0.due
+            );
+            assert!(
+                rt.wake_deadline().is_none(),
+                "in-flight refresh must leave no residual timer wakes: {:?}",
+                rt.wake_deadline()
+            );
+        });
     }
 }
