@@ -508,6 +508,10 @@ impl Reading {
             .resize_anchor
             .as_ref()
             .is_some_and(|anchor| anchor.id == id && anchor.may_rescue);
+        let keep_rescued = self
+            .resize_anchor
+            .as_ref()
+            .is_some_and(|anchor| anchor.id == id && anchor.rescued);
         let height = self
             .resize_anchor
             .as_ref()
@@ -523,11 +527,12 @@ impl Reading {
             id,
             offset,
             height,
-            may_rescue: width_grew || keep_rescue,
-            rescued: false,
+            may_rescue: !keep_rescued && (width_grew || keep_rescue),
+            rescued: keep_rescued,
             clamped: false,
             settling: false,
-            observed: (cur.seq > 0).then_some((cur.offset, self.at_bottom || cur.at_bottom())),
+            observed: (!keep_rescued && cur.seq > 0)
+                .then_some((cur.offset, self.at_bottom || cur.at_bottom())),
             settle_seq: None,
         });
     }
@@ -932,8 +937,11 @@ pub(crate) fn viewport(s: &State, history: El, scroll_stack: bool) -> El {
                         .reader
                         .as_ref()
                         .is_some_and(crate::chat::reader::Reader::awaiting_manual_probe)
+                    && s.reader
+                        .as_ref()
+                        .is_some_and(crate::chat::reader::Reader::has_pending_scroll)
                 {
-                    let _ = crate::chat::reader::renderer_ready(s, tx);
+                    tx.wake_after(std::time::Duration::ZERO);
                 }
             } else {
                 tx.live_only();

@@ -269,7 +269,20 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if wait_manual_probe {
         tx.wake_after(std::time::Duration::ZERO);
     }
+    let history_width = s.tool_diff_preferences.history_width();
+    let wait_rail_layout = !wait_manual_probe
+        && !s.screen.is_launcher()
+        && !git::has_preview(s)
+        && !files::has_preview(s)
+        && s.reader
+            .as_ref()
+            .is_some_and(chat::reader::Reader::has_pending_scroll)
+        && timeline::rail_layout_pending(s, history_width);
+    if wait_rail_layout {
+        tx.wake_after(std::time::Duration::ZERO);
+    }
     let restored = !wait_manual_probe
+        && !wait_rail_layout
         && !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)
@@ -277,7 +290,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             .reader
             .as_ref()
             .is_some_and(chat::reader::Reader::awaits_history_width)
-            || s.tool_diff_preferences.history_width() > 0.0)
+            || history_width > 0.0)
         && chat::reader::renderer_ready(s, tx);
     let mut changed = gesture | chat | restored | transcript_state::Display::poll(s, chat, now, tx);
     changed |= chat::ToolDiffPreferences::sync_focused_agent_control(s, tx.focused());

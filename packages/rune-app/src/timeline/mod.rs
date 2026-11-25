@@ -15,7 +15,7 @@ pub(crate) use navigation::{
 pub(crate) use preview::{ExcerptCache, window_layout as preview_window_layout};
 pub(crate) use preview::{dismiss as dismiss_preview, overlay as preview_overlay};
 pub(crate) use reading_line::watch as watch_block;
-pub(crate) use view::{observe_history_scroll, observe_history_wheel, poll_edge, view};
+pub(crate) use view::{notice_key, observe_history_scroll, observe_history_wheel, poll_edge, view};
 
 use crate::{State, backend::Backend, platform, transport::Event};
 use codenomad_client::{
@@ -268,6 +268,33 @@ pub(crate) fn demanded(s: &State) -> bool {
     conversation_shown(s)
         && crate::settings::show_timeline(s)
         && rune_theme_codenomad::timeline::fits(t.width)
+}
+
+pub(crate) fn rail_layout_pending(s: &State, history_w: f32) -> bool {
+    if !history_w.is_finite() || history_w <= 0.0 || !conversation_shown(s) {
+        return false;
+    }
+    let t = &s.transcript_display.timeline;
+    let enabled = crate::settings::show_timeline(s);
+    let container_w = if t.width.is_finite() && t.width > 0.0 {
+        t.width
+    } else {
+        history_w
+    };
+    let rail_should_mount = enabled
+        && rune_theme_codenomad::timeline::fits(container_w)
+        && (t.has_raw_markers || !t.markers.is_empty());
+    if enabled
+        && rune_theme_codenomad::timeline::fits(history_w)
+        && (!rune_theme_codenomad::timeline::fits(t.width)
+            || ((!t.visible || t.changed) && !s.messages.is_empty()))
+    {
+        return true;
+    }
+    if rail_should_mount && history_w >= container_w - 1.0 {
+        return true;
+    }
+    !rail_should_mount && t.width.is_finite() && t.width > 0.0 && history_w < t.width - 1.0
 }
 
 fn reproject(s: &mut State) -> bool {

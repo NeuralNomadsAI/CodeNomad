@@ -459,7 +459,9 @@ fn drain_chat(
                 }
             }
             Event::Text(id, event) => {
+                let mut touched = false;
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
+                    touched = true;
                     let new_text = matches!(&event, content::TextEvent::Delta { text, .. } if !text.trim().is_empty())
                         && m.parts
                             .iter()
@@ -477,8 +479,16 @@ fn drain_chat(
                         crate::timeline::structure_changed(s);
                     }
                 }
+                if touched && let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
+                }
             }
             Event::Reasoning(id, event) => {
+                if s.messages.iter().any(|m| m.id == id)
+                    && let Some(reader) = &mut s.reader
+                {
+                    reader.clear_sync_undo();
+                }
                 let changed = chat::anchors::reasoning_changed(&s.messages, &id, &event);
                 content::apply_reasoning(&mut s.messages, &id, &event);
                 if changed {
@@ -486,15 +496,21 @@ fn drain_chat(
                 }
             }
             Event::StepUsage(id, usage) => {
+                let mut touched = false;
                 if let Some(row) = s
                     .messages
                     .iter_mut()
                     .find(|row| row.id == id && !row.completed)
                 {
+                    touched = true;
                     std::sync::Arc::make_mut(row).usage = Some(usage);
+                }
+                if touched && let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
                 }
             }
             Event::Tool(id, tool) => {
+                let mut touched = false;
                 if let Some(row) = s.messages.iter_mut().find(|row| {
                     row.id == id
                         && (!row.completed
@@ -511,11 +527,15 @@ fn drain_chat(
                                     )
                                 })))
                 }) {
+                    touched = true;
                     let inserted = !row.parts.iter().any(|part| matches!(part, content::Part::Tool(existing) if existing.id == tool.id));
                     content::install_tool(std::sync::Arc::make_mut(row), tool);
                     if inserted {
                         crate::timeline::structure_changed(s);
                     }
+                }
+                if touched && let Some(reader) = &mut s.reader {
+                    reader.clear_sync_undo();
                 }
             }
             Event::Done => s.phase = Phase::Ready,

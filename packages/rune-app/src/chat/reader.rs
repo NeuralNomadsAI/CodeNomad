@@ -365,6 +365,10 @@ impl Reader {
         self.resume_pending || self.pending_scroll || self.hidden
     }
 
+    pub(crate) fn has_pending_scroll(&self) -> bool {
+        self.pending_scroll
+    }
+
     pub(crate) fn awaits_history_width(&self) -> bool {
         self.pending_scroll && self.bookmark_width > 0.0
     }
@@ -434,10 +438,11 @@ impl Reader {
             self.resume_manual_seq = None;
             *revision += 1;
             reading.apply_restored(&self.bookmark, *revision, width_grew);
-            let restore = reading
-                .rescue_target_if_evicted(messages, history_bounds)
-                .unwrap_or_else(|| self.bookmark.clone());
-            reading.arm_frame_restore_for(&restore, had_manual_scroll);
+            let rescued = reading.rescue_target_if_evicted(messages, history_bounds);
+            let restore = rescued.clone().unwrap_or_else(|| self.bookmark.clone());
+            if rescued.is_none() {
+                reading.arm_frame_restore_for(&restore, had_manual_scroll);
+            }
             reading.note_programmatic_scroll();
             Reading::restore(&restore, tx);
             return true;
@@ -1540,12 +1545,9 @@ mod resume_tests {
                 "fast post-rotation resume must wait for history width and rescue huge-fast-resume",
             )
             .rect;
-        // Frame 1 clamps at 844px (~24px visible); frame 2 mounts the 40px timeline rail (804px),
-        // wrapping ~45px more tail below the anchored top offset.
-        let visible = (wide[1] + wide[3]) - history[1];
         assert!(
-            wide[1] < history[1] && (20.0..=80.0).contains(&visible),
-            "fast post-rotation resume must rescue and clamp huge-fast-resume in view: visible={visible}, wide={wide:?}, history={history:?}"
+            wide[1] < history[1] && ((wide[1] + wide[3]) - (history[1] + 24.0)).abs() <= 4.0,
+            "fast post-rotation resume must rescue and clamp huge-fast-resume to ~24px visible: wide={wide:?}, history={history:?}"
         );
     }
 
@@ -3191,5 +3193,119 @@ mod resume_tests {
                 "zero-inertia touch pan concurrent with {label} during resume_pending must not jump back to sync-20: got {pan_top}"
             );
         }
+    }
+
+    #[test]
+    fn live_text_delta_after_trimmed_reader_sync_clears_sync_undo() {
+        let make_rows = |prefix: &str, range: std::ops::Range<usize>| -> Vec<crate::history::Row> {
+            range
+                .map(|i| {
+                    crate::Message {
+                        usage: None,
+                        id: format!("delta-{i:02}"),
+                        role: "assistant".into(),
+                        completed: i != 20,
+                        body: format!(
+                            "{prefix} {i:02} line one.\nRow {i:02} line two.\nRow {i:02} line three."
+                        ),
+                        parts: vec![],
+                    }
+                    .into()
+                })
+                .collect()
+        };
+        let mut s = init();
+        s.phase = Phase::Streaming;
+        s.messages = make_rows("Full", 0..40);
+        let (reader, lane) = Reader::open();
+        s.reader = Some(reader);
+        let mut rt = Runtime::new(s, crate::view, (390.0, 420.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        rt.update(|_, tx| {
+            tx.instant();
+            tx.scroll_key_to("delta-20", 0.0);
+        });
+        for _ in 0..25 {
+            rt.frame(0.02);
+        }
+        rt.update(|s, tx| {
+            suspend(s);
+            resume(s, tx);
+        });
+        let g = rt.state.reader.as_ref().unwrap().generation;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        let h_rect = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect;
+        let (wx, wy) = (h_rect[0] + h_rect[2] / 2.0, h_rect[1] + h_rect[3] / 2.0);
+        // Send trimmed ReaderSync [16..26] (which records sync_undo), then a live Text delta
+        // on delta-20 in the same consumption frame before the wheel handler runs.
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::ReaderSync {
+                    page: crate::history::Page {
+                        rows: make_rows("Trim", 16..26),
+                        older: Some(serde_json::json!("older-delta")),
+                        newer: Some(serde_json::json!("newer-delta")),
+                        running: true,
+                        user_file_references: false,
+                    },
+                    version: 1,
+                },
+            ))
+            .unwrap();
+        rt.frame(0.02);
+        assert!(rt.state.reader.as_ref().unwrap().has_deferred_sync());
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::Text(
+                    "delta-20".into(),
+                    crate::content::TextEvent::Start { ordinal: Some(0) },
+                ),
+            ))
+            .unwrap();
+        lane.events
+            .try_send((
+                g,
+                0,
+                Event::Text(
+                    "delta-20".into(),
+                    crate::content::TextEvent::Delta {
+                        ordinal: Some(0),
+                        text: "STREAMED_TOKEN".into(),
+                    },
+                ),
+            ))
+            .unwrap();
+        rt.wheel_event(rune::WheelEvent::new(0.0, 360.0).at(wx, wy));
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let row20 = rt
+            .state
+            .messages
+            .iter()
+            .find(|r| r.id == "delta-20")
+            .expect("delta-20 must stay mounted in trimmed window");
+        let has_token = row20.parts.iter().any(
+            |p| matches!(p, crate::content::Part::Text(t) if t.text.contains("STREAMED_TOKEN")),
+        );
+        assert!(
+            has_token,
+            "live Text delta after trimmed ReaderSync must clear sync_undo and never be dropped by wheel rollback: parts={:?}",
+            row20.parts
+        );
     }
 }

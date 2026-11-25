@@ -59,7 +59,7 @@ export async function launchWeb({
     state.deviceLease=androidLease(androidDevice(androidEnv),uiOrigin)
     await state.deviceLease.open()
   }
-  const launch=webMobile?spawn:spawnFixtureChild
+  const launch=(webMobile||webKeyboard)?spawn:spawnFixtureChild
   const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile||webKeyboard?['ipc']:[])]})
   state.client=client
   if(webKeyboard)client.on('message',action=>{

@@ -173,20 +173,15 @@ fn point_in_rect(rect: [f32; 4], x: f32, y: f32) -> bool {
         && y <= rect[1] + rect[3]
 }
 
-fn scroll(s: &State, el: El, rail: bool) -> El {
+fn rail_scroll(s: &State, el: El) -> El {
     let scroll = s.transcript_display.timeline.scroll.clone();
     let wheel_scroll = scroll.clone();
     let rail_bounds = s.transcript_display.timeline.rail_bounds.0.clone();
     let wake = s.wake.clone();
     let scope = s.input_scope.clone();
-    let el = if rail {
-        el.drawn_rect_into(&rail_bounds)
-    } else {
-        el
-    };
-    el.on_wheel(move |s: &mut State, event, tx| {
-        if s.current_scope(&scope) {
-            if rail {
+    el.drawn_rect_into(&rail_bounds)
+        .on_wheel(move |s: &mut State, event, tx| {
+            if s.current_scope(&scope) {
                 let mut state = wheel_scroll.get();
                 let rail_rect = rail_bounds.get();
                 let has_rail_rect = rail_rect[2] > 0.0 && rail_rect[3] > 0.0;
@@ -295,40 +290,15 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
                 if taken {
                     return true;
                 }
-            } else {
-                let mut state = wheel_scroll.get();
-                state.rail_wheel.note_phase(event.phase, tx);
-                state.transcript_wheel_momentum = false;
-                state.last_hand_rail = false;
-                if event.dy != 0.0 {
-                    state.wheel_last_rail = Some(false);
-                }
-                wheel_scroll.set(state);
-                super::navigation::hand_scrolled(s, false);
-                if event.dy != 0.0 && event.dy.abs() > event.dx.abs() {
-                    let direction = if event.dy > 0.0 { Before } else { After };
-                    turn_page_gesture(s, direction);
-                    if !s.history_error
-                        && !event.momentum
-                        && let Some(edge) = boundary(wheel_scroll.get().viewport, -event.dy)
-                        && crate::chat::reader::request_page(s, edge)
-                    {
-                        crate::chat::reader::announce_paging(tx);
-                    }
-                }
             }
-        }
-        false
-    })
-    .on_scroll_offset(move |at| {
-        let mut gesture = scroll.get();
-        let previous = gesture.viewport;
-        let moved = rail && gesture.at != at;
-        let programmatic = rail
-            && gesture.programmatic_rail.take().is_some_and(|target| {
+            false
+        })
+        .on_scroll_offset(move |at| {
+            let mut gesture = scroll.get();
+            let moved = gesture.at != at;
+            let programmatic = gesture.programmatic_rail.take().is_some_and(|target| {
                 (at.offset[1] - target.clamp(0.0, at.max[1].max(0.0))).abs() <= 0.5
             });
-        let forwarded_momentum = if rail {
             gesture.rail_wheel.clear_frame();
             gesture.at = at;
             if let Some(aim) = gesture.rail_glide {
@@ -342,50 +312,41 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
                     gesture.rail_glide_stalled = 0;
                 }
             }
-            false
-        } else {
-            gesture.transcript_wheel_target = None;
-            gesture.viewport = at;
-            std::mem::take(&mut gesture.transcript_wheel_momentum)
-        };
-        let user_moved = if rail {
-            timeline::rail_scrolled() && !programmatic
-        } else {
-            timeline::user_scrolled()
-        };
-        if rail {
+            let user_moved = timeline::rail_scrolled() && !programmatic;
             if user_moved {
                 if gesture.rail_glide.take().is_some() {
                     gesture.rail_glide_stalled = 0;
                     gesture.rail_glide_interrupted = true;
                 }
+                gesture.last_hand_rail = true;
+                gesture.rail = gesture.rail.wrapping_add(1);
+                wake();
             } else if gesture.rail_glide_interrupted && !programmatic {
                 gesture.rail_glide_interrupted = false;
                 gesture.halt_rail_glide = true;
                 wake();
             }
-        }
-        if user_moved {
-            gesture.last_hand_rail = rail;
-            let epoch = if rail {
-                &mut gesture.rail
-            } else {
-                &mut gesture.transcript
-            };
-            *epoch = epoch.wrapping_add(1);
-            if !rail && let Some(delta) = directed_delta(previous, at) {
-                gesture.direction = Some(if delta < 0.0 { Before } else { After });
-                if !forwarded_momentum {
-                    gesture.edge = boundary(at, delta);
-                }
+            scroll.set(gesture);
+            if moved {
+                wake();
             }
-            wake();
-        }
-        scroll.set(gesture);
-        if moved {
-            wake();
-        }
-    })
+        })
+}
+
+pub(crate) fn notice_key(s: &State) -> Option<&'static str> {
+    if !super::conversation_shown(s) {
+        return None;
+    }
+    let t = &s.transcript_display.timeline;
+    if t.jump.filtered && !super::search::is_open(s) {
+        Some("timeline-destination-filtered")
+    } else if t.jump.retry.is_some() {
+        Some("timeline-jump-retry")
+    } else if super::demanded(s) && t.outline_error && t.scan.is_none() {
+        Some("timeline-outline-retry")
+    } else {
+        None
+    }
 }
 
 pub(crate) fn view(
@@ -444,41 +405,39 @@ pub(crate) fn view(
             },
         )
     {
-        area = area.child(timeline::rail_slot(scroll(s, rail, true)));
+        area = area.child(timeline::rail_slot(rail_scroll(s, rail)));
     }
-    let notice = if t.jump.filtered && !super::search::is_open(s) {
-        Some(
+    let notice = match notice_key(s) {
+        Some("timeline-destination-filtered") => Some(
             rune::text(crate::strings::t("history.destinationFiltered"))
                 .key("timeline-destination-filtered")
                 .role("alert")
                 .wrap(),
-        )
-    } else {
-        let retry = if t.jump.retry.is_some() {
-            Some((
-                "timeline-jump-retry",
-                "history.sessionUnavailable",
-                super::navigation::retry as fn(&mut State, &mut rune::Tx),
-            ))
-        } else if super::demanded(s) && t.outline_error && t.scan.is_none() {
-            Some((
-                "timeline-outline-retry",
-                "history.navigation.outlineUnavailable",
-                retry_outline as fn(&mut State, &mut rune::Tx),
-            ))
-        } else {
-            None
-        };
-        retry.map(|(key, label, action)| {
-            layout::action_row()
-                .key(key)
-                .child(rune::text(crate::strings::t(label)))
-                .child(layout::button_tx(
-                    crate::strings::t("messageSection.search.retry"),
-                    false,
-                    screen::action_tx(&s.input_scope, action),
-                ))
-        })
+        ),
+        Some(key) => {
+            let (label, action) = if key == "timeline-jump-retry" {
+                (
+                    "history.sessionUnavailable",
+                    super::navigation::retry as fn(&mut State, &mut rune::Tx),
+                )
+            } else {
+                (
+                    "history.navigation.outlineUnavailable",
+                    retry_outline as fn(&mut State, &mut rune::Tx),
+                )
+            };
+            Some(
+                layout::action_row()
+                    .key(key)
+                    .child(rune::text(crate::strings::t(label)))
+                    .child(layout::button_tx(
+                        crate::strings::t("messageSection.search.retry"),
+                        false,
+                        screen::action_tx(&s.input_scope, action),
+                    )),
+            )
+        }
+        None => None,
     };
     timeline::panel(layout, notice, area)
 }

@@ -23,7 +23,9 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         )
     });
     let restore: Vec<El> = super::message_actions::restore(s).collect();
-    let has_restore = !restore.is_empty();
+    let has_restore = s.transcript_display.messages.has_restore();
+    let has_restore_error = s.transcript_display.messages.has_error();
+    let timeline_notice = crate::timeline::notice_key(s);
     let layout = rune_theme_codenomad::interruption::session_layout(
         cx,
         expanded,
@@ -31,6 +33,8 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         s.attachments.error,
         has_controls,
         has_restore,
+        has_restore_error,
+        timeline_notice,
         reference_height,
     );
     let (more, menu) = composer::menu::view(s);

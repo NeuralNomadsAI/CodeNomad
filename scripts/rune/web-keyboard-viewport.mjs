@@ -12,6 +12,7 @@ export async function keyboardViewport(page, m, {kind, prefix, heading, headerHe
   const shrink = landscape ? 145 : Math.min(330, original.height - 420)
   const short = {...original, height: original.height - shrink}
   const composer = mirror.getByRole('group', {name: m['rune.prompt'], exact: true})
+  const controls = button('transcriptFilters.title')
   const historyRegion = mirror.getByRole('region', {name: m['settings.voice.conversation.title'], exact: true})
   const send = button('promptInput.overlay.send')
   const actionKeys = kind === 'permission'
@@ -146,13 +147,22 @@ export async function keyboardViewport(page, m, {kind, prefix, heading, headerHe
   const scrollHistoryToTopOfStack = async () => {
     for (let i = 0; i < 16; i++) {
       const {top: paneTop} = await paneGeometry()
-      const historyBox = await historyRegion.boundingBox()
-      if (historyBox && historyBox.y >= paneTop - 1.5) break
+      const controlsBox = await controls.count() > 0 ? await controls.boundingBox().catch(() => null) : null
+      const topBox = controlsBox ?? await historyRegion.boundingBox()
+      if (topBox && topBox.y >= paneTop - 1.5) break
       await wheelStack(-180)
     }
     const view = await visiblePassages()
-    assert(Math.abs(view.historyBox.y - view.paneTop) <= 1.5,
-      `${kind}: outer session-stack must return to top before reading check: historyTop=${view.historyBox.y}, paneTop=${view.paneTop}`)
+    const controlsBox = await controls.count() > 0 ? await controls.boundingBox().catch(() => null) : null
+    if (controlsBox) {
+      assert(Math.abs(controlsBox.y - view.paneTop) <= 1.5,
+        `${kind}: outer session-stack must return to top before reading check: controlsTop=${controlsBox.y}, paneTop=${view.paneTop}`)
+      assert(Math.abs(view.historyBox.y - (controlsBox.y + controlsBox.height)) <= 1.5,
+        `${kind}: history must sit immediately below transcript controls: historyTop=${view.historyBox.y}, controlsBottom=${controlsBox.y + controlsBox.height}`)
+    } else {
+      assert(Math.abs(view.historyBox.y - view.paneTop) <= 1.5,
+        `${kind}: outer session-stack must return to top before reading check: historyTop=${view.historyBox.y}, paneTop=${view.paneTop}`)
+    }
     return view.items
   }
   const watchFocusLoss = (expectedLabel, expectedValue, requireNonEmptySelection = false) => page.evaluate(({label, value, requireSel}) => {
@@ -361,12 +371,13 @@ export async function keyboardViewport(page, m, {kind, prefix, heading, headerHe
 
   // Scroll the transcript up to a non-tail passage whose lower body sits inside the short reserve.
   let beforeList = await scrollHistoryToTopOfStack()
-  const {x, top} = await paneGeometry()
   const pickAnchor = list => list.find(item => item.index > 0 && item.index <= 26 && item.top <= 0.5 && item.bottom >= 12)
   let scrolledUp = false
   for (let i = 0; i < 16; i++) {
     if (scrolledUp && pickAnchor(beforeList)) break
-    await page.mouse.move(x, top + 28)
+    const histBox = await historyRegion.boundingBox()
+    assert(histBox && histBox.height > 4, `${kind}: missing history region box before wheel`)
+    await page.mouse.move(histBox.x + histBox.width / 2, histBox.y + Math.min(28, histBox.height / 2))
     await page.mouse.wheel(0, -180)
     scrolledUp = true
     await flushMirror()

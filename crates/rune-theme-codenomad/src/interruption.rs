@@ -57,15 +57,8 @@ fn composer_minimum_for_viewport(visible: f32) -> f32 {
     })
 }
 
-fn scrolled_history_min(stack_h: f32, top_chrome: f32, touch_handle: f32) -> f32 {
-    let avail = (stack_h - top_chrome).max(0.0);
-    if avail > touch_handle {
-        TRANSCRIPT_RESERVE.min(avail - touch_handle)
-    } else if top_chrome >= touch_handle - 4.0 {
-        avail.min(TRANSCRIPT_RESERVE)
-    } else {
-        0.0
-    }
+fn scrolled_history_min(stack_h: f32, touch_handle: f32) -> f32 {
+    (stack_h - touch_handle).clamp(0.0, TRANSCRIPT_RESERVE)
 }
 
 fn non_expanded_layout(
@@ -83,7 +76,7 @@ fn non_expanded_layout(
     SessionLayout {
         scroll_stack,
         history_min: if scroll_stack {
-            scrolled_history_min(stack_h, top_chrome, touch_handle)
+            scrolled_history_min(stack_h, touch_handle)
         } else {
             (field_space - composer_max).clamp(0.0, reserve)
         },
@@ -99,10 +92,13 @@ pub fn session_layout<S>(
     has_attachment_error: bool,
     has_controls: bool,
     has_restore: bool,
+    has_restore_error: bool,
+    timeline_notice: Option<&str>,
     reference_height: Option<f32>,
 ) -> SessionLayout {
     let t = tokens(layout::dark());
     let control = t.metric("button", "minHeight").px();
+    let line = t.text(TextRole::Body).line_px();
     let stack_h = cx
         .layout_size("session-stack")
         .and_then(|size| finite_positive(size[1]));
@@ -120,14 +116,24 @@ pub fn session_layout<S>(
     } else {
         0.0
     };
-    let top_chrome = controls_h + restore_h;
+    let restore_error_h = if has_restore_error {
+        measured(cx, "message-action-error", line)
+    } else {
+        0.0
+    };
+    let notice_h = match timeline_notice {
+        Some("timeline-destination-filtered") => {
+            measured(cx, "timeline-destination-filtered", line)
+        }
+        Some(key) => measured(cx, key, control),
+        None => 0.0,
+    };
+    let top_chrome = controls_h + restore_h + restore_error_h + notice_h;
     if expanded {
         let composer_h = viewport_h.map_or(MIN_COMPOSER_HEIGHT, composer_minimum_for_viewport);
         return SessionLayout {
             scroll_stack: true,
-            history_min: stack_h.map_or(TRANSCRIPT_RESERVE, |h| {
-                scrolled_history_min(h, top_chrome, control)
-            }),
+            history_min: stack_h.map_or(TRANSCRIPT_RESERVE, |h| scrolled_history_min(h, control)),
             composer_min: composer_h,
             composer_max: composer_h,
         };
@@ -312,11 +318,21 @@ mod tests {
         // matching Solid min(60% of 410 = 246 px, 45% of 844 = 379.8 px) = 246 px.
         assert!((dock_bound(410.0, 844.0, 120.0) - 246.0).abs() < 0.01);
         assert!((dock_bound(410.0, 514.0, 120.0) - 231.3).abs() < 0.01);
-        assert_eq!(scrolled_history_min(56.0, 0.0, 27.0), 29.0);
-        assert_eq!(scrolled_history_min(20.0, 0.0, 27.0), 0.0);
-        assert_eq!(scrolled_history_min(111.0, 0.0, 27.0), 64.0);
-        assert_eq!(scrolled_history_min(56.0, 24.0, 27.0), 5.0);
-        assert_eq!(scrolled_history_min(40.0, 24.0, 27.0), 16.0);
+        assert_eq!(scrolled_history_min(56.0, 27.0), 29.0);
+        assert_eq!(scrolled_history_min(20.0, 27.0), 0.0);
+        assert_eq!(scrolled_history_min(111.0, 27.0), 64.0);
+        assert_eq!(scrolled_history_min(40.0, 27.0), 13.0);
+        for touch_handle in [24.0_f32, 27.0, 28.0] {
+            for stack_h in 0..140 {
+                let a = scrolled_history_min(stack_h as f32, touch_handle);
+                let b = scrolled_history_min((stack_h + 1) as f32, touch_handle);
+                assert!(
+                    b >= a && (b - a) <= 1.0 + f32::EPSILON,
+                    "scrolled_history_min must be monotonic and continuous: touch_handle={touch_handle}, {stack_h}->{}: {a}->{b}",
+                    stack_h + 1
+                );
+            }
+        }
         // Without an active interruption, Rune applies the same fieldSpace < 44 crowding rule on
         // any tight viewport (including Chrome Android resizes-content and compact desktop windows,
         // whereas Solid limits fieldSpace crowding to coarse-pointer visualViewport occlusion),

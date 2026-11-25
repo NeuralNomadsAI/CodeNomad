@@ -997,14 +997,21 @@ fn ultra_short_touch_drag_reaches_permission_and_shallow_height_only_resize_neve
         stack[3] <= 64.0 && stack[3] >= 54.0,
         "expected ultra-short stack ~56px (<= 64px), got {stack:?}"
     );
+    let top_strip = (history[1] - stack[1]).max(0.0);
+    let bottom_strip = (stack[1] + stack[3] - (history[1] + history[3])).max(0.0);
     assert!(
-        history[3] > 0.0 && history[1] + history[3] <= stack[1] + stack[3] - 24.0,
-        "history must leave a touch-draggable chrome strip below it: stack={stack:?}, history={history:?}"
+        history[3] > 0.0 && top_strip + bottom_strip >= 24.0,
+        "history must leave a touch-draggable chrome strip in session-stack: stack={stack:?}, history={history:?}, top_strip={top_strip}, bottom_strip={bottom_strip}"
     );
-    // A real touch drag starting on the exposed strip below history must scroll session-stack down to reject.
+    // A real touch drag starting on the exposed non-history strip (top controls or bottom strip)
+    // must scroll session-stack down to reject.
     let start_x = stack[0] + stack[2] * 0.5;
-    let start_y = stack[1] + stack[3] - 6.0;
-    assert!(start_y > history[1] + history[3]);
+    let start_y = if bottom_strip >= 12.0 {
+        stack[1] + stack[3] - 6.0
+    } else {
+        stack[1] + (top_strip * 0.5).max(6.0)
+    };
+    assert!(start_y < history[1] || start_y > history[1] + history[3]);
     let mut t = 1.0;
     let mut reached_reject = false;
     rt.touch(1, TouchPhase::Started, start_x, start_y, t);
