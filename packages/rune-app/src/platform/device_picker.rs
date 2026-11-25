@@ -14,7 +14,46 @@ pub enum Source {
     Path(std::path::PathBuf),
     #[cfg(target_arch = "wasm32")]
     File(web_sys::File),
+    #[cfg(target_arch = "wasm32")]
+    WebFile(rune::clipboard::WebFile),
     Png(rune::clipboard::ClipboardImage),
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn web_file_metadata(name: &str, mime: &str) -> (String, String) {
+    let mime = if mime.is_empty() {
+        "application/octet-stream"
+    } else {
+        mime
+    };
+    let name = if !name.is_empty() {
+        name
+    } else if mime == "image/png" {
+        "clipboard.png"
+    } else {
+        "attachment"
+    };
+    (name.into(), mime.into())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn web_files_keep_text(
+    file_count: usize,
+    first_mime: Option<&str>,
+    has_image: bool,
+    has_text: bool,
+) -> bool {
+    has_image && has_text && file_count == 1 && first_mime == Some("image/png")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn web_file_offer(file: &rune::clipboard::WebFile) -> Offer {
+    let (name, mime) = web_file_metadata(file.name(), file.mime());
+    Offer {
+        name,
+        mime,
+        source: Source::WebFile(file.clone()),
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -36,6 +75,17 @@ pub fn paste(s: &mut State, content: &rune::clipboard::ClipboardContent) -> bool
     if !content.files().is_empty() {
         drop_files(s, content.files());
         return true;
+    }
+    #[cfg(target_arch = "wasm32")]
+    if !content.web_files().is_empty() {
+        let files = content.web_files();
+        device::enqueue(s, files.iter().take(MAX_FILES + 1).map(web_file_offer));
+        return !web_files_keep_text(
+            files.len(),
+            files.first().map(|file| file.mime()),
+            content.image().is_some(),
+            !content.text().is_empty(),
+        );
     }
     let Some(image) = content.image() else {
         return false;
@@ -111,17 +161,29 @@ pub async fn read(source: &Source, limit: usize) -> Result<Arc<[u8]>, Error> {
         Source::Png(image) if image.png().len() <= limit => Ok(image.png().into()),
         Source::Png(_) => Err(Error::Limit),
         #[cfg(target_arch = "wasm32")]
+        Source::WebFile(file) => {
+            let over = if limit == MAX_FILE {
+                Error::TooLarge
+            } else {
+                Error::Limit
+            };
+            let js = file.js_file().ok_or(Error::Unreadable)?;
+            if js_file_size(&js)? > limit as f64 {
+                return Err(over);
+            }
+            file.read(limit)
+                .await
+                .map(Arc::from)
+                .ok_or(Error::Unreadable)
+        }
+        #[cfg(target_arch = "wasm32")]
         Source::File(file) => {
             let over = if limit == MAX_FILE {
                 Error::TooLarge
             } else {
                 Error::Limit
             };
-            let length = js_sys::Reflect::get(file, &wasm_bindgen::JsValue::from_str("size"))
-                .ok()
-                .and_then(|value| value.as_f64())
-                .ok_or(Error::Unreadable)?;
-            if length > limit as f64 {
+            if js_file_size(file)? > limit as f64 {
                 return Err(over);
             }
             let buffer = wasm_bindgen_futures::JsFuture::from(file.array_buffer())
@@ -134,6 +196,14 @@ pub async fn read(source: &Source, limit: usize) -> Result<Arc<[u8]>, Error> {
             Ok(bytes.to_vec().into())
         }
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn js_file_size(file: &wasm_bindgen::JsValue) -> Result<f64, Error> {
+    js_sys::Reflect::get(file, &wasm_bindgen::JsValue::from_str("size"))
+        .ok()
+        .and_then(|value| value.as_f64())
+        .ok_or(Error::Unreadable)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -227,5 +297,39 @@ impl Drop for Choice {
             .input
             .remove_event_listener_with_callback("cancel", self.cancel.as_ref().unchecked_ref());
         self.input.remove();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_file_metadata_preserves_names_and_normalizes_empty_fields() {
+        assert_eq!(
+            web_file_metadata("capture.png", "image/png"),
+            ("capture.png".into(), "image/png".into())
+        );
+        assert_eq!(
+            web_file_metadata("", "image/png"),
+            ("clipboard.png".into(), "image/png".into())
+        );
+        assert_eq!(
+            web_file_metadata("", ""),
+            ("attachment".into(), "application/octet-stream".into())
+        );
+        assert_eq!(
+            web_file_metadata("notes.txt", ""),
+            ("notes.txt".into(), "application/octet-stream".into())
+        );
+    }
+
+    #[test]
+    fn web_files_keep_text_only_for_a_single_pasted_png_with_text() {
+        assert!(web_files_keep_text(1, Some("image/png"), true, true));
+        assert!(!web_files_keep_text(1, Some("image/png"), true, false));
+        assert!(!web_files_keep_text(2, Some("image/png"), true, true));
+        assert!(!web_files_keep_text(1, Some("text/plain"), false, true));
+        assert!(!web_files_keep_text(1, Some(""), false, true));
     }
 }

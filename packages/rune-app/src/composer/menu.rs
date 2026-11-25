@@ -8,8 +8,6 @@ use rune_theme_codenomad::{
 use std::rc::Rc;
 
 const KEY: &str = "composer-more";
-// The native menu tree carries the role and disabled rows. Rune's web projection
-// tracks these missing semantics in https://github.com/anomalyco/rune/issues/1677.
 
 fn state(s: &mut State) -> Option<&mut action_menu::State<State>> {
     (!s.screen.is_launcher()).then_some(&mut s.composer.menu)
@@ -129,8 +127,7 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
                 super::shortcuts::Action::NextPrompt
             }
             .label(s);
-            // Keep editor focus in the selecting gesture. Mouse release in Rune's web
-            // host updates the editing proxy without activating it (Rune #1713).
+            // Keep editor focus in the selecting gesture.
             item.select_before_close = true;
             Rc::new(item)
         }));
@@ -292,6 +289,21 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|state| state == "disabled")
+        );
+        let mirror: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+        assert!(
+            mirror
+                .iter()
+                .any(|entry| entry["o"] == "menu" && entry["t"] == t("messageItem.actions.more")),
+            "{}",
+            rt.a11y_json()
+        );
+        assert!(
+            mirror.iter().any(|entry| entry["o"] == "menuitem"
+                && entry["t"] == t("promptInput.send.queueAriaLabel")
+                && entry["dis"] == true),
+            "{}",
+            rt.a11y_json()
         );
     }
 }

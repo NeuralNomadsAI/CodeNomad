@@ -67,32 +67,19 @@ fn any_editor_composing(s: &State) -> bool {
         })
 }
 
-fn focused_text_field(s: &State, tx: &Tx) -> bool {
-    let focused = tx.focused();
+fn focused_text_field(tx: &Tx) -> bool {
     // Every rune-kit TextInput/TextArea focuses its inner "input" leaf (file-editor included).
-    if matches!(focused, Some("input" | "file-editor")) {
-        return true;
-    }
-    #[cfg(target_arch = "wasm32")]
-    if focused
-        .and_then(|key| key.strip_prefix("input-"))
-        .is_some_and(|epoch| epoch.parse().ok() == Some(s.web_composer_input_epoch))
-    {
-        return true;
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = s;
-    false
+    matches!(tx.focused(), Some("input" | "file-editor"))
 }
 
-pub(super) fn field_key_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
+pub(super) fn field_key_blocked(event: &KeyEvent, tx: &Tx) -> bool {
     let no_command_mod = !event.mods.ctrl && !event.mods.cmd && !event.mods.alt && !event.mods.logo;
     let is_field_nav = matches!(
         event.key,
         Key::PageUp | Key::PageDown | Key::Insert | Key::ContextMenu
     );
     let is_context_menu = event.mods.shift && event.key == Key::Function(10);
-    no_command_mod && (is_field_nav || is_context_menu) && focused_text_field(s, tx)
+    no_command_mod && (is_field_nav || is_context_menu) && focused_text_field(tx)
 }
 
 fn authentication_required(s: &State) -> bool {
@@ -122,7 +109,7 @@ fn home_focus_allows_browse(tx: &Tx) -> bool {
 fn can_browse_home(s: &State, tx: &Tx) -> bool {
     crate::platform::folder_picker_available()
         && launcher_replaces_project(s)
-        && !focused_text_field(s, tx)
+        && !focused_text_field(tx)
         && home_focus_allows_browse(tx)
         && s.screen
             .launcher()
@@ -152,7 +139,7 @@ pub(crate) fn global_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
         || overlay_open(s)
         || any_editor_composing(s)
         || reserved_shell_key(event)
-        || field_key_blocked(s, event, tx)
+        || field_key_blocked(event, tx)
 }
 
 pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {

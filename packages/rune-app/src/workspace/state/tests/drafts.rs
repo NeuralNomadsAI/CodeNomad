@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn a_late_clipboard_read_cannot_attach_to_another_conversation_in_the_same_tab() {
-    use rune::{Mods, PhysicalInput, PhysicalKeyCode, clipboard::ClipboardContent};
+    use rune::{Key, KeyEvent, Mods, clipboard::ClipboardContent};
     let mut s = init();
     let mut ui = Ui::new();
     ui.ready = true;
@@ -15,17 +15,13 @@ fn a_late_clipboard_read_cannot_attach_to_another_conversation_in_the_same_tab()
     let mut rt = runtime(s);
     rt.update(|_, tx| tx.focus("composer", false));
     let paste = |rt: &mut rune::Runtime<State>| {
-        rt.physical_input(PhysicalInput::Key {
-            key: PhysicalKeyCode::KeyV,
+        rt.key(KeyEvent {
+            key: Key::Command('v'),
             mods: Mods {
                 cmd: true,
                 ctrl: !cfg!(target_os = "macos"),
                 ..Mods::default()
             },
-            pressed: true,
-            repeat: false,
-            text: None,
-            consumed_mods: Mods::default(),
         });
         rt.frame(0.0);
     };

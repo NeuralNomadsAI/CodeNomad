@@ -9,7 +9,13 @@ use rune_theme_codenomad::{
 pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
     let scope = s.input_scope.clone();
     let stop = s.phase == Phase::Streaming && s.agent.is_some();
-    let editor = editor(s, compact);
+    let send_button = layout::button_tx(
+        t("promptInput.overlay.send"),
+        !can_send(s),
+        screen::action_tx(&scope, |s, tx| send(s, tx, false)),
+    )
+    .key("send");
+    let editor = editor(s, compact, send_button);
     let retry = s.reader.as_ref().is_some_and(|reader| reader.can_retry());
     let mut actions = layout::action_row()
         .children(worktree)
@@ -63,15 +69,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
             false,
             screen::action_tx(&scope, crate::latest),
         ))
-        .child(more)
-        .child(
-            layout::button_tx(
-                t("promptInput.overlay.send"),
-                !can_send(s),
-                screen::action_tx(&scope, |s, tx| send(s, tx, false)),
-            )
-            .key("send"),
-        );
+        .child(more);
     if stop {
         actions = actions.child(
             layout::button(
@@ -86,6 +84,9 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
             .key("composer-stop"),
         );
     }
+    let editor_slot = col().content_direction().child(editor);
+    #[cfg(target_arch = "wasm32")]
+    let editor_slot = editor_slot.key(format!("composer-epoch-{}", s.web_composer_input_epoch));
     let mut body = col()
         .key("session-composer")
         .role("group")
@@ -94,7 +95,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
         .pad(Space::Md)
         .separate(Space::Sm)
         .children(crate::shell::status_permissions::confirmation(s))
-        .child(col().content_direction().child(editor));
+        .child(editor_slot);
     let pasted = std::cell::OnceCell::new();
     let mut attachments = s
         .composer
@@ -215,26 +216,21 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
         )
 }
 
-fn editor(s: &State, compact: bool) -> El {
-    #[cfg(not(target_arch = "wasm32"))]
-    let input_key = "input";
-    #[cfg(target_arch = "wasm32")]
-    let input_key = format!("input-{}", s.web_composer_input_epoch);
-    let input = layout::composer_input(&s.draft, t("promptInput.placeholder.default"))
-        .key(input_key)
-        .label(t("rune.prompt"));
+fn editor(s: &State, compact: bool, trailing: El) -> El {
+    let area = layout::composer_textarea(&s.draft, t("promptInput.placeholder.default"), compact)
+        .label(t("rune.prompt"))
+        .trailing(trailing);
     if s.composer.editing_locked() {
-        return layout::composer_field(input.disabled(true), compact, false).key("composer");
+        return layout::build_composer(area.disabled(true), compact).key("composer");
     }
     let scope = s.input_scope.clone();
     let key_scope = scope.clone();
     let paste_scope = scope.clone();
-    let input = input
+    let copy_scope = scope.clone();
+    let area = area
         .on_edit(screen::edit(&scope, screen::Editor::Composer))
-        .on_input_change(screen::action_tx(&scope, changed))
-        .on_input_key(move |s: &mut State, event, tx| {
-            s.current_scope(&key_scope) && key(s, event, tx)
-        })
+        .on_change(screen::action_tx(&scope, changed))
+        .on_key(move |s: &mut State, event, tx| s.current_scope(&key_scope) && key(s, event, tx))
         .on_input_paste(move |s: &mut State, content, tx| {
             if !s.current_scope(&paste_scope) || s.composer.editing_locked() {
                 return true;
@@ -249,27 +245,30 @@ fn editor(s: &State, compact: bool) -> El {
                 return true;
             }
             super::long_paste::paste(s, content.text(), tx)
+        })
+        .on_input_copy(move |s: &mut State, _cut, _| {
+            if s.current_scope(&copy_scope) {
+                crate::chat::tools::children::note_clipboard_write();
+            }
+            None
         });
     #[cfg(not(target_arch = "wasm32"))]
-    let input = {
-        let physical_scope = scope.clone();
+    let area = {
         let menu_scope = scope.clone();
-        input
-            .on_physical_input(move |s: &mut State, event, tx| {
-                s.current_scope(&physical_scope) && super::clipboard::physical(s, event, tx)
-            })
-            .on_secondary_press(move |s: &mut State, point, tx| {
-                if s.current_scope(&menu_scope) {
-                    super::clipboard::menu(s, (point.x, point.y), tx);
-                }
-            })
-            .on_drop_files(move |s: &mut State, paths, _| {
-                if s.current_scope(&scope) {
-                    platform::device_picker::drop_files(s, paths);
-                }
-            })
+        area.on_secondary_press(move |s: &mut State, point, tx| {
+            if s.current_scope(&menu_scope) {
+                super::clipboard::menu(s, (point.x, point.y), tx);
+            }
+        })
     };
-    layout::composer_field(input, compact, s.draft.focused).key("composer")
+    let field = layout::build_composer(area, compact).key("composer");
+    #[cfg(not(target_arch = "wasm32"))]
+    let field = field.on_drop_files(move |s: &mut State, paths, _| {
+        if s.current_scope(&scope) {
+            platform::device_picker::drop_files(s, paths);
+        }
+    });
+    field
 }
 
 pub fn overlays(s: &State, layer: &mut Vec<El>) {
@@ -368,7 +367,9 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     use super::shortcuts::Action;
     #[cfg(not(target_arch = "wasm32"))]
     if event.edit_command() == Some('v') {
-        super::clipboard::request(s, tx);
+        if !tx.key_repeat() {
+            super::clipboard::request(s, tx);
+        }
         return true;
     }
     if event.key == Key::Enter && s.composer.device.busy() {

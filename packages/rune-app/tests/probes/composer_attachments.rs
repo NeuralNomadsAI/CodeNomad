@@ -1,6 +1,6 @@
 use crate::{Phase, State, content::Part, init, platform, poll, setup, view};
 use rune::{
-    Env, Key, KeyEvent, Mods, PhysicalInput, PhysicalKeyCode, Runtime,
+    Env, Key, KeyEvent, Mods, Runtime,
     clipboard::{ClipboardContent, ClipboardImage},
 };
 use std::time::{Duration, Instant};
@@ -25,17 +25,13 @@ fn enter(rt: &mut Runtime<State>) {
 }
 
 fn paste(rt: &mut Runtime<State>) {
-    rt.physical_input(PhysicalInput::Key {
-        key: PhysicalKeyCode::KeyV,
+    rt.key(KeyEvent {
+        key: Key::Command('v'),
         mods: Mods {
             cmd: true,
             ctrl: !cfg!(target_os = "macos"),
             ..Mods::default()
         },
-        pressed: true,
-        repeat: false,
-        text: None,
-        consumed_mods: Mods::default(),
     });
     rt.frame(0.0);
 }

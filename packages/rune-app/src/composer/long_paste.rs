@@ -134,7 +134,7 @@ pub(super) fn expand(text: String, parts: &[Attachment]) -> Option<(String, Vec<
 mod tests {
     use super::*;
     use crate::composer::{draft::Draft, draft_storage::SavedParts};
-    use rune::{Env, Key, KeyEvent, Mods, PhysicalInput, PhysicalKeyCode, Runtime};
+    use rune::{Env, Key, KeyEvent, Mods, Runtime};
 
     #[test]
     fn native_paste_replaces_the_selection_and_sends_one_inline_expansion() {
@@ -152,17 +152,13 @@ mod tests {
         let text = "first\r\n@./literal [pasted #8]\r\nthird\r\nlast 🦀";
         clipboard.set_text(text);
         rt.use_clipboard(&clipboard);
-        rt.physical_input(PhysicalInput::Key {
-            key: PhysicalKeyCode::KeyV,
+        rt.key(KeyEvent {
+            key: Key::Command('v'),
             mods: Mods {
                 cmd: true,
                 ctrl: !cfg!(target_os = "macos"),
                 ..Mods::default()
             },
-            pressed: true,
-            repeat: false,
-            text: None,
-            consumed_mods: Mods::default(),
         });
         rt.frame(0.0);
         rt.frame(0.0);
@@ -439,5 +435,64 @@ mod tests {
         );
         draft.remove(&mut edit, 1);
         assert!(!draft.can_send(&rune::TextEdit::new("")));
+    }
+
+    #[test]
+    fn composer_textarea_mounts_trailing_send_and_forwards_copy_and_focus() {
+        let (out, commands) = codenomad_client::bounded(1);
+        let mut s = crate::init();
+        s.phase = crate::Phase::Ready;
+        s.commands = Some(out);
+        s.draft = TextEdit::new("hello trailing");
+        let mut rt = Runtime::new(s, crate::view, (800.0, 600.0), Env::new(false, 1.0));
+        let clipboard = rune::clipboard::memory();
+        rt.use_clipboard(&clipboard);
+        rt.frame(0.0);
+
+        let send = rt
+            .elements()
+            .into_iter()
+            .find(|node| node.key.as_deref() == Some("send"))
+            .expect("trailing send button");
+        assert!(
+            send.path.contains("/composer/trailing/send"),
+            "send button must mount inside TextArea::trailing, got {}",
+            send.path
+        );
+
+        rt.update(|s, tx| {
+            s.draft.set_selection(0, 5);
+            tx.focus("composer", false);
+        });
+        rt.frame(0.0);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| node.focused && node.path.ends_with("/composer/scroll/input")),
+            "focusing composer must focus the inner TextArea input, not the trailing button"
+        );
+
+        rt.key(KeyEvent {
+            key: Key::Command('c'),
+            mods: Mods {
+                cmd: true,
+                ctrl: !cfg!(target_os = "macos"),
+                ..Mods::default()
+            },
+        });
+        rt.frame(0.0);
+        assert_eq!(
+            clipboard.text().as_deref().map(String::as_str),
+            Some("hello")
+        );
+
+        let (x, y) = rt.find("send").expect("send center");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.0);
+        let crate::transport::Command::Prompt(prompt) = commands.try_recv().unwrap() else {
+            panic!("expected prompt");
+        };
+        assert_eq!(prompt.text, "hello trailing");
     }
 }

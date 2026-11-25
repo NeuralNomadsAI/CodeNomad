@@ -32,6 +32,7 @@ export async function mobileMoreActions(page, messages, press) {
   await queue.waitFor({state:'attached'})
   const a11y = {menu:await page.getByRole('menu',{name,exact:true}).count(),
     disabledRow:await page.getByRole('menuitem',{name:queueName,exact:true,disabled:true}).count()}
+  assert.deepEqual(a11y,{menu:1,disabledRow:1},'Web mirror must expose the menu role and disabled queue row')
   const focusState = async (text, caret) => {
     await queue.waitFor({state:'detached'})
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
@@ -71,6 +72,7 @@ export async function mobileMoreActions(page, messages, press) {
 }
 
 export async function longPaste(page, messages) {
+  const composer = page.getByRole('group', {name: messages['rune.prompt'], exact: true})
   const field = page.locator('textarea:focus')
   const text = `Fixture web @./literal [pasted #8] 🦀 ${'contenu '.repeat(24)}fin`
   const initial = 'avant retirer après'
@@ -88,10 +90,18 @@ export async function longPaste(page, messages) {
     return !el.dispatchEvent(new ClipboardEvent('paste', {clipboardData, bubbles: true, cancelable: true}))
   }, {text, png}), 'Rune must handle both formats in one browser paste event')
   await expectDraft(token)
-  const chip = page.getByText(`${messages['messagePart.pastedText.summary']} #9`, {exact: true})
-  const image = page.getByText('clipboard.png', {exact: true})
+  const chip = composer.getByText(`${messages['messagePart.pastedText.summary']} #9`, {exact: true})
+  const image = composer.getByText('capture.png', {exact: true})
   await chip.waitFor({state: 'attached'})
   await image.waitFor({state: 'attached'})
+  assert(await page.locator('canvas').first().evaluate(canvas => {
+    const dataTransfer = new DataTransfer()
+    dataTransfer.items.add(new File(['dropped text body'], 'dropped.txt', {type: 'text/plain'}))
+    return !canvas.dispatchEvent(new DragEvent('drop', {dataTransfer, bubbles: true, cancelable: true}))
+  }), 'Rune must forward dropped browser files to the focused composer')
+  const dropped = composer.getByText('dropped.txt', {exact: true})
+  await dropped.waitFor({state: 'attached'})
+  await expectDraft(token)
   const mac = process.platform === 'darwin'
   await page.keyboard.press(mac ? 'Meta+z' : 'Control+z')
   await expectDraft(initial)
@@ -108,7 +118,6 @@ export async function longPaste(page, messages) {
   await refused.waitFor()
   await sent.waitFor({state:'detached'})
   await expectDraft('nouveau brouillon')
-  const composer = page.getByRole('group', {name: messages['rune.prompt'], exact:true})
   const more = composer.getByRole('button', {name: messages['messageItem.actions.more'], exact:true})
   const click = async locator => {
     await present()
@@ -122,27 +131,30 @@ export async function longPaste(page, messages) {
     await click(item)
     await item.waitFor({state:'detached'})
   }
-  const expectRecalled = value => page.waitForFunction(text => document.querySelector('textarea')?.value === text, value)
   await press('previous')
-  await expectRecalled(token)
+  await expectDraft(token)
   await chip.waitFor({state:'attached'})
   await image.waitFor({state:'attached'})
+  await dropped.waitFor({state:'attached'})
   await press('next')
-  await expectRecalled('nouveau brouillon')
+  await expectDraft('nouveau brouillon')
   await press('previous')
-  await expectRecalled(token)
+  await expectDraft(token)
   assert.equal(await sent.count(), 0, 'Browsing history must not send a prompt')
   await click(page.getByRole('button', {name: messages['promptInput.overlay.send'], exact:true}))
   await sent.waitFor({state:'attached'})
   assert.equal(await sent.count(), 1)
   await chip.waitFor({state: 'detached'})
+  await image.waitFor({state: 'detached'})
+  await dropped.waitFor({state: 'detached'})
+  await page.getByText('dropped.txt', {exact: true}).waitFor({state: 'attached'})
   await refused.waitFor({state: 'detached'})
   await present()
   const group = await composer.boundingBox()
   await page.mouse.click(group.x + group.width / 2, group.y + 24)
   await expectDraft('nouveau brouillon')
-  return {insertedAtSelection: true, undo: true, retainedPng: true, recalledAfterRefusal: true,
-    nextDraftIntact: true, expandedExactlyOnce: true}
+  return {insertedAtSelection: true, undo: true, retainedPng: true, droppedWebFile: true,
+    recalledAfterRefusal: true, nextDraftIntact: true, expandedExactlyOnce: true}
 }
 
 export async function focusRing(page, captures, box, inset, color) {

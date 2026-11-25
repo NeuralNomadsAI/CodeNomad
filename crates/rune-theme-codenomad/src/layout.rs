@@ -107,8 +107,16 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
 }
-pub fn composer_input(edit: &TextEdit, placeholder: &str) -> El {
-    base_editor(edit).hint(placeholder)
+pub fn composer_textarea(edit: &TextEdit, placeholder: &str, compact: bool) -> rune_kit::TextArea {
+    rune_kit::TextArea::new(edit)
+        .width(None)
+        .placeholder(placeholder)
+        .auto_grow(if compact { 1 } else { 5 }, 20)
+        .max_height(320.0)
+}
+pub fn build_composer(area: rune_kit::TextArea, compact: bool) -> El {
+    let field = area.build(crate::field_kit(dark()));
+    if compact { field } else { field.min_h(104.0) }
 }
 pub fn editor_menu<S: 'static>(
     tx: &mut rune::Tx,
@@ -125,26 +133,6 @@ pub fn editor_menu<S: 'static>(
         menu = menu.item(PopupItem::new("select-all", label(Label::SelectAll)));
     }
     tx.popup_menu(menu, point, pick);
-}
-pub fn composer_field(editor: El, compact: bool, focused: bool) -> El {
-    let t = tokens(dark());
-    let minimum = if compact {
-        t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0
-    } else {
-        104.0
-    };
-    let field = rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
-        .min_h(minimum)
-        .max_h(320.0);
-    let field = rune::col()
-        .w_full()
-        .child(field)
-        .fill(t.color("surface-field"));
-    if focused {
-        field.outline(1.0, -1.0, t.color("focus-ring-color"))
-    } else {
-        field
-    }
 }
 pub fn announce_polite(tx: &mut rune::Tx, text: impl Into<String>) {
     tx.announce(text, rune::LiveRegion::Polite);

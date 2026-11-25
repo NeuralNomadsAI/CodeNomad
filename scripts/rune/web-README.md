@@ -47,9 +47,7 @@ Le contrôle `--web-mobile --same-origin-pairing` ouvre les liens sans page réf
 
 `--web-mobile --history-return-only` isole le retour à une conversation déjà lue : la fixture retient le GET du rappel des envois, puis exige le texte du fil avant de libérer ce GET. Le rapport contient `transcriptWhileRecallHeld`.
 
-`--web-mobile-more-actions` vérifie ce retour puis le menu du composeur sur un seul profil portrait clair : focus DOM après rappel et effacement sans retoucher le champ, annulation de l’effacement, sélection d’un fichier et mise en file effective pendant une réponse.
-
-Rune [#1713](https://github.com/anomalyco/rune/issues/1713) suit le focus DOM à la souris ; [#1677](https://github.com/anomalyco/rune/issues/1677) suit la projection des rôles. Le banc relève les rôles projetés, et le test natif exige le menu et sa ligne désactivée.
+`--web-mobile-more-actions` vérifie ce retour puis le menu du composeur sur un seul profil portrait clair : rôles projetés du menu et de sa ligne désactivée, focus DOM après rappel et effacement sans retoucher le champ, annulation de l’effacement, sélection d’un fichier et mise en file effective pendant une réponse. Le test natif exige aussi le menu, sa ligne désactivée et leur projection web.
 
 `node packages/rune-app/fixtures/launcher-fixture.mjs --web-android` utilise Chrome et le clavier logiciel d'un émulateur Android jetable déjà démarré, avec `RUNE_ANDROID_ADB` (chemin absolu), `RUNE_ANDROID_ADB_PORT` (serveur ADB privé) et `RUNE_ANDROID_SERIAL` (unique `emulator-*`). Le parcours suit un lien d'appairage externe, ouvre la conversation, défile via un geste Android, injecte un texte par CDP puis l'envoie via l'interface. Le banc coupe l'amont SSE et redémarre le serveur Rust sans recharger le document. `android-proof.json` contient les temps au premier contenu, les intervalles rAF du geste et la PSS des processus Chrome. Le cache HTTP est désactivé et le certificat de fixture épinglé. La dictée, la composition propre à Gboard et TalkBack gardent leurs essais distincts.
 

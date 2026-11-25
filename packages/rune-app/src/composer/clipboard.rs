@@ -1,34 +1,8 @@
 use crate::{State, platform};
-use rune::{Key, KeyEvent, PhysicalInput, PhysicalKeyCode, Tx};
+use rune::Tx;
 use std::{cell::Cell, rc::Rc};
 
 pub(super) type Read = Rc<Cell<bool>>;
-
-pub fn physical(s: &mut State, event: &PhysicalInput, tx: &mut Tx) -> bool {
-    let PhysicalInput::Key {
-        key: PhysicalKeyCode::KeyV,
-        mods,
-        pressed: true,
-        repeat,
-        ..
-    } = *event
-    else {
-        return false;
-    };
-    if (KeyEvent {
-        key: Key::Command('v'),
-        mods,
-    })
-    .edit_command()
-        != Some('v')
-    {
-        return false;
-    }
-    if !repeat {
-        request(s, tx);
-    }
-    true
-}
 
 pub fn request(s: &mut State, tx: &mut Tx) {
     if s.screen.is_launcher()
