@@ -388,7 +388,11 @@ fn view(s: &State, key: &str, entry: &Entry, path: Option<&str>) -> El {
                 format!("{key}-diff"),
                 move |s| s.transcript_display.diffs.read(&read),
                 move |s| s.transcript_display.diffs.edit(&write),
-                None,
+                diff::ViewOptions {
+                    labels: Some(diff::labels(locale(), "toolCall.diff.label")),
+                    scroll_bar: true,
+                    ..diff::ViewOptions::default()
+                },
             ),
             entry.lines,
         ))

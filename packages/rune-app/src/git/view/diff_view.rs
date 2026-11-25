@@ -192,10 +192,15 @@ pub(crate) fn reader(s: &State) -> El {
                             .as_mut()
                             .map_or(&mut s.git.detached_diff, |ui| &mut ui.reader.state)
                     },
-                    if can_insert {
-                        Some(std::rc::Rc::new(run_for_lines(s, target)))
-                    } else {
-                        None
+                    diff::ViewOptions {
+                        comment: can_insert
+                            .then(|| std::rc::Rc::new(run_for_lines(s, target)) as _),
+                        comment_filter: can_insert.then(|| {
+                            std::rc::Rc::new(|_, at: diff::LineRef| at.side == Side::New)
+                                as diff::CommentFilter
+                        }),
+                        labels: Some(diff::labels(crate::strings::locale(), "gitPanel.diff")),
+                        scroll_bar: true,
                     },
                 ))
         }

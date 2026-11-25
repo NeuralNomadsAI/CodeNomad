@@ -239,6 +239,54 @@ fn end_reveals_the_selected_row_and_exposes_every_row_selection_state() {
     });
 }
 
+#[test]
+fn tab_into_workspace_tree_schedules_immediate_focus_sync_via_input_waiting() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut ui = http.ui(Store::default(), "files-input-waiting");
+        seed(&mut ui, 2);
+        ui.panel = true;
+        let mut rt = shell_runtime(ui);
+        rt.poll = Some(crate::files::poll);
+        rt.update(|_, tx| tx.focus("right-panel-toggle", true));
+        rt.frame(0.02);
+        rt.frame(0.02);
+        assert!(rt.state.files.as_ref().unwrap().tree.selected().is_none());
+        let event = KeyEvent {
+            key: Key::Tab,
+            mods: Mods::default(),
+        };
+        let mut landed = false;
+        for _ in 0..16 {
+            rt.key(event.clone());
+            rt.frame(0.02);
+            let focused_row = rt
+                .elements()
+                .iter()
+                .any(|node| node.key.as_deref() == Some("file-row-file00.txt") && node.focused);
+            if focused_row {
+                // `files::poll` saw `tx.input_waiting() == true` before Tab moved focus
+                // and scheduled an immediate wake so the next frame syncs tree selection.
+                assert!(
+                    rt.wake_deadline().is_some(),
+                    "sync_tree_focus must schedule immediate wake when input_waiting is true"
+                );
+                rt.frame(0.02);
+                assert_eq!(
+                    rt.state.files.as_ref().unwrap().tree.selected(),
+                    Some("file00.txt")
+                );
+                landed = true;
+                break;
+            }
+            rt.key_up(event.clone());
+            rt.frame(0.02);
+        }
+        assert!(landed, "Tab should reach file-row-file00.txt");
+        http.quiet().await;
+    });
+}
+
 fn seed(ui: &mut crate::files::Ui, count: usize) {
     ui.tree.activate(true);
     let read = ui.tree.take_refresh().pop().unwrap();

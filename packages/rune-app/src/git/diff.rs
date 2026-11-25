@@ -1,4 +1,4 @@
-use crate::components::diff::{DiffMode, DiffState, FileDiff, parse};
+use crate::components::diff::{DiffMode, DiffOptions, DiffState, FileDiff, parse};
 use codenomad_client::git::Diff;
 use rune_theme_codenomad::git_diff::{Image, ImageCache};
 use std::borrow::Cow;
@@ -70,22 +70,6 @@ fn classify(before: &str, after: &str, old: &str, new: &str) -> Option<Hidden> {
     }
 }
 
-fn trimmed(model: &str) -> String {
-    // A final line of blanks stays a line, even if it contains no newline.
-    // Normalize every other line to the same convention for Myers comparisons.
-    let mut result = String::with_capacity(model.len());
-    for line in model.split_inclusive('\n') {
-        let text = line.strip_suffix('\n').unwrap_or(line);
-        result.push_str(trim(text));
-        if line.ends_with('\n') {
-            result.push('\n');
-        } else if trim(text).is_empty() {
-            result.push(' ');
-        }
-    }
-    result
-}
-
 fn text_diff(
     path: &str,
     before: &str,
@@ -100,31 +84,10 @@ fn text_diff(
     } else {
         3
     };
-    let mut file = FileDiff::from_texts_with_context(path, &old, &new, context);
-    if hide && !old.is_empty() && !new.is_empty() {
-        let (a, b) = (trimmed(&old), trimmed(&new));
-        if a != old || b != new {
-            let canonical = FileDiff::from_texts_with_context(path, &a, &b, context);
-            file.hunks = canonical.hunks;
-            let olds: Vec<_> = old.lines().collect();
-            let news: Vec<_> = new.lines().collect();
-            for line in file.hunks.iter_mut().flat_map(|h| &mut h.lines) {
-                let text = line
-                    .new
-                    .and_then(|n| news.get((n - 1) as usize))
-                    .or_else(|| line.old.and_then(|n| olds.get((n - 1) as usize)));
-                if let Some(text) = text {
-                    let offset = text.len() - text.trim_start_matches([' ', '\t']).len();
-                    line.changes.retain_mut(|range| {
-                        range.start += offset;
-                        range.end += offset;
-                        range.end <= text.len()
-                    });
-                    line.text = (*text).into();
-                }
-            }
-        }
-    }
+    let options = DiffOptions::new()
+        .context(context)
+        .ignore_edge_whitespace(hide);
+    let mut file = FileDiff::from_texts_with(path, &old, &new, options);
     // The Kit builds no rows for equal texts, including ignored whitespace. A
     // context-only hunk keeps the actual modified-side text readable/selectable.
     if file.hunks.is_empty() && !new.is_empty() {
@@ -387,6 +350,14 @@ mod tests {
         assert_eq!(file.language(), Some("rust"));
         assert!(!highlight(file.language(), "let foo = 1;").is_empty());
         let lines = &file.hunks[0].lines;
+        let removed = lines
+            .iter()
+            .find(|line| line.kind == LineKind::Removed)
+            .unwrap();
+        assert_eq!(
+            (removed.old, removed.text.as_str()),
+            (Some(2), "  let foo = 'é';")
+        );
         let changed = lines
             .iter()
             .find(|line| line.kind == LineKind::Added)
