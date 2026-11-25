@@ -4,6 +4,8 @@ pub mod contracts;
 pub mod favorites;
 pub mod history;
 mod history_search;
+pub(crate) mod media;
+pub(crate) mod media_stream;
 pub mod pending;
 pub mod permission_mode;
 pub mod receipts;
@@ -28,5 +30,6 @@ pub fn routes(shutdown: CancellationToken) -> Router<Shared> {
             get(permission_mode::routes::handle).put(permission_mode::routes::handle),
         )
         .route("/api/workspaces/{id}/session-history/{action}", post(history::handle))
+        .route("/api/workspaces/{id}/session-media/{session}/{message}/{part}/{index}/{sha}", get(media::route))
         .route("/api/workspaces/{id}/session-attachment/{session}/{message}/{index}/{sha}", get(history::attachment))
 }

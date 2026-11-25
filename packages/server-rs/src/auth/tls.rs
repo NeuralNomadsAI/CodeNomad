@@ -2,10 +2,7 @@
 //! connection admission and serving.
 use axum::{Router, http::Request};
 use hyper::server::conn::http1;
-use hyper_util::{
-    rt::{TokioIo, TokioTimer},
-    service::TowerToHyperService,
-};
+use hyper_util::rt::{TokioIo, TokioTimer};
 use rcgen::{BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose};
 use rustls::pki_types::CertificateDer;
 use sha2::{Digest, Sha256};
@@ -29,12 +26,16 @@ pub struct Listener {
     pub socket: TcpListener,
     pub acceptor: tokio_rustls::TlsAcceptor,
     pub origin: String,
+    pub origins: Arc<[String]>,
+    pub direct_origins: Vec<String>,
+    pub addresses: Vec<crate::host::addresses::NetworkAddress>,
     pub fingerprint: String,
     pub ingress: bool,
 }
 #[derive(Clone)]
 pub struct Channel {
     pub origin: String,
+    pub origins: Arc<[String]>,
     pub ingress: bool,
     pub socket: CancellationToken,
     pub principal: Arc<std::sync::Mutex<Option<uuid::Uuid>>>,
@@ -172,7 +173,12 @@ fn material(s: &Settings) -> Result<(String, String), Failure> {
         return Ok((fs::read_to_string(key.ok_or("TLS key missing")?)?, format!("{}\n{}", cert.trim_end(), chain)));
     }
     private_directory(dir)?;
-    let mut names = vec!["localhost".into(), "127.0.0.1".into(), host.trim_matches(['[', ']']).into()];
+    let mut names = vec!["localhost".into(), "127.0.0.1".into()];
+    if s.bind.ip.is_unspecified() {
+        names.push(if s.bind.ip.is_ipv6() { "::1".into() } else { "0.0.0.0".into() });
+    } else {
+        names.push(host.trim_matches(['[', ']']).into());
+    }
     names.extend(
         s.sans
             .split(',')
@@ -204,7 +210,8 @@ fn material(s: &Settings) -> Result<(String, String), Failure> {
     if rotate || !fresh(&certificate, 3, &names) || !key_path.is_file() {
         let key = rsa()?;
         let issuer = CertificateParams::from_ca_cert_pem(&ca)?.self_signed(&ca_key)?;
-        let mut p = params(names, if host == "127.0.0.1" { "localhost" } else { host }, 30)?;
+        let cn = if host == "127.0.0.1" || s.bind.ip.is_unspecified() { "localhost" } else { host };
+        let mut p = params(names, cn, 30)?;
         p.is_ca = IsCa::ExplicitNoCa;
         p.key_usages = vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyEncipherment];
         p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
@@ -234,8 +241,8 @@ impl Listener {
     pub async fn open(settings: Settings) -> Result<Self, Failure> {
         let ip = settings.bind.ip;
         if !match ip {
-            IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
-            IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local(),
+            IpAddr::V4(ip) => ip.is_loopback() || ip.is_private() || ip.is_unspecified(),
+            IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local() || ip.is_unspecified(),
         } {
             return Err("An explicit loopback or private TLS interface is required".into());
         }
@@ -244,14 +251,32 @@ impl Listener {
         if ingress && !ip.is_loopback() {
             return Err("Fixture ingress is loopback-only".into());
         }
-        let listener = settings.bind.listen().await?;
+        let (listener, dual_stack) = settings.bind.listen_with_dual_stack().await?;
         let port = listener.local_addr()?.port();
         let base = format!("https://{host}");
         let url = reqwest::Url::parse(&base)?;
         if url.origin().ascii_serialization() != base || url.host_str() != Some(&host) {
             return Err("Invalid HTTPS listener name".into());
         }
-        let origin = if port == 443 { base } else { format!("{base}:{port}") };
+        let (origin, origins, direct_origins, addresses) = if ip.is_unspecified() {
+            let resolved = crate::host::addresses::resolve_remote(
+                ip,
+                port,
+                dual_stack,
+                &crate::host::addresses::host_interface_ips(),
+            );
+            (resolved.primary_url, Arc::from(resolved.listener_origins), resolved.direct_origins, resolved.addresses)
+        } else {
+            let origin = if port == 443 { base } else { format!("{base}:{port}") };
+            let resolved = crate::host::addresses::resolve_remote(ip, port, false, &[]);
+            let mut listener_origins = vec![origin.clone()];
+            for extra in resolved.listener_origins {
+                if !listener_origins.contains(&extra) {
+                    listener_origins.push(extra);
+                }
+            }
+            (origin.clone(), Arc::from(listener_origins), vec![origin], resolved.addresses)
+        };
         let (key, cert) = material(&settings)?;
         let certs = rustls_pemfile::certs(&mut cert.as_bytes()).collect::<Result<Vec<_>, _>>()?;
         let fingerprint = format!("{:x}", Sha256::digest(certs.first().ok_or("TLS chain empty")?.as_ref()));
@@ -261,54 +286,81 @@ impl Listener {
             socket: listener,
             acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(config)),
             origin,
+            origins,
+            direct_origins,
+            addresses,
             fingerprint,
             ingress,
         })
     }
     pub async fn serve(self, router: Router, shutdown: CancellationToken) -> io::Result<()> {
+        let Self { socket, acceptor, origin, origins, direct_origins: _, addresses: _, fingerprint: _, ingress } = self;
         let gate = Arc::new(crate::auth::tls_admission::Gate::default());
+        let mut tasks = tokio::task::JoinSet::new();
         loop {
-            let (socket, peer) = tokio::select! {
-                _=shutdown.cancelled()=>return Ok(()),
-                result=self.socket.accept()=>match result {
+            while tasks.try_join_next().is_some() {}
+            let (stream_socket, peer) = tokio::select! {
+                _ = shutdown.cancelled() => break,
+                Some(_) = tasks.join_next(), if !tasks.is_empty() => continue,
+                result = socket.accept() => match result {
                     Ok(accepted) => accepted,
                     // A per-connection failure (reset before accept, descriptor
                     // pressure) never stops the listener.
                     Err(_) => { tokio::time::sleep(Duration::from_millis(50)).await; continue }
                 },
             };
-            let (acceptor, router) = (self.acceptor.clone(), router.clone());
+            let (acceptor, router, stop) = (acceptor.clone(), router.clone(), shutdown.clone());
+            // Keep per-connection eviction (`gate`) separate from server `shutdown` so active
+            // HTTPS requests drain gracefully before `main` tears down plugin leases.
             let channel = Channel {
-                origin: self.origin.clone(),
-                ingress: self.ingress,
-                socket: shutdown.child_token(),
+                origin: origin.clone(),
+                origins: origins.clone(),
+                ingress,
+                socket: CancellationToken::new(),
                 principal: Arc::new(std::sync::Mutex::new(None)),
             };
             let Some(ticket) = gate.admit(peer.ip(), channel.principal.clone(), channel.socket.clone()) else {
                 continue;
             };
-            tokio::spawn(async move {
+            tasks.spawn(async move {
                 let _ticket = ticket;
                 let lifetime = channel.socket.clone();
                 let io = tokio::select! {
                     _ = lifetime.cancelled() => return,
-                    result = tokio::time::timeout(HANDSHAKE, acceptor.accept(socket)) => {
+                    _ = stop.cancelled() => return,
+                    result = tokio::time::timeout(HANDSHAKE, acceptor.accept(stream_socket)) => {
                         let Ok(Ok(io)) = result else { return; };
                         io
                     }
                 };
+                let cancel = crate::shared::WriteCancel::new();
+                let io = crate::shared::WriteStallIo::new(io, Duration::from_secs(30), cancel.clone());
                 let service = router.layer(axum::Extension(channel));
                 let connection = http1::Builder::new()
                     .timer(TokioTimer::new())
                     // Also bounds the wait for a request's first byte, after the
                     // handshake and between keep-alive requests (hyper 1.x).
                     .header_read_timeout(IDLE)
-                    .serve_connection(TokioIo::new(io), TowerToHyperService::new(service))
+                    .serve_connection(TokioIo::new(io), crate::shared::abortable_service(service, cancel))
                     .with_upgrades();
-                tokio::select! { _=lifetime.cancelled()=>{}, _=connection=>{} }
+                tokio::pin!(connection);
+                tokio::select! {
+                    _ = lifetime.cancelled() => {}
+                    _ = &mut connection => {}
+                    _ = stop.cancelled() => {
+                        connection.as_mut().graceful_shutdown();
+                        tokio::select! {
+                            _ = lifetime.cancelled() => {}
+                            _ = connection => {}
+                        }
+                    }
+                }
                 lifetime.cancel();
             });
         }
+        drop(socket);
+        while tasks.join_next().await.is_some() {}
+        Ok(())
     }
 }
 
@@ -352,6 +404,26 @@ mod tests {
         let parse = |der: &CertificateDer| x509_parser::parse_x509_certificate(der).unwrap().1.issuer().to_string();
         let subject = x509_parser::parse_x509_certificate(&authority).unwrap().1.subject().to_string();
         assert_eq!(parse(&issued), subject);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn wildcard_listener_opens_and_issues_localhost_cert() {
+        let dir = std::env::temp_dir().join(format!("cnrs-tls-wildcard-{}", uuid::Uuid::new_v4()));
+        let settings = Settings {
+            bind: crate::host::Bind { ip: [0, 0, 0, 0].into(), port: 0, fallback: false },
+            name: "localhost".into(),
+            dir: dir.clone(),
+            files: Default::default(),
+            sans: String::new(),
+        };
+        let listener = Listener::open(settings).await.unwrap();
+        assert_eq!(listener.socket.local_addr().unwrap().ip(), IpAddr::from([0, 0, 0, 0]));
+        assert!(listener.origin.starts_with("https://") && !listener.origin.contains("0.0.0.0"), "{}", listener.origin);
+        assert!(listener.origins.iter().any(|o| o.starts_with("https://127.0.0.1:")));
+        let leaf_pem = fs::read_to_string(dir.join("server-cert.pem")).unwrap();
+        assert!(fresh(&leaf_pem, 20, &["localhost".into(), "127.0.0.1".into(), "0.0.0.0".into()]));
+        drop(listener);
         let _ = fs::remove_dir_all(&dir);
     }
 }

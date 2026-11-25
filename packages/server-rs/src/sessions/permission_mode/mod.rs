@@ -261,11 +261,13 @@ impl Target<'_> {
         let id = self.session["id"].as_str().ok_or_else(unavailable)?;
         before()?;
         self.check()?;
+        let mut url = self.endpoint.url.clone();
+        url.path_segments_mut().map_err(|_| unavailable())?.clear().extend(["api", "session", id]);
         let response = self
             .app
             .native
             .client
-            .request(Method::PATCH, self.endpoint.url.join(&format!("/api/session/{id}")).map_err(|_| unavailable())?)
+            .request(Method::PATCH, url)
             .basic_auth("opencode", Some(&self.endpoint.password))
             .json(&json!({"permissions":updated}))
             .timeout(Duration::from_secs(10))

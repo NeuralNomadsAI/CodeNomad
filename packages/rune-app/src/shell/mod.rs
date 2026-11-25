@@ -84,7 +84,7 @@ fn body(
 pub(crate) fn launcher_replaces_project(s: &State) -> bool {
     s.screen
         .launcher()
-        .is_some_and(|l| l.authentication_required)
+        .is_some_and(|l| l.authentication_required && !l.renewing_managed_session())
         || matches!(&s.screen, Screen::Launcher(l) if l.project.is_none())
 }
 

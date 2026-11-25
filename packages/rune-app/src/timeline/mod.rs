@@ -111,6 +111,13 @@ pub(crate) struct Timeline {
     search: search::Search,
 }
 
+#[cfg(test)]
+impl Timeline {
+    pub(crate) fn is_online(&self) -> bool {
+        self.online
+    }
+}
+
 fn owner(s: &mut State) -> &mut Timeline {
     &mut s.transcript_display.timeline
 }
@@ -207,6 +214,7 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
         Event::Connected(backend) => s.saved_outlines.mutation(backend),
         _ => None,
     };
+    let detached = s.history_detached;
     let t = owner(s);
     match event {
         Event::Connected(backend) => {
@@ -239,6 +247,10 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
             t.refresh = true;
             cancel_jump(s);
             search::invalidate(s);
+        }
+        Event::AgentHint(true) if detached => {
+            t.refresh |= !t.online;
+            t.online = true;
         }
         Event::ReaderSync { .. } | Event::Sync(_) => {
             t.refresh |= !t.online;
@@ -351,17 +363,6 @@ fn reproject(s: &mut State) -> bool {
     }
 }
 
-pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
-    poll_inner(s, tx, tx.input_waiting())
-}
-
-// Temporary test seam: headless Runtime on Rune 1d78d5688 does not stamp q.at, so
-// tx.input_waiting() stays false in tests (anomalyco/rune#2035); remove once fixed upstream.
-#[cfg(test)]
-pub(super) fn poll_with_input(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
-    poll_inner(s, tx, input_waiting)
-}
-
 pub(super) fn defer_keep_passage(s: &mut State, tx: &mut rune::Tx) {
     if owner(s).keep_passage_deferred.is_none()
         && let Some(target) = crate::chat::reading::passage_target(s)
@@ -398,7 +399,8 @@ fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: 
     }
 }
 
-fn poll_inner(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
+pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
+    let input_waiting = tx.input_waiting();
     owner(s).poll_input_waiting = input_waiting;
     let mut changed = sync_outline_mutation(s) | flush_deferred_keep_passage(s, tx, input_waiting);
     if !demanded(s) {

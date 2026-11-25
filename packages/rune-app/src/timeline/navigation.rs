@@ -226,15 +226,7 @@ pub(super) fn set_filtered(s: &mut State, filtered: bool) {
     if !filtered {
         owner(s).jump.filtered_by_rail = false;
     }
-    if std::mem::replace(&mut owner(s).jump.filtered, filtered) == filtered {
-        return;
-    }
-    #[cfg(target_arch = "wasm32")]
-    crate::platform::web_alert::history_filtered(filtered.then(|| {
-        crate::strings::with_locale(crate::settings::locale(s), || {
-            crate::strings::t("history.destinationFiltered")
-        })
-    }));
+    owner(s).jump.filtered = filtered;
 }
 
 enum JumpLanding {

@@ -1,3 +1,4 @@
+use super::banners::arm_rail_collision;
 use super::*;
 
 pub(super) fn check(
@@ -19,6 +20,7 @@ pub(super) fn check(
     let hist_rect = rt.presented("history").expect("history presented").0;
     let rail_before_same_frame = owner(&mut rt.state).scroll.get().at.offset[1];
     let hist_before_same_frame = owner(&mut rt.state).scroll.get().viewport.offset[1];
+    arm_rail_collision(&mut rt);
     rt.wheel_xy(
         rail_rect[0] + rail_rect[2] / 2.0,
         rail_rect[1] + rail_rect[3] / 2.0,
@@ -103,6 +105,7 @@ pub(super) fn check(
     let rail_hit_y = (search_rect[1] + search_rect[3] + 12.0)
         .max(rail_rect[1] + 8.0)
         .min(rail_rect[1] + rail_rect[3] - 8.0);
+    arm_rail_collision(&mut rt);
     rt.wheel_xy(rail_rect[0] + rail_rect[2] / 2.0, rail_hit_y, 0.0, 40.0);
     rt.frame(0.016);
     assert!(
@@ -185,6 +188,7 @@ pub(super) fn check(
             || uncovered_rail_y > dragged_search[1] + dragged_search[3] + 1.0,
         "precondition: uncovered_rail_y={uncovered_rail_y} must lie outside dragged_search={dragged_search:?} inside rail={rail_rect:?}"
     );
+    arm_rail_collision(&mut rt);
     rt.wheel_xy(
         rail_rect[0] + rail_rect[2] / 2.0,
         uncovered_rail_y,

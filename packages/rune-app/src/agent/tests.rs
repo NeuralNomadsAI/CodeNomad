@@ -311,3 +311,118 @@ fn controls_reject_foreign_pending_and_strip_model_configuration() {
     );
     assert!(agent_api::forms(&json!({"data":[{"id":"form_x","sessionID":"other","title":"Question","fields":[{"type":"string","key":"value"}]}]}),"ses_one").is_err());
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn stop_bypasses_blocked_catalogue_read_on_its_own_lane() {
+    use crate::files::test_http::{Http, wait};
+    use std::sync::Arc;
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake_tx, wake_rx) = super::bounded::<()>(8);
+        let wake = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        let mut ui = super::Ui::new(super::start(http.backend.clone(), wake));
+        ui.online = true;
+
+        // Initial refresh(true) reads session, then blocks GET /api/model until explicitly released.
+        let session = http.accept().await;
+        assert!(
+            session
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session "),
+            "{}",
+            session.header
+        );
+        session
+            .reply(
+                200,
+                json!({"data":{"id":"session","location":{"directory":"/private"},"time":{"busy":2,"idle":1}}}),
+            )
+            .await;
+
+        let held_model = http.accept().await;
+        assert!(
+            held_model
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/model?"),
+            "{}",
+            held_model.header
+        );
+
+        // Trigger stop while GET /api/model is still held open without a response.
+        ui.stop();
+        assert!(ui.stopping);
+        let interrupt = http.accept().await;
+        assert!(
+            interrupt
+                .header
+                .starts_with("POST /workspaces/owned/instance/api/session/session/interrupt "),
+            "{}",
+            interrupt.header
+        );
+        assert_eq!(interrupt.body, json!({"resume": false}));
+        interrupt
+            .reply(200, json!({"data":{"interrupted": true}}))
+            .await;
+
+        // Result::Stop must clear `stopping` cleanly even while GET /api/model remains blocked.
+        while ui.stopping {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+        assert!(!ui.stopping);
+        assert!(!ui.error);
+
+        // Now release GET /api/model and let the in-flight snapshot finish, then drive the
+        // trailing refresh(false) queued by Result::Stop.
+        held_model
+            .reply(
+                200,
+                json!({"data":[{"id":"m","providerID":"p","name":"Model","enabled":true}]}),
+            )
+            .await;
+        for prefix in [
+            "GET /workspaces/owned/instance/api/session/session/permission ",
+            "GET /workspaces/owned/instance/api/session/session/form ",
+        ] {
+            let req = http.accept().await;
+            assert!(
+                req.header.starts_with(prefix),
+                "expected {prefix}, got {}",
+                req.header
+            );
+            req.reply(200, json!({"data":[]})).await;
+        }
+        while ui.models.is_empty() {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+        for prefix in [
+            "GET /workspaces/owned/instance/api/session/session ",
+            "GET /workspaces/owned/instance/api/session/session/permission ",
+            "GET /workspaces/owned/instance/api/session/session/form ",
+        ] {
+            let req = http.accept().await;
+            assert!(
+                req.header.starts_with(prefix),
+                "expected {prefix}, got {}",
+                req.header
+            );
+            let body = if prefix.ends_with("session ") {
+                json!({"data":{"id":"session","location":{"directory":"/private"},"time":{"busy":2,"idle":3}}})
+            } else {
+                json!({"data":[]})
+            };
+            req.reply(200, body).await;
+        }
+        while !ui.idle() {
+            wait(wake_rx.recv()).await.unwrap();
+            ui.poll();
+        }
+        assert_eq!(ui.models.len(), 1);
+        assert!(!ui.error);
+        assert!(!ui.running);
+    });
+}
