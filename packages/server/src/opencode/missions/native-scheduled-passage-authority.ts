@@ -5,6 +5,7 @@ import { MISSION_DOCUMENT_PREFIX, parseMissionDocument, type MissionDocument } f
 import { stableToken } from "../../missions/receipt-identity"
 import { missionLaunchLimit } from "../../missions/launch-policy"
 import { readNativeSourceRows } from "./native-source-fence"
+import { nativeScheduleRuntimeIdentity } from "./native-schedule-carrier-binding"
 
 export type ScheduledPassagePurpose = "observe" | "initial" | "business"
 export type ScheduledPassageAuthority = (doc: MissionDocument, purpose: ScheduledPassagePurpose) => true
@@ -59,7 +60,8 @@ export const acquireNativeScheduledPassageAuthority = Effect.fn("missions.acquir
       || purpose === "initial" && (doc.pending.admittedAt !== null || !dispatchAllowed(doc))
       || purpose === "business" && !businessAllowed(doc)) throw new Error("Document passage authority changed")
     if (purpose !== "observe") {
-      if (canonicalAuthority(doc.calendarOwner?.installation) !== canonicalAuthority(expected.calendarOwner?.installation))
+      if (canonicalAuthority(doc.calendarOwner && nativeScheduleRuntimeIdentity(doc.calendarOwner.installation))
+        !== canonicalAuthority(expected.calendarOwner && nativeScheduleRuntimeIdentity(expected.calendarOwner.installation)))
         throw new Error("Scheduled passage installation changed")
       capability(doc)
     }

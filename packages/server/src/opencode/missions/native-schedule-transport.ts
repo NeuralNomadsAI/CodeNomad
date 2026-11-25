@@ -130,6 +130,7 @@ export function createNativeScheduleTransport(overrides: Partial<Dependencies> =
         const reply = raw as NativeScheduleTransportReply
         if (!reply || reply.key !== nativeScheduleWakeKey(wake)
           || !["applied", "pending", "rejected", "unknown"].includes(reply.state)
+          || reply.reason !== undefined && (reply.state !== "rejected" || reply.reason !== "schedule-calendar-requires-code")
           || reply.messagePresent !== undefined && typeof reply.messagePresent !== "boolean"
           || reply.ready !== undefined && typeof reply.ready !== "boolean"
           || reply.abandoned !== undefined && typeof reply.abandoned !== "boolean"
@@ -137,6 +138,7 @@ export function createNativeScheduleTransport(overrides: Partial<Dependencies> =
             || !Number.isSafeInteger(reply.preflight.issuedAt) || reply.preflight.issuedAt < 0
             || !/^[a-f0-9]{64}$/.test(reply.preflight.signature))) throw new Error("schedule-rpc-reply")
         return { state: "received", reply: { key: reply.key, state: reply.state,
+          ...(reply.reason === undefined ? {} : { reason: reply.reason }),
           ...(reply.messagePresent === undefined ? {} : { messagePresent: reply.messagePresent }),
           ...(reply.ready === undefined ? {} : { ready: reply.ready }), ...(reply.abandoned ? { abandoned: true } : {}), ...(reply.preflight ? { preflight: { ...reply.preflight } } : {}) } }
       } catch { return failure(signal.aborted ? "deadline" : "unavailable") }

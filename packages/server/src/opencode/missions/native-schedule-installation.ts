@@ -5,7 +5,7 @@ import { Context, Effect, Option, Predicate, Schema } from "effect"
 import { assertNativeScheduleCarrierArtifacts, type NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
 import { nativeScheduleIncarnationGuard, readNativeScheduleIncarnation } from "./native-schedule-transport-identity"
 
-export type NativeScheduleArtifacts = Readonly<Pick<NativeScheduleCarrierInstallation, "provider" | "runtime">>
+export type NativeScheduleArtifacts = Readonly<Pick<NativeScheduleCarrierInstallation, "runtime">>
 const globalTag = Context.Service<never, unknown>("@opencode/Global")
 const serverTag = Context.Service<never, unknown>("@opencode/server/ServerInfo")
 const globalShape = Schema.Struct({ state: Schema.String })
@@ -65,10 +65,9 @@ export const acquireNativeMissionServiceRegistration = Effect.fn("missions.acqui
 
 /** Arming adds the immutable technical artifacts to the same registration proof. */
 export const acquireNativeScheduleInstallation = Effect.fn("missions.acquireNativeScheduleInstallation")(function* (artifacts: NativeScheduleArtifacts) {
-  const provider = Object.freeze({ file: artifacts.provider.file, sha256: artifacts.provider.sha256 })
   const runtime = Object.freeze({ file: artifacts.runtime.file, sha256: artifacts.runtime.sha256 })
   const registration = yield* acquireNativeMissionServiceRegistration()
-  const installation = Object.freeze({ registrationFile: registration.registrationFile, provider, runtime })
+  const installation = Object.freeze({ registrationFile: registration.registrationFile, runtime })
   const assertCurrent = (): true => { registration.assertCurrent(); return assertNativeScheduleCarrierArtifacts(installation) }
   assertCurrent()
   return Object.freeze({ installation, assertCurrent })

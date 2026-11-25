@@ -286,10 +286,7 @@ jobs:
           # Parallel siblings, a recursive grandchild and coordinator readout.
           node scripts/test-missions-native-trajectory.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # Context IDs must resolve native schedule metadata; the retained product
-          # bundle must admit cold scheduled passages with the backend closed.
-          node scripts/test-native-schedule-context.mjs $cli
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # The retained Missions bundle must admit cold scheduled passages with the backend closed.
           $scheduleParent = node -p "require('node:path').join(require('node:os').tmpdir(), 'opencode')"
           $scheduleScratch = Join-Path $scheduleParent "schedule-wakes-$([guid]::NewGuid().ToString('N'))"
           node --import tsx scripts/test-native-mission-schedule-product.mjs $cli $scheduleScratch --parent-ready --kinds=at,in
@@ -356,17 +353,6 @@ jobs:
             ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-sql.json
           if-no-files-found: ignore
           retention-days: 7
-      - name: Upload isolated schedule foundation failure diagnostics
-        if: ${{ failure() && env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE != '' }}
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: schedule-foundation-failure-${{ matrix.runtime }}
-          path: |
-            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/receipt.json
-            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/failure-diagnostic.json
-          if-no-files-found: ignore
-          retention-days: 7
-
       - name: Upload isolated runtime contract failure diagnostics
         if: ${{ failure() && env.RUNTIME_CONTRACT_FIXTURES != '' }}
         uses: actions/upload-artifact@v7.0.2

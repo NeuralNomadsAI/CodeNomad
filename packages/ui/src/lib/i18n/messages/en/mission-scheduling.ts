@@ -65,6 +65,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.succeeded": "Successful passages",
   "missions.scheduleList.since": "Tracked since {when}",
   "missions.scheduleList.endAfter": "{minutes} minutes after first Play",
+  "missions.scheduleList.recreate": "Recreate this schedule to run it.",
   "missions.scheduleList.blocked": "Admission blocked",
   "missions.scheduleList.state.paused": "Paused",
   "missions.scheduleList.state.running": "Running",

@@ -37,9 +37,11 @@ export function parseManagedDesktopPluginEntry(feature: string, source: string, 
     for (const directory of presenceDirectories) assertNativePluginPath(directory)
   }
   if (arguments_.length === 2) {
-    if (feature !== "missions" || !artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)
-      || Object.keys(artifacts).sort().join(",") !== "provider,runtime") throw new Error("Invalid managed Missions artifacts")
-    for (const role of ["provider", "runtime"] as const) {
+    if (feature !== "missions" || !artifacts || typeof artifacts !== "object" || Array.isArray(artifacts))
+      throw new Error("Invalid managed Missions artifacts")
+    const keys = Object.keys(artifacts).sort().join(",")
+    if (keys !== "runtime" && keys !== "provider,runtime") throw new Error("Invalid managed Missions artifacts")
+    for (const role of (keys === "runtime" ? ["runtime"] : ["provider", "runtime"]) as readonly ("provider" | "runtime")[]) {
       const artifact = (artifacts as Record<string, { file: string; sha256: string }>)[role]
       if (!artifact || Object.keys(artifact).sort().join(",") !== "file,sha256"
         || typeof artifact.file !== "string" || typeof artifact.sha256 !== "string" || !/^[a-f\d]{64}$/.test(artifact.sha256)

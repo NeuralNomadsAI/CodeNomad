@@ -22,7 +22,7 @@ async function fixture() {
       values.set(key, structuredClone(value))
     } }
   const store = new NativeMissionDocumentStore(storage, "project", "/owned")
-  const model: { providerID: string; id: string } = { ...NATIVE_SCHEDULE_CARRIER_MODEL }, selection = { agent: "build", model }
+  const model: { providerID: string; id: string } = { ...NATIVE_SCHEDULE_CARRIER_MODEL }, selection = { agent: "build", model: { providerID: "fixture", id: "fixture" } }
   const initial = await store.create("owned_mission", { title: "Qualification", objective: "Read only", template: "custom", taskMode: "native",
     profileID: "isolated", executionHost: "isolated", profiles: { coordinator: selection, roles: { specialist: selection } },
     roots: [{ mode: "directory-only", directory: "/owned" }], watchedConversationIDs: [],
@@ -90,8 +90,12 @@ test("exact durable mapping and a persisted per-Mission claim survive a fresh ca
   assert.equal(await claim(), false)
 })
 
-test("wrong root, local model, calendar generation or forged marker cannot acquire a carrier binding", async () => {
+test("wrong root, foreign model, calendar generation or forged marker cannot acquire a carrier binding; model-less Code Mode carriers succeed", async () => {
   const f = await fixture()
+  const savedModel = f.session.model
+  f.session.model = undefined as never
+  assert.equal((await Effect.runPromise(readNativeScheduleCarrierBinding(f.ctx, f.wake.sessionID)))?.calendar.role, "reconciliation")
+  f.session.model = savedModel
   f.session.model.providerID = "remote"
   await assert.rejects(Effect.runPromise(readNativeScheduleCarrierBinding(f.ctx, f.wake.sessionID)), /ownership/)
   f.session.model.providerID = NATIVE_SCHEDULE_CARRIER_MODEL.providerID
@@ -241,18 +245,22 @@ test("ordinary entry guard refuses exact carriers and reserved metadata independ
     assert.throws(() => assertOrdinaryMissionScheduleInput(input), /ordinary-input/)
 })
 
-test("installed artifact guards fence missing or changed provider/runtime bytes even with a cached model", t => {
+test("installed artifact guards fence missing or changed runtime bytes and ignore the retained provider descriptor", t => {
   const base = process.env.CODENOMAD_SCHEDULE_TEST_SCRATCH ?? path.join(os.tmpdir(), "codenomad-schedule-carrier")
   mkdirSync(base, { recursive: true })
   const directory = mkdtempSync(path.join(base, "artifact-unit-"))
   t.after(() => rmSync(directory, { recursive: true, force: true }))
-  const file = path.join(directory, "provider.mjs"), bytes = "export const createLocal = () => ({})"
-  writeFileSync(file, bytes)
-  const artifact = { file, sha256: createHash("sha256").update(bytes).digest("hex") }
-  const installation = { registrationFile: path.join(directory, "registration.json"), provider: artifact, runtime: artifact }
+  const make = (name: string, bytes: string) => {
+    const file = path.join(directory, name)
+    writeFileSync(file, bytes)
+    return { file, bytes, artifact: { file, sha256: createHash("sha256").update(bytes).digest("hex") } }
+  }
+  const runtime = make("runtime.mjs", "export const plugin = true")
+  const installation = { registrationFile: path.join(directory, "registration.json"), runtime: runtime.artifact,
+    provider: { file: path.join(directory, "missing.provider.mjs"), sha256: "a".repeat(64) } }
   assert.equal(assertNativeScheduleCarrierArtifacts(installation), true)
-  writeFileSync(file, `${bytes}\n`)
+  writeFileSync(runtime.file, `${runtime.bytes}\n`)
   assert.throws(() => assertNativeScheduleCarrierArtifacts(installation), /artifact/)
-  rmSync(file)
+  rmSync(runtime.file)
   assert.throws(() => assertNativeScheduleCarrierArtifacts(installation))
 })

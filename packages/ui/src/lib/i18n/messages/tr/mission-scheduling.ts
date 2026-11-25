@@ -65,6 +65,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.succeeded": "Başarılı geçişler",
   "missions.scheduleList.since": "{when} tarihinden beri izleniyor",
   "missions.scheduleList.endAfter": "İlk başlatmadan {minutes} dakika sonra",
+  "missions.scheduleList.recreate": "Çalıştırmak için bu zamanlamayı yeniden oluşturun.",
   "missions.scheduleList.blocked": "Kabul engellendi",
   "missions.scheduleList.state.paused": "Duraklatıldı",
   "missions.scheduleList.state.running": "Çalışıyor",

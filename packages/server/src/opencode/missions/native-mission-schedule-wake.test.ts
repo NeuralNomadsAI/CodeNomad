@@ -12,7 +12,8 @@ import { nativeSchedulePreflight } from "./native-mission-schedule-preflight"
 import { nativeScheduleWakeKey } from "./native-schedule-transport-contract"
 import { dispatchNativeMissionScheduleWake, nativeMissionSchedulePriorHeld, parseNativeMissionScheduleClaim,
   recoverNativeMissionScheduleClaim } from "./native-mission-schedule-wake-dispatch"
-import { receiveNativeMissionScheduleWake, type NativeMissionScheduleWakePorts } from "./native-mission-schedule-wake-rpc"
+import { readNativeMissionScheduleWakeProof, receiveNativeMissionScheduleWake, type NativeMissionScheduleWakePorts } from "./native-mission-schedule-wake-rpc"
+import { admitNativeMissionScheduleCodeWake } from "./native-mission-schedule-code-admission"
 import type { createNativeScheduleTransport } from "./native-schedule-transport"
 
 async function receiver(t: test.TestContext, role: "principal" | "reconciliation" = "principal", loseAuxiliary = false) {
@@ -290,7 +291,7 @@ test("dispatch replays only an abandoned original, passing retry to its claim", 
   }
 })
 
-test("a carrier turn reconciles another occurrence's unsettled claim before its own wake", async () => {
+test("a Code Mode wake reconciles another occurrence's unsettled claim first", async () => {
   const wake = { missionID: "mission", generation: 1, scheduleID: "sch_main", sessionID: "ses_main", run: 1, messageID: "msg_sch_main_1" }
   const next = { ...wake, run: 2, messageID: "msg_sch_main_2" }, dispatched: string[] = []
   const claim = { version: 1 as const, key: nativeScheduleWakeKey(wake), wake, incarnation: { id: "native", pid: process.pid, url: "http://127.0.0.1:1" } }
@@ -305,4 +306,30 @@ test("a carrier turn reconciles another occurrence's unsettled claim before its 
   assert.equal(await recoverNativeMissionScheduleClaim(claim, next, answer("pending")), false)
   assert.equal(await recoverNativeMissionScheduleClaim(claim, next, answer("applied")), true)
   assert.deepEqual(dispatched, [claim.key, claim.key])
+})
+
+test("prompt rows refuse wake RPC, dispatch and admission", async t => {
+  for (const role of ["principal", "reconciliation"] as const) {
+    const f = await receiver(t, role)
+    await f.claim()
+    f.info.code = false
+    const before = await f.read()
+    f.ports.read = () => readNativeMissionScheduleWakeProof({
+      ctx: f.ctx, doc: before, role, wake: f.wake, native: f.native, run: Effect.runPromise, current: f.current,
+    })
+    const refused = { key: nativeScheduleWakeKey(f.wake), state: "rejected", reason: "schedule-calendar-requires-code" }
+    for (const mode of ["status", "wake"] as const)
+      assert.deepEqual(await receiveNativeMissionScheduleWake(mode, f.input, f.entry, f.ports), refused)
+    if (role === "principal") await assert.rejects(admitNativeMissionScheduleCodeWake(f.wake, {
+      store: f.store, current: f.current, row: async () => f.info,
+    }), /schedule-calendar-requires-code/)
+    const result = await dispatchNativeMissionScheduleWake({ wake: f.wake, registrationFile: f.input.registrationFile, directory: f.directory }, {
+      current: f.current, held: async () => false, claim: async () => assert.fail("claim"),
+      transport: { status: async () => ({ state: "received", reply: await receiveNativeMissionScheduleWake("status", f.input, f.entry, f.ports) }),
+        wake: async () => assert.fail("dispatch") },
+    })
+    assert.deepEqual(result, { state: "received", reply: refused })
+    assert.deepEqual(await f.read(), before)
+    assert.deepEqual(f.calls, [])
+  }
 })

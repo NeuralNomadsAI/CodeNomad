@@ -8,7 +8,6 @@ import type { MissionJsonValue } from "../../missions/model"
 import { nativeMissionScheduleHandlers } from "./native-mission-schedule-rpc"
 import { nativeInvocation } from "./native-invocation"
 import { acquireNativeScheduleCalendarService } from "./native-schedule-calendar-service"
-import { registerNativeScheduleProvider, assertNativeScheduleProviderAvailable } from "./native-schedule-provider-registration"
 import { captureMissionCalendarPlacement } from "../../missions/mission-calendar-placement"
 import type { NativeScheduleArtifacts } from "./native-schedule-installation"
 import type { MissionCalendarOwnerSlot } from "../../missions/mission-calendar-owner-state"
@@ -21,11 +20,9 @@ const definition = Rpc.define({ id: "codenomad.schedule-list-qualification", met
 export default Plugin.define({ id: "codenomad.schedule-list-qualification", effect: ctx => Effect.gen(function* () {
   const invocation = nativeInvocation(), production = nativeMissionScheduleHandlers(ctx)
   const artifacts = ctx.options as NativeScheduleArtifacts
-  yield* registerNativeScheduleProvider(ctx, artifacts)
   yield* ctx.rpc.register(definition, {
     seed: () => invocation.capture(Effect.scoped(Effect.gen(function* () {
-      const native = yield* acquireNativeScheduleCalendarService(ctx, "build", () => true, effect => invocation.check(run => run(effect)),
-        () => assertNativeScheduleProviderAvailable(ctx, artifacts))
+      const native = yield* acquireNativeScheduleCalendarService(ctx, "build", () => true, effect => invocation.check(run => run(effect)))
       return yield* Effect.tryPromise(() => invocation.check(async run => {
       const store = new NativeMissionDocumentStore({ get: key => run(ctx.storage.get(key)),
         // Only the fixture seeds these paused documents. Product reads use their

@@ -42,6 +42,7 @@ const input = {
 } as const
 const output = { type: "object", additionalProperties: false, required: ["key", "state"],
   properties: { key: { type: "string", maxLength: 32768 }, state: { enum: ["applied", "pending", "rejected", "unknown"] },
+    reason: { enum: ["schedule-calendar-requires-code"] },
     messagePresent: { type: "boolean" }, ready: { type: "boolean" }, abandoned: { type: "boolean" }, preflight } } as const
 
 /** Internal service-owned adapter. Register wake with CAS, status as a pure read, and
@@ -52,4 +53,4 @@ export const NativeScheduleTransportRpc = {
 
 /** `abandoned`: status found an unsettled claim on this unconsumed wake whose receiver ended. */
 export type NativeScheduleTransportReply = { key: string; state: "applied" | "pending" | "rejected" | "unknown"; messagePresent?: boolean;
-  ready?: boolean; abandoned?: boolean; preflight?: NativeSchedulePreflight }
+  reason?: "schedule-calendar-requires-code"; ready?: boolean; abandoned?: boolean; preflight?: NativeSchedulePreflight }

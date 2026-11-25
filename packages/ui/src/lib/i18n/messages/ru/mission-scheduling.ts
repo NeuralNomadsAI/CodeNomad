@@ -65,6 +65,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.succeeded": "Успешные проходы",
   "missions.scheduleList.since": "Учёт с {when}",
   "missions.scheduleList.endAfter": "Через {minutes} мин. после первого запуска",
+  "missions.scheduleList.recreate": "Создайте расписание заново, чтобы запустить его.",
   "missions.scheduleList.blocked": "Допуск заблокирован",
   "missions.scheduleList.state.paused": "На паузе",
   "missions.scheduleList.state.running": "Работает",

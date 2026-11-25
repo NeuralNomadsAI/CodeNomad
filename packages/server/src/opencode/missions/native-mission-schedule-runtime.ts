@@ -3,7 +3,6 @@ import { Rpc } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { nativeInvocation } from "./native-invocation"
 import { registerNativeScheduledBusinessRpc } from "./native-scheduled-business-rpc"
-import { registerNativeScheduleProvider } from "./native-schedule-provider-registration"
 import { NativeScheduleTransportRpc } from "./native-schedule-transport-contract"
 import { nativeMissionScheduleWakeHandlers } from "./native-mission-schedule-wake-rpc"
 import { registerNativeMissionScheduleCarrierHooks } from "./native-mission-schedule-wake-hooks"
@@ -19,11 +18,10 @@ import { registerScheduledChildInput } from "./native-scheduled-child-input"
 export const registerNativeMissionScheduleRuntime = Effect.fn("missions.registerScheduleRuntime")(function* (
   ctx: Plugin.Context, artifacts?: NativeScheduleArtifacts, invocation = nativeInvocation(),
 ) {
-  if (artifacts) yield* registerNativeScheduleProvider(ctx, artifacts)
   const idle = yield* registerNativeMissionScheduleIdleHints(ctx)
   yield* registerNativeMissionScheduleCarrierHooks(ctx, idle.remember)
   yield* registerScheduledChildInput(ctx)
-  yield* ctx.rpc.register(Rpc.define(NativeScheduleTransportRpc), nativeMissionScheduleWakeHandlers(ctx, artifacts)).pipe(Effect.orDie)
+  yield* ctx.rpc.register(Rpc.define(NativeScheduleTransportRpc), nativeMissionScheduleWakeHandlers(ctx)).pipe(Effect.orDie)
   yield* registerNativeMissionScheduleCodeWake(ctx)
   yield* registerNativeMissionScheduleMaintenance(ctx)
   // One registration, shared by persistent native tool routing and preparation.

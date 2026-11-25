@@ -117,6 +117,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
         </dl>
         <Show when={doc().blockReason}>{reason => <p role="status" class="mission-control-stale">
           {t("missions.scheduleList.blocked")} · {t(reason() === "deleting" ? "missions.scheduling.lock.deleted"
+            : reason() === "schedule-calendar-requires-code" ? "missions.scheduleList.recreate"
             : reason() === "failed" || reason() === "ended-without-report" ? "missions.recurrence.interruptedError" : "missions.scheduling.lock.uncertain")}
           <code><bdi>{reason()}</bdi></code>
         </p>}</Show>
