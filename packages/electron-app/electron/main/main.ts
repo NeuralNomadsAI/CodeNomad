@@ -38,7 +38,7 @@ import { CliProcessManager, setBackendProfileScope } from "./process-manager"
 import { loadNewRemoteWindow, navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, DeferredRestore, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, readForwardedLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, DeferredRestore, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareForwardedLaunch, readForwardedLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
 import { InvalidProfileError } from "./data-profile"
 import { stripPrivateRelaunchEnvironment, sweepSelectionFolders } from "./profile-selection-cleanup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
@@ -556,16 +556,21 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
   lifecycle.registerAppEvents()
   app.on("second-instance", (_event, argv, workingDirectory, additionalData) => {
     if ((additionalData as { automationRelaunch?: unknown } | undefined)?.automationRelaunch === true) return
-    const intent = readForwardedLaunchIntent(additionalData) ?? parseLaunchIntent(
-      argv.slice(process.defaultApp ? readElectronEntry(argv)?.nextIndex ?? 2 : 1),
-      workingDirectory || process.cwd(),
-    )
-    void intentQueue.enqueue(prepareSecondLaunchIntent(intent, storageScope.configIdentity)).catch(() => {})
+    const args = argv.slice(process.defaultApp ? readElectronEntry(argv)?.nextIndex ?? 2 : 1)
+    const cwd = workingDirectory || process.cwd()
+    // Folder checks and the config read stay off the native event loop.
+    void intentQueue.enqueue(() => prepareForwardedLaunch(
+      (isDirectory) => readForwardedLaunchIntent(additionalData, isDirectory) ?? parseLaunchIntent(args, cwd, isDirectory),
+      storageScope.configIdentity,
+    )).catch(() => {})
   })
   app.on("open-file", (event, path) => {
     event.preventDefault()
-    const intent = parseLaunchIntent([path], process.cwd())
-    if (intent.folders.length) void intentQueue.enqueue(intent).catch(() => {})
+    const cwd = process.cwd()
+    void intentQueue.enqueue(() => prepareForwardedLaunch((isDirectory) => {
+      const intent = parseLaunchIntent([path], cwd, isDirectory)
+      return intent.folders.length ? intent : undefined
+    })).catch(() => {})
   })
   app.on("certificate-error", (event, contents, url, error, _certificate, callback) => {
     if (contents && isRemoteCertificateAllowed(contents.id, url, insecureOrigins)) {
