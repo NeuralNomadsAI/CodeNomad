@@ -166,9 +166,22 @@ export async function historySearch(page, messages, touch, {holdNextAnchor, hold
     await press(search,'Existing arguments only')
     await rejected()
     assert.equal(windows,0,'Arguments-only refusal must also stay local')
-    // Rune exposes the select trigger as a button in the unfocused web mirror.
-    const picker=search.getByRole('button',{name:scopeLabel,exact:true})
+    const picker=search.getByRole('combobox',{name:scopeLabel,exact:true})
+    await picker.waitFor()
+    await picker.evaluate(el=>new Promise((resolve,reject)=>{
+      const until=performance.now()+3000
+      let prev=el.getBoundingClientRect().top
+      const step=now=>{
+        const y=el.getBoundingClientRect().top
+        if(Math.abs(y-prev)<0.5)return resolve()
+        if(now>=until)return reject(Error('Select trigger did not settle'))
+        prev=y
+        requestAnimationFrame(step)
+      }
+      requestAnimationFrame(step)
+    }))
     await activate(picker)
+    await page.getByRole('listbox').waitFor()
     const workspace=page.getByRole('option',{name:messages['history.workspace'],exact:true})
     const [ranked]=await Promise.all([read('ranked'),activate(workspace)])
     if(!ranked.ok())assert.fail(`Ranked broker status ${ranked.status()}: ${await ranked.text()}`)

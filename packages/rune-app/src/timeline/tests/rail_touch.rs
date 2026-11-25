@@ -118,12 +118,12 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
     }
     let after_race = owner(&mut rt.state).scroll.get().at.offset[1];
     assert!(
-        touch_glide_interrupted
+        !touch_glide_interrupted
             && owner(&mut rt.state).jump.is_browsing()
             && owner(&mut rt.state).scroll.get().rail_glide.is_none()
             && during_race >= 200.0
             && (after_race - during_race).abs() <= 5.0,
-        "same-frame headless touch/reveal race must interrupt the glide without snapping to 0.0 and enter browse mode: interrupted={touch_glide_interrupted}, before={offset_before_race}, during={during_race}, after={after_race}"
+        "same-frame headless touch/reveal race must defer reveal without snapping to 0.0 and enter browse mode: interrupted={touch_glide_interrupted}, before={offset_before_race}, during={during_race}, after={after_race}"
     );
     // Mid-glide touch pan: once a reveal glide is already in-flight, a touch pan must interrupt
     // the glide, enter browse mode, and preserve its ~82px pan displacement with no snap/clamp.

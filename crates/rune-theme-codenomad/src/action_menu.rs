@@ -306,7 +306,7 @@ pub fn view<S: 'static>(
             .radius(metric("borderRadius"))
             .role("menuitem")
             .label(&item.label)
-            .disabled(item.disabled)
+            .aria_disabled(item.disabled)
             .focusable(true)
             .no_focus_ring()
             .focus_highlight(t.color("menu-item-hover-bg"))
