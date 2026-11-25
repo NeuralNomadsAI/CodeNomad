@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { projectLinkPath, resolveProjectLinkPath } from "./markdown-project-links"
+import { localFileUrlPath, projectLinkPath, resolveProjectLinkPath } from "./markdown-project-links"
 
 describe("project-file link paths", () => {
   it("classifies project-file link candidates", () => {
@@ -21,7 +21,28 @@ describe("project-file link paths", () => {
       "javascript:alert(1)", "data:text/plain,x", "//cdn.example.com/a.png", "\\\\server\\share\\x.png"]) {
       assert.equal(projectLinkPath(source), undefined, source)
     }
+    // Encoded backslashes cannot smuggle a UNC path past the `//` check.
+    assert.equal(projectLinkPath("/%5Cfixture.invalid%5Cshare%5Cnotes.txt"), undefined)
+    assert.equal(projectLinkPath("/"), "/")
+    assert.equal(projectLinkPath("C:/"), "C:/")
+    assert.equal(projectLinkPath("./"), ".")
+    assert.equal(resolveProjectLinkPath("./", "/home/me/repo"), undefined)
   })
+
+  it("reads local file URLs", () => {
+    assert.equal(localFileUrlPath("file:///C:/Users/me/My%20reports"), "C:/Users/me/My reports")
+    assert.equal(localFileUrlPath("file://localhost/home/me/repo/docs/?view=%2F#top"), "/home/me/repo/docs/")
+    assert.equal(localFileUrlPath("file:/home/me/repo/docs"), "/home/me/repo/docs")
+    assert.equal(localFileUrlPath("file:///"), "/")
+    assert.equal(localFileUrlPath("file:///C:/"), "C:/")
+    assert.equal(localFileUrlPath("file:C:/Users/me/notes.txt"), "C:/Users/me/notes.txt")
+    assert.equal(localFileUrlPath("file://C:/Users/me/notes.txt"), "C:/Users/me/notes.txt")
+    assert.equal(localFileUrlPath("file:///C:\\Users\\me\\notes.md"), "C:/Users/me/notes.md")
+    assert.equal(localFileUrlPath("file:C:\\Users\\me\\notes.txt"), "C:/Users/me/notes.txt")
+    for (const source of ["C:/Users/me/bato.jpg", "file://server/share/x.md", "file:///home/me/docs%2Fchild",
+      "file:///%5C%5Cserver%5Cshare", "file:///\\\\server\\share\\x.md", "file:////server/share/x.md", "https://example.com/x"]) {
+      assert.equal(localFileUrlPath(source), undefined, source)
+    }  })
 
   it("resolves containment and rejects escapes", () => {
     const base = "/home/me/repo"

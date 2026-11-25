@@ -65,6 +65,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.succeeded": "सफल चरणहरू",
   "missions.scheduleList.since": "{when} देखि अभिलेख",
   "missions.scheduleList.endAfter": "पहिलो सुरुबाट {minutes} मिनेटपछि",
+  "missions.scheduleList.recreate": "चलाउन यो तालिका फेरि बनाउनुहोस्।",
   "missions.scheduleList.blocked": "प्रवेश रोकिएको छ",
   "missions.scheduleList.state.paused": "विराममा",
   "missions.scheduleList.state.running": "चलिरहेको",

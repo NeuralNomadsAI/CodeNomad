@@ -118,7 +118,7 @@ Les entrées quotidiennes existantes conservent leurs contrôles et leur fuseau.
 
 ## Suivre l’arbre et lire les résultats {#tracking}
 
-Le chevron déplie ou replie les tâches. Cliquer une ligne sélectionne la Mission ou la tâche ; les actions de cette sélection restent dans l’en-tête. Une Mission sans tâche n’a pas de chevron. **Filtrer les missions** filtre le répertoire chargé.
+Le chevron déplie ou replie les tâches. Cliquer une ligne sélectionne la Mission ou la tâche ; les actions de cette sélection restent dans l’en-tête. Une Mission sans tâche n’a pas de chevron. **Filtrer les missions** filtre le répertoire chargé. Missions ponctuelles et récurrentes partagent une seule liste, activité la plus récente en premier ; une exécution planifiée en cours passe en tête.
 
 L’œil active **Résumé** dans le lecteur central et suit la sélection tant qu’il est enfoncé. **Ouvrir la conversation** mène au coordinateur ou à la tâche sélectionnée. **Plus d’actions** (⋯) contient les commandes applicables de point d’avancement, interruption, enregistrement de configuration et modification.
 

@@ -4,12 +4,12 @@
 export class RefTable {
   private entries = new Map<string, { backendNodeId: number; generation: string }>()
   private byNode = new Map<string, string>()
-  private next = 0
-
-  constructor(private readonly retry = "inspect again", private readonly prefix = "e", private readonly limit = 5_000) {}
+  /** `counter` is shared by tables that reuse one prefix, so a recreated table never issues an earlier ref again. */
+  constructor(private readonly retry = "inspect again", private readonly prefix = "e", private readonly limit = 5_000,
+    private readonly counter = { next: 0 }) {}
 
   get refLength(): number {
-    return this.prefix.length + String(this.next + this.limit).length
+    return this.prefix.length + String(this.counter.next + this.limit).length
   }
 
   /** Issues refs for one inspection; refs of other generations can no longer resolve and are dropped. */
@@ -29,7 +29,7 @@ export class RefTable {
         this.entries.set(ref, entry)
         return ref
       }
-      ref = `${this.prefix}${++this.next}`
+      ref = `${this.prefix}${++this.counter.next}`
       this.entries.set(ref, { backendNodeId, generation })
       this.byNode.set(key, ref)
       if (this.entries.size > this.limit) {

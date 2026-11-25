@@ -33,7 +33,7 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
     "./instances": "export const instances = () => new Map([['instance', { client: globalThis.__missionSchedulesTest.client() }]]);",
     "./opencode-data": "export const getOpenCodeInstanceGeneration = () => globalThis.__missionSchedulesTest.generation();",
     "./session-list-restoration": "export const sessionListRestored = () => true;",
-    "./missions": "export const isMissionActivityEvent = () => false;",
+    "./missions": "export const isMissionActivityEvent = event => event.type === 'session.execution.started';",
   }
    if ((context.parentURL?.endsWith("/mission-schedules.ts") || context.parentURL?.endsWith("/mission-schedule-controls.ts")) && specifier === "../lib/backend-client")
      return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(sources["../lib/api-client"] + " export const backendOf = () => ({ api: serverApi });")}` }
@@ -47,6 +47,7 @@ after(() => { hooks.deregister(); delete (globalThis as any).__missionSchedulesT
 const { createRoot, createSignal, createEffect, createMemo, untrack } = await import("solid-js")
 const { useMissionSchedules, unifiedScheduleHolds: holds, unifiedScheduleHold: held, changedUnifiedScheduleHolds: bump } = await import("./mission-schedules")
 const { createMissionScheduleControls } = await import("../components/mission-schedule-controls")
+const { ACTIVITY_REFRESH_INTERVAL_MS } = await import("../lib/event-refresh-scheduler")
 const deferred = <T = void>() => {
   let resolve!: (value: T) => void, reject!: (error: unknown) => void
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
@@ -614,4 +615,28 @@ test(`a late revision-R display cannot release a publication hold after ${change
     }
     assert.equal(receiptReads, 1); assert.equal(controls, 0)
   } finally { c.dispose(); h.dispose() }
+})
+
+test("native activity rereads the schedules only while one runs a passage", { timeout: 30_000 }, async () => {
+  const listeners = new Set<(event: any) => void>(), on = fixture.backendEvents.on
+  fixture.backendEvents.on = ((type: string, listener: (event: any) => void) => {
+    if (type === "instance.event") listeners.add(listener)
+    return () => { listeners.delete(listener) }
+  }) as typeof on
+  let passage = false
+  const h = setup(false, async () => ({ version: 1, projectID: "project", schedules: [{ ...running,
+    pendingPassage: passage ? { id: "psg_1", missionID: "msn_1", coordinatorSessionID: "ses_1", admittedAt: 100 } : null }] }))
+  // An activity read is due only ACTIVITY_REFRESH_INTERVAL_MS after the previous one settled.
+  const settle = () => new Promise(resolve => setTimeout(resolve, ACTIVITY_REFRESH_INTERVAL_MS + 500))
+  const emit = () => { for (const listener of listeners) listener({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: {} } }) }
+  try {
+    await until(() => !h.store.loading())
+    const idle = h.calls.list
+    emit(); await settle()
+    assert.equal(h.calls.list, idle, "no passage: activity reads nothing")
+    passage = true; h.store.refresh(); await until(() => !h.store.loading())
+    const before = h.calls.list
+    emit(); await settle()
+    assert.equal(h.calls.list, before + 1, "a running passage rereads on activity")
+  } finally { h.dispose(); fixture.backendEvents.on = on }
 })

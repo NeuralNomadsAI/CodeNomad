@@ -1,8 +1,12 @@
 import { VALUE_LIMIT, type PageFunctionId } from "./functions"
 export { VALUE_LIMIT, INPUT_MARK_LEASE_MS } from "./functions"
 
-/** Low-level CDP transport, used only by the CDP adapter. */
-export interface PageChannel { send(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> }
+/** Low-level CDP transport, used only by the CDP adapter. A native preview also serves its diagnostic event buffer. */
+export interface PageChannel {
+  /** `sessionId` reaches an out-of-process frame's protocol session. */
+  send(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<Record<string, unknown>>
+  diagnostics?(after: number): Promise<Record<string, unknown>>
+}
 export const PAGE_DRIVER_VERSION = 1
 export const OBJECT_GROUP = "codenomad-automation"
 export type DriverKind = "cdp" | "webkit"
@@ -26,6 +30,12 @@ export type PageOperation =
   | { op: "wheel"; event: WheelInput }
   | { op: "keyboard"; event: KeyboardInput }
   | { op: "insert-text"; text: string }
+  /** The document's title and whether its tab can go back or forward (`{ title, canGoBack, canGoForward }`). */
+  | { op: "history" }
+  /** The preview's console and network events after a sequence number (`DiagnosticRead`). */
+  | { op: "diagnostics"; after: number }
+  /** A retained response's body by its protocol request ID, in its frame's session when it has one. */
+  | { op: "response-body"; request: string; session?: string }
 
 /** One semantic page; drivers own protocol/native adaptation, never arbitrary evaluation. */
 export interface PageDriver {
@@ -61,7 +71,7 @@ export interface PageSession {
 export class Handle { constructor(readonly objectId: string) {} }
 export function gone(ref: string): Error { return new Error(`${ref} is no longer in the page; inspect again`) }
 const MUTATIONS: Partial<Record<PageFunctionId, string>> = {
-  "programmatic-click": "click", "option-click": "option selection", select: "selection",
+  "programmatic-click": "click", "option-click": "option selection", select: "selection", "select-values": "selection",
   "set-value": "field update", "delete-selection": "text deletion", focus: "focus change", prepare: "field preparation",
 }
 
@@ -102,7 +112,7 @@ export async function releaseObjects(session: PageSession): Promise<void> { awai
 function isMutationResult(id: PageFunctionId, value: unknown): boolean {
   if (id === "prepare") return value === "insert" || value === "value" || value === "append"
   if (id === "option-click" && value === null) return true
-  if (id === "select" || id === "option-click") return Array.isArray(value) && value.every(item => typeof item === "string")
+  if (id === "select" || id === "select-values" || id === "option-click") return Array.isArray(value) && value.every(item => typeof item === "string")
   return value === null
 }
 

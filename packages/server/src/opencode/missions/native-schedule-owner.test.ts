@@ -515,3 +515,46 @@ test("a code auxiliary whose create acknowledgement was lost is identified by it
     assert.equal(await read(2), undefined)
   })
 })
+
+test("Play and lost-ACK adoption refuse prompt calendars; Pause and Delete clean up without adopting", async t => {
+  const f = await ownerFixture(t)
+  f.createPromptRows(); f.loseCreateACK("reconciliation")
+  const attempted = await f.control("play"), row = [...f.calendars.values()][0]
+  const wake = { missionID: attempted.id, generation: attempted.timeGeneration, scheduleID: row.id,
+    sessionID: row.sessionID, run: 1, messageID: `msg_${row.id}_1` }
+  row.runCount = 1
+  await assert.rejects(f.owner.adoptAuxiliary(wake), /schedule-calendar-requires-code/)
+  assert.deepEqual(await f.read(), attempted)
+  const refused = await f.owner.reconcile(attempted.id)
+  assert.equal(refused.calendarOwner!.error, "schedule-calendar-requires-code")
+  assert.deepEqual(refused.calendars, [])
+  assert.equal(refused.calendarOwner!.slots[0].scheduleID, null)
+  await f.control("pause")
+  assert.equal(row.status, "paused")
+  await f.control("delete")
+  assert.equal(f.calendars.size, 0)
+  assert.equal(f.sessions.size, 0)
+})
+
+test("Resume refuses a mapped prompt calendar without advancing its high-water", async t => {
+  const f = await ownerFixture(t)
+  const armed = await f.control("play"), paused = await f.control("pause")
+  const row = f.calendars.get(armed.calendars.find(item => item.role === "reconciliation")!.scheduleID)!
+  row.code = false
+  const refused = await f.control("resume")
+  assert.equal(refused.calendarOwner!.error, "schedule-calendar-requires-code")
+  assert.deepEqual(refused.calendars, paused.calendars)
+  assert.equal(row.status, "paused")
+  await f.control("pause", "pause_again")
+  await f.control("delete")
+  assert.equal(f.calendars.size, 0)
+})
+
+test("persisted installations accept an ignored provider descriptor", async t => {
+  const f = await ownerFixture(t)
+  const doc = await f.control("play")
+  const provider = { file: doc.calendarOwner!.installation.runtime.file + ".missing", sha256: "a".repeat(64) }
+  await f.store.change(doc.id, doc.revision, f.current, value => { value.calendarOwner!.installation.provider = provider })
+  assert.deepEqual((await f.read()).calendarOwner!.installation.provider, provider)
+  assert.equal((await f.owner.reconcile(doc.id)).calendarOwner!.error, null)
+})

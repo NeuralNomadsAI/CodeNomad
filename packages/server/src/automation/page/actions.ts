@@ -7,27 +7,34 @@ export type { PageChannel, PageSession } from "./protocol"
 
 interface Target { ref: string; backendNodeId: number }
 export type PageAction =
-  | Target & { kind: "click"; button?: MouseButton }
+  | Target & { kind: "click"; button?: MouseButton; noFilePicker?: true }
   | Target & { kind: "type"; text: string; clear: boolean }
-  | Target & { kind: "select"; values: string[] }
+  | Target & { kind: "select"; values: string[]; byValue?: true }
   | Target & { kind: "hover" }
   | Target & { kind: "drag"; to: Target }
-  | { kind: "scroll"; target?: Target; direction: "up" | "down" | "left" | "right"; amount: number }
+  | { kind: "scroll"; target?: Target; delta: { x: number; y: number } }
   | { kind: "press"; key: string; target?: Target }
-  | { kind: "wait"; text: string; gone: boolean; timeoutMs: number }
-export interface PageActionResult { value?: string; selected?: string[]; focused?: string; found?: boolean; waitedMs?: number }
+  | { kind: "wait"; text: string; gone: boolean; timeoutMs: number; literal?: true }
+  | Target & { kind: "checked" }
+export interface PageActionResult { value?: string; selected?: string[]; focused?: string; found?: boolean; waitedMs?: number; checked?: boolean | null }
 
 export function bindRefs(action: RefAction, resolve: (ref: string) => number): PageAction {
   const target = (ref: string): Target => ({ ref, backendNodeId: resolve(ref) })
   switch (action.action) {
-    case "click": return { kind: "click", ...target(action.ref), ...(action.button ? { button: action.button } : {}) }
+    case "click": return { kind: "click", ...target(action.ref), ...(action.button ? { button: action.button } : {}), ...(action.noFilePicker ? { noFilePicker: true as const } : {}) }
     case "type": return { kind: "type", ...target(action.ref), text: action.text, clear: action.clear }
-    case "select": return { kind: "select", ...target(action.ref), values: action.values }
+    case "select": return { kind: "select", ...target(action.ref), values: action.values, ...(action.byValue ? { byValue: true as const } : {}) }
     case "hover": return { kind: "hover", ...target(action.ref) }
     case "drag": return { kind: "drag", ...target(action.ref), to: target(action.to) }
-    case "scroll": return { kind: "scroll", direction: action.direction, amount: action.amount, ...(action.ref ? { target: target(action.ref) } : {}) }
+    case "scroll": {
+      const sign = "delta" in action ? 0 : action.direction === "up" || action.direction === "left" ? -1 : 1
+      const delta = "delta" in action ? action.delta : action.direction === "up" || action.direction === "down"
+        ? { x: 0, y: sign * action.amount } : { x: sign * action.amount, y: 0 }
+      return { kind: "scroll", delta, ...(action.ref ? { target: target(action.ref) } : {}) }
+    }
     case "press": return { kind: "press", key: action.key, ...(action.ref ? { target: target(action.ref) } : {}) }
-    case "wait": return { kind: "wait", text: action.text, gone: action.gone, timeoutMs: action.timeout }
+    case "wait": return { kind: "wait", text: action.text, gone: action.gone, timeoutMs: action.timeout, ...(action.literal ? { literal: true as const } : {}) }
+    case "checked": return { kind: "checked", ...target(action.ref) }
   }
 }
 export async function readAccessibilityTree(session: PageSession): Promise<AxNode[]> {
@@ -46,7 +53,7 @@ export async function performAction(session: PageSession, action: PageAction): P
       case "type": return await type(session, action)
       case "select": {
         const element = await resolveElement(session, action.ref, action.backendNodeId)
-        return { selected: (await callOn(session, action.ref, element, "select", [action.values]) as unknown[]).map(String) }
+        return { selected: (await callOn(session, action.ref, element, action.byValue ? "select-values" : "select", [action.values]) as unknown[]).map(String) }
       }
       case "hover": {
         const point = await aim(session, action.ref, action.backendNodeId)
@@ -64,10 +71,7 @@ export async function performAction(session: PageSession, action: PageAction): P
       case "scroll": {
         const point = action.target ? await aim(session, action.target.ref, action.target.backendNodeId, { wheel: true }) : undefined
         if (action.target && !point) throw new Error(`${action.target.ref} has no visible box to scroll`)
-        const sign = action.direction === "up" || action.direction === "left" ? -1 : 1
-        const vertical = action.direction === "up" || action.direction === "down"
-        await wheelAt(session, point ?? undefined, { x: vertical ? 0 : sign * action.amount, y: vertical ? sign * action.amount : 0 },
-          action.target && await pointerTarget(session, action.target))
+        await wheelAt(session, point ?? undefined, action.delta, action.target && await pointerTarget(session, action.target))
         return {}
       }
       case "press": {
@@ -81,15 +85,22 @@ export async function performAction(session: PageSession, action: PageAction): P
         try { return { focused: await focusedElement(session) } }
         catch (error) { throw new Error("Key input was sent, but the current focus could not be read; inspect before retrying.", { cause: error }) }
       }
-      case "wait": return await waitForText(session, action.text, action.gone, action.timeoutMs)
+      case "wait": return await waitForText(session, action.text, action.gone, action.timeoutMs, action.literal)
+      case "checked": {
+        const element = await resolveElement(session, action.ref, action.backendNodeId)
+        const checked = await callOn(session, action.ref, element, "checked-state", [])
+        return { checked: typeof checked === "boolean" ? checked : null }
+      }
     }
   } finally { await releaseObjects(session) }
 }
 async function pointerTarget(session: PageSession, { ref, backendNodeId }: Target): Promise<InputTarget | undefined> {
   if (session.guardInput) return { ref, handle: await resolveElement(session, ref, backendNodeId) }
 }
-async function click(session: PageSession, action: Target & { button?: MouseButton }): Promise<PageActionResult> {
+async function click(session: PageSession, action: Target & { button?: MouseButton; noFilePicker?: true }): Promise<PageActionResult> {
   const element = await resolveElement(session, action.ref, action.backendNodeId)
+  if (action.noFilePicker && await callOn(session, action.ref, element, "file-input", []) === true)
+    throw new Error(`${action.ref} opens a native file picker, which agent actions cannot use`)
   const selected = await callOn(session, action.ref, element, "option-click", [])
   if (Array.isArray(selected)) return { selected: selected.map(String) }
   const point = await aim(session, action.ref, action.backendNodeId)

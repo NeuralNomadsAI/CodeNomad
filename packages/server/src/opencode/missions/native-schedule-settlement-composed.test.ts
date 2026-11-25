@@ -2,15 +2,14 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { Context, Effect, Schema } from "effect"
 import { Automation } from "@opencode/schema/automation"
-import { missionAutomationID } from "./native-mission-automation"
-import { SessionMessage } from "@opencode/schema/session-message"
+import { missionAutomationID, MISSION_WAKE_CODE } from "./native-mission-automation"
 import { MissionDocumentPassageEngine, type DocumentPassagePorts } from "../../missions/mission-document-passage-engine"
 import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
 import type { MissionWake } from "../../missions/mission-document"
 import { ownerFixture } from "./native-schedule-owner-test-fixture"
 import { acquireNativeScheduledPassageCoverage } from "./native-scheduled-passage-coverage"
 import type { MissionNativeService } from "./native-service-adapter"
-import { NATIVE_SCHEDULE_CARRIER_SIGNAL, claimNativeScheduleCarrierWake, nativeScheduleClaimKey,
+import { claimNativeScheduleCarrierWake, nativeScheduleClaimKey,
   nativeScheduleCarrierLookupKey, closeNativeScheduleCarrierClaimLocked } from "./native-schedule-carrier-binding"
 
 /** Real owner + document engine + native coverage over one shared native-row
@@ -19,14 +18,14 @@ async function composed(t: test.TestContext, maximum = 3) {
   const f = await ownerFixture(t, { kind: "every", intervalMs: 900_000 }, maximum)
   const armed = await f.control("play"), principal = armed.calendars.find(item => item.role === "principal")!
   const auxiliary = armed.calendars.find(item => item.role === "reconciliation")!
-  const messages = new Map<string, typeof SessionMessage.Info.Type>(), business: string[] = []
+  const business: string[] = []
   let now = f.now, quietFamily = false, originalAdmissions = 0
   const native = { location: f.ctx.location,
     get: async ({ sessionID }: { sessionID: string }) => {
       const session = f.sessions.get(sessionID)
       if (!session) throw new Error("Native session missing")
       return structuredClone(session)
-    }, message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
+    },
   } as unknown as MissionNativeService
   const schedule = {
     enabled: () => Effect.succeed(true),
@@ -35,7 +34,7 @@ async function composed(t: test.TestContext, maximum = 3) {
       if (!row) throw new Error("Native calendar missing")
       return Schema.decodeUnknownSync(Automation.Info)({ id, sessionID: row.sessionID, name: row.name, trigger: row.when, tz: "UTC",
         projectID: f.ctx.location.project.id, directory: f.ctx.location.directory,
-        action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: row.sessionID } }, status: row.status, runCount: row.runCount,
+        action: { type: "code", code: MISSION_WAKE_CODE }, status: row.status, runCount: row.runCount,
         ...(row.nextDueAt === null ? {} : { nextDueAt: row.nextDueAt }), ...(row.endsAt === null ? {} : { expires: row.endsAt }),
         time: { created: row.createdAt, updated: row.createdAt } })
     }),
@@ -44,13 +43,8 @@ async function composed(t: test.TestContext, maximum = 3) {
   const run = <A>(effect: Effect.Effect<A, unknown>) => Effect.runPromiseWith(graph)(effect)
   const coverage = await run(acquireNativeScheduledPassageCoverage(native, run)), signal = new AbortController().signal
   f.native.wakeAcknowledged = async (target, wake, current) => {
-    current()
-    const doc = await f.read()
-    try {
-      const verified = await coverage.verifyWake(doc, { ...wake, missionID: doc.id, generation: target.descriptor.timeGeneration,
-        sessionID: target.descriptor.sessionID }, current, signal)
-      verified.current(); return verified.wake.dueAt === wake.dueAt
-    } catch { return false }
+    const row = await f.native.get(target, wake.scheduleID, current)
+    return !!row && row.code && row.runCount >= wake.run
   }
   const ports: DocumentPassagePorts = {
     incarnation: "composed_native", now: () => now, current: f.current,
@@ -68,14 +62,14 @@ async function composed(t: test.TestContext, maximum = 3) {
   }
   const engine = new MissionDocumentPassageEngine(f.store, ports)
   const occurrence = (): MissionWake => ({ scheduleID: principal.scheduleID, run: 1, messageID: `msg_${principal.scheduleID}_1`, dueAt: f.now + 900_000 })
-  const acknowledge = (wake = occurrence(), present = true) => {
+  const acknowledge = async (wake = occurrence(), counted = true) => {
     const row = f.calendars.get(wake.scheduleID)!
-    row.runCount = wake.run; row.nextDueAt = wake.dueAt + 900_000
-    if (present) messages.set(wake.messageID, Schema.decodeUnknownSync(SessionMessage.Info)({ type: "user", id: wake.messageID,
-      text: NATIVE_SCHEDULE_CARRIER_SIGNAL, time: { created: now }, metadata: { schedule: { id: wake.scheduleID, run: wake.run, dueAt: wake.dueAt, late: false } } }))
+    const doc = await f.read(), calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)
+    if (counted && !calendar?.wakePreparing) await f.store.change(doc.id, doc.revision, f.current, value => changes.prepareWake(value, wake))
+    if (counted) { row.runCount = wake.run; row.nextDueAt = wake.dueAt + 900_000 }
   }
   const incoming = () => ({ ...occurrence(), missionID: armed.id, generation: armed.timeGeneration, sessionID: principal.sessionID })
-  return { ...f, armed, principal, auxiliary, engine, coverage, signal, business, messages, ports, occurrence, acknowledge, incoming,
+  return { ...f, armed, principal, auxiliary, engine, coverage, signal, business, ports, occurrence, acknowledge, incoming,
     advance: (ms: number) => { now += ms; f.advance(ms) }, familyQuiet: () => { quietFamily = true }, admissions: () => originalAdmissions }
 }
 
@@ -100,7 +94,7 @@ test("composed Pause → Run now → success closes its paused suppression windo
 
 test("composed last-quota settlement retains auxiliary while family is live, then removes every carrier after positive idle proof", async t => {
   const f = await composed(t, 1)
-  f.advance(900_001); f.acknowledge()
+  f.advance(900_001); await f.acknowledge()
   assert.equal(await f.engine.wake({ missionID: f.armed.id, wake: f.incoming() }), "started")
   let doc = await f.owner.reconcile(f.armed.id)
   assert.equal(doc.state, "finished"); assert(doc.pending)
@@ -125,7 +119,7 @@ test("composed last-quota settlement retains auxiliary while family is live, the
 
 test("composed Stop with an admitted pending settles through paused coverage and cleans principal plus auxiliary", async t => {
   const f = await composed(t)
-  f.advance(900_001); f.acknowledge()
+  f.advance(900_001); await f.acknowledge()
   await f.engine.wake({ missionID: f.armed.id, wake: f.incoming() })
   const pendingID = (await f.read()).pending!.id
   let doc = await f.control("stop")
@@ -141,7 +135,7 @@ test("composed Stop with an admitted pending settles through paused coverage and
 
 test("paused observation never authorizes new principal admission, even with a positive contiguous native wake", async t => {
   const f = await composed(t)
-  f.advance(900_001); f.acknowledge()
+  f.advance(900_001); await f.acknowledge()
   await f.native.pause({ missionID: f.armed.id, descriptor: f.armed.calendarOwner!.slots.find(item => item.role === "principal")! }, f.principal.scheduleID, f.current)
   const before = await f.read()
   const preflight = await f.engine.preflight({ missionID: before.id, wake: f.incoming() })
@@ -161,7 +155,7 @@ test("a prepared run whose next native slot is overdue and refused at prompt ent
   f.advance(900_001)
   let doc = await f.read()
   doc = await f.store.change(doc.id, doc.revision, f.current, value => changes.prepareWake(value, f.occurrence()))
-  f.acknowledge()
+  await f.acknowledge()
   // Native retries run 2 while its due time stays past; prompt entry refuses it until run 1 is consumed.
   f.advance(4 * 900_000)
   const next = { scheduleID: f.principal.scheduleID, run: 2, messageID: `msg_${f.principal.scheduleID}_2`, dueAt: f.now + 1_800_000 }
@@ -175,7 +169,7 @@ test("a prepared run whose next native slot is overdue and refused at prompt ent
   assert.doesNotThrow(() => changes.prepareWake(structuredClone(doc), next))
 })
 
-test("paused suppression preserves an in-flight preparation through missing ACK/message, then consumes only its exact positive proof", async t => {
+test("paused suppression consumes a durable Code Mode preparation before OpenCode counts it", async t => {
   const f = await composed(t)
   f.advance(900_001)
   let doc = await f.read()
@@ -184,15 +178,7 @@ test("paused suppression preserves an in-flight preparation through missing ACK/
   f.familyQuiet()
   doc = await f.read()
   assert.equal(await f.engine.runNow({ missionID: doc.id, requestID: "manual_with_preparation", expectedRevision: doc.revision }), "settled")
-  const retained = await f.read()
-  assert.equal(retained.fanIn!.completed, false); assert.deepEqual(retained.calendars[1].wakePreparing, f.occurrence())
-  assert.equal(retained.calendars[1].highWater, 0)
-  await assert.rejects(f.engine.runNow({ missionID: doc.id, requestID: "blocked_manual", expectedRevision: retained.revision }), /Manual passage conflict/)
-  f.acknowledge(f.occurrence(), false)
-  await f.engine.reconcile({ missionID: doc.id })
-  assert.deepEqual((await f.read()).calendars[1].wakePreparing, f.occurrence())
-  f.acknowledge()
-  await f.engine.reconcile({ missionID: doc.id })
+  assert.equal(f.calendars.get(f.principal.scheduleID)!.runCount, 0)
   doc = await f.read()
   assert.equal(doc.fanIn!.completed, true); assert.equal(doc.calendars[1].highWater, 1); assert.equal(doc.calendars[1].wakePreparing, null)
   assert.equal(doc.launchedCount, 1); assert.equal(f.admissions(), 1)
@@ -203,7 +189,7 @@ test("Delete consumes an exact acknowledged current preparation, closes its clai
   f.advance(900_001)
   let doc = await f.read()
   doc = await f.store.change(doc.id, doc.revision, f.current, value => changes.prepareWake(value, f.occurrence()))
-  f.acknowledge()
+  await f.acknowledge()
   const incarnation = { id: "native_delete", pid: process.pid, url: "http://127.0.0.1:1" }
   assert.equal(await claimNativeScheduleCarrierWake(f.ctx, f.incoming(), incarnation, Effect.runPromise, f.current), true)
   const remove = f.native.remove
@@ -222,19 +208,19 @@ test("Delete consumes an exact acknowledged current preparation, closes its clai
   assert.equal(tombstone.requestID, "delete_prepared")
 })
 
-test("Delete with unknown ACK or missing original retains current preparation, high-water, claim and every native target", async t => {
-  for (const proof of ["no-ack", "missing-message", "pruned-after-read"] as const) {
+test("Delete with missing or changed Code Mode ACK retains the current preparation, claim and native targets", async t => {
+  for (const proof of ["no-ack", "changed-after-read"] as const) {
     const f = await composed(t)
     f.advance(900_001)
     let doc = await f.read()
     doc = await f.store.change(doc.id, doc.revision, f.current, value => changes.prepareWake(value, f.occurrence()))
-    if (proof !== "no-ack") f.acknowledge(f.occurrence(), proof === "pruned-after-read")
-    if (proof === "pruned-after-read") {
+    if (proof === "changed-after-read") {
+      await f.acknowledge()
       const acknowledge = f.native.wakeAcknowledged
       let reads = 0
       f.native.wakeAcknowledged = async (...args) => {
         const result = await acknowledge(...args)
-        if (++reads === 1) f.messages.delete(f.occurrence().messageID)
+        if (++reads === 1) f.calendars.get(f.principal.scheduleID)!.runCount = 0
         return result
       }
     }

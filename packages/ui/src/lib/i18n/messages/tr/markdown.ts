@@ -12,4 +12,7 @@ export const markdownMessages = {
 
   "markdown.link.previewOpens": "Web önizlemede açılır. Ctrl+tıklama (macOS'ta ⌘+tıklama) veya orta tıklama bunu tarayıcınızda açar.",
   "markdown.link.fileOpens": "Dosya önizlemesinde açılır. Ctrl+tıklama (macOS'ta ⌘+tıklama) veya orta tıklama bunu tarayıcınızda açar.",
+  "markdown.link.pathOpens": "Dosya önizlemesi gösterebiliyorsa orada, aksi halde sisteminizle açılır. Ctrl+tıklama (macOS'ta ⌘+tıklama) veya orta tıklama onu sisteminizle açar.",
+  "markdown.link.systemOpens": "Sisteminizle açılır.",
+  "markdown.link.openMissing": "Bulunamadı: {path}",
 } as const

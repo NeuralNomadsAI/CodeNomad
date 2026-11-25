@@ -611,6 +611,7 @@ dependencies = [
  "windows",
  "windows-core",
  "windows-sys 0.59.0",
+ "wry",
  "zbus",
 ]
 

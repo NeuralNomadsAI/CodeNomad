@@ -17,8 +17,6 @@ import type { MissionStorage } from "../../missions/journal"
 import type { MissionDocument } from "../../missions/mission-document"
 import { registerNativeScheduledBusinessRpc } from "./native-scheduled-business-rpc"
 import { acquireNativeScheduledPassageRuntime } from "./native-scheduled-passage-runtime"
-import { registerNativeScheduleProvider } from "./native-schedule-provider-registration"
-import { nativeScheduleCarrierHooks, NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import type { NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
 import { nativeInvocation } from "./native-invocation"
 import { nativeScheduleDocumentKey } from "./native-schedule-carrier-binding"
@@ -27,9 +25,6 @@ const method = { input: { type: "object" }, output: { type: "object" } } as cons
 const definition = Rpc.define({ id: "codenomad.business-bridge-qualification", methods: { seed: method, use: method }, events: {} })
 export default Plugin.define({ id: "codenomad.missions", effect: ctx => Effect.gen(function* () {
   const options = ctx.options as NativeScheduleCarrierInstallation & { configYamlPath: string }, invocation = nativeInvocation()
-  yield* registerNativeScheduleProvider(ctx, options)
-  const hooks = nativeScheduleCarrierHooks(() => false)
-  yield* ctx.aisdk.hook("language", event => Effect.sync(() => hooks.language(event)))
   const sessionTag = Context.Service<never, unknown>("@opencode/Session"), scheduleTag = Context.Service<never, unknown>("@opencode/Automation")
   const receivers: boolean[] = []
   const business = yield* registerNativeScheduledBusinessRpc(ctx, options, invocation, run => Effect.gen(function* () {
@@ -49,7 +44,7 @@ export default Plugin.define({ id: "codenomad.missions", effect: ctx => Effect.g
         if ((before?.revision ?? null) !== expected) throw new Error("Fixture revision conflict")
         await storage.set(key, value)
       } }, ctx.location.project.id, ctx.location.project.canonical)
-      const selection = { agent: "build", model: NATIVE_SCHEDULE_CARRIER_MODEL }
+      const selection = { agent: "build", model: { providerID: "fixture", id: "fixture" } }
       let doc = await documents.create("business_native", { title: "Business bridge", objective: "Private proof", template: "custom", taskMode: "native",
         profileID: "profile", executionHost: "host", profiles: { coordinator: selection, roles: { specialist: selection } },
         roots: [{ mode: "directory-only", directory: ctx.location.directory }], watchedConversationIDs: [],
@@ -57,7 +52,7 @@ export default Plugin.define({ id: "codenomad.missions", effect: ctx => Effect.g
       doc = await documents.change(doc.id, doc.revision, current, next => {
         changes.play(next, "first_play", Date.now(), []); changes.reserve(next, { kind: "immediate", requestID: "original" }, Date.now(), [])
         changes.admitted(next, next.pending!.id, Date.now())
-        next.calendarOwner = missionCalendarOwnerSchema.parse({ version: 1, installation: { registrationFile: options.registrationFile, provider: options.provider, runtime: options.runtime },
+        next.calendarOwner = missionCalendarOwnerSchema.parse({ version: 1, installation: { registrationFile: options.registrationFile, runtime: options.runtime },
           profileSource: { profileID: "profile", executionHost: "host", configYamlPath: options.configYamlPath }, placement: captureMissionCalendarPlacement(next.configuration.roots),
           operation: { action: "play", requestID: "first_play", expectedRevision: 0, fingerprint: "a".repeat(64), pending: false, startedAt: Date.now() },
           slots: [], retired: [], auxiliaryReady: false, error: null })

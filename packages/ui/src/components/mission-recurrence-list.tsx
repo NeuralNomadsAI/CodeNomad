@@ -4,7 +4,7 @@ import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { MissionActionBar } from "./mission-action-bar"
-import { missionMarkStateKey, scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
+import { missionMarkStateKey, recurrenceActivityAt, scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 import type { MissionControlRetry, MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
 import { markScheduleSuccessSeen, missionProjectView, scheduleSuccessSeen, seedScheduleSuccessSeen, navigateMissionProjectView } from "../stores/mission-view-state"
@@ -287,7 +287,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
     const mark = scheduleMark(schedule, passageRequests(schedule), !schedule.latestResult
       || scheduleSuccessSeen(seenScope(), "daily", schedule.id, schedule.latestResult.passageID), !error() && !held)
     const stateKey = missionMarkStateKey(mark)
-    return { key: `schedule:${schedule.id}`, title: schedule.title, mark,
+    return { key: `schedule:${schedule.id}`, title: schedule.title, mark, activityAt: recurrenceActivityAt(schedule),
       status: [t("missionsPanel.dailyBadge"), mark === "unconfirmed" && (schedule.state === "paused" || schedule.state === "stopped") ? state : "",
         stateKey ? t(stateKey) : state, mark === "permission" ? t("missionsPanel.task.input") : "", next, text.every(schedule)]
         .filter(Boolean).join(" · ") }

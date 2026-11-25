@@ -21,6 +21,8 @@ pub(super) enum Operation {
     Viewport,
     ReleaseHandles,
     Checkpoint,
+    /// The document's title and whether its tab can go back or forward.
+    History,
     Resolve {
         node: u64,
     },
@@ -50,6 +52,16 @@ pub(super) enum Operation {
     },
     InsertText {
         text: String,
+    },
+    /// Served by the host's diagnostic event buffer, not by the page.
+    Diagnostics {
+        after: u64,
+    },
+    ResponseBody {
+        request: String,
+        /// The out-of-process frame's protocol session the request belongs to.
+        #[serde(default)]
+        session: Option<String>,
     },
 }
 fn keys(value: &Value, allowed: &[&str], required: &[&str]) -> Result<(), String> {
@@ -105,11 +117,25 @@ pub(super) fn parse(value: Value) -> Result<Operation, String> {
         Operation::Tree
         | Operation::Viewport
         | Operation::ReleaseHandles
-        | Operation::Checkpoint => keys(&value, &["op"], &["op"])?,
+        | Operation::Checkpoint
+        | Operation::History => keys(&value, &["op"], &["op"])?,
         Operation::Resolve { node }
         | Operation::Geometry { node }
         | Operation::ScrollIntoView { node }
             if *node == 0 || *node > 9_007_199_254_740_991 =>
+        {
+            return Err(INVALID.into())
+        }
+        Operation::Diagnostics { after } if *after > 9_007_199_254_740_991 => {
+            return Err(INVALID.into())
+        }
+        Operation::ResponseBody { request, session }
+            if !handle(&json!(request))
+                || request.len() > 256
+                || session
+                    .as_ref()
+                    .is_some_and(|session| session.is_empty() || session.len() > 256)
+                || value.get("session").is_some_and(|session| !session.is_string()) =>
         {
             return Err(INVALID.into())
         }
@@ -277,6 +303,13 @@ pub(super) fn parse(value: Value) -> Result<Operation, String> {
 }
 
 impl Operation {
+    /// The protocol session the command goes to; `None` is the top-level document.
+    pub(super) fn session(&self) -> Option<String> {
+        match self {
+            Self::ResponseBody { session, .. } => session.clone(),
+            _ => None,
+        }
+    }
     pub(super) fn cdp(&self) -> Option<(&'static str, Value)> {
         Some(match self {
             Self::Tree => ("Accessibility.getFullAXTree", json!({})),
@@ -289,6 +322,7 @@ impl Operation {
             }
             Self::Geometry { node } => ("DOM.getContentQuads", json!({"backendNodeId":node})),
             Self::Viewport => ("Page.getLayoutMetrics", json!({})),
+            Self::History => ("Page.getNavigationHistory", json!({})),
             Self::HitTest { x, y } => (
                 "DOM.getNodeForLocation",
                 json!({"x":*x as i64,"y":*y as i64,"includeUserAgentShadowDOM":false,"ignorePointerEventsNone":false}),
@@ -322,7 +356,8 @@ impl Operation {
             Self::Keyboard { event } => ("Input.dispatchKeyEvent", event.clone()),
             Self::InsertText { text } => ("Input.insertText", json!({"text":text})),
             Self::ReleaseHandles => ("Runtime.releaseObjectGroup", json!({"objectGroup":GROUP})),
-            Self::Checkpoint => return None,
+            Self::ResponseBody { request, .. } => ("Network.getResponseBody", json!({"requestId":request})),
+            Self::Checkpoint | Self::Diagnostics { .. } => return None,
         })
     }
     pub(super) fn result(&self, raw: Value) -> Value {
@@ -353,6 +388,20 @@ impl Operation {
                 result
             }
             Self::HitTest { .. } => optional("node", raw.get("backendNodeId")),
+            Self::History => {
+                let entries = raw["entries"].as_array().map(Vec::as_slice).unwrap_or_default();
+                let index = raw["currentIndex"].as_i64().unwrap_or(-1);
+                let title = usize::try_from(index)
+                    .ok()
+                    .and_then(|index| entries.get(index))
+                    .and_then(|entry| entry["title"].as_str())
+                    .unwrap_or("");
+                json!({
+                    "title": title.chars().take(2_048).collect::<String>(),
+                    "canGoBack": index > 0,
+                    "canGoForward": index >= 0 && (index as usize) + 1 < entries.len(),
+                })
+            }
             _ => raw,
         }
     }

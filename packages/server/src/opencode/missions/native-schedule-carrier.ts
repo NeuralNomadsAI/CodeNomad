@@ -1,83 +1,18 @@
-import type { AISDKHooks } from "@opencode/plugin/effect/aisdk"
-import type { SessionCompaction, SessionContext, SessionHttpRequest, SessionTitle } from "@opencode/plugin/effect/session"
-import type { NativeScheduleWake } from "./native-schedule-transport-contract"
-import { assertNativeScheduleWake } from "./native-schedule-transport-contract"
-import { missionAutomationID, missionWakeMessageID, missionWakeMetadata, sameMissionAutomation } from "./native-mission-automation"
+import type { SessionCompaction, SessionHttpRequest, SessionTitle } from "@opencode/plugin/effect/session"
 
 export const NATIVE_SCHEDULE_CARRIER_MODEL = Object.freeze({ providerID: "codenomad-missions-local", id: "schedule-noop" })
+type CarrierModelRef = { providerID?: unknown; id?: unknown } | undefined
+/** Recognize model-less carriers and the retained noop model identity. */
+export const isAllowedScheduleCarrierModel = (model: CarrierModelRef) =>
+  model === undefined || model.providerID === NATIVE_SCHEDULE_CARRIER_MODEL.providerID && model.id === NATIVE_SCHEDULE_CARRIER_MODEL.id
 export const NATIVE_SCHEDULE_CARRIER_TITLE = "Mission schedule carrier"
-const summary = "Mission schedule carrier. Read exact wake messages and durable mappings for correlation."
-const finish = () => ({ finishReason: { unified: "stop", raw: "stop" } as const,
-  usage: { inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 0, text: 0, reasoning: 0 } } })
-
-// Shared across concurrent cold language hooks; carries no session/wake state.
-const language: NonNullable<AISDKHooks["language"]["language"]> = Object.freeze({
-  specificationVersion: "v3", provider: NATIVE_SCHEDULE_CARRIER_MODEL.providerID,
-  modelId: NATIVE_SCHEDULE_CARRIER_MODEL.id, supportedUrls: {},
-  doGenerate: async () => ({ content: [], warnings: [], ...finish() }),
-  doStream: async () => ({ stream: new ReadableStream({ start(controller) {
-    controller.enqueue({ type: "finish", ...finish() })
-    controller.close()
-  } }) }),
-})
-
-export { createNativeScheduleCarrierProvider } from "./native-schedule-carrier-provider"
-
+const summary = "Mission schedule carrier. Read durable mappings for correlation."
 /** Register through the public session/aisdk hooks. owns must use exact durable
  * carrier identities; admission belongs exclusively to the context → RPC path. */
 export function nativeScheduleCarrierHooks(owns: (sessionID: string) => boolean) {
   return {
-    language(event: AISDKHooks["language"]) {
-      if (event.model.providerID !== NATIVE_SCHEDULE_CARRIER_MODEL.providerID) return
-      if (event.model.id !== NATIVE_SCHEDULE_CARRIER_MODEL.id) throw new Error("schedule-carrier-model")
-      event.language = language
-    },
-    context(event: SessionContext) {
-      if (!owns(event.sessionID)) return
-      if (event.model.providerID !== NATIVE_SCHEDULE_CARRIER_MODEL.providerID || event.model.id !== NATIVE_SCHEDULE_CARRIER_MODEL.id)
-        throw new Error("schedule-carrier-model")
-      event.tools = {}
-    },
     title(event: SessionTitle) { if (owns(event.sessionID)) event.result = NATIVE_SCHEDULE_CARRIER_TITLE },
     compaction(event: SessionCompaction) { if (owns(event.sessionID)) event.result = { summary } },
     httpRequest(event: SessionHttpRequest) { if (owns(event.sessionID)) throw new Error("schedule-carrier-provider-http") },
   }
-}
-
-export type NativeScheduleCarrierMapping = Omit<NativeScheduleWake, "run" | "messageID">
-export type NativeScheduleCarrierCandidate = NativeScheduleWake & { dueAt: number; late: boolean }
-
-/** Classify resolved native records only, never LLM-projected metadata. RPC must point-read the native user message,
- * revalidate mapping/Location/state, and reserve/advance high-water under CAS. */
-export function nativeScheduleCarrierWakes(mapping: NativeScheduleCarrierMapping, highWater: number,
-  messages: readonly unknown[], selection: "contiguous" | "next" = "contiguous"): NativeScheduleCarrierCandidate[] {
-  if (!Number.isSafeInteger(highWater) || highWater < 0 || messages.length > 128
-    || Buffer.byteLength(JSON.stringify(messages), "utf8") > 1024 * 1024) throw new Error("schedule-carrier-coverage")
-  const candidates = new Map<number, NativeScheduleCarrierCandidate>()
-  for (const raw of messages) {
-    if (!raw || typeof raw !== "object") throw new Error("schedule-carrier-context")
-    const message = raw as { type?: unknown; status?: unknown; id?: unknown; metadata?: Readonly<Record<string, unknown>> }
-    if (typeof message.id !== "string" || !message.id.length || message.id.length > 1024) throw new Error("schedule-carrier-coverage")
-    const schedule = missionWakeMetadata(message.metadata, message.id)
-    // Native notices/checkpoints cannot hide a deterministic or schedule-bearing wake.
-    if (message.metadata?.schedule === undefined && message.metadata?.automation === undefined
-      && !message.id.startsWith(`msg_${mapping.scheduleID}_`) && !message.id.startsWith(`msg_${missionAutomationID(mapping.scheduleID)}_`)
-      && (message.type === "compaction" && message.status === "completed"
-        || message.type === "synthetic" && message.metadata?.notice === "restart")) continue
-    if (message.type !== "user" || !schedule || !sameMissionAutomation(schedule.id, mapping.scheduleID)) throw new Error("schedule-carrier-wake")
-    const candidate = { ...mapping, run: schedule.run, messageID: missionWakeMessageID(mapping.scheduleID, schedule.run), dueAt: schedule.dueAt, late: schedule.late }
-    assertNativeScheduleWake(candidate)
-    if (candidate.run <= highWater) continue
-    const previous = candidates.get(candidate.run)
-    if (previous && (previous.dueAt !== candidate.dueAt || previous.late !== candidate.late)) throw new Error("schedule-carrier-wake")
-    candidates.set(candidate.run, candidate)
-  }
-  if (selection === "next") {
-    const next = candidates.get(highWater + 1)
-    return next ? [next] : []
-  }
-  const ordered = [...candidates.values()].sort((a, b) => a.run - b.run)
-  if (ordered.length > 32 || ordered.some((candidate, index) => candidate.run !== highWater + index + 1))
-    throw new Error("schedule-carrier-coverage")
-  return ordered
 }

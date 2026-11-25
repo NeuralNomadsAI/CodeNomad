@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { isMissionActivityEvent, isMissionChangedEvent } from "./missions"
+import { isMissionActivityEvent, isMissionChangedEvent, missionActivityMatters } from "./missions"
 
 test("refreshes activity only for bounded native state transitions", () => {
   for (const type of [
@@ -16,4 +16,8 @@ test("refreshes activity only for bounded native state transitions", () => {
     "session.child.created", "session.location.changed", "session.compacted", "session.status", "session.idle"])
     assert.equal(isMissionActivityEvent({ type }), false, type)
   assert.equal(isMissionChangedEvent({ type: "rpc.codenomad.missions.changed" }), true)
+})
+
+test("activity of a project without a running Mission refreshes nothing", () => {
+  assert.equal(missionActivityMatters("idle-instance"), false)
 })

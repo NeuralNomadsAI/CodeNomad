@@ -1,0 +1,79 @@
+{
+  "enable": [
+    [
+      "Runtime.enable",
+      {}
+    ],
+    [
+      "Log.enable",
+      {}
+    ],
+    [
+      "Network.enable",
+      {
+        "maxTotalBufferSize": 5242880,
+        "maxResourceBufferSize": 1048576,
+        "maxPostDataSize": 20000
+      }
+    ],
+    [
+      "Target.setAutoAttach",
+      {
+        "autoAttach": true,
+        "waitForDebuggerOnStart": true,
+        "flatten": true,
+        "filter": [
+          {
+            "type": "iframe",
+            "exclude": false
+          },
+          {
+            "type": "worker",
+            "exclude": false
+          },
+          {
+            "exclude": true
+          }
+        ]
+      }
+    ]
+  ],
+  "events": [
+    "Runtime.consoleAPICalled",
+    "Runtime.exceptionThrown",
+    "Runtime.executionContextCreated",
+    "Runtime.executionContextDestroyed",
+    "Runtime.executionContextsCleared",
+    "Log.entryAdded",
+    "Network.requestWillBeSent",
+    "Network.requestWillBeSentExtraInfo",
+    "Network.responseReceived",
+    "Network.responseReceivedExtraInfo",
+    "Network.loadingFinished",
+    "Network.loadingFailed",
+    "Network.webSocketCreated",
+    "Network.webSocketWillSendHandshakeRequest",
+    "Network.webSocketHandshakeResponseReceived",
+    "Network.webSocketFrameError",
+    "Network.webSocketClosed",
+    "Target.detachedFromTarget"
+  ],
+  "messageEvents": [
+    "Runtime.consoleAPICalled",
+    "Runtime.exceptionThrown",
+    "Log.entryAdded"
+  ],
+  "endingEvents": [
+    "Network.loadingFinished",
+    "Network.loadingFailed",
+    "Network.webSocketClosed",
+    "Network.webSocketHandshakeResponseReceived",
+    "Network.webSocketFrameError"
+  ],
+  "maxEvents": 2000,
+  "maxBytes": 4194304,
+  "maxText": 2000,
+  "maxRead": 1000,
+  "maxReadBytes": 2097152,
+  "maxContexts": 512
+}

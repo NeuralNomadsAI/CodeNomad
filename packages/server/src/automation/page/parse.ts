@@ -3,14 +3,21 @@ import { keyChord } from "./keys"
 /** Page actions as tools receive them, with elements as refs from the latest inspection. Parsing is
  * idempotent, so the same flat command crosses the bridge and is validated again by the backend. */
 export type RefAction =
-  | { action: "click"; ref: string; button?: "left" | "right" }
+  /** `noFilePicker` refuses a file input or its label, whose native picker must not open for an agent. */
+  | { action: "click"; ref: string; button?: "left" | "right"; noFilePicker?: true }
   | { action: "type"; ref: string; text: string; clear: boolean }
-  | { action: "select"; ref: string; values: string[] }
+  /** `byValue` matches option values only, as OpenCode's browser contract requires. */
+  | { action: "select"; ref: string; values: string[]; byValue?: true }
   | { action: "hover"; ref: string }
   | { action: "drag"; ref: string; to: string }
   | { action: "scroll"; ref?: string; direction: "up" | "down" | "left" | "right"; amount: number }
+  /** One wheel gesture with both deltas, as OpenCode's browser scrolls. */
+  | { action: "scroll"; ref?: string; delta: { x: number; y: number } }
   | { action: "press"; key: string; ref?: string }
-  | { action: "wait"; text: string; gone: boolean; timeout: number }
+  /** `literal` matches the body's visible text exactly, as OpenCode's browser does. */
+  | { action: "wait"; text: string; gone: boolean; timeout: number; literal?: true }
+  /** A native checkbox or radio's `checked` property, or null for other controls. */
+  | { action: "checked"; ref: string }
 
 export const PAGE_ACTIONS = ["click", "type", "select", "hover", "drag", "scroll", "press", "wait"] as const
 export const MAX_WAIT_MS = 15_000

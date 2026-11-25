@@ -65,6 +65,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.succeeded": "成功した実行",
   "missions.scheduleList.since": "{when}から記録",
   "missions.scheduleList.endAfter": "初回開始から{minutes}分後",
+  "missions.scheduleList.recreate": "実行するには、このスケジュールを作成し直してください。",
   "missions.scheduleList.blocked": "実行受付がブロックされています",
   "missions.scheduleList.state.paused": "一時停止中",
   "missions.scheduleList.state.running": "稼働中",

@@ -14,7 +14,7 @@ MIT/Apache-2.0 crates, including licenses, selected through `[patch.crates-io]`.
    `patches/wry-browser-isolation.patch`, `patches/runtime-browser-isolation.patch`
     `patches/wry-browser-print.patch`, `patches/wry-browser-download.patch`,
      `patches/wry-browser-private-preview.patch`, `patches/runtime-browser-private-preview.patch`
-     and `patches/runtime-cookie-dispatch.patch`;
+     `patches/runtime-cookie-dispatch.patch` and `patches/wry-agent-file-panels.patch`;
   native trials ship beside the runtime examples.
 - Cookie installation releases the runtime's webview window-ID lock before
   dispatch: WebKitGTK may handle a new window IPC while its cookie write completes.
@@ -67,6 +67,8 @@ MIT/Apache-2.0 crates, including licenses, selected through `[patch.crates-io]`.
   isolated host suffix; Tauri shares that predicate. Paths, queries and foreign
   host suffixes retain ordinary browser actions. The shared cases in
   `../tests/private-preview-url-cases.json` qualify native and preload predicates.
+- `set_file_panels_refused` marks a WKWebView whose page-opened file panels are cancelled unseen; Tauri sets it
+  for the length of each agent page lease, as WebView2 intercepts file choosers.
 - WKWebView's `_webView:contextMenuDidCreateDownload:` callback, declared by
   `WKNavigationDelegatePrivate.h`, attaches the same download delegate as native
   navigation downloads. Both paths use the preview's Downloads-folder policy.

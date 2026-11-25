@@ -479,8 +479,6 @@ Each technical wake enters an exact-file, own-process HTTP RPC with an eight-sec
 deadline. A read-only preflight freezes complete fan-in coverage before a dispatch
 claim. Technical high-water advances at durable reservation; the pending business
 reference remains separate, so auxiliary observation can reconcile the last passage.
-When recent carrier context omits the next unconsumed wake, the context hook
-reads that exact native message by ID before dispatch.
 Native persisted schedules load their owning Location on wake after service startup.
 Pause/Stop, failures, unqualified observations and uncertain effects retain their
 admission barriers. Never resend an attempted original whose proof is missing.
@@ -494,23 +492,15 @@ can prepare a separate one-time or calendar-backed Mission through `mission.prep
 owns its preparation and read-only target access in the ordinary project journal.
 An explicitly requested `startOnCreation` continues only fresh creation through the
 guarded first-Play contract in [Missions](MISSIONS.md#mission-profile-selection-and-creation-recovery).
-New calendars run a fixed Code Mode program that calls the wake tool, with no model
-turn and no carrier message ([code wakes](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#code-wakes)).
-Rows created with the carrier prompt keep that action until they retire.
-Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
-local title/compaction hooks and authoritative ordinary-input guards.
-Context classification and recovery follow the schedule transport's
-[native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
-Ordinary sidebar browsing/search and Mission criterion conversation-source pickers
-exclude this namespace through the shared carrier-identity predicate; native
-observations remain available to ownership and reconciliation readers.
-The compaction notifier uses the same predicate to keep carrier compaction silent.
-Prompt-row technical turns keep native model-selection events/statistics while making zero
-provider HTTP requests. Their compaction preserves the carrier/calendar identity
-and bounds processed context. Persisted native messages and events follow native
-retention and may grow until explicit terminal cleanup; the thirty Mission result
-receipts have their own independent bound.
-Prompt-row wake conversations use a zero-token local model, so OpenCode's background precompaction never applies to them; their automatic local compaction does.
+Calendars run a fixed Code Mode program that calls the wake tool without a model
+turn ([code wakes](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#code-wakes)). An owned
+prompt row can be paused, stopped or deleted and must be recreated to run.
+Technical carriers use the reserved `ses_cn_schedule_` namespace, local title and
+compaction hooks, and authoritative ordinary-input guards. Provisioning installs
+only the Missions runtime. Ordinary sidebar browsing/search and conversation-source
+pickers exclude carriers using the shared identity predicate, which also keeps
+carrier compaction notifications silent. Native ownership and reconciliation readers
+retain access. The thirty Mission result receipts keep their own retention bound.
 
 Implementation contracts and isolated qualification commands:
 [native contracts](MISSIONS_NATIVE_CONTRACTS.md) and

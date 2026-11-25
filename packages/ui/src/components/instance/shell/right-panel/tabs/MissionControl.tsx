@@ -23,7 +23,7 @@ import { missionQuestionContext, missionQuestions, type MissionQuestionStore } f
 import { currentMissionObservations, missionQuestionOwners } from "../../../../mission-question-owners"
 import { MissionPanelHeader, MissionRows } from "../../../../mission-picker"
 import { MissionActionBar, MissionActionSlot, MissionTaskToolbarActive } from "../../../../mission-action-bar"
-import { missionMark, type MissionPickerEntry } from "../../../../mission-picker-model"
+import { missionMark, sortMissionPickerEntries, type MissionPickerEntry } from "../../../../mission-picker-model"
 import { createDocumentAttention } from "../../../../session/session-idle-attention"
 import { MissionSelectedActions } from "../../../../mission-selected-actions"
 import type { MissionControlRetry } from "../../../../mission-lifecycle-controls"
@@ -81,8 +81,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // The selected item's unconfirmed control, resent only by an explicit refresh click.
   const [controlRetry, setControlRetry] = createSignal<MissionControlRetry>()
   const [refreshing, setRefreshing] = createSignal(false)
-  // The open editor's passive scheduling reads share the toolbar's update icon.
-  const [editorReading, setEditorReading] = createSignal(false)
+  // The instance whose first journal read has settled: passive revalidation never spins the update icon.
+  const [loadedFor, setLoadedFor] = createSignal<string>()
   const registerRetry = (retry: MissionControlRetry) => {
     setControlRetry(() => retry)
     return () => setControlRetry(current => current === retry ? undefined : current)
@@ -554,7 +554,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const map = missionStore.state(props.instanceId).missions.find(item => item.id === value.id)
     const taskCount = map ? map.taskPage?.total ?? map.tasks.length : value.taskCount
     return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark, childActivity, leaf: taskCount === 0,
-      status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
+      activityAt: value.updatedAt, status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
         childActivity === "permission" ? props.t("missionsPanel.row.taskInput") : "",
         missionRelativeTime(value.updatedAt, locale())].filter(Boolean).join(" · ") }
   }))
@@ -617,10 +617,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       updateView({ selected: undefined, selectedRecurrence: undefined, selectedScheduled: id })
     }
   })
-  const pickerEntries = () => {
+  const pickerEntries = createMemo(() => {
     const unified = scheduled.entries(), ids = new Set(unified.map(row => row.key.slice("scheduled:".length)))
-    return [...missionEntries().filter(row => !ids.has(row.key.slice("mission:".length))), ...recurrence.entries(), ...unified]
-  }
+    return sortMissionPickerEntries([...missionEntries().filter(row => !ids.has(row.key.slice("mission:".length))), ...recurrence.entries(), ...unified])
+  })
   const selectedRow = () => selectedSchedule() || selectedScheduled() ? undefined : rows().find(row => row.id === selectedMissionId())
   const selectedKey = () => selectedScheduled() ? `scheduled:${selectedScheduled()}` : selectedSchedule() ? `schedule:${selectedSchedule()}` : selectedRow() ? `mission:${selectedRow()!.id}` : undefined
   const selectedOneTime = () => selectedSchedule() || selectedScheduled() ? undefined : mission()
@@ -638,8 +638,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     untrack(() => markMissionsFinishedSeen(viewScope, shown, completed, true))
   })
   const refreshLabel = () => props.t(controlRetry()?.pending() ? "missions.control.refreshResend" : "missions.control.refresh")
-  const reading = () => refreshing() || missionStore.reading(props.instanceId) || currentPassage.inventory()?.reading(props.instanceId)
-    || recurrence.loading() || scheduled.loading() || currentPassage.loading() || editorReading()
+  createEffect(() => { const status = state().status; if (status !== "idle" && status !== "loading") setLoadedFor(props.instanceId) })
+  const spinning = () => refreshing() || loadedFor() !== props.instanceId
   /** Read-only reconciliation first; only a control still unconfirmed by that
    * read is resent, with its original identity, from this explicit click. */
   const refresh = async () => {
@@ -676,8 +676,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             <Settings class="h-4 w-4" aria-hidden="true" />
           </button>
           <button type="button" class="mission-control-icon-button" aria-label={refreshLabel()}
-            title={refreshLabel()} disabled={state().status === "loading" || refreshing()} onClick={() => void refresh()}>
-            <Show when={reading()} fallback={<RefreshCw class="h-4 w-4" />}>
+            title={refreshLabel()} disabled={spinning()} onClick={() => void refresh()}>
+            <Show when={spinning()} fallback={<RefreshCw class="h-4 w-4" />}>
               <span class="inline-flex animate-spin"><Loader2 class="h-4 w-4" /></span>
             </Show>
           </button>
@@ -714,7 +714,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           })
         }}
         onRecurrenceRefresh={() => setRecurrenceRefresh(value => value + 1)}
-        onReading={setEditorReading}
         onRecurrenceSaved={() => { if (!completionCurrent() || editor() !== action) return; settleMissionEditor(action); setRecurrenceRefresh(value => value + 1) }}
         onSaved={(saved, scheduleID) => {
           if (!completionCurrent() || editor() !== action) return

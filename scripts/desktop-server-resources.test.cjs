@@ -50,6 +50,7 @@ test("glibc desktop resources omit musl-only msgpackr binaries and retain the na
   const serverRoot = path.join(root, "source")
   for (const name of ["public", "dist", "node_modules"]) fs.mkdirSync(path.join(serverRoot, name), { recursive: true })
   fs.writeFileSync(path.join(serverRoot, "package.json"), "{}")
+  fs.writeFileSync(path.join(serverRoot, "THIRD_PARTY_NOTICES.md"), "notices")
   for (const cpu of ["x64", "arm64"]) {
     const relative = path.join("node_modules", "@msgpackr-extract", `msgpackr-extract-linux-${cpu}`)
     fs.mkdirSync(path.join(serverRoot, relative), { recursive: true })
@@ -60,6 +61,7 @@ test("glibc desktop resources omit musl-only msgpackr binaries and retain the na
     copyPackagedServerResources({ serverRoot, serverDest, target: `linux-${cpu}` })
     assert.deepEqual(fs.readdirSync(path.join(serverDest, relative)).sort(), ["index.js", "node.napi.glibc.node", "package.json"])
     assert(fs.existsSync(path.join(serverRoot, relative, "node.napi.musl.node")), "source installation is untouched")
+    assert.equal(fs.readFileSync(path.join(serverDest, "THIRD_PARTY_NOTICES.md"), "utf8"), "notices", "the notices ship with the server")
   }
 })
 
@@ -112,6 +114,7 @@ test(`both desktop resource layouts retain a self-contained ${feature} bundle`, 
   const serverRoot = path.join(root, "source")
   for (const name of ["public", "node_modules"]) fs.mkdirSync(path.join(serverRoot, name), { recursive: true })
   fs.writeFileSync(path.join(serverRoot, "package.json"), JSON.stringify({ type: "module" }))
+  fs.writeFileSync(path.join(serverRoot, "THIRD_PARTY_NOTICES.md"), "notices")
   const relative = path.join("dist", "plugins", feature, "plugin.mjs")
   await require("esbuild").build({
     entryPoints: [path.join(__dirname, `../packages/server/src/opencode/${feature}/desktop-plugin.ts`)],

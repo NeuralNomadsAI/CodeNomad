@@ -65,6 +65,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.succeeded": "הרצות שהצליחו",
   "missions.scheduleList.since": "במעקב מאז {when}",
   "missions.scheduleList.endAfter": "{minutes} דקות לאחר ההפעלה הראשונה",
+  "missions.scheduleList.recreate": "כדי להפעיל את התזמון, יש ליצור אותו מחדש.",
   "missions.scheduleList.blocked": "הקבלה חסומה",
   "missions.scheduleList.state.paused": "מושהית",
   "missions.scheduleList.state.running": "פועלת",

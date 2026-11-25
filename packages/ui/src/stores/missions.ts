@@ -71,6 +71,14 @@ export function isMissionActivityEvent(event: { type: string }): boolean {
     || event.type.startsWith("permission.")
 }
 
+/** Native activity changes the panel only while a Mission may still run: an active or
+ * failed (recoverable) one, an unread later summary page, or an errored inventory. */
+export function missionActivityMatters(instanceId: string): boolean {
+  const state = missionStore.state(instanceId)
+  return state.status === "error" || missionStore.progress(instanceId, "summaries").more
+    || state.summaries.some(row => row.status === "active" || row.status === "failed")
+}
+
 function scheduleRefresh(instanceId: string, urgency: RefreshUrgency): void {
   if (missionStore.demandedInstanceIds().includes(instanceId)) refreshes.schedule(instanceId, urgency, captureBackendOperation(instanceId).signal)
 }
@@ -79,7 +87,8 @@ serverEvents.on("instance.event", (event) => {
   if (event.type !== "instance.event") return
   const urgent = isMissionChangedEvent(event.event) || event.event.type === "plugin.updated"
   if (event.event.type === "plugin.updated") missionStore.invalidateTasks(event.instanceId)
-  if (urgent || isMissionActivityEvent(event.event)) scheduleRefresh(event.instanceId, urgent ? "urgent" : "activity")
+  if (urgent) scheduleRefresh(event.instanceId, "urgent")
+  else if (isMissionActivityEvent(event.event) && missionActivityMatters(event.instanceId)) scheduleRefresh(event.instanceId, "activity")
 })
 
 serverEvents.on("instance.eventStatus", (event) => {

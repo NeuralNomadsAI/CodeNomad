@@ -3,13 +3,14 @@ import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { describe, it, mock } from "node:test"
 import type { BrowserWindow, WebContents } from "electron"
+import { DIAGNOSTICS, type DiagnosticRead } from "../../../server/src/automation/page/diagnostic-events"
 import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
 
 interface GuestOptions {
   id: number
   owner: WebContents
   loadURL?: (url: string) => Promise<void>
-  sendCommand?: (method: string, params?: Record<string, unknown>) => Promise<unknown>
+  sendCommand?: (method: string, params?: Record<string, unknown>, session?: string) => Promise<unknown>
   insertText?: (text: string) => Promise<void>
   sendInputEvent?: (event: Electron.InputEvent) => void
   loading?: boolean
@@ -41,12 +42,12 @@ function createGuest(options: GuestOptions) {
       isAttached: () => attached,
       attach: () => { attached = true; attachCount += 1 },
       detach: () => { attached = false; detachCount += 1; guest.debugger.emit("detach", {}, "test") },
-      sendCommand: async (method: string, params?: Record<string, unknown>) => {
+      sendCommand: async (method: string, params?: Record<string, unknown>, session?: string) => {
         if (method === "DOM.getDocument") {
           assert.deepEqual(params, { depth: 1 })
           return { root: { children: [{ nodeType: 1, backendNodeId: options.documentRoot?.() ?? 42 }] } }
         }
-        return options.sendCommand?.(method, params) ?? {}
+        return options.sendCommand?.(method, params, session) ?? {}
       },
     }),
   }) as unknown as WebContents
@@ -192,6 +193,101 @@ describe("BrowserController private page channel", () => {
     await assert.rejects(page(h.controller, "check", lease), /no longer current/)
   })
 
+  it("intercepts native file pickers from a page lease's start to its end", async () => {
+    const h = createHarness()
+    const intercepts: unknown[] = []
+    const { guest } = createGuest({ id: 4, owner: h.owner, sendCommand: async (method, params) => {
+      if (method === "Page.setInterceptFileChooserDialog") intercepts.push(params)
+      return {}
+    } })
+    h.add(guest, "one")
+    const lease = await begin(h.controller)
+    assert.deepEqual(intercepts, [{ enabled: true, cancel: true }])
+    await page(h.controller, "end", lease)
+    assert.deepEqual(intercepts, [{ enabled: true, cancel: true }, { enabled: false }])
+  })
+
+  it("probes only previews in the verified project tabs", async () => {
+    const h = createHarness()
+    const { guest } = createGuest({ id: 7, owner: h.owner })
+    h.add(guest, "one", "session", "ws-a")
+    await assert.rejects(handleNativeBrowserRequest(h.controller, "browser.probe", { sessionID: "session", workspaceIDs: ["ws-b"] }),
+      /No visible|no longer|not shown|available/i, "another project tab's preview is no target")
+    const probed = await handleNativeBrowserRequest(h.controller, "browser.probe", { sessionID: "session", workspaceIDs: ["ws-a"] }) as { available: boolean }
+    assert.equal(probed.available, true)
+    await assert.rejects(handleNativeBrowserRequest(h.controller, "browser.probe", { sessionID: "session", workspaceIDs: [""] }), /Invalid browser request/)
+  })
+
+  it("keeps a watched preview's console and network events per document and serves them to page leases", async () => {
+    const h = createHarness()
+    const sent: Array<[string, unknown, string?]> = []
+    const { guest } = createGuest({ id: 5, owner: h.owner, sendCommand: async (method, params, session) => {
+      sent.push(session ? [method, params, session] : [method, params])
+      return method === "Network.getResponseBody" ? { body: "ok", base64Encoded: false } : {}
+    } })
+    h.add(guest, "one")
+    const lease = await begin(h.controller)
+    assert.deepEqual(sent.filter(([method]) => DIAGNOSTICS.enable.some(([enable]) => enable === method)), DIAGNOSTICS.enable)
+    guest.debugger.emit("message", {}, "Runtime.consoleAPICalled", { type: "log" })
+    guest.debugger.emit("message", {}, "Network.requestWillBeSent", { requestId: "r1" }, "child-session")
+    guest.debugger.emit("message", {}, "Page.frameNavigated", {})
+    const first = await page(h.controller, "send", { ...lease, operation: { op: "diagnostics", after: 0 } }) as DiagnosticRead
+    assert.deepEqual(first.events, [{ method: "Runtime.consoleAPICalled", params: { type: "log" } },
+      { method: "Network.requestWillBeSent", params: { requestId: "r1" }, session: "child-session" }], "listed events, an out-of-process frame's with its session")
+    assert.deepEqual(await page(h.controller, "send", { ...lease, operation: { op: "response-body", request: "r1", session: "child-session" } }), { body: "ok", base64Encoded: false })
+    assert.deepEqual(sent.at(-1), ["Network.getResponseBody", { requestId: "r1" }, "child-session"])
+    guest.debugger.emit("message", {}, "Target.attachedToTarget", { sessionId: "frame-1", targetInfo: { type: "iframe", url: "https://other.test/" } })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(sent.filter(call => call[2] === "frame-1").map(call => call[0]), [...DIAGNOSTICS.enable.map(([method]) => method), "Runtime.runIfWaitingForDebugger"], "a frame gets the same domains, then runs")
+    guest.debugger.emit("message", {}, "Target.attachedToTarget", { sessionId: "worker-1", targetInfo: { type: "worker", url: "https://site.test/w.js" } })
+    await new Promise(resolve => setImmediate(resolve))
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(sent.filter(call => call[2] === "worker-1").map(call => call[0]), ["Runtime.runIfWaitingForDebugger"], "a worker only runs")
+    assert.deepEqual(sent.at(-1), ["Target.detachFromTarget", { sessionId: "worker-1" }], "and is left")
+    await page(h.controller, "end", lease)
+    guest.emit("did-start-navigation", {}, "https://example.com/", true, true)
+    guest.emit("did-start-navigation", {}, "https://example.com/next", false, true)
+    const next = await begin(h.controller)
+    const second = await page(h.controller, "send", { ...next, operation: { op: "diagnostics", after: 0 } }) as DiagnosticRead
+    assert.deepEqual(second.events, [], "a new document's events start with it")
+    assert.notEqual(second.epoch, first.epoch)
+  })
+
+  it("arms a new guest's diagnostics before its first load, and restarts them when the document is opened again", async () => {
+    const h = createHarness()
+    const sent: string[] = []
+    const { guest } = createGuest({ id: 6, owner: h.owner, sendCommand: async method => { sent.push(method); return {} } })
+    h.controller.guestCreated(guest)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(sent, ["Page.enable", ...DIAGNOSTICS.enable.map(([method]) => method)],
+      "Page events and the diagnostic domains are enabled at creation, so a document.open() before any probe restarts them")
+    guest.debugger.emit("message", {}, "Network.requestWillBeSent", { requestId: "first" })
+    h.add(guest, "one")
+    const lease = await begin(h.controller)
+    const first = await page(h.controller, "send", { ...lease, operation: { op: "diagnostics", after: 0 } }) as DiagnosticRead
+    assert.deepEqual(first.events.map(event => event.params.requestId), ["first"], "the first page's own request is kept")
+    await page(h.controller, "end", lease)
+    guest.debugger.emit("message", {}, "Page.documentOpened", { frame: { id: "main" } })
+    const next = await begin(h.controller)
+    const reopened = await page(h.controller, "send", { ...next, operation: { op: "diagnostics", after: 0 } }) as DiagnosticRead
+    assert.deepEqual(reopened.events, [])
+    assert.notEqual(reopened.epoch, first.epoch, "document.open() starts a new document's diagnostics")
+  })
+  it("resumes paused child targets even when the preview's diagnostics are unavailable", async () => {
+    const h = createHarness()
+    const sent: Array<[string, string | undefined]> = []
+    const { guest } = createGuest({ id: 8, owner: h.owner, sendCommand: async (method, _params, session) => {
+      sent.push([method, session])
+      if (method === "Log.enable" && !session) throw new Error("Log domain unavailable")
+      return {}
+    } })
+    h.controller.guestCreated(guest)
+    await new Promise(resolve => setImmediate(resolve))
+    guest.debugger.emit("message", {}, "Target.attachedToTarget", { sessionId: "frame-9", targetInfo: { type: "iframe", url: "https://other.test/" } })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(sent.filter(([, session]) => session === "frame-9").map(([method]) => method), ["Runtime.runIfWaitingForDebugger"],
+      "a frame of a preview without diagnostics runs at once")
+  })
   it("accepts only the fixed protocol commands and bounded object params/responses", async () => {
     const h = createHarness()
     const calls: string[] = []
@@ -207,7 +303,8 @@ describe("BrowserController private page channel", () => {
     for (const params of [null, [], "bad", { text: "x".repeat(256 * 1024) }]) {
       await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.insertText", params }), /parameters/)
     }
-    assert.deepEqual(calls, ["Page.enable"])
+    // A page lease intercepts native file pickers for its length.
+    assert.deepEqual(calls, ["Page.enable", ...DIAGNOSTICS.enable.map(([method]) => method), "Page.setInterceptFileChooserDialog"])
     const valid = [
       [{op:"tree"},{nodes:[]}], [{op:"resolve",node:42},{}], [{op:"scroll-into-view",node:42},{ok:true}],
       [{op:"geometry",node:42},{ok:true}], [{op:"hit-test",x:0,y:0},{}], [{op:"viewport"},{}],
@@ -483,7 +580,8 @@ describe("BrowserController preview lifecycle", () => {
       await page(h.controller, "send", { sessionID, operationID, generation, operation: { op: "keyboard", event: { type: "keyDown", key: "Enter" } } })
     }, /Browser target is stale/)
     await assert.rejects(h.controller.execute(sessionID, { action: "screenshot" }, Infinity, target), /Browser target is stale/)
-    assert.deepEqual(calls, ["Page.enable"])
+    // The first lease's file-picker interception, then its release; the stale lease reached nothing.
+    assert.deepEqual(calls, ["Page.enable", ...DIAGNOSTICS.enable.map(([method]) => method), "Page.setInterceptFileChooserDialog", "Page.setInterceptFileChooserDialog"])
     assert.deepEqual(inputs, [])
     const { target: refreshed } = await h.controller.probe(sessionID)
     assert.notEqual(refreshed, target)
@@ -522,7 +620,7 @@ describe("BrowserController preview lifecycle", () => {
         const lease = await pageBegin() as { generation: string }
         await page(h.controller, "end", { sessionID, operationID, generation: lease.generation })
         assert.deepEqual(await execute(screenshot), { image: { mime: "image/png", data: "png" }, url: "https://example.com/" })
-        assert.deepEqual(await execute(navigation), { url: navigation.url })
+        assert.equal((await execute(navigation) as { url: string }).url, navigation.url)
       } else {
         const error = change === "ambiguous" ? /Multiple visible browser targets exist for this session/
           : change === "absent" ? /A current browser target is required/ : /Browser target is stale/
@@ -530,7 +628,9 @@ describe("BrowserController preview lifecycle", () => {
         await assert.rejects(execute(screenshot), error)
         await assert.rejects(execute(navigation), error)
         assert.equal(navigate.mock.callCount(), 0, change)
-        assert.ok(send.mock.calls.every(call => call.arguments[0] === "Page.enable"), change)
+        // Only the document watch and its diagnostics domains were set up.
+        const watch = ["Page.enable", ...DIAGNOSTICS.enable.map(([method]) => method)]
+        assert.ok(send.mock.calls.every(call => watch.includes(call.arguments[0] as string)), change)
       }
     }
   })
@@ -564,7 +664,7 @@ describe("BrowserController preview lifecycle", () => {
       else if (scenario === "reopened") guest.debugger.emit("message", {}, "Page.documentOpened", { frame: { id: "main", url: guest.getURL() } })
       else events.emit("did-navigate")
       release()
-      if (scenario === "navigate") assert.deepEqual(await first, { url: navigation.url })
+      if (scenario === "navigate") assert.equal((await first as { url: string }).url, navigation.url)
       else await assert.rejects(first, /Browser target is stale/)
       if (queued) {
         await assert.rejects(queued, /Browser target is stale/)
@@ -678,7 +778,7 @@ describe("BrowserController preview lifecycle", () => {
       visible.events.emit("did-finish-load")
     })
     const url = "https://example.com/new"
-    assert.deepEqual(await h.controller.open("session", url, Infinity, ["tab"]), { url })
+    assert.equal((await h.controller.open("session", url, Infinity, ["tab"])).url, url)
     assert.equal(load.mock.callCount(), 1)
   })
 
@@ -725,7 +825,7 @@ describe("BrowserController preview lifecycle", () => {
     const { target } = await h.controller.probe("session")
     const command = { action: "open", url }
     await assert.rejects(execute({ command, target }), /Owning project tabs are unavailable/)
-    assert.deepEqual(await execute({ command, workspaceIDs: ["tab"] }), { url })
+    assert.equal((await execute({ command, workspaceIDs: ["tab"] }) as { url: string }).url, url)
     await assert.rejects(execute({ command: { action: "screenshot" }, target }), /Browser target is stale/)
     const refreshed = await h.controller.probe("session")
     assert.notEqual(refreshed.target, target)
@@ -733,6 +833,55 @@ describe("BrowserController preview lifecycle", () => {
       image: { mime: "image/png", data: "png" }, url,
     })
     assert.deepEqual(counts(), { attachCount: 1, detachCount: 0 })
+  })
+
+  it("supports back, forward and reload through guarded history/reload CDP operations", async () => {
+    const h = createHarness()
+    const history = { currentIndex: 1, entries: [{ id: 10, url: "https://example.com/a" }, { id: 11, url: "https://example.com/b" }, { id: 12, url: "https://example.com/c" }] }
+    const cdpCalls: Array<{ method: string; params?: Record<string, unknown> }> = []
+    let current = "https://example.com/b"
+    const { guest } = createGuest({
+      id: 25,
+      owner: h.owner,
+      sendCommand: async (method, params) => {
+        cdpCalls.push({ method, params })
+        if (method === "Page.getNavigationHistory") return history
+        if (method === "Page.navigateToHistoryEntry") {
+          const entry = history.entries.find(item => item.id === params?.entryId)!
+          history.currentIndex = history.entries.indexOf(entry)
+          current = entry.url
+          guest.getURL = () => current
+          queueMicrotask(() => {
+            guest.emit("did-start-navigation", {}, current, false, true)
+            guest.emit("did-navigate", {}, current)
+            guest.emit("did-finish-load")
+          })
+          return {}
+        }
+        if (method === "Page.reload") {
+          queueMicrotask(() => {
+            guest.emit("did-start-navigation", {}, current, false, true)
+            guest.emit("did-navigate", {}, current)
+            guest.emit("did-finish-load")
+          })
+          return {}
+        }
+        return {}
+      },
+    })
+    guest.getURL = () => current
+    h.add(guest, "one", "session", "tab")
+    const run = async (action: "back" | "forward" | "reload") => {
+      const { target } = await h.controller.probe("session")
+      return handleNativeBrowserRequest(h.controller, "browser.execute", { sessionID: "session", target, command: { action } })
+    }
+    assert.equal((await run("back") as { url: string }).url, "https://example.com/a")
+    const { registration } = await h.controller.probe("session")
+    assert.deepEqual(await run("forward"), { url: "https://example.com/b", registration }, "a load names the preview that made it")
+    assert.deepEqual(await run("reload"), { url: "https://example.com/b", registration })
+    assert.ok(cdpCalls.some(call => call.method === "Page.navigateToHistoryEntry" && call.params?.entryId === 10))
+    assert.ok(cdpCalls.some(call => call.method === "Page.navigateToHistoryEntry" && call.params?.entryId === 11))
+    assert.ok(cdpCalls.some(call => call.method === "Page.reload"))
   })
 
   for (const replace of [false, true]) {
@@ -758,7 +907,7 @@ describe("BrowserController preview lifecycle", () => {
       h.add(guest, "exact", "session", "tab")
       const opening = h.controller.open("session", url, Infinity, ["tab"])
       if (replace) await assert.rejects(opening, /registration changed/)
-      else assert.deepEqual(await opening, { url })
+      else assert.equal((await opening).url, url)
       assert.deepEqual(trace, [16])
       assert.deepEqual(h.receipts, [{ requestID: request, sessionID: "session", instanceId: "tab", committedUrl: replace ? undefined : url }])
     })
@@ -799,7 +948,7 @@ describe("BrowserController preview lifecycle", () => {
       })
       const opening = h.controller.open("session", url, Infinity, ["tab"])
       if (replacement || fragmentAborted) await assert.rejects(opening, /Browser navigation changed/)
-      else assert.deepEqual(await opening, { url: committedUrl })
+      else assert.equal((await opening).url, committedUrl)
       assert.deepEqual(h.receipts.map(receipt => (receipt as { committedUrl?: string }).committedUrl), [replacement || fragmentAborted ? undefined : committedUrl])
       if (replacement || fragmentAborted) {
         const receipt = h.receipts[0] as { keepGuest?: boolean; successorUrl?: string }
@@ -825,7 +974,8 @@ describe("BrowserController preview lifecycle", () => {
     })
     let completed = false
     const target = (await h.controller.probe("session")).target
-    const navigation = h.controller.execute("session", { action: "navigate", url }, Date.now() + 1000, target)
+    // The deadline only bounds the test; parallel suites can delay these events beyond a second.
+    const navigation = h.controller.execute("session", { action: "navigate", url }, Date.now() + 10_000, target)
       .then(result => { completed = true; return result })
     try {
       await child
@@ -833,7 +983,7 @@ describe("BrowserController preview lifecycle", () => {
       assert.equal(completed, false)
     } finally {
       events.emit("did-finish-load")
-      assert.deepEqual(await navigation, { url })
+      assert.equal((await navigation as { url: string }).url, url)
     }
   })
 
@@ -994,7 +1144,7 @@ describe("BrowserController preview lifecycle", () => {
       h.add(createGuest({ id: 22, owner, loadURL: async () => { now += 11_000 } }).guest, "first", "session", "tab")
       h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "first" })
     })
-    assert.deepEqual(await h.controller.open("session", url, now + 90_000, ["tab"]), { url })
+    assert.equal((await h.controller.open("session", url, now + 90_000, ["tab"])).url, url)
   })
 
   it("propagates navigation failures and keeps the queue usable", async () => {

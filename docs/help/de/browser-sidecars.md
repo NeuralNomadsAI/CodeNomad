@@ -34,7 +34,7 @@ Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte
 
 Jede Sitzung hat eine native Vorschau. Zeigt eine doppelte Registerkarte **Vorschau in einer anderen Registerkarte geöffnet**, wählen Sie **Zur Registerkarte**, um dorthin zu wechseln, oder **Hier öffnen**, um die Vorschau im selben Fenster zu verschieben. Die bisherige Registerkarte zeigt dann dieselbe Meldung. Nach dem Schließen der Registerkarte mit der Vorschau lässt sie sich in einer anderen öffnen.
 
-Der Agent öffnet die Vorschau in der Registerkarte, der sie gehört, oder sonst in der zuletzt für die Sitzung verwendeten Registerkarte. Seitenaktionen gelten für die sichtbare native Vorschau.
+Solange ein Desktop-Fenster eine Unterhaltung zeigt, können ihre Agenten deren Vorschau mit den Browser-Werkzeugen von OpenCode steuern (OpenCode 2.4 oder neuer); Seitenskripte auszuführen wird abgelehnt, und in der Tauri-App unter macOS und Linux können sie nicht zurück, vor oder neu laden. In Electron und der Windows-Tauri-App können sie außerdem Konsolenmeldungen und Netzwerkanfragen der Vorschau lesen; sie sehen Header und Textinhalte von Anfragen und Antworten, solange die Vorschau sie noch vorhält, außer den Werten der Cookie- und Autorisierungs-Header. Der Agent öffnet die Vorschau in der Registerkarte, der sie gehört, oder sonst in der zuletzt für die Sitzung verwendeten Registerkarte. Seitenaktionen gelten für die sichtbare native Vorschau. Seiten laden wie in der sichtbaren Vorschau über das Netzwerk dieses Computers; `localhost` ist also dieser Computer, auch wenn OpenCode in WSL läuft.
 
 Vor einer Aktion oder Aufnahme erstellt der Agent einen Snapshot der Vorschau. Ändert sich die Vorschau, bricht der Befehl ab, statt eine andere Vorschau zu verwenden.
 

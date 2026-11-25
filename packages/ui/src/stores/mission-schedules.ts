@@ -138,7 +138,8 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
   const event = serverEvents.on("instance.event", value => {
     if (value.type !== "instance.event" || value.instanceId !== props.instanceId()) return
     if (value.event.type.startsWith("rpc.codenomad.missions.") || value.event.type === "plugin.updated") schedule()
-    else if (isMissionActivityEvent(value.event)) schedule("activity")
+    // Activity matters only while a schedule runs a passage, or after a failed read.
+    else if (isMissionActivityEvent(value.event) && (error() || rows().some(doc => doc.pendingPassage))) schedule("activity")
   })
   const reconnect = serverEvents.on("instance.eventStatus", value => {
     if (value.type === "instance.eventStatus" && value.instanceId === props.instanceId() && value.status === "connected") schedule()

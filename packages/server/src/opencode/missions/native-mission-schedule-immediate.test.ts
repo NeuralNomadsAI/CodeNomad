@@ -18,7 +18,7 @@ test("unplayed conversion to immediate is a document CAS without Schedule, provi
     rmSync(file)
     return { file, sha256 }
   }
-  const artifacts = { provider: artifact("provider.mjs"), runtime: artifact("runtime.mjs") }
+  const artifacts = { runtime: artifact("runtime.mjs") }
   const state = path.join(f.directory, "service-state"); mkdirSync(state)
   const url = "http://127.0.0.1:1"
   writeFileSync(path.join(state, "service-owned.json"), JSON.stringify({ id: "own", pid: process.pid, url }))

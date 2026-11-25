@@ -110,7 +110,7 @@ Diese Einträge behalten ihre Kontrollen und Zeitzone. Nach Dienstneustart benö
 
 ## Baum und Ergebnisse {#tracking}
 
-Der Chevron öffnet Aufgaben; ein Zeilenklick wählt Mission oder Aufgabe. Die Aktionen bleiben im Kopf. Missionen ohne Aufgaben haben keinen Chevron. Der Filter durchsucht geladene Einträge.
+Der Chevron öffnet Aufgaben; ein Zeilenklick wählt Mission oder Aufgabe. Die Aktionen bleiben im Kopf. Missionen ohne Aufgaben haben keinen Chevron. Der Filter durchsucht geladene Einträge. Einmalige und wiederkehrende Missionen stehen in einer Liste, neueste Aktivität zuerst; ein laufender geplanter Durchlauf steht ganz oben.
 
 Das Auge schaltet die zentrale Zusammenfassung um und folgt der Auswahl. **Unterhaltung öffnen** führt zum jeweiligen Koordinator oder zur Aufgabe. Das ⋯-Menü enthält anwendbare Aktualisierungs-, Unterbrechungs-, Konfigurations- und Bearbeitungsaktionen.
 

@@ -19,6 +19,20 @@
     "handle": false,
     "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const label = option => (option.label || option.textContent || \"\").replace(/\\s+/g, \" \").trim();\n  const apply = (select, picked, options, guard) => {\n    const validate = () => {\n      if (select.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n      for (const option of picked) if (option.matches(\":disabled\")) throw new Error(\"codenomad:option-disabled:\" + label(option));\n      if (!select.multiple && picked.length !== 1) throw new Error(\"codenomad:single\");\n    };\n    validate();\n    select.focus();\n    guard?.();\n    const current = select.options;\n    if (!select.isConnected || current.length !== options.length || options.some((option, index) => current[index] !== option))\n      throw new Error(\"codenomad:options-changed\");\n    validate();\n    if (options.some(option => option.selected !== picked.includes(option))) {\n      for (const option of options) option.selected = picked.includes(option);\n      select.dispatchEvent(new Event(\"input\", { bubbles: true, composed: true }));\n      select.dispatchEvent(new Event(\"change\", { bubbles: true }));\n    }\n    return Array.from(select.selectedOptions).map(label);\n  };\n  const choose = (select, wanted, guard) => {\n    if (select.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n    const options = Array.from(select.options), picked = [];\n    for (const raw of wanted) {\n      const target = String(raw).replace(/\\s+/g, \" \").trim();\n      const option = options.find(item => label(item) === target) || options.find(item => item.value === String(raw));\n      if (!option) throw new Error(\"codenomad:no-option:\" + target);\n      if (!picked.includes(option)) picked.push(option);\n    }\n    return apply(select, picked, options, guard);\n  };\n  const control = element instanceof HTMLLabelElement ? element.control : element;\n  const select = control instanceof HTMLSelectElement ? control : control && control.closest(\"select\");\n  if (!select) throw new Error(\"codenomad:not-select\");\n  return choose(select, args[0], args[1]); }"
   },
+  "select-values": {
+    "scope": "element",
+    "args": [
+      "strings"
+    ],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const label = option => (option.label || option.textContent || \"\").replace(/\\s+/g, \" \").trim();\n  const apply = (select, picked, options, guard) => {\n    const validate = () => {\n      if (select.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n      for (const option of picked) if (option.matches(\":disabled\")) throw new Error(\"codenomad:option-disabled:\" + label(option));\n      if (!select.multiple && picked.length !== 1) throw new Error(\"codenomad:single\");\n    };\n    validate();\n    select.focus();\n    guard?.();\n    const current = select.options;\n    if (!select.isConnected || current.length !== options.length || options.some((option, index) => current[index] !== option))\n      throw new Error(\"codenomad:options-changed\");\n    validate();\n    if (options.some(option => option.selected !== picked.includes(option))) {\n      for (const option of options) option.selected = picked.includes(option);\n      select.dispatchEvent(new Event(\"input\", { bubbles: true, composed: true }));\n      select.dispatchEvent(new Event(\"change\", { bubbles: true }));\n    }\n    return Array.from(select.selectedOptions).map(label);\n  };\n  const choose = (select, wanted, guard) => {\n    if (select.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n    const options = Array.from(select.options), picked = [];\n    for (const raw of wanted) {\n      const target = String(raw).replace(/\\s+/g, \" \").trim();\n      const option = options.find(item => label(item) === target) || options.find(item => item.value === String(raw));\n      if (!option) throw new Error(\"codenomad:no-option:\" + target);\n      if (!picked.includes(option)) picked.push(option);\n    }\n    return apply(select, picked, options, guard);\n  };\n  const control = element instanceof HTMLLabelElement ? element.control : element;\n  const select = control instanceof HTMLSelectElement ? control : control && control.closest(\"select\");\n  if (!select) throw new Error(\"codenomad:not-select\");\n  if (select.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n  const options = Array.from(select.options), picked = [];\n  for (const raw of args[0]) {\n    const option = options.find(item => item.value === String(raw));\n    if (!option) throw new Error(\"codenomad:no-option:\" + String(raw));\n    if (!picked.includes(option)) picked.push(option);\n  }\n  return apply(select, picked, options); }"
+  },
+  "file-input": {
+    "scope": "element",
+    "args": [],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const label = element instanceof HTMLLabelElement ? element : element.closest && element.closest(\"label\");\n  const control = element instanceof HTMLInputElement ? element : label && label.control;\n  return control instanceof HTMLInputElement && control.type === \"file\"; }"
+  },
   "focus": {
     "scope": "element",
     "args": [],
@@ -89,6 +103,20 @@
     ],
     "handle": false,
     "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const needle = String(args[0]).replace(/\\s+/g, \" \").trim().toLowerCase();\n  const root = element;\n  const text = value => String(value || \"\").replace(/\\s+/g, \" \").toLowerCase();\n  if (text(root.innerText || root.textContent).includes(needle)) return true;\n  for (const item of root.querySelectorAll(\"[aria-label], [title], [placeholder], input, textarea\")) {\n    if ([item.getAttribute(\"aria-label\"), item.getAttribute(\"title\"), item.getAttribute(\"placeholder\"), item.value].some(value => text(value).includes(needle))) return true;\n  }\n  return false; }"
+  },
+  "body-text-includes": {
+    "scope": "element",
+    "args": [
+      "string"
+    ],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const body = element.ownerDocument.body;\n  return !!body && body.innerText.includes(String(args[0])); }"
+  },
+  "checked-state": {
+    "scope": "element",
+    "args": [],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); return element instanceof HTMLInputElement && (element.type === \"checkbox\" || element.type === \"radio\") ? element.checked : null; }"
   },
   "active-element": {
     "scope": "global",
