@@ -39,8 +39,9 @@ export const DIAGNOSTICS = {
   maxContexts: 512,
 }
 
-/** `session` names the out-of-process frame an event came from; the top-level document has none. */
-export interface DiagnosticEvent { method: string; params: Record<string, unknown>; session?: string }
+/** `session` names the out-of-process frame an event came from; the top-level document has none.
+ * `timestampMs` records host capture time for events whose protocol payload carries no timestamp (WebSocket creation). */
+export interface DiagnosticEvent { method: string; params: Record<string, unknown>; session?: string; timestampMs?: number }
 /** Events the host evicted before any read returned them, counted for this epoch by the readout they would feed. */
 export interface DiagnosticLoss { messages: number; requests: number }
 /** A live execution context and whether it is a page world (a frame's default context). */
@@ -58,7 +59,7 @@ export interface DiagnosticRead {
 /** The raw event buffer of one preview, restarted for each new document. */
 export class DiagnosticEventBuffer {
   private readonly instance = randomUUID()
-  private readonly events: Array<{ sequence: number; method: string; params: Record<string, unknown>; session?: string; bytes: number }> = []
+  private readonly events: Array<{ sequence: number; method: string; params: Record<string, unknown>; session?: string; timestampMs?: number; bytes: number }> = []
   private readonly contexts = new Map<string, DiagnosticContext>()
   private epoch = 0
   private sequence = 0
@@ -82,7 +83,8 @@ export class DiagnosticEventBuffer {
       if (bytes > DIAGNOSTICS.maxReadBytes) return this.lose(method, kept, session)
     }
     const kind = classOf(method)
-    this.events.push({ sequence: ++this.sequence, method, params: kept, ...(session ? { session } : {}), bytes })
+    const timestampMs = method === "Network.webSocketCreated" ? Date.now() : undefined
+    this.events.push({ sequence: ++this.sequence, method, params: kept, ...(session ? { session } : {}), ...(timestampMs !== undefined ? { timestampMs } : {}), bytes })
     const tally = this.classes[kind]
     tally.count++
     tally.bytes += bytes
@@ -95,18 +97,26 @@ export class DiagnosticEventBuffer {
     }
   }
 
+  private remember(set: Set<string>, key: string): boolean {
+    if (set.has(key)) return false
+    if (set.size >= DIAGNOSTICS.maxEvents) set.delete(set.values().next().value!)
+    set.add(key)
+    return true
+  }
+
   private lose(method: string, params: Record<string, unknown>, session: string | undefined): void {
     if (DIAGNOSTICS.messageEvents.includes(method)) return void this.lost.messages++
-    // Both sets are bounded like the buffer itself.
-    if (this.lostRequests.size >= DIAGNOSTICS.maxEvents || this.endedRequests.size >= DIAGNOSTICS.maxEvents) return
     // A lost detach ends every request of its frame; a lost ending event ends its request. Other lost events only
-    // leave a request incomplete, which the loss count reports.
-    if (method === "Target.detachedFromTarget" && typeof params.sessionId === "string") this.endedRequests.add(`${params.sessionId}:*`)
+    // leave a request incomplete, which the loss count reports. Both sets stay bounded, evicting the oldest so
+    // newer ending losses remain tracked past maxEvents distinct losses.
+    if (method === "Target.detachedFromTarget" && typeof params.sessionId === "string") {
+      this.remember(this.endedRequests, `${params.sessionId}:*`)
+      return
+    }
     if (classOf(method) !== "network" || typeof params.requestId !== "string") return
     const key = `${session ?? ""}:${params.requestId}`
-    this.lostRequests.add(key)
-    this.lost.requests = this.lostRequests.size
-    if (DIAGNOSTICS.endingEvents.includes(method)) this.endedRequests.add(key)
+    if (this.remember(this.lostRequests, key)) this.lost.requests++
+    if (DIAGNOSTICS.endingEvents.includes(method)) this.remember(this.endedRequests, key)
   }
 
   /** Execution contexts live across documents: document.open() keeps the page's, and a read may come after their
@@ -142,7 +152,7 @@ export class DiagnosticEventBuffer {
     for (const event of this.events) {
       if (event.sequence <= after) continue
       if (events.length >= DIAGNOSTICS.maxRead || bytes + event.bytes > DIAGNOSTICS.maxReadBytes) break
-      events.push({ method: event.method, params: event.params, ...(event.session ? { session: event.session } : {}) })
+      events.push({ method: event.method, params: event.params, ...(event.session ? { session: event.session } : {}), ...(event.timestampMs !== undefined ? { timestampMs: event.timestampMs } : {}) })
       bytes += event.bytes
       next = event.sequence
     }

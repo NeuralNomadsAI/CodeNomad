@@ -54,7 +54,7 @@ export class PreviewDiagnostics {
     this.lost = { ...read.lost }
     // The host's live contexts cover those whose creation this readout never saw (an earlier epoch or an eviction).
     for (const context of read.contexts) this.contexts.set(`${context.session ?? ""}:${context.id}`, context.page)
-    for (const event of read.events) this.apply(event.method, event.params as Params, event.session)
+    for (const event of read.events) this.apply(event.method, event.params as Params, event.session, event.timestampMs)
     // A request whose later events the host evicted unread would stay pending: it ends as failed, with the reason.
     for (const key of read.lostRequests ?? []) {
       // `${session}:*`: the frame's lost detach ends each of its requests, as a received one would.
@@ -142,7 +142,7 @@ export class PreviewDiagnostics {
     return typeof context !== "number" || this.contexts.get(`${session ?? ""}:${context}`) === true
   }
 
-  private apply(method: string, event: Params, session: string | undefined): void {
+  private apply(method: string, event: Params, session: string | undefined, timestampMs: number | undefined): void {
     switch (method) {
       case "Runtime.executionContextCreated":
         if (typeof event.context?.id === "number") this.contexts.set(`${session ?? ""}:${event.context.id}`,
@@ -186,7 +186,7 @@ export class PreviewDiagnostics {
         return
       }
     }
-    const change = chainEvent(method, event, session, () => `${this.scope}:${++this.sequence}`)
+    const change = chainEvent(method, event, session, () => `${this.scope}:${++this.sequence}`, timestampMs)
     if (change && typeof event.requestId === "string") this.transition(`${session ?? ""}:${event.requestId}`, change)
   }
 
@@ -218,14 +218,14 @@ export class PreviewDiagnostics {
   }
 }
 
-function chainEvent(method: string, event: Params, sessionID: string | undefined, id: () => string): ChainEvent | undefined {
+function chainEvent(method: string, event: Params, sessionID: string | undefined, id: () => string, timestampMs: number | undefined): ChainEvent | undefined {
   switch (method) {
     case "Network.requestWillBeSent": return { type: "request", id: id(), sessionID, event: event as RequestEvent }
     case "Network.requestWillBeSentExtraInfo": return { type: "request.extra", headers: (event.headers ?? {}) as Headers }
     case "Network.responseReceived": return { type: "response", event: event as Extract<ChainEvent, { type: "response" }>["event"] }
     case "Network.responseReceivedExtraInfo": return { type: "response.extra", wire: { headers: (event.headers ?? {}) as Headers, statusCode: Number(event.statusCode) } }
     // WebSockets never emit requestWillBeSent; their handshake is the whole request lifecycle.
-    case "Network.webSocketCreated": return { type: "ws.created", id: id(), sessionID, event: event as Extract<ChainEvent, { type: "ws.created" }>["event"], wallTime: Date.now() / 1000 }
+    case "Network.webSocketCreated": return { type: "ws.created", id: id(), sessionID, event: event as Extract<ChainEvent, { type: "ws.created" }>["event"], wallTime: (timestampMs ?? Date.now()) / 1000 }
     case "Network.webSocketWillSendHandshakeRequest": return { type: "ws.request", event: event as Extract<ChainEvent, { type: "ws.request" }>["event"] }
     case "Network.webSocketHandshakeResponseReceived": return { type: "ws.response", event: event as Extract<ChainEvent, { type: "ws.response" }>["event"] }
     case "Network.webSocketFrameError": return { type: "ws.error", timestamp: event.timestamp, message: String(event.errorMessage ?? "") }
