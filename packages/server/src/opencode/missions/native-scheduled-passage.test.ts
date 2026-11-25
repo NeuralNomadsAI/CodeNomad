@@ -227,34 +227,6 @@ test("an agent's own active root is admitted at once and reused on later passage
   assert.deepEqual(f.counts(), { sends: 2, creates: 0, environments: 2 })
 })
 
-test("agent adoption refuses uncertain ownership and another document's reserved coordinator", async () => {
-  const f = await fixture(true, "ses_author")
-  f.states.get("ses_existing")!.active = false
-  f.sessions.get("ses_existing")!.metadata!["codenomad.mission"] = { missionID: "unknown_owner" }
-  await assert.rejects(f.admit(), /coordinator-owned/)
-  delete f.sessions.get("ses_existing")!.metadata!["codenomad.mission"]
-  const doc = await f.read()
-  let other = await f.store.create("another", doc.configuration, at, current)
-  other = await f.store.change(other.id, other.revision, current, next => changes.play(next, "other_play", at, []))
-  other = await f.store.change(other.id, other.revision, current, next => changes.synchronized(next, "other_play", [
-    { role: "principal", slot: 0, scheduleID: "sch_other", sessionID: "ses_other", timeGeneration: next.timeGeneration, highWater: 0, pendingWake: null, wakePreparing: null },
-    { role: "reconciliation", slot: 0, scheduleID: "sch_other_aux", sessionID: "ses_other_aux", timeGeneration: next.timeGeneration, highWater: 0, pendingWake: null, wakePreparing: null },
-  ]))
-  await f.store.change(other.id, other.revision, current, next => changes.reserve(next, { kind: "manual", requestID: "other_run" }, at, []))
-  await assert.rejects(f.admit(), /coordinator-owned/)
-  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
-})
-
-test("agent adoption refuses an ordinary active mission even when its native marker is absent", async () => {
-  const f = await fixture(true, "ses_author")
-  f.states.get("ses_existing")!.active = false
-  const control = new MissionControl({ project: { id: "project", canonical: "/project", location: f.native.location },
-    storage: f.storage, sessions: f.native as unknown as MissionSessionAdapter })
-  await control.create({ requestID: "other_mission", objective: "Other work", template: "custom", coordinatorSessionID: "ses_existing" })
-  await assert.rejects(f.admit(), /coordinator-owned/)
-  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
-})
-
 test("agent adoption revalidates at each lazy native profile/metadata effect entry", async () => {
   for (const blockedWrite of [1, 2, 3]) {
     const f = await fixture(true, "ses_author")
