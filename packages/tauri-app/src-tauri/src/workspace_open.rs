@@ -1,4 +1,5 @@
 use crate::{cli_manager::CliProcessManager, AppState};
+use tauri::Manager;
 #[cfg(windows)]
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::de::DeserializeOwned;
@@ -597,9 +598,10 @@ pub async fn open_workspace_target(
     path: Option<String>,
     editor: Option<String>,
 ) -> Result<(), String> {
-    require_local_window(&webview, &state)?;
     let manager = state.manager.clone();
+    // The check reads the WebView URL, which waits on the native thread: keep it off the executor.
     tauri::async_runtime::spawn_blocking(move || {
+        require_local_window(&webview, &webview.state::<AppState>())?;
         open_workspace_target_impl(&manager, target, instance_id, worktree_slug, path, editor)
     })
     .await
@@ -616,13 +618,14 @@ pub async fn open_workspace_target(
 #[tauri::command]
 pub async fn open_local_path(
     webview: tauri::Webview,
-    state: State<'_, AppState>,
     path: String,
     keep: String,
 ) -> Result<&'static str, String> {
-    require_local_window(&webview, &state)?;
-    tauri::async_runtime::spawn_blocking(move || open_local_path_impl(&path, &keep))
-        .await
+    tauri::async_runtime::spawn_blocking(move || {
+        require_local_window(&webview, &webview.state::<AppState>())?;
+        open_local_path_impl(&path, &keep)
+    })
+    .await
         .map_err(|error| error.to_string())?
 }
 
