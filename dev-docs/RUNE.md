@@ -25,9 +25,9 @@ Kit builders consume the mapped `Kit` directly. Keep visual configuration before
 
 Controls shared by screens live in `components/` or the theme. Application button factories accept their action before building the Kit control. Disabled buttons omit pointer and keyboard actions; application callbacks retain their captured screen scope.
 
-Shared renders enable `Cx::web_focus`: Tab follows pressable controls, pointer presses take focus, and Return on a focused button precedes an explicit default action. Close preserves the source's Shift+Return and held-Return activation through its shared handler, with Ctrl/Alt/Meta left to shortcut routing. The pinned runtime's Space press phase, modified Space and held Return on Kit buttons have separate source qualification gaps.
+Shared renders enable `Cx::web_focus`: Tab follows pressable controls, pointer presses take focus, and unmodified Return on a focused button precedes an explicit default action. Close preserves the source's Shift+Return and held-Return activation through its shared handler, with Ctrl/Alt/Meta left to shortcut routing. The pinned runtime's Space press phase, modified Space and held Return on Kit buttons have separate source qualification gaps.
 
-Shared menus focus their container when opened by pointer—entering items directly on arrows, Home/End, PageUp/PageDown and typeahead via Rune's `focus_group`—and focus the first item when activated by keyboard (`Up` opens at the last item; `aria-disabled` items stay reachable and inert). Confirmation scenes declare their Cancel autofocus explicitly.
+Shared menus focus their container when opened by pointer—entering items directly on arrows, Home/End, PageUp/PageDown and typeahead via Rune's `focus_group`—and focus the first item when activated by keyboard or non-pointer assistive activation (`Up` opens at the last item; `aria-disabled` items stay reachable and inert). The web accessibility mirror exposes `role="menu"` on the container while its focus proxy uses `group`. Confirmation and single-action modal dialogs declare their initial `.autofocus()` control explicitly.
 
 ## Platform
 

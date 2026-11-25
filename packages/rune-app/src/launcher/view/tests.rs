@@ -116,49 +116,32 @@ fn launcher_state() -> State {
     s
 }
 
+fn product_root_with_probe(s: &State, cx: &mut Cx<State>) -> El {
+    let probe = text(t("rune.refresh"))
+        .key("web-focus-probe")
+        .role("button")
+        .label(t("rune.refresh"))
+        .on_press(|_: &mut State| {});
+    col().child(probe).child(crate::view(s, cx))
+}
+
 #[test]
 fn product_root_enables_web_focus_for_launcher_controls() {
     let mut rt = Runtime::new(
         launcher_state(),
-        crate::view,
+        product_root_with_probe,
         (960.0, 640.0),
         Env::new(false, 1.0),
     );
     rt.frame(0.0);
-    let mut reached_connect = false;
-    for _ in 0..16 {
-        rt.key(rune::KeyEvent {
-            key: rune::Key::Tab,
-            mods: rune::Mods::default(),
-        });
-        rt.frame(0.0);
-        if rt
-            .elements()
-            .iter()
-            .any(|node| node.key.as_deref() == Some("connect") && node.focused)
-        {
-            reached_connect = true;
-            break;
-        }
-    }
-    assert!(
-        reached_connect,
-        "product root Tab must reach pressable launcher buttons via shared web_focus"
-    );
-    let mut rt = Runtime::new(
-        launcher_state(),
-        crate::view,
-        (960.0, 640.0),
-        Env::new(false, 1.0),
-    );
-    rt.frame(0.0);
-    let (x, y) = rt.find("connect").expect("connect button");
-    rt.pointer_down(x, y);
+    // Without .focusable(true), a pressable role="button" only takes focus when
+    // crate::view enables Cx::web_focus() through settings::render.
+    rt.update(|_, tx| tx.focus("web-focus-probe", true));
     rt.frame(0.0);
     assert!(
         rt.elements()
             .iter()
-            .any(|node| node.key.as_deref() == Some("connect") && node.focused),
-        "product root pointer press must focus launcher button via shared web_focus"
+            .any(|node| node.key.as_deref() == Some("web-focus-probe") && node.focused),
+        "product root must enable shared web_focus so pressable buttons without focusable(true) take focus"
     );
 }

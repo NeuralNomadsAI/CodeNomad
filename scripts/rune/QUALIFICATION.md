@@ -26,7 +26,7 @@ Le binaire séparé `web-focus-fixture` exige `test-support` et importe le vrai 
 ```powershell
 cargo +1.99.1 test --locked -p rune-theme-codenomad --test web_focus_probe -- --nocapture
 cargo +1.99.1 build --locked -p rune-theme-codenomad --example web-focus-fixture --features test-support --target wasm32-unknown-unknown
-node scripts/rune/parity/web-focus.mjs --wasm <target>/wasm32-unknown-unknown/debug/examples/web-focus-fixture.wasm --bindgen <wasm-bindgen-matching-lock.exe> --rune <locked-rune-crate> --executable <chromium.exe>
+node scripts/rune/parity/web-focus.mjs --wasm C:\cn-cargo\files\wasm32-unknown-unknown\debug\examples\web-focus-fixture.wasm --bindgen <chemin-absolu-wasm-bindgen.exe> --rune <checkout-rune-verrouillé>\crates\rune --executable <chemin-absolu-chromium.exe>
 ```
 
 Le contrat SSE Préférences/Git s'exécute dans Chromium depuis la sonde WASM du client. Avec `wasm-bindgen` à la version de `Cargo.lock` et Chromium Playwright installé :
