@@ -226,36 +226,39 @@ pub async fn list(
     links::guard(&w.path, &key)?;
     let physical = dunce::canonicalize(links::target(&w.path, &key)).map_err(io_error)?;
     watch::observe(&app, &w, &key, &physical);
-    let mut entries = Vec::new();
-    for (index, entry) in std::fs::read_dir(&physical).map_err(io_error)?.enumerate() {
-        if index >= 4096 {
-            return Err(error(Status::BAD_REQUEST, "Directory listing too large"));
+    let workspace_path = w.path.clone();
+    let entries = tokio::task::spawn_blocking(move || -> Result<Vec<Value>, Error> {
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(&physical).map_err(io_error)? {
+            let entry = entry.map_err(io_error)?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let p = if key == "." { name.to_owned() } else { format!("{key}/{name}") };
+            if relative(&p, false).is_err() || links::guard(&workspace_path, &p).is_err() {
+                continue;
+            }
+            // Followed like the reference's `stat`; a dangling link or loop is skipped.
+            let entry_path = links::target(&workspace_path, &p);
+            let Ok(m) = std::fs::metadata(&entry_path) else { continue };
+            if !m.is_dir() && !m.is_file() {
+                continue;
+            }
+            let modified = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            let mut row = json!({"name":name,"path":p,"absolutePath":workspace_path.join(&p),
+                "type":if m.is_dir(){"directory"}else{"file"},
+                "modifiedAt":DateTime::<Utc>::from(modified).to_rfc3339_opts(SecondsFormat::Millis,true)});
+            if m.is_dir() {
+                row["directoryIdentity"] = json!(host_identity(&entry_path).unwrap_or_default());
+            } else {
+                row["size"] = json!(m.len());
+            }
+            entries.push(row);
         }
-        let entry = entry.map_err(io_error)?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
-        let p = if key == "." { name.to_owned() } else { format!("{key}/{name}") };
-        if relative(&p, false).is_err() || links::guard(&w.path, &p).is_err() {
-            continue;
-        }
-        // Followed like the reference's `stat`; a dangling link or loop is skipped.
-        let entry_path = links::target(&w.path, &p);
-        let Ok(m) = std::fs::metadata(&entry_path) else { continue };
-        if !m.is_dir() && !m.is_file() {
-            continue;
-        }
-        let modified = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-        let mut row = json!({"name":name,"path":p,"absolutePath":w.path.join(&p),
-            "type":if m.is_dir(){"directory"}else{"file"},
-            "modifiedAt":DateTime::<Utc>::from(modified).to_rfc3339_opts(SecondsFormat::Millis,true)});
-        if m.is_dir() {
-            row["directoryIdentity"] = json!(host_identity(&entry_path).unwrap_or_default());
-        } else {
-            row["size"] = json!(m.len());
-        }
-        entries.push(row);
-    }
-    entries.sort_by_cached_key(|r| r["name"].as_str().unwrap_or_default().to_lowercase());
+        entries.sort_by_cached_key(|r| r["name"].as_str().unwrap_or_default().to_lowercase());
+        Ok(entries)
+    })
+    .await
+    .map_err(|_| unavailable())??;
     app.workspace(&id)?;
     Ok(Json(json!(entries)))
 }
@@ -390,5 +393,95 @@ mod tests {
         assert!(workspace_path(root, ".git/config", false).is_err());
         #[cfg(unix)]
         assert_eq!(workspace_path(root, "nul.txt", false).unwrap(), "nul.txt");
+    }
+
+    #[tokio::test]
+    async fn lists_and_sorts_directories_with_more_than_4096_entries() {
+        use crate::{App, auth, opencode, settings};
+        use std::{sync::Arc, time::Duration};
+        use uuid::Uuid;
+
+        struct CleanupDir(PathBuf);
+        impl Drop for CleanupDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let dir = crate::shared::test_dir("files-large-dir");
+        let _cleanup = CleanupDir(dir.clone());
+        let root = dir.join("workspace");
+        let generated = root.join("generated");
+        std::fs::create_dir_all(&generated).unwrap();
+        let count = 4097usize;
+        for i in (0..count).rev() {
+            std::fs::File::create(generated.join(format!("item-{i:04}.txt"))).unwrap();
+        }
+        let root = dunce::canonicalize(&root).unwrap();
+        let auth = auth::Auth::new(auth::Settings {
+            username: "fixture".into(),
+            password: None,
+            file: None,
+            cookie: "fixture".into(),
+            token: false,
+            skip: true,
+            idle: Duration::from_secs(60),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let settings =
+            settings::Settings::new(settings::document::Location::resolve(dir.join("config.yaml").to_str().unwrap()));
+        let native = opencode::Native::test_connection(([127, 0, 0, 1], 9).into());
+        let app = Arc::new(App::new(
+            auth,
+            0,
+            dir.clone(),
+            root.clone(),
+            false,
+            settings,
+            Value::Null,
+            native,
+            PathBuf::new(),
+            None,
+            watch::Watches::new(tx),
+            None,
+        ));
+        let id = Uuid::new_v4();
+        app.inner.lock().unwrap().workspaces.push(Workspace {
+            id,
+            request_id: None,
+            path: root.clone(),
+            name: None,
+            status: "running",
+            proxy_path: format!("/workspaces/{id}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({"directory": root}),
+        });
+
+        let expected: Vec<String> = (0..count).map(|i| format!("item-{i:04}.txt")).collect();
+
+        let listed = list(
+            State(app.clone()),
+            Route(id.to_string()),
+            Query(Input { path: Some("generated".into()), directory: None, worktree: None }),
+        )
+        .await
+        .unwrap()
+        .0;
+        let listed_names: Vec<&str> = listed.as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+        assert_eq!(listed_names, expected);
+
+        let browsed = browse::browse_restricted_for_test(&app, Some(PathBuf::from("generated")), true).await.unwrap().0;
+        let browse_names: Vec<&str> =
+            browsed["entries"].as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+        assert_eq!(browse_names, expected);
+
+        let unrestricted = browse::browse_unrestricted_for_test(generated.to_str().unwrap(), true).await.unwrap();
+        let unrestricted_names: Vec<&str> = unrestricted.iter().map(|r| r["name"].as_str().unwrap()).collect();
+        assert_eq!(unrestricted_names, expected);
     }
 }
