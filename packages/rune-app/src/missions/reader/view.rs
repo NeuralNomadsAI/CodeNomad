@@ -4,7 +4,7 @@ use super::{
         directory::{Panel, title},
         view::status,
     },
-    BodyStatus, ReaderTarget, current_task_report, overview_progress,
+    BodyStatus, MAX_WHOLE_BODY_UNITS, ReaderTarget, current_task_report, overview_progress,
     sections::{
         body_status_note, json_list_section, local_section, remote_section, task_status_label,
     },
@@ -99,6 +99,23 @@ pub(crate) fn view<S: 'static>(
                     content = task_body(
                         content, panel, snapshot, project_id, mission_id, task, &scoped,
                     );
+                } else if panel.reader.lookup_failed().is_some() {
+                    let retry_owner = scoped.clone();
+                    content = content
+                        .child(theme::note(t("missionsPanel.pages.failed"), "alert"))
+                        .child(
+                            layout::button(
+                                t("missionsPanel.reader.retry"),
+                                false,
+                                move |s: &mut S| {
+                                    if let Some(p) = retry_owner.get(s) {
+                                        p.reader.clear_lookup_error();
+                                        p.wake();
+                                    }
+                                },
+                            )
+                            .key("mission-reader-detail-retry"),
+                        );
                 } else if panel.detail.busy()
                     || (!panel.detail.failed
                         && snapshot.tasks.len() < snapshot.header.tasks.page.total
@@ -128,8 +145,15 @@ pub(crate) fn view<S: 'static>(
                 }
             }
         }
+        let target_missing_lookup_failed = matches!(
+            target,
+            ReaderTarget::Task { task_id, task_key, .. }
+            if snapshot.tasks.find_by_id_or_key(task_id, task_key).is_none()
+        ) && panel.reader.lookup_failed().is_some();
         if panel.reader.pending_lookup().is_some() {
             content = content.child(theme::note(t("missions.control.loading"), "status"));
+        } else if panel.reader.lookup_failed().is_some() && !target_missing_lookup_failed {
+            content = content.child(theme::note(t("missionsPanel.pages.failed"), "alert"));
         } else if panel.reader.lookup_missing().is_some() {
             content = content.child(theme::note(t("missions.control.reader.missing"), "status"));
         }
@@ -594,14 +618,23 @@ fn task_body<S: 'static>(
     let omitted_history = task.report_count.saturating_sub(loaded_total);
     let all_history_open = panel.reader.is_disclosure_open("task-all-history");
     let full_history_selector = ContentSelector::task(task.key.clone(), "reports");
-    let full_history_view = all_history_open.then(|| {
+    let history_unavailable = task
+        .body("reports")
+        .is_none_or(|b| b.characters > MAX_WHOLE_BODY_UNITS);
+    let full_history_view = (all_history_open && !history_unavailable).then(|| {
         panel
             .reader
             .body_view(project_id, mission_id, &full_history_selector)
     });
-    let full_history: Option<Vec<FullTaskReport>> = full_history_view
-        .and_then(|v| v.body.filter(|b| b.utf16_len >= b.characters))
+    let full_history_complete =
+        full_history_view.and_then(|v| v.body.filter(|b| b.utf16_len >= b.characters));
+    let full_history: Option<Vec<FullTaskReport>> = full_history_complete
         .and_then(|loaded| serde_json::from_str::<Vec<FullTaskReport>>(&loaded.text).ok())
+        .filter(|list| {
+            let mut ids = HashSet::with_capacity(list.len());
+            list.iter()
+                .all(|r| r.task_key == task.key && ids.insert(r.id.as_str()))
+        })
         .map(|mut list| {
             list.retain(|r| Some(r.id.as_str()) != current_id);
             list.sort_unstable_by(|a, b| {
@@ -629,20 +662,27 @@ fn task_body<S: 'static>(
                 .key("mission-reader-show-all-history"),
             );
         }
-        if let Some(view) = full_history_view
+        if all_history_open && history_unavailable {
+            body = body.child(theme::note(
+                t("missions.control.reader.unavailable"),
+                "alert",
+            ));
+        } else if let Some(view) = full_history_view
             && (full_history.is_none() || view.status == BodyStatus::Error)
         {
+            let status = if view.status == BodyStatus::Error
+                || (full_history_complete.is_some() && full_history.is_none())
+            {
+                BodyStatus::Error
+            } else {
+                view.status
+            };
             let key = (
                 project_id.to_owned(),
                 mission_id.to_owned(),
                 full_history_selector,
             );
-            body = body.child(body_status_note(
-                view.status,
-                key,
-                "task-all-history",
-                scoped,
-            ));
+            body = body.child(body_status_note(status, key, "task-all-history", scoped));
         }
         if let Some(full_list) = &full_history {
             for report in full_list {

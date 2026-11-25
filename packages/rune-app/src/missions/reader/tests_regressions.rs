@@ -758,10 +758,10 @@ fn return_focus_tracks_first_trigger_and_restores_on_close() {
         panel
             .reader
             .set_return_focus("mission-row-eye-msn_1".into());
-        // Navigating inside the reader via capture_return_focus must not overwrite the opening trigger.
+        // Navigating inside the reader must not overwrite the opening trigger.
         panel
             .reader
-            .capture_return_focus("mission-reader-dep-task-a".into());
+            .open_task("msn_1".into(), "tsk_a".into(), "task-a".into());
         assert_eq!(
             panel.close_reader().as_deref(),
             Some("mission-row-eye-msn_1")
@@ -1035,4 +1035,129 @@ fn cross_page_report_id_collision_cannot_substitute_foreign_report() {
     let resolved = current_task_report(&snap, task).expect("nested fallback");
     assert_eq!(resolved.task_key, "task-a");
     assert!(resolved.body("summary").is_none());
+}
+
+#[test]
+fn failed_offpage_lookup_stays_retryable_instead_of_caching_missing() {
+    crate::platform::block_on(async {
+        const OFFPAGE_TASKS: &str = r#"{"taskPage":{"order":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","offset":0,"end":0,"total":60,"reports":2,"counts":{"completed":60}},"tasks":[{"id":"tsk_far","key":"task-far","title":"Offpage Task","role":"specialist","status":"completed","blockedBy":[],"order":55,"createdAt":1,"updatedAt":1,"dependents":0,"reportCount":1,"outstandingExecution":false,"bodies":{"brief":{"characters":12,"digest":"mPPnWrHj4vEFmX9TRzV2jvYMian4OZjG3wx189MckAU"}},"report":{"id":"rep_tsk_far","taskKey":"task-far","sessionId":"ses_task","outcome":"completed","excerpt":"Excerpt for task-far","createdAt":2}}],"reports":[{"id":"rep_tsk_far","taskKey":"task-far","sessionId":"ses_task","outcome":"completed","excerpt":"Excerpt for task-far","createdAt":2,"bodies":{"summary":{"characters":24,"digest":"mwKfd7N-_i81PRfQA3tUMgTlcMxZN6otlkuGGAlVLFo"},"evidence":{"characters":20,"digest":"miBWWG3jJlR9rjbI4TGbcmpBlZ8cwEvRfQCGUzUiU-Y"},"next":{"characters":2,"digest":"XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc"}}}]}"#;
+        const OFFPAGE_DIGEST: &str = "Ef_gOvbQNxC9Ft1k1PBB0ll16tmt2zrK-4Zg5L9e0QY";
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_c = calls.clone();
+        let http = Http::new().await;
+        let mut backend = http.backend.clone();
+        backend.workspace = "project".into();
+        crate::platform::spawn(async move {
+            loop {
+                let req = http.accept().await;
+                if req.header.contains("/missions/panel") && req.body["source"] == "tasks" {
+                    let n = calls_c.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 {
+                        let _ = req.try_reply(503, json!({"error": "temporary"})).await;
+                    } else {
+                        let _ = req
+                            .try_reply(
+                                200,
+                                json!({
+                                    "available": true,
+                                    "version": 1,
+                                    "source": "tasks",
+                                    "projectID": "project",
+                                    "missionID": "msn_1",
+                                    "revision": 5,
+                                    "discardedEvents": 0,
+                                    "controlUnavailable": false,
+                                    "notificationUnavailable": false,
+                                    "cleanupUnavailable": false,
+                                    "page": {
+                                        "digest": OFFPAGE_DIGEST,
+                                        "total": 1,
+                                        "pieces": [{
+                                            "index": 0,
+                                            "offset": 0,
+                                            "characters": OFFPAGE_TASKS.encode_utf16().count(),
+                                            "text": OFFPAGE_TASKS
+                                        }]
+                                    }
+                                }),
+                            )
+                            .await;
+                    }
+                } else {
+                    let _ = req.try_reply(503, json!({})).await;
+                }
+            }
+        });
+
+        let (wake_tx, wake_rx) = bounded(32);
+        let wake: Wake = Arc::new(move || {
+            let _ = wake_tx.try_send(());
+        });
+        let mut panel = Panel::new(backend, Some("project".into()), Reads::default(), wake);
+        panel.summaries = vec![summary_row("msn_1", "Alpha")];
+        panel.detail.observe("msn_1", 5);
+        let (done_task, done_rep) = task_and_report(
+            "tsk_done",
+            "task-done",
+            "Completed Work",
+            "completed",
+            "completed",
+            &["task-far"],
+            0,
+        );
+        let (other_task, other_rep) = task_and_report(
+            "tsk_other",
+            "task-other",
+            "Other Work",
+            "completed",
+            "completed",
+            &[],
+            1,
+        );
+        panel.detail.snapshot = Some(header_with_reports(
+            "msn_1",
+            5,
+            json!({}),
+            vec![done_task, other_task],
+            vec![done_rep, other_rep],
+            Some(60),
+        ));
+        panel.selected = Some("msn_1".into());
+        panel.reader.open_overview("msn_1".into());
+
+        // Transient 503 must report lookup_failed (never cached as lookup_missing).
+        panel
+            .reader
+            .request_task_lookup("msn_1".into(), "task-far".into());
+        wait(async {
+            loop {
+                panel.poll();
+                if panel.reader.lookup_failed() == Some("task-far") {
+                    break;
+                }
+                wake_rx.recv().await.unwrap();
+            }
+        })
+        .await;
+        assert!(panel.reader.lookup_missing().is_none());
+        assert!(!panel.detail.lookup_settled("", "task-far"));
+        assert!(panel.reader.is_overview_open("msn_1"));
+
+        // Clicking again retries the lookup and opens the task once the server recovers.
+        panel
+            .reader
+            .request_task_lookup("msn_1".into(), "task-far".into());
+        wait(async {
+            loop {
+                panel.poll();
+                if panel.reader.is_task_open("msn_1", "tsk_far") {
+                    break;
+                }
+                wake_rx.recv().await.unwrap();
+            }
+        })
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(panel.reader.lookup_failed().is_none());
+    });
 }

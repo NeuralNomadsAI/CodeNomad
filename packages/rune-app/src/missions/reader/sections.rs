@@ -85,13 +85,12 @@ pub(super) fn remote_section<S: 'static>(
         let copy_digest = loaded.digest.clone();
         let copy_chars = loaded.characters;
         let can_copy = copy_chars <= MAX_WHOLE_BODY_UNITS;
-        let copy_loading = panel.reader.is_copy_loading(&key);
         section = section.child(section_toolbar(
             scoped,
             section_id,
             page,
             total,
-            can_copy && !copy_loading,
+            can_copy,
             move |s: &mut S, tx: &mut Tx| {
                 if let Some(p) = copy_owner.get(s) {
                     if let Some(text) = p.reader.request_copy(

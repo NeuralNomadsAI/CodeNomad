@@ -139,6 +139,7 @@ pub(crate) struct Reader {
     return_focus: Option<String>,
     pending_lookup: Option<(String, String)>,
     lookup_missing: Option<String>,
+    lookup_failed: Option<String>,
     focus_close_pending: bool,
 }
 
@@ -172,12 +173,6 @@ impl Reader {
         }
     }
 
-    pub(crate) fn capture_return_focus(&mut self, key: String) {
-        if self.return_focus.is_none() && !key.is_empty() {
-            self.return_focus = Some(key);
-        }
-    }
-
     pub(crate) fn take_return_focus(&mut self) -> Option<String> {
         self.return_focus.take()
     }
@@ -188,6 +183,7 @@ impl Reader {
 
     pub(super) fn request_task_lookup(&mut self, mission_id: String, task_key: String) {
         self.lookup_missing = None;
+        self.lookup_failed = None;
         self.pending_lookup = Some((mission_id, task_key));
     }
 
@@ -201,16 +197,32 @@ impl Reader {
         self.lookup_missing.as_deref()
     }
 
+    pub(super) fn lookup_failed(&self) -> Option<&str> {
+        self.lookup_failed.as_deref()
+    }
+
     pub(super) fn resolve_lookup(&mut self, mission_id: String, task_id: String, task_key: String) {
         self.pending_lookup = None;
         self.lookup_missing = None;
+        self.lookup_failed = None;
         self.open_task(mission_id, task_id, task_key);
         self.focus_close_pending = true;
     }
 
     pub(super) fn fail_lookup(&mut self, task_key: String) {
         self.pending_lookup = None;
+        self.lookup_failed = None;
         self.lookup_missing = Some(task_key);
+    }
+
+    pub(super) fn fail_lookup_error(&mut self, task_key: String) {
+        self.pending_lookup = None;
+        self.lookup_missing = None;
+        self.lookup_failed = Some(task_key);
+    }
+
+    pub(super) fn clear_lookup_error(&mut self) {
+        self.lookup_failed = None;
     }
 
     pub(crate) fn open_overview(&mut self, mission_id: String) {
@@ -223,6 +235,7 @@ impl Reader {
             self.ready_copy = None;
             self.pending_lookup = None;
             self.lookup_missing = None;
+            self.lookup_failed = None;
             self.target = Some(next);
         }
     }
@@ -241,6 +254,7 @@ impl Reader {
             self.ready_copy = None;
             self.pending_lookup = None;
             self.lookup_missing = None;
+            self.lookup_failed = None;
             self.target = Some(next);
         }
     }
@@ -272,6 +286,7 @@ impl Reader {
         self.ready_copy = None;
         self.pending_lookup = None;
         self.lookup_missing = None;
+        self.lookup_failed = None;
         self.focus_close_pending = false;
         self.cache.evict_unused(&HashSet::new());
     }
@@ -284,6 +299,8 @@ impl Reader {
 
     pub(crate) fn invalidate(&mut self) {
         self.cache.invalidate_all();
+        self.lookup_missing = None;
+        self.lookup_failed = None;
     }
 
     pub(crate) fn follow_selection(&mut self, selected: Option<&str>) {
@@ -351,12 +368,6 @@ impl Reader {
         None
     }
 
-    pub(super) fn is_copy_loading(&self, key: &BodyKey) -> bool {
-        self.pending_copy
-            .as_ref()
-            .is_some_and(|(copy_key, _)| copy_key == key)
-    }
-
     pub(crate) fn take_ready_copy(&mut self) -> Option<String> {
         self.ready_copy.take()
     }
@@ -417,14 +428,20 @@ impl Reader {
         changed |= self.cache.drive(backend, revision, demands, reads, wake);
 
         if let Some((copy_key, exp_digest)) = self.pending_copy.clone() {
-            let still_valid = active_digests
-                .get(&copy_key)
-                .is_some_and(|(digest, chars)| {
-                    *chars <= MAX_WHOLE_BODY_UNITS
-                        && exp_digest.as_deref().is_none_or(|exp| exp == digest)
-                });
+            let body_view = self.cache.body_view(&copy_key);
+            let superseded_by_body = exp_digest
+                .as_deref()
+                .is_some_and(|exp| body_view.body.is_some_and(|b| b.digest != exp));
+            let still_valid = !superseded_by_body
+                && active_digests
+                    .get(&copy_key)
+                    .is_some_and(|(digest, chars)| {
+                        *chars <= MAX_WHOLE_BODY_UNITS
+                            && exp_digest.as_deref().is_none_or(|exp| exp == digest)
+                    });
             if !still_valid {
                 self.pending_copy = None;
+                changed = true;
             } else if let Some(text) = self.cache.complete_text(&copy_key, exp_digest.as_deref()) {
                 // On wasm32, calling navigator.clipboard outside a live user gesture can be
                 // rejected without feedback; keep the verified body cached so the user's Copy
@@ -436,11 +453,9 @@ impl Reader {
                 let _ = text;
                 self.pending_copy = None;
                 changed = true;
-            } else if matches!(
-                self.cache.body_view(&copy_key).status,
-                BodyStatus::Error | BodyStatus::Missing
-            ) {
+            } else if matches!(body_view.status, BodyStatus::Error | BodyStatus::Missing) {
                 self.pending_copy = None;
+                changed = true;
             }
         }
         changed
@@ -584,15 +599,20 @@ impl Reader {
                         }
                     }
                     if self.is_disclosure_open("task-all-history") {
-                        let desc = task.body("reports").cloned().unwrap_or(BodyDescriptor {
-                            characters: MAX_WHOLE_BODY_UNITS,
-                            digest: String::new(),
-                        });
-                        push_whole(
-                            &mut out,
-                            ContentSelector::task(task.key.clone(), "reports"),
-                            Some(&desc),
-                        );
+                        let oversized = task
+                            .body("reports")
+                            .is_some_and(|b| b.characters > MAX_WHOLE_BODY_UNITS);
+                        if !oversized {
+                            let desc = task.body("reports").cloned().unwrap_or(BodyDescriptor {
+                                characters: MAX_WHOLE_BODY_UNITS,
+                                digest: String::new(),
+                            });
+                            push_whole(
+                                &mut out,
+                                ContentSelector::task(task.key.clone(), "reports"),
+                                Some(&desc),
+                            );
+                        }
                     }
                     for report in task_history_reports(snapshot, task) {
                         let disc = format!("history-report-{}", report.id);
@@ -602,7 +622,7 @@ impl Reader {
                         if let Some(desc) = report.body("summary") {
                             push_paged(
                                 &mut out,
-                                &format!("history-summary-{}", report.id),
+                                &format!("history-{}-summary", report.id),
                                 ContentSelector::report(report.id.clone(), "summary"),
                                 Some(&desc),
                             );

@@ -226,6 +226,14 @@ fn content_request_validation_matches_http_contract() {
     assert!(ContentSelector::change(999_999_999_999_999, "reason").valid());
     assert!(!ContentSelector::change(1_000_000_000_000_000, "reason").valid());
 
+    // Independent UTF-16LE SHA-256 reference vector (Node crypto.createHash('sha256').update(s, 'utf16le').digest('base64url'))
+    // covering >2 KiB multi-chunk streaming and non-BMP surrogate pairs.
+    let long_surrogates = format!("{}-end", "🦀".repeat(700));
+    assert_eq!(
+        content_digest(&long_surrogates),
+        "GA9Y_oAEMaUcQxTm5cnPtvz0XB6HA-ZxAhT2qaBNhTQ"
+    );
+
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

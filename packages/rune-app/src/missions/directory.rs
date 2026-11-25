@@ -130,6 +130,7 @@ impl Panel {
         self.control_fields.cancel();
         self.observation.cancel();
         self.detail.cancel();
+        self.detail.clear_lookup_cache();
         self.reader.invalidate();
         if self.visible || self.reader.is_open() {
             self.refresh();
@@ -558,17 +559,27 @@ impl Panel {
             .reader
             .pending_lookup()
             .map(|(m, k)| (m.to_owned(), k.to_owned()))
-            && let Some(snapshot) = &self.detail.snapshot
-            && snapshot.header.root.id == mid
+            && let Some((found, exhausted)) = self
+                .detail
+                .snapshot
+                .as_ref()
+                .filter(|s| s.header.root.id == mid)
+                .map(|s| {
+                    (
+                        s.tasks
+                            .find_by_key(&tkey)
+                            .map(|t| (t.id.clone(), t.key.clone())),
+                        s.tasks.len() >= s.header.tasks.page.total,
+                    )
+                })
         {
-            if let Some(task) = snapshot.tasks.find_by_key(&tkey) {
-                let tid = task.id.clone();
-                let key = task.key.clone();
+            if let Some((tid, key)) = found {
                 self.reader.resolve_lookup(mid, tid, key);
                 changed = true;
-            } else if snapshot.tasks.len() >= snapshot.header.tasks.page.total
-                || self.detail.lookup_settled("", &tkey)
-            {
+            } else if self.detail.take_lookup_failed("", &tkey) {
+                self.reader.fail_lookup_error(tkey);
+                changed = true;
+            } else if exhausted || self.detail.lookup_settled("", &tkey) {
                 self.reader.fail_lookup(tkey);
                 changed = true;
             } else if !self.detail.busy() {
@@ -581,15 +592,30 @@ impl Panel {
             task_id,
             task_key,
         }) = self.reader.target().cloned()
-            && let Some(snapshot) = &self.detail.snapshot
-            && snapshot.header.root.id == mission_id
+            && let Some((found, has_more)) = self
+                .detail
+                .snapshot
+                .as_ref()
+                .filter(|s| s.header.root.id == mission_id)
+                .map(|s| {
+                    (
+                        s.tasks
+                            .find_by_id_or_key(&task_id, &task_key)
+                            .map(|t| (t.id.clone(), t.key.clone())),
+                        s.tasks.len() < s.header.tasks.page.total,
+                    )
+                })
         {
-            if let Some(task) = snapshot.tasks.find_by_id_or_key(&task_id, &task_key) {
-                self.reader
-                    .bind_task_identity(&mission_id, &task.id, &task.key);
+            if let Some((id, key)) = found {
+                self.reader.bind_task_identity(&mission_id, &id, &key);
+                self.reader.clear_lookup_error();
+            } else if self.detail.take_lookup_failed(&task_id, &task_key) {
+                self.reader.fail_lookup_error(task_key);
+                changed = true;
             } else if !self.detail.busy()
+                && self.reader.lookup_failed().is_none()
                 && !self.detail.lookup_settled(&task_id, &task_key)
-                && snapshot.tasks.len() < snapshot.header.tasks.page.total
+                && has_more
             {
                 self.detail.lookup_task(
                     (!task_id.is_empty()).then_some(task_id.as_str()),

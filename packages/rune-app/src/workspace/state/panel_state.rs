@@ -125,7 +125,12 @@ pub(crate) fn restore_mission_reader_focus(s: &State, back: Option<String>, tx: 
     } else {
         "right-panel-toggle".into()
     };
-    tx.focus(target, tx.focus_visible());
+    if let Some(task_id) = target.strip_prefix("mission-task-eye-") {
+        tx.scroll_into_view(format!("mission-task-{task_id}"));
+        tx.focus_when_shown(target, tx.focus_visible());
+    } else {
+        tx.focus(target, tx.focus_visible());
+    }
 }
 
 pub(crate) fn mission_reader(s: &State) -> El {

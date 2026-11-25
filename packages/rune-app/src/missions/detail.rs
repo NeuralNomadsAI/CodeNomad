@@ -31,6 +31,7 @@ pub(super) struct Detail {
     pending: Option<Demand>,
     retry: Option<Demand>,
     looked_up: HashSet<(String, String)>,
+    lookup_failed: Option<(String, String)>,
     auth_expired: Option<Backend>,
     pub failed: bool,
     pub map_reads: u64,
@@ -145,6 +146,7 @@ impl Detail {
         if self.looked_up.contains(&key_pair) {
             return;
         }
+        self.lookup_failed = None;
         self.pending = Some(Demand::Lookup {
             task_id: task_id.filter(|s| !s.is_empty()).map(str::to_owned),
             task_key: task_key.filter(|s| !s.is_empty()).map(str::to_owned),
@@ -153,6 +155,22 @@ impl Detail {
     pub fn lookup_settled(&self, task_id: &str, task_key: &str) -> bool {
         self.looked_up
             .contains(&(task_id.to_owned(), task_key.to_owned()))
+    }
+    pub fn take_lookup_failed(&mut self, task_id: &str, task_key: &str) -> bool {
+        if self
+            .lookup_failed
+            .as_ref()
+            .is_some_and(|(id, key)| id == task_id && key == task_key)
+        {
+            self.lookup_failed = None;
+            true
+        } else {
+            false
+        }
+    }
+    pub fn clear_lookup_cache(&mut self) {
+        self.looked_up.clear();
+        self.lookup_failed = None;
     }
     pub fn cancel_lookup(&mut self) {
         if matches!(self.active.as_ref(), Some((Demand::Lookup { .. }, _))) {
@@ -284,10 +302,11 @@ impl Detail {
                         self.observed = self.observed.max(Some(changed.0));
                     }
                     if let Demand::Lookup { task_id, task_key } = demand {
-                        self.looked_up
-                            .insert((task_id.unwrap_or_default(), task_key.unwrap_or_default()));
                         if error.is::<DirectoryChanged>() || error.is::<RevisionChanged>() {
                             self.refresh();
+                        } else {
+                            self.lookup_failed =
+                                Some((task_id.unwrap_or_default(), task_key.unwrap_or_default()));
                         }
                         false
                     } else {
@@ -541,7 +560,7 @@ async fn read_map(
     }
     let end = source.page.end;
     let mut tasks = Vec::new();
-    let mut reports = HashMap::new();
+    let mut reports: HashMap<String, codenomad_client::missions::Report> = HashMap::new();
     if source.page.total != 0 {
         let read = backend.mission_task_window(project, &header, 0)?;
         let window = read_window(read, reads, alive)
@@ -549,6 +568,12 @@ async fn read_map(
             .ok_or("cancelled Mission tasks")??;
         tasks = window.tasks;
         for report in window.reports {
+            if reports
+                .get(&report.id)
+                .is_some_and(|old| old.task_key != report.task_key)
+            {
+                continue;
+            }
             reports.insert(report.id.clone(), report);
         }
     }
@@ -568,6 +593,12 @@ async fn read_map(
             tasks.push(pin);
         }
         for report in pins.reports {
+            if reports
+                .get(&report.id)
+                .is_some_and(|old| old.task_key != report.task_key)
+            {
+                continue;
+            }
             reports.insert(report.id.clone(), report);
         }
     }

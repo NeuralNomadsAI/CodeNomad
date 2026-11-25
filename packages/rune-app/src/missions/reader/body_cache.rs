@@ -50,6 +50,7 @@ struct BodyFlight {
     epoch: u64,
     offset: u64,
     digest: Option<String>,
+    dispatched_revision: Option<u64>,
     cancel: Sender<()>,
     inbox: Receiver<Result<ContentOutcome>>,
 }
@@ -323,11 +324,12 @@ impl BodyCache {
                     flight.epoch,
                     flight.offset,
                     flight.digest.clone(),
+                    flight.dispatched_revision,
                     outcome,
                 ));
             }
         }
-        for (key, epoch, offset, expected_digest, outcome) in completed {
+        for (key, epoch, offset, expected_digest, dispatched_revision, outcome) in completed {
             let Some(entry) = self.entries.get_mut(&key) else {
                 continue;
             };
@@ -363,7 +365,8 @@ impl BodyCache {
                         }
                     }
                     ContentRefusal::MissionNotFound | ContentRefusal::ContentNotFound => {
-                        let older_than_expected = revision.is_some_and(|rev| {
+                        let effective_rev = revision.or(dispatched_revision);
+                        let older_than_expected = effective_rev.is_some_and(|rev| {
                             entry
                                 .expected
                                 .as_ref()
@@ -382,7 +385,7 @@ impl BodyCache {
                             entry.display = None;
                             entry.pending = None;
                             entry.status = BodyStatus::Missing;
-                            entry.missing_revision = revision;
+                            entry.missing_revision = effective_rev;
                             entry.parked = true;
                         }
                     }
@@ -517,6 +520,7 @@ impl BodyCache {
                     epoch,
                     offset,
                     digest: digest.clone(),
+                    dispatched_revision: entry.expected.as_ref().map(|(rev, _)| *rev),
                     cancel: cancel_tx,
                     inbox,
                 });
@@ -582,7 +586,10 @@ impl BodyCache {
 fn accept_slice(entry: &mut BodyEntry, offset: u64, revision: u64, slice: ContentSlice) {
     let slice_units = utf16_len(&slice.text) as u64;
     if offset == 0 {
-        if slice_units > MAX_WHOLE_BODY_UNITS || slice_units > slice.characters {
+        if slice_units > MAX_WHOLE_BODY_UNITS
+            || slice.text.len() > MAX_BODY_CACHE_BYTES
+            || slice_units > slice.characters
+        {
             entry.pending = None;
             entry.status = BodyStatus::Error;
             entry.parked = true;
@@ -642,8 +649,10 @@ fn accept_slice(entry: &mut BodyEntry, offset: u64, revision: u64, slice: Conten
     {
         entry.slices = entry.slices.saturating_add(1);
         let next_len = offset.saturating_add(slice_units);
+        let next_bytes = pending.text.len().saturating_add(slice.text.len());
         if entry.slices > MAX_SLICES_PER_BODY
             || next_len > MAX_WHOLE_BODY_UNITS
+            || next_bytes > MAX_BODY_CACHE_BYTES
             || next_len > pending.characters
             || pending.json != slice.json
             || pending.characters != slice.characters
@@ -671,22 +680,26 @@ fn accept_slice(entry: &mut BodyEntry, offset: u64, revision: u64, slice: Conten
     {
         entry.slices = entry.slices.saturating_add(1);
         let next_len = offset.saturating_add(slice_units);
+        let next_bytes = display.text.len().saturating_add(slice.text.len());
         if entry.slices > MAX_SLICES_PER_BODY
             || next_len > MAX_WHOLE_BODY_UNITS
+            || next_bytes > MAX_BODY_CACHE_BYTES
             || next_len > display.characters
             || display.json != slice.json
             || display.characters != slice.characters
             || slice_units == 0
         {
+            entry.stale = true;
             entry.status = BodyStatus::Error;
             entry.parked = true;
             return;
         }
         if next_len == display.characters {
-            let mut candidate = String::with_capacity(display.text.len() + slice.text.len());
+            let mut candidate = String::with_capacity(next_bytes);
             candidate.push_str(&display.text);
             candidate.push_str(&slice.text);
             if content_digest(&candidate) != display.digest {
+                entry.stale = true;
                 entry.status = BodyStatus::Error;
                 entry.parked = true;
                 return;
