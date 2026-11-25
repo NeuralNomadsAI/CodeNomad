@@ -15,7 +15,7 @@ const MAX_TRACKED_PATHS: usize = 1024;
 #[derive(Default)]
 struct Snapshot {
     directories: BTreeMap<String, Vec<Entry>>,
-    model: TreeModel<Entry>,
+    model: TreeModel<(String, usize)>,
     expanded: BTreeSet<String>,
     selected: Option<String>,
     loaded: BTreeMap<String, u64>,
@@ -40,25 +40,22 @@ impl Snapshot {
             expanded: &BTreeSet<String>,
             parent: Option<&str>,
             path: &str,
-            model: &mut TreeModel<Entry>,
+            model: &mut TreeModel<(String, usize)>,
         ) {
-            for entry in directories.get(path).into_iter().flatten() {
+            for (index, entry) in directories.get(path).into_iter().flatten().enumerate() {
                 if entry.kind == EntryKind::Directory {
-                    if model.insert_branch(parent, entry.path.clone(), entry.clone()) {
-                        if expanded.contains(&entry.path) {
-                            model.set_expanded(&entry.path, true);
-                        }
+                    if model.insert_branch(parent, entry.path.clone(), (path.to_owned(), index))
+                        && expanded.contains(&entry.path)
+                    {
+                        model.set_expanded(&entry.path, true);
                         populate(directories, expanded, Some(&entry.path), &entry.path, model);
                     }
                 } else {
-                    model.insert(parent, entry.path.clone(), entry.clone());
+                    model.insert(parent, entry.path.clone(), (path.to_owned(), index));
                 }
             }
         }
         populate(&self.directories, &self.expanded, None, ".", &mut model);
-        if let Some(selected) = self.selected.as_deref() {
-            model.select(selected);
-        }
         self.model = model;
     }
 }
@@ -108,7 +105,6 @@ impl Tree {
         self.state.selected.as_deref()
     }
     pub fn select(&mut self, path: String) {
-        self.state.model.select(&path);
         self.state.selected = Some(path);
     }
     pub fn errors(&self) -> &BTreeMap<String, codenomad_client::history::Error> {
@@ -120,7 +116,7 @@ impl Tree {
     pub fn expanded(&self, path: &str) -> bool {
         path == "."
             || if self.state.model.contains(path) {
-                self.state.model.is_expanded(path)
+                self.state.model.is_branch(path) && self.state.model.is_expanded(path)
             } else {
                 self.state.expanded.contains(path)
             }
@@ -128,10 +124,11 @@ impl Tree {
     pub fn rows(&self) -> Vec<Row<'_>> {
         (0..self.state.model.visible_len())
             .filter_map(|index| {
-                let (entry, row) = self.state.model.row(index)?;
+                let ((parent, entry_index), row) = self.state.model.row(index)?;
+                let entry = self.state.directories.get(parent)?.get(*entry_index)?;
                 Some(Row {
                     entry,
-                    parent: self.state.model.parent(row.id).unwrap_or("."),
+                    parent: parent.as_str(),
                     depth: row.depth as usize + 1,
                     expanded: row.expanded,
                 })
@@ -167,14 +164,16 @@ impl Tree {
             return;
         }
         self.cancel();
-        let next = self
+        let mut next = self
             .cache
             .iter()
             .position(|(key, _)| key == &directory)
             .and_then(|index| self.cache.remove(index))
             .map(|(_, state)| state)
             .unwrap_or_else(Snapshot::empty);
-        let previous = std::mem::replace(&mut self.state, next);
+        next.sync_model();
+        let mut previous = std::mem::replace(&mut self.state, next);
+        previous.model.clear();
         self.cache
             .push_back((std::mem::replace(&mut self.directory, directory), previous));
         if self.cache.len() > 8 {
@@ -243,15 +242,26 @@ impl Tree {
             .collect()
     }
     pub fn toggle(&mut self, path: &str) -> Vec<Read> {
-        if self.closed {
+        if self.closed
+            || path == "."
+            || (self.state.model.contains(path) && !self.state.model.is_branch(path))
+        {
             return vec![];
         }
         if !self.state.expanded.insert(path.into()) {
             self.state.expanded.remove(path);
-            self.state.model.set_expanded(path, false);
+            if self.state.model.has_children(path) {
+                self.state.sync_model();
+            } else {
+                self.state.model.set_expanded(path, false);
+            }
             return vec![];
         }
-        self.state.model.set_expanded(path, true);
+        if self.state.directories.contains_key(path) {
+            self.state.sync_model();
+        } else {
+            self.state.model.set_expanded(path, true);
+        }
         let paths = self.visible();
         paths
             .into_iter()
@@ -331,12 +341,34 @@ impl Tree {
                     })
                     .map(|entry| entry.path.clone())
                     .collect();
+                let removed_dirs: Vec<_> = self
+                    .state
+                    .directories
+                    .get(&read.path)
+                    .into_iter()
+                    .flatten()
+                    .filter(|old| {
+                        old.kind == EntryKind::Directory
+                            && entries
+                                .iter()
+                                .find(|entry| entry.path == old.path)
+                                .is_none_or(|new| new.kind != EntryKind::Directory)
+                    })
+                    .map(|entry| entry.path.clone())
+                    .collect();
                 let invalid = |key: &str| {
                     replaced
                         .iter()
                         .any(|path| key == path || descendant(key, path))
                 };
                 self.state.directories.retain(|key, _| !invalid(key));
+                if !removed_dirs.is_empty() {
+                    self.state.expanded.retain(|key| {
+                        !removed_dirs
+                            .iter()
+                            .any(|path| key == path || descendant(key, path))
+                    });
+                }
                 self.state.loaded.retain(|key, _| !invalid(key));
                 self.errors.retain(|key, _| !invalid(key));
                 self.requests.retain(|key, pending| {
@@ -466,5 +498,45 @@ mod tests {
         assert_eq!(tree.rows()[1].expanded, Some(true));
         assert!(tree.toggle("empty").is_empty());
         assert_eq!(tree.rows()[0].expanded, Some(false));
+
+        // Toggling a loaded file or root is a no-op and never marks it expanded.
+        assert!(tree.toggle("README.md").is_empty());
+        assert!(!tree.expanded("README.md"));
+        assert!(tree.toggle(".").is_empty());
+
+        // Collapsed subtrees are not projected into TreeModel until reopened.
+        let src_read = tree.load(".", true).unwrap();
+        assert!(tree.complete(
+            src_read,
+            Ok(vec![dir("src", "src"), file("README.md", "README.md")]),
+            Ok,
+        ));
+        let children_read = tree.toggle("src").pop().unwrap();
+        assert!(tree.complete(
+            children_read,
+            Ok(vec![
+                file("src/a.rs", "src/a.rs"),
+                file("src/b.rs", "src/b.rs")
+            ]),
+            Ok,
+        ));
+        assert_eq!(tree.state.model.len(), 4);
+        assert!(tree.toggle("src").is_empty());
+        assert_eq!(tree.state.model.len(), 2);
+        assert!(tree.toggle("src").is_empty());
+        assert_eq!(tree.state.model.len(), 4);
+
+        // Replacing an expanded directory with a file clears its expanded state.
+        let replace = tree.load(".", true).unwrap();
+        assert!(tree.complete(
+            replace,
+            Ok(vec![file("src", "src"), file("README.md", "README.md")]),
+            Ok,
+        ));
+        assert!(!tree.state.model.is_branch("src"));
+        assert!(!tree.expanded("src"));
+        assert!(tree.toggle("src").is_empty());
+        assert!(!tree.expanded("src"));
+        assert_eq!(tree.rows()[0].expanded, None);
     }
 }

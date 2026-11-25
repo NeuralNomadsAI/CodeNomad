@@ -195,5 +195,34 @@ mod tests {
         );
         rt.frame(0.0);
         assert!(rt.state.line_home_end());
+        rt.key(rune::KeyEvent::from(rune::Key::End));
+        rt.frame(0.0);
+        assert_eq!(rt.state.focus, 5);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Home,
+            mods: rune::Mods {
+                shift: true,
+                ..rune::Mods::default()
+            },
+        });
+        rt.frame(0.0);
+        assert_eq!(rt.state.selected(), "first");
+        let doc_mods = if cfg!(target_os = "macos") {
+            rune::Mods {
+                cmd: true,
+                ..rune::Mods::default()
+            }
+        } else {
+            rune::Mods {
+                ctrl: true,
+                ..rune::Mods::default()
+            }
+        };
+        rt.key(rune::KeyEvent {
+            key: rune::Key::End,
+            mods: doc_mods,
+        });
+        rt.frame(0.0);
+        assert_eq!(rt.state.focus, rt.state.text.len());
     }
 }

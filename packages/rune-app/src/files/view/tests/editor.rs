@@ -418,15 +418,9 @@ fn typing_and_primary_save_use_the_versioned_workspace_file() {
                 .iter()
                 .any(|node| node.path == input.path && node.focused)
         );
-        let mac = cfg!(target_os = "macos");
-        // Rune's native macOS End jumps to the end of the document.
         rt.key(KeyEvent {
-            key: if mac { Key::Right } else { Key::End },
-            mods: Mods {
-                cmd: mac,
-                logo: mac,
-                ..Mods::default()
-            },
+            key: Key::End,
+            mods: Mods::default(),
         });
         rt.key(KeyEvent {
             key: Key::Enter,
@@ -445,6 +439,7 @@ fn typing_and_primary_save_use_the_versioned_workspace_file() {
                 .as_deref()
                 .is_some_and(|text| text.contains("Unsaved changes"))
         }));
+        let mac = cfg!(target_os = "macos");
         rt.key(KeyEvent {
             key: Key::Command('s'),
             mods: Mods {

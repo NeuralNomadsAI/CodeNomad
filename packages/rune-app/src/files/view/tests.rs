@@ -353,19 +353,17 @@ fn private_image_bytes_decode_and_fit_the_public_pixel_size() {
             let width = case["width"].as_f64().unwrap() as f32;
             let height = case["height"].as_f64().unwrap() as f32;
             assert!(image.rect[2] > 0.0 && image.rect[3] > 0.0, "{name}");
-            if name != "sample.svg" {
-                assert!(
-                    image.rect[2] <= width && image.rect[3] <= height,
-                    "{name}: {:?}",
-                    image.rect
-                );
-            }
+            assert!(
+                image.rect[2] <= width && image.rect[3] <= height,
+                "{name}: {:?}",
+                image.rect
+            );
             assert!(
                 (image.rect[2] / image.rect[3] - width / height).abs() < 0.001,
                 "{name}: {:?}",
                 image.rect
             );
-            if width < 100.0 && name != "sample.svg" {
+            if width < 100.0 {
                 assert_eq!([image.rect[2], image.rect[3]], [width, height], "{name}");
             }
             assert!(rt.take_url_requests().is_empty());

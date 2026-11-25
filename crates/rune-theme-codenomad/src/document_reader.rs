@@ -39,7 +39,14 @@ pub fn image(image: &rune::Image, label: &str) -> El {
     let Some([width, height]) = image.intrinsic_size() else {
         return rune::el();
     };
-    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+    let ratio = width / height;
+    if !width.is_finite()
+        || !height.is_finite()
+        || !ratio.is_finite()
+        || width <= 0.0
+        || height <= 0.0
+        || ratio <= 0.0
+    {
         return rune::el();
     }
     rune::col()
@@ -50,8 +57,8 @@ pub fn image(image: &rune::Image, label: &str) -> El {
         .center()
         .child(
             rune::el()
-                .pixels_fit(image.pixels(), rune::SurfaceFit::Fit)
-                .aspect_fit(width / height)
+                .pixels(image.pixels())
+                .aspect_fit(ratio)
                 .max_w(width)
                 .max_h(height)
                 .role("img")
@@ -413,10 +420,11 @@ mod tests {
     #[test]
     fn svg_preview_uses_intrinsic_dimensions_instead_of_supersampled_raster_size() {
         let cache = rune::ImageCache::new(Arc::new(|| {}));
-        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="8"><rect width="16" height="8" fill="#000"/></svg>"##;
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="16.5" height="8.25"><rect width="16.5" height="8.25" fill="#000"/></svg>"##;
         let svg_image = cache.load(&svg[..]);
-        assert_eq!(svg_image.wait(), Ok([32, 16]));
-        assert_eq!(svg_image.intrinsic_size(), Some([16.0, 8.0]));
+        let raster = svg_image.wait().expect("decoded svg");
+        assert!(raster[0] >= 32 && raster[1] >= 16);
+        assert_eq!(svg_image.intrinsic_size(), Some([16.5, 8.25]));
 
         let mut rt = rune::Runtime::new(
             svg_image,
@@ -430,7 +438,8 @@ mod tests {
             .into_iter()
             .find(|el| el.role == "img")
             .expect("rendered svg img element");
-        assert_eq!((node.rect[2], node.rect[3]), (16.0, 8.0));
+        assert!((node.rect[2] - 16.5).abs() < 0.01, "{:?}", node.rect);
+        assert!((node.rect[3] - 8.25).abs() < 0.01, "{:?}", node.rect);
     }
 
     #[test]

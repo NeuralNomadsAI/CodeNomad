@@ -396,5 +396,37 @@ mod tests {
         );
         rt.frame(0.0);
         assert!(rt.state.editor.draft.line_home_end());
+        rt.key(rune::KeyEvent::from(rune::Key::End));
+        rt.frame(0.0);
+        assert_eq!(rt.state.editor.draft.focus, 10);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Home,
+            mods: rune::Mods {
+                shift: true,
+                ..rune::Mods::default()
+            },
+        });
+        rt.frame(0.0);
+        assert_eq!(rt.state.editor.draft.selected(), "  \"a\": 1");
+        let doc_mods = if cfg!(target_os = "macos") {
+            rune::Mods {
+                cmd: true,
+                ..rune::Mods::default()
+            }
+        } else {
+            rune::Mods {
+                ctrl: true,
+                ..rune::Mods::default()
+            }
+        };
+        rt.key(rune::KeyEvent {
+            key: rune::Key::End,
+            mods: doc_mods,
+        });
+        rt.frame(0.0);
+        assert_eq!(
+            rt.state.editor.draft.focus,
+            rt.state.editor.draft.text.len()
+        );
     }
 }
