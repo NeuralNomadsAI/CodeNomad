@@ -63,12 +63,9 @@
     "Runtime.exceptionThrown",
     "Log.entryAdded"
   ],
-  "requestEvents": [
-    "Network.requestWillBeSent",
-    "Network.webSocketCreated"
-  ],
-  "maxEvents": 4000,
-  "maxBytes": 8388608,
+  "maxEvents": 2000,
+  "maxBytes": 4194304,
+  "maxText": 2000,
   "maxRead": 1000,
   "maxReadBytes": 2097152,
   "maxContexts": 512

@@ -1,19 +1,19 @@
 //! Console and network events of WebView2 previews, kept raw and bounded for the backend to read.
 //! The events, domains and limits come from the shared `diagnostic-events.ts` (its generated JSON).
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Mutex, OnceLock};
 
 pub(super) struct Spec {
     pub(super) enable: Vec<(String, Value)>,
     pub(super) events: Vec<String>,
     message_events: Vec<String>,
-    request_events: Vec<String>,
     max_events: usize,
     max_bytes: usize,
     max_read: usize,
     max_read_bytes: usize,
     max_contexts: usize,
+    max_text: usize,
 }
 
 pub(super) fn spec() -> &'static Spec {
@@ -41,14 +41,64 @@ pub(super) fn spec() -> &'static Spec {
                 .collect(),
             events: names("events"),
             message_events: names("messageEvents"),
-            request_events: names("requestEvents"),
             max_events: number("maxEvents"),
             max_bytes: number("maxBytes"),
             max_read: number("maxRead"),
             max_read_bytes: number("maxReadBytes"),
             max_contexts: number("maxContexts"),
+            max_text: number("maxText"),
         }
     })
+}
+
+/// Network events, and the others: each class has its own budget, so a console flood never evicts a request's
+/// lifecycle.
+#[derive(Clone, Copy, PartialEq)]
+enum Class {
+    Network,
+    Page,
+}
+
+fn class_of(method: &str) -> Class {
+    if method.starts_with("Network.") {
+        Class::Network
+    } else {
+        Class::Page
+    }
+}
+
+/// An event too large to keep whole keeps its console text cut one character past `maxText`, so the readout still
+/// reports it as truncated, as OpenCode's browser keeps an entry's text; other events stay as they are.
+fn shrink(method: &str, mut params: Value, max_text: usize) -> Value {
+    let cut = |value: &mut Value| {
+        if let Some(text) = value.as_str() {
+            *value = json!(text.chars().take(max_text + 1).collect::<String>());
+        }
+    };
+    match method {
+        "Runtime.consoleAPICalled" => {
+            if let Some(args) = params["args"].as_array_mut() {
+                for arg in args {
+                    cut(&mut arg["value"]);
+                    cut(&mut arg["description"]);
+                    if let Some(arg) = arg.as_object_mut() {
+                        arg.remove("preview");
+                    }
+                }
+            }
+        }
+        "Runtime.exceptionThrown" => {
+            let details = &mut params["exceptionDetails"];
+            cut(&mut details["text"]);
+            cut(&mut details["exception"]["description"]);
+            if let Some(exception) = details["exception"].as_object_mut() {
+                exception.remove("preview");
+            }
+        }
+        "Log.entryAdded" => cut(&mut params["entry"]["text"]),
+        _ => {}
+    }
+    params
 }
 
 struct Buffer {
@@ -58,12 +108,13 @@ struct Buffer {
     sequence: u64,
     /// The last sequence a read returned: evicting it or anything before it loses nothing.
     delivered: u64,
-    /// This epoch's evicted, never-read console entries and requests.
+    /// This epoch's console entries lost before any read, and the requests that lost an unread event.
     lost_messages: u64,
-    lost_requests: u64,
+    lost_requests: HashSet<String>,
     /// The navigation that started this epoch: its redirects keep the epoch.
     navigation: Option<u64>,
-    bytes: usize,
+    /// Retained events and bytes per class: network, then the others.
+    tallies: [(usize, usize); 2],
     events: VecDeque<(u64, String, Value, Option<String>, usize)>,
     /// Live execution contexts by session and ID, oldest first, and whether each is a page world. They outlast
     /// epochs (document.open() keeps the page's) and evictions.
@@ -102,6 +153,18 @@ impl Buffer {
             _ => {}
         }
     }
+
+    fn lose(&mut self, method: &str, params: &Value, session: Option<&str>) {
+        let spec = spec();
+        if spec.message_events.iter().any(|event| event == method) {
+            self.lost_messages += 1;
+        } else if class_of(method) == Class::Network && self.lost_requests.len() < spec.max_events {
+            if let Some(request) = params["requestId"].as_str() {
+                self.lost_requests
+                    .insert(format!("{}:{request}", session.unwrap_or_default()));
+            }
+        }
+    }
 }
 
 /// One buffer per registration generation; events of a replaced webview never reach its successor.
@@ -109,8 +172,15 @@ impl Buffer {
 pub(super) struct Buffers(Mutex<HashMap<String, Buffer>>);
 
 impl Buffers {
+    /// A registration's newer generation replaces its buffer; a late, older one never does.
     pub(super) fn start(&self, registration_id: &str, generation: u64) {
         if let Ok(mut buffers) = self.0.lock() {
+            if buffers
+                .get(registration_id)
+                .is_some_and(|buffer| buffer.generation > generation)
+            {
+                return;
+            }
             buffers.insert(
                 registration_id.to_string(),
                 Buffer {
@@ -120,9 +190,9 @@ impl Buffers {
                     sequence: 0,
                     delivered: 0,
                     lost_messages: 0,
-                    lost_requests: 0,
+                    lost_requests: HashSet::new(),
                     navigation: None,
-                    bytes: 0,
+                    tallies: [(0, 0); 2],
                     events: VecDeque::new(),
                     contexts: VecDeque::new(),
                 },
@@ -145,10 +215,10 @@ impl Buffers {
         session: Option<&str>,
     ) {
         let spec = spec();
-        if params.len() > spec.max_read_bytes || !spec.events.iter().any(|event| event == method) {
+        if !spec.events.iter().any(|event| event == method) {
             return;
         }
-        let Ok(value) = serde_json::from_str::<Value>(params) else {
+        let Ok(mut value) = serde_json::from_str::<Value>(params) else {
             return;
         };
         let Ok(mut buffers) = self.0.lock() else {
@@ -161,23 +231,37 @@ impl Buffers {
             return;
         };
         buffer.track(method, &value, session, spec.max_contexts);
+        let mut size = params.len();
+        if size > spec.max_read_bytes {
+            value = shrink(method, value, spec.max_text);
+            size = value.to_string().len();
+            if size > spec.max_read_bytes {
+                buffer.lose(method, &value, session);
+                return;
+            }
+        }
+        let class = class_of(method) as usize;
         buffer.sequence += 1;
-        buffer.bytes += params.len();
         buffer
             .events
-            .push_back((buffer.sequence, method.to_string(), value, session.map(str::to_string), params.len()));
-        while buffer.events.len() > spec.max_events || buffer.bytes > spec.max_bytes {
-            let Some((sequence, method, _, _, bytes)) = buffer.events.pop_front() else {
+            .push_back((buffer.sequence, method.to_string(), value, session.map(str::to_string), size));
+        buffer.tallies[class].0 += 1;
+        buffer.tallies[class].1 += size;
+        while buffer.tallies[class].0 > spec.max_events || buffer.tallies[class].1 > spec.max_bytes {
+            let Some(index) = buffer
+                .events
+                .iter()
+                .position(|(_, method, ..)| class_of(method) as usize == class)
+            else {
                 break;
             };
-            buffer.bytes -= bytes;
-            if sequence <= buffer.delivered {
-                continue;
-            }
-            if spec.message_events.contains(&method) {
-                buffer.lost_messages += 1;
-            } else if spec.request_events.contains(&method) {
-                buffer.lost_requests += 1;
+            let Some((sequence, method, params, session, bytes)) = buffer.events.remove(index) else {
+                break;
+            };
+            buffer.tallies[class].0 -= 1;
+            buffer.tallies[class].1 -= bytes;
+            if sequence > buffer.delivered {
+                buffer.lose(&method, &params, session.as_deref());
             }
         }
     }
@@ -195,15 +279,14 @@ impl Buffers {
                 }
                 buffer.navigation = navigation;
                 buffer.events.clear();
-                buffer.bytes = 0;
+                buffer.tallies = [(0, 0); 2];
                 buffer.epoch += 1;
                 buffer.delivered = buffer.sequence;
                 buffer.lost_messages = 0;
-                buffer.lost_requests = 0;
+                buffer.lost_requests.clear();
             }
         }
     }
-
     pub(super) fn read(&self, registration_id: &str, generation: u64, after: u64) -> Result<Value, String> {
         let spec = spec();
         let mut buffers = self.0.lock().map_err(|error| error.to_string())?;
@@ -237,7 +320,7 @@ impl Buffers {
             "epoch": format!("{}:{}", buffer.instance, buffer.epoch),
             "events": events,
             "next": next,
-            "lost": { "messages": buffer.lost_messages, "requests": buffer.lost_requests },
+            "lost": { "messages": buffer.lost_messages, "requests": buffer.lost_requests.len() },
             "more": next < buffer.sequence,
             "contexts": buffer.contexts.iter().map(|(session, id, page)| {
                 let mut context = json!({ "id": id, "page": page });
@@ -419,5 +502,36 @@ mod tests {
         buffers.record("preview", 1, "Target.detachedFromTarget", r#"{"sessionId":"frame"}"#, None);
         buffers.record("preview", 1, "Runtime.executionContextDestroyed", r#"{"executionContextId":2}"#, None);
         assert_eq!(buffers.read("preview", 1, 0).unwrap()["contexts"], json!([{ "id": 1, "page": true }]));
+    }
+    #[test]
+    fn a_late_older_generation_keeps_the_current_buffer() {
+        let buffers = Buffers::default();
+        buffers.start("preview", 2);
+        buffers.start("preview", 1);
+        assert!(buffers.read("preview", 2, 0).is_ok());
+        assert!(buffers.read("preview", 1, 0).is_err());
+    }
+
+    #[test]
+    fn a_console_flood_keeps_network_events_and_oversized_text_is_cut() {
+        let buffers = Buffers::default();
+        buffers.start("preview", 1);
+        buffers.record("preview", 1, "Network.loadingFinished", r#"{"requestId":"r1"}"#, None);
+        for _ in 0..spec().max_events + 2 {
+            buffers.record("preview", 1, "Runtime.consoleAPICalled", r#"{"args":[]}"#, None);
+        }
+        let read = buffers.read("preview", 1, 0).unwrap();
+        assert_eq!(read["events"][0]["method"], "Network.loadingFinished");
+        assert_eq!(read["lost"]["messages"], 2);
+        let wide = Buffers::default();
+        wide.start("preview", 1);
+        let text = "x".repeat(spec().max_read_bytes + 1);
+        let params = json!({ "args": [{ "type": "string", "value": text }] }).to_string();
+        wide.record("preview", 1, "Runtime.consoleAPICalled", &params, None);
+        let kept = wide.read("preview", 1, 0).unwrap();
+        assert_eq!(
+            kept["events"][0]["params"]["args"][0]["value"].as_str().unwrap().len(),
+            spec().max_text + 1
+        );
     }
 }

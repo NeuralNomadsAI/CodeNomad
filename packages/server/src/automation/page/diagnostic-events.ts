@@ -21,12 +21,14 @@ export const DIAGNOSTICS = {
     "Network.webSocketCreated", "Network.webSocketWillSendHandshakeRequest", "Network.webSocketHandshakeResponseReceived",
     "Network.webSocketFrameError", "Network.webSocketClosed", "Target.detachedFromTarget",
   ],
-  /** The events that feed a console entry or a request, for counting losses. */
+  /** The events that feed a console entry, for counting losses; a lost network event loses its request. */
   messageEvents: ["Runtime.consoleAPICalled", "Runtime.exceptionThrown", "Log.entryAdded"],
-  requestEvents: ["Network.requestWillBeSent", "Network.webSocketCreated"],
-  /** Retained events and their UTF-8 JSON size; the oldest go first. */
-  maxEvents: 4_000,
-  maxBytes: 8 * 1024 * 1024,
+  /** Retained events and their UTF-8 JSON size per class (network events, and the others): the oldest of a class go
+   * first, so a console flood never evicts a request's lifecycle. */
+  maxEvents: 2_000,
+  maxBytes: 4 * 1024 * 1024,
+  /** Console text kept from an event too large to retain whole, as OpenCode's browser keeps an entry's text. */
+  maxText: 2_000,
   /** One read returns at most this many events and bytes; `more` asks for another. */
   maxRead: 1_000,
   maxReadBytes: 2 * 1024 * 1024,
@@ -57,21 +59,39 @@ export class DiagnosticEventBuffer {
   /** The last sequence a read returned: evicting it or anything before it loses nothing. */
   private delivered = 0
   private lost: DiagnosticLoss = { messages: 0, requests: 0 }
-  private bytes = 0
+  /** Requests this epoch lost an unread event of: the readout cannot finish them. */
+  private readonly lostRequests = new Set<string>()
+  private readonly classes = { network: { count: 0, bytes: 0 }, page: { count: 0, bytes: 0 } }
 
   record(method: string, params: unknown, session?: string): void {
     if (!DIAGNOSTICS.events.includes(method) || !params || typeof params !== "object") return
     this.track(method, params as Record<string, any>, session)
-    const bytes = Buffer.byteLength(JSON.stringify(params))
-    if (bytes > DIAGNOSTICS.maxReadBytes) return
-    this.events.push({ sequence: ++this.sequence, method, params: params as Record<string, unknown>, ...(session ? { session } : {}), bytes })
-    this.bytes += bytes
-    while (this.events.length > DIAGNOSTICS.maxEvents || this.bytes > DIAGNOSTICS.maxBytes) {
-      const evicted = this.events.shift()!
-      this.bytes -= evicted.bytes
-      if (evicted.sequence <= this.delivered) continue
-      if (DIAGNOSTICS.messageEvents.includes(evicted.method)) this.lost.messages++
-      else if (DIAGNOSTICS.requestEvents.includes(evicted.method)) this.lost.requests++
+    let kept = params as Record<string, unknown>
+    let bytes = Buffer.byteLength(JSON.stringify(kept))
+    if (bytes > DIAGNOSTICS.maxReadBytes) {
+      kept = shrink(method, kept)
+      bytes = Buffer.byteLength(JSON.stringify(kept))
+      if (bytes > DIAGNOSTICS.maxReadBytes) return this.lose(method, kept, session)
+    }
+    const kind = classOf(method)
+    this.events.push({ sequence: ++this.sequence, method, params: kept, ...(session ? { session } : {}), bytes })
+    const tally = this.classes[kind]
+    tally.count++
+    tally.bytes += bytes
+    while (tally.count > DIAGNOSTICS.maxEvents || tally.bytes > DIAGNOSTICS.maxBytes) {
+      const index = this.events.findIndex(event => classOf(event.method) === kind)
+      const [evicted] = this.events.splice(index, 1)
+      tally.count--
+      tally.bytes -= evicted.bytes
+      if (evicted.sequence > this.delivered) this.lose(evicted.method, evicted.params, evicted.session)
+    }
+  }
+
+  private lose(method: string, params: Record<string, unknown>, session: string | undefined): void {
+    if (DIAGNOSTICS.messageEvents.includes(method)) this.lost.messages++
+    else if (classOf(method) === "network" && typeof params.requestId === "string" && this.lostRequests.size < DIAGNOSTICS.maxEvents) {
+      this.lostRequests.add(`${session ?? ""}:${params.requestId}`)
+      this.lost.requests = this.lostRequests.size
     }
   }
 
@@ -92,7 +112,9 @@ export class DiagnosticEventBuffer {
 
   restart(): void {
     this.events.length = 0
-    this.bytes = 0
+    this.classes.network = { count: 0, bytes: 0 }
+    this.classes.page = { count: 0, bytes: 0 }
+    this.lostRequests.clear()
     this.epoch++
     this.delivered = this.sequence
     this.lost = { messages: 0, requests: 0 }
@@ -113,4 +135,20 @@ export class DiagnosticEventBuffer {
     return { epoch: `${this.instance}:${this.epoch}`, events, next, lost: { ...this.lost }, more: next < this.sequence,
       contexts: [...this.contexts.values()] }
   }
+}
+
+const classOf = (method: string): "network" | "page" => method.startsWith("Network.") ? "network" : "page"
+
+/** An event too large to keep whole keeps its console text cut to `maxText`; other events stay as they are. */
+function shrink(method: string, params: Record<string, any>): Record<string, unknown> {
+  // One character more than the readout keeps, so it still reports the text as truncated.
+  const cut = (value: unknown) => typeof value === "string" ? value.slice(0, DIAGNOSTICS.maxText + 1) : value
+  if (method === "Runtime.consoleAPICalled" && Array.isArray(params.args))
+    return { ...params, args: params.args.map((arg: Record<string, unknown>) => ({ ...arg, value: cut(arg.value), description: cut(arg.description), preview: undefined })) }
+  if (method === "Runtime.exceptionThrown" && params.exceptionDetails) {
+    const details = params.exceptionDetails
+    return { ...params, exceptionDetails: { ...details, text: cut(details.text), exception: details.exception && { ...details.exception, description: cut(details.exception.description), preview: undefined } } }
+  }
+  if (method === "Log.entryAdded" && params.entry) return { ...params, entry: { ...params.entry, text: cut(params.entry.text) } }
+  return params
 }

@@ -259,7 +259,8 @@ describe("BrowserController private page channel", () => {
     const { guest } = createGuest({ id: 6, owner: h.owner, sendCommand: async method => { sent.push(method); return {} } })
     h.controller.guestCreated(guest)
     await new Promise(resolve => setImmediate(resolve))
-    assert.deepEqual(sent, DIAGNOSTICS.enable.map(([method]) => method), "the domains are enabled at creation")
+    assert.deepEqual(sent, ["Page.enable", ...DIAGNOSTICS.enable.map(([method]) => method)],
+      "Page events and the diagnostic domains are enabled at creation, so a document.open() before any probe restarts them")
     guest.debugger.emit("message", {}, "Network.requestWillBeSent", { requestId: "first" })
     h.add(guest, "one")
     const lease = await begin(h.controller)

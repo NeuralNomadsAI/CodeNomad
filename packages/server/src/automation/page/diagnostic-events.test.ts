@@ -36,7 +36,8 @@ test("only unread evictions count, by the readout they would feed, and sizes are
   const wide = new DiagnosticEventBuffer()
   const text = "é".repeat(DIAGNOSTICS.maxReadBytes / 2)
   wide.record("Log.entryAdded", { entry: { text } })
-  assert.deepEqual(wide.read(0).events, [], "a payload over the read bound in UTF-8 bytes is not kept")
+  assert.equal((wide.read(0).events[0].params.entry as any).text.length, DIAGNOSTICS.maxText + 1,
+    "a payload over the read bound in UTF-8 bytes keeps its text cut, still marked as longer")
 })
 
 test("live execution contexts outlast restarts and evictions, and a detached frame's go", () => {
@@ -54,4 +55,22 @@ test("live execution contexts outlast restarts and evictions, and a detached fra
   assert.deepEqual(buffer.read(0).contexts, [])
   for (let id = 0; id < DIAGNOSTICS.maxContexts + 5; id++) buffer.record("Runtime.executionContextCreated", { context: { id, auxData: {} } })
   assert.equal(buffer.read(0).contexts.length, DIAGNOSTICS.maxContexts)
+})
+
+test("a console flood never evicts a request's lifecycle, and a lost network event loses its request", () => {
+  const buffer = new DiagnosticEventBuffer()
+  buffer.record("Network.requestWillBeSent", { requestId: "r1" })
+  buffer.read(0)
+  buffer.record("Network.loadingFinished", { requestId: "r1" })
+  for (let index = 0; index < DIAGNOSTICS.maxEvents + 5; index++) buffer.record("Runtime.consoleAPICalled", { args: [] })
+  const flooded = buffer.read(1)
+  assert.equal(flooded.lost.messages, 5)
+  assert.equal(flooded.lost.requests, 0)
+  assert.equal(flooded.events[0].method, "Network.loadingFinished", "the request still completes")
+  const network = new DiagnosticEventBuffer()
+  for (let index = 0; index < DIAGNOSTICS.maxEvents + 2; index++) network.record("Network.dataReceived", { requestId: `n${index}` })
+  network.record("Network.loadingFinished", { requestId: "n0" })
+  assert.equal(network.read(0).lost.requests, 0, "dataReceived is not a listed event")
+  for (let index = 0; index < DIAGNOSTICS.maxEvents + 2; index++) network.record("Network.loadingFinished", { requestId: `f${index % 2}` })
+  assert.equal(network.read(0).lost.requests, 2, "each request that lost an unread event counts once")
 })

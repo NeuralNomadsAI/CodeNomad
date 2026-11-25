@@ -181,7 +181,11 @@ export class BrowserController {
     if (guest.getType() !== "webview") return
     // Before the first page loads, so its own requests and startup console output are kept.
     try { if (!guest.debugger.isAttached()) guest.debugger.attach("1.3") } catch { /* diagnostics start with the document watch */ }
-    if (guest.debugger.isAttached()) void this.enableDiagnostics(guest, Number.POSITIVE_INFINITY)
+    if (guest.debugger.isAttached()) {
+      // Page events too, so a document.open() before the first probe still restarts the diagnostics.
+      void guest.debugger.sendCommand("Page.enable").catch(() => undefined)
+      void this.enableDiagnostics(guest, Number.POSITIVE_INFINITY)
+    }
     const owner = guest.hostWebContents
     const session = owner && this.attaching.get(owner)
     if (!session || !owner) return
