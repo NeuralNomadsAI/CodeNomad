@@ -60,12 +60,21 @@ pub struct Previews {
     rewrites: rewrite::Budget,
     pub owners: backend::Owners,
     remote: remote::Remote,
+    remote_streams: Mutex<CancellationToken>,
 }
+pub(super) struct CancelOnDrop(CancellationToken);
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
 #[derive(Clone)]
 struct Preview {
     target: Url,
     until: CancellationToken,
     source_device: Option<crate::auth::Principal>,
+    relay_done: Option<std::sync::Arc<CancelOnDrop>>,
 }
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -77,7 +86,17 @@ pub fn routes() -> Router<Shared> {
         .merge(remote::routes())
 }
 impl Previews {
+    fn remote_stream_token(&self) -> CancellationToken {
+        self.remote_streams.lock().unwrap().clone()
+    }
+    fn disconnect_remote_streams(&self) {
+        let mut guard = self.remote_streams.lock().unwrap();
+        let previous = std::mem::replace(&mut *guard, CancellationToken::new());
+        drop(guard);
+        previous.cancel();
+    }
     pub fn close(&self) {
+        self.disconnect_remote_streams();
         self.remote.close();
         self.owners.close();
         for preview in self.live.lock().unwrap().values() {
@@ -85,6 +104,7 @@ impl Previews {
         }
     }
     pub fn revoke_devices(&self) {
+        self.disconnect_remote_streams();
         self.remote.revoke_devices();
         self.live.lock().unwrap().retain(|_, p| {
             if p.source_device.is_some() {
@@ -95,6 +115,23 @@ impl Previews {
             }
         });
     }
+    pub fn revoke_tunnel_devices(&self) {
+        self.disconnect_remote_streams();
+        self.remote.revoke_tunnel_devices();
+        self.live.lock().unwrap().retain(|_, p| {
+            if p.source_device.as_ref().is_some_and(|s| s.0.is_cancelled()) {
+                p.until.cancel();
+                false
+            } else {
+                true
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) async fn test_pinned_client(app: &Shared, target: &Url) -> Result<reqwest::Client, Status> {
+    proxy::pinned_client(app, target, false, false).await
 }
 pub async fn sweep(app: Shared, stop: CancellationToken) {
     loop {
@@ -109,7 +146,7 @@ pub async fn sweep(app: Shared, stop: CancellationToken) {
     }
 }
 fn device_allowed(app: &crate::App) -> bool {
-    app.devices.as_ref().is_some_and(|d| d.lock().unwrap().previews_allowed())
+    app.devices.as_ref().is_some_and(|d| d.lock().unwrap().previews_allowed_for_remote())
 }
 fn invalid_target(message: &str) -> Error {
     error(Status::BAD_REQUEST, message)
@@ -236,7 +273,7 @@ async fn create(State(app): State<Shared>, request: Request) -> Result<Json<Valu
     let answer =
         json!({"token":token,"sessionId":session,"targetUrl":target.as_str(),"proxyUrl":proxy_url,"createdAt":now()});
     let until = source_device.as_ref().map_or_else(CancellationToken::new, |p| p.0.child_token());
-    app.previews.live.lock().unwrap().insert(token, Preview { target, until, source_device });
+    app.previews.live.lock().unwrap().insert(token, Preview { target, until, source_device, relay_done: None });
     Ok(Json(answer))
 }
 async fn remove(State(app): State<Shared>, Path(token): Path<String>) -> Result<Status, Error> {
@@ -272,8 +309,11 @@ fn not_found() -> Response {
     error(Status::NOT_FOUND, "Preview not found").into_response()
 }
 async fn content(State(app): State<Shared>, request: Request) -> Response {
+    content_with_preview(&app, request, None).await
+}
+async fn content_with_preview(app: &Shared, request: Request, override_preview: Option<Preview>) -> Response {
     let Some(token) = path_token(request.uri().path()) else { return not_found() };
-    let Some(preview) = lookup(&app, token) else { return not_found() };
+    let Some(preview) = override_preview.or_else(|| lookup(app, token)) else { return not_found() };
     let original = request.uri().path();
     let tail = original.strip_prefix("/previews/").and_then(|p| p.split_once('/')).map_or("", |(_, t)| t);
     let path = if proxy::upgrade(&request) {
@@ -282,7 +322,7 @@ async fn content(State(app): State<Shared>, request: Request) -> Response {
         decode_component(tail).map(|s| s.replace('%', "%25"))
     };
     let Some(path) = path else { return invalid_target("Invalid request").into_response() };
-    proxy::relay(&app, request, preview, &path, &base(token)).await
+    proxy::relay(app, request, preview, &path, &base(token)).await
 }
 
 /// Select content before the application's source-policy hook. Exclusive origins are content-only;
@@ -334,14 +374,55 @@ pub async fn admit_remote(app: &Shared, req: Request) -> Response {
     let Some(channel) = crate::auth::tls::https_only(&req) else {
         return not_found();
     };
-    if !channel.ingress
-        || !device_allowed(app)
-        || !safe_request(&req, Some(&channel.origin))
-        || !lookup(app, token).is_some_and(|p| !p.until.is_cancelled())
-    {
+    // Capture the remote preview cutoff token BEFORE checking `device_allowed`: a concurrent
+    // `PUT /api/remote-control/previews { enabled: false }` either persists `false` before our
+    // check (refusing admission) or cancels this exact token after swapping it.
+    let remote_gate = app.previews.remote_stream_token();
+    let Some(preview) = lookup(app, token).filter(|p| !p.until.is_cancelled()) else {
+        return not_found();
+    };
+    if !channel.ingress || !device_allowed(app) || !safe_request(&req, Some(&channel.origin)) {
         return not_found();
     }
-    content(State(app.clone()), req).await
+    // Bind the remote relay (including upgraded WebSockets) to both the preview's own lifetime
+    // and the remote preview switch / ingress socket, without cancelling local viewers.
+    let socket = channel.socket.clone();
+    let preview_until = preview.until.clone();
+    let combined = CancellationToken::new();
+    let combined_link = combined.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = combined_link.cancelled() => return,
+            _ = preview_until.cancelled() => {},
+            _ = remote_gate.cancelled() => {},
+            _ = socket.cancelled() => {},
+        }
+        combined_link.cancel();
+    });
+    // Construct the drop guard BEFORE awaiting `content_with_preview`: if the client disconnects
+    // before headers arrive, or once the HTTP body / upgraded WebSocket finishes, the last `Arc`
+    // drops and cancels ONLY `combined` so the linker task exits without cancelling `preview.until`.
+    let guard = std::sync::Arc::new(CancelOnDrop(combined.clone()));
+    let scoped = Preview {
+        target: preview.target,
+        until: combined,
+        source_device: preview.source_device,
+        relay_done: Some(guard.clone()),
+    };
+    let response = content_with_preview(app, req, Some(scoped)).await;
+    if response.status() == Status::SWITCHING_PROTOCOLS {
+        // Upgraded WebSocket task owns its `Arc<CancelOnDrop>` clone in `proxy::tunnel`.
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    let mut stream = body.into_data_stream();
+    let guarded = axum::body::Body::from_stream(async_stream::stream! {
+        let _guard = guard;
+        while let Some(chunk) = futures_util::StreamExt::next(&mut stream).await {
+            yield chunk;
+        }
+    });
+    Response::from_parts(parts, guarded)
 }
 fn safe_request(req: &Request, own: Option<&str>) -> bool {
     let headers = req.headers();

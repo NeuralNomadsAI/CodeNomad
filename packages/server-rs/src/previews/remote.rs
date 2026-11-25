@@ -70,7 +70,10 @@ impl Record {
     fn current(&self, app: &Shared) -> bool {
         !self.signal.is_cancelled()
             && self.generation.current(app)
-            && (self.device.is_none() || app.devices.as_ref().is_some_and(|d| d.lock().unwrap().previews_allowed()))
+            && self
+                .device
+                .as_ref()
+                .is_none_or(|d| app.remote_control.is_preview_device_authorized(app, d.id, &d.host, d.ingress))
     }
 }
 impl Remote {
@@ -106,6 +109,13 @@ impl Remote {
             }
         }
     }
+    pub fn revoke_tunnel_devices(&self) {
+        for record in self.records.lock().unwrap().values() {
+            if record.device.as_ref().is_some_and(|d| d.ingress) {
+                record.signal.cancel();
+            }
+        }
+    }
 }
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -132,7 +142,11 @@ async fn create(State(app): State<Shared>, Path(id): Path<String>, request: Requ
     let principal = request.extensions().get::<Principal>().unwrap().0.clone();
     let channel = tls::https_only(&request).is_some();
     let device = device(&request);
-    if channel && (device.is_none() || app.devices.as_ref().is_none_or(|d| !d.lock().unwrap().previews_allowed())) {
+    if channel
+        && !device
+            .as_ref()
+            .is_some_and(|d| app.remote_control.is_preview_device_authorized(&app, d.id, &d.host, d.ingress))
+    {
         return backend::refused();
     }
     let embedding = (!channel)
@@ -200,7 +214,10 @@ async fn create(State(app): State<Shared>, Path(id): Path<String>, request: Requ
             || !generation.current(&app)
             || signal.is_cancelled()
             || principal.is_cancelled()
-            || channel && app.devices.as_ref().is_none_or(|d| !d.lock().unwrap().previews_allowed())
+            || channel
+                && !device
+                    .as_ref()
+                    .is_some_and(|d| app.remote_control.is_preview_device_authorized(&app, d.id, &d.host, d.ingress))
         {
             cleanup(app.clone(), generation.clone(), source.token);
             return None;
@@ -459,7 +476,7 @@ async fn content(app: &Shared, mut req: Request, key: Uuid, r: Arc<Record>, orig
             }
         }
         if status == Status::SWITCHING_PROTOCOLS {
-            return proxy::tunnel(response, headers, on_upgrade, r.signal.clone()).await;
+            return proxy::tunnel(response, headers, on_upgrade, r.signal.clone(), None).await;
         }
         return stream(status, headers, response, r.signal.clone());
     }

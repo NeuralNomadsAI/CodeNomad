@@ -204,7 +204,8 @@ fn decode_uri(path: &str) -> Option<String> {
 fn own_listener(app: &crate::App, target: &Url) -> Option<Response> {
     let port = target.port_or_known_default()?;
     let https = app.meta["remotePort"].as_u64().is_some_and(|p| p == u64::from(port));
-    if port != app.port && !https {
+    let ingress = app.remote_control.ingress_port() == Some(port);
+    if port != app.port && !https && !ingress {
         return None;
     }
     let api = decode_uri(target.path()).is_none_or(|p| {
