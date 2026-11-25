@@ -161,6 +161,7 @@ impl Harness {
             file: None,
             cookie: "fixture".into(),
             token: false,
+            managed_local: false,
             skip: true,
             idle: Duration::from_secs(60),
             absolute: Duration::from_secs(60),
