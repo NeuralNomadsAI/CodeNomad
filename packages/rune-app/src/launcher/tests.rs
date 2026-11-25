@@ -755,86 +755,137 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-struct AbortOnDrop(tokio::task::JoinHandle<()>);
+struct CatalogueFixture {
+    base_url: String,
+    sse_opened: codenomad_client::Receiver<()>,
+    sse_dropped: codenomad_client::Receiver<()>,
+    workspaces_requests: codenomad_client::Receiver<codenomad_client::Receiver<()>>,
+    _shutdown: codenomad_client::Receiver<()>,
+    task: tokio::task::JoinHandle<()>,
+}
 
 #[cfg(not(target_arch = "wasm32"))]
-impl Drop for AbortOnDrop {
+impl Drop for CatalogueFixture {
     fn drop(&mut self) {
-        self.0.abort();
+        self.task.abort();
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn spawn_catalogue_sse_fixture(
     drop_first_sse: bool,
-) -> (
-    String,
-    codenomad_client::Receiver<()>,
-    codenomad_client::Receiver<()>,
-    AbortOnDrop,
-) {
+    second_sse_gate: Option<codenomad_client::Receiver<()>>,
+) -> CatalogueFixture {
+    use codenomad_client::runtime::until_closed;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
+    };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let (opened_tx, opened_rx) = bounded(4);
-    let (dropped_tx, dropped_rx) = bounded(4);
+    let (opened_tx, sse_opened) = bounded(8);
+    let (dropped_tx, sse_dropped) = bounded(8);
+    let (workspaces_tx, workspaces_requests) = bounded(8);
+    let (shutdown_tx, shutdown_rx) = bounded::<()>(1);
+    let sse_attempts = Arc::new(AtomicUsize::new(0));
     let task = tokio::spawn(async move {
-        let mut held = Vec::new();
-        let mut sse_attempts = 0usize;
-        while let Ok((mut socket, _)) = listener.accept().await {
-            let mut buf = [0u8; 4096];
-            let mut n = 0usize;
-            while n < buf.len() {
-                match socket.read(&mut buf[n..]).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(read) => {
-                        n += read;
-                        if buf[..n].windows(4).any(|w| w == b"\r\n\r\n") {
-                            break;
+        while let Some(Ok((mut socket, _))) = until_closed(&shutdown_tx, listener.accept()).await {
+            let opened_tx = opened_tx.clone();
+            let dropped_tx = dropped_tx.clone();
+            let workspaces_tx = workspaces_tx.clone();
+            let shutdown_tx = shutdown_tx.clone();
+            let second_sse_gate = second_sse_gate.clone();
+            let sse_attempts = sse_attempts.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let mut n = 0usize;
+                let header_read = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                    while n < buf.len() {
+                        match socket.read(&mut buf[n..]).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(read) => {
+                                n += read;
+                                if buf[..n].windows(4).any(|w| w == b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
                         }
                     }
+                })
+                .await;
+                if header_read.is_err() || n == 0 {
+                    return;
                 }
-            }
-            let head = String::from_utf8_lossy(&buf[..n]);
-            let first = head.lines().next().unwrap_or_default();
-            if first.starts_with("GET /api/events") {
-                sse_attempts += 1;
-                if drop_first_sse && sse_attempts == 1 {
-                    drop(socket);
-                    let _ = dropped_tx.try_send(());
-                } else {
-                    let _ = socket
-                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                let head = String::from_utf8_lossy(&buf[..n]);
+                let first = head.lines().next().unwrap_or_default();
+                if first.starts_with("GET /api/events") {
+                    let attempt = sse_attempts.fetch_add(1, SeqCst) + 1;
+                    if drop_first_sse && attempt == 1 {
+                        drop(socket);
+                        let _ = dropped_tx.try_send(());
+                        return;
+                    }
+                    if drop_first_sse
+                        && attempt == 2
+                        && let Some(gate) = second_sse_gate
+                        && until_closed(&shutdown_tx, gate.recv()).await.is_none()
+                    {
+                        return;
+                    }
+                    let wrote = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                        socket
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n",
+                            )
+                            .await?;
+                        socket.flush().await
+                    })
+                    .await;
+                    if matches!(wrote, Ok(Ok(()))) {
+                        let _ = opened_tx.try_send(());
+                        let mut drain = [0u8; 64];
+                        let _ = until_closed(&shutdown_tx, async {
+                            while matches!(socket.read(&mut drain).await, Ok(k) if k > 0) {}
+                        })
                         .await;
-                    let _ = socket.flush().await;
-                    held.push(socket);
-                    let _ = opened_tx.try_send(());
+                    }
+                } else if first.starts_with("GET /api/workspaces") {
+                    let (_closed_tx, closed_rx) = bounded::<()>(1);
+                    let _ = workspaces_tx.try_send(closed_rx);
+                    let mut drain = [0u8; 64];
+                    let _ = until_closed(&shutdown_tx, async {
+                        while matches!(socket.read(&mut drain).await, Ok(k) if k > 0) {}
+                    })
+                    .await;
+                } else {
+                    drop(socket);
                 }
-            } else {
-                held.push(socket);
-            }
+            });
         }
     });
-    (
-        format!("http://{addr}/"),
-        opened_rx,
-        dropped_rx,
-        AbortOnDrop(task),
-    )
+    CatalogueFixture {
+        base_url: format!("http://{addr}/"),
+        sse_opened,
+        sse_dropped,
+        workspaces_requests,
+        _shutdown: shutdown_rx,
+        task,
+    }
 }
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write_rebind() {
     crate::platform::block_on(async {
-        let (base_url, sse_opened_rx, _sse_dropped_rx, _server) =
-            spawn_catalogue_sse_fixture(false).await;
+        let fixture = spawn_catalogue_sse_fixture(false, None).await;
         let mut s = crate::init();
         crate::gallery::shell::fixture(&mut s);
         let mut ui = crate::workspace::Ui::new();
         ui.fixture_ready();
         s.workspace = Some(ui);
-        let backend = Backend::unauthenticated(&base_url).unwrap();
+        let backend = Backend::unauthenticated(&fixture.base_url).unwrap();
         let project_a = Project {
             id: "proj-a".into(),
             path: "/repo-a".into(),
@@ -901,9 +952,19 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
         rt.update(|s, tx| {
             assert!(poll(s, tx));
         });
+        assert!(!rt.state.screen.is_launcher());
+        assert_eq!(
+            rt.state
+                .screen
+                .launcher()
+                .unwrap()
+                .rebind_after_send
+                .as_deref(),
+            Some("ses-b")
+        );
         // Wait for the reauthenticated CatalogueWatch SSE stream to open cleanly so later
         // poll() calls never race with an ECONNREFUSED disconnect transition on Unix.
-        tokio::time::timeout(std::time::Duration::from_secs(4), sse_opened_rx.recv())
+        tokio::time::timeout(std::time::Duration::from_secs(4), fixture.sse_opened.recv())
             .await
             .expect("catalogue watch must open SSE")
             .unwrap();
@@ -925,16 +986,6 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
             });
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
-        assert!(!rt.state.screen.is_launcher());
-        assert_eq!(
-            rt.state
-                .screen
-                .launcher()
-                .unwrap()
-                .rebind_after_send
-                .as_deref(),
-            Some("ses-b")
-        );
         // Settling the permission write triggers the deferred rebind automatically.
         rt.state.status_permissions.fixture_writing(false);
         rt.update(|s, tx| {
@@ -1138,7 +1189,7 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
 
         // Reply::Created whose workspace stopped while creation was in flight must not bind or list it.
         let (created_out, created_in) = bounded(1);
-        let mut created_backend = Backend::unauthenticated(&base_url).unwrap();
+        let mut created_backend = Backend::unauthenticated(&fixture.base_url).unwrap();
         created_backend.workspace = "proj-stopped".into();
         created_backend.session = "ses-stopped".into();
         {
@@ -1181,14 +1232,14 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
 #[cfg(not(target_arch = "wasm32"))]
 fn catalogue_disconnect_cancels_reconcile_and_reconnect_replaces_stale_pre_open_reconcile() {
     crate::platform::block_on(async {
-        let (base_url, sse_opened_rx, sse_dropped_rx, _server) =
-            spawn_catalogue_sse_fixture(true).await;
+        let (allow_second_sse_tx, allow_second_sse_rx) = bounded(1);
+        let fixture = spawn_catalogue_sse_fixture(true, Some(allow_second_sse_rx)).await;
         let mut s = crate::init();
         crate::gallery::shell::fixture(&mut s);
         let mut ui = crate::workspace::Ui::new();
         ui.fixture_ready();
         s.workspace = Some(ui);
-        let backend = Backend::unauthenticated(&base_url).unwrap();
+        let backend = Backend::unauthenticated(&fixture.base_url).unwrap();
         let project_a = Project {
             id: "proj-a".into(),
             path: "/repo-a".into(),
@@ -1234,15 +1285,19 @@ fn catalogue_disconnect_cancels_reconcile_and_reconnect_replaces_stale_pre_open_
             assert!(poll(s, tx));
         });
 
-        // First SSE attempt drops immediately (reproducing fast Unix ECONNREFUSED/EOF):
-        // observing generation 2 must cancel any in-flight detached_reconcile.
+        // 1. First SSE attempt drops immediately while the 2nd SSE attempt is gated behind
+        // allow_second_sse_tx so poll() deterministically observes generation 2 (never skipping
+        // straight to 3 under CI scheduling delays) and cancels the active detached_reconcile.
         let (reconcile_tx, reconcile_rx) = bounded(1);
         rt.state.screen.launcher_mut().unwrap().detached_reconcile =
             Some((1, HashSet::new(), reconcile_rx));
-        tokio::time::timeout(std::time::Duration::from_secs(4), sse_dropped_rx.recv())
-            .await
-            .expect("first SSE attempt must drop immediately")
-            .unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            fixture.sse_dropped.recv(),
+        )
+        .await
+        .expect("first SSE attempt must drop immediately")
+        .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
         while rt
             .state
@@ -1271,11 +1326,33 @@ fn catalogue_disconnect_cancels_reconcile_and_reconnect_replaces_stale_pre_open_
         );
         assert!(reconcile_tx.try_send(Some(vec![])).is_err());
 
-        // Second SSE attempt stays open (generation 3): Reply::Opened started at generation 1
-        // replaces the stale generation-3 reconcile without adding proj-d to opened_after.
-        tokio::time::timeout(std::time::Duration::from_secs(4), sse_opened_rx.recv())
+        // 2. Stage an in-flight Reply::Opened from generation 1 before releasing reconnect (gen 3):
+        // observing gen 3 spawns a real GET /api/workspaces reconcile, and settling Reply::Opened
+        // cancels that stale pre-open GET and issues a fresh gen-3 GET without adding proj-d.
+        let (opened_out_d, opened_in_d) = bounded(1);
+        let project_d = Project {
+            id: "proj-d".into(),
+            path: "/repo-d".into(),
+        };
+        let opening_d = rt
+            .state
+            .screen
+            .launcher()
+            .unwrap()
+            .openings
+            .begin(backend, "tab-d")
+            .unwrap()
+            .fixture_opening(project_d);
+        {
+            let l = rt.state.screen.launcher_mut().unwrap();
+            l.pending_stream_generation = 1;
+            l.result = Some(opened_in_d);
+            l.pending = true;
+        }
+        let _ = allow_second_sse_tx.try_send(());
+        tokio::time::timeout(std::time::Duration::from_secs(4), fixture.sse_opened.recv())
             .await
-            .expect("second SSE attempt must open")
+            .expect("second SSE attempt must open after gate release")
             .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
         while rt
@@ -1295,28 +1372,14 @@ fn catalogue_disconnect_cancels_reconcile_and_reconnect_replaces_stale_pre_open_
             });
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
-        let (opened_out_d, opened_in_d) = bounded(1);
-        let (reconcile_tx_d, reconcile_rx_d) = bounded(1);
-        let project_d = Project {
-            id: "proj-d".into(),
-            path: "/repo-d".into(),
-        };
-        let opening_d = rt
-            .state
-            .screen
-            .launcher()
-            .unwrap()
-            .openings
-            .begin(backend, "tab-d")
-            .unwrap()
-            .fixture_opening(project_d);
-        {
-            let l = rt.state.screen.launcher_mut().unwrap();
-            l.detached_reconcile = Some((3, HashSet::new(), reconcile_rx_d));
-            l.pending_stream_generation = 1;
-            l.result = Some(opened_in_d);
-            l.pending = true;
-        }
+        let stale_get_closed = tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            fixture.workspaces_requests.recv(),
+        )
+        .await
+        .expect("reconnecting at generation 3 must start a real GET /api/workspaces reconcile")
+        .unwrap();
+
         assert!(
             opened_out_d
                 .try_send(Ok(Reply::Opened(
@@ -1332,7 +1395,16 @@ fn catalogue_disconnect_cancels_reconcile_and_reconnect_replaces_stale_pre_open_
         rt.update(|s, tx| {
             assert!(poll(s, tx));
         });
-        assert!(reconcile_tx_d.try_send(Some(vec![])).is_err());
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(4), stale_get_closed.recv())
+            .await
+            .expect("Reply::Opened must cancel the stale pre-open GET /api/workspaces socket");
+        let _fresh_get_closed = tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            fixture.workspaces_requests.recv(),
+        )
+        .await
+        .expect("Reply::Opened must issue a fresh generation-3 GET /api/workspaces reconcile")
+        .unwrap();
         let (generation, opened_after, _) = rt
             .state
             .screen
