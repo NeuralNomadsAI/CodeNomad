@@ -74,3 +74,9 @@ test("a console flood never evicts a request's lifecycle, and a lost network eve
   for (let index = 0; index < DIAGNOSTICS.maxEvents + 2; index++) network.record("Network.loadingFinished", { requestId: `f${index % 2}` })
   assert.equal(network.read(0).lost.requests, 2, "each request that lost an unread event counts once")
 })
+test("a frame detach stays with the requests it ends", () => {
+  const buffer = new DiagnosticEventBuffer()
+  buffer.record("Target.detachedFromTarget", { sessionId: "frame" })
+  for (let index = 0; index < DIAGNOSTICS.maxEvents + 1; index++) buffer.record("Runtime.consoleAPICalled", { args: [] })
+  assert.equal(buffer.read(0).events[0].method, "Target.detachedFromTarget")
+})

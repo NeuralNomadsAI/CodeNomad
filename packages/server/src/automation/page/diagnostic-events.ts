@@ -137,7 +137,8 @@ export class DiagnosticEventBuffer {
   }
 }
 
-const classOf = (method: string): "network" | "page" => method.startsWith("Network.") ? "network" : "page"
+/** A frame's detach ends its requests, so it belongs with them: a console flood never evicts it. */
+const classOf = (method: string): "network" | "page" => method.startsWith("Network.") || method === "Target.detachedFromTarget" ? "network" : "page"
 
 /** An event too large to keep whole keeps its console text cut to `maxText`; other events stay as they are. */
 function shrink(method: string, params: Record<string, any>): Record<string, unknown> {

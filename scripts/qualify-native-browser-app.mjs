@@ -232,30 +232,37 @@ return { waits, found, refused, copyRefused, pickerRefused, loaded, oauth }`)
     const accepted = await step("dialog accepted", `return { met: (await tools.browser.wait({ tabID: ${tabID}, text: "Dialog accepted", timeout: 10000 })).met }`)
     assert.equal(accepted.met, true)
   }
-  // Increment logged a warning and posted its count: OpenCode's console and network tools read them back.
-  const diagnostics = await step("console and network", `const tabID = ${tabID};
+  // WebKit previews (macOS and Linux Tauri) refuse diagnostics: there the qualification checks that refusal.
+  const support = await step("diagnostics support", `try { await tools.browser.console({ tabID: ${tabID} }); return { supported: true } }
+catch (error) { return { supported: false, message: String(error?.message ?? error) } }`)
+  if (!support.supported) {
+    assert.ok(!dev && process.platform !== "win32" && /WebKit previews/.test(support.message), JSON.stringify(support))
+  } else {
+    // Increment logged a warning and posted its count: OpenCode's console and network tools read them back.
+    const diagnostics = await step("console and network", `const tabID = ${tabID};
 const logged = await tools.browser.console({ tabID, level: "warning" });
 const listed = await tools.browser.network.list({ tabID, urlContains: "/api/count" });
 const got = listed.requests[0] && await tools.browser.network.get({ tabID, id: listed.requests[0].id, includeBody: true });
 return { warnings: logged.messages.map(entry => entry.text), requests: listed.requests.map(item => [item.method, item.statusCode, item.state]),
-  requestBody: got?.requestBody, responseBody: got?.responseBody,
-  cookie: got?.responseHeaders.find(header => header.name === "set-cookie")?.value }`)
-  assert.ok(diagnostics.warnings.includes("Count is 1"), JSON.stringify(diagnostics))
-  assert.deepEqual(diagnostics.requests, [["POST", 200, "completed"]])
-  assert.deepEqual(diagnostics.requestBody, { state: "text", text: "{\"count\":1}", truncated: false })
-  assert.deepEqual(diagnostics.responseBody, { state: "text", text: "{\"saved\":true}", truncated: false })
-  assert.equal(diagnostics.cookie, "<redacted>")
-  // Out-of-process frames and workers start paused: they must run, and the frame's own startup is captured.
-  const frames = await step("frames and workers", `const tabID = ${tabID};
+    requestBody: got?.requestBody, responseBody: got?.responseBody,
+    cookie: got?.responseHeaders.find(header => header.name === "set-cookie")?.value }`)
+    assert.ok(diagnostics.warnings.includes("Count is 1"), JSON.stringify(diagnostics))
+    assert.deepEqual(diagnostics.requests, [["POST", 200, "completed"]])
+    assert.deepEqual(diagnostics.requestBody, { state: "text", text: "{\"count\":1}", truncated: false })
+    assert.deepEqual(diagnostics.responseBody, { state: "text", text: "{\"saved\":true}", truncated: false })
+    assert.equal(diagnostics.cookie, "<redacted>")
+    // Out-of-process frames and workers start paused: they must run, and the frame's own startup is captured.
+    const frames = await step("frames and workers", `const tabID = ${tabID};
 await tools.browser.navigate({ tabID, url: ${JSON.stringify(`http://127.0.0.1:${fixture.address().port}/frames`)} });
 const waits = [];
 for (const text of ["Frame loaded", "Worker ran"]) waits.push((await tools.browser.wait({ tabID, text, timeout: 10000 })).met);
 const listed = await tools.browser.network.list({ tabID, urlContains: "/frame-api" });
 const logged = await tools.browser.console({ tabID, level: "warning" });
 return { waits, requests: listed.requests.map(item => [item.method, item.statusCode, item.state]), warnings: logged.messages.map(entry => entry.text) }`)
-  assert.deepEqual(frames.waits, [true, true], JSON.stringify(frames))
-  assert.deepEqual(frames.requests, [["GET", 200, "completed"]], JSON.stringify(frames))
-  assert.ok(frames.warnings.includes(`frame warning ${run}`), JSON.stringify(frames))
+    assert.deepEqual(frames.waits, [true, true], JSON.stringify(frames))
+    assert.deepEqual(frames.requests, [["GET", 200, "completed"]], JSON.stringify(frames))
+    assert.ok(frames.warnings.includes(`frame warning ${run}`), JSON.stringify(frames))
+  }
   const shot = await step("screenshot", `const shot = await tools.browser.screenshot({ tabID: ${tabID} }); return { files: shot.files }`)
   assert.equal(shot.files?.[0]?.mime, "image/png")
   await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, run, sessionID: session.id, project, app: appPath,

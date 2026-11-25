@@ -60,7 +60,8 @@ enum Class {
 }
 
 fn class_of(method: &str) -> Class {
-    if method.starts_with("Network.") {
+    // A frame's detach ends its requests, so it belongs with them.
+    if method.starts_with("Network.") || method == "Target.detachedFromTarget" {
         Class::Network
     } else {
         Class::Page
