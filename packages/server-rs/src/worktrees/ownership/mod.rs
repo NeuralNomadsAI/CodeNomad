@@ -15,7 +15,10 @@ mod tests;
 
 pub(in crate::worktrees) use git_discovery::valid_git_admin;
 pub use git_discovery::{common_directory, resolve_directory, within};
-use git_discovery::{head_cannot_name_repository, repository_root, shares_common_directory, strict_common_directory};
+use git_discovery::{
+    head_cannot_name_repository, repository_root, shares_common_directory, shares_common_directory_strict,
+    strict_common_directory,
+};
 pub(crate) use media_path::{
     catalogue_owns_event, directory_anchor, media_directory, media_directory_with_slot, resolve_media_path,
     resolve_media_path_checked,
@@ -480,9 +483,15 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
     }
     if let Some(t) = &target
         && !t.starts_with(root)
-        && !shares_common_directory(root, t).await?
     {
-        return Ok(None);
+        let shared = if strict {
+            shares_common_directory_strict(root, t).await?
+        } else {
+            shares_common_directory(root, t).await?
+        };
+        if !shared {
+            return Ok(None);
+        }
     }
     let resolved = resolve_directory(directory).ok_or(())?;
     if !resolved.starts_with(&app.scope) {

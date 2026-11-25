@@ -639,7 +639,7 @@ async fn deliver(
             if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
                 break;
             }
-            let rev = crate::worktrees::inventory_revision(app);
+            let rev = crate::worktrees::event_inventory_revision(app, workspace.id);
             let source = match directory.as_deref() {
                 Some(dir) if !foreign_workspace && event["location"].get("workspaceID").is_none() => {
                     crate::worktrees::owns_event(app, &workspace, dir).await
@@ -647,7 +647,7 @@ async fn deliver(
                 _ => false,
             };
             let owns_destination = crate::worktrees::owns_event(app, &workspace, &destination).await;
-            if crate::worktrees::inventory_revision(app) != rev {
+            if crate::worktrees::event_inventory_revision(app, workspace.id) != rev {
                 continue;
             }
             if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {

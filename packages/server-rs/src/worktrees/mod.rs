@@ -321,12 +321,7 @@ async fn lookup_owned_tree(app: &App, w: &Workspace, directory: &str) -> Result<
             return Err(());
         };
         let dir = directory.to_owned();
-        let check_live = fresh.from_cache;
-        return Ok(tokio::task::spawn_blocking(move || {
-            cat.by_directory(&dir).filter(|t| !check_live || t.contains_live(&t.path)).cloned()
-        })
-        .await
-        .unwrap_or(None));
+        return Ok(tokio::task::spawn_blocking(move || cat.by_directory(&dir).cloned()).await.unwrap_or(None));
     }
     Ok(None)
 }

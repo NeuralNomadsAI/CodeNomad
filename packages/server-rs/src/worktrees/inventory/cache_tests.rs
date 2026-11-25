@@ -526,9 +526,10 @@ async fn backoff_retains_last_display_snapshot_and_sse_cache_stays_isolated() {
         "HTTP snapshot change must invalidate the stale SSE entry"
     );
 
-    // Cold HTTP/SSE race: an in-flight SSE scan that captured 2 worktrees before an HTTP scan
-    // publishes 3 worktrees must be revoked (sse_generation bumped) and never publish the stale
-    // 2-worktree snapshot into `sse_entries`.
+    // Cold HTTP/SSE race with empty HTTP cache: an in-flight SSE scan that captured 2 worktrees
+    // before the first HTTP scan publishes 3 worktrees (with no prior HTTP snapshot to trigger
+    // `http_changed`) must be revoked via the cold-loading SSE branch and never publish stale data.
+    forget(&h.app, h.id);
     h.native.post_get_gate.arm_once();
     let (as_sse, ws_sse) = (h.app.clone(), h.ws.clone());
     let sse_task = tokio::spawn(async move { event_catalogue(&as_sse, &ws_sse).await });
@@ -628,26 +629,17 @@ async fn refreshed_on_miss_is_atomic_and_passive_refresh_retries_after_invalidat
     std::fs::remove_file(linked.join(".git")).unwrap();
     assert!(!owns(&h.app, &h.ws, linked.to_str().unwrap()).await);
 
-    // Corrupting HEAD on the root invalidates `root_live_for`, and replacing `.git` with an
-    // incomplete directory leaves strict `resolve_checked` on an internal subfolder returning
-    // `Err(())` (unverifiable) through the cached `NonGit` path rather than `Ok(None)`.
+    // Corrupting HEAD on the root causes `Step::VerifyRoot` in `http_read(Validated)` to reject
+    // the warm cached Git snapshot immediately (without manual invalidation), and replacing `.git`
+    // with an incomplete directory leaves strict `resolve_checked` on an internal subfolder
+    // returning `Err(())` (unverifiable) through the cached `NonGit` path rather than `Ok(None)`.
     let inside = h.ws.path.join("inside-sub");
     std::fs::create_dir(&inside).unwrap();
     std::fs::write(h.ws.path.join(".git").join("HEAD"), "not-a-valid-head\n").unwrap();
+    let after_corrupt_head = http_read(&h.app, &h.ws, ReadMode::Validated).await;
     assert!(
-        !h.app
-            .linked_events
-            .lock()
-            .unwrap()
-            .http_entries
-            .get(&h.id)
-            .and_then(|e| e.value.as_ref())
-            .and_then(|v| match v {
-                HttpSnapshot::Git(cat) => Some(cat.root_live_for(&h.ws.path)),
-                _ => None,
-            })
-            .unwrap_or(true),
-        "corrupted root HEAD must fail root_live_for immediately"
+        !matches!(&after_corrupt_head, Ok(hit) if hit.from_cache && matches!(hit.snapshot, HttpSnapshot::Git(_))),
+        "Step::VerifyRoot must never serve a warm cached Git snapshot after root HEAD corruption"
     );
     std::fs::remove_dir_all(h.ws.path.join(".git")).unwrap();
     std::fs::create_dir(h.ws.path.join(".git")).unwrap();

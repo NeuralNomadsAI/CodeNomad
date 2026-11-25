@@ -686,21 +686,36 @@ async fn http_read_core(
                 } else {
                     true
                 };
+                // Re-acquire locks in canonical order (`app.inner` -> `app.linked_events`) after
+                // the disk check so a concurrent forget, invalidation, newer publication or
+                // endpoint retirement cannot be overtaken by a stale cached snapshot.
+                let workspaces = app.inner.lock().unwrap();
+                if !workspaces.workspaces.iter().any(|item| item.id == w.id) {
+                    return Err(error(Status::NOT_FOUND, "Workspace not found"));
+                }
+                let mut cache = app.linked_events.lock().unwrap();
                 if pinned_endpoint.is_some_and(|ep| !app.native.current(ep)) {
                     return Err(crate::opencode::upstream_error());
                 }
-                if root_live {
+                let still_current = cache.http_entries.get(&w.id).is_some_and(|entry| {
+                    entry.generation == candidate.generation
+                        && !entry.expired
+                        && !entry.require_validation
+                        && entry.at.elapsed() < MAX_AGE
+                        && entry.endpoint.as_ref().is_none_or(|ep| app.native.current(ep))
+                });
+                if root_live && still_current {
                     return Ok(candidate);
                 }
+                if !root_live
+                    && let Some(entry) = cache.http_entries.get_mut(&w.id)
+                    && entry.generation == candidate.generation
                 {
-                    let mut cache = app.linked_events.lock().unwrap();
-                    if let Some(entry) = cache.http_entries.get_mut(&w.id)
-                        && entry.generation == candidate.generation
-                    {
-                        entry.expired = true;
-                        entry.require_validation = true;
-                    }
+                    entry.expired = true;
+                    entry.require_validation = true;
                 }
+                drop(cache);
+                drop(workspaces);
                 restarts += 1;
                 if restarts > max_restarts {
                     return Err(crate::opencode::upstream_error());
