@@ -326,6 +326,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             Event::HistoryInvalidated => {
                 s.transcript_display.messages.invalidate_boundary();
                 chat::reader::cancel_page(s);
+                s.history_error = false;
                 s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
                 s.transcript_display.tool_clock.reset();

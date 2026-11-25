@@ -267,6 +267,13 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
             !state.reader.as_ref().unwrap().resume_pending,
             "disconnect during explicit historical page must not clobber the window with resume"
         );
+        assert!(!state.transcript_display.timeline.is_online());
+        out.try_send(Event::AgentHint(true)).unwrap();
+        assert!(poll_chat(&mut state, 8));
+        assert!(
+            state.transcript_display.timeline.is_online(),
+            "reconnecting on a detached window must restore timeline online state"
+        );
         assert!(older(&mut state));
         let Command::Page(retried_edge, _) = cmd_rx.try_recv().unwrap() else {
             panic!("expected retried Command::Page");
@@ -316,7 +323,7 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
         assert_eq!(retried_edge, edge);
     }
 
-    // A fresh ReaderSync after reconnecting on a non-historical window clears both error and retry.
+    // On a non-detached window, disconnect during an explicit page still resumes and ReaderSync clears both error and retry.
     let mut state = init();
     let (mut reader, lane) = Reader::open();
     reader.install(false);
@@ -337,9 +344,13 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
         state.transcript_display.timeline.page_retry,
         Some(HistoryEdge::Oldest)
     );
+    assert!(
+        state.reader.as_ref().unwrap().resume_pending,
+        "disconnect during a non-detached page must keep reconnect resume active"
+    );
     lane.events
         .try_send((
-            0,
+            1,
             1,
             Event::ReaderSync {
                 page: crate::history::Page {
@@ -353,6 +364,42 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
             },
         ))
         .unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(!state.history_error);
+    assert_eq!(state.transcript_display.timeline.page_retry, None);
+
+    // refresh_after_message_action cancels pending paging so a later disconnect cannot resurrect history_error.
+    let mut state = init();
+    let (mut reader, _lane) = Reader::open();
+    reader.install(true);
+    state.reader = Some(reader);
+    state.phase = Phase::Ready;
+    state.history_detached = true;
+    state.can_older = true;
+    let (cmd_tx, cmd_rx) = bounded(4);
+    let (out, incoming) = bounded(4);
+    state.commands = Some(cmd_tx);
+    state.incoming = Some(incoming);
+    assert!(request_page(&mut state, HistoryEdge::After));
+    let _ = cmd_rx.try_recv().unwrap();
+    refresh_after_message_action(&mut state);
+    assert!(!state.paging && !state.history_error);
+    assert_eq!(state.transcript_display.timeline.page_retry, None);
+    out.try_send(Event::ConnectionLost).unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(!state.history_error);
+    assert_eq!(state.transcript_display.timeline.page_retry, None);
+
+    // suspend and HistoryInvalidated clear history_error together with page_retry.
+    state.history_error = true;
+    state.transcript_display.timeline.page_retry = Some(HistoryEdge::After);
+    suspend(&mut state);
+    assert!(!state.history_error);
+    assert_eq!(state.transcript_display.timeline.page_retry, None);
+
+    state.history_error = true;
+    state.transcript_display.timeline.page_retry = Some(HistoryEdge::Oldest);
+    out.try_send(Event::HistoryInvalidated).unwrap();
     assert!(poll_chat(&mut state, 8));
     assert!(!state.history_error);
     assert_eq!(state.transcript_display.timeline.page_retry, None);

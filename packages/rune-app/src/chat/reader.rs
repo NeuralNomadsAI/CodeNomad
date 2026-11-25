@@ -177,11 +177,12 @@ impl Reader {
 }
 
 pub(crate) fn reconnecting(s: &mut State) {
-    let had_explicit_page = s.transcript_display.timeline.paging.is_some();
+    let preserve_historical_page =
+        s.history_detached && s.transcript_display.timeline.paging.is_some();
     if let Some(reader) = &mut s.reader {
         reader.reconnecting(
             s.transcript_display.reading_mut(),
-            s.paging && !had_explicit_page,
+            s.paging && !preserve_historical_page,
         );
     }
 
@@ -200,6 +201,8 @@ pub(crate) fn invalidate(s: &mut State) {
 }
 
 pub(super) fn refresh_after_message_action(s: &mut State) {
+    cancel_page(s);
+    s.history_error = false;
     if let Some(reader) = &mut s.reader {
         reader.resume(Bookmark::Latest);
         s.paging = false;
@@ -242,6 +245,7 @@ pub(crate) fn reconcile_bookmark(s: &mut State, rows: &[crate::history::Row]) {
 
 pub(crate) fn suspend(s: &mut State) {
     cancel_page(s);
+    s.history_error = false;
     crate::timeline::suspend(s);
     crate::settings::transcript_filters::close(s);
     if let Some(reader) = &mut s.reader {
