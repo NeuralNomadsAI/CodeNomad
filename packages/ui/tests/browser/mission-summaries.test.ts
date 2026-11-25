@@ -82,8 +82,8 @@ async function panel(maps: MissionMap[], answer: (include: string[], read: numbe
   return { page, includes }
 }
 const choose = (page: Page, id: string) => page.evaluate(async id =>
-  (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { selected: id }), id)
-// Selected through the view state, a row stays folded: its loaded detail is mounted, not shown.
+  (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { selected: id, expanded: [`mission:${id}`] }), id)
+const loaded = (page: Page, id: string) => page.waitForFunction(id => (window as any).missionFixture.snapshot().missions.some((m: { id: string }) => m.id === id), id)
 const shownDetail = (page: Page, title: string) => page.locator(`section.mission-detail[aria-label="${title}"]`)
 
 test("a failed selected-map read stays parked until an explicit retry; a successful one costs one follow-up", async () => {
@@ -106,6 +106,7 @@ test("a failed selected-map read stays parked until an explicit retry; a success
   const loading = await panel(closed)
   try {
     await choose(loading.page, "closed")
+    await loaded(loading.page, "closed")
     await shownDetail(loading.page, "Objective closed").waitFor({ state: "attached" })
     await loading.page.waitForTimeout(500)
     assert.deepEqual(loading.includes, [[], ["closed"]], "a loaded map needs no further read")
@@ -117,6 +118,7 @@ test("failed refreshes keep the mission list mounted and stationary through reco
   const { page } = await panel([mission("closed", { status: "completed", updatedAt: 2 })], async () => fail ? 503 : undefined)
   try {
     await choose(page, "closed")
+    await loaded(page, "closed")
     await shownDetail(page, "Objective closed").waitFor({ state: "attached" })
     const row = await inlineMissionEntry(page, "Objective closed")
     const node = await row.elementHandle()
@@ -146,6 +148,7 @@ test("an obsolete include response never unmounts the current selection's loaded
   })
   try {
     await choose(page, "A")
+    await loaded(page, "A")
     await shownDetail(page, "Objective A").waitFor({ state: "attached" })
     race = true
     await choose(page, "B")
@@ -180,6 +183,7 @@ test("hiding the panel cancels the follow-up an obsolete include answer would st
   const fixtureCall = (method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
   try {
     await choose(page, "A")
+    await loaded(page, "A")
     await shownDetail(page, "Objective A").waitFor({ state: "attached" })
     race = true
     await choose(page, "B")

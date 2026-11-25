@@ -6,7 +6,7 @@ import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "done" | "prepared" | "waiting" | "unconfirmed" | "idle"
 
 export interface MissionPickerEntry {
-  /** `mission:<id>` or `schedule:<id>`. */
+  /** `mission:<id>`, `schedule:<id>`, or `scheduled:<id>`. */
   key: string
   title: string
   /** Full localized state for tooltips and screen readers. */
@@ -17,6 +17,8 @@ export interface MissionPickerEntry {
   childActivity?: "permission" | "working" | "idle"
   /** A Mission whose plan holds no task: like a session without children, no chevron. */
   leaf?: boolean
+  /** Most recent real activity timestamp (epoch ms) for unified sorting. Never a future nextDueAt. */
+  activityAt?: number
 }
 
 /** A one-time Mission's own state from native requests and observed actor activity:
@@ -92,6 +94,44 @@ export function missionMarkStateKey(mark: MissionMark): string | undefined {
   return mark === "waiting" ? "missionsPanel.state.waiting" : mark === "done" ? "missionsPanel.state.unreadSuccess"
     : mark === "unconfirmed" ? "missionsPanel.state.unconfirmed" : mark === "prepared" ? "missions.control.run.prepared"
     : mark === "interrupted" ? "missionsPanel.state.interrupted" : undefined
+}
+
+export function unifiedScheduleActivityAt(doc: UnifiedMissionSchedule, livePassageUpdatedAt?: number): number {
+  const pending = doc.pendingPassage
+  return Math.max(
+    0,
+    pending?.admittedAt ?? 0,
+    pending?.dueAt ?? 0,
+    pending?.createdAt ?? 0,
+    livePassageUpdatedAt ?? 0,
+    doc.latestResult?.settledAt ?? 0,
+    doc.latestResult?.dueAt ?? 0,
+    doc.checks?.since ?? 0,
+    doc.firstPlayedAt ?? 0,
+    doc.createdAt ?? 0,
+  )
+}
+
+export function recurrenceScheduleActivityAt(
+  schedule: RecurrenceSchedule,
+  livePassageUpdatedAt?: number,
+  pendingSessionUpdatedAt?: number,
+): number {
+  const pending = schedule.pending
+  return Math.max(
+    0,
+    pending?.createdAt ?? 0,
+    pending?.dueAt ?? 0,
+    livePassageUpdatedAt ?? 0,
+    pendingSessionUpdatedAt ?? 0,
+    schedule.latestResult?.settledAt ?? 0,
+    schedule.latestResult?.dueAt ?? 0,
+    schedule.lastError?.at ?? 0,
+  )
+}
+
+export function sortMissionPickerEntries(entries: readonly MissionPickerEntry[]): MissionPickerEntry[] {
+  return [...entries].sort((a, b) => (b.activityAt ?? 0) - (a.activityAt ?? 0) || a.key.localeCompare(b.key))
 }
 
 export function filterMissionPickerEntries(entries: readonly MissionPickerEntry[], query: string): MissionPickerEntry[] {

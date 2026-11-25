@@ -33,7 +33,7 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
     "./instances": "export const instances = () => new Map([['instance', { client: globalThis.__missionSchedulesTest.client() }]]);",
     "./opencode-data": "export const getOpenCodeInstanceGeneration = () => globalThis.__missionSchedulesTest.generation();",
     "./session-list-restoration": "export const sessionListRestored = () => true;",
-    "./missions": "export const isMissionActivityEvent = () => false;",
+    "./missions": "export const isMissionActivityEvent = event => globalThis.__missionSchedulesTest.activityEvent?.(event) ?? false;",
   }
    if ((context.parentURL?.endsWith("/mission-schedules.ts") || context.parentURL?.endsWith("/mission-schedule-controls.ts")) && specifier === "../lib/backend-client")
      return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(sources["../lib/api-client"] + " export const backendOf = () => ({ api: serverApi });")}` }
@@ -47,6 +47,7 @@ after(() => { hooks.deregister(); delete (globalThis as any).__missionSchedulesT
 const { createRoot, createSignal, createEffect, createMemo, untrack } = await import("solid-js")
 const { useMissionSchedules, unifiedScheduleHolds: holds, unifiedScheduleHold: held, changedUnifiedScheduleHolds: bump } = await import("./mission-schedules")
 const { createMissionScheduleControls } = await import("../components/mission-schedule-controls")
+const { ACTIVITY_REFRESH_INTERVAL_MS } = await import("../lib/event-refresh-scheduler")
 const deferred = <T = void>() => {
   let resolve!: (value: T) => void, reject!: (error: unknown) => void
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
@@ -614,4 +615,64 @@ test(`a late revision-R display cannot release a publication hold after ${change
     }
     assert.equal(receiptReads, 1); assert.equal(controls, 0)
   } finally { c.dispose(); h.dispose() }
+})
+
+test("activity events do not refresh schedules when idle or belonging to an unrelated conversation", async () => {
+  const listeners = new Set<(event: any) => void>()
+  const originalOn = fixture.backendEvents.on
+  ;(fixture as any).activityEvent = (event: { type: string }) => event.type === "session.execution.started"
+  fixture.backendEvents.on = ((type: string, listener: (event: any) => void) => {
+    if (type === "instance.event") listeners.add(listener)
+    return () => { listeners.delete(listener) }
+  }) as typeof fixture.backendEvents.on
+  const { registerSessionParentLookup } = await import("./mission-activity-filter")
+  const sessionMap = new Map([
+    ["ses_chat", { parentID: null }],
+    ["ses_passage", { parentID: null }],
+    ["ses_passage_child", { parentID: "ses_passage" }],
+  ])
+  registerSessionParentLookup(id => id === "instance" ? sessionMap : undefined)
+  let listCalls = 0
+  let activePassage = false
+  // listCalls is not reactive: poll it instead of waiting on a Solid effect.
+  const settled = async (predicate: () => boolean) => {
+    for (const deadline = Date.now() + 7_000; !predicate() && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, 25))
+    assert.ok(predicate(), "schedule list read settled")
+  }
+  const h = setup(false)
+  try {
+    fixture.list = async () => {
+      listCalls++
+      const doc = activePassage
+        ? { ...running, pendingPassage: { id: "psg_1", missionID: "msn_1", coordinatorSessionID: "ses_passage", admittedAt: 100, createdAt: 90, dueAt: 80 } }
+        : { ...running, pendingPassage: null }
+      return { version: 1, projectID: "project", schedules: [doc] }
+    }
+    h.store.refresh()
+    await settled(() => listCalls >= 1 && !h.store.loading())
+    const idleCount = listCalls
+    // Idle schedule (no pendingPassage): activity event triggers zero reads.
+    for (const emit of listeners) emit({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: { sessionID: "ses_chat" } } })
+    await new Promise(resolve => setTimeout(resolve, ACTIVITY_REFRESH_INTERVAL_MS + 500))
+    assert.equal(listCalls, idleCount, "no activity refresh when no schedule has pendingPassage")
+
+    // Active native pendingPassage: unrelated root conversation triggers zero reads.
+    activePassage = true
+    h.store.refresh()
+    await settled(() => listCalls > idleCount && !h.store.loading())
+    const activeCount = listCalls
+    for (const emit of listeners) emit({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: { sessionID: "ses_chat" } } })
+    await new Promise(resolve => setTimeout(resolve, ACTIVITY_REFRESH_INTERVAL_MS + 500))
+    assert.equal(listCalls, activeCount, "unrelated root session does not refresh active native schedule")
+
+    // Child of the active passage's coordinator DOES trigger a refresh.
+    for (const emit of listeners) emit({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: { sessionID: "ses_passage_child" } } })
+    for (const deadline = Date.now() + ACTIVITY_REFRESH_INTERVAL_MS + 2_000; listCalls <= activeCount && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, 25))
+    assert.ok(listCalls > activeCount, "descendant of pendingPassage coordinator refreshes schedule")
+  } finally {
+    h.dispose()
+    registerSessionParentLookup(undefined)
+    delete (fixture as any).activityEvent
+    fixture.backendEvents.on = originalOn
+  }
 })

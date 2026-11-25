@@ -102,7 +102,7 @@ Events at the beginning can launch a passage on each new occurrence; trigger eve
 
 You can ask an agent to prepare the schedule using its current root conversation. Passages wait for the conversation to be idle.
 
-Select a schedule to read its state, next wake or check, launched and successful passage counts, and **Past runs**. The history retains 30 results; lifetime counts remain. **Run now** counts as a launched passage once admitted.
+Expand a schedule's chevron to read its state, next wake or check, launched and successful passage counts, and **Past runs**; select the row for its header actions. The history retains 30 results; lifetime counts remain. **Run now** counts as a launched passage once admitted.
 
 A saved policy that the editor cannot represent stays under **Stored scheduling policy** until you explicitly replace it. Review any retained end or launch limit before editing.
 
@@ -114,11 +114,11 @@ Choose **New commits on a local branch** to watch a local Git ref, or **New comm
 
 Agents can find and control these schedules from any conversation belonging to the same project, including another worktree.
 
-Existing daily entries keep their own controls and saved time zone. After a service restart they show **Interrupted** and require **Resume**. They catch up the latest eligible day rather than running every missed day. Read their retained results through the selected entry.
+Existing daily entries keep their own controls and saved time zone. After a service restart they show **Interrupted** and require **Resume**. They catch up the latest eligible day rather than running every missed day. Expand the entry to read its retained results.
 
 ## Follow the tree and read results {#tracking}
 
-The chevron expands or collapses a Mission's tasks. Clicking a row selects the Mission or task; actions for that selection stay in the header. A Mission without tasks has no chevron. **Filter missions** filters the loaded directory.
+One-time and scheduled Missions share one list ordered by most recent activity. The chevron expands or collapses a Mission's tasks or a schedule's details and current run without changing selection. Clicking a row selects the Mission, schedule or task; actions for that selection stay in the header. A Mission without tasks has no chevron. **Filter missions** filters the loaded directory.
 
 The eye toggles **Summary** in the central reader and follows your selection while pressed. Use **Open conversation** to go to the coordinator or selected task. **More actions** (⋯) contains the applicable update, interruption, save-configuration and edit commands.
 

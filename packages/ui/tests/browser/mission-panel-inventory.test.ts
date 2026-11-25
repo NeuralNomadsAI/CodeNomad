@@ -457,7 +457,9 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
     // Exercise the same event dispatcher as live plugin invalidations, not a
     // manually animated spinner or a substitute test component.
     await f.page.evaluate(() => (window as any).missionFixture.refresh())
-    await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').waitFor()
+    await f.page.waitForFunction(() => (window as any).inventoryStore.reading("fixture"))
+    assert.equal(await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').count(), 0,
+      "passive background revalidation never spins the manual refresh button")
     assert.deepEqual(await geometry(), before)
     assert.deepEqual(await buttons(), labels)
     assert.equal(await stableNode.evaluate((current, old) => current === old, node), true)
@@ -479,19 +481,27 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
   } finally { release?.(); await f.close() }
 })
 
-test("a schedule-only background read uses the same top-right indicator after panel reads settle", async () => {
+test("passive schedule background reads do not spin the refresh button, while an explicit refresh click does", async () => {
   const f = await open()
-  let release!: () => void
+  let release!: () => void, scheduleRequested!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
+  const started = new Promise<void>(resolve => { scheduleRequested = resolve })
   try {
     await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
-    await f.page.route("**/missions/scheduled?**", async route => { await gate; return route.fallback() })
+    await f.page.route("**/missions/scheduled?**", async route => { scheduleRequested(); await gate; return route.fallback() })
     await f.page.evaluate(() => (window as any).missionFixture.refresh())
+    await started
     const spinner = f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin')
-    await spinner.waitFor()
     await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
-    assert.equal(await spinner.isVisible(), true)
+    assert.equal(await spinner.count(), 0, "passive schedule read does not spin the refresh button")
     release()
+    await f.page.unroute("**/missions/scheduled?**")
+    let releaseManual!: () => void
+    const manualGate = new Promise<void>(resolve => { releaseManual = resolve })
+    await f.page.route("**/missions/panel-page", async route => { await manualGate; return route.fallback() })
+    await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"]').click()
+    await spinner.waitFor()
+    releaseManual()
     await spinner.waitFor({ state: "detached" })
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { release?.(); await f.close() }
@@ -502,7 +512,7 @@ test("a native refresh straddling header and task revisions keeps the selected d
   let release!: () => void, entered!: () => void, headers = 0, skew = true
   const gate = new Promise<void>(resolve => { release = resolve }), retry = new Promise<void>(resolve => { entered = resolve })
   try {
-    await f.page.evaluate(async id => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { selected: id }), id)
+    await f.page.evaluate(async id => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { selected: id, expanded: [`mission:${id}`] }), id)
     await showSelection(f.page)
     await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
     const node = await f.page.locator(".mission-detail").elementHandle()

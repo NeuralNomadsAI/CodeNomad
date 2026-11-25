@@ -54,17 +54,21 @@ export function retryMissionTarget(values: readonly MissionTargetValue[]): void 
  * An input that changed since starts it again from the newest map (refreshed once if the
  * shown one has not caught up), at most `MAX_BRIEF_RESTARTS` times; then, or when a refresh
  * brings no newer map, it is `changed` until `retry` starts again from the current map. */
-export function useRecordedBriefInputs(props: { instanceId: () => string; mission: () => MissionPanelMap; open: () => boolean; refresh: () => Promise<void> }) {
+export function useRecordedBriefInputs(props: { instanceId: () => string; mission: () => MissionPanelMap | undefined; open: () => boolean; refresh: () => Promise<void> }) {
   const [target, setTarget] = createSignal<MissionPanelMap>()
   const [restarts, setRestarts] = createSignal(0)
   const [refreshed, setRefreshed] = createSignal<{ target: MissionPanelMap; settled: boolean }>()
   const begin = () => { setRestarts(0); setRefreshed(undefined); setTarget(props.open() ? props.mission() : undefined) }
   createEffect(on(props.open, () => untrack(begin)))
+  createEffect(() => {
+    const newest = props.mission()
+    if (props.open() && !untrack(target) && newest) setTarget(newest)
+  })
   const objective = useTargetBody(props.instanceId, target, "objective"), notes = useTargetBody(props.instanceId, target, "notes")
   const inputs = () => [objective(), notes()]
   createEffect(() => {
     const current = target(), newest = props.mission()
-    if (!current || missionTargetState(inputs()) !== "changed" || untrack(restarts) >= MAX_BRIEF_RESTARTS) return
+    if (!current || !newest || missionTargetState(inputs()) !== "changed" || untrack(restarts) >= MAX_BRIEF_RESTARTS) return
     if (newest.revision > current.revision) { setRestarts(count => count + 1); setTarget(newest); return }
     if (untrack(refreshed)?.target === current) return
     setRestarts(count => count + 1)
@@ -72,9 +76,9 @@ export function useRecordedBriefInputs(props: { instanceId: () => string; missio
     void untrack(props.refresh).finally(() => { if (refreshed()?.target === current) setRefreshed({ target: current, settled: true }) })
   })
   const state = () => {
-    const value = missionTargetState(inputs()), current = target()
+    const value = missionTargetState(inputs()), current = target(), newest = props.mission()
     if (value !== "changed" || !current) return value
-    const stalled = refreshed()?.target === current && refreshed()!.settled && props.mission().revision <= current.revision
+    const stalled = refreshed()?.target === current && refreshed()!.settled && (newest?.revision ?? 0) <= current.revision
     return restarts() >= MAX_BRIEF_RESTARTS || stalled ? "changed" : "reading"
   }
   return {

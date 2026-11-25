@@ -4,7 +4,7 @@ import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { MissionActionBar } from "./mission-action-bar"
-import { missionMarkStateKey, scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
+import { missionMarkStateKey, recurrenceScheduleActivityAt, scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 import type { MissionControlRetry, MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
 import { markScheduleSuccessSeen, missionProjectView, scheduleSuccessSeen, seedScheduleSuccessSeen, navigateMissionProjectView } from "../stores/mission-view-state"
@@ -219,8 +219,12 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
 /** Recurring schedules: picker entries for the shared mission list, and the
  * selected schedule's detail (actions, notice, current passage, past runs). */
 export function createMissionRecurrenceList(props: { instanceId: string; projectID?: string; scope: string; active: () => boolean; refresh: number;
-  selectedSchedule?: string; onRead?: (restoreChat?: boolean) => void; detailId: string
+  selectedSchedule?: string; expanded?: boolean; onRead?: (restoreChat?: boolean) => void; detailId: string
   tracking?: JSX.Element
+  livePassageUpdatedAt?: (id: string) => number | undefined
+  pendingSessionUpdatedAt?: (sessionId: string) => number | undefined
+  previewTracking?: (id: string) => JSX.Element
+  onOpenPendingConversation?: (scheduleId: string, sessionId: string) => void
   /** The admitted passage, when one is tracked: its overview reader and coordinator conversation. */
   passage?: { reading: boolean; onToggle: () => void; onOpenConversation: () => void }
   registerRetry?: (retry: MissionControlRetry) => () => void
@@ -288,6 +292,8 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       || scheduleSuccessSeen(seenScope(), "daily", schedule.id, schedule.latestResult.passageID), !error() && !held)
     const stateKey = missionMarkStateKey(mark)
     return { key: `schedule:${schedule.id}`, title: schedule.title, mark,
+      activityAt: recurrenceScheduleActivityAt(schedule, props.livePassageUpdatedAt?.(schedule.id),
+        schedule.pending?.conversationID ? props.pendingSessionUpdatedAt?.(schedule.pending.conversationID) : undefined),
       status: [t("missionsPanel.dailyBadge"), mark === "unconfirmed" && (schedule.state === "paused" || schedule.state === "stopped") ? state : "",
         stateKey ? t(stateKey) : state, mark === "permission" ? t("missionsPanel.task.input") : "", next, text.every(schedule)]
         .filter(Boolean).join(" · ") }
@@ -306,26 +312,42 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
         refresh: () => setRevision(value => value + 1) })
       const unregister = props.registerRetry?.(controls.retry)
       onCleanup(() => unregister?.())
+      const openConversation = () => props.passage?.onOpenConversation
+        ?? (schedule().pending?.conversationID && props.onOpenPendingConversation
+          ? () => props.onOpenPendingConversation!(schedule().id, schedule().pending!.conversationID!) : undefined)
       return <section id={props.detailId} class="mission-detail mission-schedule-detail" aria-label={schedule().title}>
         {/* A running passage's summary opens what is happening now; otherwise the schedule reader. */}
         <MissionActionBar label={t("missionsPanel.picker.actions")}
           reading={props.passage ? props.passage.reading : reading(schedule().id)}
           onToggleReader={() => props.passage ? props.passage.onToggle() : read(schedule().id)}
-          primary={controls.primary()} stop={controls.stop()} onOpenConversation={props.passage?.onOpenConversation}
+          primary={controls.primary()} stop={controls.stop()} onOpenConversation={openConversation()}
           runNow={controls.runNow()} feedback={controls.feedback} secondary={controls.secondary()} />
-        <Show when={notice(schedule())}>{key => <p class="mission-schedule-notice" role="status">{t(key())}</p>}</Show>
-        <Show when={schedule().lastError}>{failure => <p class="mission-control-stale" role="status">
-          {t("missions.recurrence.lastError", { time: date(schedule(), failure().at) })}</p>}</Show>
-        {props.tracking}
-        {pastRuns(schedule())}
+        <Show when={props.expanded !== false}>
+          <Show when={notice(schedule())}>{key => <p class="mission-schedule-notice" role="status">{t(key())}</p>}</Show>
+          <Show when={schedule().lastError}>{failure => <p class="mission-control-stale" role="status">
+            {t("missions.recurrence.lastError", { time: date(schedule(), failure().at) })}</p>}</Show>
+          {props.tracking}
+          {pastRuns(schedule())}
+        </Show>
       </section>
     }}</Show>
   </>
+  const preview = (id: string) => <Show when={snapshot()?.schedules.find(item => item.id === id)}>{schedule =>
+    <section class="mission-detail mission-schedule-detail mission-schedule-preview" aria-label={schedule().title}>
+      <Show when={notice(schedule())}>{key => <p class="mission-schedule-notice" role="status">{t(key())}</p>}</Show>
+      <Show when={schedule().lastError}>{failure => <p class="mission-control-stale" role="status">
+        {t("missions.recurrence.lastError", { time: date(schedule(), failure().at) })}</p>}</Show>
+      <Show when={schedule().pending}>{props.previewTracking?.(id)}</Show>
+      {pastRuns(schedule())}
+    </section>
+  }</Show>
+  const ownsPendingSession = (scheduleId: string, sessionId: string) =>
+    Boolean(snapshot()?.schedules.some(item => item.id === scheduleId && item.pending?.conversationID === sessionId))
   const markRead = (key: string) => {
     const schedule = snapshot()?.schedules.find(item => key === `schedule:${item.id}`), result = schedule?.latestResult
     const scope = seenScope()
     return schedule && result?.outcome === "completed" && !scheduleSuccessSeen(scope, "daily", schedule.id, result.passageID)
       ? () => markScheduleSuccessSeen(scope, "daily", schedule.id, result.passageID) : undefined
   }
-  return { entries, view, listView, loading, markRead }
+  return { entries, view, preview, listView, loading, markRead, ownsPendingSession }
 }

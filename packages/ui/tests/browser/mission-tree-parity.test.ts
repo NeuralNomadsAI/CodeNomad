@@ -189,12 +189,13 @@ test("a click only selects; the chevron alone expands and collapses a row", asyn
     assert.equal(await (await inlineMissionEntry(page, AUDIT)).getAttribute("aria-current"), null)
     assert.equal(await entry.getAttribute("aria-current"), "true")
 
-    // An unselected schedule's children are its selected detail: its chevron selects and expands it.
+    // An unselected schedule's chevron previews its content without stealing selection.
     const nightly = await inlineMissionEntry(page, SCHEDULE)
     await chevron(page, SCHEDULE).click()
-    await attribute(nightly, "aria-current", "true")
     await attribute(chevron(page, SCHEDULE), "aria-expanded", "true")
-    await page.locator(".mission-schedule-detail").waitFor()
+    assert.equal(await nightly.getAttribute("aria-current"), null, "a schedule chevron never steals selection")
+    assert.equal(await entry.getAttribute("aria-current"), "true")
+    await page.locator(".mission-schedule-preview").waitFor()
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

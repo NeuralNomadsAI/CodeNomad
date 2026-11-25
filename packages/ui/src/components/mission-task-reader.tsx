@@ -113,7 +113,7 @@ export function MissionTaskReader(props: {
         <Show when={allHistory() && !wholeHistory.settled()}>
           <MissionBodyPending failed={wholeHistory.failed()} onRetry={wholeHistory.retry} /></Show>
         <For each={history().map(report => report.id)}>{id => {
-          const report = () => history().find(report => report.id === id)!
+          const report = createMemo<MissionPanelReport>(previous => history().find(report => report.id === id) ?? previous!)
           const [open, setOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => `report:${id}`)
           const [details, setDetails] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => `report:${id}:technical`)
           return <details open={open()} onToggle={event => setOpen(event.currentTarget.open)}>

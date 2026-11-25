@@ -114,7 +114,7 @@ export function MissionRows(props: {
             markReadLabel={t("sessionList.expand.markRead")} markReadDisabled={!markRead()}
             onMarkRead={() => markRead()?.()} onOpenChange={open => { if (open) setMarkRead(() => props.markRead?.(key)) }}
             onToggle={() => {
-              // A schedule's children are its selected detail: expanding one selects it.
+              // Expanding a row whose preview is supported keeps the current selection intact.
               if (!isSelected() && !props.expandable?.(key)) props.onSelect(entry())
               setOpen(key, !open())
             }} />

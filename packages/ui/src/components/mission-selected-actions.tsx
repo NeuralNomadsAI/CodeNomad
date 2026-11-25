@@ -1,4 +1,4 @@
-import { Show, createSignal, onCleanup } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack } from "solid-js"
 import { MissionTaskActions, type MissionTaskSelection } from "./mission-task-actions"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionActorActivityState } from "../../../server/src/api-types"
@@ -31,6 +31,8 @@ export function MissionSelectedActions(props: {
    task?: MissionTaskSelection; taskPending?: boolean; taskReading?: boolean; onToggleTask?: () => void; onOpenTask?: (sessionId: string) => void
   /** Unfolds the selection's detail, where Save as brief opens its name field. */
   onRevealDetail?: () => void
+  /** False while backed only by a terminal summary row; Save as brief then demands the header. */
+  headerLoaded?: boolean
 }) {
   const { t } = useI18n()
   const lifecycle = createMissionLifecycle({ get instanceId() { return props.instanceId }, get mission() { return props.mission },
@@ -58,9 +60,17 @@ export function MissionSelectedActions(props: {
   // state (full wording as tooltip) and never resends automatically.
   // Save as brief saves the recorded inputs of the one snapshot shown when its name field opens.
   const [briefOpen, setBriefOpen] = createSignal(false)
+  const briefWantOwner = `brief:${createUniqueId()}`
+  const missionId = createMemo(() => props.mission.id)
+  createEffect(() => {
+    const instanceId = props.instanceId, id = missionId()
+    if (!briefOpen()) return
+    untrack(() => missionStore.want(instanceId, briefWantOwner, id, false, undefined, false))
+    onCleanup(() => missionStore.want(instanceId, briefWantOwner, undefined))
+  })
   // The overflow menu's Save as brief opens the name field shown in the detail.
   const [briefTrigger, setBriefTrigger] = createSignal<MissionBriefSaveTrigger>()
-  const brief = useRecordedBriefInputs({ instanceId: () => props.instanceId, mission: () => props.mission, open: briefOpen,
+  const brief = useRecordedBriefInputs({ instanceId: () => props.instanceId, mission: () => props.headerLoaded !== false ? props.mission : undefined, open: briefOpen,
     refresh: () => missionStore.refresh(props.instanceId) })
   const recordedBrief = () => {
     const inputs = brief.values()

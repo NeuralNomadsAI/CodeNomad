@@ -11,6 +11,7 @@ import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { sessionListRestored } from "./session-list-restoration"
 import { isMissionActivityEvent } from "./missions"
+import { isUnrelatedSessionEvent, knownSessionsForInstance } from "./mission-activity-filter"
 
 export type UnifiedMissionSchedule = NonNullable<MissionScheduleRead["document"]>
 export type UnifiedScheduleAction = Parameters<ServerApi["controlMissionSchedule"]>[2]["action"]
@@ -138,7 +139,15 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
   const event = serverEvents.on("instance.event", value => {
     if (value.type !== "instance.event" || value.instanceId !== props.instanceId()) return
     if (value.event.type.startsWith("rpc.codenomad.missions.") || value.event.type === "plugin.updated") schedule()
-    else if (isMissionActivityEvent(value.event)) schedule("activity")
+    else if (isMissionActivityEvent(value.event)) {
+      const active = snapshot().filter(doc => doc.pendingPassage)
+      if (active.length === 0) return
+      if (active.every(doc => doc.configuration.taskMode === "native")) {
+        const roots = new Set(active.map(doc => doc.pendingPassage!.coordinatorSessionID))
+        if (isUnrelatedSessionEvent(value.event, roots, knownSessionsForInstance(props.instanceId()))) return
+      }
+      schedule("activity")
+    }
   })
   const reconnect = serverEvents.on("instance.eventStatus", value => {
     if (value.type === "instance.eventStatus" && value.instanceId === props.instanceId() && value.status === "connected") schedule()

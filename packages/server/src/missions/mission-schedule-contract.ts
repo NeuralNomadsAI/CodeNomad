@@ -103,7 +103,7 @@ const summary = { ...missionDocumentSummaryWire, properties: { ...missionDocumen
   oneShotAt: { type: ["integer", "null"], minimum: 0 }, slotEndsAt: { type: ["integer", "null"], minimum: 0 }, successfulCount: counter,
   checks: { type: ["object", "null"], properties: { count: counter, since: counter }, required: ["count", "since"], additionalProperties: false },
   pendingPassage: { type: ["object", "null"], properties: { id: text, missionID: text, coordinatorSessionID: text,
-    admittedAt: { type: ["integer", "null"], minimum: 0 } }, required: ["id", "missionID", "coordinatorSessionID", "admittedAt"], additionalProperties: false },
+    admittedAt: { type: ["integer", "null"], minimum: 0 }, createdAt: counter, dueAt: counter }, required: ["id", "missionID", "coordinatorSessionID", "admittedAt"], additionalProperties: false },
   latestResult: { ...missionScheduleHistoryWire, type: ["object", "null"] },
   history: { type: "array", maxItems: 30, items: missionScheduleHistoryWire },
   id: text, configuration: missionConfigurationWire, remaining: { type: ["integer", "null"], minimum: 0 },

@@ -609,3 +609,63 @@ for (const status of [200, 503]) test(`actual inventory API releases deferred ${
     globalThis.fetch = original; clearTimeout(keepAlive)
   }
 })
+
+test("header-only want skips task and activity reads until upgraded to detail, and passive refresh awaits marks settlement", async () => {
+  const f = seeded(120, 2)
+  const seenSelectors: Array<{ source: string; header?: boolean }> = []
+  let taskCalls = 0, releaseMarks!: () => void, marksStarted!: () => void
+  const marksGate = new Promise<void>(resolve => { releaseMarks = resolve })
+  const marksReached = new Promise<void>(resolve => { marksStarted = resolve })
+  let holdMarks = false
+  const store = createMissionPanelInventory({
+    scope: () => "header-only-and-marks",
+    tasks: async (_instance, id, request, scope) => { taskCalls++; return readMissionTaskPage(id, request, { ...scope, exchange: f.exchange }) },
+    read: async (_instance, selector, scope) => {
+      seenSelectors.push({ source: selector.source, header: selector.source === "mission" ? selector.header : undefined })
+      if (selector.source === "marks") {
+        if (holdMarks) { marksStarted(); await marksGate }
+        return Promise.reject(new Error("Native unknown"))
+      }
+      if (selector.source === "activity") return Promise.reject(new Error("Native unknown"))
+      return readMissionPanelWindow(selector, { ...scope, runTransfer: read => read(), exchange: f.exchange })
+    },
+  })
+  try {
+    store.setDemand("fixture", true)
+    await store.ensure("fixture")
+    seenSelectors.length = 0; taskCalls = 0
+    // Header-only want fetches ONLY header, zero tasks and zero activity.
+    const settled = async (predicate: () => boolean) => {
+      for (const deadline = Date.now() + 5_000; !predicate() && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    const selected = () => store.state("fixture").missions.find(m => m.id === "msn_119")
+    store.want("fixture", "selection", "msn_119", false, undefined, false)
+    await settled(() => Boolean(selected()))
+    assert.equal(seenSelectors.filter(s => s.source === "mission" && s.header).length, 1)
+    assert.equal(seenSelectors.filter(s => s.source === "activity").length, 0)
+    assert.equal(taskCalls, 0)
+    assert.equal(store.state("fixture").missions.find(m => m.id === "msn_119")?.id, "msn_119")
+    assert.equal(store.state("fixture").missions.find(m => m.id === "msn_119")?.tasks.length, 0)
+
+    // Upgrading to detail=true loads tasks and activity.
+    store.want("fixture", "selection", "msn_119", false, undefined, true)
+    await settled(() => selected()?.tasks.length === 2 && seenSelectors.some(s => s.source === "activity"))
+    assert.ok(taskCalls >= 1, "upgrading to detail loads task page")
+    assert.ok(seenSelectors.some(s => s.source === "activity"), "upgrading to detail starts activity observation")
+    assert.equal(store.state("fixture").missions.find(m => m.id === "msn_119")?.tasks.length, 2)
+
+    // Passive refresh (explicit=false) awaits marks settlement while summaries still publish immediately.
+    holdMarks = true
+    let passiveSettled = false
+    const passive = store.refresh("fixture", false).then(() => { passiveSettled = true })
+    await marksReached
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(passiveSettled, false, "passive refresh does not settle before marks completes")
+    releaseMarks()
+    await passive
+    assert.equal(passiveSettled, true)
+  } finally {
+    releaseMarks?.()
+    store.clear("fixture")
+  }
+})

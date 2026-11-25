@@ -23,8 +23,8 @@ interface Lane { pages: Map<number, Page>; loading: boolean; cycle: number; fail
   inventoryRows?: Map<string, { value: unknown; revision: number; serial: number; epoch: number }> }
 interface Entry {
   attachment?: AbortSignal
-  controller: AbortController; epoch: number; owners: Map<string, { id: string; reader: boolean }>; panel: boolean
-  maps: Map<string, { header: PanelHeader; map: MissionPanelMap; epoch: number }>; lanes: Map<string, Lane>; projectID?: string; baseline?: number; seeded?: boolean
+  controller: AbortController; epoch: number; owners: Map<string, { id: string; reader: boolean; detail: boolean }>; panel: boolean
+  maps: Map<string, { header: PanelHeader; map: MissionPanelMap; epoch: number; tasksLoaded: boolean }>; lanes: Map<string, Lane>; projectID?: string; baseline?: number; seeded?: boolean
   missionOwners: Map<string, AbortController>
   refreshDeadline?: number
   headerReads: Map<string, { owner: AbortController; promise: Promise<void>; trailing: boolean; current(): boolean }>
@@ -349,13 +349,15 @@ export function createMissionPanelInventory(input: {
     if (answer.values.length !== 1) throw new MissionTaskPageReadError("invalid")
     const header = panelHeaderSchema.parse(answer.values[0])
     if (header.root.id !== id || header.root.projectID !== own.projectID || header.root.revision !== answer.envelope.revision) throw new MissionTaskPageReadError("invalid")
-    const previous = own.maps.get(id)
+    const previous = own.maps.get(id), full = [...own.owners.values()].some(owner => owner.id === id && owner.detail)
     let map: MissionPanelMap = { ...header.root, actors: header.coordinator ? [header.coordinator] : [], tasks: [], reports: [], history: [], panelControl: header.control,
       ...(input.passage ? { panelPassage: input.passage } : {}),
       panelCollections: header.collections } as MissionPanelMap
-    if (previous?.header.tasks.version === header.tasks.version && JSON.stringify(previous.header.tasks.pins) === JSON.stringify(header.tasks.pins)) {
+    let tasksLoaded = false
+    if (previous?.tasksLoaded && previous.header.tasks.version === header.tasks.version && JSON.stringify(previous.header.tasks.pins) === JSON.stringify(header.tasks.pins)) {
       map = { ...map, tasks: previous.map.tasks, reports: previous.map.reports, taskPage: header.tasks.page }
-    } else if (header.tasks.page.total || header.tasks.reportPins.length) {
+      tasksLoaded = true
+    } else if (full && (header.tasks.page.total || header.tasks.reportPins.length)) {
       const tasks = await input.tasks(instanceId, id, { offset: 0 }, { ...life, projectID: own.projectID!, signal: life.signal!, deadline: life.deadline! })
       if (!life.current()) throw new DOMException("Obsolete task owner", "AbortError")
       if (!tasks.available || !("tasks" in tasks)) throw new MissionTaskPageReadError("unavailable")
@@ -368,7 +370,11 @@ export function createMissionPanelInventory(input: {
         if (pins.revision !== header.root.revision) return
         map = { ...map, tasks: [...map.tasks, ...pins.tasks], reports: [...new Map([...map.reports, ...pins.reports].map(report => [report.id, report])).values()] }
       }
-    } else map.taskPage = header.tasks.page
+      tasksLoaded = true
+    } else {
+      map.taskPage = header.tasks.page
+      tasksLoaded = full
+    }
     assertTaskReadLive(life.signal, life.deadline)
     if (!life.current()) throw new DOMException("Obsolete mission owner", "AbortError")
     for (const target of own.lanes.values()) if (target.field?.missionID === id && target.field.field) {
@@ -380,9 +386,9 @@ export function createMissionPanelInventory(input: {
     }
     // The selected source alone observes actor roots. Additional windows are explicit.
     recordMissionTaskSource(map, header.tasks.version)
-    own.maps.set(id, { header, map, epoch: own.epoch })
+    own.maps.set(id, { header, map, epoch: own.epoch, tasksLoaded })
     own.projection = undefined
-    void readLane(instanceId, `activity:${id}`, { source: "activity", missionID: id }, life, false, true).catch(() => {})
+    if (full) void readLane(instanceId, `activity:${id}`, { source: "activity", missionID: id }, life, false, true).catch(() => {})
     return map
   }
   const base = createMissionStore(async (instanceId, request, signal): Promise<MissionDisplayResponse> => {
@@ -398,7 +404,10 @@ export function createMissionPanelInventory(input: {
     const maps = [...own.maps.values()].filter(value => wanted.has(value.map.id)).map(value => value.map)
     if (!life.current()) throw new DOMException("Obsolete panel read", "AbortError")
     assertTaskReadLive(life.signal, life.deadline)
-    if (own.panel && !input.passage) void readLane(instanceId, "marks", { source: "marks", missionOffset: 0 }, life, false, true).catch(() => {})
+    if (own.panel && !input.passage) {
+      if (values(own, "summaries").length > 0) void readLane(instanceId, "marks", { source: "marks", missionOffset: 0 }, life, false, true).catch(() => {})
+      else own.lanes.delete("marks")
+    }
     const summaries = summaryRows(own, maps)
     return { available: true, version: 1, projectID: own.projectID!, generatedAt: Date.now(), discardedEvents: 0, missions: maps, summaries, panelDeadline: life.deadline, panelCurrent: life.current,
       activity: activity(own), cleanups: values(own, "cleanups") as NonNullable<Extract<MissionListResponse, { available: true }>["cleanups"]>,
@@ -483,10 +492,25 @@ export function createMissionPanelInventory(input: {
     own.headerReads.set(id, job); job.promise = Promise.resolve().then(run); setVersion(value => value + 1)
     return job.promise
   }
+  const waitForPendingObservations = async (own: Entry, signal?: AbortSignal) => {
+    const seen = new Set<Promise<void>>()
+    while (!signal?.aborted && !own.controller.signal.aborted) {
+      const pending = [...own.lanes.entries()]
+        .filter(([key, target]) => (key === "marks" || key.startsWith("activity:")) && target.pending && !seen.has(target.pending))
+        .map(([, target]) => target.pending!)
+      if (pending.length === 0) break
+      for (const promise of pending) seen.add(promise)
+      const stop = signal ? AbortSignal.any([own.controller.signal, signal]) : own.controller.signal
+      await raceTaskRead(Promise.allSettled(pending), stop).catch(() => {})
+    }
+  }
   const refresh = async (instanceId: string, initial = false, explicit = true, signal = input.signal?.(instanceId)) => {
     if (signal?.aborted) return
     const own = entry(instanceId), deadline = own.refreshDeadline ??= performance.now() + TASK_READ_TIMEOUT_MS
-    try { await Promise.all([initial ? base.ensure(instanceId, signal) : base.refresh(instanceId, signal), ...[...new Set([...own.owners.values()].filter(owner => own.panel || owner.reader).map(owner => owner.id))].map(id => refreshMap(instanceId, id, explicit, initial, signal))]) }
+    try {
+      await Promise.all([initial ? base.ensure(instanceId, signal) : base.refresh(instanceId, signal), ...[...new Set([...own.owners.values()].filter(owner => own.panel || owner.reader).map(owner => owner.id))].map(id => refreshMap(instanceId, id, explicit, initial, signal))])
+      if (!explicit) await waitForPendingObservations(own, signal)
+    }
     finally { if (own.refreshDeadline === deadline) own.refreshDeadline = undefined }
   }
   const mergeField = <T>(own: Entry, map: MissionPanelMap, field: string, baseRows: T[], key: (row: T) => string | number): T[] => {
@@ -528,6 +552,7 @@ export function createMissionPanelInventory(input: {
     refresh: (instanceId: string, explicit = true, signal?: AbortSignal) => refresh(instanceId, false, explicit, signal),
     ensure: (instanceId: string, signal?: AbortSignal) => refresh(instanceId, true, false, signal),
     mapMissing: (instanceId: string, id: string) => { version(); return entries.get(instanceId)?.missing.has(id) ?? false },
+    tasksLoaded: (instanceId: string, id: string) => { version(); return entries.get(instanceId)?.maps.get(id)?.tasksLoaded ?? false },
     fieldValues: (instanceId: string, id: string, field: string): unknown[] => { version(); const own = entries.get(instanceId); return own ? values(own, `field:${id}:${field}`) : [] },
     fieldText: (instanceId: string, id: string, field: string, page: number): string | undefined => {
       version(); return entries.get(instanceId)?.lanes.get(`text:${id}:${field}`)?.pages.get(page)?.values[0] as string | undefined
@@ -556,20 +581,26 @@ export function createMissionPanelInventory(input: {
       base.setDemand(instanceId, demanded)
       if (own.epoch !== epoch) changed(own)
     },
-    want: (instanceId: string, owner: string, id: string | undefined, reader = false, signal = input.signal?.(instanceId)) => untrack(() => {
-      const own = entry(instanceId), old = own.owners.get(owner)?.id, alreadyWanted = id !== undefined && [...own.owners.values()].some(value => value.id === id)
-      if (old !== id) own.projection = undefined
-      if (id) own.owners.set(owner, { id, reader }); else own.owners.delete(owner)
+    want: (instanceId: string, owner: string, id: string | undefined, reader = false, signal = input.signal?.(instanceId), detail = true) => untrack(() => {
+      const own = entry(instanceId), previous = own.owners.get(owner), old = previous?.id
+      const alreadyWanted = id !== undefined && [...own.owners.values()].some(value => value.id === id)
+      const hadDetail = id !== undefined && [...own.owners.values()].some(value => value.id === id && value.detail)
+      const oldHadDetail = old !== undefined && [...own.owners.values()].some(value => value.id === old && value.detail)
+      if (old !== id || previous?.detail !== detail) own.projection = undefined
+      if (id) own.owners.set(owner, { id, reader, detail }); else own.owners.delete(owner)
       if (old && old !== id && ![...own.owners.values()].some(item => item.id === old)) {
         own.missionOwners.get(old)?.abort(); own.missionOwners.delete(old)
         own.headerErrors.delete(old); own.missing.delete(old)
         for (const key of own.lanes.keys()) if (key === `activity:${old}` || key.startsWith(`field:${old}:`) || key.startsWith(`text:${old}:`)) own.lanes.delete(key)
+      } else if (old && oldHadDetail && ![...own.owners.values()].some(item => item.id === old && item.detail)) {
+        own.lanes.delete(`activity:${old}`)
       }
       base.want(instanceId, owner, id, reader); stop(own)
       if (old !== id) publishHeaders(instanceId, own, Infinity, signal)
+      const needsUpgrade = id !== undefined && detail && !hadDetail && (!own.maps.get(id)?.tasksLoaded || !own.lanes.has(`activity:${id}`))
       if (own.controller.signal.aborted) base.setDemand(instanceId, false)
-      else if (id && !alreadyWanted && (own.panel || reader)) void refreshMap(instanceId, id, true, false, signal)
-      if (old !== id) changed(own)
+      else if (id && (!alreadyWanted || needsUpgrade) && (own.panel || reader)) void refreshMap(instanceId, id, true, false, signal)
+      if (old !== id || previous?.detail !== detail) changed(own)
     }),
     invalidateTasks: (instanceId: string) => {
       const own = entries.get(instanceId)

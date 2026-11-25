@@ -13,6 +13,7 @@ import { parseInstanceKey } from "../lib/backend-identity"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { isMissionActivityEvent, isMissionChangedEvent } from "./missions"
+import { isUnrelatedSessionEvent, knownSessionsForInstance } from "./mission-activity-filter"
 import { copyMissionProfiles } from "./mission-creation-drafts"
 import { sessionListRestored } from "./session-list-restoration"
 import { eventRefreshDue, type RefreshUrgency } from "../lib/event-refresh-scheduler"
@@ -254,7 +255,15 @@ serverEvents.on("instance.event", event => {
   for (const entry of cache.values()) {
     if (entry.instanceId !== event.instanceId) continue
     if (plugin || schedule && (!entry.scheduleID || entry.scheduleID === schedule.scheduleID) || changedJournal && entry.scheduleID) scheduleRefresh(entry)
-    else if (passage && entry.scheduleID) scheduleRefresh(entry, "activity")
+    else if (passage && entry.scheduleID) {
+      if (entry.currentSnapshot && !entry.currentSnapshot.passageID && !entry.error) continue
+      const mission = entry.currentSnapshot?.mission
+      if (mission && mission.taskMode === "native") {
+        const roots = new Set([mission.coordinatorSessionId, ...mission.actors.map(actor => actor.sessionId)])
+        if (isUnrelatedSessionEvent(event.event, roots, knownSessionsForInstance(event.instanceId))) continue
+      }
+      scheduleRefresh(entry, "activity")
+    }
   }
 })
 serverEvents.on("instance.eventStatus", event => {

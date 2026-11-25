@@ -10,7 +10,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { compactMissionMap } from "../../../server/src/missions/mission-compact-map"
 import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
 import { panelMissions, routeMissionTasks } from "./mission-content-fixture"
-import { expandRow, showSelection } from "./mission-actions"
+import { expandRow, revealMissionTask, showSelection } from "./mission-actions"
 
 // Real MissionControl with the full stylesheet: single-scroller policy on short
 // layouts, measured dependency rail endpoints and native picker key semantics.
@@ -165,6 +165,7 @@ for (const variant of [
       for (const edge of await railEnds(page)) assert.ok(edge.gaps.every(gap => gap <= 0.75), `after scroll ${edge.edge}: ${edge.gaps}`)
       // Full-width rollover and the row button stay interactive beneath the rail.
       const row = page.locator('.mission-tree-node[data-task-key="cleanup"]')
+      await revealMissionTask(row.locator(".mission-tree-task"))
       await row.scrollIntoViewIfNeeded()
       await page.waitForFunction(() => getComputedStyle(document.querySelector(".mission-tree-list")!).pointerEvents !== "none")
       const box = (await row.boundingBox())!

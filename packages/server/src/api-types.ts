@@ -71,7 +71,7 @@ export interface MissionRecurrenceSnapshot {
     lastError?: { code: "wake-failed" | "admission-failed" | "settlement-failed"; at: number }
     pending: { passageID: string; status: "starting" | "running" | "settling" | "uncertain";
       trigger?: "daily" | "manual"; reason?: "not-observed" | "admission-failing"
-      missionID?: string; conversationID?: string } | null
+      missionID?: string; conversationID?: string; createdAt?: number; dueAt?: number } | null
     actions: Array<"play" | "pause" | "stop" | "resume" | "run-now" | "check">
     controls: import("./missions/recurrence-control-contract").RecurrenceControlStatus[]
     latestResult: MissionRecurrenceReceipt | null

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { filterMissionPickerEntries, missionMark, scheduleMark, unifiedScheduleMark, type MissionPickerEntry } from "./mission-picker-model"
+import { filterMissionPickerEntries, missionMark, recurrenceScheduleActivityAt, scheduleMark, sortMissionPickerEntries, unifiedScheduleActivityAt, unifiedScheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 import type { RecurrenceSchedule } from "../stores/mission-recurrence"
 import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 
@@ -82,4 +82,53 @@ test("filter matches titles case-insensitively", () => {
   const entries = [entry("mission:a", undefined, "Release Notes"), entry("mission:b", undefined, "Bug hunt")]
   assert.deepEqual(filterMissionPickerEntries(entries, " notes ").map(item => item.key), ["mission:a"])
   assert.equal(filterMissionPickerEntries(entries, "").length, 2)
+})
+
+test("unified activity timestamps ignore future nextDueAt and sort all mission kinds together", () => {
+  const future = Date.now() + 86_400_000
+  const idleUnified = {
+    createdAt: 100, firstPlayedAt: 200, checks: { count: 1, since: 250 },
+    pendingPassage: null, latestResult: { settledAt: 300, dueAt: 290 },
+    observation: { state: "known", nativeStatus: "active", timeGeneration: 1, nextDueAt: future, wakeCount: 0, kind: "launch" },
+  } as unknown as UnifiedMissionSchedule
+  assert.equal(unifiedScheduleActivityAt(idleUnified), 300, "future nextDueAt is never used")
+
+  const activeUnified = {
+    ...idleUnified,
+    pendingPassage: { id: "psg_1", missionID: "msn_1", coordinatorSessionID: "ses_1", admittedAt: 800, createdAt: 750, dueAt: 700 },
+  } as unknown as UnifiedMissionSchedule
+  assert.equal(unifiedScheduleActivityAt(activeUnified), 800)
+  assert.equal(unifiedScheduleActivityAt(activeUnified, 950), 950, "live passage updatedAt promotes active work")
+
+  const idleDaily = {
+    id: "rec_1", revision: 1, title: "Daily", clock: { time: "09:00", zone: "UTC" }, state: "running",
+    nextDueAt: future, pending: null, latestResult: { passageID: "p1", dueAt: 350, settledAt: 400, outcome: "completed" },
+    history: [], actions: [], controls: [],
+  } as RecurrenceSchedule
+  assert.equal(recurrenceScheduleActivityAt(idleDaily), 400, "future nextDueAt is never used for daily schedules")
+
+  const activeDaily: RecurrenceSchedule = {
+    ...idleDaily,
+    pending: { passageID: "p2", status: "running", createdAt: 850, dueAt: 820, conversationID: "ses_daily" },
+  }
+  assert.equal(recurrenceScheduleActivityAt(activeDaily), 850)
+  assert.equal(recurrenceScheduleActivityAt(activeDaily, 920), 920)
+  assert.equal(recurrenceScheduleActivityAt({ ...idleDaily, pending: { passageID: "p3", status: "running", conversationID: "ses_old" } }, undefined, 880), 880)
+
+  const sorted = sortMissionPickerEntries([
+    { ...entry("mission:old"), activityAt: 500 },
+    { ...entry("scheduled:idle"), activityAt: unifiedScheduleActivityAt(idleUnified) },
+    { ...entry("schedule:active"), activityAt: recurrenceScheduleActivityAt(activeDaily) },
+    { ...entry("scheduled:active"), activityAt: unifiedScheduleActivityAt(activeUnified, 950) },
+    { ...entry("mission:tie-b"), activityAt: 500 },
+    { ...entry("mission:tie-a"), activityAt: 500 },
+  ])
+  assert.deepEqual(sorted.map(item => item.key), [
+    "scheduled:active",
+    "schedule:active",
+    "mission:old",
+    "mission:tie-a",
+    "mission:tie-b",
+    "scheduled:idle",
+  ])
 })

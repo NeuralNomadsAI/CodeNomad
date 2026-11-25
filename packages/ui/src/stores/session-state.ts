@@ -39,6 +39,7 @@ import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
 import { confirmedSessionListDirectory, getSessionPlacementEvidence } from "./session-events"
 import { resolveRestoredSessionSelection } from "./app-session-reconciliation"
 import { getSessionListView } from "./session-list-view"
+import { registerSessionParentLookup } from "./mission-activity-filter"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -70,6 +71,7 @@ export interface SessionInfo {
 
 // Published workspace maps are snapshots. Replace every changed map.
 const [sessions, setSessions] = createSignal<Map<string, Map<string, Session>>>(new Map())
+registerSessionParentLookup(instanceId => sessions().get(instanceId))
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
 // The Location authority key each instance's `agents` list was read for.

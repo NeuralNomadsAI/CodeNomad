@@ -68,6 +68,7 @@ export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurr
       ...(state === "interrupted" ? { interruptionReason: jobStatus === "error" ? "error" as const : doc.interruptionReason ?? "service-restart" } : {}),
       ...(lastError ? { lastError } : {}),
       pending: doc.pending ? { passageID: doc.pending.passage.id, status: pendingStatus, trigger: doc.pending.passage.due.kind,
+        createdAt: doc.pending.passage.createdAt, dueAt: doc.pending.passage.due.at,
         ...(pendingStatus === "uncertain" ? { reason: !doc.pending.admission && observed ? "admission-failing" as const : "not-observed" as const } : {}),
         ...(doc.pending.admission ? { missionID: doc.pending.admission.missionID, conversationID: doc.pending.admission.conversationID } : {}) } : null,
       latestResult: history.at(-1) ?? null, history, actions,

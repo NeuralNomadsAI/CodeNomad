@@ -475,6 +475,10 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     closeButton?.focus()
   })
   onCleanup(() => { disposed = true; if (root?.contains(document.activeElement) && returnFocus?.isConnected) returnFocus.focus() })
+  const taskView = createMemo(() => {
+    const current = target(), currentMission = mission(), currentTask = task()
+    return current?.kind === "task" && currentMission && currentTask ? { mission: currentMission, task: currentTask } : undefined
+  })
   const close = () => {
     const ctx = { instanceId: props.instanceId, sessionId: activeSessionId().get(props.instanceId) ?? null }
     applySurface(ctx, { kind: "conversation" })
@@ -491,7 +495,8 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       </button>
     </header>
     <div class="window-body" ref={body}>
-      <Show when={mission() && "panelCollections" in mission()!}><MissionPanelPaging instanceId={props.instanceId} lane={`activity:${mission()!.id}`} /></Show>
+      <Show when={mission() && "panelCollections" in mission()! ? mission()!.id : undefined}>{id =>
+        <MissionPanelPaging instanceId={props.instanceId} lane={`activity:${id()}`} />}</Show>
       <Show when={navigationError()}><p role="alert">{t("sessionList.reload.error")}</p></Show>
       <Show when={target()?.recurrence && currentPassage.error()}><p role="status">{t(passage() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
       <Show when={target()?.kind === "recurrence" && target()?.scheduleOwner === "scheduled"}>
@@ -511,10 +516,10 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
             schedule={schedule()} passageID={target()?.itemId}
             onSelect={passageID => navigateMissionProjectView(props.instanceId, { reader: { ...target()!, itemId: passageID } })} />}</Show>
       </Show>
-      <Show when={target()?.kind === "overview" && missionBriefed(mission())}>
-        <p class="mission-briefing-meta">{t("missions.briefing.authored")} · {new Date(mission()!.briefing!.createdAt).toLocaleString(locale())}</p>
-        <Show when={missionBriefingFreshness(mission()!).changed}><p class="mission-briefing-stale">{t("missions.briefing.changed")}</p></Show>
-      </Show>
+      <Show when={target()?.kind === "overview" && missionBriefed(mission()) ? mission() : undefined}>{briefedMission => <>
+        <p class="mission-briefing-meta">{t("missions.briefing.authored")} · {new Date(briefedMission().briefing!.createdAt).toLocaleString(locale())}</p>
+        <Show when={missionBriefingFreshness(briefedMission()).changed}><p class="mission-briefing-stale">{t("missions.briefing.changed")}</p></Show>
+      </>}</Show>
       <Show when={target()?.kind === "report" && report()?.late}><p>{t("missions.control.report.late")}</p></Show>
       <Show when={target()?.kind === "report" && previousReport() && !report()?.late}>
         <p>{t("missions.progress.previousAttempt")}</p>
@@ -523,7 +528,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         <p>{t(`missions.control.report.outcome.${value().outcome}`)}</p>
       }</Show>
       <Show when={playbook()}>{id => <MissionPlaybookReader instanceId={props.instanceId} playbook={id()} taskMode={target()?.taskMode ?? "native"} />}</Show>
-      <Show when={target()?.kind !== "recurrence" && target()?.kind === "task" && task() && mission()} fallback={
+      <Show when={taskView()} fallback={
         <Show when={target()?.kind !== "recurrence" && !playbook()}>
         <Show when={sections().length} fallback={<Show when={targetState() === "failed"} fallback={<p>{t(missionStore.state(props.instanceId).status === "loading"
           || targetState() === "loading" ? "missions.control.loading" : "missions.control.reader.missing")}</p>}>
@@ -546,12 +551,12 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         }}</For>
         </Show>
         </Show>
-      }>
-        <MissionTaskReader instanceId={props.instanceId} scope={props.scope} mission={mission()!} task={task()!}
+      }>{current =>
+        <MissionTaskReader instanceId={props.instanceId} scope={props.scope} mission={current().mission} task={current().task}
           identity={JSON.stringify([props.instanceId, props.scope, target()])}
-          activity={activity()?.missions.find(item => item.missionId === mission()?.id)?.actors.find(actor => actor.sessionId === task()?.actorSessionId)?.state}
+          activity={activity()?.missions.find(item => item.missionId === current().mission.id)?.actors.find(actor => actor.sessionId === current().task.actorSessionId)?.state}
           recurrence={target()?.recurrence} />
-      </Show>
+      }</Show>
       <Show when={target()?.kind === "overview" && mission()}>{value =>
         <MissionOverviewDetails instanceId={props.instanceId} scope={props.scope} mission={value()} recurrence={target()?.recurrence} />}</Show>
       <Show when={target()?.kind === "report" && report()}>{value => <>

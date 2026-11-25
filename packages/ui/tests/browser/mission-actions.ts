@@ -25,7 +25,7 @@ export async function clickListItemAction(row: Locator, label: string): Promise<
 }
 
 /** The selected Mission's detail: the selected row's children in the tree. */
-export const missionDetail = (page: Page) => page.locator("section.mission-detail")
+export const missionDetail = (page: Page) => page.locator("section.mission-detail:not(.mission-schedule-preview)")
 
 /** The panel header: general toolbar (create, settings, refresh), then the selection line. */
 export const missionPicker = (page: Page) => page.locator(".mission-control .mission-picker")

@@ -6,6 +6,7 @@ import { createMissionPanelInventory } from "./mission-panel-inventory"
 import { instances } from "./instances"
 import { projectScope, parseInstanceKey } from "../lib/backend-identity"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
+import { isUnrelatedSessionEvent, knownSessionsForInstance, type SessionParentInfo } from "./mission-activity-filter"
 import { createRoot, createComputed, untrack } from "solid-js"
 
 export const missionStore = createMissionPanelInventory({
@@ -71,6 +72,40 @@ export function isMissionActivityEvent(event: { type: string }): boolean {
     || event.type.startsWith("permission.")
 }
 
+export function shouldRefreshMissionActivity(
+  instanceId: string,
+  event: { type: string; data?: unknown },
+  sessionsMap: ReadonlyMap<string, SessionParentInfo> | undefined = knownSessionsForInstance(instanceId),
+): boolean {
+  const state = missionStore.state(instanceId)
+  const activeSummaries = state.summaries.filter(row => row.status === "active")
+  const activeMaps = state.missions.filter(map => map.status === "active")
+  if (activeSummaries.length === 0 && activeMaps.length === 0) return false
+  const activeIds = new Set([...activeSummaries.map(row => row.id), ...activeMaps.map(map => map.id)])
+  const relatedRoots = new Set<string>()
+  let allCovered = true
+  for (const id of activeIds) {
+    const summary = activeSummaries.find(row => row.id === id)
+    const map = activeMaps.find(item => item.id === id)
+    if (summary?.coordinatorSessionId) relatedRoots.add(summary.coordinatorSessionId)
+    if (map?.coordinatorSessionId) relatedRoots.add(map.coordinatorSessionId)
+    for (const actor of map?.actors ?? []) relatedRoots.add(actor.sessionId)
+    for (const actor of missionStore.observedActors(instanceId, id)) relatedRoots.add(actor.sessionId)
+    const marks = missionStore.markObservations(instanceId, id)
+    for (const page of marks) {
+      for (const actor of page.context.actors) relatedRoots.add(actor.sessionId)
+      for (const member of page.activity.family.members) relatedRoots.add(member.sessionId)
+    }
+    const marksCovered = marks.length > 0 && marks.every(page => page.coverage === "observed" && page.context.actorPage.end >= page.context.actorPage.total)
+    const declaredActors = summary && "actorCount" in summary && typeof summary.actorCount === "number"
+      ? summary.actorCount : summary?.actorSessionIds.length ?? 0
+    const nativeMapCovered = Boolean(map && map.taskMode === "native" && map.actors.length >= declaredActors)
+    if (!marksCovered && !nativeMapCovered) allCovered = false
+  }
+  if (allCovered && isUnrelatedSessionEvent(event, relatedRoots, sessionsMap)) return false
+  return true
+}
+
 function scheduleRefresh(instanceId: string, urgency: RefreshUrgency): void {
   if (missionStore.demandedInstanceIds().includes(instanceId)) refreshes.schedule(instanceId, urgency, captureBackendOperation(instanceId).signal)
 }
@@ -79,7 +114,8 @@ serverEvents.on("instance.event", (event) => {
   if (event.type !== "instance.event") return
   const urgent = isMissionChangedEvent(event.event) || event.event.type === "plugin.updated"
   if (event.event.type === "plugin.updated") missionStore.invalidateTasks(event.instanceId)
-  if (urgent || isMissionActivityEvent(event.event)) scheduleRefresh(event.instanceId, urgent ? "urgent" : "activity")
+  if (urgent) scheduleRefresh(event.instanceId, "urgent")
+  else if (isMissionActivityEvent(event.event) && shouldRefreshMissionActivity(event.instanceId, event.event)) scheduleRefresh(event.instanceId, "activity")
 })
 
 serverEvents.on("instance.eventStatus", (event) => {

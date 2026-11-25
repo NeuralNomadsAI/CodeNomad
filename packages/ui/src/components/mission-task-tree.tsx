@@ -159,7 +159,7 @@ export function MissionTaskTree(props: {
         <Show when={viewport.scrollRef()}>{host => <Virtualizer as={List} item="li" data={entries()} scrollRef={host()}
           startMargin={viewport.startMargin()} ref={setVirtualizer} bufferSize={400} keepMounted={kept()}
           onResize={() => setLayoutVersion(value => value + 1)}>{id => {
-          const task = () => byID().get(id)!
+          const task = createMemo<MissionPanelTask>(previous => byID().get(id) ?? previous!)
           const question = () => props.questions?.length
             ? taskQuestion(questionContext(), props.questions, task(), props.conversation(task())) : undefined
           const state = () => missionTaskRowState(props.instanceId, props.mission, task(), activities(), props.conversation(task()), Boolean(question()))

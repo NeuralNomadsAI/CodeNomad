@@ -94,7 +94,7 @@ Los eventos iniciales se comprueban cada 15 minutos. El primer inicio fija la re
 
 Puedes pedir a un agente que prepare la programación con su conversación raíz actual. Los pases esperan a que la conversación esté inactiva.
 
-La programación seleccionada muestra estado, próximo despertar o comprobación, pasadas lanzadas/exitosas e historial. Se conservan 30 resultados y los contadores acumulados. **Ejecutar ahora** cuenta al admitirse. Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
+Despliega el chevrón de una programación para ver su estado, próximo despertar o comprobación, pasadas lanzadas/exitosas e historial; selecciona la fila para sus acciones en la cabecera. Se conservan 30 resultados y los contadores acumulados. **Ejecutar ahora** cuenta al admitirse. Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
 
 En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conversación, también para una Misión inmediata. Antes de iniciar, cambia una selección o quítala con ×.
 
@@ -104,11 +104,11 @@ Elige **Nuevos commits en una rama local** para seguir una referencia Git local 
 
 Los agentes pueden encontrar y controlar estas programaciones desde cualquier conversación del mismo proyecto, incluso en otro worktree.
 
-Conservan controles y zona. Tras reiniciar el servicio requieren **Reanudar** desde el estado interrumpido. Recuperan el último día válido, no todos los perdidos. La entrada seleccionada permite leer resultados.
+Conservan controles y zona. Tras reiniciar el servicio requieren **Reanudar** desde el estado interrumpido. Recuperan el último día válido, no todos los perdidos. Despliega la entrada para leer los resultados conservados.
 
 ## Árbol y resultados {#tracking}
 
-El chevrón despliega tareas; hacer clic selecciona Misión o tarea. Sus acciones quedan en la cabecera. Sin tareas no hay chevrón. El filtro busca en las entradas cargadas.
+Las Misiones puntuales y programadas comparten una sola lista ordenada por actividad más reciente. El chevrón despliega o pliega las tareas de una Misión o los detalles y la ejecución actual de una programación sin cambiar la selección; hacer clic selecciona Misión, programación o tarea. Sus acciones quedan en la cabecera. Sin tareas no hay chevrón. El filtro busca en las entradas cargadas.
 
 El ojo alterna el resumen central y sigue la selección. **Abrir conversación** lleva al coordinador o tarea. El menú ⋯ contiene las acciones disponibles de actualización, interrupción, configuración y edición.
 

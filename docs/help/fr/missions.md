@@ -102,7 +102,7 @@ Les événements en tête peuvent lancer un passage à chaque nouvelle occurrenc
 
 Vous pouvez demander à un agent de préparer la programmation dans sa conversation racine actuelle. Les passages attendent que la conversation soit au repos.
 
-Sélectionnez un programme pour lire son état, le prochain réveil ou contrôle, les nombres de passages lancés et réussis et les **Exécutions passées**. L’historique conserve 30 résultats ; les compteurs cumulés restent. **Lancer maintenant** compte comme passage lancé une fois admis.
+Dépliez le chevron d’un programme pour lire son état, le prochain réveil ou contrôle, les nombres de passages lancés et réussis et les **Exécutions passées** ; sélectionnez la ligne pour ses actions dans l’en-tête. L’historique conserve 30 résultats ; les compteurs cumulés restent. **Lancer maintenant** compte comme passage lancé une fois admis.
 
 Une politique enregistrée que l’éditeur ne sait pas représenter reste sous **Politique de lancement enregistrée** jusqu’à son remplacement explicite. Vérifiez les éventuelles limites de fin ou de nombre de passages avant de modifier.
 
@@ -114,11 +114,11 @@ Choisissez **Nouveaux commits sur une branche locale** pour suivre une référen
 
 Les agents peuvent trouver et contrôler ces programmations depuis toute conversation appartenant au même projet, y compris dans un autre worktree.
 
-Les entrées quotidiennes existantes conservent leurs contrôles et leur fuseau. Après un redémarrage du service, elles indiquent **Interrompue** et demandent **Reprendre**. Elles rattrapent le dernier jour admissible plutôt que chaque jour manqué. L’entrée sélectionnée donne accès aux résultats conservés.
+Les entrées quotidiennes existantes conservent leurs contrôles et leur fuseau. Après un redémarrage du service, elles indiquent **Interrompue** et demandent **Reprendre**. Elles rattrapent le dernier jour admissible plutôt que chaque jour manqué. Dépliez l’entrée pour lire ses résultats conservés.
 
 ## Suivre l’arbre et lire les résultats {#tracking}
 
-Le chevron déplie ou replie les tâches. Cliquer une ligne sélectionne la Mission ou la tâche ; les actions de cette sélection restent dans l’en-tête. Une Mission sans tâche n’a pas de chevron. **Filtrer les missions** filtre le répertoire chargé.
+Les Missions ponctuelles et programmées partagent une seule liste triée par activité la plus récente. Le chevron déplie ou replie les tâches d’une Mission ou les détails et le passage en cours d’un programme sans changer la sélection. Cliquer une ligne sélectionne la Mission, le programme ou la tâche ; les actions de cette sélection restent dans l’en-tête. Une Mission sans tâche n’a pas de chevron. **Filtrer les missions** filtre le répertoire chargé.
 
 L’œil active **Résumé** dans le lecteur central et suit la sélection tant qu’il est enfoncé. **Ouvrir la conversation** mène au coordinateur ou à la tâche sélectionnée. **Plus d’actions** (⋯) contient les commandes applicables de point d’avancement, interruption, enregistrement de configuration et modification.
 
