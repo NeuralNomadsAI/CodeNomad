@@ -1,9 +1,10 @@
 //! Offline browser qualification of the actual shared controls and DOM mirror.
 use rune::{Cx, El, TextEdit};
 use rune_theme_codenomad::{
-    Space,
+    Space, action_menu,
     layout::{self, Layout},
 };
+use std::rc::Rc;
 
 #[path = "../../../../packages/rune-app/src/components/window_close_button.rs"]
 mod close;
@@ -17,6 +18,7 @@ mod strings {
 struct State {
     focused: String,
     close: close::WindowCloseState,
+    menu: action_menu::State<State>,
     field: TextEdit,
     submit_field: TextEdit,
     actions: usize,
@@ -26,6 +28,18 @@ struct State {
     modal_actions: usize,
     modal_defaults: usize,
     modal: bool,
+}
+fn menu_at(s: &mut State) -> Option<&mut action_menu::State<State>> {
+    Some(&mut s.menu)
+}
+fn menu_descriptor() -> Rc<action_menu::Menu<State>> {
+    let open = action_menu::Item::new("open", "Open", |s: &mut State, _| s.actions += 1);
+    let last = action_menu::Item::new("last", "Last", |s: &mut State, _| s.actions += 1);
+    Rc::new(action_menu::Menu::new(
+        "fixture-menu",
+        "Fixture menu",
+        vec![Rc::new(open), Rc::new(last)],
+    ))
 }
 fn receipts(s: &State, key: &str) -> El {
     rune::col().key(key)
@@ -114,8 +128,15 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
                     .role("group")
                     .focusable(true),
             );
+        let trigger = rune_kit::Button::new("Fixture menu")
+            .variant(rune_kit::ButtonVariant::Ghost)
+            .build(rune_theme_codenomad::kit(cx.system_dark()));
+        let (trigger, menu_surface) =
+            action_menu::view(&s.menu, menu_at, menu_descriptor(), trigger, 1000.0);
+        root = root.child(trigger);
+        let mut layers: Vec<El> = menu_surface.into_iter().collect();
         if s.modal {
-            root = root.child(
+            layers.push(
                 rune::col()
                     .key("modal")
                     .role("dialog")
@@ -144,16 +165,17 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
                     ),
             );
         }
-        root
+        rune_kit::root(root, layers)
     })
 }
 fn main() {
     let spec = rune::AppSpec {
         poll: Some(|s: &mut State, _, tx| {
+            let menu_changed = action_menu::poll(s, menu_at, tx);
             tx.wake_after(std::time::Duration::from_millis(20));
             let focused = tx.focused().unwrap_or("none");
             if s.focused == focused {
-                return false;
+                return menu_changed;
             }
             s.focused = focused.into();
             true

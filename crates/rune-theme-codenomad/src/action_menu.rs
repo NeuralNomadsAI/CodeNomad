@@ -256,7 +256,7 @@ pub fn view<S: 'static>(
                 close(s, at, &action, None, None, tx);
             } else {
                 open(s, at, &action, tx);
-                if tx.by_keys() {
+                if tx.by_keys() || tx.press_point().is_none() {
                     if let Some(first) = &pressed_first {
                         tx.focus(format!("{}:item:{first}", action.key), true);
                     }

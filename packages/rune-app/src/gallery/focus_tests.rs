@@ -2,12 +2,25 @@ use super::*;
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 use serde_json::json;
 
-fn web_view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
-    cx.web_focus();
-    view(s, cx)
+fn native_view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
+    let dark = cx.system_dark();
+    rune_theme_codenomad::layout::with_appearance(dark, || {
+        rune_theme_codenomad::window_control::gallery_surface(
+            dark,
+            close_button(
+                &s.close,
+                "window-close",
+                dark,
+                None,
+                |s: &mut Gallery| &mut s.close,
+                |s, _| s.presses += 1,
+            ),
+        )
+    })
+    .locale_direction(crate::strings::locale())
 }
 fn runtime(web: bool) -> Runtime<Gallery> {
-    let render = if web { web_view } else { view };
+    let render = if web { view } else { native_view };
     let mut rt = Runtime::new(
         Gallery::default(),
         render,

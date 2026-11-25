@@ -109,3 +109,56 @@ fn web_focus_keyboard_actions_keep_their_screen_scope_and_tx() {
         }
     }
 }
+
+fn launcher_state() -> State {
+    let mut s = crate::init();
+    s.screen = crate::Screen::Launcher(launcher::Launcher::fixture());
+    s
+}
+
+#[test]
+fn product_root_enables_web_focus_for_launcher_controls() {
+    let mut rt = Runtime::new(
+        launcher_state(),
+        crate::view,
+        (960.0, 640.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let mut reached_connect = false;
+    for _ in 0..16 {
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Tab,
+            mods: rune::Mods::default(),
+        });
+        rt.frame(0.0);
+        if rt
+            .elements()
+            .iter()
+            .any(|node| node.key.as_deref() == Some("connect") && node.focused)
+        {
+            reached_connect = true;
+            break;
+        }
+    }
+    assert!(
+        reached_connect,
+        "product root Tab must reach pressable launcher buttons via shared web_focus"
+    );
+    let mut rt = Runtime::new(
+        launcher_state(),
+        crate::view,
+        (960.0, 640.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let (x, y) = rt.find("connect").expect("connect button");
+    rt.pointer_down(x, y);
+    rt.frame(0.0);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|node| node.key.as_deref() == Some("connect") && node.focused),
+        "product root pointer press must focus launcher button via shared web_focus"
+    );
+}

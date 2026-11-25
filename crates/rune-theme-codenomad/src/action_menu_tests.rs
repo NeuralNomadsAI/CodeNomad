@@ -169,13 +169,19 @@ fn pointer_container_admits_home_end_and_typeahead() {
     for (entry, target) in [
         (Key::Home, "open"),
         (Key::End, "last"),
+        (Key::PageUp, "open"),
+        (Key::PageDown, "last"),
         (Key::Text("l".into()), "last"),
     ] {
         let mut rt = runtime();
         rt.state.many = true;
         tap(&mut rt, "actions:trigger");
+        assert_eq!(focused(&rt).as_deref(), Some("actions:menu"));
         key(&mut rt, entry);
         assert_eq!(focused(&rt), Some(format!("actions:item:{target}")));
+        // Container tab_index(-1) keeps it out of Tab cycling inside the open menu.
+        key(&mut rt, Key::Tab);
+        assert_ne!(focused(&rt).as_deref(), Some("actions:menu"));
     }
 }
 #[test]

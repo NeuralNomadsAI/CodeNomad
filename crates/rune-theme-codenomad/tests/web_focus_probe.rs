@@ -28,12 +28,15 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     }
 }
 fn body(s: &State) -> El {
-    let mut action = layout::button_tx("Action", s.disabled, |s: &mut State, tx| {
-        s.presses += 1;
-        s.receipts
-            .push(json!({"keys":tx.by_keys(),"repeat":tx.key_repeat(),"focused":tx.focused()}));
-    })
-    .key("action");
+    let mut action = rune_kit::Button::new("Action")
+        .disabled(s.disabled)
+        .on_press_tx(|s: &mut State, tx| {
+            s.presses += 1;
+            s.receipts
+                .push(json!({"keys":tx.by_keys(),"repeat":tx.key_repeat(),"focused":tx.focused()}));
+        })
+        .build(rune_theme_codenomad::kit(layout::dark()))
+        .key("action");
     if s.consume_down {
         action = action.on_key(|_: &mut State, _, _| true);
     }
@@ -146,8 +149,16 @@ fn public_runtime_observes_native_and_web_focus_without_keyboard_adapter() {
         let mut rt = runtime(web);
         focus(&mut rt, "before");
         down(&mut rt, Key::Tab, Mods::default());
+        if web {
+            assert_eq!(focused(&rt).as_deref(), Some("action"));
+        }
         emit(web, "tab-forward", snap(&rt));
         down(&mut rt, Key::Tab, Mods::default());
+        if web {
+            assert_eq!(focused(&rt).as_deref(), Some("after"));
+        }
+        assert_ne!(focused(&rt).as_deref(), Some("opt-out"));
+        assert_ne!(focused(&rt).as_deref(), Some("disabled"));
         emit(web, "tab-skips-optout-disabled", snap(&rt));
         down(
             &mut rt,
@@ -157,6 +168,9 @@ fn public_runtime_observes_native_and_web_focus_without_keyboard_adapter() {
                 ..Mods::default()
             },
         );
+        if web {
+            assert_eq!(focused(&rt).as_deref(), Some("action"));
+        }
         emit(web, "tab-reverse", snap(&rt));
         for (name, key) in [("Enter", Key::Enter), ("Space", Key::Text(" ".into()))] {
             let mut rt = runtime(web);
@@ -164,11 +178,12 @@ fn public_runtime_observes_native_and_web_focus_without_keyboard_adapter() {
             down(&mut rt, key.clone(), Mods::default());
             let pressed = snap(&rt);
             up(&mut rt, key.clone(), Mods::default());
-            if web && name == "Enter" {
-                assert_eq!(pressed["presses"], 1);
+            if name == "Enter" {
+                let expected = usize::from(web);
+                assert_eq!(pressed["presses"], expected);
                 assert_eq!(
-                    rt.state.presses, 1,
-                    "Return dispatches one action across its release"
+                    rt.state.presses, expected,
+                    "Return presses focused Kit button only under web_focus"
                 );
             }
             emit(
@@ -300,14 +315,12 @@ fn public_runtime_observes_native_and_web_focus_without_keyboard_adapter() {
                 focus(&mut rt, target);
             }
             down(&mut rt, Key::Enter, Mods::default());
-            if web {
-                assert_eq!(rt.state.presses, usize::from(target == "action"));
-                assert_eq!(
-                    rt.state.defaults,
-                    usize::from(target != "action" && target != "after")
-                );
-                assert_eq!(rt.state.submits, usize::from(target == "after"));
-            }
+            assert_eq!(rt.state.presses, usize::from(web && target == "action"));
+            assert_eq!(
+                rt.state.defaults,
+                usize::from((!web || target != "action") && target != "after")
+            );
+            assert_eq!(rt.state.submits, usize::from(target == "after"));
             emit(web, &format!("Enter-default-focus-{target}"), snap(&rt));
         }
 
