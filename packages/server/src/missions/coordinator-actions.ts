@@ -64,12 +64,15 @@ export async function missionPreparationSource(snapshot: MissionSnapshot, sessio
       || isReservedMissionScheduleSessionID(session.id)) return refuse()
     seen.add(session.id)
     const memberships = snapshot.missions.filter(mission => mission.actors.some(actor => actor.sessionId === session.id))
-    const active = memberships.filter(mission => mission.status === "active")
-    if (active.length > 1) return refuse()
     const marker = session.metadata?.["codenomad.mission"]
     if (marker !== undefined && (!marker || typeof marker !== "object" || Array.isArray(marker)
       || typeof marker.missionID !== "string")) return refuse()
-    if (active[0]) return active[0]
+    // A conversation may take part in several active Missions. The source stays stable
+    // across rereads: the marked one, otherwise the oldest.
+    const active = memberships.filter(mission => mission.status === "active")
+      .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1))
+    const marked = active.find(mission => marker && typeof marker === "object" && mission.id === marker.missionID)
+    if (marked ?? active[0]) return marked ?? active[0]
     if (marker && typeof marker === "object" && typeof marker.missionID === "string") return { id: marker.missionID }
     if (memberships.length) return memberships.sort((a, b) => b.updatedAt - a.updatedAt)[0]
     if (!session.parentID) return undefined
