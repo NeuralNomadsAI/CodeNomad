@@ -78,7 +78,7 @@ pub(crate) struct Panel {
     reader_suspended: bool,
     editor_suspended: bool,
     editor_auto_start_revoked: bool,
-    auth_expired: Option<Backend>,
+    auth_expired: Vec<Backend>,
 }
 
 const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
@@ -122,7 +122,7 @@ impl Panel {
             reader_suspended: false,
             editor_suspended: false,
             editor_auto_start_revoked: false,
-            auth_expired: None,
+            auth_expired: Vec::new(),
         }
     }
 
@@ -424,7 +424,7 @@ impl Panel {
                 if saved.select {
                     self.selected = Some(saved.mission_id.clone());
                     self.detail.clear();
-                    self.observation = Observation::default();
+                    self.observation.reset();
                 }
                 if self.selected.as_deref() == Some(saved.mission_id.as_str()) {
                     self.detail.observe(&saved.mission_id, saved.revision);
@@ -459,6 +459,16 @@ impl Panel {
         back
     }
 
+    fn record_auth_expired(&mut self, backend: Backend) {
+        if !self
+            .auth_expired
+            .iter()
+            .any(|known| known.client.same_connection(&backend.client))
+        {
+            self.auth_expired.push(backend);
+        }
+    }
+
     pub(crate) fn suspend(&mut self) {
         self.reader_suspended = self.reader.is_open();
         self.editor_suspended = self.editor.is_open();
@@ -468,18 +478,23 @@ impl Panel {
         self.reader.suspend();
         self.editor.suspend();
         self.cancel_probe();
+        while let Ok(done) = self.incoming.try_recv() {
+            if let Err(error) = &done.page
+                && codenomad_client::missions::is_auth_expired(error)
+            {
+                self.record_auth_expired(done.backend);
+            }
+        }
     }
 
     pub(crate) fn drain_auth_expired(&mut self) -> Vec<Backend> {
         let mut expired = Vec::new();
-        for candidate in [
-            self.auth_expired.take(),
-            self.reader.take_auth_expired(),
-            self.detail.take_auth_expired(),
-            self.editor.take_auth_expired(),
-        ]
-        .into_iter()
-        .flatten()
+        for candidate in std::mem::take(&mut self.auth_expired)
+            .into_iter()
+            .chain(self.observation.drain_auth_expired())
+            .chain(self.detail.drain_auth_expired())
+            .chain(self.reader.take_auth_expired())
+            .chain(self.editor.drain_auth_expired())
         {
             if !expired
                 .iter()
@@ -810,6 +825,11 @@ impl Panel {
             changed = self.supported();
         }
         while let Ok(done) = self.incoming.try_recv() {
+            if let Err(error) = &done.page
+                && codenomad_client::missions::is_auth_expired(error)
+            {
+                self.record_auth_expired(done.backend.clone());
+            }
             let lane = &mut self.lanes[done.kind as usize];
             if lane
                 .active
@@ -847,9 +867,6 @@ impl Panel {
                     }
                 }
                 Err(error) => {
-                    if codenomad_client::missions::is_auth_expired(&error) {
-                        self.auth_expired = Some(done.backend);
-                    }
                     self.lanes[done.kind as usize].failed =
                         Some(if error.is::<DirectoryChanged>() {
                             Read::Refresh
@@ -962,7 +979,7 @@ impl Panel {
             );
         } else if self.selected.is_none() {
             self.detail.clear();
-            self.observation = Observation::default();
+            self.observation.reset();
             self.reader.follow_selection(None);
         }
         // Resolve or dispatch pending off-page task lookups AFTER detail.poll() so a lookup queued
@@ -1148,7 +1165,7 @@ impl Panel {
             }
             self.control_fields.cancel();
             self.detail.clear();
-            self.observation = Observation::default();
+            self.observation.reset();
             self.selected = Some(id.into());
             self.reader.follow_selection(Some(id));
         }

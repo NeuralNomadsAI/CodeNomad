@@ -386,6 +386,14 @@ pub enum EditorBodyOutcome {
     AuthExpired,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DocumentEditCheck {
+    Editable { lock_help: Option<&'static str> },
+    Locked(&'static str),
+    Unavailable,
+    AuthExpired,
+}
+
 impl Backend {
     pub async fn create_mission(&self, request: &CreateMissionRequest) -> CreateMissionOutcome {
         if !valid_id(&self.workspace) || request.validate().is_err() {
@@ -465,7 +473,94 @@ impl Backend {
             return UpdateMissionOutcome::AuthExpired;
         }
         let body = read_json_limited(response, MAX_RESPONSE_BYTES).await.ok();
-        settle_update(status, body.as_ref(), target, request)
+        if !status.is_success() {
+            return settle_update_error(status, body.as_ref());
+        }
+        let Some(body) = body.as_ref() else {
+            return UpdateMissionOutcome::Uncertain;
+        };
+        if body["controlUnavailable"] == true || body["notificationUnavailable"] == true {
+            return UpdateMissionOutcome::Uncertain;
+        }
+        match self
+            .verify_applied_edit(target, request, &body["mission"])
+            .await
+        {
+            EditReceiptOutcome::Applied {
+                mission_id,
+                revision,
+            } => UpdateMissionOutcome::Updated {
+                mission_id,
+                revision,
+            },
+            EditReceiptOutcome::AuthExpired => UpdateMissionOutcome::AuthExpired,
+            EditReceiptOutcome::Unconfirmed => UpdateMissionOutcome::Uncertain,
+        }
+    }
+
+    /// Reads the unified Mission document via `GET /missions/{id}/schedule` to verify
+    /// whether one-time text edits are currently allowed or blocked by a document lock.
+    pub async fn read_mission_edit_document(&self, mission_id: &str) -> DocumentEditCheck {
+        if !valid_id(&self.workspace)
+            || !panel_id(mission_id)
+            || mission_id.encode_utf16().count() > 100
+        {
+            return DocumentEditCheck::Unavailable;
+        }
+        let Ok(url) = missions_url(self, &[mission_id, "schedule"]) else {
+            return DocumentEditCheck::Unavailable;
+        };
+        let Ok(response) = self.client.get(url).timeout(RECEIPT_TIMEOUT).send().await else {
+            return DocumentEditCheck::Unavailable;
+        };
+        let status = response.status();
+        if status == StatusCode::UNAUTHORIZED {
+            return DocumentEditCheck::AuthExpired;
+        }
+        if !status.is_success() {
+            return DocumentEditCheck::Unavailable;
+        }
+        let Ok(body) = read_json_limited(response, MAX_RESPONSE_BYTES).await else {
+            return DocumentEditCheck::Unavailable;
+        };
+        if body["deleted"] == true {
+            return DocumentEditCheck::Locked("missions.scheduling.lock.deleted");
+        }
+        let doc = &body["document"];
+        if !doc.is_object() || doc["id"].as_str() != Some(mission_id) || !doc["edit"].is_object() {
+            return DocumentEditCheck::Unavailable;
+        }
+        if body["pending"] == true
+            || doc["dormant"] == true
+            || doc["dormantJournal"] == true
+            || doc["preparation"]["pending"] == true
+            || doc["observation"]["state"].as_str() == Some("unknown")
+        {
+            return DocumentEditCheck::Locked("missions.scheduling.lock.uncertain");
+        }
+        if doc["deletion"].is_object() {
+            return DocumentEditCheck::Locked("missions.scheduling.lock.deleted");
+        }
+        if doc["kind"].as_str().is_some_and(|kind| kind != "one-time") {
+            return DocumentEditCheck::Locked("missions.scheduling.lock.journal");
+        }
+        let structural = doc["edit"]["structural"].as_bool().unwrap_or(false);
+        match doc["edit"]["reason"].as_str() {
+            Some("deleted") => DocumentEditCheck::Locked("missions.scheduling.lock.deleted"),
+            Some("terminal") => DocumentEditCheck::Locked("missions.scheduling.lock.terminal"),
+            Some("uncertain") => DocumentEditCheck::Locked("missions.scheduling.lock.uncertain"),
+            Some("launched-once") => DocumentEditCheck::Editable {
+                lock_help: Some("missions.scheduling.lock.launched-once"),
+            },
+            Some("passage") => DocumentEditCheck::Editable {
+                lock_help: Some("missions.scheduling.lock.passage"),
+            },
+            Some("journal") => DocumentEditCheck::Editable {
+                lock_help: Some("missions.scheduling.lock.journal"),
+            },
+            None if structural => DocumentEditCheck::Editable { lock_help: None },
+            _ => DocumentEditCheck::Locked("missions.scheduling.lock.uncertain"),
+        }
     }
 
     /// Reads the full text of an editable Mission field (`objective` or `notes`)
@@ -548,8 +643,17 @@ impl Backend {
         {
             return EditReceiptOutcome::Unconfirmed;
         }
-        let mission = &body["mission"];
-        if !target.matches(mission)
+        self.verify_applied_edit(target, request, &body["mission"])
+            .await
+    }
+
+    async fn verify_applied_edit(
+        &self,
+        target: &LifecycleTarget,
+        request: &UpdateMissionRequest,
+        mission: &Value,
+    ) -> EditReceiptOutcome {
+        if !matches_mission_identity(target, mission)
             || (!mission["document"].is_null() && !mission["document"].is_object())
         {
             return EditReceiptOutcome::Unconfirmed;
@@ -1033,47 +1137,31 @@ fn parse_creation_receipt(body: &Value, expected_request_id: &str) -> CreationRe
     }
 }
 
-fn settle_update(
-    status: StatusCode,
-    body: Option<&Value>,
-    target: &LifecycleTarget,
-    request: &UpdateMissionRequest,
-) -> UpdateMissionOutcome {
-    if !status.is_success() {
-        let code = body.and_then(|value| MutationCode::from_body(value, false));
-        if status.as_u16() == 409 && code == Some(MutationCode::RevisionConflict) {
-            return UpdateMissionOutcome::RevisionConflict;
-        }
-        if status.as_u16() == 409
-            && matches!(
-                code,
-                Some(MutationCode::RequestConflict | MutationCode::MissionFinished)
-            )
-        {
-            return UpdateMissionOutcome::Rejected(code.unwrap());
-        }
-        return match status.as_u16() {
-            403 => UpdateMissionOutcome::Rejected(MutationCode::Forbidden),
-            400 | 404 => UpdateMissionOutcome::Rejected(MutationCode::Invalid),
-            _ => UpdateMissionOutcome::Uncertain,
-        };
+/// Matches stable project + Mission identity for edit reconciliation without pinning to
+/// `coordinatorSessionId`, which a valid reconfiguration may replace without invalidating the edit.
+fn matches_mission_identity(target: &LifecycleTarget, mission: &Value) -> bool {
+    mission["id"].as_str() == Some(target.mission.as_str())
+        && mission["projectID"].as_str() == Some(target.project.as_str())
+        && (target.canonical.is_empty()
+            || mission["projectCanonical"].as_str() == Some(target.canonical.as_str()))
+}
+
+fn settle_update_error(status: StatusCode, body: Option<&Value>) -> UpdateMissionOutcome {
+    let code = body.and_then(|value| MutationCode::from_body(value, false));
+    if status.as_u16() == 409 && code == Some(MutationCode::RevisionConflict) {
+        return UpdateMissionOutcome::RevisionConflict;
     }
-    let Some(body) = body else {
-        return UpdateMissionOutcome::Uncertain;
-    };
-    let mission = &body["mission"];
-    let Some(revision) = mission["revision"]
-        .as_u64()
-        .filter(|r| (request.expected_revision..=MAX_REVISION).contains(r))
-    else {
-        return UpdateMissionOutcome::Uncertain;
-    };
-    if target.matches(mission) {
-        UpdateMissionOutcome::Updated {
-            mission_id: target.mission.clone(),
-            revision,
-        }
-    } else {
-        UpdateMissionOutcome::Uncertain
+    if status.as_u16() == 409
+        && matches!(
+            code,
+            Some(MutationCode::RequestConflict | MutationCode::MissionFinished)
+        )
+    {
+        return UpdateMissionOutcome::Rejected(code.unwrap());
+    }
+    match status.as_u16() {
+        403 => UpdateMissionOutcome::Rejected(MutationCode::Forbidden),
+        400 | 404 => UpdateMissionOutcome::Rejected(MutationCode::Invalid),
+        _ => UpdateMissionOutcome::Uncertain,
     }
 }

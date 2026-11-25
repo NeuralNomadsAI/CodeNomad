@@ -54,16 +54,53 @@ pub(crate) fn test_state_with_mission_panel(
 ) -> State {
     let mut state = crate::init();
     crate::gallery::shell::fixture(&mut state);
+    let backend = panel.briefing_backend().clone();
+    let wake = panel.briefing_wake().clone();
+    state.wake = wake;
+    if let Some(launcher) = state.screen.launcher_mut() {
+        launcher.connection = Some(backend.clone());
+        if let Some(project) = launcher.project.as_mut() {
+            project.id = backend.workspace.clone();
+        }
+    }
     let project = state.screen.launcher().unwrap().project.clone().unwrap();
     let mut ui = Ui::new();
+    ui.ready = true;
     ui.mission_editor = mission_editor;
     state.workspace = Some(ui);
     opened(&mut state, &project);
     if let Some(ui) = state.workspace.as_mut() {
         let active = ui.active;
+        ui.entries[active].binding = Some(backend);
+        if let Tab::Workspace(saved) = &mut ui.entries[active].saved {
+            saved.view.right_panel = crate::workspace::RightPanelTab::Missions;
+        }
         ui.entries[active].missions = Some(panel);
     }
     state
+}
+
+#[cfg(test)]
+pub(crate) fn test_mission_entry_mut(
+    s: &mut State,
+    index: usize,
+) -> (
+    String,
+    &mut crate::missions::Panel,
+    &mut crate::missions::EditorHolds,
+) {
+    let ui = s.workspace.as_mut().unwrap();
+    let key = ui.entries[index].key.clone();
+    let panel = ui.entries[index].missions.as_mut().unwrap();
+    (key, panel, &mut ui.mission_editor)
+}
+
+#[cfg(test)]
+pub(crate) fn test_mission_panel(s: &State, index: usize) -> &crate::missions::Panel {
+    s.workspace.as_ref().unwrap().entries[index]
+        .missions
+        .as_ref()
+        .unwrap()
 }
 
 pub(super) struct Entry {

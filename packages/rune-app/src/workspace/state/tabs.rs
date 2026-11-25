@@ -28,6 +28,11 @@ fn stash(s: &mut State) {
             .unwrap_or(0)
             .saturating_add(1);
         let entry = &mut ui.entries[ui.active];
+        if let Some(panel) = &mut entry.missions {
+            panel.suspend();
+        }
+        ui.mission_editor
+            .revoke_auto_start_for_occurrence(&entry.key);
         entry.history_touched = stamp;
         entry.catalogue.pause(ui.clock);
         entry.cache = Some(cache);

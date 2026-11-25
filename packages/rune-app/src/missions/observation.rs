@@ -25,11 +25,12 @@ pub(super) struct Observation {
     current_end: Option<u64>,
     revision: Option<u64>,
     seen_revision: Option<u64>,
-    active: Option<(u64, Receiver<Result<Activity>>)>,
+    active: Option<(u64, Backend, Receiver<Result<Activity>>)>,
     pending: Option<u64>,
     failed: Option<u64>,
     due: Option<f64>,
     settled_at: Option<f64>,
+    auth_expired: Vec<Backend>,
 }
 
 impl Observation {
@@ -112,12 +113,38 @@ impl Observation {
         }
     }
 
+    fn record_auth_expired(&mut self, backend: Backend) {
+        if !self
+            .auth_expired
+            .iter()
+            .any(|known| known.client.same_connection(&backend.client))
+        {
+            self.auth_expired.push(backend);
+        }
+    }
+
+    pub fn drain_auth_expired(&mut self) -> Vec<Backend> {
+        std::mem::take(&mut self.auth_expired)
+    }
+
     pub fn cancel(&mut self) {
-        self.active = None;
+        if let Some((_, backend, inbox)) = self.active.take()
+            && let Ok(Err(error)) = inbox.try_recv()
+            && codenomad_client::missions::is_auth_expired(&error)
+        {
+            self.record_auth_expired(backend);
+        }
         self.pending = None;
         self.due = None;
         self.current_end = None;
         self.rebuild_current_actors();
+    }
+
+    pub fn reset(&mut self) {
+        self.cancel();
+        let expired = std::mem::take(&mut self.auth_expired);
+        *self = Self::default();
+        self.auth_expired = expired;
     }
 
     pub fn invalidate(&mut self, now: f64) {
@@ -145,10 +172,13 @@ impl Observation {
             self.refresh();
             self.rebuild_current_actors();
         }
-        if let Some((offset, result)) = self
-            .active
-            .as_ref()
-            .and_then(|(offset, inbox)| inbox.try_recv().ok().map(|result| (*offset, result)))
+        if let Some((offset, backend, result)) =
+            self.active.as_ref().and_then(|(offset, backend, inbox)| {
+                inbox
+                    .try_recv()
+                    .ok()
+                    .map(|result| (*offset, backend.clone(), result))
+            })
         {
             self.active = None;
             self.settled_at = Some(now);
@@ -157,6 +187,11 @@ impl Observation {
             }
             if self.due.is_some() {
                 wake();
+            }
+            if let Err(error) = &result
+                && codenomad_client::missions::is_auth_expired(error)
+            {
+                self.record_auth_expired(backend);
             }
             self.failed = match result {
                 Ok(page) if Some(page.revision) >= self.revision.max(floor) => {
@@ -222,7 +257,7 @@ impl Observation {
             .map(|page| page.window.order.as_str());
         let read = backend.mission_activity(project, id, offset, order);
         let (out, inbox) = bounded(1);
-        self.active = Some((offset, inbox));
+        self.active = Some((offset, backend.clone(), inbox));
         let reads = reads.clone();
         let wake = wake.clone();
         platform::spawn(async move {
@@ -444,8 +479,9 @@ mod tests {
     #[test]
     fn lifecycle_burst_owes_one_observation_after_settlement_and_hiding_revokes_it() {
         let mut state = Observation::default();
+        let backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
         let (send, inbox) = bounded(1);
-        state.active = Some((0, inbox));
+        state.active = Some((0, backend, inbox));
         state.invalidate(1.0);
         state.invalidate(2.0);
         send.try_send(Ok(page(7, 100.0, 0, 2))).ok().unwrap();
@@ -460,6 +496,7 @@ mod tests {
     #[test]
     fn actor_index_stays_in_sync_with_revision_advance_and_offset_zero_failure() {
         let mut state = Observation::default();
+        let backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
         state.fixture_actor("ses_worker");
         assert!(state.includes_actor("ses_worker"));
 
@@ -469,7 +506,7 @@ mod tests {
 
         // Re-adopting at revision 3 restores the actor; an offset-0 failure clears it again.
         let (send, inbox) = bounded(1);
-        state.active = Some((0, inbox));
+        state.active = Some((0, backend.clone(), inbox));
         let mut p = page(3, 100.0, 0, 1);
         p.actors.push(codenomad_client::missions::Actor {
             session_id: "ses_worker".into(),
@@ -483,7 +520,7 @@ mod tests {
         assert!(state.includes_actor("ses_worker"));
 
         let (send2, inbox2) = bounded(1);
-        state.active = Some((0, inbox2));
+        state.active = Some((0, backend, inbox2));
         send2.try_send(Err("network".into())).ok().unwrap();
         assert!(state.settle(Some(3), 2.0, &wake));
         assert!(!state.includes_actor("ses_worker"));

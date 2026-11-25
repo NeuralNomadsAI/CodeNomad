@@ -118,14 +118,28 @@ pub(crate) fn mission_panel(s: &State) -> El {
     })
 }
 
+fn pairing_required(s: &State) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::platform::pairing::required(s)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = s;
+        false
+    }
+}
+
+fn mission_context_blocked(s: &State) -> bool {
+    crate::shell::launcher_replaces_project(s) || pairing_required(s)
+}
+
 pub(crate) fn mission_has_reader(s: &State) -> bool {
-    !crate::shell::launcher_replaces_project(s)
-        && mission_owner(s).is_some_and(missions::Panel::has_surface)
+    !mission_context_blocked(s) && mission_owner(s).is_some_and(missions::Panel::has_surface)
 }
 
 pub(crate) fn mission_has_editor(s: &State) -> bool {
-    !crate::shell::launcher_replaces_project(s)
-        && mission_owner(s).is_some_and(missions::Panel::has_editor)
+    !mission_context_blocked(s) && mission_owner(s).is_some_and(missions::Panel::has_editor)
 }
 
 pub(crate) fn close_mission_reader(s: &mut State) -> Option<String> {
@@ -201,7 +215,7 @@ pub(crate) fn mission_reader(s: &State) -> El {
 }
 
 fn mission_editor_act(s: &mut State, gesture: missions::EditorGesture, tx: &mut rune::Tx) {
-    if crate::shell::launcher_replaces_project(s) {
+    if mission_context_blocked(s) {
         return;
     }
     let opening = matches!(
@@ -229,7 +243,7 @@ fn mission_editor_act(s: &mut State, gesture: missions::EditorGesture, tx: &mut 
 }
 
 fn mission_reader_owner(s: &mut State) -> Option<&mut missions::Panel> {
-    if crate::shell::launcher_replaces_project(s) {
+    if mission_context_blocked(s) {
         return None;
     }
     let ui = s.workspace.as_mut()?;
@@ -237,7 +251,7 @@ fn mission_reader_owner(s: &mut State) -> Option<&mut missions::Panel> {
 }
 
 fn mission_editor_edit(s: &mut State) -> (Option<&mut missions::Panel>, &mut TextEdit) {
-    if crate::shell::launcher_replaces_project(s) {
+    if mission_context_blocked(s) {
         return (None, &mut s.rejected_edit);
     }
     let panel = s
@@ -437,9 +451,10 @@ pub(super) fn poll_missions(
     let mut restore_chat_after_save = false;
     let mut selection_changed = false;
     let mounted = crate::shell::right_panel_visible(s);
-    let replaced = crate::shell::launcher_replaces_project(s);
+    let blocked = mission_context_blocked(s);
     let current = &ui.entries[ui.active];
-    let current_source = (mounted
+    let current_source = (!blocked
+        && mounted
         && matches!(&current.saved, Tab::Workspace(saved)
         if saved.view.right_panel == RightPanelTab::Missions))
     .then(|| {
@@ -469,6 +484,7 @@ pub(super) fn poll_missions(
                 panel.suspend();
                 ui.mission_editor
                     .revoke_auto_start_for_occurrence(&entry.key);
+                extend_unique_auth(&mut auth_expired, panel.drain_auth_expired());
             }
             continue;
         }
@@ -517,10 +533,11 @@ pub(super) fn poll_missions(
             changed = true;
         }
         if let Some(panel) = &mut entry.missions {
-            if replaced {
+            if blocked {
                 panel.suspend();
                 ui.mission_editor
                     .revoke_auto_start_for_occurrence(&entry.key);
+                extend_unique_auth(&mut auth_expired, panel.drain_auth_expired());
                 continue;
             }
             let visible = mounted && saved.view.right_panel == RightPanelTab::Missions;
@@ -612,7 +629,8 @@ pub(super) fn poll_missions(
         }
     }
     let active_entry = &ui.entries[ui.active];
-    let active_briefing = (auth_expired.is_empty()
+    let active_briefing = (!blocked
+        && auth_expired.is_empty()
         && mounted
         && matches!(&active_entry.saved, Tab::Workspace(saved)
             if saved.view.right_panel == RightPanelTab::Missions))
@@ -692,8 +710,10 @@ pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
         }
     }
     // No observer may grant demand; the real mounted occurrence owns it.
-    if !(crate::shell::right_panel_visible(s) && right_panel_tab(s) == RightPanelTab::Missions)
-        && !mission_has_reader(s)
+    if mission_context_blocked(s)
+        || (!(crate::shell::right_panel_visible(s)
+            && right_panel_tab(s) == RightPanelTab::Missions)
+            && !mission_has_reader(s))
     {
         return;
     }

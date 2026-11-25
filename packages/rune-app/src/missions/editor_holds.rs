@@ -73,10 +73,34 @@ fn server_owner(backend: &Backend) -> String {
         .unwrap_or_else(|| backend.base.clone())
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct FormOrigin {
     pub occurrence: String,
     pub generation: u64,
+    pub backend: Backend,
+}
+
+impl FormOrigin {
+    pub(crate) fn matches(&self, other: &Self) -> bool {
+        self.occurrence == other.occurrence
+            && self.generation == other.generation
+            && self.backend.base == other.backend.base
+            && self.backend.workspace == other.backend.workspace
+            && self.backend.client.same_connection(&other.backend.client)
+    }
+
+    pub(crate) fn matches_live(
+        &self,
+        occurrence: &str,
+        generation: u64,
+        backend: &Backend,
+    ) -> bool {
+        self.occurrence == occurrence
+            && self.generation == generation
+            && self.backend.base == backend.base
+            && self.backend.workspace == backend.workspace
+            && self.backend.client.same_connection(&backend.client)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -537,7 +561,10 @@ impl EditorHolds {
                     if let Some(ctx) = &active
                         && entry.auto_start_alive
                         && ctx.mode == Mode::Create
-                        && Some(&ctx.origin) == entry.origin.as_ref()
+                        && entry
+                            .origin
+                            .as_ref()
+                            .is_some_and(|origin| origin.matches(&ctx.origin))
                         && created.can_auto_start()
                         && ctx.backend.base == reply.backend.base
                         && ctx.backend.workspace == reply.backend.workspace

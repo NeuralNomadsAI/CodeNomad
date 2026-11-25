@@ -382,11 +382,16 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             UpdateMissionRequest::with_request_id("upd-1".into(), 2, "New objective", "Notes")
                 .unwrap();
 
-        let (base, req_task) = spawn_http(
-            "200 OK",
-            json!({"mission": sample_mission(3, "running")}).to_string(),
-        )
-        .await;
+        let mut updated_mission = sample_mission(3, "running");
+        updated_mission["history"] = json!([{
+            "revision": 3,
+            "source": "user",
+            "requestID": "upd-1",
+            "objective": { "before": "Old", "after": "New objective" },
+            "notes": { "before": "", "after": "Notes" }
+        }]);
+        let (base, req_task) =
+            spawn_http("200 OK", json!({"mission": updated_mission}).to_string()).await;
         assert_eq!(
             backend(base).update_mission(&t, &req).await,
             UpdateMissionOutcome::Updated {
@@ -397,6 +402,26 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
         let raw = req_task.await.unwrap();
         assert!(raw.starts_with("PATCH /api/workspaces/ws-1/missions/msn_alpha123 "));
         assert!(raw.contains("\"expectedRevision\":2"));
+
+        // PATCH 200 returning unchanged revision or missing exact history entry stays Uncertain.
+        let (base, _t) = spawn_http(
+            "200 OK",
+            json!({"mission": sample_mission(2, "running")}).to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base).update_mission(&t, &req).await,
+            UpdateMissionOutcome::Uncertain
+        );
+        let (base, _t) = spawn_http(
+            "200 OK",
+            json!({"mission": sample_mission(3, "running")}).to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base).update_mission(&t, &req).await,
+            UpdateMissionOutcome::Uncertain
+        );
 
         let (base, _t) = spawn_http(
             "409 Conflict",
@@ -428,8 +453,10 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             UpdateMissionOutcome::Uncertain
         );
 
-        // Reconcile edit matches exact history entry (requestID + expectedRevision + 1 + after bodies).
+        // Reconcile edit matches exact history entry even when coordinatorSessionId changed
+        // through a valid reconfiguration on the same project and Mission.
         let mut mission = sample_mission(3, "running");
+        mission["coordinatorSessionId"] = json!("ses_reconfigured_coord");
         mission["history"] = json!([{
             "revision": 3,
             "source": "user",
@@ -448,6 +475,78 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
                 mission_id: "msn_alpha123".into(),
                 revision: 3
             }
+        );
+
+        // Document edit-lock checks via GET /missions/{id}/schedule.
+        let (base, _t) = spawn_http(
+            "200 OK",
+            json!({
+                "pending": false,
+                "document": {
+                    "id": "msn_alpha123",
+                    "kind": "one-time",
+                    "edit": { "structural": false, "reason": "launched-once" }
+                }
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base)
+                .read_mission_edit_document("msn_alpha123")
+                .await,
+            DocumentEditCheck::Editable {
+                lock_help: Some("missions.scheduling.lock.launched-once")
+            }
+        );
+
+        let (base, _t) = spawn_http(
+            "200 OK",
+            json!({
+                "pending": false,
+                "document": {
+                    "id": "msn_alpha123",
+                    "kind": "one-time",
+                    "preparation": { "pending": true },
+                    "edit": { "structural": false, "reason": "uncertain" }
+                }
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base)
+                .read_mission_edit_document("msn_alpha123")
+                .await,
+            DocumentEditCheck::Locked("missions.scheduling.lock.uncertain")
+        );
+
+        let (base, _t) = spawn_http(
+            "200 OK",
+            json!({
+                "pending": false,
+                "document": {
+                    "id": "msn_alpha123",
+                    "kind": "schedule",
+                    "edit": { "structural": true, "reason": null }
+                }
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base)
+                .read_mission_edit_document("msn_alpha123")
+                .await,
+            DocumentEditCheck::Locked("missions.scheduling.lock.journal")
+        );
+
+        let (base, _t) = spawn_http("401 Unauthorized", "{}".into()).await;
+        assert_eq!(
+            backend(base)
+                .read_mission_edit_document("msn_alpha123")
+                .await,
+            DocumentEditCheck::AuthExpired
         );
 
         // Explicit notes clear ("") must NOT be confirmed when history entry omits notes.

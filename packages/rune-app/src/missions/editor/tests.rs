@@ -437,6 +437,7 @@ fn same_cycle_patch_401_blocks_fresh_create_autostart() {
         super::super::editor_holds::FormOrigin {
             occurrence: "tab-1".into(),
             generation: 1,
+            backend: backend.clone(),
         },
         &backend,
         &wake,
@@ -1365,13 +1366,18 @@ fn editor_view_exposes_accessible_controls_focuses_close_on_edit_and_hides_lock_
         "reopened editor exposes copyable previous conflicted draft"
     );
 
-    // Closing the editor must restore actual focus back to the originating trigger.
-    rt.update(|host, tx| {
-        let back = host.panel.close_reader();
-        assert_eq!(back.as_deref(), Some("mission-edit"));
-        tx.focus(back.unwrap(), true);
-    });
+    // Clicking the real Close button must close the editor and restore focus to the trigger.
+    let (cx, cy) = rt
+        .find("mission-editor-close")
+        .expect("close button must be mounted");
+    rt.pointer_down(cx, cy);
+    rt.pointer_up(cx, cy);
     rt.frame(2.0 / 60.0);
+    assert!(
+        rt.state.closed,
+        "clicking Close must invoke editor close callback"
+    );
+    assert!(!rt.state.panel.has_editor(), "editor must be closed");
     let mut restored_focus = None;
     rt.update(|_, tx| {
         restored_focus = tx.focused().map(str::to_owned);
@@ -1379,7 +1385,7 @@ fn editor_view_exposes_accessible_controls_focuses_close_on_edit_and_hides_lock_
     assert_eq!(
         restored_focus.as_deref(),
         Some("mission-edit"),
-        "closing editor must restore actual keyboard focus to the trigger"
+        "closing editor via Close button must restore actual keyboard focus to the trigger"
     );
 }
 
@@ -1585,6 +1591,7 @@ fn finished_mission_with_uncertain_edit_hold_exposes_read_only_receipt_reconcili
         super::super::editor_holds::FormOrigin {
             occurrence: "tab-1".into(),
             generation: 1,
+            backend: backend.clone(),
         },
         &backend,
         &noop_wake(),
@@ -2004,8 +2011,7 @@ fn same_cycle_directory_summary_401_blocks_fresh_create_autostart() {
         let _ = wake_tx.try_send(());
     });
     let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), wake);
-    let mut holds = EditorHolds::default();
-    let mut lifecycle = Lifecycle::default();
+    let holds = EditorHolds::default();
 
     // Trigger Summaries read (which will return 401 simultaneously with Create fresh ACK).
     panel.show(true);
@@ -2018,11 +2024,25 @@ fn same_cycle_directory_summary_401_blocks_fresh_create_autostart() {
         panel.failed(super::super::directory::Kind::Cleanups)
     });
 
-    panel.open_create_editor(&mut holds, Some("missions-create".into()));
-    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Create vs dir 401");
-    panel.editor.form.as_mut().unwrap().start_on_creation = true;
-    while wake_rx.try_recv().is_ok() {}
-    panel.submit_editor("tab-1", &mut holds);
+    let state = crate::workspace::test_state_with_mission_panel(panel, holds);
+    let mut rt = Runtime::new(
+        state,
+        |_, _| rune::el(),
+        (1200.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    // Open Create with start_on_creation=true and submit; wait for BOTH Summaries 401 and Create
+    // fresh replies to land in their channels, then hide the panel before workspace::poll runs.
+    // Real workspace::poll must still observe the hidden Summaries 401 and block /control.
+    rt.update(|s, _| {
+        let (tab_key, panel, mission_editor) = crate::workspace::test_mission_entry_mut(s, 0);
+        panel.open_create_editor(mission_editor, Some("missions-create".into()));
+        panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Create vs dir 401");
+        panel.editor.form.as_mut().unwrap().start_on_creation = true;
+        while wake_rx.try_recv().is_ok() {}
+        panel.submit_editor(&tab_key, mission_editor);
+    });
     crate::platform::block_on(async {
         for _ in 0..3 {
             tokio::time::timeout(Duration::from_secs(3), wake_rx.recv())
@@ -2031,11 +2051,17 @@ fn same_cycle_directory_summary_401_blocks_fresh_create_autostart() {
                 .unwrap();
         }
     });
-    let (auth, _) = poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
-    assert_eq!(
-        auth.len(),
-        1,
-        "directory Summaries 401 must propagate through drain_auth_expired"
+    rt.update(|s, tx| {
+        let (_, panel, _) = crate::workspace::test_mission_entry_mut(s, 0);
+        panel.show(false);
+        crate::workspace::poll(s, 1.0, tx);
+    });
+    assert!(
+        rt.state
+            .screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required),
+        "real workspace::poll must propagate hidden directory 401 into authentication recovery"
     );
     std::thread::sleep(Duration::from_millis(60));
     assert_eq!(
@@ -2087,6 +2113,477 @@ fn open_mission_editor_blocks_global_shortcuts_while_allowing_escape() {
     );
     assert!(escape_handled, "Escape must still close the Mission editor");
     assert!(!editor_still_open, "Mission editor must close on Escape");
+}
+
+#[test]
+fn create_with_empty_title_sends_derived_title_in_post_body() {
+    let captured_post = Arc::new(std::sync::Mutex::new(None::<String>));
+    let captured_post_bg = captured_post.clone();
+    let (base, _) = start_scripted_server(move |_idx, raw| {
+        if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+            *captured_post_bg.lock().unwrap() = Some(raw.to_owned());
+            (
+                "200 OK".into(),
+                json!({
+                    "acknowledgement": "fresh",
+                    "mission": mission_json_for("msn_derived", 1, "prepared")
+                })
+                .to_string(),
+            )
+        } else {
+            ("404 Not Found".into(), "{}".into())
+        }
+    });
+    let backend = attested_backend(base);
+    let mut panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+
+    panel.open_create_editor(&mut holds, Some("missions-create".into()));
+    panel.editor.form.as_mut().unwrap().objective =
+        TextEdit::new("Fix the retry loop. Keep existing tests.");
+    panel.submit_editor("tab-1", &mut holds);
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        !panel.has_editor()
+    });
+    let post = captured_post
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("POST /missions must be sent");
+    let body: Value = serde_json::from_str(post.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(
+        body["title"].as_str(),
+        Some("Fix the retry loop"),
+        "empty title field must send derived first-clause title like Solid"
+    );
+}
+
+#[test]
+fn document_lock_via_schedule_blocks_edit_while_preserving_existing_hold() {
+    let patch_calls = Arc::new(AtomicUsize::new(0));
+    let patch_calls_bg = patch_calls.clone();
+    let (base, _) = start_scripted_server(move |_idx, raw| {
+        if raw.starts_with("GET /api/workspaces/ws-1/missions/msn_doclock/schedule ") {
+            (
+                "200 OK".into(),
+                json!({
+                    "pending": false,
+                    "document": {
+                        "id": "msn_doclock",
+                        "kind": "one-time",
+                        "preparation": { "pending": true },
+                        "edit": { "structural": false, "reason": "uncertain" }
+                    }
+                })
+                .to_string(),
+            )
+        } else if raw.starts_with("PATCH /api/workspaces/ws-1/missions/msn_doclock ") {
+            patch_calls_bg.fetch_add(1, Ordering::SeqCst);
+            ("500 Internal Server Error".into(), "{}".into())
+        } else {
+            ("404 Not Found".into(), "{}".into())
+        }
+    });
+    let backend = attested_backend(base);
+
+    // Header carrying dormant document is immediately non-editable.
+    let dormant_header: MapHeader = serde_json::from_value(json!({
+        "root": {
+            "version": 1,
+            "id": "msn_dormant",
+            "projectID": "prj_1",
+            "projectCanonical": "/repo",
+            "title": "Dormant",
+            "excerpt": "Dormant",
+            "template": "custom",
+            "taskMode": "native",
+            "status": "active",
+            "runState": "prepared",
+            "revision": 2,
+            "coordinatorSessionId": "ses_coord",
+            "createdAt": 1.0,
+            "updatedAt": 1.0,
+            "historyTruncated": false,
+            "bodies": {},
+            "document": { "revision": 2, "state": "active", "dormant": true }
+        },
+        "collections": {
+            "actors": { "characters": 0, "digest": "", "total": 0, "array": true },
+            "history": { "characters": 0, "digest": "", "total": 0, "array": true },
+            "reports": { "characters": 0, "digest": "", "total": 0, "array": true }
+        },
+        "tasks": {
+            "version": "",
+            "page": { "order": "", "offset": 0, "end": 0, "total": 0, "reports": 0, "counts": {} },
+            "pins": [],
+            "reportPins": []
+        }
+    }))
+    .unwrap();
+    assert!(
+        !dormant_header.root.editable(),
+        "dormant unified document must not advertise Edit"
+    );
+
+    // Active unified document whose /schedule reports preparation.pending locks Edit without PATCH.
+    let obj = "Current objective";
+    let doc_header: MapHeader = serde_json::from_value(json!({
+        "root": {
+            "version": 1,
+            "id": "msn_doclock",
+            "projectID": "prj_1",
+            "projectCanonical": "/repo",
+            "title": "DocLocked",
+            "excerpt": obj,
+            "template": "custom",
+            "taskMode": "native",
+            "status": "active",
+            "runState": "prepared",
+            "revision": 2,
+            "coordinatorSessionId": "ses_coord",
+            "createdAt": 1.0,
+            "updatedAt": 1.0,
+            "historyTruncated": false,
+            "bodies": {
+                "objective": {
+                    "characters": utf16_len(obj),
+                    "digest": content_digest(obj)
+                }
+            },
+            "document": { "revision": 2, "state": "active" }
+        },
+        "collections": {
+            "actors": { "characters": 0, "digest": "", "total": 0, "array": true },
+            "history": { "characters": 0, "digest": "", "total": 0, "array": true },
+            "reports": { "characters": 0, "digest": "", "total": 0, "array": true }
+        },
+        "tasks": {
+            "version": "",
+            "page": { "order": "", "offset": 0, "end": 0, "total": 0, "reports": 0, "counts": {} },
+            "pins": [],
+            "reportPins": []
+        }
+    }))
+    .unwrap();
+    let mut panel = Panel::new(
+        backend.clone(),
+        Some("prj_1".into()),
+        Reads::default(),
+        noop_wake(),
+    );
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+    let scope = panel.creation_scope_key();
+    assert!(panel.editor.open_edit(
+        &doc_header,
+        &scope,
+        &panel.backend,
+        &mut holds,
+        &panel.reads,
+        &panel.wake,
+        Some("mission-edit".into()),
+    ));
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        panel.editor.form.as_ref().is_some_and(|f| {
+            f.prefill == PrefillState::DocumentLocked("missions.scheduling.lock.uncertain")
+        })
+    });
+    let form = panel.editor.form.as_ref().unwrap();
+    assert!(
+        !form.can_submit(None, None),
+        "locked document must disable Save"
+    );
+    panel.submit_editor("tab-1", &mut holds);
+    assert_eq!(
+        patch_calls.load(Ordering::SeqCst),
+        0,
+        "locked document must never send PATCH"
+    );
+}
+
+#[test]
+fn observation_401_propagates_across_cancel_and_drain() {
+    let (obs_seen_tx, obs_seen_rx) = std::sync::mpsc::channel();
+    let obs_seen_tx = Arc::new(std::sync::Mutex::new(Some(obs_seen_tx)));
+    let (base, _) = start_scripted_server(move |_idx, raw| {
+        if raw.contains("/missions/panel-page") && raw.contains("\"activity\"") {
+            if let Some(tx) = obs_seen_tx.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+            ("401 Unauthorized".into(), "expired".into())
+        } else {
+            ("404 Not Found".into(), "{}".into())
+        }
+    });
+    let backend = attested_backend(base);
+    let (wake_tx, wake_rx) = bounded(8);
+    let wake: Wake = Arc::new(move || {
+        let _ = wake_tx.try_send(());
+    });
+    let mut panel = Panel::new(
+        backend.clone(),
+        Some("prj_1".into()),
+        Reads::default(),
+        wake,
+    );
+    panel.observation.refresh();
+    assert!(panel.observation.poll(
+        &backend,
+        "prj_1",
+        "msn_obs_401",
+        2,
+        &Reads::default(),
+        &panel.wake,
+    ));
+    obs_seen_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("activity read must reach server");
+    crate::platform::block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), wake_rx.recv())
+            .await
+            .expect("observation 401 reply must arrive")
+            .unwrap();
+    });
+    // Even if cancel() runs before settle(), the arrived 401 must not be dropped.
+    panel.observation.cancel();
+    let expired = panel.drain_auth_expired();
+    assert_eq!(
+        expired.len(),
+        1,
+        "Observation 401 must survive cancel() and surface through Panel::drain_auth_expired"
+    );
+}
+
+#[test]
+fn pairing_required_and_tab_stash_suspend_missions_and_revoke_autostart() {
+    let control_calls = Arc::new(AtomicUsize::new(0));
+    let control_calls_bg = control_calls.clone();
+    let (post_seen_tx, post_seen_rx) = std::sync::mpsc::channel();
+    let post_seen_tx = Arc::new(std::sync::Mutex::new(Some(post_seen_tx)));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let release_bg = release.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let _ = tx.send(format!("http://{addr}/"));
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let seen = post_seen_tx.clone();
+                let gate = release_bg.clone();
+                let controls = control_calls_bg.clone();
+                tokio::spawn(async move {
+                    let raw = read_http_request(&mut socket).await;
+                    let (status, body) = if raw.starts_with("GET /api/meta ") {
+                        (
+                            "200 OK",
+                            json!({"apiContract": 1, "serverId": "fixture-server"}).to_string(),
+                        )
+                    } else if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+                        if let Some(tx) = seen.lock().unwrap().take() {
+                            let _ = tx.send(());
+                        }
+                        gate.notified().await;
+                        (
+                            "200 OK",
+                            json!({
+                                "acknowledgement": "fresh",
+                                "mission": mission_json_for("msn_pairing", 1, "prepared")
+                            })
+                            .to_string(),
+                        )
+                    } else if raw.contains("/control ") {
+                        controls.fetch_add(1, Ordering::SeqCst);
+                        ("200 OK", "{}".into())
+                    } else {
+                        ("404 Not Found", "{}".into())
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+    });
+    let base = rx.recv().unwrap();
+    let backend = attested_backend(base);
+    let panel = Panel::new(backend, Some("prj_1".into()), Reads::default(), noop_wake());
+    let state = crate::workspace::test_state_with_mission_panel(panel, EditorHolds::default());
+    let mut rt = Runtime::new(
+        state,
+        |_, _| rune::el(),
+        (1200.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+
+    // Open Create with start_on_creation=true, submit, then block context (auth/launcher takeover).
+    rt.update(|s, _| {
+        let (tab_key, panel, mission_editor) = crate::workspace::test_mission_entry_mut(s, 0);
+        panel.open_create_editor(mission_editor, Some("missions-create".into()));
+        panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Context guard");
+        panel.editor.form.as_mut().unwrap().start_on_creation = true;
+        panel.submit_editor(&tab_key, mission_editor);
+    });
+    post_seen_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("POST /missions must reach server");
+
+    rt.update(|s, tx| {
+        s.screen.launcher_mut().unwrap().authentication_required = true;
+        assert!(
+            !crate::workspace::mission_has_editor(s),
+            "blocked project context must hide Mission editor"
+        );
+        assert!(
+            !crate::workspace::mission_has_reader(s),
+            "blocked project context must hide Mission reader"
+        );
+        crate::workspace::poll(s, 1.0, tx);
+    });
+
+    // Release POST /missions while blocked; auto-start must already be revoked.
+    release.notify_one();
+    wait_until(|| {
+        let mut done = false;
+        rt.update(|s, tx| {
+            crate::workspace::poll(s, 2.0, tx);
+            let (_, panel, mission_editor) = crate::workspace::test_mission_entry_mut(s, 0);
+            let scope = panel.creation_scope_key();
+            done = mission_editor.creation(&scope).is_none();
+        });
+        done
+    });
+    std::thread::sleep(Duration::from_millis(60));
+    assert_eq!(
+        control_calls.load(Ordering::SeqCst),
+        0,
+        "blocked project context must revoke auto-start so no POST /control fires"
+    );
+
+    // Restore context and verify immediate tab switch (workspace::new_tab -> stash) suspends panel before any poll.
+    rt.update(|s, tx| {
+        s.screen.launcher_mut().unwrap().authentication_required = false;
+        {
+            let (_, panel, mission_editor) = crate::workspace::test_mission_entry_mut(s, 0);
+            panel.show(true);
+            panel.open_create_editor(mission_editor, Some("missions-create".into()));
+            panel.editor.form.as_mut().unwrap().start_on_creation = true;
+        }
+        crate::workspace::new_tab(s, tx);
+    });
+    let stashed_panel = crate::workspace::test_mission_panel(&rt.state, 0);
+    assert!(
+        !stashed_panel.busy(super::super::directory::Kind::Summaries),
+        "tabs::stash must immediately cancel active directory reads without waiting for poll"
+    );
+}
+
+#[test]
+fn reconnect_same_server_advances_generation_so_old_ack_does_not_close_or_hijack_form() {
+    let (post_seen_tx, post_seen_rx) = std::sync::mpsc::channel();
+    let post_seen_tx = Arc::new(std::sync::Mutex::new(Some(post_seen_tx)));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let release_bg = release.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let _ = tx.send(format!("http://{addr}/"));
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let seen = post_seen_tx.clone();
+                let gate = release_bg.clone();
+                tokio::spawn(async move {
+                    let raw = read_http_request(&mut socket).await;
+                    let (status, body) = if raw.starts_with("GET /api/meta ") {
+                        (
+                            "200 OK",
+                            json!({"apiContract": 1, "serverId": "fixture-server"}).to_string(),
+                        )
+                    } else if raw.starts_with("POST /api/workspaces/ws-1/missions ") {
+                        if let Some(tx) = seen.lock().unwrap().take() {
+                            let _ = tx.send(());
+                        }
+                        gate.notified().await;
+                        (
+                            "200 OK",
+                            json!({
+                                "acknowledgement": "fresh",
+                                "mission": mission_json_for("msn_old_conn", 1, "prepared")
+                            })
+                            .to_string(),
+                        )
+                    } else {
+                        ("404 Not Found", "{}".into())
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+    });
+    let base = rx.recv().unwrap();
+    let conn1 = attested_backend(base.clone());
+    let conn2 = attested_backend(base);
+    assert!(
+        !conn1.client.same_connection(&conn2.client),
+        "reconnected client must have a distinct connection identity"
+    );
+    let mut panel = Panel::new(conn1, Some("prj_1".into()), Reads::default(), noop_wake());
+    let mut holds = EditorHolds::default();
+    let mut lifecycle = Lifecycle::default();
+
+    panel.open_create_editor(&mut holds, Some("missions-create".into()));
+    panel.editor.form.as_mut().unwrap().objective = TextEdit::new("Created before reconnect");
+    panel.submit_editor("tab-1", &mut holds);
+    post_seen_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("POST /missions on conn1 must reach server");
+
+    // Reconnect to the same server/workspace with conn2 while POST on conn1 is still in flight.
+    panel.rebind(conn2);
+    panel.rebind_editor(&mut holds);
+
+    // Late ACK from conn1 arrives; hold settles, but restored form stays open and selection stays None.
+    release.notify_one();
+    let scope = panel.creation_scope_key();
+    wait_until(|| {
+        poll_step(&mut panel, "tab-1", &mut holds, &mut lifecycle);
+        holds.creation(&scope).is_none()
+    });
+    assert!(
+        panel.has_editor(),
+        "late ACK from previous connection must not close the reconnected form"
+    );
+    assert_eq!(
+        panel.selected, None,
+        "late ACK from previous connection must not hijack Mission selection"
+    );
 }
 
 fn mission_page_envelope(mission_id: &str, revision: u64, objective: &str) -> String {

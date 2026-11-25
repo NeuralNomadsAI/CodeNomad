@@ -209,8 +209,23 @@ impl Header {
         }
     }
 
+    pub fn has_document(&self) -> bool {
+        self.extra.get("document").is_some_and(Value::is_object)
+    }
+
+    pub fn document_blocked(&self) -> bool {
+        self.extra.get("document").is_some_and(|doc| {
+            doc.is_object()
+                && (doc["dormant"] == true
+                    || doc["deletion"].is_object()
+                    || matches!(doc["state"].as_str(), Some("stopped" | "finished")))
+        })
+    }
+
     pub fn editable(&self) -> bool {
-        self.status == Status::Active && self.run_state != Some(RunState::Stopped)
+        self.status == Status::Active
+            && self.run_state != Some(RunState::Stopped)
+            && !self.document_blocked()
     }
 }
 

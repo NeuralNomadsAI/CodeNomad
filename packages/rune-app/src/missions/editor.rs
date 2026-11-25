@@ -17,10 +17,10 @@ use codenomad_client::{
     backend::Backend,
     bounded,
     missions::{
-        BodyDescriptor, ContentSelector, CreateMissionRequest, EditorBodyOutcome, LifecycleTarget,
-        MISSION_TEXT_MAX, MISSION_TITLE_MAX, MapHeader, RunState, TaskMode, Template,
-        UpdateMissionRequest, derive_mission_title, js_trim, request_id, utf16_len,
-        valid_notes_input, valid_objective_input, valid_title_input,
+        BodyDescriptor, ContentSelector, CreateMissionRequest, DocumentEditCheck,
+        EditorBodyOutcome, LifecycleTarget, MISSION_TEXT_MAX, MISSION_TITLE_MAX, MapHeader,
+        RunState, TaskMode, Template, UpdateMissionRequest, derive_mission_title, js_trim,
+        request_id, utf16_len, valid_notes_input, valid_objective_input, valid_title_input,
     },
 };
 use rune::edit::TextEdit;
@@ -40,6 +40,7 @@ pub(super) enum PrefillState {
     Ready,
     Changed,
     Failed,
+    DocumentLocked(&'static str),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,6 +66,8 @@ pub(super) struct EditTarget {
     pub run_state: Option<RunState>,
     pub objective_body: Option<BodyDescriptor>,
     pub notes_body: Option<BodyDescriptor>,
+    pub has_document: bool,
+    pub document_lock_help: Option<&'static str>,
     pub target: LifecycleTarget,
     pub read_only: bool,
 }
@@ -82,6 +85,8 @@ impl EditTarget {
             run_state: header.root.run_state,
             objective_body: header.root.body("objective").cloned(),
             notes_body: header.root.body("notes").cloned(),
+            has_document: header.root.has_document(),
+            document_lock_help: None,
             target: header.lifecycle_target(),
             read_only: !header.root.editable(),
         }
@@ -104,6 +109,8 @@ impl EditTarget {
             run_state,
             objective_body: None,
             notes_body: None,
+            has_document: false,
+            document_lock_help: None,
             target: hold.target.clone(),
             read_only: true,
         }
@@ -312,6 +319,7 @@ impl Form {
 
 struct PrefillReply {
     serial: u64,
+    document: Option<DocumentEditCheck>,
     objective: EditorBodyOutcome,
     notes: EditorBodyOutcome,
     backend: Backend,
@@ -333,7 +341,7 @@ pub(crate) struct Editor {
     prefill_flight: Option<Receiver<PrefillReply>>,
     prefill_cancel: Option<Sender<()>>,
     prefill_serial: u64,
-    auth_expired: Option<Backend>,
+    auth_expired: Vec<Backend>,
     focus_initial: Option<&'static str>,
 }
 
@@ -363,6 +371,10 @@ impl Editor {
     ) {
         self.cancel_prefill();
         holds.revoke_auto_start_for_scope(scope);
+        let next = self.next_generation();
+        if let Some(form) = &mut self.form {
+            form.generation = next;
+        }
         let restart = self.form.as_ref().and_then(|form| {
             if form.mode == Mode::Edit
                 && (form.prefill != PrefillState::Ready || form.reopen_target.is_some())
@@ -411,6 +423,7 @@ impl Editor {
             origin: FormOrigin {
                 occurrence: occurrence.to_owned(),
                 generation: form.generation,
+                backend: backend.clone(),
             },
             mode: form.mode,
             backend,
@@ -562,8 +575,18 @@ impl Editor {
         self.focus_initial.take()
     }
 
-    pub(crate) fn take_auth_expired(&mut self) -> Option<Backend> {
-        self.auth_expired.take()
+    fn record_auth_expired(&mut self, backend: Backend) {
+        if !self
+            .auth_expired
+            .iter()
+            .any(|known| known.client.same_connection(&backend.client))
+        {
+            self.auth_expired.push(backend);
+        }
+    }
+
+    pub(crate) fn drain_auth_expired(&mut self) -> Vec<Backend> {
+        std::mem::take(&mut self.auth_expired)
     }
 
     pub(super) fn retry_prefill(&mut self, backend: &Backend, reads: &Reads, wake: &Wake) {
@@ -713,7 +736,14 @@ impl Editor {
             form.request_id = fresh_id;
         }
         form.last_payload = payload_key;
-        let title = (!js_trim(&form.title.text).is_empty()).then_some(form.title.text.as_str());
+        let derived_title = form.derived_title();
+        let title = if !js_trim(&form.title.text).is_empty() {
+            Some(form.title.text.as_str())
+        } else if !derived_title.is_empty() {
+            Some(derived_title.as_str())
+        } else {
+            None
+        };
         let Ok(request) = CreateMissionRequest::with_request_id(
             form.request_id.clone(),
             &form.objective.text,
@@ -730,6 +760,7 @@ impl Editor {
         let origin = FormOrigin {
             occurrence: occurrence.to_owned(),
             generation: form.generation,
+            backend: backend.clone(),
         };
         if !holds.start_create(
             scope.clone(),
@@ -795,6 +826,7 @@ impl Editor {
         let origin = FormOrigin {
             occurrence: occurrence.to_owned(),
             generation: form.generation,
+            backend: backend.clone(),
         };
         if !holds.start_edit(key, target.target, request, origin, backend, wake) {
             form.error = Some("missions.control.mutation.error");
@@ -817,6 +849,7 @@ impl Editor {
             .map(|f| FormOrigin {
                 occurrence: occurrence.to_owned(),
                 generation: f.generation,
+                backend: backend.clone(),
             });
         holds.reconcile_creation(scope, origin, backend, wake)
     }
@@ -838,6 +871,7 @@ impl Editor {
             .map(|f| FormOrigin {
                 occurrence: occurrence.to_owned(),
                 generation: f.generation,
+                backend: backend.clone(),
             });
         holds.reconcile_edit(&key, origin, backend, wake)
     }
@@ -852,6 +886,12 @@ impl Editor {
         };
         self.prefill_flight = None;
         self.prefill_cancel = None;
+        let reply_is_auth_expired = matches!(reply.document, Some(DocumentEditCheck::AuthExpired))
+            || matches!(reply.objective, EditorBodyOutcome::AuthExpired)
+            || matches!(reply.notes, EditorBodyOutcome::AuthExpired);
+        if reply_is_auth_expired {
+            self.record_auth_expired(reply.backend.clone());
+        }
         if reply.serial != self.prefill_serial {
             return false;
         }
@@ -861,7 +901,29 @@ impl Editor {
         if form.mode != Mode::Edit {
             return false;
         }
-        if let Some(new_target) = form.reopen_target.take() {
+        if let Some(mut new_target) = form.reopen_target.take() {
+            match reply.document {
+                Some(DocumentEditCheck::AuthExpired) => {
+                    form.reopening = None;
+                    form.error = Some("missions.control.reader.unavailable");
+                    return true;
+                }
+                Some(DocumentEditCheck::Locked(reason)) => {
+                    form.reopening = None;
+                    form.prefill = PrefillState::DocumentLocked(reason);
+                    form.error = None;
+                    return true;
+                }
+                Some(DocumentEditCheck::Unavailable) => {
+                    form.reopening = None;
+                    form.error = Some("missions.control.reader.unavailable");
+                    return true;
+                }
+                Some(DocumentEditCheck::Editable { lock_help }) => {
+                    new_target.document_lock_help = lock_help;
+                }
+                None => {}
+            }
             match (reply.objective, reply.notes) {
                 (EditorBodyOutcome::Ready(obj), EditorBodyOutcome::Ready(notes)) => {
                     if form.prefill == PrefillState::Ready {
@@ -889,7 +951,6 @@ impl Editor {
                 (EditorBodyOutcome::AuthExpired, _) | (_, EditorBodyOutcome::AuthExpired) => {
                     form.reopening = None;
                     form.error = Some("missions.control.reader.unavailable");
-                    self.auth_expired = Some(reply.backend);
                 }
                 (EditorBodyOutcome::Changed, _) | (_, EditorBodyOutcome::Changed) => {
                     form.reopening = None;
@@ -903,10 +964,26 @@ impl Editor {
             return true;
         }
 
+        match reply.document {
+            Some(DocumentEditCheck::AuthExpired) | Some(DocumentEditCheck::Unavailable) => {
+                form.prefill = PrefillState::Failed;
+                return true;
+            }
+            Some(DocumentEditCheck::Locked(reason)) => {
+                form.prefill = PrefillState::DocumentLocked(reason);
+                return true;
+            }
+            Some(DocumentEditCheck::Editable { lock_help }) => {
+                if let Some(edit) = &mut form.edit {
+                    edit.document_lock_help = lock_help;
+                }
+            }
+            None => {}
+        }
+
         match (reply.objective, reply.notes) {
             (EditorBodyOutcome::AuthExpired, _) | (_, EditorBodyOutcome::AuthExpired) => {
                 form.prefill = PrefillState::Failed;
-                self.auth_expired = Some(reply.backend);
             }
             (EditorBodyOutcome::Changed, _) | (_, EditorBodyOutcome::Changed) => {
                 form.prefill = PrefillState::Changed;
@@ -935,7 +1012,7 @@ impl Editor {
             form.mode == mode
                 && origin
                     .as_ref()
-                    .is_some_and(|o| o.occurrence == occurrence && o.generation == form.generation)
+                    .is_some_and(|o| o.matches_live(occurrence, form.generation, backend))
         };
         match event {
             EditorEvent::Created {
@@ -1116,28 +1193,46 @@ impl Editor {
             let Some(_permit) = reads.preview(&cancelled).await else {
                 return;
             };
+            let document = if target.has_document {
+                let Some(check) = crate::platform::reads::cancellable(
+                    &cancelled,
+                    backend_clone.read_mission_edit_document(&target.mission_id),
+                )
+                .await
+                else {
+                    return;
+                };
+                Some(check)
+            } else {
+                None
+            };
+            let doc_editable = matches!(document, None | Some(DocumentEditCheck::Editable { .. }));
             // Never substitute the truncated excerpt for the full objective body.
-            let objective = match &target.objective_body {
-                Some(desc) => {
-                    let Some(outcome) = crate::platform::reads::cancellable(
-                        &cancelled,
-                        backend_clone.read_editor_body(
-                            &target.project_id,
-                            &target.mission_id,
-                            &ContentSelector::mission("objective"),
-                            desc,
-                        ),
-                    )
-                    .await
-                    else {
-                        return;
-                    };
-                    outcome
+            let objective = if doc_editable {
+                match &target.objective_body {
+                    Some(desc) => {
+                        let Some(outcome) = crate::platform::reads::cancellable(
+                            &cancelled,
+                            backend_clone.read_editor_body(
+                                &target.project_id,
+                                &target.mission_id,
+                                &ContentSelector::mission("objective"),
+                                desc,
+                            ),
+                        )
+                        .await
+                        else {
+                            return;
+                        };
+                        outcome
+                    }
+                    None => EditorBodyOutcome::Unavailable,
                 }
-                None => EditorBodyOutcome::Unavailable,
+            } else {
+                EditorBodyOutcome::Unavailable
             };
             // Confirm absent notes positively via `/content` so missing descriptors never overwrite existing notes.
-            let notes = if matches!(objective, EditorBodyOutcome::Ready(_)) {
+            let notes = if doc_editable && matches!(objective, EditorBodyOutcome::Ready(_)) {
                 match &target.notes_body {
                     Some(desc) => {
                         let Some(outcome) = crate::platform::reads::cancellable(
@@ -1177,6 +1272,7 @@ impl Editor {
             let _ = out
                 .send(PrefillReply {
                     serial,
+                    document,
                     objective,
                     notes,
                     backend: backend_clone,
@@ -1188,7 +1284,14 @@ impl Editor {
 
     fn cancel_prefill(&mut self) {
         self.prefill_cancel = None;
-        self.prefill_flight = None;
+        if let Some(rx) = self.prefill_flight.take()
+            && let Ok(reply) = rx.try_recv()
+            && (matches!(reply.document, Some(DocumentEditCheck::AuthExpired))
+                || matches!(reply.objective, EditorBodyOutcome::AuthExpired)
+                || matches!(reply.notes, EditorBodyOutcome::AuthExpired))
+        {
+            self.record_auth_expired(reply.backend);
+        }
         self.prefill_serial = self.prefill_serial.saturating_add(1);
     }
 }

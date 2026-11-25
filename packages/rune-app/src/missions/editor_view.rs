@@ -150,6 +150,16 @@ pub(crate) fn view<S: 'static>(
                         .key("mission-editor-prefill-retry"),
                     );
             }
+            PrefillState::DocumentLocked(reason) => {
+                content = content.child(theme::note(t(reason), "alert")).child(
+                    layout::button_tx(
+                        t("missionsPanel.reader.retry"),
+                        false,
+                        move |s: &mut S, tx| act(s, EditorGesture::RetryPrefill, tx),
+                    )
+                    .key("mission-editor-prefill-retry"),
+                );
+            }
             PrefillState::Ready => {}
         }
     }
@@ -189,10 +199,14 @@ pub(crate) fn view<S: 'static>(
     let title_invalid = title_limit_exceeded(&form.title.text);
     let mut title_header = layout::action_row().child(text(title_label).text_role(TextRole::Small));
     if form.mode == Mode::Edit {
-        let lock_key = match form.edit.as_ref().and_then(|e| e.run_state) {
-            Some(RunState::Prepared) | None => "missions.scheduling.lock.journal",
-            _ => "missions.scheduling.lock.launched-once",
-        };
+        let lock_key = form
+            .edit
+            .as_ref()
+            .and_then(|e| e.document_lock_help)
+            .unwrap_or_else(|| match form.edit.as_ref().and_then(|e| e.run_state) {
+                Some(RunState::Prepared) | None => "missions.scheduling.lock.journal",
+                _ => "missions.scheduling.lock.launched-once",
+            });
         let info_owner = scoped.clone();
         title_header = title_header.child(
             chrome::info_tip(title_label, t(lock_key), form.lock_help_open, move |s| {

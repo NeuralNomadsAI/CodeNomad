@@ -26,13 +26,13 @@ pub(super) struct Detail {
     id: String,
     observed: Option<u64>,
     pub snapshot: Option<Snapshot>,
-    active: Option<(u64, Demand, Receiver<Result<Answer>>)>,
-    staged: Option<(u64, Demand, Result<Answer>)>,
+    active: Option<(u64, Demand, Backend, Receiver<Result<Answer>>)>,
+    staged: Option<(u64, Demand, Backend, Result<Answer>)>,
     pending: Option<Demand>,
     retry: Option<Demand>,
     looked_up: HashSet<(String, String)>,
     lookup_failed: Option<(String, String)>,
-    auth_expired: Option<Backend>,
+    auth_expired: Vec<Backend>,
     pub failed: bool,
     pub map_reads: u64,
     refresh_started: u64,
@@ -102,12 +102,34 @@ impl Detail {
                 .is_some_and(|snapshot| Some(snapshot.header.root.revision) >= self.observed)
     }
 
+    fn record_auth_expired(&mut self, backend: Backend) {
+        if !self
+            .auth_expired
+            .iter()
+            .any(|known| known.client.same_connection(&backend.client))
+        {
+            self.auth_expired.push(backend);
+        }
+    }
+
     pub fn clear(&mut self) {
+        self.cancel();
+        let expired = std::mem::take(&mut self.auth_expired);
         *self = Self::default();
+        self.auth_expired = expired;
     }
     pub fn cancel(&mut self) {
-        self.active = None;
-        self.staged = None;
+        if let Some((_, _, backend, Err(error))) = self.staged.take()
+            && codenomad_client::missions::is_auth_expired(&error)
+        {
+            self.record_auth_expired(backend);
+        }
+        if let Some((_, _, backend, inbox)) = self.active.take()
+            && let Ok(Err(error)) = inbox.try_recv()
+            && codenomad_client::missions::is_auth_expired(&error)
+        {
+            self.record_auth_expired(backend);
+        }
         self.pending = None;
     }
     pub fn busy(&self) -> bool {
@@ -135,17 +157,20 @@ impl Detail {
             return summary;
         }
         if self.staged.is_none() {
-            self.staged = self.active.as_ref().and_then(|(serial, demand, inbox)| {
-                inbox
-                    .try_recv()
-                    .ok()
-                    .map(|answer| (*serial, demand.clone(), answer))
-            });
+            self.staged = self
+                .active
+                .as_ref()
+                .and_then(|(serial, demand, backend, inbox)| {
+                    inbox
+                        .try_recv()
+                        .ok()
+                        .map(|answer| (*serial, demand.clone(), backend.clone(), answer))
+                });
         }
         let answer = self
             .staged
             .as_ref()
-            .and_then(|(_, _, answer)| match answer {
+            .and_then(|(_, _, _, answer)| match answer {
                 Ok(answer) => Some(answer.revision()),
                 Err(error) => error
                     .downcast_ref::<RevisionChanged>()
@@ -200,18 +225,25 @@ impl Detail {
         self.lookup_failed = None;
     }
     pub fn cancel_lookup(&mut self) {
-        if matches!(self.active.as_ref(), Some((_, Demand::Lookup { .. }, _))) {
-            self.active = None;
+        if matches!(self.active.as_ref(), Some((_, Demand::Lookup { .. }, _, _)))
+            && let Some((_, _, backend, inbox)) = self.active.take()
+            && let Ok(Err(error)) = inbox.try_recv()
+            && codenomad_client::missions::is_auth_expired(&error)
+        {
+            self.record_auth_expired(backend);
         }
-        if matches!(self.staged.as_ref(), Some((_, Demand::Lookup { .. }, _))) {
-            self.staged = None;
+        if matches!(self.staged.as_ref(), Some((_, Demand::Lookup { .. }, _, _)))
+            && let Some((_, _, backend, Err(error))) = self.staged.take()
+            && codenomad_client::missions::is_auth_expired(&error)
+        {
+            self.record_auth_expired(backend);
         }
         if matches!(self.pending.as_ref(), Some(Demand::Lookup { .. })) {
             self.pending = None;
         }
     }
-    pub fn take_auth_expired(&mut self) -> Option<Backend> {
-        self.auth_expired.take()
+    pub fn drain_auth_expired(&mut self) -> Vec<Backend> {
+        std::mem::take(&mut self.auth_expired)
     }
     #[cfg(test)]
     pub fn fixture_snapshot_and_lookup(
@@ -276,7 +308,7 @@ impl Detail {
             self.refresh();
         }
         self.revision_floor(id, revision);
-        if let Some((serial, demand, result)) = self.staged.take() {
+        if let Some((serial, demand, reply_backend, result)) = self.staged.take() {
             self.active = None;
             let is_lookup = matches!(demand, Demand::Lookup { .. });
             if !is_lookup {
@@ -349,7 +381,7 @@ impl Detail {
                 }
                 Err(error) => {
                     if codenomad_client::missions::is_auth_expired(&error) {
-                        self.auth_expired = Some(backend.clone());
+                        self.record_auth_expired(reply_backend);
                     }
                     if let Some(changed) = error.downcast_ref::<RevisionChanged>() {
                         self.observed = self.observed.max(Some(changed.0));
@@ -435,7 +467,7 @@ impl Detail {
         } else {
             0
         };
-        self.active = Some((serial, demand.clone(), inbox));
+        self.active = Some((serial, demand.clone(), backend.clone(), inbox));
         platform::spawn(async move {
             let (_cancel, alive) = bounded(1);
             let operation = async {
@@ -713,7 +745,7 @@ mod tests {
             send.try_send(Ok(Answer::New(header(revision), vec![], HashMap::new(), 0)))
                 .ok()
                 .unwrap();
-            detail.active = Some((1, Demand::Refresh, inbox));
+            detail.active = Some((1, Demand::Refresh, backend.clone(), inbox));
             assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));
             assert_eq!(
                 detail
@@ -731,13 +763,13 @@ mod tests {
         }))
         .unwrap();
         send.try_send(Ok(Answer::More(page, 8))).ok().unwrap();
-        detail.active = Some((0, Demand::More, inbox));
+        detail.active = Some((0, Demand::More, backend.clone(), inbox));
         assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));
         assert_eq!(detail.snapshot.as_ref().unwrap().end, 0);
         assert!(detail.failed && matches!(detail.retry, Some(Demand::Refresh)));
         let (send, inbox) = bounded(1);
         send.try_send(Err(RevisionChanged(10).into())).ok().unwrap();
-        detail.active = Some((0, Demand::More, inbox));
+        detail.active = Some((0, Demand::More, backend.clone(), inbox));
         assert_eq!(detail.revision_floor("mission", Some(8)), Some(10));
         assert_eq!(detail.revision_floor("other", Some(8)), Some(8));
         assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));
