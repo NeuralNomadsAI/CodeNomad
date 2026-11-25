@@ -888,7 +888,7 @@ fn begin_close_revokes_guards_and_blocks_new_subscribers_before_finish() {
             );
             assert!(!client.supports_atomic_settings_patches());
             assert_eq!(client.transport_drops(&backend.client_id), 1);
-            assert!(!watch.snapshot().online);
+            assert!(!watch.current().1);
             assert!(
                 !hub.streams.lock().unwrap()[&backend.base].active,
                 "closing hub entry must not accept new subscribers while pong teardown runs"
@@ -963,7 +963,7 @@ fn voluntary_detach_revokes_guard_immediately_without_outage_before_pump_exits()
             );
             assert!(shared.mark_open());
             assert_eq!(client.open_streams_counter().load(SeqCst), 1);
-            assert!(watch.snapshot().online);
+            assert!(watch.current().1);
 
             let mut subscription = Subscription {
                 hub: hub.clone(),
@@ -985,7 +985,7 @@ fn voluntary_detach_revokes_guard_immediately_without_outage_before_pump_exits()
                 0,
                 "voluntary detach must not record a transport outage"
             );
-            assert!(!watch.snapshot().online);
+            assert!(!watch.current().1);
 
             // A new stream opening before the old pump exits transitions 0 -> 1 cleanly.
             let next_guard = client.track_stream(&backend.client_id);
