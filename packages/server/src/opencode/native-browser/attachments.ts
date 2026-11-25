@@ -250,10 +250,10 @@ class SessionAttachment {
         const [owner] = owners
         this.owners = owners
         const connection = owner && await this.workspaceManager.getSharedServiceConnection(owner)
-        const client = connection && this.attachClient(connection)
+        const client = connection ? this.attachClient(connection) : undefined
         // 2.3 accepts this attachment, but its blanket browser grant overrides a configured `browser` deny.
         // The daemon about to receive `attach` must report a numbered 2.4 release; a custom label never attaches.
-        if (client && compareVersionStrings((await client.server.info()).version ?? "", MINIMUM_OPENCODE_VERSION) < 0) {
+        if (client && compareVersionStrings((await client.server.info({ signal })).version ?? "", MINIMUM_OPENCODE_VERSION) < 0) {
           wait = UNAVAILABLE_RETRY_MS
         } else if (connection) {
           this.workspaceID = owner
