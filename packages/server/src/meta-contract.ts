@@ -11,7 +11,7 @@ export const CODENOMAD_CAPABILITIES = [
   "linked-worktrees", "force-worktree-delete", "workspace-clone", "temporary-workspaces",
   "missions", "conversation-permissions", "session-goals", "history-search", "background-shells",
   "plugin-controls", "integrations", "websearch-settings", "image-settings", "provider-usage", "service-usage",
-  "speech", "previews", "sidecars", "remote-control", "opencode-admin", "config-files",
+  "speech", "previews", "sidecars", "remote-control", "opencode-admin", "config-files", "settings-atomic-patches",
 ] as const
 
 export type CodeNomadCapability = typeof CODENOMAD_CAPABILITIES[number]

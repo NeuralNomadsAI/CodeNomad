@@ -135,12 +135,14 @@ fn update(s: &mut State, origin: Control, drag: FilterDrag, tx: &mut Tx) {
                 // Rune delivers the regular press after drag-up when released over the origin.
                 sweep.suppress = Some(gesture.origin);
             }
+            let mut batch = Vec::with_capacity(gesture.changes.len());
             for (row, (before, after)) in gesture.changes {
                 if after == "hidden" {
                     filters.last_visible.insert(row, before);
                 }
-                prefs.set_transcript(Some(row), after);
+                batch.push((row, after));
             }
+            prefs.set_transcript_batch(batch);
             return;
         }
     }

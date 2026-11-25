@@ -8,7 +8,7 @@ import { migrateSettingsLayout } from "./migrate"
 import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
-import { preserveLegacyTranscriptDefaults } from "./transcript-preset-defaults"
+import { applySecureEnvVarsMask, preserveLegacyTranscriptDefaults, stripNewObjectNulls } from "./transcript-preset-defaults"
 import { compactRemoteProjectHistory } from "./remote-project-history"
 import { readAdmissionEnvironment } from "./admission-environment"
 import { ServerFlagReader } from "./server-flag-reader"
@@ -227,12 +227,29 @@ export class SettingsService {
     if (kind === "config") {
       assertVoiceConversationPatch(patch.server)
       const before = this.configStore.reloadAuthoritative()
-      const changes = Object.hasOwn(patch, "ui") ? { ...patch, ui: preserveLegacyTranscriptDefaults(before.ui, patch.ui) } : patch
+      let changes: SettingsDoc = patch
+      if (Object.hasOwn(changes, "ui")) {
+        changes = { ...changes, ui: preserveLegacyTranscriptDefaults(before.ui, changes.ui) }
+      }
+      if (Object.hasOwn(changes, "server")) {
+        changes = { ...changes, server: applySecureEnvVarsMask(before.server, changes.server) }
+      }
       const after = normalizeConfigDoc(applyMergePatch(before, changes) as SettingsDoc)
       check?.(before, after)
       updated = this.configStore.replace(after)
     } else {
-      updated = this.stateStore.mergePatch(patch)
+      updated = this.stateStore.mergePatch(patch, {
+        authoritative: true,
+        prepare: (before, raw) => {
+          const next: SettingsDoc = { ...raw }
+          for (const key of Object.keys(raw)) {
+            if (key !== SESSION_PERMISSION_BLOCKS_OWNER) {
+              next[key] = stripNewObjectNulls(before[key], raw[key])
+            }
+          }
+          return next
+        },
+      })
     }
     this.publish(kind, "*", kind === "config" ? {} : undefined)
     return updated
@@ -253,6 +270,15 @@ export class SettingsService {
     const value = this.configStore.getAuthoritativeOwner(owner, options)
     if (owner === "ui" && value.settings !== undefined && !isPlainObject(value.settings)) throw new SettingsReadError()
     return value
+  }
+
+  getAuthoritativeConfigOwner(owner: string): SettingsDoc {
+    const value = this.getRawConfigOwner(owner)
+    return owner === "server" ? normalizeServerConfigOwner(value) : value
+  }
+
+  getAuthoritativeStateOwner(owner: string): SettingsDoc {
+    return this.stateStore.getAuthoritativeOwner(owner)
   }
 
   getPrivateSessionPermissionState(): SettingsDoc {
@@ -296,13 +322,22 @@ export class SettingsService {
     if (kind === "config") {
       if (owner === "server") assertVoiceConversationPatch(patch)
       const before = this.configStore.reloadAuthoritative()
-      const changes = owner === "ui" ? preserveLegacyTranscriptDefaults(before.ui, patch) : patch
+      const changes = owner === "ui"
+        ? preserveLegacyTranscriptDefaults(before.ui, patch)
+        : owner === "server"
+          ? applySecureEnvVarsMask(before.server, patch)
+          : patch
       const merged = applyMergePatch(this.configStore.getOwner(owner), changes) as SettingsDoc
       const next = owner === "server" ? normalizeServerConfigOwner(merged) : merged
       check?.(before, { ...before, [owner]: next })
       updated = this.configStore.replaceOwner(owner, next)
     } else {
-      updated = this.stateStore.mergePatchOwner(owner, patch)
+      updated = this.stateStore.mergePatchOwner(owner, patch, {
+        authoritative: true,
+        prepare: owner !== SESSION_PERMISSION_BLOCKS_OWNER
+          ? (beforeOwner, raw) => stripNewObjectNulls(beforeOwner, raw) as SettingsDoc
+          : undefined,
+      })
       if (owner === SESSION_FAVORITES_OWNER) this.favoritesSnapshot = undefined
     }
     this.publish(kind, owner, updated)

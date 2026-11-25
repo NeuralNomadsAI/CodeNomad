@@ -60,6 +60,9 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 }
                 let updated =
                     prefs.revision != std::mem::replace(&mut s.seen_revision, prefs.revision);
+                if !prefs.transcript_ready() {
+                    s.transcript_picker.set(None);
+                }
                 let editor_changed = prefs.memory.poll_editor(&mut s.memory_editor);
                 let mut config_changed = false;
                 if let Some(wake) = prefs.window_wake.clone() {
@@ -159,6 +162,12 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
         #[cfg(any(test, feature = "test-support"))]
         scenes: &[
             ("settings", |s| s.shared.borrow_mut().fixture()),
+            ("conversation", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::Conversation;
+            }),
             ("opencode", |s| {
                 s.shared
                     .borrow_mut()

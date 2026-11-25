@@ -75,6 +75,30 @@ impl Row {
         })
     }
 
+    pub(super) fn preset_mode(self, preset: &str) -> &'static str {
+        match self {
+            Self::Thinking | Self::Usage | Self::System => {
+                if preset == "everything" {
+                    "expanded"
+                } else {
+                    "hidden"
+                }
+            }
+            Self::Diagnostics => match preset {
+                "nothing" => "hidden",
+                "minimal" => "collapsed",
+                _ => "expanded",
+            },
+            Self::Inputs => match preset {
+                "nothing" | "minimal" => "hidden",
+                "balanced" => "collapsed",
+                _ => "expanded",
+            },
+            Self::Groups => groups_default(preset),
+            Self::Tool(id) => tool_default(preset, id),
+        }
+    }
+
     pub(super) fn mode(self, settings: &Value) -> &'static str {
         let preset = saved_preset(settings);
         let defaults = &settings["toolCallExpansionDefaults"];
@@ -96,65 +120,132 @@ impl Row {
                         expansion(&settings["toolOutputExpansion"]).unwrap_or("expanded")
                     }
                 }),
-            Self::Groups => visibility(&settings[self.key()]).unwrap_or(usage_default(preset)),
+            Self::Groups => visibility(&settings[self.key()]).unwrap_or(groups_default(preset)),
             Self::Diagnostics => visibility(&settings[self.key()]).unwrap_or("expanded"),
             Self::Inputs => visibility(&settings[self.key()]).unwrap_or("collapsed"),
             Self::System => visibility(&settings[self.key()]).unwrap_or("hidden"),
         }
     }
 
-    pub(super) fn put(self, patch: &mut Value, saved: &Value, mode: &'static str) {
+    pub(super) fn needs_fresh_snapshot(self, mode: &str) -> bool {
+        matches!(self, Self::Thinking | Self::Tool(_)) || (self == Self::Usage && mode == "hidden")
+    }
+
+    pub(super) fn put(self, patch: &mut Value, saved: &Value, mode: &'static str, atomic: bool) {
+        let preset = saved_preset(saved);
         match self {
             Self::Usage => {
-                // Hide keeps the selected expansion for the next enable.
+                // On atomic servers, hiding leaves usageMetricsExpansion untouched so concurrent
+                // updates survive; legacy servers without server-side preservation need the
+                // pre-hide default materialized in the PATCH.
                 patch[self.key()] = json!(mode != "hidden");
                 if mode != "hidden" {
                     patch["usageMetricsExpansion"] = json!(mode);
+                } else if !atomic && expansion(&saved["usageMetricsExpansion"]).is_none() {
+                    patch["usageMetricsExpansion"] = json!(usage_default(preset));
                 }
             }
-            Self::Thinking | Self::Tool(_) => {
-                let mut current = saved.clone();
-                // Other rows in the same write may already have adjusted the effective choices.
-                overlay(&mut current, patch);
-                let mut tools = tools(|id| Self::Tool(id).mode(&current));
-                if let Self::Tool(id) = self {
-                    tools[id] = json!(mode);
-                    if id == "other" && mode != "hidden" {
-                        patch["toolOutputExpansion"] = json!(mode);
-                    }
+            Self::Thinking => {
+                if !atomic {
+                    materialize_legacy_custom_defaults(patch, saved, preset, None);
                 }
-                let mut thinking = thinking(&current);
-                if self == Self::Thinking {
-                    patch[self.key()] = json!(mode != "hidden");
-                    if mode != "hidden" {
-                        thinking = mode;
-                        patch["thinkingBlocksExpansion"] = json!(mode);
-                    }
+                patch["showThinkingBlocks"] = json!(mode != "hidden");
+                patch["toolCallExpansionDefaults"]["preset"] = json!("custom");
+                if mode != "hidden" {
+                    patch["toolCallExpansionDefaults"]["thinking"] = json!(mode);
+                    patch["thinkingBlocksExpansion"] = json!(mode);
                 }
-                // Solid derives these from the old preset when absent. Keep that effective
-                // state on owners that store merge patches without deriving legacy defaults.
-                for row in [Self::Groups, Self::Usage] {
-                    let (key, mode) = if row == Self::Groups {
-                        (row.key(), row.mode(&current))
-                    } else {
-                        ("usageMetricsExpansion", usage_expansion(&current))
-                    };
-                    if current[key].is_null() {
-                        patch[key] = json!(mode);
-                    }
+            }
+            Self::Tool(target) => {
+                if !atomic {
+                    materialize_legacy_custom_defaults(patch, saved, preset, Some(target));
                 }
-                patch["toolCallExpansionDefaults"] =
-                    json!({"preset":"custom", "thinking":thinking, "tools":tools});
+                patch["toolCallExpansionDefaults"]["preset"] = json!("custom");
+                patch["toolCallExpansionDefaults"]["tools"][target] = json!(mode);
+                if target == "other" && mode != "hidden" {
+                    patch["toolOutputExpansion"] = json!(mode);
+                }
             }
             _ => patch[self.key()] = json!(mode),
         }
     }
+
+    pub(super) fn confirmed(self, mode: &str, settings: &Value) -> bool {
+        if !settings.is_object() {
+            return false;
+        }
+        match self {
+            Self::Usage => {
+                if mode == "hidden" {
+                    settings["showUsageMetrics"] == false
+                } else {
+                    settings["showUsageMetrics"] == true
+                        && expansion(&settings["usageMetricsExpansion"]) == Some(mode)
+                }
+            }
+            Self::Thinking => {
+                if settings["toolCallExpansionDefaults"]["preset"] != "custom" {
+                    return false;
+                }
+                if mode == "hidden" {
+                    settings["showThinkingBlocks"] == false
+                } else {
+                    settings["showThinkingBlocks"] == true
+                        && expansion(&settings["toolCallExpansionDefaults"]["thinking"])
+                            == Some(mode)
+                        && expansion(&settings["thinkingBlocksExpansion"]) == Some(mode)
+                }
+            }
+            Self::Tool(id) => {
+                settings["toolCallExpansionDefaults"]["preset"] == "custom"
+                    && visibility(&settings["toolCallExpansionDefaults"]["tools"][id]) == Some(mode)
+                    && (id != "other"
+                        || mode == "hidden"
+                        || expansion(&settings["toolOutputExpansion"]) == Some(mode))
+            }
+            _ => visibility(&settings[self.key()]) == Some(mode),
+        }
+    }
 }
 
-fn overlay(saved: &mut Value, patch: &Value) {
-    if let Some(fields) = patch.as_object() {
-        for (key, value) in fields {
-            saved[key] = value.clone();
+fn materialize_legacy_custom_defaults(
+    patch: &mut Value,
+    saved: &Value,
+    preset: &str,
+    target_tool: Option<&str>,
+) {
+    let switching_to_custom = raw_preset(saved) != Some("custom");
+    let hiding_other_on_custom = !switching_to_custom && target_tool == Some("other");
+    if switching_to_custom {
+        if visibility(&saved["toolGroupVisibility"]).is_none()
+            && patch.get("toolGroupVisibility").is_none()
+            && groups_default(preset) != groups_default("custom")
+        {
+            patch["toolGroupVisibility"] = json!(groups_default(preset));
+        }
+        if expansion(&saved["usageMetricsExpansion"]).is_none()
+            && patch.get("usageMetricsExpansion").is_none()
+            && usage_default(preset) != usage_default("custom")
+        {
+            patch["usageMetricsExpansion"] = json!(usage_default(preset));
+        }
+        if expansion(&saved["toolCallExpansionDefaults"]["thinking"]).is_none()
+            && patch["toolCallExpansionDefaults"].get("thinking").is_none()
+        {
+            patch["toolCallExpansionDefaults"]["thinking"] = json!(thinking(saved));
+        }
+    }
+    if switching_to_custom || hiding_other_on_custom {
+        for &tool in TOOLS {
+            if Some(tool) == target_tool
+                || patch["toolCallExpansionDefaults"]["tools"]
+                    .get(tool)
+                    .is_some()
+                || visibility(&saved["toolCallExpansionDefaults"]["tools"][tool]).is_some()
+            {
+                continue;
+            }
+            patch["toolCallExpansionDefaults"]["tools"][tool] = json!(Row::Tool(tool).mode(saved));
         }
     }
 }
@@ -178,7 +269,7 @@ fn thinking(settings: &Value) -> &'static str {
         .unwrap_or("collapsed")
 }
 
-fn usage_default(preset: &str) -> &'static str {
+fn groups_default(preset: &str) -> &'static str {
     if preset == "everything" {
         "expanded"
     } else {
@@ -186,15 +277,25 @@ fn usage_default(preset: &str) -> &'static str {
     }
 }
 
-fn usage_expansion(settings: &Value) -> &'static str {
+pub(super) fn usage_default(preset: &str) -> &'static str {
+    if matches!(preset, "everything" | "custom" | "detailed") {
+        "expanded"
+    } else {
+        "collapsed"
+    }
+}
+
+pub(super) fn usage_expansion(settings: &Value) -> &'static str {
     expansion(&settings["usageMetricsExpansion"])
         .unwrap_or_else(|| usage_default(saved_preset(settings)))
 }
 
-fn saved_preset(settings: &Value) -> &'static str {
-    let name = settings["toolCallExpansionDefaults"]["preset"]
-        .as_str()
-        .unwrap_or_default();
+fn raw_preset(settings: &Value) -> Option<&str> {
+    settings["toolCallExpansionDefaults"]["preset"].as_str()
+}
+
+pub(super) fn saved_preset(settings: &Value) -> &'static str {
+    let name = raw_preset(settings).unwrap_or_default();
     match name {
         "custom" | "detailed" => "custom",
         _ => PRESETS
@@ -231,7 +332,7 @@ fn tools(mode: impl Fn(&'static str) -> &'static str) -> Value {
 
 pub(super) fn patch(preset: &str) -> Value {
     let all = preset == "everything";
-    let expansion = usage_default(preset);
+    let expansion = groups_default(preset);
     json!({
         "toolGroupVisibility": expansion,
         "systemMessagesVisibility": if all { "expanded" } else { "hidden" },
@@ -273,6 +374,17 @@ pub(super) fn selected(settings: &Value) -> &'static str {
         }
     }
     "custom"
+}
+
+pub(super) fn matches_named_details(
+    preset: &str,
+    mode: impl Fn(Row) -> &'static str,
+    usage_expansion: &'static str,
+) -> bool {
+    DETAILS
+        .into_iter()
+        .all(|row| mode(row) == row.preset_mode(preset))
+        && usage_expansion == usage_default(preset)
 }
 
 #[cfg(test)]

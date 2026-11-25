@@ -57,6 +57,7 @@ pub fn document(
         "sidecars",
         "service-usage",
         "provider-usage",
+        "settings-atomic-patches",
         "conversation-permissions",
     ];
     if bench::missions_run() {
@@ -87,7 +88,7 @@ pub fn document(
 }
 
 /// `resolveUpdateFeed`: the saved feed, else the installed build's label.
-fn update_feed(server: &crate::settings::document::Doc) -> &'static str {
+pub(crate) fn update_feed(server: &crate::settings::document::Doc) -> &'static str {
     match server.get("updateFeed").and_then(Value::as_str) {
         Some("preview") => "preview",
         Some("stable") => "stable",

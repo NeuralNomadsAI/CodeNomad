@@ -1,7 +1,7 @@
 import fs from "fs"
 import path from "path"
 import { randomUUID } from "node:crypto"
-import { stringify as stringifyYaml } from "yaml"
+import { Document as YamlDocument, stringify as stringifyYaml, visit as visitYaml } from "yaml"
 import type { Logger } from "../logger"
 import { applyMergePatch, isPlainObject } from "./merge-patch"
 import { parseSettingsYaml } from "./parse-yaml"
@@ -43,6 +43,27 @@ export function resolveWriteDestination(filePath: string): string {
     seen.add(current)
     current = path.resolve(path.dirname(current), fs.readlinkSync(current))
   }
+}
+
+function stringifySettingsYaml(value: SettingsDoc): string {
+  const doc = new YamlDocument(value as any)
+  visitYaml(doc, {
+    Scalar(_, node) {
+      if (typeof node.value !== "string") return
+      const as11 = stringifyYaml(node.value, { schema: "yaml-1.1" }).trim()
+      const as12 = stringifyYaml(node.value, { schema: "core" }).trim()
+      if (
+        /[\u0085\u2028\u2029]/.test(node.value)
+        || as11.startsWith('"')
+        || as11.startsWith("'")
+        || as12.startsWith('"')
+        || as12.startsWith("'")
+      ) {
+        node.type = "QUOTE_DOUBLE"
+      }
+    },
+  })
+  return doc.toString()
 }
 
 export class YamlDocStore {
@@ -110,12 +131,16 @@ export class YamlDocStore {
     return this.options.normalize?.(doc, beforeMerge) ?? doc
   }
 
-  mergePatch(patch: unknown): SettingsDoc {
+  mergePatch(
+    patch: unknown,
+    { authoritative = false, prepare }: { authoritative?: boolean; prepare?: (before: SettingsDoc, patch: SettingsDoc) => SettingsDoc } = {},
+  ): SettingsDoc {
     if (!isPlainObject(patch)) {
       throw new Error("Patch must be a JSON object")
     }
-    const current = this.get()
-    const next = applyMergePatch(current, patch)
+    const current = authoritative ? this.reloadAuthoritative() : this.get()
+    const effective = prepare ? prepare(current, patch) : patch
+    const next = applyMergePatch(current, effective)
     return this.persistDoc(next, current)
   }
 
@@ -127,8 +152,9 @@ export class YamlDocStore {
 
   /** Fresh, read-only authority; the forgiving display cache is not a CAS base. */
   getAuthoritativeOwner(owner: string, { refreshCache = true } = {}): SettingsDoc {
-    const doc = this.readAuthoritative()
-    if (Object.prototype.hasOwnProperty.call(doc, owner) && !isPlainObject(doc[owner])) throw new SettingsReadError()
+    const raw = this.readAuthoritative()
+    if (Object.prototype.hasOwnProperty.call(raw, owner) && !isPlainObject(raw[owner])) throw new SettingsReadError()
+    const doc = this.normalize(raw)
     // Publish a refreshed cache only after a successful, valid document read.
     // The following synchronous owner merge therefore retains external fields.
     if (refreshCache) {
@@ -143,7 +169,7 @@ export class YamlDocStore {
    * stale display cache is never written back. Unreadable or invalid documents throw.
    */
   reloadAuthoritative(): SettingsDoc {
-    const doc = this.readAuthoritative()
+    const doc = this.normalize(this.readAuthoritative())
     this.cache = doc
     this.loaded = true
     return doc
@@ -152,7 +178,8 @@ export class YamlDocStore {
   private readAuthoritative(): SettingsDoc {
     let content: string
     try {
-      content = fs.readFileSync(this.filePath, "utf-8")
+      const raw = fs.readFileSync(this.filePath)
+      content = new TextDecoder("utf-8", { fatal: true }).decode(raw)
     } catch (error: any) {
       // Only an actually missing path is empty authority. A dangling symlink,
       // permission failure or directory must not authorize a destructive repair.
@@ -182,13 +209,18 @@ export class YamlDocStore {
     return this.replace(nextDoc)[owner] as SettingsDoc
   }
 
-  mergePatchOwner(owner: string, patch: unknown): SettingsDoc {
+  mergePatchOwner(
+    owner: string,
+    patch: unknown,
+    { authoritative = false, prepare }: { authoritative?: boolean; prepare?: (beforeOwner: SettingsDoc, patch: SettingsDoc) => SettingsDoc } = {},
+  ): SettingsDoc {
     if (!isPlainObject(patch)) {
       throw new Error("Patch must be a JSON object")
     }
-    const doc = this.get()
+    const doc = authoritative ? this.reloadAuthoritative() : this.get()
     const currentOwner = normalizeDoc((doc as any)?.[owner])
-    const nextOwner = normalizeDoc(applyMergePatch(currentOwner, patch))
+    const effective = prepare ? prepare(currentOwner, patch) : patch
+    const nextOwner = normalizeDoc(applyMergePatch(currentOwner, effective))
     const nextDoc: SettingsDoc = { ...doc, [owner]: nextOwner }
     return this.persistDoc(nextDoc, doc)[owner] as SettingsDoc
   }
@@ -198,7 +230,7 @@ export class YamlDocStore {
     try {
       const destination = resolveWriteDestination(this.filePath)
       fs.mkdirSync(path.dirname(destination), { recursive: true })
-      const yaml = stringifyYaml(this.cache as any)
+      const yaml = stringifySettingsYaml(this.cache)
       const mode = fs.existsSync(destination) ? fs.statSync(destination).mode & 0o777 : 0o600
       tempPath = `${destination}.${process.pid}.${randomUUID()}.tmp`
       fs.writeFileSync(tempPath, ensureTrailingNewline(yaml), { encoding: "utf-8", mode })

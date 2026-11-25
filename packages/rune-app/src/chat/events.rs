@@ -7,14 +7,14 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
-    drain_chat(s, limit, true)
+    drain_chat(s, limit, true, true)
 }
 
-pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize) -> bool {
-    drain_chat(s, limit, false)
+pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize, active_has_stream: bool) -> bool {
+    drain_chat(s, limit, false, !active_has_stream)
 }
 
-fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
+fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: bool) -> bool {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
     if changed
         && s.reader
@@ -40,10 +40,12 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
         crate::timeline::observe(s, &event);
         let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
             if s.reader.as_ref().is_some_and(|reader| reader.activity_after(*version)));
-        settings::connection_event(s, &event);
+        settings::connection_event(s, &event, affects_preferences);
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
+                s.conversation_client_id = Some(backend.client_id.clone());
+                s.conversation_stream_connected = false;
                 s.status_permissions.bind(&backend);
                 s.status_usage.bind(&backend);
                 s.transcript_display.children.bind(backend.clone());
@@ -54,7 +56,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
-                settings::connected(s, &backend);
+                if affects_preferences {
+                    settings::connected(s, &backend);
+                }
                 workspace::restore_files_mode(s);
                 if s.agent.is_none() {
                     s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
@@ -62,6 +66,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    s.conversation_stream_connected = true;
                     s.transcript_display.messages.refresh();
                     s.status_permissions.online(true);
                     workspace::mission_event(s, None);
@@ -205,8 +210,12 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                     files.event(event);
                 }
             }
-            Event::Preferences(owner) => settings::invalidate(s, owner),
+            Event::Preferences(owner) => {
+                s.conversation_stream_connected = true;
+                settings::invalidate(s, owner);
+            }
             Event::Sync(page) | Event::ReaderSync { page, .. } => {
+                s.conversation_stream_connected = true;
                 if s.reader.is_none() {
                     // Direct startup also uses Reconnecting to stage a fresh transcript read.
                     s.status_permissions.synchronized();
@@ -266,6 +275,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 }
             }
             Event::Reconnecting | Event::ConnectionLost => {
+                if matches!(event, Event::ConnectionLost) {
+                    s.conversation_stream_connected = false;
+                }
                 s.transcript_display.messages.offline();
                 s.status_permissions.online(false);
                 s.composer.picker.set_attachments_supported(false);
@@ -320,6 +332,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.phase = Phase::Reconnecting;
             }
             Event::WorkspaceMissing => {
+                s.conversation_stream_connected = false;
                 s.transcript_display.receipts.clear();
                 s.status_permissions.online(false);
                 s.status_usage.disconnect();
@@ -336,6 +349,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 }
             }
             Event::History(messages) => {
+                s.conversation_stream_connected = true;
                 s.messages = messages;
                 s.phase = Phase::Ready;
             }
@@ -409,6 +423,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.history_error = true;
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
+                if matches!(&event, Event::AuthenticationRequired(..)) {
+                    s.conversation_stream_connected = false;
+                }
                 s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
                 s.transcript_display.pictures.clear();
@@ -440,14 +457,16 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
         s.revision += 1;
         changed = true;
     }
-    if (s.composer.pending() || s.phase == Phase::Reconnecting)
-        && s.incoming
-            .as_ref()
-            .is_some_and(|receiver| receiver.is_closed() && receiver.is_empty())
+    if s.incoming
+        .as_ref()
+        .is_some_and(|receiver| receiver.is_closed() && receiver.is_empty())
     {
-        composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
-        s.phase = Phase::Failed;
-        changed = true;
+        s.conversation_stream_connected = false;
+        if s.composer.pending() || s.phase == Phase::Reconnecting {
+            composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
+            s.phase = Phase::Failed;
+            changed = true;
+        }
     }
     if s.transcript_display.children.poll()
         | s.transcript_display.pictures.poll(&s.reads, &s.wake)

@@ -118,13 +118,13 @@ fn providers_refresh_the_captured_location_and_revoke_a_stopped_project() {
         provider_changed(&root, "captured");
         tick(&mut rt);
         let late = request(&listener).await;
-        crate::settings::connection_event(&root, &crate::transport::Event::ConnectionLost);
+        crate::settings::connection_event(&root, &crate::transport::Event::ConnectionLost, true);
         tick(&mut rt);
         let tree = rt.accessibility_json().to_string();
         assert!(!tree.contains("New account") && !tree.contains("Obsolete account"));
         drop(late);
         provider_stopped(&root, "captured");
-        crate::settings::connection_event(&root, &crate::transport::Event::AgentHint(true));
+        crate::settings::connection_event(&root, &crate::transport::Event::AgentHint(true), true);
         tick(&mut rt);
         assert!(
             timeout(Duration::from_millis(100), listener.accept())
