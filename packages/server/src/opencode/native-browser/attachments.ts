@@ -10,18 +10,15 @@ import type { NativeParent } from "../../native-parent"
 import { BrowserPage } from "../../automation/browser-page"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
-import { compareVersionStrings } from "../../releases/release-monitor"
 import { locationRequestOptions } from "../compatibility/location"
-import { runtimeIdentity } from "../compatibility/runtime"
 import { createRuntimeTransport } from "../compatibility/transport"
+import { MINIMUM_OPENCODE_VERSION } from "../runtime-support"
+import { compareVersionStrings } from "../../releases/release-monitor"
 import { PreviewTab, type BrowserOutcome, type PreviewHost } from "./commands"
 
 /** OpenCode's desktop browser contract (`@opencode/plugin-browser/rpc`). */
 export const BROWSER_CONTROL_EVENT = "rpc.experimental.browser.control"
 const RPC_ID = "experimental.browser", VERSION = 4
-/** OpenCode 2.3 accepts version 4 but its attachment appends a blanket browser allow after the configured
- * rules (`plugin-browser/src/machine.ts`), overriding a `browser` deny; 2.4 checks that deny first. */
-export const NATIVE_BROWSER_MINIMUM_OPENCODE_VERSION = "2.4.0"
 /** A view renews its hold well within this; a closed or crashed view releases the session after it. */
 const HOLD_MS = 45_000
 const RETRY_MS = 2_000, UNAVAILABLE_RETRY_MS = 15_000, MAX_SESSIONS = 16
@@ -253,16 +250,17 @@ class SessionAttachment {
         const [owner] = owners
         this.owners = owners
         const connection = owner && await this.workspaceManager.getSharedServiceConnection(owner)
-        const version = connection && runtimeIdentity(connection.endpoint)?.version
-        if (version && compareVersionStrings(version, NATIVE_BROWSER_MINIMUM_OPENCODE_VERSION) < 0) {
-          // An older runtime would let the preview bypass a configured browser deny: it is never attached.
+        const client = connection ? this.attachClient(connection) : undefined
+        // 2.3 accepts this attachment, but its blanket browser grant overrides a configured `browser` deny.
+        // The daemon about to receive `attach` must report a numbered 2.4 release; a custom label never attaches.
+        if (client && compareVersionStrings((await client.server.info({ signal })).version ?? "", MINIMUM_OPENCODE_VERSION) < 0) {
           wait = UNAVAILABLE_RETRY_MS
         } else if (connection) {
           this.workspaceID = owner
           this.connection = connection
           this.location = location
           this.connectionID = randomUUID()
-          const outcome = await this.rpc("attach", { version: VERSION }, signal, this.attachClient(connection))
+          const outcome = await this.rpc("attach", { version: VERSION }, signal, client)
           // Another desktop took the session over: this one attaches again once every view has released it.
           if (outcome === "replaced") { this.connectionID = undefined; this.cancelRequests(); return }
         }
