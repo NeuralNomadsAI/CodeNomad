@@ -161,9 +161,10 @@ export class PreviewTab {
       case "snapshot":
       case "find": {
         const query = action.type === "find" ? String(action.text) : undefined
-        const result = await page({ action: "snapshot", ...(action.ref ? { ref: ref(action.ref) } : {}), ...(query ? { query } : {}) })
-        let text = String(result.snapshot ?? ""), truncated = Boolean(result.collapsed)
         const maxLines = Number(action.maxLines) || 0, limit = Math.min(MAX_TEXT, Number(action.maxChars) || DEFAULT_SNAPSHOT_CHARS)
+        // The page renders within the requested limit, so a larger one expands collapsed nodes.
+        const result = await page({ action: "snapshot", ...(action.ref ? { ref: ref(action.ref) } : {}), ...(query ? { query } : {}), budget: limit })
+        let text = String(result.snapshot ?? ""), truncated = Boolean(result.collapsed)
         const lines = text.split("\n")
         if (maxLines && lines.length > maxLines) { text = lines.slice(0, maxLines).join("\n"); truncated = true }
         if (text.length > limit) { text = text.slice(0, limit); truncated = true }
@@ -194,8 +195,8 @@ export class PreviewTab {
       }
       case "scroll": {
         const y = Number(action.deltaY ?? 0), x = Number(action.deltaX ?? 0)
-        if (y) await page({ action: "scroll", direction: y > 0 ? "down" : "up", amount: Math.abs(y) })
-        if (x) await page({ action: "scroll", direction: x > 0 ? "right" : "left", amount: Math.abs(x) })
+        // One wheel event with both deltas, as OpenCode's browser sends.
+        if (x || y) await page({ action: "scroll", delta: { x, y } })
         return this.success(this.tab())
       }
       case "wait": return this.wait(action, page, deadline, signal)
@@ -226,6 +227,8 @@ export class PreviewTab {
   private async loaded({ url }: { url: string }, deadline: number, signal: AbortSignal) {
     this.target = undefined
     await this.refresh(deadline, signal)
+    // The result names a tab only while the inventory still lists it.
+    if (!this.target) return failure("operation_failed", "The page loaded, but its preview is no longer visible to the agent.")
     this.url = url
     return this.success(this.tab())
   }

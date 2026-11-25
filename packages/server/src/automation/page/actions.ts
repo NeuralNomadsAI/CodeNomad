@@ -12,7 +12,7 @@ export type PageAction =
   | Target & { kind: "select"; values: string[]; byValue?: true }
   | Target & { kind: "hover" }
   | Target & { kind: "drag"; to: Target }
-  | { kind: "scroll"; target?: Target; direction: "up" | "down" | "left" | "right"; amount: number }
+  | { kind: "scroll"; target?: Target; delta: { x: number; y: number } }
   | { kind: "press"; key: string; target?: Target }
   | { kind: "wait"; text: string; gone: boolean; timeoutMs: number; literal?: true }
 export interface PageActionResult { value?: string; selected?: string[]; focused?: string; found?: boolean; waitedMs?: number }
@@ -25,7 +25,12 @@ export function bindRefs(action: RefAction, resolve: (ref: string) => number): P
     case "select": return { kind: "select", ...target(action.ref), values: action.values, ...(action.byValue ? { byValue: true as const } : {}) }
     case "hover": return { kind: "hover", ...target(action.ref) }
     case "drag": return { kind: "drag", ...target(action.ref), to: target(action.to) }
-    case "scroll": return { kind: "scroll", direction: action.direction, amount: action.amount, ...(action.ref ? { target: target(action.ref) } : {}) }
+    case "scroll": {
+      const sign = "delta" in action ? 0 : action.direction === "up" || action.direction === "left" ? -1 : 1
+      const delta = "delta" in action ? action.delta : action.direction === "up" || action.direction === "down"
+        ? { x: 0, y: sign * action.amount } : { x: sign * action.amount, y: 0 }
+      return { kind: "scroll", delta, ...(action.ref ? { target: target(action.ref) } : {}) }
+    }
     case "press": return { kind: "press", key: action.key, ...(action.ref ? { target: target(action.ref) } : {}) }
     case "wait": return { kind: "wait", text: action.text, gone: action.gone, timeoutMs: action.timeout, ...(action.literal ? { literal: true as const } : {}) }
   }
@@ -64,10 +69,7 @@ export async function performAction(session: PageSession, action: PageAction): P
       case "scroll": {
         const point = action.target ? await aim(session, action.target.ref, action.target.backendNodeId, { wheel: true }) : undefined
         if (action.target && !point) throw new Error(`${action.target.ref} has no visible box to scroll`)
-        const sign = action.direction === "up" || action.direction === "left" ? -1 : 1
-        const vertical = action.direction === "up" || action.direction === "down"
-        await wheelAt(session, point ?? undefined, { x: vertical ? 0 : sign * action.amount, y: vertical ? sign * action.amount : 0 },
-          action.target && await pointerTarget(session, action.target))
+        await wheelAt(session, point ?? undefined, action.delta, action.target && await pointerTarget(session, action.target))
         return {}
       }
       case "press": {

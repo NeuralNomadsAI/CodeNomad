@@ -206,6 +206,16 @@ describe("BrowserController private page channel", () => {
     assert.deepEqual(intercepts, [{ enabled: true, cancel: true }, { enabled: false }])
   })
 
+  it("probes only previews in the verified project tabs", async () => {
+    const h = createHarness()
+    const { guest } = createGuest({ id: 7, owner: h.owner })
+    h.add(guest, "one", "session", "ws-a")
+    await assert.rejects(handleNativeBrowserRequest(h.controller, "browser.probe", { sessionID: "session", workspaceIDs: ["ws-b"] }),
+      /No visible|no longer|not shown|available/i, "another project tab's preview is no target")
+    const probed = await handleNativeBrowserRequest(h.controller, "browser.probe", { sessionID: "session", workspaceIDs: ["ws-a"] }) as { available: boolean }
+    assert.equal(probed.available, true)
+    await assert.rejects(handleNativeBrowserRequest(h.controller, "browser.probe", { sessionID: "session", workspaceIDs: [""] }), /Invalid browser request/)
+  })
   it("accepts only the fixed protocol commands and bounded object params/responses", async () => {
     const h = createHarness()
     const calls: string[] = []

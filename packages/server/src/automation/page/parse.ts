@@ -11,6 +11,8 @@ export type RefAction =
   | { action: "hover"; ref: string }
   | { action: "drag"; ref: string; to: string }
   | { action: "scroll"; ref?: string; direction: "up" | "down" | "left" | "right"; amount: number }
+  /** One wheel gesture with both deltas, as OpenCode's browser scrolls. */
+  | { action: "scroll"; ref?: string; delta: { x: number; y: number } }
   | { action: "press"; key: string; ref?: string }
   /** `literal` matches the body's visible text exactly, as OpenCode's browser does. */
   | { action: "wait"; text: string; gone: boolean; timeout: number; literal?: true }

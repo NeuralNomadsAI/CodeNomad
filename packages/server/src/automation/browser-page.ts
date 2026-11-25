@@ -5,7 +5,8 @@ import type { RefAction } from "./page/parse"
 import { RefTable } from "./page/refs"
 import { nativeDriver } from "./page/native-driver"
 
-export type BrowserPageAction = RefAction | { action: "snapshot"; ref?: string; query?: string }
+/** `budget` sets the snapshot's character budget, so larger limits expand collapsed nodes. */
+export type BrowserPageAction = RefAction | { action: "snapshot"; ref?: string; query?: string; budget?: number }
   /** Reads the exact target's address only. */
   | { action: "location" }
 const OPERATION_MS = 25_000
@@ -97,7 +98,7 @@ export class BrowserPage {
       }
       else if (action.action === "snapshot") {
         const rootBackendNodeId = action.ref ? refs.resolve(action.ref, generation) : undefined
-        const snapshot = await snapshotPage(page, () => refs.issuer(generation), { rootBackendNodeId, query: action.query, refLength: refs.refLength })
+        const snapshot = await snapshotPage(page, () => refs.issuer(generation), { rootBackendNodeId, query: action.query, refLength: refs.refLength, ...(action.budget ? { budget: action.budget } : {}) })
         result = { url, snapshot: snapshot.text, collapsed: snapshot.collapsed }
       } else {
         const actionResult = await performAction(page, bindRefs(action, ref => refs.resolve(ref, generation)))

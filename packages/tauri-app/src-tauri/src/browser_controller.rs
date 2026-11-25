@@ -827,6 +827,7 @@ impl BrowserController {
                 "browser.probe" => self.probe(
                     app,
                     session_id,
+                    workspace_filter(input.get("workspaceIDs"))?,
                     deadline,
                     &fence,
                     |registration, version| {
@@ -861,11 +862,15 @@ impl BrowserController {
         &self,
         app: &AppHandle<R>,
         session_id: &str,
+        workspaces: Option<Vec<String>>,
         deadline: Instant,
         fence: &crate::native_request::RequestFence,
         read_document: impl FnOnce(&Registration, u64) -> Result<String, String>,
     ) -> Result<Value, String> {
-        let registration = self.resolve(app, session_id)?;
+        // Only a view in one of these project tabs serves the session to its agents.
+        let registration = self.resolve_with_visibility_in(session_id, workspaces.as_deref(), |label| {
+            window_visible(app, label)
+        })?;
         let document = self.document_version(&registration)?;
         self.check_target(app, &registration, deadline, fence)?;
         let token = read_document(&registration, document)?;
@@ -1093,6 +1098,16 @@ impl BrowserController {
         session_id: &str,
         read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
     ) -> Result<Registration, String> {
+        self.resolve_with_visibility_in(session_id, None, read_visibility)
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn resolve_with_visibility_in(
+        &self,
+        session_id: &str,
+        workspaces: Option<&[String]>,
+        read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
+    ) -> Result<Registration, String> {
         validate_id(session_id, 256)?;
         let registrations = self
             .inner
@@ -1101,7 +1116,16 @@ impl BrowserController {
             .map_err(|error| error.to_string())?
             .registrations
             .values()
-            .filter(|registration| registration.session_id == session_id && registration.visible)
+            .filter(|registration| {
+                registration.session_id == session_id
+                    && registration.visible
+                    && workspaces.is_none_or(|workspaces| {
+                        registration
+                            .instance_id
+                            .as_ref()
+                            .is_some_and(|id| workspaces.contains(id))
+                    })
+            })
             .cloned()
             .collect::<Vec<_>>();
         resolve_visible_registration(registrations.iter(), read_visibility).cloned()
@@ -1606,6 +1630,26 @@ fn allowed_url(raw: &str) -> Result<tauri::Url, String> {
 
 fn navigation_error() -> String {
     "Browser navigation requires a credential-free HTTP(S) URL".to_string()
+}
+
+/// The project tabs a probe may use, from the backend's verified owners.
+fn workspace_filter(value: Option<&Value>) -> Result<Option<Vec<String>>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let ids = value
+        .as_array()
+        .filter(|ids| ids.len() <= 1024)
+        .ok_or("Invalid browser request")?
+        .iter()
+        .map(|id| {
+            id.as_str()
+                .filter(|id| validate_id(id, 256).is_ok())
+                .map(str::to_string)
+                .ok_or("Invalid browser request")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(ids))
 }
 
 fn resolve_visible_registration<'a>(

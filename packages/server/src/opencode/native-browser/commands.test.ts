@@ -59,11 +59,11 @@ test("one preview tab: absent until opened, then a stable ID whose generation fo
 test("every step of one command stays on the document it started on", async () => {
   const { tab, calls, state } = fixture()
   await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
-  // A concurrent command refreshes the tab onto another document between the two scroll steps.
-  state.onPage = action => { if (action !== "scroll") return; state.onPage = undefined; state.target = `doc-${++state.document}`; void tab.run({ type: "tabs.list" }, undefined, signal) }
+  // A concurrent command refreshes the tab onto another document between the two fill steps.
+  state.onPage = action => { if (action !== "type") return; state.onPage = undefined; state.target = `doc-${++state.document}`; void tab.run({ type: "tabs.list" }, undefined, signal) }
   calls.length = 0
-  await tab.run({ type: "scroll", tabID: tab.id, deltaY: 100, deltaX: 50 }, undefined, signal)
-  assert.deepEqual(calls.filter(call => call.action === "scroll").map(call => call.at), ["doc-1", "doc-1"])
+  await tab.run({ type: "fill_form", tabID: tab.id, fields: [{ type: "text", ref: "e1", value: "a" }, { type: "text", ref: "e4", value: "b" }] }, undefined, signal)
+  assert.deepEqual(calls.filter(call => call.action === "type").map(call => call.at), ["doc-1", "doc-1"])
 })
 
 test("snapshots, failures and the operations the CodeNomad preview does not offer", async () => {
@@ -249,4 +249,19 @@ test("a cancelled pause releases the queue, and check fails when the control is 
   assert.equal((await tab.run({ type: "snapshot", tabID }, undefined, signal)).type, "success")
   assert.ok(Date.now() - started < 2_000, "the next command runs once the pause is cancelled")
   assert.equal((await paused).type, "failure")
+})
+test("a navigation whose preview disappears fails, snapshots render within maxChars, and a diagonal scroll is one gesture", async () => {
+  const { tab, calls, state } = fixture()
+  const opened = await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal) as any
+  await tab.run({ type: "snapshot", tabID: tab.id, maxChars: 90_000 }, undefined, signal)
+  assert.equal((calls.at(-1) as any).budget, 90_000)
+  await tab.run({ type: "scroll", tabID: tab.id, deltaX: 50, deltaY: 100 }, undefined, signal)
+  assert.deepEqual(calls.filter(call => call.action === "scroll").map(call => call.delta), [{ x: 50, y: 100 }])
+  // The preview is hidden right after the native load receipt.
+  const host = (tab as any).host as PreviewHost
+  const navigate = host.navigate
+  host.navigate = async (...args) => { const loaded = await navigate(...args); state.target = undefined; return loaded }
+  const outcome = await tab.run({ type: "navigate", tabID: tab.id, url: "http://127.0.0.1/next" }, opened.result.value.generation, signal) as any
+  assert.equal(outcome.type, "failure")
+  assert.deepEqual((await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value.tabs, [])
 })

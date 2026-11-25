@@ -9,13 +9,18 @@ import type { NativeParent } from "../../native-parent"
 import { BrowserPage } from "../../automation/browser-page"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
+import { compareVersionStrings } from "../../releases/release-monitor"
 import { locationRequestOptions } from "../compatibility/location"
+import { runtimeIdentity } from "../compatibility/runtime"
 import { createRuntimeTransport } from "../compatibility/transport"
 import { PreviewTab, type BrowserOutcome, type PreviewHost } from "./commands"
 
 /** OpenCode's desktop browser contract (`@opencode/plugin-browser/rpc`). */
 export const BROWSER_CONTROL_EVENT = "rpc.experimental.browser.control"
 const RPC_ID = "experimental.browser", VERSION = 4
+/** OpenCode 2.3 accepts version 4 but its attachment appends a blanket browser allow after the configured
+ * rules (`plugin-browser/src/machine.ts`), overriding a `browser` deny; 2.4 checks that deny first. */
+export const NATIVE_BROWSER_MINIMUM_OPENCODE_VERSION = "2.4.0"
 /** A view renews its hold well within this; a closed or crashed view releases the session after it. */
 const HOLD_MS = 45_000
 const RETRY_MS = 2_000, UNAVAILABLE_RETRY_MS = 15_000, MAX_SESSIONS = 16
@@ -144,8 +149,9 @@ export class NativeBrowserAttachments {
     const execute = (command: Record<string, unknown>, target: string, deadline: number, signal: AbortSignal) =>
       native<{ url: string }>("browser.execute", { command, target }, deadline, signal)
     return {
+      // Only a view in a verified owner's project tab is the session's preview for its agents.
       probe: async (deadline, signal) => {
-        const result = await native<{ available?: boolean; target?: string; loading?: boolean }>("browser.probe", {}, deadline, signal)
+        const result = await native<{ available?: boolean; target?: string; loading?: boolean }>("browser.probe", { workspaceIDs: owners() }, deadline, signal)
         return result?.available === true && typeof result.target === "string" ? { target: result.target, loading: result.loading === true } : undefined
       },
       // The views that show the session are in these workspaces' project tabs.
@@ -239,9 +245,15 @@ class SessionAttachment {
         const session = await readConnection.client.session.get({ sessionID: this.sessionID }, { signal })
         const location = session.location as Location
         // A holder that does not own the session never attaches it; a later owner's hold does.
-        const [owner] = await this.verifiedOwners(location, signal)
+        const owners = await this.verifiedOwners(location, signal)
+        const [owner] = owners
+        this.owners = owners
         const connection = owner && await this.workspaceManager.getSharedServiceConnection(owner)
-        if (connection) {
+        const version = connection && runtimeIdentity(connection.endpoint)?.version
+        if (version && compareVersionStrings(version, NATIVE_BROWSER_MINIMUM_OPENCODE_VERSION) < 0) {
+          // An older runtime would let the preview bypass a configured browser deny: it is never attached.
+          wait = UNAVAILABLE_RETRY_MS
+        } else if (connection) {
           this.workspaceID = owner
           this.connection = connection
           this.location = location
@@ -270,7 +282,15 @@ class SessionAttachment {
     const signal = AbortSignal.any([controller.signal, this.stopping.signal])
     let lost = false
     try {
-      const command = await this.rpc("command", { requestID }, signal) as { action: Record<string, unknown> & { type: string }; generation?: number; inspect?: boolean }
+      const command = await this.rpc("command", { requestID }, signal).catch(async error => {
+        // An unreadable command still settles its request, as in OpenCode's desktop browser.
+        if (!signal.aborted && connectionID === this.connectionID) {
+          await this.rpc("result", { requestID, outcome: { type: "failure", code: "operation_failed",
+            message: `The browser command could not be read: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2_000) } }, signal)
+            .catch(() => undefined)
+        }
+        throw error
+      }) as { action: Record<string, unknown> & { type: string }; generation?: number; inspect?: boolean }
       // Ownership is checked again when each command's turn comes: a project can stop owning the session while
       // the command waits behind another.
       const admit = async (): Promise<BrowserOutcome | undefined> => {

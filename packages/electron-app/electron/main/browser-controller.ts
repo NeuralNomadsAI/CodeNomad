@@ -388,17 +388,19 @@ export class BrowserController {
     for (const [requestID, claim] of this.openClaims) if (claim.owner === owner) this.releaseOpen(owner, requestID)
   }
 
-  async probe(sessionID: string, deadline = Number.POSITIVE_INFINITY, checkAdmission: () => void = () => {}): Promise<{ available: true; target: string; loading: boolean }> {
+  /** `workspaceIDs` are the project tabs whose views may serve the session: another tab's preview is no target. */
+  async probe(sessionID: string, deadline = Number.POSITIVE_INFINITY, checkAdmission: () => void = () => {},
+    workspaceIDs?: readonly string[]): Promise<{ available: true; target: string; loading: boolean }> {
     ensureDeadline(deadline)
     checkAdmission()
-    const registration = this.resolve(sessionID)
+    const registration = this.resolve(sessionID, workspaceIDs)
     const { guest } = registration
     const generation = this.pageGeneration(registration)
     const target = await this.enqueue(guest, async () => {
       const check = () => {
         ensureDeadline(deadline)
         checkAdmission()
-        if (this.resolveWitness(sessionID) !== registration || this.pageGeneration(registration) !== generation) throw new Error(staleTarget)
+        if (this.resolveWitness(sessionID, undefined, workspaceIDs) !== registration || this.pageGeneration(registration) !== generation) throw new Error(staleTarget)
       }
       check()
       if (!this.documentWatches.has(guest)) {
@@ -559,16 +561,17 @@ export class BrowserController {
       && this.openWindowVisible(owner)
   }
 
-  private resolve(sessionID: string): Registration {
-    const matches = [...this.registrations.values()].filter(registration => registration.sessionId === sessionID && this.registrationVisible(registration))
+  private resolve(sessionID: string, workspaceIDs?: readonly string[]): Registration {
+    const matches = [...this.registrations.values()].filter(registration => registration.sessionId === sessionID && this.registrationVisible(registration)
+      && (!workspaceIDs || (registration.instanceId !== undefined && workspaceIDs.includes(registration.instanceId))))
     if (matches.length === 0) throw new Error(noTarget)
     if (matches.length > 1) throw new Error("Multiple visible browser targets exist for this session")
     return matches[0]
   }
 
-  private resolveWitness(sessionID: string, target?: string): Registration {
+  private resolveWitness(sessionID: string, target?: string, workspaceIDs?: readonly string[]): Registration {
     try {
-      const registration = this.resolve(sessionID)
+      const registration = this.resolve(sessionID, workspaceIDs)
       if (target !== undefined && (target !== this.pageGeneration(registration)
         || !this.documentWatches.has(registration.guest) || !registration.guest.debugger.isAttached())) throw new Error(staleTarget)
       return registration
@@ -766,7 +769,13 @@ export class BrowserController {
 export async function handleNativeBrowserRequest(controller: BrowserController, method: string, params: unknown, deadline = Number.POSITIVE_INFINITY, checkAdmission?: () => void): Promise<unknown> {
   const input = params as { sessionID?: unknown; command?: unknown; target?: unknown; workspaceIDs?: unknown } | undefined
   if (!input || typeof input.sessionID !== "string") throw new Error("Invalid browser request")
-  if (method === "browser.probe") return controller.probe(input.sessionID, deadline, checkAdmission)
+  if (method === "browser.probe") {
+    const workspaces = input.workspaceIDs
+    if (workspaces !== undefined && (!Array.isArray(workspaces) || workspaces.length > 1024 || !workspaces.every(id => validId(id, 256)))) {
+      throw new Error("Invalid browser request")
+    }
+    return controller.probe(input.sessionID, deadline, checkAdmission, workspaces as string[] | undefined)
+  }
   if (["browser.page.begin", "browser.page.send", "browser.page.check", "browser.page.end"].includes(method)) {
     return controller.page(method, input as Record<string, unknown>, deadline, checkAdmission)
   }

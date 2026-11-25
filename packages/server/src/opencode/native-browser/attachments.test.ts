@@ -211,3 +211,66 @@ test("ownership is checked when a queued command's turn comes, and a failed inve
   assert.deepEqual(dispatched, [true], "only the first open reached the preview")
   assert.equal(rpcCalls.filter(call => call.method === "state").length - states <= 1, true, "the refused command publishes nothing")
 })
+test("an OpenCode older than 2.4 is never attached, and an unreadable command is settled with probes naming the owners", async t => {
+  const rpcCalls: Array<{ method: string; input: Record<string, unknown> }> = []
+  const probes: Array<Record<string, unknown>> = []
+  let releaseAttach: (outcome: string) => void = () => {}
+  const app = Fastify({ logger: false })
+  app.get("/openapi.json", async () => modernContractFixture)
+  app.get("/api/session/:id", async request => ({ data: { id: (request.params as { id: string }).id, location: { directory: "/repo" } } }))
+  app.post("/api/rpc/:rpcID/:method", async (request, reply) => {
+    const { method } = request.params as { rpcID: string; method: string }
+    const input = (request.body as { input: Record<string, unknown> }).input
+    rpcCalls.push({ method, input })
+    if (method === "attach") return { output: await new Promise<string>(done => { releaseAttach = done }) }
+    if (method === "command") return reply.code(503).send({ error: "unavailable" })
+    return { output: { ok: true } }
+  })
+  const address = await app.listen({ host: "127.0.0.1", port: 0 })
+  t.after(async () => { releaseAttach("replaced"); await app.close() })
+  const runtime = (version: string) => {
+    const endpoint = { url: address, auth: undefined }
+    rememberRuntime(endpoint, { version, pid: 1234, discovery: "status" })
+    return { endpoint, client: OpenCode.make({ baseUrl: address, fetch: globalThis.fetch }), fetch: globalThis.fetch,
+      assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
+  }
+  let connection = runtime("2.3.2")
+  const eventBus = new EventBus()
+  const attachments = new NativeBrowserAttachments({
+    workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
+    eventBus,
+    nativeParent: { available: true, browserAutomationUnavailable: false, request: async (method: string, params: Record<string, unknown>) => {
+      if (method === "browser.probe") probes.push(params)
+      return { available: false }
+    } } as never,
+    logger: { warn: () => {}, debug: () => {}, info: () => {}, error: () => {}, trace: () => {}, isLevelEnabled: () => false } as never,
+  })
+  t.after(() => attachments.close())
+  attachments.hold("hold", "ws", "ses-1")
+  await new Promise(resolve => setTimeout(resolve, 300))
+  assert.equal(rpcCalls.some(call => call.method === "attach"), false, "2.3 would let the preview bypass a browser deny")
+  attachments.close()
+
+  connection = runtime("2.4.1")
+  const current = new NativeBrowserAttachments({
+    workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
+    eventBus,
+    nativeParent: { available: true, browserAutomationUnavailable: false, request: async (method: string, params: Record<string, unknown>) => {
+      if (method === "browser.probe") probes.push(params)
+      return { available: false }
+    } } as never,
+    logger: { warn: () => {}, debug: () => {}, info: () => {}, error: () => {}, trace: () => {}, isLevelEnabled: () => false } as never,
+  })
+  t.after(() => current.close())
+  current.hold("hold", "ws", "ses-1")
+  await until(() => rpcCalls.some(call => call.method === "attach"), "attach on 2.4")
+  const connectionID = rpcCalls.find(call => call.method === "attach")!.input.connectionID
+  const publish = (data: Record<string, unknown>) => eventBus.publish({ type: "instance.event", instanceId: "ws",
+    event: { type: BROWSER_CONTROL_EVENT, data: { connectionID, ...data } } } as any)
+  publish({ type: "attached" })
+  publish({ type: "command", requestID: "unreadable" })
+  await until(() => rpcCalls.some(call => call.method === "result"), "settled unreadable command")
+  const settled = rpcCalls.find(call => call.method === "result")!.input as any
+  assert.deepEqual([settled.requestID, settled.outcome.type], ["unreadable", "failure"])
+  assert.deepEqual(probes.at(-1)?.workspaceIDs, ["ws"], "the probe names the verified owners")
+})
