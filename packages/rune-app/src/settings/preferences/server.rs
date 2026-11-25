@@ -106,7 +106,15 @@ impl Preferences {
     }
 
     pub(in crate::settings) fn opencode_binary_pending(&self) -> bool {
-        self.server.opencode_binary_pending() || self.state.opencode_binaries_pending()
+        self.server.choice_pending(Choice::OpenCodeBinary)
+            || self.state.choice_pending(Choice::OpenCodeBinaries)
+    }
+
+    pub(in crate::settings) fn opencode_transport_generation(&self) -> Option<(String, u64)> {
+        self.backend
+            .as_ref()
+            .filter(|_| self.can_retry() && !self.is_transport_lost())
+            .map(|backend| (backend.client_id.clone(), self.server.transport_epoch()))
     }
 
     pub(in crate::settings) fn opencode_binary_failed(&self) -> Option<&'static str> {
@@ -170,6 +178,7 @@ impl Preferences {
         if trimmed.is_empty() || trimmed == "opencode" || trimmed == "opencode2" {
             return false;
         }
+        self.server.clear_failed_opencode_binary(trimmed);
         if !self.state.transport_revalidated() && !self.state.refreshing() {
             self.state.invalidate();
         }

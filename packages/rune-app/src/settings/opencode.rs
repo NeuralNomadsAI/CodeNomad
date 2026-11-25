@@ -125,12 +125,24 @@ impl Status {
 
     pub fn step(&mut self, prefs: &mut Preferences, wake: &rune::Waker) -> bool {
         let allowed = prefs.can_retry();
+        let authority = prefs
+            .backend
+            .as_ref()
+            .filter(|_| allowed)
+            .map(|backend| backend.client_id.as_str());
+        let mut changed = authority != self.authority.as_deref();
+        if changed {
+            *self = Self {
+                authority: authority.map(str::to_owned),
+                ..Self::default()
+            };
+        }
         let admitted = prefs.opencode_install.admit(
             prefs.backend.as_ref().filter(|_| allowed),
             prefs.main_wake.clone(),
             wake.clone(),
         );
-        let changed = self.poll();
+        changed |= self.poll();
         let (exec_changed, binary_changed) = self.executable.poll(prefs, wake, self.value.as_ref());
         let login_changed = self.login_start.poll(prefs, wake);
         let logs_changed = self.logs.poll(prefs, wake);

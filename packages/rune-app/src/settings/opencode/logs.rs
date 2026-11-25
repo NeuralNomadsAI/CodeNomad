@@ -47,7 +47,7 @@ impl State {
         }
         let binary = prefs.opencode_binary();
         if binary != self.last_binary {
-            if self.last_binary.is_some() && self.open {
+            if self.open {
                 self.close();
             }
             self.last_binary = binary;
@@ -126,7 +126,7 @@ impl State {
         let toggle_wake = wake.clone();
         let trigger = layout::button(
             t("settings.opencode.logs.open"),
-            !prefs.can_retry(),
+            !prefs.opencode_binary_available(),
             move |s: &mut S| {
                 let prefs = toggle_shared.borrow();
                 access(s).logs.toggle(&prefs, toggle_wake.clone());
@@ -186,7 +186,12 @@ impl State {
                 );
             }
             if let Some(snapshot) = &self.snapshot {
-                if snapshot.truncated {
+                let (content, locally_truncated) = if snapshot.text.is_empty() {
+                    (t("settings.opencode.logs.empty"), false)
+                } else {
+                    bounded_tail(&snapshot.text)
+                };
+                if snapshot.truncated || locally_truncated {
                     body = body.child(
                         text(t("settings.opencode.logs.truncated"))
                             .text_role(TextRole::Small)
@@ -195,11 +200,6 @@ impl State {
                             .key("opencode-logs-truncated"),
                     );
                 }
-                let content = if snapshot.text.is_empty() {
-                    t("settings.opencode.logs.empty")
-                } else {
-                    bounded_tail(&snapshot.text)
-                };
                 body = body.child(chrome::log_block(content).key("opencode-logs-content"));
             }
             layers.push(chrome::output_window(
@@ -217,17 +217,35 @@ impl State {
     }
 }
 
-fn bounded_tail(source: &str) -> &str {
+fn bounded_tail(source: &str) -> (&str, bool) {
     if source.len() <= MAX_DISPLAY_BYTES {
-        return source;
+        return (source, false);
     }
     let mut start = source.len() - MAX_DISPLAY_BYTES;
     while start < source.len() && !source.is_char_boundary(start) {
         start += 1;
     }
     if let Some(offset) = source[start..].find('\n') {
-        &source[start + offset + 1..]
+        (&source[start + offset + 1..], true)
     } else {
-        &source[start..]
+        (&source[start..], true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounded_tail_reports_local_truncation_and_respects_utf8_boundaries() {
+        let short = "line1\nline2\n";
+        assert_eq!(bounded_tail(short), (short, false));
+
+        let mut oversized = String::from("é".repeat(MAX_DISPLAY_BYTES));
+        oversized.push_str("\ntail-entry\n");
+        let (tail, truncated) = bounded_tail(&oversized);
+        assert!(truncated);
+        assert!(tail.len() <= MAX_DISPLAY_BYTES);
+        assert_eq!(tail, "tail-entry\n");
     }
 }

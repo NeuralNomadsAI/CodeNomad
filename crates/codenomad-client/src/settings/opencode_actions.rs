@@ -55,7 +55,8 @@ pub async fn install_opencode(backend: &Backend) -> Result<(), &'static str> {
 
 const MAX_VALIDATION_BYTES: usize = 16 * 1024;
 const MAX_LOGIN_START_BYTES: usize = 4 * 1024;
-const MAX_LOGS_BYTES: usize = 512 * 1024;
+const MAX_LOGS_RESPONSE_BYTES: usize = 1024 * 1024;
+const MAX_LOGS_TEXT_BYTES: usize = 512 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BinaryValidation {
@@ -92,15 +93,48 @@ fn clean_text(value: &serde_json::Value, max: usize) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn sanitize_diagnostic(value: &serde_json::Value, max: usize) -> Option<String> {
+    let raw = value.as_str()?;
+    let mut out = String::new();
+    let mut prev_space = true;
+    for ch in raw.chars() {
+        let mapped = match ch {
+            '\r' | '\n' | '\t' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        };
+        let Some(ch) = mapped else {
+            continue;
+        };
+        if ch.is_whitespace() {
+            if !prev_space && out.len() < max {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            if out.len() + ch.len_utf8() > max {
+                break;
+            }
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+    let trimmed = out.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
 fn parse_binary_validation(value: serde_json::Value) -> crate::history::Result<BinaryValidation> {
     let valid = value["valid"]
         .as_bool()
         .ok_or("Invalid binary validation response")?;
     let v2_required = value["errorCode"].as_str() == Some("opencode_v2_required");
+    if valid && v2_required {
+        return Err("Contradictory binary validation response".into());
+    }
     Ok(BinaryValidation {
         valid,
         version: clean_text(&value["version"], 256),
-        error: clean_text(&value["error"], 512),
+        error: sanitize_diagnostic(&value["error"], 240),
         v2_required,
     })
 }
@@ -119,7 +153,7 @@ pub async fn validate_opencode_binary(
     let status = response.status();
     let value = read_json_limited(response, MAX_VALIDATION_BYTES).await?;
     if !status.is_success() {
-        return Err(clean_text(&value["error"], 512)
+        return Err(sanitize_diagnostic(&value["error"], 240)
             .unwrap_or_else(|| "Binary validation failed".into())
             .into());
     }
@@ -175,6 +209,7 @@ fn parse_opencode_logs(value: serde_json::Value) -> crate::history::Result<OpenC
     let path = clean_text(&value["path"], 32_768).ok_or("Invalid OpenCode log path")?;
     let text = value["text"]
         .as_str()
+        .filter(|text| text.len() <= MAX_LOGS_TEXT_BYTES)
         .ok_or("Invalid OpenCode log text")?
         .to_owned();
     let truncated = value["truncated"]
@@ -196,7 +231,7 @@ pub async fn opencode_logs(backend: &Backend) -> crate::history::Result<OpenCode
     #[cfg(not(target_arch = "wasm32"))]
     let request = request.timeout(Duration::from_secs(20));
     let response = request.send().await?.error_for_status()?;
-    parse_opencode_logs(read_json_limited(response, MAX_LOGS_BYTES).await?)
+    parse_opencode_logs(read_json_limited(response, MAX_LOGS_RESPONSE_BYTES).await?)
 }
 
 #[cfg(test)]
@@ -218,12 +253,20 @@ mod tests {
         let v1 = parse_binary_validation(json!({
             "valid": false,
             "errorCode": "opencode_v2_required",
-            "error": "Requires V2"
+            "error": "Requires\nV2\tbinary"
         }))
         .unwrap();
         assert!(!v1.valid);
         assert!(v1.v2_required);
+        assert_eq!(v1.error.as_deref(), Some("Requires V2 binary"));
         assert!(parse_binary_validation(json!({"version": "2.4.0"})).is_err());
+        assert!(
+            parse_binary_validation(json!({
+                "valid": true,
+                "errorCode": "opencode_v2_required"
+            }))
+            .is_err()
+        );
 
         assert_eq!(
             parse_login_start(json!({"state": "on"})).unwrap(),

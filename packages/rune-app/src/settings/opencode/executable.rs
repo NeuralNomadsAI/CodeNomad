@@ -76,6 +76,13 @@ impl State {
             changed = true;
         }
 
+        if prefs.opencode_install.busy() {
+            if self.submit_flight.take().is_some() || self.bg_flight.take().is_some() {
+                changed = true;
+            }
+            return (changed, binary_changed);
+        }
+
         let submit_done = self
             .submit_flight
             .as_ref()
@@ -83,28 +90,31 @@ impl State {
         if let Some((path, result)) = submit_done {
             self.submit_flight = None;
             changed = true;
-            self.validated.insert(path.clone());
             match result {
                 Ok(validation) if validation.valid => {
+                    self.validated.insert(path.clone());
                     if let Some(version) = &validation.version {
                         self.versions.insert(path.clone(), version.clone());
                     }
                     self.validation_error = None;
-                    let selected = prefs.select_opencode_binary(
-                        &path,
-                        validation.version,
-                        platform::storage::unix_millis(),
-                    );
-                    if selected {
+                    if !prefs.opencode_install.busy()
+                        && prefs.opencode_binary_available()
+                        && !prefs.opencode_binary_pending()
+                        && prefs.select_opencode_binary(
+                            &path,
+                            validation.version,
+                            platform::storage::unix_millis(),
+                        )
+                    {
                         self.custom_path = TextEdit::default();
                     }
                 }
                 Ok(validation) => {
+                    self.validated.insert(path);
                     self.validation_error = Some(validation_message(&validation));
                 }
                 Err(_) => {
-                    self.validation_error =
-                        Some(t("opencodeBinarySelector.validation.invalidBinary").into());
+                    self.validation_error = Some(t("settings.opencode.setup.actionFailed").into());
                 }
             }
         }

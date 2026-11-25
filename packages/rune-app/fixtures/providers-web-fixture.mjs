@@ -1015,8 +1015,11 @@ try {
     await openCode.waitFor({state:local?'attached':'detached'})
     assert.deepEqual(opencodeRequests,[],'No diagnostic until OpenCode is opened')
     if (local) {
+      const loginLoaded = page.waitForResponse(
+        response=>new URL(response.url()).pathname==='/api/opencode/login-start' && response.request().method()==='GET'
+      )
       await openCode.click({force:true})
-      await update.waitFor({state:'attached'})
+      await Promise.all([update.waitFor({state:'attached'}), loginLoaded])
       assert.deepEqual(opencodeRequests,['GET'])
       const logging = page.getByRole('combobox',{name:'OpenCode Log Level',exact:true})
       await logging.and(page.locator('[aria-description="Debug"]')).waitFor({state:'attached'})
@@ -1025,7 +1028,7 @@ try {
       await logging.and(page.locator('[aria-description="Warn"]')).waitFor({state:'attached'})
       assert.deepEqual(logLevelWrites,[{logLevel:'WARN'}])
       const loginSwitch = page.getByRole('switch',{name:'Launch at startup',exact:true})
-      await loginSwitch.waitFor({state:'attached'})
+      await loginSwitch.and(page.locator(':not([disabled], [aria-disabled="true"])')).waitFor({state:'attached'})
       await loginSwitch.click({force:true})
       await loginSwitch.and(page.locator('[aria-checked="true"]')).waitFor({state:'attached'})
       assert.deepEqual(loginStartWrites,[{enabled:true}])

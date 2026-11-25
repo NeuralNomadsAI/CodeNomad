@@ -97,23 +97,7 @@ impl Choice {
             return;
         }
         if let (Self::OpenCodeBinaries, ChoiceValue::OpenCodeBinaries(op)) = (self, value) {
-            let current = parse_opencode_binaries(snapshot);
-            let next = apply_opencode_binaries_op(&current, op);
-            patch["opencodeBinaries"] = Value::Array(
-                next.into_iter()
-                    .map(|entry| {
-                        let mut map = serde_json::Map::new();
-                        map.insert("path".into(), json!(entry.path));
-                        if let Some(version) = entry.version {
-                            map.insert("version".into(), json!(version));
-                        }
-                        if let Some(last_used) = entry.last_used {
-                            map.insert("lastUsed".into(), json!(last_used));
-                        }
-                        Value::Object(map)
-                    })
-                    .collect(),
-            );
+            patch["opencodeBinaries"] = apply_opencode_binaries_patch(snapshot, op);
             return;
         }
         let ChoiceValue::Text(value) = *value else {
@@ -199,9 +183,14 @@ impl Choice {
             return normalize_opencode_binary(snapshot) == *path;
         }
         if let (Self::OpenCodeBinaries, ChoiceValue::OpenCodeBinaries(op)) = (self, value) {
+            let raw = &snapshot["opencodeBinaries"];
             let entries = parse_opencode_binaries(snapshot);
             return match op {
-                OpenCodeBinariesOp::Upsert { path, version, .. } => {
+                OpenCodeBinariesOp::Upsert {
+                    path,
+                    version,
+                    last_used,
+                } => {
                     path == "opencode"
                         || path == "opencode2"
                         || entries.iter().any(|entry| {
@@ -209,9 +198,12 @@ impl Choice {
                                 && version
                                     .as_ref()
                                     .is_none_or(|v| entry.version.as_ref() == Some(v))
+                                && entry.last_used.is_some_and(|seen| seen >= *last_used)
                         })
                 }
-                OpenCodeBinariesOp::Remove { path } => !entries.iter().any(|e| e.path == *path),
+                OpenCodeBinariesOp::Remove { path } => {
+                    (raw.is_null() || raw.is_array()) && !entries.iter().any(|e| e.path == *path)
+                }
             };
         }
         let ChoiceValue::Text(value) = *value else {
@@ -330,45 +322,71 @@ pub(in crate::settings) fn parse_opencode_binaries(snapshot: &Value) -> Vec<Open
     entries
 }
 
-fn apply_opencode_binaries_op(
-    source: &[OpenCodeBinaryEntry],
-    op: &OpenCodeBinariesOp,
-) -> Vec<OpenCodeBinaryEntry> {
-    match op {
+fn apply_opencode_binaries_patch(snapshot: &Value, op: &OpenCodeBinariesOp) -> Value {
+    let mut existing_objects: Vec<(String, serde_json::Map<String, Value>)> = Vec::new();
+    if let Some(items) = snapshot["opencodeBinaries"].as_array() {
+        for item in items {
+            let Some(obj) = item.as_object() else {
+                continue;
+            };
+            let Some(path) = obj
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+            else {
+                continue;
+            };
+            if existing_objects.iter().any(|(seen, _)| seen == path) {
+                continue;
+            }
+            let mut preserved = obj.clone();
+            preserved.insert("path".into(), json!(path));
+            existing_objects.push((path.to_owned(), preserved));
+        }
+    }
+    let next: Vec<Value> = match op {
         OpenCodeBinariesOp::Upsert {
             path,
             version,
             last_used,
         } => {
             if path == "opencode" || path == "opencode2" {
-                return source.to_vec();
-            }
-            let existing = source.iter().find(|entry| entry.path == *path);
-            let next_entry = OpenCodeBinaryEntry {
-                path: path.clone(),
-                version: version
-                    .clone()
-                    .or_else(|| existing.and_then(|e| e.version.clone())),
-                last_used: Some(*last_used),
-            };
-            let mut out = Vec::with_capacity(source.len().min(10) + 1);
-            out.push(next_entry);
-            for entry in source {
-                if entry.path != *path {
-                    out.push(entry.clone());
+                existing_objects
+                    .into_iter()
+                    .map(|(_, obj)| Value::Object(obj))
+                    .collect()
+            } else {
+                let mut updated = existing_objects
+                    .iter()
+                    .find(|(seen, _)| seen == path)
+                    .map(|(_, obj)| obj.clone())
+                    .unwrap_or_default();
+                updated.insert("path".into(), json!(path));
+                if let Some(version) = version {
+                    updated.insert("version".into(), json!(version));
                 }
-                if out.len() >= 10 {
-                    break;
+                updated.insert("lastUsed".into(), json!(*last_used));
+                let mut out = Vec::with_capacity(existing_objects.len().min(10) + 1);
+                out.push(Value::Object(updated));
+                for (seen, obj) in existing_objects {
+                    if seen != *path {
+                        out.push(Value::Object(obj));
+                    }
+                    if out.len() >= 10 {
+                        break;
+                    }
                 }
+                out
             }
-            out
         }
-        OpenCodeBinariesOp::Remove { path } => source
-            .iter()
-            .filter(|entry| entry.path != *path)
-            .cloned()
+        OpenCodeBinariesOp::Remove { path } => existing_objects
+            .into_iter()
+            .filter(|(seen, _)| seen != path)
+            .map(|(_, obj)| Value::Object(obj))
             .collect(),
-    }
+    };
+    Value::Array(next)
 }
 
 #[derive(Clone, PartialEq)]

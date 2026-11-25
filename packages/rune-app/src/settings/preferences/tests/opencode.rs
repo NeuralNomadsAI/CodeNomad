@@ -280,7 +280,7 @@ fn opencode_binary_selection_add_remove_and_fresh_list_fencing() {
                         200,
                         json!({
                             "opencodeBinaries": [
-                                {"path": "/other/opencode2", "version": "2.4.0", "lastUsed": 150}
+                                {"path": "/other/opencode2", "label": "Team build", "version": "2.4.0", "lastUsed": 150}
                             ]
                         }),
                     )
@@ -293,6 +293,7 @@ fn opencode_binary_selection_add_remove_and_fresh_list_fencing() {
                     assert_eq!(list[0]["path"], "/custom/opencode2");
                     assert_eq!(list[0]["version"], "2.4.1");
                     assert_eq!(list[1]["path"], "/other/opencode2");
+                    assert_eq!(list[1]["label"], "Team build");
                     req.reply(200, json!({"opencodeBinaries": list})).await;
                     saw_state_patch = true;
                 }
@@ -645,6 +646,281 @@ fn opencode_cards_validate_binary_toggle_login_start_and_view_logs() {
         assert!(
             update_reads > updates_before,
             "switching OpenCode binary must refresh diagnostic status"
+        );
+    });
+}
+
+#[test]
+fn opencode_binary_preflight_503_recovers_and_remove_clears_failed_selection() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        prefs.state.snapshot = Some(json!({
+            "opencodeBinaries": [
+                {"path": "/a/opencode2", "label": "Alpha", "version": "2.4.0", "lastUsed": 100}
+            ]
+        }));
+        assert!(prefs.show_opencode());
+        assert!(prefs.poll());
+        let initial = request(&listener).await;
+        assert_eq!(
+            initial.first,
+            "GET /api/storage/config/server?authoritative=1 HTTP/1.1"
+        );
+        initial
+            .reply(200, json!({"opencodeBinary": "opencode2"}))
+            .await;
+        wait_until(|| prefs.poll()).await;
+
+        // 1. Selecting /a/opencode2 fails on server config PATCH (503 -> readback confirms
+        //    unchanged opencode2 -> failed) while UI state succeeds and preserves `label`.
+        assert!(prefs.select_opencode_binary("/a/opencode2", Some("2.4.0".into()), 200));
+        assert!(prefs.poll());
+        let mut server_readback = false;
+        let mut state_patched = false;
+        for _ in 0..8 {
+            while let Ok(Ok(req)) = timeout(Duration::from_millis(60), async {
+                Ok::<_, ()>(request(&listener).await)
+            })
+            .await
+            {
+                match req.first.as_str() {
+                    "PATCH /api/storage/config/server HTTP/1.1" => {
+                        req.reply(503, json!({"error": "unavailable"})).await;
+                    }
+                    "GET /api/storage/config/server?authoritative=1 HTTP/1.1" => {
+                        server_readback = true;
+                        req.reply(200, json!({"opencodeBinary": "opencode2"})).await;
+                    }
+                    "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" => {
+                        req.reply(
+                            200,
+                            json!({
+                                "opencodeBinaries": [
+                                    {"path": "/a/opencode2", "label": "Alpha", "version": "2.4.0", "lastUsed": 100}
+                                ]
+                            }),
+                        )
+                        .await;
+                    }
+                    "PATCH /api/storage/state/ui HTTP/1.1" => {
+                        let list = req.body["opencodeBinaries"].as_array().unwrap().clone();
+                        assert_eq!(list[0]["label"], "Alpha");
+                        req.reply(200, json!({"opencodeBinaries": list})).await;
+                        state_patched = true;
+                    }
+                    other => panic!("unexpected request: {other}"),
+                }
+            }
+            prefs.poll();
+            if server_readback && state_patched && !prefs.opencode_binary_pending() {
+                break;
+            }
+        }
+        assert!(server_readback && state_patched);
+        assert!(prefs.opencode_binary_failed().is_some());
+        assert!(!prefs.opencode_binary_pending());
+
+        // 2. Removing /a/opencode2 clears the failed selection for /a/opencode2; a 503 on
+        //    the pre-PATCH GET settles out of pending so Retry remains actionable.
+        assert!(prefs.remove_opencode_binary("/a/opencode2"));
+        assert!(prefs.poll());
+        let preflight = request(&listener).await;
+        assert_eq!(
+            preflight.first,
+            "GET /api/storage/state/ui?authoritative=1 HTTP/1.1"
+        );
+        preflight.reply(503, json!({"error": "busy"})).await;
+        wait_until(|| prefs.poll()).await;
+        assert!(
+            !prefs.opencode_binary_pending(),
+            "failed pre-PATCH GET must not leave Retry disabled"
+        );
+        assert!(prefs.opencode_binary_failed().is_some());
+
+        // 3. Retry completes removal and NEVER replays the cleared failed selection of /a/opencode2.
+        prefs.retry_opencode_binary();
+        assert!(prefs.poll());
+        let retry_get = request(&listener).await;
+        assert_eq!(
+            retry_get.first,
+            "GET /api/storage/state/ui?authoritative=1 HTTP/1.1"
+        );
+        retry_get
+            .reply(
+                200,
+                json!({
+                    "opencodeBinaries": [
+                        {"path": "/a/opencode2", "label": "Alpha", "version": "2.4.0", "lastUsed": 200}
+                    ]
+                }),
+            )
+            .await;
+        wait_until(|| prefs.poll()).await;
+        let retry_patch = request(&listener).await;
+        assert_eq!(retry_patch.first, "PATCH /api/storage/state/ui HTTP/1.1");
+        assert_eq!(retry_patch.body, json!({"opencodeBinaries": []}));
+        retry_patch
+            .reply(200, json!({"opencodeBinaries": []}))
+            .await;
+        wait_until(|| prefs.poll()).await;
+
+        assert_eq!(prefs.opencode_binary().as_deref(), Some("opencode2"));
+        assert!(prefs.opencode_binaries().is_empty());
+        assert!(prefs.opencode_binary_failed().is_none());
+        assert!(
+            timeout(Duration::from_millis(80), listener.accept())
+                .await
+                .is_err(),
+            "cleared failed selection must not replay on Retry"
+        );
+    });
+}
+
+#[test]
+fn opencode_login_start_single_initial_read_and_reconnect_reload() {
+    platform::block_on(async {
+        use crate::settings::view::{self, Window};
+        use std::{
+            cell::{Cell, RefCell},
+            rc::Rc,
+        };
+
+        let (listener, mut prefs) = fixture().await;
+        let wake: rune::Waker = std::sync::Arc::new(|| {});
+        prefs.window_wake = Some(wake.clone());
+        prefs.main_wake = Some(wake);
+        prefs.state.snapshot = Some(json!({ "opencodeBinaries": [] }));
+
+        let shared = Rc::new(RefCell::new(prefs));
+        let state = Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let mut rt = rune::Runtime::new(
+            state,
+            view::view,
+            (1000.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+
+        let poll_frame = |rt: &mut rune::Runtime<Window>| {
+            rt.update(|state, tx| {
+                view::spec().poll.unwrap()(state, 0.0, tx);
+            });
+            rt.frame(0.02);
+        };
+
+        // No login-start GET before opening OpenCode tab (only /api/meta capability probe).
+        poll_frame(&mut rt);
+        while let Ok(Ok(req)) = timeout(Duration::from_millis(60), async {
+            Ok::<_, ()>(request(&listener).await)
+        })
+        .await
+        {
+            assert_eq!(
+                req.first, "GET /api/meta HTTP/1.1",
+                "no OpenCode request may fire before opening the OpenCode tab"
+            );
+            req.reply(200, json!({"version": "1.0.0"})).await;
+        }
+        poll_frame(&mut rt);
+
+        let (x, y) = rt.find("settings-opencode").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.02);
+        poll_frame(&mut rt);
+
+        let mut login_reads = 0usize;
+        let mut login_value = "off";
+        for _ in 0..8 {
+            let mut handled = 0usize;
+            while let Ok(Ok(req)) = timeout(Duration::from_millis(60), async {
+                Ok::<_, ()>(request(&listener).await)
+            })
+            .await
+            {
+                handled += 1;
+                match req.first.as_str() {
+                    "GET /api/meta HTTP/1.1" => req.reply(200, json!({"version": "1.0.0"})).await,
+                    "GET /api/storage/config/server?authoritative=1 HTTP/1.1" => {
+                        req.reply(
+                            200,
+                            json!({"logLevel": "INFO", "opencodeBinary": "opencode2"}),
+                        )
+                        .await;
+                    }
+                    "GET /api/opencode/update HTTP/1.1" => {
+                        req.reply(
+                            200,
+                            json!({
+                                "state": "ready",
+                                "serviceState": "ready",
+                                "currentVersion": "2.3.2",
+                                "installationSource": "managed"
+                            }),
+                        )
+                        .await;
+                    }
+                    "GET /api/opencode/login-start HTTP/1.1" => {
+                        login_reads += 1;
+                        req.reply(200, json!({"state": login_value})).await;
+                    }
+                    other => panic!("unexpected request: {other}"),
+                }
+            }
+            poll_frame(&mut rt);
+            if handled == 0 && login_reads >= 1 {
+                break;
+            }
+        }
+        assert_eq!(
+            login_reads, 1,
+            "first OpenCode open must issue exactly one login-start GET"
+        );
+
+        // Simulate transport drop and reconnect on the SAME client_id.
+        login_value = "on";
+        shared.borrow_mut().mark_transport_lost();
+        poll_frame(&mut rt);
+        shared.borrow_mut().revalidate_transport();
+        shared.borrow_mut().poll();
+        for _ in 0..10 {
+            let mut handled = 0usize;
+            while let Ok(Ok(req)) = timeout(Duration::from_millis(60), async {
+                Ok::<_, ()>(request(&listener).await)
+            })
+            .await
+            {
+                handled += 1;
+                match req.first.as_str() {
+                    "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
+                        req.reply(200, json!({"settings": {}})).await;
+                    }
+                    "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" => {
+                        req.reply(200, json!({"opencodeBinaries": []})).await;
+                    }
+                    "GET /api/storage/config/server?authoritative=1 HTTP/1.1" => {
+                        req.reply(
+                            200,
+                            json!({"logLevel": "INFO", "opencodeBinary": "opencode2"}),
+                        )
+                        .await;
+                    }
+                    "GET /api/opencode/login-start HTTP/1.1" => {
+                        login_reads += 1;
+                        req.reply(200, json!({"state": login_value})).await;
+                    }
+                    other => panic!("unexpected reconnect request: {other}"),
+                }
+            }
+            shared.borrow_mut().poll();
+            poll_frame(&mut rt);
+            if handled == 0 && login_reads >= 2 {
+                break;
+            }
+        }
+        assert_eq!(
+            login_reads, 2,
+            "transport reconnect on the same client_id must reload login-start once"
         );
     });
 }

@@ -32,6 +32,7 @@ impl Failure {
 #[derive(Default)]
 pub(super) struct State {
     authority: Option<String>,
+    transport_epoch: Option<u64>,
     status: Option<LoginStartState>,
     failure: Option<Failure>,
     sequence: u64,
@@ -46,14 +47,33 @@ pub(super) struct State {
 
 impl State {
     pub(super) fn poll(&mut self, prefs: &Preferences, wake: &rune::Waker) -> bool {
-        let backend = prefs.backend.as_ref().filter(|_| prefs.can_retry());
-        let authority = backend.map(|backend| backend.client_id.as_str());
+        let transport = prefs.opencode_transport_generation();
+        let authority = prefs
+            .backend
+            .as_ref()
+            .filter(|_| prefs.can_retry())
+            .map(|backend| backend.client_id.as_str());
         let mut changed = authority != self.authority.as_deref();
         if changed {
             *self = Self {
                 authority: authority.map(str::to_owned),
+                transport_epoch: transport.as_ref().map(|(_, epoch)| *epoch),
                 ..Self::default()
             };
+        } else {
+            let epoch = transport.as_ref().map(|(_, epoch)| *epoch);
+            if epoch != self.transport_epoch {
+                self.transport_epoch = epoch;
+                changed = true;
+                // Cancel pre-drop reads so stale responses cannot overwrite post-reconnect state;
+                // never replay an in-flight POST.
+                self.read_flight = None;
+                if epoch.is_none() {
+                    self.sequence = self.sequence.wrapping_add(1);
+                } else if !self.busy() {
+                    self.start_read(prefs, wake);
+                }
+            }
         }
 
         let write_done = self
@@ -104,7 +124,7 @@ impl State {
             }
         }
 
-        if backend.is_some()
+        if transport.is_some()
             && self.status.is_none()
             && self.failure.is_none()
             && self.read_flight.is_none()
