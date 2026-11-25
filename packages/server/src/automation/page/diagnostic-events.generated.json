@@ -63,6 +63,11 @@
     "Runtime.exceptionThrown",
     "Log.entryAdded"
   ],
+  "endingEvents": [
+    "Network.loadingFinished",
+    "Network.loadingFailed",
+    "Network.webSocketClosed"
+  ],
   "maxEvents": 2000,
   "maxBytes": 4194304,
   "maxText": 2000,

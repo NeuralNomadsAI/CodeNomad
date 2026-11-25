@@ -451,3 +451,22 @@ test("a new tab starts with empty readouts, and a body read on a lease the page 
   assert.equal((await tab.run({ type: "network.get", tabID: reopened.id, id: old }, undefined, signal) as any).code, "operation_failed",
     "the previous tab's request IDs are refused")
 })
+
+test("a readout whose tab a concurrent tabs.list replaces fails, and an open leaves the previous tab's unread events behind", async () => {
+  const { tab, state } = fixture()
+  const host = (tab as any).host as PreviewHost
+  const probe = host.probe, open = host.open, page = host.page
+  let registration = "window-a"
+  host.probe = async (...args) => { const probed = await probe(...args); return probed && { ...probed, registration } }
+  host.open = async (...args) => ({ ...await open(...args), registration })
+  await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
+  state.events.push({ method: "Runtime.consoleAPICalled", params: { type: "warning", timestamp: 1, args: [{ type: "string", value: "before second tab" }] } })
+  const reopened = (await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page#next" }, undefined, signal) as any).result.value
+  assert.deepEqual((await tab.run({ type: "console", tabID: reopened.id }, undefined, signal) as any).result.value.messages, [])
+  host.page = async (action, at, deadline, abort) => {
+    const result = await page(action, at, deadline, abort)
+    if (action.action === "diagnostics") { registration = "window-b"; await tab.run({ type: "tabs.list" }, undefined, signal) }
+    return result
+  }
+  assert.equal((await tab.run({ type: "console", tabID: reopened.id }, undefined, signal) as any).code, "operation_failed")
+})

@@ -230,16 +230,22 @@ export class PreviewTab {
         return this.success(this.tab())
       }
       case "wait": return this.wait(action, deadline, signal)
-      case "console":
+      // A readout belongs to the tab it was read for: a tabs.list that replaces the tab meanwhile fails it.
+      case "console": {
+        const tab = this.id
         await this.pull(page)
-        return this.success({ tab: this.tab(), ...this.diagnostics.console(action as Parameters<PreviewDiagnostics["console"]>[0]) })
-      case "network.list":
+        return this.id !== tab ? replaced() : this.success({ tab: this.tab(), ...this.diagnostics.console(action as Parameters<PreviewDiagnostics["console"]>[0]) })
+      }
+      case "network.list": {
+        const tab = this.id
         await this.pull(page)
-        return this.success({ tab: this.tab(), ...this.diagnostics.list(action as Parameters<PreviewDiagnostics["list"]>[0]) })
+        return this.id !== tab ? replaced() : this.success({ tab: this.tab(), ...this.diagnostics.list(action as Parameters<PreviewDiagnostics["list"]>[0]) })
+      }
       case "network.get": {
+        const tab = this.id
         await this.pull(page)
         const request = await this.diagnostics.get(action as Action & { id: string }, async (nativeID, session) => page({ action: "response-body", request: nativeID, ...(session ? { session } : {}) }))
-        return this.success({ tab: this.tab(), ...request })
+        return this.id !== tab ? replaced() : this.success({ tab: this.tab(), ...request })
       }
       case "screenshot": {
         const { image } = await this.host.screenshot(target, deadline, signal)
@@ -263,6 +269,10 @@ export class PreviewTab {
         return failure("operation_failed", "The page opened, but its preview is not the one shown to the agent. Call browser.tabs.list({}).")
       // The address read from the preview is current; the receipt's only stands in when that read failed.
       if (this.urlTarget !== this.target) this.url = opened.url
+      // The host's events so far belong to the previous tab: they are read now, so the new tab's readouts start after
+      // them even when the open kept the document (a fragment). Previews without diagnostics skip this.
+      const shown = this.target
+      await this.pull(step => this.host.page(step, shown, deadline, signal)).catch(() => undefined)
       // OpenCode's web open gives a new tab: the one preview takes a new ID, so the previous one is never retargeted.
       this.tabID = `tab_${randomUUID()}`
       return this.success(this.tab())
@@ -417,6 +427,8 @@ export function keyRefusal(chord: string): string | undefined {
     || key === "ContextMenu" || code === 93)
     return "Agent input cannot use clipboard or context-menu shortcuts. Use fill to enter text and snapshot to read page text."
 }
+
+const replaced = () => failure("operation_failed", "This tab was replaced while it was read. Call browser.tabs.list({}).")
 
 function failed(error: unknown): BrowserOutcome {
   const message = error instanceof Error ? error.message : String(error)

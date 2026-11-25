@@ -23,6 +23,8 @@ export const DIAGNOSTICS = {
   ],
   /** The events that feed a console entry, for counting losses; a lost network event loses its request. */
   messageEvents: ["Runtime.consoleAPICalled", "Runtime.exceptionThrown", "Log.entryAdded"],
+  /** The events that end a request: losing one leaves the request unable to finish. */
+  endingEvents: ["Network.loadingFinished", "Network.loadingFailed", "Network.webSocketClosed"],
   /** Retained events and their UTF-8 JSON size per class (network events, and the others): the oldest of a class go
    * first, so a console flood never evicts a request's lifecycle. */
   maxEvents: 2_000,
@@ -47,7 +49,8 @@ export interface DiagnosticContext { session?: string; id: number; page: boolean
  * evictions. */
 export interface DiagnosticRead {
   epoch: string; events: DiagnosticEvent[]; next: number; lost: DiagnosticLoss; more: boolean; contexts: DiagnosticContext[]
-  /** The requests (`${session}:${requestId}`) that lost an unread event this epoch: their readout cannot finish them. */
+  /** The requests (`${session}:${requestId}`, or `${session}:*` for every request of a detached frame) whose ending
+   * event this epoch evicted unread: their readout cannot finish them. */
   lostRequests: string[]
 }
 
@@ -63,6 +66,8 @@ export class DiagnosticEventBuffer {
   private lost: DiagnosticLoss = { messages: 0, requests: 0 }
   /** Requests this epoch lost an unread event of: the readout cannot finish them. */
   private readonly lostRequests = new Set<string>()
+  /** Requests whose ending event was lost (or whose frame's detach was): they can no longer finish. */
+  private readonly endedRequests = new Set<string>()
   private readonly classes = { network: { count: 0, bytes: 0 }, page: { count: 0, bytes: 0 } }
 
   record(method: string, params: unknown, session?: string): void {
@@ -90,11 +95,16 @@ export class DiagnosticEventBuffer {
   }
 
   private lose(method: string, params: Record<string, unknown>, session: string | undefined): void {
-    if (DIAGNOSTICS.messageEvents.includes(method)) this.lost.messages++
-    else if (classOf(method) === "network" && typeof params.requestId === "string" && this.lostRequests.size < DIAGNOSTICS.maxEvents) {
-      this.lostRequests.add(`${session ?? ""}:${params.requestId}`)
-      this.lost.requests = this.lostRequests.size
-    }
+    if (DIAGNOSTICS.messageEvents.includes(method)) return void this.lost.messages++
+    if (this.lostRequests.size >= DIAGNOSTICS.maxEvents) return
+    // A lost detach ends every request of its frame; a lost ending event ends its request. Other lost events only
+    // leave a request incomplete, which the loss count reports.
+    if (method === "Target.detachedFromTarget" && typeof params.sessionId === "string") this.endedRequests.add(`${params.sessionId}:*`)
+    if (classOf(method) !== "network" || typeof params.requestId !== "string") return
+    const key = `${session ?? ""}:${params.requestId}`
+    this.lostRequests.add(key)
+    this.lost.requests = this.lostRequests.size
+    if (DIAGNOSTICS.endingEvents.includes(method)) this.endedRequests.add(key)
   }
 
   /** Execution contexts live across documents: document.open() keeps the page's, and a read may come after their
@@ -117,6 +127,7 @@ export class DiagnosticEventBuffer {
     this.classes.network = { count: 0, bytes: 0 }
     this.classes.page = { count: 0, bytes: 0 }
     this.lostRequests.clear()
+    this.endedRequests.clear()
     this.epoch++
     this.delivered = this.sequence
     this.lost = { messages: 0, requests: 0 }
@@ -135,7 +146,7 @@ export class DiagnosticEventBuffer {
     }
     this.delivered = Math.max(this.delivered, next)
     return { epoch: `${this.instance}:${this.epoch}`, events, next, lost: { ...this.lost }, more: next < this.sequence,
-      contexts: [...this.contexts.values()], lostRequests: [...this.lostRequests] }
+      contexts: [...this.contexts.values()], lostRequests: [...this.endedRequests] }
   }
 }
 

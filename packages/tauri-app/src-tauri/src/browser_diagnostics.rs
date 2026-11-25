@@ -8,6 +8,7 @@ pub(super) struct Spec {
     pub(super) enable: Vec<(String, Value)>,
     pub(super) events: Vec<String>,
     message_events: Vec<String>,
+    ending_events: Vec<String>,
     max_events: usize,
     max_bytes: usize,
     max_read: usize,
@@ -41,6 +42,7 @@ pub(super) fn spec() -> &'static Spec {
                 .collect(),
             events: names("events"),
             message_events: names("messageEvents"),
+            ending_events: names("endingEvents"),
             max_events: number("maxEvents"),
             max_bytes: number("maxBytes"),
             max_read: number("maxRead"),
@@ -71,17 +73,20 @@ fn class_of(method: &str) -> Class {
 /// An event too large to keep whole keeps its console text cut one character past `maxText`, so the readout still
 /// reports it as truncated, as OpenCode's browser keeps an entry's text; other events stay as they are.
 fn shrink(method: &str, mut params: Value, max_text: usize) -> Value {
-    let cut = |value: &mut Value| {
-        if let Some(text) = value.as_str() {
-            *value = json!(text.chars().take(max_text + 1).collect::<String>());
+    // Only fields the event has are cut: a missing one stays missing, as the TypeScript host leaves it.
+    let cut = |value: &mut Value, pointer: &str| {
+        if let Some(field) = value.pointer_mut(pointer) {
+            if let Some(text) = field.as_str() {
+                *field = json!(text.chars().take(max_text + 1).collect::<String>());
+            }
         }
     };
     match method {
         "Runtime.consoleAPICalled" => {
             if let Some(args) = params["args"].as_array_mut() {
                 for arg in args {
-                    cut(&mut arg["value"]);
-                    cut(&mut arg["description"]);
+                    cut(arg, "/value");
+                    cut(arg, "/description");
                     if let Some(arg) = arg.as_object_mut() {
                         arg.remove("preview");
                     }
@@ -89,19 +94,20 @@ fn shrink(method: &str, mut params: Value, max_text: usize) -> Value {
             }
         }
         "Runtime.exceptionThrown" => {
-            let details = &mut params["exceptionDetails"];
-            cut(&mut details["text"]);
-            cut(&mut details["exception"]["description"]);
-            if let Some(exception) = details["exception"].as_object_mut() {
+            cut(&mut params, "/exceptionDetails/text");
+            cut(&mut params, "/exceptionDetails/exception/description");
+            if let Some(exception) = params
+                .pointer_mut("/exceptionDetails/exception")
+                .and_then(Value::as_object_mut)
+            {
                 exception.remove("preview");
             }
         }
-        "Log.entryAdded" => cut(&mut params["entry"]["text"]),
+        "Log.entryAdded" => cut(&mut params, "/entry/text"),
         _ => {}
     }
     params
 }
-
 struct Buffer {
     generation: u64,
     instance: String,
@@ -112,6 +118,8 @@ struct Buffer {
     /// This epoch's console entries lost before any read, and the requests that lost an unread event.
     lost_messages: u64,
     lost_requests: HashSet<String>,
+    /// Requests whose ending event, or whose frame's detach, was lost: they can no longer finish.
+    ended_requests: HashSet<String>,
     /// The navigation that started this epoch: its redirects keep the epoch.
     navigation: Option<u64>,
     /// Retained events and bytes per class: network, then the others.
@@ -155,16 +163,30 @@ impl Buffer {
         }
     }
 
+    /// A lost detach ends every request of its frame and a lost ending event its request; other lost events only
+    /// leave a request incomplete, which the loss count reports.
     fn lose(&mut self, method: &str, params: &Value, session: Option<&str>) {
         let spec = spec();
         if spec.message_events.iter().any(|event| event == method) {
             self.lost_messages += 1;
-        } else if class_of(method) == Class::Network && self.lost_requests.len() < spec.max_events {
-            if let Some(request) = params["requestId"].as_str() {
-                self.lost_requests
-                    .insert(format!("{}:{request}", session.unwrap_or_default()));
+            return;
+        }
+        if self.lost_requests.len() >= spec.max_events {
+            return;
+        }
+        if method == "Target.detachedFromTarget" {
+            if let Some(frame) = params["sessionId"].as_str() {
+                self.ended_requests.insert(format!("{frame}:*"));
             }
         }
+        let (Class::Network, Some(request)) = (class_of(method), params["requestId"].as_str()) else {
+            return;
+        };
+        let key = format!("{}:{request}", session.unwrap_or_default());
+        if spec.ending_events.iter().any(|event| event == method) {
+            self.ended_requests.insert(key.clone());
+        }
+        self.lost_requests.insert(key);
     }
 }
 
@@ -186,6 +208,7 @@ impl Buffers {
                     delivered: 0,
                     lost_messages: 0,
                     lost_requests: HashSet::new(),
+                    ended_requests: HashSet::new(),
                     navigation: None,
                     tallies: [(0, 0); 2],
                     events: VecDeque::new(),
@@ -277,6 +300,7 @@ impl Buffers {
                 buffer.delivered = buffer.sequence;
                 buffer.lost_messages = 0;
                 buffer.lost_requests.clear();
+                buffer.ended_requests.clear();
             }
         }
     }
@@ -313,7 +337,7 @@ impl Buffers {
             "events": events,
             "next": next,
             "lost": { "messages": buffer.lost_messages, "requests": buffer.lost_requests.len() },
-            "lostRequests": buffer.lost_requests.iter().collect::<Vec<_>>(),
+            "lostRequests": buffer.ended_requests.iter().collect::<Vec<_>>(),
             "more": next < buffer.sequence,
             "contexts": buffer.contexts.iter().map(|(session, id, page)| {
                 let mut context = json!({ "id": id, "page": page });
@@ -520,7 +544,7 @@ mod tests {
             .map(|id| id.as_str().unwrap().to_string())
             .collect::<Vec<_>>();
         lost.sort();
-        assert_eq!(lost, [":r1", ":r2"], "each request that lost an unread event is named");
+        assert_eq!(lost, [":r2"], "only a request whose ending event was lost is named");
     }
 
     #[test]
@@ -544,5 +568,21 @@ mod tests {
             kept["events"][0]["params"]["args"][0]["value"].as_str().unwrap().len(),
             spec().max_text + 1
         );
+    }
+    #[test]
+    fn a_lost_detach_ends_its_frame_and_cut_text_adds_no_field() {
+        let buffers = Buffers::default();
+        buffers.start("preview", 1);
+        buffers.record("preview", 1, "Target.detachedFromTarget", r#"{"sessionId":"frame"}"#, None);
+        buffers.record("preview", 1, "Network.requestWillBeSentExtraInfo", r#"{"requestId":"r1"}"#, None);
+        for _ in 0..spec().max_events + 1 {
+            buffers.record("preview", 1, "Network.dataReceived", r#"{"requestId":"x"}"#, None);
+            buffers.record("preview", 1, "Network.responseReceivedExtraInfo", r#"{"requestId":"r9"}"#, None);
+        }
+        let lost = buffers.read("preview", 1, 0).unwrap()["lostRequests"].clone();
+        assert_eq!(lost, json!(["frame:*"]), "a lost header leaves its request to finish");
+        let params = json!({ "args": [{ "type": "object", "description": "x".repeat(spec().max_read_bytes) }] });
+        let cut = shrink("Runtime.consoleAPICalled", params, spec().max_text);
+        assert!(cut["args"][0].get("value").is_none());
     }
 }

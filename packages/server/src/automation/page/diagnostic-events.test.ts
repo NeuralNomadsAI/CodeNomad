@@ -80,3 +80,14 @@ test("a frame detach stays with the requests it ends", () => {
   for (let index = 0; index < DIAGNOSTICS.maxEvents + 1; index++) buffer.record("Runtime.consoleAPICalled", { args: [] })
   assert.equal(buffer.read(0).events[0].method, "Target.detachedFromTarget")
 })
+
+test("only a lost ending event or frame detach ends a request", () => {
+  const buffer = new DiagnosticEventBuffer()
+  buffer.record("Target.detachedFromTarget", { sessionId: "frame" })
+  buffer.record("Network.requestWillBeSentExtraInfo", { requestId: "r1" })
+  buffer.record("Network.loadingFinished", { requestId: "r2" })
+  for (let index = 0; index < DIAGNOSTICS.maxEvents + 3; index++) buffer.record("Network.responseReceivedExtraInfo", { requestId: "r9" })
+  const read = buffer.read(0)
+  assert.deepEqual(read.lostRequests.sort(), [":r2", "frame:*"])
+  assert.equal(read.lost.requests, 3, "every request that lost an event is counted")
+})

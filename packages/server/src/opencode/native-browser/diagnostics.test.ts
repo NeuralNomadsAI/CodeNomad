@@ -155,3 +155,10 @@ test("a request whose later events the host lost ends as failed instead of stayi
   assert.equal(slow.state, "failed")
   assert.equal(diagnostics.list({}).dropped, 1)
 })
+
+test("a frame whose detach the host lost ends its requests", () => {
+  const diagnostics = new PreviewDiagnostics()
+  diagnostics.ingest(read([{ ...request("f1", "https://frame.test/a"), session: "frame" }]))
+  diagnostics.ingest(read([], "buffer:0", 1, { messages: 0, requests: 0 }, [], ["frame:*"]))
+  assert.equal(diagnostics.list({}).requests[0].state, "failed")
+})

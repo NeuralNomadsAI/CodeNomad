@@ -57,7 +57,10 @@ export class PreviewDiagnostics {
     for (const event of read.events) this.apply(event.method, event.params as Params, event.session)
     // A request whose later events the host evicted unread would stay pending: it ends as failed, with the reason.
     for (const key of read.lostRequests ?? []) {
-      if (this.chains.has(key)) this.transition(key, { type: "detached", failure: "The preview did not keep this request's later events." })
+      // `${session}:*`: the frame's lost detach ends each of its requests, as a received one would.
+      if (key.endsWith(":*")) {
+        for (const chain of [...this.chains.keys()]) if (chain.startsWith(key.slice(0, -1))) this.transition(chain, { type: "detached" })
+      } else if (this.chains.has(key)) this.transition(key, { type: "detached", failure: "The preview did not keep this request's later events." })
     }
     // Once the buffer is read up to now, the host's live set is exact: contexts it no longer has are gone.
     if (!read.more) {
