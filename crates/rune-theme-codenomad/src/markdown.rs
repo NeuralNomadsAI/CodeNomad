@@ -27,7 +27,8 @@ pub fn prose<S: 'static>(
     let style = MarkdownStyle::from_kit(kit)
         .code_block(kit.c.bg_deep, kit.c.border_base)
         .link(kit.c.text_accent)
-        .syntax_highlight(highlight);
+        .syntax_highlight(highlight)
+        .diagram_max_items(crate::document_reader::MERMAID_MAX_ITEMS);
     let source = literal_breaks_with(source, truncated).into_owned();
     let matches: Vec<(Vec<std::ops::Range<usize>>, rune_kit::markdown::Highlight)> = match query {
         Some(q) => prose_ranges(&source, q, 512)
