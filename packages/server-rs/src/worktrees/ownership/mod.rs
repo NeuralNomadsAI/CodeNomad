@@ -8,10 +8,20 @@
 //! - the (virtual) target is then owned by the deepest live checkout whose project folder
 //!   contains it (`resolveOwnedWorktreePath`), with one fresh inventory read on a miss.
 //! Every location also stays under the authorized scope (`App::scope`). WSL is not ported.
+mod git_discovery;
+mod media_path;
+#[cfg(test)]
+mod tests;
+
+pub use git_discovery::{common_directory, resolve_directory, within};
+use git_discovery::{head_cannot_name_repository, read_common_directory, repository_root, shares_common_directory};
+pub(crate) use media_path::{
+    catalogue_owns_event, directory_anchor, media_directory, media_directory_with_slot, resolve_media_path,
+    resolve_media_path_checked,
+};
 
 use crate::{App, Workspace};
 use std::path::{Path, PathBuf};
-
 pub struct Owned {
     /// The service directory (`location.directory`).
     pub directory: String,
@@ -19,20 +29,30 @@ pub struct Owned {
     pub checkout: PathBuf,
 }
 
+#[derive(Clone)]
 pub(crate) struct DirectoryProof {
     tree: Option<super::inventory::Tree>,
     source: Option<super::inventory::Tree>,
+    root: Option<(PathBuf, String)>,
     external: bool,
+    media: bool,
 }
 
 impl DirectoryProof {
     pub(crate) fn same_checkout(&self, other: &Self) -> bool {
-        self.tree.as_ref().map(super::inventory::Tree::registered)
-            == other.tree.as_ref().map(super::inventory::Tree::registered)
+        match (&self.tree, &other.tree) {
+            (Some(a), Some(b)) => a.same_physical_checkout(b),
+            (None, None) => self.root == other.root,
+            _ => false,
+        }
     }
 
     pub(crate) fn live(&self, physical: &Path) -> bool {
         self.live_at(physical, None, false)
+    }
+
+    pub(crate) fn root_direct() -> Self {
+        Self { tree: None, source: None, root: None, external: false, media: false }
     }
 
     pub(crate) fn history_live(&self, workspace: &Path, physical: &Path) -> bool {
@@ -48,28 +68,46 @@ impl DirectoryProof {
                 (absent(&path.join("commondir")) && (absent(&path.join("objects")) || absent(&path.join("refs"))))
                     || head_cannot_name_repository(&path.join("HEAD"))
             };
-            within(root, path)
-                && path.ancestors().take_while(|ancestor| !within(ancestor, root)).all(|ancestor| {
-                    let marker = ancestor.join(".git");
-                    let marker_clear = match std::fs::symlink_metadata(&marker) {
-                        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
-                        // Git skips incomplete layouts. The external target's
-                        // Git common directory is also checked at admission.
-                        Ok(meta) if meta.is_dir() => no_repository(&marker),
-                        _ => false,
-                    };
-                    marker_clear && no_repository(ancestor)
-                })
+            path.starts_with(root)
+                && path.ancestors().take_while(|ancestor| *ancestor != root && ancestor.starts_with(root)).all(
+                    |ancestor| {
+                        let marker = ancestor.join(".git");
+                        let marker_clear = match std::fs::symlink_metadata(&marker) {
+                            Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+                            // Git skips incomplete layouts. The external target's
+                            // Git common directory is also checked at admission.
+                            Ok(meta) if meta.is_dir() => no_repository(&marker),
+                            _ => false,
+                        };
+                        marker_clear && no_repository(ancestor)
+                    },
+                )
         };
         self.source
             .as_ref()
             .is_none_or(|source| source.contains_live(&source.path) && no_nested_git(&source.path, source.registered()))
             && match &self.tree {
                 Some(tree) => {
-                    (if receipt { tree.contains_receipt_location(physical) } else { tree.contains_live(physical) })
-                        && (!(self.external || history_root.is_some()) || no_nested_git(physical, tree.registered()))
+                    // A checkout of another repository nested inside the opened folder (`!external`)
+                    // is intentionally owned under the root's identity per TS `manager.test.ts:225`.
+                    // `no_nested_git` applies to external targets and history provenance.
+                    (if receipt {
+                        tree.contains_receipt_location(physical)
+                    } else if self.media {
+                        tree.contains_media(physical)
+                    } else if history_root.is_some() {
+                        tree.contains_history(physical)
+                    } else {
+                        tree.contains_live(physical)
+                    }) && (!(self.external || history_root.is_some()) || no_nested_git(physical, tree.target_root()))
                 }
-                None => history_root.is_none_or(|root| no_nested_git(physical, root)),
+                None => {
+                    self.root.as_ref().is_none_or(|(root, id)| {
+                        dunce::canonicalize(root).ok().as_deref() == Some(root.as_path())
+                            && crate::files::directory_identity(root).ok().as_deref() == Some(id.as_str())
+                            && physical.starts_with(root)
+                    }) && (self.media || history_root.is_none_or(|root| no_nested_git(physical, root)))
+                }
             }
     }
 }
@@ -111,7 +149,7 @@ pub(crate) async fn receipt_location(
     let external = !within(&w.path, &path);
     let mut revision = None;
     let proof = if path == w.path {
-        DirectoryProof { tree: None, source: None, external }
+        DirectoryProof { tree: None, source: None, root: None, external, media: false }
     } else {
         let stamp = app.linked_events.lock().unwrap().stamp();
         match super::inventory::receipt_catalogue(app, w, endpoint).await {
@@ -120,7 +158,7 @@ pub(crate) async fn receipt_location(
                 registered_proof(&inventory, &path, external)?
             }
             None if !external && matches!(super::root_only(w).await, Ok(Some(true))) => {
-                DirectoryProof { tree: None, source: None, external }
+                DirectoryProof { tree: None, source: None, root: None, external, media: false }
             }
             None => return None,
         }
@@ -141,7 +179,7 @@ pub(super) fn registered_proof(
         .filter(|tree| tree.contains_receipt_location(path))
         .max_by_key(|tree| tree.path.as_os_str().len())?;
     let source = (tree.registered() != root.registered()).then(|| root.clone());
-    Some(DirectoryProof { tree: Some(tree.clone()), source, external })
+    Some(DirectoryProof { tree: Some(tree.clone()), source, root: None, external, media: false })
 }
 
 pub(super) fn existing_directory(path: &Path) -> Option<&Path> {
@@ -153,24 +191,6 @@ pub(super) fn existing_directory(path: &Path) -> Option<&Path> {
         }
     }
     None
-}
-
-fn head_cannot_name_repository(path: &Path) -> bool {
-    use std::io::{ErrorKind, Read};
-    match std::fs::symlink_metadata(path) {
-        Err(error) => error.kind() == ErrorKind::NotFound,
-        Ok(meta) if meta.is_dir() => true,
-        // Keep links and ambiguous reads closed; Git resolves the external
-        // target's actual common directory during the asynchronous admission.
-        Ok(meta) if meta.is_file() && meta.len() <= 4096 => {
-            let mut head = Vec::new();
-            std::fs::File::open(path).and_then(|file| file.take(4097).read_to_end(&mut head)).is_ok()
-                && head.len() <= 4096
-                && !head.strip_prefix(b"ref:").is_some_and(|target| target.trim_ascii_start().starts_with(b"refs/"))
-                && !head.get(..40).is_some_and(|oid| oid.iter().all(u8::is_ascii_hexdigit))
-        }
-        _ => false,
-    }
 }
 
 /// Capture the checkout that authorizes an existing folder, for a final
@@ -190,29 +210,71 @@ pub(crate) async fn capture_directory_with_refresh(
     }
     let external = !physical.starts_with(&workspace.path);
     if physical == workspace.path || !external && matches!(super::root_only(workspace).await, Ok(Some(true))) {
-        return Some(DirectoryProof { tree: None, source: None, external });
+        return Some(DirectoryProof { tree: None, source: None, root: None, external, media: false });
     }
     if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
         return None;
     }
     for &refresh in if refresh_on_miss { &[false, true][..] } else { &[false] } {
         let catalogue = super::linked::catalogue(app, workspace, refresh).await.ok()?;
-        if let Some(proof) = catalogue_proof(&catalogue, physical, external) {
+        if let Some(proof) = catalogue_proof(&catalogue, physical, external, ProofMode::Live) {
             return proof.live(physical).then_some(proof);
         }
     }
     None
 }
 
-fn catalogue_proof(catalogue: &super::inventory::Catalogue, path: &Path, external: bool) -> Option<DirectoryProof> {
+#[derive(Clone, Copy)]
+enum ProofMode {
+    Live,
+    Media,
+    History,
+}
+
+fn catalogue_proof(
+    catalogue: &super::inventory::Catalogue,
+    path: &Path,
+    external: bool,
+    mode: ProofMode,
+) -> Option<DirectoryProof> {
     let root = catalogue.get("root").ok()?;
     let tree = catalogue
         .trees
         .iter()
-        .filter(|tree| tree.contains_live(path))
-        .max_by_key(|tree| tree.path.as_os_str().len())?;
+        .filter(|tree| match mode {
+            ProofMode::Live => tree.contains_live(path),
+            ProofMode::Media => tree.contains_media(path),
+            ProofMode::History => tree.contains_history(path),
+        })
+        .max_by_key(|tree| match mode {
+            ProofMode::Live => tree.path.as_os_str().len(),
+            ProofMode::Media | ProofMode::History => tree.media_path_len(),
+        })?;
     let source = (external || tree.registered() != root.registered()).then(|| root.clone());
-    Some(DirectoryProof { tree: Some(tree.clone()), source, external })
+    Some(DirectoryProof {
+        tree: Some(tree.clone()),
+        source,
+        root: None,
+        external,
+        media: matches!(mode, ProofMode::Media),
+    })
+}
+
+fn reject_network_path(raw: &str, path: &Path) -> Result<(), ()> {
+    if raw.starts_with("\\\\") || raw.starts_with("//") || raw.starts_with(r"\??\") {
+        return Err(());
+    }
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        if let Some(Component::Prefix(prefix)) = path.components().next()
+            && matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..) | Prefix::DeviceNS(..))
+        {
+            return Err(());
+        }
+    }
+    let _ = path;
+    Ok(())
 }
 
 pub(crate) struct LoadedOwnership {
@@ -284,98 +346,42 @@ pub(crate) async fn owns_loaded(
 }
 
 /// Request-local validated checkout inventory for history fan-out and provenance.
-pub(crate) struct HistoryInventory(Option<super::inventory::Catalogue>);
+pub(crate) struct HistoryInventory {
+    catalogue: Option<std::sync::Arc<super::inventory::Catalogue>>,
+    allow_subfolders: bool,
+}
 
 impl HistoryInventory {
-    pub(crate) async fn load(app: &App, workspace: &Workspace) -> Option<Self> {
-        if super::root_only(workspace).await.ok()?.is_some() {
-            return Some(Self(None));
+    pub(crate) async fn load(
+        app: &crate::Shared,
+        workspace: &Workspace,
+        endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    ) -> Option<Self> {
+        if let Some(allow_subfolders) = super::root_only(workspace).await.ok()? {
+            return Some(Self { catalogue: None, allow_subfolders });
         }
-        Some(Self(Some(super::linked::catalogue(app, workspace, false).await.ok()?)))
+        Some(Self {
+            // Reuse the shared 10-second validated inventory cache (TS `worktree-inventory.ts:13-93`)
+            // which refreshes native worktree registrations on cold/invalidated loads.
+            catalogue: Some(super::inventory::history_catalogue(app, workspace, endpoint).await?),
+            allow_subfolders: true,
+        })
     }
 
     pub(crate) fn directories(&self) -> impl Iterator<Item = &str> {
-        self.0
-            .iter()
-            .flat_map(|inventory| &inventory.trees)
-            .filter(|tree| !tree.nested_missing)
-            .map(|tree| tree.service.as_str())
+        self.catalogue.iter().flat_map(|inventory| &inventory.trees).map(|tree| tree.service.as_str())
     }
 
     pub(crate) fn prove(&self, workspace: &Path, path: &Path) -> Option<DirectoryProof> {
         let external = !path.starts_with(workspace);
-        let proof = match &self.0 {
-            Some(inventory) => catalogue_proof(inventory, path, external)?,
-            None if !external => DirectoryProof { tree: None, source: None, external },
+        let proof = match &self.catalogue {
+            Some(inventory) => catalogue_proof(inventory, path, external, ProofMode::History)?,
+            None if !external && (path == workspace || self.allow_subfolders) => {
+                DirectoryProof { tree: None, source: None, root: None, external, media: false }
+            }
             None => return None,
         };
         proof.history_live(workspace, path).then_some(proof)
-    }
-}
-
-/// `resolveDirectoryPath`: the real path, or the real nearest ancestor joined with the
-/// missing components; `None` when an existing entry cannot be resolved.
-pub fn resolve_directory(directory: &str) -> Option<PathBuf> {
-    let trimmed = crate::shared::js_trim(directory);
-    if trimmed.is_empty() {
-        return None;
-    }
-    let style = crate::files::node_path::Style::host();
-    let absolute = if style.is_absolute(&trimmed) {
-        style.normalize(&trimmed)
-    } else {
-        style.join(&std::env::current_dir().ok()?.to_string_lossy(), &trimmed)
-    };
-    let mut current = PathBuf::from(absolute);
-    let mut missing: Vec<std::ffi::OsString> = Vec::new();
-    loop {
-        match dunce::canonicalize(&current) {
-            Ok(real) => return Some(missing.iter().rev().fold(real, |p, c| p.join(c))),
-            Err(_) => {
-                if std::fs::symlink_metadata(&current).is_ok()
-                    || std::fs::symlink_metadata(&current).err()?.kind() != std::io::ErrorKind::NotFound
-                {
-                    return None;
-                }
-                missing.push(current.file_name()?.to_owned());
-                current = current.parent()?.to_path_buf();
-            }
-        }
-    }
-}
-/// `isPathWithinWorktree` (host paths).
-pub fn within(root: &Path, candidate: &Path) -> bool {
-    let style = crate::files::node_path::Style::host();
-    let relative = style.relative(&root.to_string_lossy(), &candidate.to_string_lossy());
-    relative.is_empty()
-        || relative != ".."
-            && !relative.starts_with(&format!("..{}", std::path::MAIN_SEPARATOR))
-            && !style.is_absolute(&relative)
-}
-/// `readGitCommonDirectory`: the canonical Git common directory, `None` when unreadable.
-pub async fn common_directory(dir: &Path) -> Option<PathBuf> {
-    read_common_directory(dir).await.ok().flatten()
-}
-
-async fn read_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
-    let out = crate::git::run(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"], 16 * 1024)
-        .await
-        .map_err(|_| ())?;
-    if out.not_a_repository() {
-        return Ok(None);
-    }
-    let out = out.ok().map_err(|_| ())?;
-    dunce::canonicalize(out.text().trim()).map(Some).map_err(|_| ())
-}
-async fn shares_common_directory(left: &Path, right: &Path) -> Result<bool, ()> {
-    let (a, b) = tokio::join!(read_common_directory(left), read_common_directory(right));
-    let (a, b) = (a?, b?);
-    Ok(a.is_some() && a == b)
-}
-async fn repository_root(root: &Path) -> PathBuf {
-    match crate::git::run(root, &["rev-parse", "--show-toplevel"], 16 * 1024).await.ok().and_then(|o| o.ok().ok()) {
-        Some(o) => dunce::canonicalize(o.text().trim()).unwrap_or_else(|_| root.to_path_buf()),
-        None => root.to_path_buf(),
     }
 }
 
@@ -404,7 +410,7 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
         }));
     }
     if let Some(t) = &target
-        && !within(root, t)
+        && !t.starts_with(root)
         && !shares_common_directory(root, t).await?
     {
         return Ok(None);
@@ -430,44 +436,4 @@ pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: 
         }
     }
     Ok(None)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_components_resolve_under_their_real_ancestor() {
-        let base = dunce::canonicalize(std::env::temp_dir()).unwrap();
-        let virtual_path = base.join("depth-owner-missing").join("a").join("b");
-        let _ = std::fs::remove_dir_all(base.join("depth-owner-missing"));
-        assert_eq!(resolve_directory(&virtual_path.to_string_lossy()), Some(virtual_path.clone()));
-        assert_eq!(resolve_directory(&format!("  {}  ", base.to_string_lossy())), Some(base.clone()));
-        assert_eq!(resolve_directory("   "), None);
-        assert!(within(&base, &virtual_path) && within(&base, &base) && !within(&virtual_path, &base));
-    }
-
-    #[cfg(windows)]
-    #[tokio::test]
-    async fn a_junction_to_a_foreign_folder_shares_no_common_directory() {
-        let base = crate::shared::test_dir("depth-owner");
-        let (repo, foreign) = (base.join("repo"), base.join("foreign"));
-        std::fs::create_dir_all(&repo).unwrap();
-        std::fs::create_dir_all(&foreign).unwrap();
-        let init = crate::git::run(&repo, &["init", "--quiet"], 4096).await.unwrap();
-        assert_eq!(init.code, 0);
-        let link = repo.join("link");
-        let made =
-            std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(&link).arg(&foreign).output().unwrap();
-        assert!(made.status.success());
-        let real = dunce::canonicalize(&link).unwrap();
-        assert_eq!(real, foreign);
-        assert!(!within(&repo, &real));
-        assert_eq!(shares_common_directory(&repo, &real).await, Ok(false));
-        assert_eq!(shares_common_directory(&repo, &repo).await, Ok(true));
-        std::fs::write(foreign.join(".git"), "gitdir: missing").unwrap();
-        assert_eq!(shares_common_directory(&repo, &real).await, Err(()));
-        std::fs::remove_dir(&link).unwrap();
-        let _ = std::fs::remove_dir_all(&base);
-    }
 }

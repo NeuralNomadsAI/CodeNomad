@@ -328,5 +328,6 @@ impl App {
         store.released.remove(&workspace.id);
         self.emit_status(workspace.id, "disconnected", store.generation, Some("workspace stopped"));
         self.emit(json!({"type":"workspace.stopped","workspaceId":workspace.id,"reason":"deleted"}));
+        self.workspace_closed.notify_waiters();
     }
 }

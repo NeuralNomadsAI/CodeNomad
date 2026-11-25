@@ -43,11 +43,14 @@ pub(crate) fn retry_connection(s: &mut State, tx: &mut Tx) {
     if chat::authentication::retry(s) {
         return;
     }
-    if s.screen
-        .launcher()
-        .is_some_and(|l| l.authentication_required)
+    if let Some(l) = s.screen.launcher()
+        && l.authentication_required
     {
-        s.show_launcher();
+        if l.renewing_managed_session() {
+            s.phase = Phase::Reconnecting;
+        } else {
+            s.show_launcher();
+        }
         return;
     }
     if s.incoming.as_ref().is_none_or(Receiver::is_closed)

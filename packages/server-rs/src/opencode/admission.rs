@@ -10,7 +10,7 @@ use super::daemon::Endpoint;
 pub const MINIMUM_VERSION: &str = "2.3.2";
 
 /// Why no connection: an unsupported daemon (HTTP 426 on workspace creation) or any other failure.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Refusal {
     Unsupported { actual: String, reason: &'static str },
     Failed(String),

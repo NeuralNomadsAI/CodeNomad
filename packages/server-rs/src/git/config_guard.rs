@@ -1,5 +1,5 @@
-//! Repository configuration admitted before any Git display or mutation
-//! (audit M3). The listing is the effective configuration of the directory
+//! Repository configuration admitted before any Git display read or linked
+//! worktree lifecycle command (audit M3). The listing is the effective configuration of the directory
 //! Git actually runs in (local, `config.worktree` and command scopes; system
 //! and global are disabled by `command`), with includes named but never
 //! followed, plus every absorbed submodule's own configuration. Status and

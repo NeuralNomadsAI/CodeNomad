@@ -165,7 +165,18 @@ fn nonce_name(value: &str) -> bool {
     value.len() == 36 && value.bytes().all(|b| matches!(b, b'a'..=b'f' | b'0'..=b'9' | b'-'))
 }
 fn sharing(e: &io::Error) -> bool {
-    matches!(e.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::ResourceBusy) || e.raw_os_error() == Some(32)
+    if matches!(e.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::ResourceBusy) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION};
+        matches!(e.raw_os_error(), Some(code) if code == ERROR_SHARING_VIOLATION as i32 || code == ERROR_LOCK_VIOLATION as i32)
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 fn conflict(message: &'static str) -> MemoryError {
     fail(Code::Conflict, message)

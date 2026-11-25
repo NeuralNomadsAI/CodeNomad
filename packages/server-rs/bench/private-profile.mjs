@@ -17,6 +17,29 @@ export async function outsideUserHome(directory) {
   return resolved
 }
 
+const isDriveQualifiedWindowsPath = value => /^[A-Za-z]:[\\/]/.test(value)
+
+export async function assertPrivateOpenCodeExecutable(executable) {
+  assert(typeof executable === "string" && path.isAbsolute(executable), "Expected an absolute OpenCode executable path")
+  if (process.platform === "win32" && !isDriveQualifiedWindowsPath(executable)) {
+    throw new assert.AssertionError({ message: `Refused: OpenCode executable must be a drive-qualified local path (${executable})` })
+  }
+  const candidates = [...unsafeRoots, process.env.USERPROFILE, process.env.HOME]
+    .filter(value => typeof value === "string" && path.isAbsolute(value))
+    .map(value => path.resolve(value))
+  const roots = [...new Set(candidates)]
+  const canonicalRoots = await Promise.all(roots.map(home => canonical(home).catch(() => home)))
+  const forbidden = [...new Set([...roots, ...canonicalRoots])]
+  const normalized = path.resolve(executable)
+  assert(!forbidden.some(home => within(home, normalized)), `Refused: OpenCode executable must be outside the user's home (${executable})`)
+  const resolved = await canonical(normalized)
+  if (process.platform === "win32" && !isDriveQualifiedWindowsPath(resolved)) {
+    throw new assert.AssertionError({ message: `Refused: OpenCode executable resolves to a non-local path (${resolved})` })
+  }
+  assert(!forbidden.some(home => within(home, resolved)), `Refused: OpenCode executable resolves inside the user's home (${resolved})`)
+  return resolved
+}
+
 export async function ownedOutput(root, directory) {
   assert(path.isAbsolute(directory) && below(root, directory), "Bench output must belong to its checkout")
   const owned = await outsideUserHome(root), resolved = await canonical(directory)

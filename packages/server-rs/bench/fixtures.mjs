@@ -47,20 +47,27 @@ export function rustBinary() {
   return bin
 }
 
+export const PRUNING_READY_TIMEOUT_MS = 12000
+
+/** Wait until OpenCode has booted `directory` and activated `codenomad-session-pruning`. */
+export async function waitForPruningPlugin(client, directory, signal = AbortSignal.timeout(PRUNING_READY_TIMEOUT_MS)) {
+  const location = { directory }
+  await client.location.get({ location }, { signal })
+  const { awaitNativePlugin } = await fromDist("opencode/plugin-activation.js")
+  await awaitNativePlugin(client, "codenomad-session-pruning", location, signal)
+}
+
 /** The bundled pruning plugin in the Rust fixture profile, as the TS server installs its own. */
 export async function installPruning({ root, configDirectory }) {
   assertFixtureRoot(root)
   const { installPruningPresence } = await fromDist("opencode/pruning-installation.js")
-  const { awaitNativePlugin } = await fromDist("opencode/plugin-activation.js")
   const presence = await installPruningPresence(await readFile(new URL("plugins/session-pruning/plugin.mjs", dist)),
     { config: configDirectory, data: path.join(root, "rust-fixture-presence") })
   return {
     close: presence,
     async ready(client, directory) {
-      const location = { directory }
-      await client.location.get({ location })
-      const signal = AbortSignal.timeout(12000)
-      await awaitNativePlugin(client, "codenomad-session-pruning", location, signal)
+      const signal = AbortSignal.timeout(PRUNING_READY_TIMEOUT_MS)
+      await waitForPruningPlugin(client, directory, signal)
       await presence.prepare(directory, signal, () => {})
     },
   }

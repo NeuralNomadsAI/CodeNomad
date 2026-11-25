@@ -239,29 +239,53 @@ pub fn run() {
     rt.state.draft = TextEdit::new("Synthetic interrupt test");
     rt.frame(0.0);
     tap(&mut rt, "send");
+    // Bring the stop button into view before waiting for idle + holding /api/model.
+    rt.update(|_, tx| {
+        tx.scroll_into_view("stop-response".to_string());
+        tx.instant()
+    });
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
     wait(&mut rt, "stream fragments", |s| {
         s.phase == Phase::Streaming
             && s.messages
                 .last()
                 .is_some_and(|m| m.body.contains("fragment fragment"))
+            && s.agent.as_ref().is_some_and(|a| a.idle())
     });
+    assert!(rt.state.agent.as_ref().unwrap().idle());
     rt.state.agent.as_mut().unwrap().refresh(true);
-    // The stop request must complete while the ordinary model read is delayed 1.5 s.
-    std::thread::sleep(Duration::from_millis(50));
-    rt.frame(0.0);
-    let started = Instant::now();
-    tap(&mut rt, "stop-response");
+    // Wait causally until the fixture confirms GET /api/model is held open; the fixture only
+    // releases /api/model after Rune prints `controls-stopped` upon observing `!stopping`.
+    wait(&mut rt, "slow catalogue held", |s| {
+        s.messages
+            .last()
+            .is_some_and(|m| m.body.contains("holding-catalogue"))
+    });
+    rt.update(|_, tx| {
+        tx.scroll_into_view("stop-response".to_string());
+        tx.instant()
+    });
+    rt.frame(1.0 / 60.0);
+    let (x, y) = rt
+        .find("stop-response")
+        .expect("missing control: stop-response");
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    assert!(
+        rt.state.agent.as_ref().unwrap().stopping,
+        "stop-response click must be admitted"
+    );
     wait(&mut rt, "urgent stop lane", |s| {
         !s.agent.as_ref().unwrap().stopping
     });
-    assert!(
-        started.elapsed() < Duration::from_millis(1200),
-        "stop waited for catalogue"
-    );
+    assert!(!rt.state.agent.as_ref().unwrap().error);
+    println!(r#"{{"type":"controls-stopped"}}"#);
     wait(&mut rt, "interrupted authoritative history", |s| {
         s.phase == Phase::Ready && idle(s)
     });
-    assert!(started.elapsed() < Duration::from_secs(5));
     assert!(!rt.state.agent.as_ref().unwrap().error);
     assert!(rt.state.messages.last().unwrap().body.contains("fragment"));
     assert!(
