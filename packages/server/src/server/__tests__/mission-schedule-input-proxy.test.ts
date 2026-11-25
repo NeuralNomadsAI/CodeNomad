@@ -514,6 +514,13 @@ test("pre-handler 400/413/426 keep Fastify error envelopes and carry x-codenomad
       payload: "{invalid",
     })
     assert.equal(refusedMalformed.statusCode, 403, refusedMalformed.body)
+    const refusedBadMediaType = await f.app.inject({
+      method: "POST",
+      url: doubleSlash,
+      headers: { "content-type": "invalid/type; ;" },
+      payload: "{invalid",
+    })
+    assert.equal(refusedBadMediaType.statusCode, 403, refusedBadMediaType.body)
   }
 
   // Disallowed double-slash routes must not short-circuit workspace lookup (404) or preHandler auth (401).

@@ -1023,9 +1023,10 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
       if (request.method === "POST") {
         const pathOnly = routedPath(request.raw.url ?? "") ?? (request.raw.url ?? "").split(/[?;]/, 1)[0] ?? ""
         if (/^\/workspaces\/[^/]+\/instance\/api\/session\/[^/]+\/(?:prompt|command)\/\/+$/.test(pathOnly)) {
-          // Skip JSON parsing and body-limit rejection for disallowed double-slash variants so
-          // authentication (401), workspace lookup (404), and route allowlist (403) run in order.
+          // Skip JSON parsing, media-type validation, and body-limit rejection for disallowed
+          // double-slash variants so auth (401), workspace lookup (404), and allowlist (403) run in order.
           delete request.headers["content-length"]
+          delete request.headers["content-type"]
           done(null, Readable.from([]))
           return
         }
