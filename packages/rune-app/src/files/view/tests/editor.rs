@@ -593,3 +593,70 @@ fn binary_replacement_keeps_the_draft_visible_and_version_refusal_shows_the_reas
         http.quiet().await;
     });
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn isolated_editor_edit_arms_wake_and_persists_draft_while_idle() {
+    crate::platform::block_on(async {
+        let parent = std::env::temp_dir().join(codenomad_client::http::client_id().unwrap());
+        std::fs::create_dir(&parent).unwrap();
+        let store = crate::platform::storage::Store::open(parent.join("rune"))
+            .await
+            .unwrap();
+        let http = http::Http::new().await;
+        let documents = Store::default();
+        let mut rt = runtime(http.ui(documents.clone(), "idle-draft-wake"));
+        rt.state.documents = documents;
+        let mut workspace = crate::workspace::Ui::new();
+        workspace.fixture_ready();
+        workspace.fixture_store(store.clone());
+        rt.state.workspace = Some(workspace);
+        open(&mut rt, &http, "main.rs", "YQ==").await;
+        let input = rt
+            .elements()
+            .into_iter()
+            .find(|node| node.path.contains("/file-editor/") && node.role == "textbox")
+            .expect("the real reader mounts the source input");
+        let [x, y, width, _] = input.visible;
+        rt.pointer_down(x + width / 2.0, y + 2.0);
+        rt.pointer_up(x + width / 2.0, y + 2.0);
+        rt.frame(0.02);
+        rt.poll = Some(crate::poll);
+        rt.frame(1.0);
+        // Single character edit with no further user interaction: Rune polls before input,
+        // so on_change must arm an immediate wake to schedule the debounced draft checkpoint.
+        rt.key(KeyEvent {
+            key: Key::Text("x".into()),
+            mods: Mods::default(),
+        });
+        rt.frame(0.02);
+        let immediate = rt
+            .wake_deadline()
+            .expect("editor on_change must arm a wake for poll_file_drafts");
+        rt.frame((immediate - rt.clock).max(0.0) + 0.01);
+        let debounce = rt
+            .wake_deadline()
+            .expect("poll_file_drafts must arm the 250 ms debounce wake");
+        assert!(debounce > rt.clock);
+        rt.frame((debounce - rt.clock).max(0.0) + 0.01);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while store.file_draft_write_count() == 0 {
+            assert!(Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        drop(rt);
+        while store.file_draft_worker_running() || store.files_refcount() > 1 {
+            assert!(Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let persisted = store.load_file_drafts().await.unwrap().unwrap();
+        assert!(
+            String::from_utf8_lossy(&persisted).contains("x"),
+            "expected persisted draft to contain edit, got: {}",
+            String::from_utf8_lossy(&persisted)
+        );
+        drop(store);
+        std::fs::remove_dir_all(parent).unwrap();
+        http.quiet().await;
+    });
+}

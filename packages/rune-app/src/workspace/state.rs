@@ -114,6 +114,10 @@ impl Ui {
     pub(crate) fn fixture_ready(&mut self) {
         self.ready = true;
     }
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn fixture_store(&mut self, store: crate::platform::storage::Store) {
+        self.persistence.store = Some(store);
+    }
     #[cfg(test)]
     pub(crate) fn fixture_hydrate(&mut self, saved: Snapshot) {
         self.hydrate(saved);
@@ -420,6 +424,7 @@ pub fn retry(s: &mut State, tx: &mut Tx) {
         ui.persistence.retry();
         ui.persistence.retry_file_drafts(s.wake.clone());
     }
+    tx.wake_after(std::time::Duration::ZERO);
     connected(s);
     resume(s, tx);
 }

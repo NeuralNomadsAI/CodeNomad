@@ -251,9 +251,11 @@ mod native {
                             |temporary, destination| {
                                 // Enforce the deadline and claim PUBLISHING atomically without
                                 // holding a mutex across fs::rename so a stalled filesystem cannot
-                                // block admission or timeout beyond the 5 s wait bound; the single
-                                // sequential worker prevents any older write from overwriting a
-                                // newer confirmed checkpoint.
+                                // block admission or timeout beyond the 5 s wait bound; re-check
+                                // the deadline after claiming PUBLISHING so a pause before the CAS
+                                // cannot publish after expiry, while the single sequential worker
+                                // prevents any older write from overwriting a newer confirmed
+                                // checkpoint.
                                 if std::time::Instant::now() >= task.deadline
                                     || task
                                         .state
@@ -265,6 +267,13 @@ mod native {
                                         )
                                         .is_err()
                                 {
+                                    return Ok(false);
+                                }
+                                if std::time::Instant::now() >= task.deadline {
+                                    task.state.store(
+                                        DRAFT_CANCELLED,
+                                        std::sync::atomic::Ordering::Release,
+                                    );
                                     return Ok(false);
                                 }
                                 fs::rename(temporary, destination)?;

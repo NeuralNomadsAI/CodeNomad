@@ -94,7 +94,7 @@ pub fn status(s: &State) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{file_draft_status, poll_file_drafts, status};
+    use super::{file_draft_status, status};
     use crate::workspace::Ui;
 
     #[test]
@@ -130,8 +130,26 @@ mod tests {
                 .iter()
                 .any(|l| l == crate::strings::t("filesPanel.draftLimit"))
         );
+        // At narrow mobile widths, French alert text wraps within the viewport instead of clipping.
+        rt.set_viewport((320.0, 600.0), 1.0);
+        crate::strings::with_locale("fr", || {
+            rt.frame(0.02);
+        });
+        let narrow_alerts: Vec<_> = rt
+            .elements()
+            .into_iter()
+            .filter(|e| e.role == "alert")
+            .collect();
+        assert_eq!(narrow_alerts.len(), 2);
+        for node in &narrow_alerts {
+            assert!(
+                node.rect[0] + node.rect[2] <= 320.5,
+                "alert overflowed 320px viewport: {node:?}"
+            );
+        }
         rt.state.workspace.as_mut().unwrap().persistence.read_error = false;
-        rt.frame(0.0);
+        rt.set_viewport((1000.0, 600.0), 1.0);
+        rt.frame(0.02);
         let alerts: Vec<_> = rt
             .elements()
             .iter()
@@ -151,7 +169,8 @@ mod tests {
                 .unwrap();
         let mut s = crate::init();
         let mut ui = Ui::new();
-        ui.persistence.store = Some(store);
+        ui.ready = true;
+        ui.persistence.store = Some(store.clone());
         s.workspace = Some(ui);
         let mut rt = rune::Runtime::new(
             s,
@@ -159,21 +178,35 @@ mod tests {
             (100.0, 100.0),
             rune::Env::new(false, 1.0),
         );
-        rt.update(|s, tx| {
-            // Simulate a draft mutation happening during files::poll after workspace::poll.
-            s.documents.insert_test_file_draft("src/lib.rs", "edited");
-            let _ = poll_file_drafts(s, 1.0, tx);
-        });
-        assert_eq!(
-            rt.state
-                .workspace
-                .as_ref()
-                .unwrap()
-                .persistence
-                .file_drafts_due,
-            1.25
-        );
+        rt.poll = Some(crate::poll);
+        rt.frame(1.0);
+        assert!(rt.wake_deadline().is_none());
+        rt.state
+            .documents
+            .insert_test_file_draft("src/lib.rs", "edited");
+        rt.frame(0.02);
+        let due = rt
+            .wake_deadline()
+            .expect("crate::poll must arm tx.wake_at for pending file drafts");
+        assert!(due > rt.clock);
+        let step = (due - rt.clock).max(0.0) + 0.01;
+        rt.frame(step);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while store.file_draft_write_count() == 0 {
+            assert!(std::time::Instant::now() < deadline);
+            rt.frame(0.02);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         drop(rt);
+        while store.file_draft_worker_running() || store.files_refcount() > 1 {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let persisted = crate::platform::block_on(store.load_file_drafts())
+            .unwrap()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&persisted).contains("edited"));
+        drop(store);
         std::fs::remove_dir_all(parent).unwrap();
     }
 }

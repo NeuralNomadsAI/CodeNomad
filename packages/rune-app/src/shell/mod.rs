@@ -37,9 +37,9 @@ pub fn view(
         if let Some(error) = primary {
             let mut row = layout::action_row()
                 .pad(Space::Sm)
-                .child(text(t(error)).role("alert"));
+                .child(text(t(error)).wrap().role("alert"));
             if let Some(draft_error) = secondary {
-                row = row.child(text(t(draft_error)).role("alert"));
+                row = row.child(text(t(draft_error)).wrap().role("alert"));
             }
             root = root.child(row.child(button_tx(
                 "workspace-retry",

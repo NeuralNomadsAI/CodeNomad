@@ -232,7 +232,7 @@ fn latest(s: &mut State, tx: &mut Tx) {
     }
     chat::reader::latest(s, tx);
 }
-fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
+pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     strings::with_locale(settings::app_locale(s), || poll_window(s, now, tx))
 }
 
