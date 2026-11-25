@@ -29,6 +29,59 @@ const PROD: [&str; 11] = [
     "true",
 ];
 
+fn ci_enabled() -> bool {
+    std::env::var_os("CI").is_some_and(|v| {
+        let s = v.to_string_lossy();
+        let trimmed = s.trim();
+        !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("false") && trimmed != "0"
+    })
+}
+
+fn is_loopback_host(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    let stripped = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')).unwrap_or(trimmed);
+    stripped.is_empty()
+        || stripped.eq_ignore_ascii_case("localhost")
+        || stripped.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.to_canonical().is_loopback())
+}
+
+fn assert_loopback_command(command: &std::process::Command) {
+    let args: Vec<String> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+    for pair in args.windows(2) {
+        if pair[0] == "--host" {
+            assert!(
+                is_loopback_host(&pair[1]),
+                "local serve tests must bind loopback only (set CI for wildcard host tests), got --host {}",
+                pair[1]
+            );
+        }
+    }
+    for arg in &args {
+        if let Some(host) = arg.strip_prefix("--host=") {
+            assert!(
+                is_loopback_host(host),
+                "local serve tests must bind loopback only (set CI for wildcard host tests), got --host={host}"
+            );
+        }
+    }
+    for (key, value) in command.get_envs() {
+        let Some(value) = value else { continue };
+        let key = key.to_string_lossy();
+        let val = value.to_string_lossy();
+        if key.eq_ignore_ascii_case("CODENOMAD_LOCKED_HOST") || key.eq_ignore_ascii_case("CLI_HOST") {
+            assert!(
+                is_loopback_host(&val),
+                "local serve tests must bind loopback only (set CI for wildcard host tests), got {key}={val}"
+            );
+        } else if key.eq_ignore_ascii_case("CNRS_HTTPS_BIND") && !val.trim().is_empty() {
+            assert!(
+                val.trim().parse::<std::net::SocketAddr>().is_ok_and(|addr| addr.ip().to_canonical().is_loopback()),
+                "local serve tests must bind loopback only (set CI for wildcard host tests), got {key}={val}"
+            );
+        }
+    }
+}
+
 struct Server {
     child: Child,
     lines: mpsc::UnboundedReceiver<String>,
@@ -81,6 +134,9 @@ impl Server {
             .env("XDG_DATA_HOME", home.join(".local/share"))
             .env("XDG_STATE_HOME", home.join(".local/state"))
             .env("XDG_CACHE_HOME", home.join(".cache"));
+        if !ci_enabled() {
+            assert_loopback_command(command.as_std());
+        }
         let mut child = command.spawn().unwrap();
         let (tx, lines) = mpsc::unbounded_channel();
         let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
@@ -360,6 +416,10 @@ async fn desktop_dev_launch_proxies_the_ui() {
 /// desktop HTTP stays on 127.0.0.1, matching `packages/server/src/index.ts`.
 #[tokio::test]
 async fn desktop_launch_accepts_wildcard_host_and_keeps_http_on_loopback() {
+    // Binding `--host 0.0.0.0` triggers the Windows Firewall prompt for each new test binary; run in CI only.
+    if !ci_enabled() {
+        return;
+    }
     let args = [
         "serve",
         "--host",
@@ -458,6 +518,9 @@ async fn shutdown_cancels_pending_plugin_snapshot() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .kill_on_drop(true);
+    if !ci_enabled() {
+        assert_loopback_command(command.as_std());
+    }
     let mut child = command.spawn().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
     let url = timeout(Duration::from_secs(30), stdout.next_line()).await.unwrap().unwrap().unwrap();
@@ -625,4 +688,32 @@ async fn serve_declares_missions_capability_without_bench_env() {
         }
         server.stop(b"").await;
     }
+}
+
+#[test]
+fn local_serve_command_guard_rejects_non_loopback_hosts_and_env() {
+    let ok = |configure: &dyn Fn(&mut std::process::Command)| {
+        let mut cmd = std::process::Command::new("codenomad-rs");
+        configure(&mut cmd);
+        std::panic::catch_unwind(move || assert_loopback_command(&cmd)).is_ok()
+    };
+    assert!(ok(&|c| {
+        c.args(["serve", "--host", "127.0.0.1", "--host=[::1]", "--host=LOCALHOST"]);
+        c.env("CLI_HOST", "::ffff:127.0.0.1").env("CNRS_HTTPS_BIND", "127.0.0.1:0");
+    }));
+    assert!(!ok(&|c| {
+        c.args(["serve", "--host", "0.0.0.0"]);
+    }));
+    assert!(!ok(&|c| {
+        c.args(["serve", "--host=::"]);
+    }));
+    assert!(!ok(&|c| {
+        c.args(["serve", "--host", "127.0.0.1"]).env("CODENOMAD_LOCKED_HOST", "0.0.0.0");
+    }));
+    assert!(!ok(&|c| {
+        c.args(["serve"]).env("CLI_HOST", "::");
+    }));
+    assert!(!ok(&|c| {
+        c.env("CNRS_HTTPS_BIND", "0.0.0.0:9898");
+    }));
 }
