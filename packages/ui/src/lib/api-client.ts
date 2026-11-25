@@ -859,8 +859,8 @@ export function createServerApi(ctx: BackendHttp) {
       } })
     },
     /** One mission's compact map and cleanups, for display reconciliation (lost acknowledgements, cleanup retries). */
-    fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
-      return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}`)
+    fetchMission(instanceId: string, missionId: string, signal?: AbortSignal): Promise<MissionReadResponse> {
+      return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}`, { signal })
     },
     /** More of one mission's tasks for display: a window of its display order or tasks by name;
      * it shares the secondary read budget. */
@@ -901,9 +901,9 @@ export function createServerApi(ctx: BackendHttp) {
       const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined) as [string, string][])
       return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
     },
-    fetchMissionScheduleCreation(instanceId: string, requestID: string, directory?: string): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+    fetchMissionScheduleCreation(instanceId: string, requestID: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       const query = new URLSearchParams(directory === undefined ? {} : { directory })
-      return secondaryRead(undefined, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`, { signal }))
     },
     saveMissionSchedule(instanceId: string, input: import("../stores/mission-schedule-editor-holds").MissionScheduleEditorRequest): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       const { missionID, ...body } = input

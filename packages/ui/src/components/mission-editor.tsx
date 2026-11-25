@@ -653,7 +653,7 @@ export function MissionEditor(props: {
       <Show when={schedule.previousDraft()}>{previous => <details class="mission-profile-optional"><summary>{t("missions.scheduling.previousDraft")}</summary>
         <textarea readOnly rows={8} value={previous()} aria-label={t("missions.scheduling.previousDraft")} /></details>}</Show>
       <Show when={!uncertain() && error()}><p role="alert">{error()}</p></Show>
-      <Show when={kind !== "create" && schedule.held()?.state === "uncertain"}><p role="alert">{t(otherUncertain()
+      <Show when={schedule.held()?.state === "uncertain"}><p role="alert">{t(otherUncertain()
         ? "missions.scheduling.uncertainOther" : "missions.scheduling.uncertain")}</p></Show>
     </div>
     <footer class="window-footer">

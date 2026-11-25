@@ -919,11 +919,7 @@ for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its
     }
     const initialRead = page.waitForResponse(response => response.request().method() === "GET" && receiptRequest(response.url()))
     await form(page).locator('button[type="submit"]').click()
-    if (kind === "create") {
-      // The hold is pending while its POST is in flight, then uncertain once the lost reply settles.
-      await page.waitForFunction(() => window.schedulingEditor.held()?.state === "uncertain")
-      assert.equal(await form(page).locator("[role=alert]").count(), 0)
-    } else await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
+    await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
     await initialRead
     assert.equal(await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).count(), 0)
     assert.equal(await form(page).locator(".window-footer").getByRole("button", { name: "Refresh", exact: true }).count(), 0)
@@ -935,6 +931,7 @@ for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its
     const remountRead = page.waitForResponse(response => response.request().method() === "GET" && receiptRequest(response.url()))
     await page.evaluate(() => window.schedulingEditor.mount(true))
     await remountRead
+    await form(page).getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
     assert.equal(await form(page).getByLabel(objective, { exact: true }).isDisabled(), true)
     await form(page).evaluate(element => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
     assert.equal(f.posts.length, 1)

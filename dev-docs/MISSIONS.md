@@ -834,8 +834,9 @@ separate concurrent reads and reject late responses from a replaced connection.
 
 `stores/mission-schedule-editor-holds.ts` retains serialized create/configure/journal-edit
 intent and its exact draft before dispatch. Transport loss and incomplete replies keep
-that identity across mountings. Explicit receipt refresh performs reads only; a matching
-complete original receipt releases the hold. A journal edit's retained history entry
+that identity across mountings. While the editor is active, automatic read-only rereads
+check the original receipt on mount and periodically until a matching complete original
+receipt releases the hold. A journal edit's retained history entry
 includes its `requestID`, revision and accepted text; unified text also requires a matching
 document read. Missing/evicted evidence keeps the hold. Never resend a held edit or
 creation automatically, and never use a negative read as permission for another identity.

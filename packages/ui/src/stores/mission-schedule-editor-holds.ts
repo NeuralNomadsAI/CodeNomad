@@ -31,6 +31,12 @@ export function retainMissionScheduleEditor(scope: string, requestID: string) {
   if (!held || JSON.parse(held.payload).requestID !== requestID) return
   setHolds(value => new Map(value).set(scope, { ...held, state: "uncertain" }))
 }
+export function resumeMissionScheduleEditor(scope: string, requestID: string) {
+  const held = holds().get(scope)
+  if (!held || held.state !== "uncertain" || JSON.parse(held.payload).requestID !== requestID) return false
+  setHolds(value => new Map(value).set(scope, { ...held, state: "pending" }))
+  return true
+}
 export function releaseMissionScheduleEditor(scope: string, requestID: string) {
   const held = holds().get(scope)
   if (!held || JSON.parse(held.payload).requestID !== requestID) return

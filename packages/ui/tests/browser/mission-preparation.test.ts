@@ -167,6 +167,27 @@ test("real owner: positive partial preparation enables only an explicit original
     await page.clock.fastForward(5_000)
     await retry.waitFor()
     assert.equal(f.writes.length, 1); assert.equal(f.admissions.length, 0)
+    // Polling must not clear retryable or disable the focused Try again button mid-poll.
+    await retry.focus()
+    const retryElement = await retry.elementHandle()
+    assert.ok(retryElement)
+    let releasePoll!: () => void
+    const pollStarted = new Promise<void>(resolve => {
+      const pollGate = new Promise<void>(done => { releasePoll = done })
+      void page.route("**/api/workspaces/fixture/missions/**/schedule?*", async route => {
+        if (route.request().method() === "GET" && new URL(route.request().url()).searchParams.has("requestID")) {
+          resolve()
+          await pollGate
+        }
+        return route.fallback()
+      })
+    })
+    await page.clock.fastForward(5_000)
+    await pollStarted
+    assert.equal(await retryElement.evaluate(element => element.isConnected && !element.hasAttribute("disabled") && document.activeElement === element), true,
+      "background receipt polling must keep the focused Try again button mounted, enabled and focused")
+    releasePoll()
+    await page.unroute("**/api/workspaces/fixture/missions/**/schedule?*")
     await page.evaluate(() => window.schedulingEditor.mount(false)); await page.evaluate(() => window.schedulingEditor.mount(true))
     await retry.waitFor()
     assert.equal(f.writes.length, 1); assert.equal(f.admissions.length, 0)
@@ -178,6 +199,49 @@ test("real owner: positive partial preparation enables only an explicit original
     assert.equal((await f.read()).preparation!.pending, false)
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
+})
+
+test("real owner: in-flight Try again keeps the shared hold pending across close and reopen without auto-reread or duplicate retry", async () => {
+  const page = await browser.newPage()
+  await page.clock.install({ time: Date.now() })
+  const f = await setup(page)
+  let releaseRetry!: () => void
+  const retryGate = new Promise<void>(resolve => { releaseRetry = resolve })
+  try {
+    f.fail("native-after")
+    const form = await edit(page)
+    await form.getByRole("button", { name: "Save", exact: true }).click()
+    const retry = form.locator(".window-footer").getByRole("button", { name: "Try again", exact: true })
+    await retry.waitFor()
+    let receiptGetsWhileRetrying = 0, retryInFlight = false
+    const retryPosted = new Promise<void>(resolve => {
+      void page.route("**/api/workspaces/fixture/missions/**/schedule*", async route => {
+        const request = route.request()
+        if (request.method() === "POST" && request.postDataJSON()?.retry === true) {
+          retryInFlight = true; resolve(); await retryGate
+          return route.fallback()
+        }
+        if (retryInFlight && request.method() === "GET" && new URL(request.url()).searchParams.has("requestID"))
+          receiptGetsWhileRetrying++
+        return route.fallback()
+      })
+    })
+    await retry.click()
+    await retryPosted
+    assert.equal((await page.evaluate(() => window.schedulingEditor.held()))?.state, "pending")
+    await page.evaluate(() => window.schedulingEditor.mount(false))
+    await page.evaluate(() => window.schedulingEditor.mount(true))
+    await page.clock.fastForward(10_000)
+    assert.equal(receiptGetsWhileRetrying, 0, "automatic reread must not run while Try again POST is in flight")
+    assert.equal(await retry.count(), 0, "reopened editor must not offer another Try again while retry is in flight")
+    assert.equal((await page.evaluate(() => window.schedulingEditor.held()))?.state, "pending")
+    releaseRetry()
+    await page.waitForFunction(() => !window.schedulingEditor.held())
+    assert.equal(f.writes.length, 2)
+    assert.deepEqual(f.writes[1], { ...f.writes[0], retry: true })
+    assert.equal((await f.read()).preparation!.pending, false)
+    assert.deepEqual(f.errors, [])
+  } finally { releaseRetry?.(); await page.close() }
 })
 
 async function convert(page: Page, target: "hourly" | "once") {

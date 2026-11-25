@@ -10,7 +10,7 @@ import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { instances } from "../stores/instances"
 import type { MissionEditorAction, MissionEditorDraft } from "../stores/mission-editor-state"
 import { exactMissionScheduleEditorReceipt, holdMissionScheduleEditor, missionScheduleEditorHold,
-  releaseMissionScheduleEditor, retainMissionScheduleEditor, type MissionEditorConfiguration,
+  releaseMissionScheduleEditor, resumeMissionScheduleEditor, retainMissionScheduleEditor, type MissionEditorConfiguration,
   type MissionScheduleEditorRequest, type MissionJournalEditRequest } from "../stores/mission-schedule-editor-holds"
 import { decodeMissionSchedulingPolicy } from "./mission-scheduling-decode"
 import { newMissionSchedulingDraft } from "./mission-scheduling-data"
@@ -102,15 +102,19 @@ export function createMissionEditorScheduling(props: {
       if (documentRead === controller) { documentRead = undefined; setDocumentReading(false) }
     })
   })
+  let reconcileRead: AbortController | undefined
+  const stopReconcile = () => { reconcileRead?.abort(); reconcileRead = undefined }
   let previousOwner: ReturnType<typeof owner> | undefined
   const visible = createMemo(() => props.active())
   createEffect(() => {
     const value = owner(), active = visible()
     untrack(() => {
-      if (previousOwner && value !== previousOwner) { setCapability("loading"); if (unified) setReady(false) }
+      const changed = Boolean(previousOwner && value !== previousOwner)
+      if (changed) { setCapability("loading"); if (unified) setReady(false) }
       previousOwner = value
-      stopCapability(); if (active) readCapability()
+      stopCapability(); stopReconcile(); if (active) readCapability()
       readDocument()
+      if (active && changed && held()?.state === "uncertain") void reconcile()
     })
   })
   createEffect(on(refresh, () => { readCapability(); readDocument() }, { defer: true }))
@@ -126,7 +130,7 @@ export function createMissionEditorScheduling(props: {
     }),
     serverEvents.forInstance(() => props.instanceId).onOpen(readCapability),
   ]
-  onCleanup(() => { stopEvents.forEach(stop => stop()); stopCapability(); documentRead?.abort(); documentRead = undefined })
+  onCleanup(() => { stopEvents.forEach(stop => stop()); stopCapability(); stopReconcile(); documentRead?.abort(); documentRead = undefined })
   const held = () => missionScheduleEditorHold(props.scope())
   const comparison = () => {
     const { titleOverride, objective, notes, template, profiles, taskMode, watched, scheduling } = props.captureDraft()
@@ -135,8 +139,8 @@ export function createMissionEditorScheduling(props: {
       scheduling: fields, storedPolicy: stored?.policy }, null, 2)
   }
   const capture = () => captureBackendOperation(props.instanceId, undefined, props.captureView()).current
-  const readBody = (mission: MissionPanelMap, selector: Parameters<typeof readMissionEditorBody>[1], current: () => boolean) => {
-    const operation = captureBackendOperation(props.instanceId, AbortSignal.timeout(10_000), current)
+  const readBody = (mission: MissionPanelMap, selector: Parameters<typeof readMissionEditorBody>[1], current: () => boolean, abort?: AbortSignal) => {
+    const operation = captureBackendOperation(props.instanceId, abort ? AbortSignal.any([abort, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), current)
     return readMissionEditorBody(mission, selector, query => {
       if (!operation.current()) throw new DOMException("Stale Mission read", "AbortError")
       return backendOf(props.instanceId).api.fetchMissionContent(props.instanceId, mission.id, query, operation.signal).then(value => {
@@ -145,9 +149,9 @@ export function createMissionEditorScheduling(props: {
       })
     })
   }
-  const readText = async (mission: MissionPanelMap, current: () => boolean) => {
-    const objective = await readBody(mission, { kind: "mission", field: "objective" }, current)
-    const notes = await readBody(mission, { kind: "mission", field: "notes" }, current)
+  const readText = async (mission: MissionPanelMap, current: () => boolean, abort?: AbortSignal) => {
+    const objective = await readBody(mission, { kind: "mission", field: "objective" }, current, abort)
+    const notes = await readBody(mission, { kind: "mission", field: "notes" }, current, abort)
     if (typeof objective !== "string" || notes !== undefined && typeof notes !== "string") throw new Error("Mission text unavailable")
     return { objective, notes: notes as string | undefined }
   }
@@ -254,43 +258,48 @@ export function createMissionEditorScheduling(props: {
   }
   async function reconcile() {
     const hold = held()
-    if (!hold || hold.state !== "uncertain" || reading() || !props.active()) return
-    const current = capture(), scope = props.scope()
-    if (!current()) return
+    if (!hold || hold.state !== "uncertain" || reading() || reconcileRead || !props.active()) return
+    const viewCurrent = capture(), scope = props.scope()
+    if (!viewCurrent()) return
+    const controller = reconcileRead = new AbortController()
+    const owned = captureOwner(controller)
+    const signal = AbortSignal.any([owner().signal, controller.signal, AbortSignal.timeout(30_000)])
+    const current = () => viewCurrent() && owned() && reconcileRead === controller && !signal.aborted
     const request: MissionScheduleEditorRequest | MissionJournalEditRequest = JSON.parse(hold.payload)
-    setReading(true); setRetryable(false)
     try {
       if (!("action" in request)) {
-        const read = await backendOf(props.instanceId).api.fetchMission(props.instanceId, request.missionID)
+        const read = await backendOf(props.instanceId).api.fetchMission(props.instanceId, request.missionID, signal)
         if (!current()) return
         const mission = read.available && !read.controlUnavailable && !read.notificationUnavailable ? read.mission : undefined
         const change = mission?.history.find(change => change.source === "user" && change.requestID === request.requestID
           && change.revision === request.expectedRevision + 1)
         if (!mission || !change) return
-        const objective = await readBody(mission, { kind: "change", change: change.revision, field: "objective" }, current) as { after?: string } | undefined
-        const notes = await readBody(mission, { kind: "change", change: change.revision, field: "notes" }, current) as { after?: string } | undefined
+        const objective = await readBody(mission, { kind: "change", change: change.revision, field: "objective" }, current, signal) as { after?: string } | undefined
+        const notes = await readBody(mission, { kind: "change", change: change.revision, field: "notes" }, current, signal) as { after?: string } | undefined
         if (objective?.after !== request.objective || notes?.after !== request.notes) return
         if (mission.document) {
-          const text = await readText(mission, current)
+          const text = await readText(mission, current, signal)
           if (!current()) return
-          const state = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, request.missionID, { directory: props.directory })
+          const state = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, request.missionID, { directory: props.directory }, signal)
           if (!current()) return
           if (!state.document || state.document.configuration.objective !== text.objective
             || (state.document.configuration.notes ?? "") !== (text.notes ?? "")) return
         }
+        setRetryable(false)
         releaseMissionScheduleEditor(scope, request.requestID)
         if (current()) props.onSaved(mission)
         return
       }
       const result = request.missionID
-         ? await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, request.missionID, { directory: request.directory, requestID: request.requestID })
-         : await backendOf(props.instanceId).api.fetchMissionScheduleCreation(props.instanceId, request.requestID, request.directory)
+         ? await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, request.missionID, { directory: request.directory, requestID: request.requestID }, signal)
+         : await backendOf(props.instanceId).api.fetchMissionScheduleCreation(props.instanceId, request.requestID, request.directory, signal)
       if (!current()) return
       if (!exactMissionScheduleEditorReceipt(request, result)) { setRetryable(partialPreparation(request, result)); return }
+      setRetryable(false)
       releaseMissionScheduleEditor(scope, request.requestID)
       if (current()) props.onSaved(undefined, result.document?.id)
     } catch { /* Only a positive original receipt settles an unknown write. */ }
-    finally { setReading(false) }
+    finally { if (reconcileRead === controller) reconcileRead = undefined }
   }
   function partialPreparation(request: MissionScheduleEditorRequest, result: MissionScheduleRead) {
     const doc = result.document, receipt = doc?.control
@@ -300,21 +309,29 @@ export function createMissionEditorScheduling(props: {
   }
   async function retryPreparation() {
     const hold = held()
-    if (!hold || !retryable() || reading() || !props.active()) return
+    if (!hold || hold.state !== "uncertain" || !retryable() || reading() || !props.active()) return
     const request: MissionScheduleEditorRequest | MissionJournalEditRequest = JSON.parse(hold.payload)
     if (!("action" in request) || !request.missionID) return
     const current = capture(), scope = props.scope()
     if (!current()) return
+    stopReconcile()
+    if (!resumeMissionScheduleEditor(scope, request.requestID)) return
     setReading(true); setRetryable(false)
+    let released = false
     try {
-      const read = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, request.missionID, { directory: request.directory, requestID: request.requestID })
-      if (!current() || held() !== hold || !partialPreparation(request, read)) return
+      const read = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, request.missionID,
+        { directory: request.directory, requestID: request.requestID }, AbortSignal.any([owner().signal, AbortSignal.timeout(30_000)]))
+      if (!current() || held()?.state !== "pending" || held()?.payload !== hold.payload || !partialPreparation(request, read)) return
       const result = await backendOf(props.instanceId).api.saveMissionSchedule(props.instanceId, { ...request, retry: true })
       if (!exactMissionScheduleEditorReceipt(request, result)) return
       releaseMissionScheduleEditor(scope, request.requestID)
+      released = true
       if (current()) props.onSaved(undefined, result.document?.id)
     } catch { /* The original request remains held through any uncertain retry. */ }
-    finally { setReading(false) }
+    finally {
+      if (!released) retainMissionScheduleEditor(scope, request.requestID)
+      setReading(false)
+    }
   }
   rereadMissionHoldWhileActive(() => held()?.state === "uncertain", props.active, reconcile)
   return { unified, document, journal, scheduling, setScheduling, previousDraft, ready, failed, conflict, reading, capability, directory,

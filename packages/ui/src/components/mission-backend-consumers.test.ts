@@ -314,8 +314,12 @@ function scheduleScope(api: Record<string, any>) {
     props: { instanceId: id, directory: "/repo", action: {}, active: () => true, scope: () => "scope",
       captureDraft: () => ({}), onSaved: (...args: any[]) => accepted.push(args), onLoad: (value: any) => accepted.push(value) },
     capture: () => env.captureBackendOperation(id).current, held: () => undefined, reading: () => false, retryable: () => true,
+    owner: () => ({ signal: env.captureBackendOperation(id).signal }),
+    captureOwner: (controller: AbortController) => () => !controller.signal.aborted,
+    reconcileRead: undefined, stopReconcile: () => {},
     document: () => doc, journal: () => mission, holdMissionScheduleEditor: () => true,
     releaseMissionScheduleEditor: (_scope: string, request: string) => released.push(request), retainMissionScheduleEditor: () => {},
+    resumeMissionScheduleEditor: () => true,
     exactMissionScheduleEditorReceipt: () => true, refusedMissionScheduleReceipt: () => false,
     HttpResponseError: class extends Error {}, MissionMutationError: class extends Error {},
     setReading: () => {}, setRetryable: () => {}, setFailed: () => {}, setReady: () => {}, setConflict: () => {}, setDocument: () => {},
@@ -389,7 +393,7 @@ for (const kind of ["journal", "unified-journal", "configure", "create"] as cons
       fetchMissionSchedule: async (owner: string) => { assert.equal(owner, id); calls.push("document"); return { document: scope.doc } },
       fetchMissionScheduleCreation: async (owner: string, requestID: string) => { assert.equal(owner, id); assert.equal(requestID, "r"); calls.push("creation"); return { document: scope.doc } },
     })
-    scope.held = () => ({ payload: JSON.stringify(request) })
+    scope.held = () => ({ payload: JSON.stringify(request), state: "uncertain" })
     await production("./mission-editor-schedule.ts", "reconcile", scope)()
     assert.deepEqual(calls, kind === "unified-journal" ? ["journal", "document"] : kind === "journal" ? ["journal"] : kind === "create" ? ["creation"] : ["document"])
     assert.deepEqual(scope.released, ["r"]); assert.equal(scope.accepted.length, 1)
@@ -402,10 +406,14 @@ test("schedule retry preparation reads the original receipt then dispatches the 
     fetchMissionSchedule: async (...args: any[]) => { calls.push(["read", ...args]); return { document: scope.doc } },
     saveMissionSchedule: async (...args: any[]) => { calls.push(["retry", ...args]); return { document: scope.doc } },
   })
-  const hold = { payload: JSON.stringify(request) }; scope.held = () => hold
+  let hold = { payload: JSON.stringify(request), state: "uncertain" as "pending" | "uncertain" }
+  scope.held = () => hold
+  scope.resumeMissionScheduleEditor = () => { hold = { ...hold, state: "pending" }; return true }
+  scope.retainMissionScheduleEditor = () => { hold = { ...hold, state: "uncertain" } }
   await production("./mission-editor-schedule.ts", "retryPreparation", scope)()
   assert.deepEqual(calls.map(call => call[0]), ["read", "retry"])
-  assert.deepEqual(calls[0].slice(1), [id, "m", { directory: "/repo", requestID: "r" }])
+  assert.deepEqual(calls[0].slice(1, 4), [id, "m", { directory: "/repo", requestID: "r" }])
+  assert.ok(calls[0][4] instanceof AbortSignal)
   assert.deepEqual(calls[1].slice(1), [id, { ...request, retry: true }]); assert.deepEqual(scope.released, ["r"])
 })
 
