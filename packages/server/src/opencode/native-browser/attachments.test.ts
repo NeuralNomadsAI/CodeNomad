@@ -213,7 +213,7 @@ test("ownership is checked when a queued command's turn comes, and a failed inve
   assert.deepEqual(dispatched, [true], "only the first open reached the preview")
   assert.equal(rpcCalls.filter(call => call.method === "state").length - states <= 1, true, "the refused command publishes nothing")
 })
-test("an OpenCode older than 2.4 is never attached, and an unreadable command is settled with probes naming the owners", async t => {
+test("closing ends a retry wait, and an unreadable command is settled with probes naming the owners", async t => {
   const rpcCalls: Array<{ method: string; input: Record<string, unknown> }> = []
   const probes: Array<Record<string, unknown>> = []
   let releaseAttach: (outcome: string) => void = () => {}
@@ -236,10 +236,11 @@ test("an OpenCode older than 2.4 is never attached, and an unreadable command is
     return { endpoint, client: OpenCode.make({ baseUrl: address, fetch: globalThis.fetch }), fetch: globalThis.fetch,
       assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
   }
-  let connection = runtime("2.3.2")
+  const connection = runtime("2.4.1")
   const eventBus = new EventBus()
+  // No holder owns the session yet: the attachment waits to retry.
   const attachments = new NativeBrowserAttachments({
-    workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
+    workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => false } as never,
     eventBus,
     nativeParent: { available: true, browserAutomationUnavailable: false, request: async (method: string, params: Record<string, unknown>) => {
       if (method === "browser.probe") probes.push(params)
@@ -250,14 +251,13 @@ test("an OpenCode older than 2.4 is never attached, and an unreadable command is
   t.after(() => attachments.close())
   attachments.hold("hold", "ws", "ses-1")
   await new Promise(resolve => setTimeout(resolve, 300))
-  assert.equal(rpcCalls.some(call => call.method === "attach"), false, "2.3 would let the preview bypass a browser deny")
+  assert.equal(rpcCalls.some(call => call.method === "attach"), false, "an unowned session is never attached")
   const timers = () => process.getActiveResourcesInfo().filter(kind => kind === "Timeout").length
   const waiting = timers()
   attachments.close()
   await new Promise(resolve => setImmediate(resolve))
   assert.ok(timers() < waiting, "closing ends the retry wait, so it never holds the process open")
 
-  connection = runtime("2.4.1")
   const current = new NativeBrowserAttachments({
     workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
     eventBus,

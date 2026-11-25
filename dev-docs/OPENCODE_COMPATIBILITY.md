@@ -25,8 +25,11 @@ Positive shared-service test fixtures declare `MINIMUM_OPENCODE_VERSION` when
 serving the pinned client contract. Version-refusal scenarios supply their
 explicit incompatible identity.
 
-Minimum and recommended runtime **2.3.2** (`runtime-support.ts`), with **2.3.2**
-client/schema/plugin pins and the matching `effect` **4.1.0**. CodeNomad
+Minimum runtime **2.4.0** and recommended **2.4.1** (`runtime-support.ts`), with **2.3.2**
+client/schema/plugin pins and the matching `effect` **4.1.0**. The minimum carries the
+browser tools' permission hook: 2.3 accepts the same `experimental.browser` attachment
+(`BROWSER_AUTOMATION.md`), but its blanket session grant overrides a configured
+`browser` deny. CodeNomad
 qualifies background subagent delivery: every subagent call returns at once
 (`metadata.status: "running"`) and the child reports to its parent through
 synthetic `<subagent sessionID state …>` or `<background-result kind="subagent" sessionID state …>`
