@@ -206,10 +206,10 @@ fn abandoning_a_received_chunk_revokes_quota_authority_before_waking() {
     assert!(saw_revocation.load(Relaxed));
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) struct Chunk<'a>(Option<&'a Ingress>);
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 impl Chunk<'_> {
     pub fn finish(mut self) {
         if let Some(ingress) = self.0.take() {
@@ -225,7 +225,7 @@ impl Chunk<'_> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 impl Drop for Chunk<'_> {
     fn drop(&mut self) {
         if let Some(ingress) = self.0 {
@@ -258,12 +258,25 @@ impl Ingress {
         (self.wake)();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn chunk(&self) -> Chunk<'_> {
-        self.watch.0.lock().unwrap().backpressure = true;
+        self.begin_chunk();
         Chunk(Some(self))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn begin_chunk(&self) {
+        self.watch.0.lock().unwrap().backpressure = true;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn finish_chunk_quiet(&self) -> bool {
+        let mut authority = self.watch.0.lock().unwrap();
+        authority.backpressure = false;
+        std::mem::take(&mut authority.publication_waiting)
+    }
+
+    #[cfg(test)]
     pub fn frame(&self, data: &str) {
         if self.frame_quiet(data) {
             self.wake();
@@ -301,6 +314,7 @@ impl Ingress {
         change.is_some_and(|change| self.watch.observe(change))
     }
 
+    #[cfg(test)]
     pub fn skipped(&self) {
         if self.skipped_quiet() {
             self.wake();

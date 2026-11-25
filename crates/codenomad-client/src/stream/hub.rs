@@ -1,9 +1,11 @@
 //! Connection-scoped SSE multiplexer: one physical `/api/events` stream per `(Http, base)`
 //! shared across all open tabs, `CatalogueWatch`, and `PreferencesWatch`.
 use super::{
-    Backend, Input, Result, Sender, State, dispatch, limits::FRAME_LIMIT, limits::reread, opened,
+    Backend, Input, Result, Sender, State, dispatch,
+    limits::{FRAME_LIMIT, reread},
+    opened, resync_preferences,
 };
-use crate::{Receiver, bounded, runtime};
+use crate::{Receiver, bounded, http::StreamDropGuard, runtime, transport::WorkspaceEvent};
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
@@ -11,7 +13,6 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
     },
-    time::Duration,
 };
 
 const MAX_SUBSCRIBER_FRAMES: usize = 256;
@@ -33,7 +34,7 @@ impl std::error::Error for AuthenticationExpired {}
 pub(super) enum HubItem {
     Opened,
     Frame(Arc<(String, String)>),
-    Skipped,
+    Skipped { overflow: bool },
     Closed { auth_expired: bool },
 }
 
@@ -44,16 +45,42 @@ struct SubQueue {
     closed: bool,
 }
 
+impl SubQueue {
+    fn max_items(&self) -> usize {
+        MAX_SUBSCRIBER_FRAMES + usize::from(matches!(self.items.front(), Some(HubItem::Opened)))
+    }
+}
+
+struct CloseRevocation {
+    http: crate::http::Http,
+    guard: Arc<StreamDropGuard>,
+    client_id: String,
+}
+
+impl CloseRevocation {
+    fn revoke(&self) {
+        let was_open = self.guard.release_open();
+        if !self.guard.mark_drop_recorded() {
+            self.http.record_transport_drop(&self.client_id, was_open);
+        }
+    }
+}
+
 struct Subscriber {
     id: u64,
     queue: Mutex<SubQueue>,
     wake_tx: Sender<()>,
     wake_rx: Receiver<()>,
     quota: Option<crate::provider_usage::Ingress>,
+    close_revocation: Option<CloseRevocation>,
 }
 
 impl Subscriber {
-    fn new(id: u64, quota: Option<crate::provider_usage::Ingress>) -> Arc<Self> {
+    fn new(
+        id: u64,
+        quota: Option<crate::provider_usage::Ingress>,
+        close_revocation: Option<CloseRevocation>,
+    ) -> Arc<Self> {
         let (wake_tx, wake_rx) = bounded(1);
         Arc::new(Self {
             id,
@@ -61,10 +88,11 @@ impl Subscriber {
             wake_tx,
             wake_rx,
             quota,
+            close_revocation,
         })
     }
 
-    fn seed_opened(&self, replays: &[Arc<(String, String)>]) -> bool {
+    fn seed_opened(&self, replays: &[Arc<(String, String)>], force_overflow: bool) -> bool {
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
             return false;
@@ -73,18 +101,22 @@ impl Subscriber {
         let mut overflowed = false;
         for frame in replays {
             let size = frame.0.len().saturating_add(frame.1.len());
-            if queue.items.len() >= MAX_SUBSCRIBER_FRAMES
+            if queue.items.len() >= queue.max_items()
                 || queue.bytes.saturating_add(size) > MAX_SUBSCRIBER_BYTES
             {
                 queue.items.clear();
                 queue.bytes = 0;
                 queue.items.push_back(HubItem::Opened);
-                queue.items.push_back(HubItem::Skipped);
+                queue.items.push_back(HubItem::Skipped { overflow: true });
                 overflowed = true;
                 break;
             }
             queue.bytes = queue.bytes.saturating_add(size);
             queue.items.push_back(HubItem::Frame(frame.clone()));
+        }
+        if !overflowed && force_overflow {
+            queue.items.push_back(HubItem::Skipped { overflow: true });
+            overflowed = true;
         }
         let _ = self.wake_tx.try_send(());
         overflowed
@@ -99,44 +131,42 @@ impl Subscriber {
         let _ = self.wake_tx.try_send(());
     }
 
-    fn push_frame(&self, frame: Arc<(String, String)>) {
+    fn push_frame_quiet(&self, frame: Arc<(String, String)>) -> bool {
         let size = frame.0.len().saturating_add(frame.1.len());
-        let overflowed = {
-            let mut queue = self.queue.lock().unwrap();
-            if queue.closed {
-                return;
+        let mut queue = self.queue.lock().unwrap();
+        if queue.closed {
+            return false;
+        }
+        if queue.items.len() >= queue.max_items()
+            || queue.bytes.saturating_add(size) > MAX_SUBSCRIBER_BYTES
+        {
+            let had_opened = matches!(queue.items.front(), Some(HubItem::Opened));
+            queue.items.clear();
+            queue.bytes = 0;
+            if had_opened {
+                queue.items.push_back(HubItem::Opened);
             }
-            if queue.items.len() >= MAX_SUBSCRIBER_FRAMES
-                || queue.bytes.saturating_add(size) > MAX_SUBSCRIBER_BYTES
-            {
-                let had_opened = matches!(queue.items.front(), Some(HubItem::Opened));
-                queue.items.clear();
-                queue.bytes = 0;
-                if had_opened {
-                    queue.items.push_back(HubItem::Opened);
-                }
-                queue.items.push_back(HubItem::Skipped);
-                let _ = self.wake_tx.try_send(());
-                true
-            } else {
-                queue.bytes = queue.bytes.saturating_add(size);
-                queue.items.push_back(HubItem::Frame(frame));
-                let _ = self.wake_tx.try_send(());
-                false
-            }
-        };
-        if overflowed && let Some(quota) = &self.quota {
-            quota.skipped();
+            queue.items.push_back(HubItem::Skipped { overflow: true });
+            let _ = self.wake_tx.try_send(());
+            true
+        } else {
+            queue.bytes = queue.bytes.saturating_add(size);
+            queue.items.push_back(HubItem::Frame(frame));
+            let _ = self.wake_tx.try_send(());
+            false
         }
     }
 
-    fn push_skipped(&self) {
+    fn push_skipped(&self, overflow: bool) {
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
             return;
         }
-        if !matches!(queue.items.back(), Some(HubItem::Skipped)) {
-            queue.items.push_back(HubItem::Skipped);
+        match queue.items.back_mut() {
+            Some(HubItem::Skipped { overflow: existing }) => {
+                *existing |= overflow;
+            }
+            _ => queue.items.push_back(HubItem::Skipped { overflow }),
         }
         let _ = self.wake_tx.try_send(());
     }
@@ -186,6 +216,9 @@ struct StreamInner {
     phase: Phase,
     subscribers: Vec<Arc<Subscriber>>,
     replays: HashMap<String, Arc<(String, String)>>,
+    replays_overflowed: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    chunk_active: bool,
     stop: Option<Sender<()>>,
 }
 
@@ -193,6 +226,29 @@ pub(super) struct SharedStream {
     base: String,
     inner: Mutex<StreamInner>,
     done: Receiver<()>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) struct ChunkGuard<'a> {
+    shared: Option<&'a SharedStream>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ChunkGuard<'_> {
+    pub(super) fn finish(mut self) {
+        if let Some(shared) = self.shared.take() {
+            shared.end_chunk(true);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for ChunkGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(shared) = self.shared.take() {
+            shared.end_chunk(false);
+        }
+    }
 }
 
 impl SharedStream {
@@ -219,19 +275,50 @@ impl SharedStream {
         true
     }
 
-    pub(super) fn snapshot_quotas(&self) -> Vec<crate::provider_usage::Ingress> {
-        let inner = self.inner.lock().unwrap();
-        inner
-            .subscribers
-            .iter()
-            .filter_map(|sub| sub.quota.clone())
-            .collect()
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn begin_chunk(&self) -> ChunkGuard<'_> {
+        let mut inner = self.inner.lock().unwrap();
+        if !matches!(inner.phase, Phase::Closed { .. }) {
+            inner.chunk_active = true;
+            for sub in &inner.subscribers {
+                if let Some(quota) = &sub.quota {
+                    quota.begin_chunk();
+                }
+            }
+        }
+        ChunkGuard { shared: Some(self) }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn end_chunk(&self, clean: bool) {
+        let mut wakes = Vec::new();
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.chunk_active = false;
+            for sub in &inner.subscribers {
+                if let Some(quota) = &sub.quota {
+                    let wake = if clean {
+                        quota.finish_chunk_quiet()
+                    } else {
+                        quota.transport_quiet(false)
+                    };
+                    if wake {
+                        wakes.push(quota.clone());
+                    }
+                }
+            }
+        }
+        for quota in wakes {
+            quota.wake();
+        }
     }
 
     pub(super) fn broadcast_frame(&self, kind: String, data: String) {
         let frame = Arc::new((kind, data));
         let replay_update = classify_replay(&frame.0, &frame.1);
-        let subscribers = {
+        let notify_quota = frame.0.is_empty() || frame.0 == "message";
+        let mut wakes = Vec::new();
+        {
             let mut inner = self.inner.lock().unwrap();
             if matches!(inner.phase, Phase::Closed { .. }) {
                 return;
@@ -241,6 +328,8 @@ impl SharedStream {
                     if inner.replays.len() < MAX_REPLAY_STATUSES || inner.replays.contains_key(&id)
                     {
                         inner.replays.insert(id, frame.clone());
+                    } else {
+                        inner.replays_overflowed = true;
                     }
                 }
                 ReplayUpdate::Stopped(id) => {
@@ -248,33 +337,64 @@ impl SharedStream {
                 }
                 ReplayUpdate::None => {}
             }
-            inner.subscribers.clone()
-        };
-        for sub in &subscribers {
-            sub.push_frame(frame.clone());
+            for sub in &inner.subscribers {
+                let overflowed = sub.push_frame_quiet(frame.clone());
+                if let Some(quota) = &sub.quota {
+                    let mut wake = false;
+                    if notify_quota {
+                        wake |= quota.frame_quiet(&frame.1);
+                    }
+                    if overflowed {
+                        wake |= quota.skipped_quiet();
+                    }
+                    if wake {
+                        wakes.push(quota.clone());
+                    }
+                }
+            }
+        }
+        for quota in wakes {
+            quota.wake();
         }
     }
 
     pub(super) fn broadcast_skipped(&self) {
-        let subscribers = {
+        let mut wakes = Vec::new();
+        {
             let inner = self.inner.lock().unwrap();
             if matches!(inner.phase, Phase::Closed { .. }) {
                 return;
             }
-            inner.subscribers.clone()
-        };
-        for sub in &subscribers {
-            sub.push_skipped();
+            for sub in &inner.subscribers {
+                sub.push_skipped(false);
+                if let Some(quota) = &sub.quota
+                    && quota.skipped_quiet()
+                {
+                    wakes.push(quota.clone());
+                }
+            }
         }
+        for quota in wakes {
+            quota.wake();
+        }
+    }
+
+    fn replay_for(&self, workspace: &str) -> Option<Arc<(String, String)>> {
+        if workspace.is_empty() {
+            return None;
+        }
+        let inner = self.inner.lock().unwrap();
+        inner.replays.get(workspace).cloned()
     }
 
     pub(super) fn finish(&self, hub: &Hub, auth_expired: bool) {
         let mut wakes = Vec::new();
+        let mut revocations = Vec::new();
         {
             let mut streams = hub.streams.lock().unwrap();
             if streams
                 .get(&self.base)
-                .is_some_and(|existing| std::ptr::eq(Arc::as_ptr(existing), self))
+                .is_some_and(|entry| std::ptr::eq(Arc::as_ptr(&entry.stream), self))
             {
                 streams.remove(&self.base);
             }
@@ -284,6 +404,11 @@ impl SharedStream {
             }
             inner.phase = Phase::Closed { auth_expired };
             inner.replays.clear();
+            inner.replays_overflowed = false;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                inner.chunk_active = false;
+            }
             inner.stop.take();
             for sub in std::mem::take(&mut inner.subscribers) {
                 if let Some(quota) = &sub.quota
@@ -292,6 +417,14 @@ impl SharedStream {
                     wakes.push(quota.clone());
                 }
                 sub.push_closed(auth_expired);
+                if sub.close_revocation.is_some() {
+                    revocations.push(sub);
+                }
+            }
+        }
+        for sub in revocations {
+            if let Some(revocation) = &sub.close_revocation {
+                revocation.revoke();
             }
         }
         for quota in wakes {
@@ -322,6 +455,14 @@ fn classify_replay(kind: &str, data: &str) -> ReplayUpdate {
         && let Some(id) = value["instanceId"].as_str()
         && crate::history::valid_id(id)
     {
+        if value["status"] == "disconnected"
+            && matches!(
+                value["reason"].as_str(),
+                Some("workspace stopped" | "workspace error")
+            )
+        {
+            return ReplayUpdate::Stopped(id.to_owned());
+        }
         return ReplayUpdate::Status(id.to_owned());
     }
     if value["type"] == "workspace.stopped"
@@ -333,91 +474,131 @@ fn classify_replay(kind: &str, data: &str) -> ReplayUpdate {
     ReplayUpdate::None
 }
 
+struct StreamEntry {
+    stream: Arc<SharedStream>,
+    active: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct Hub {
-    streams: Mutex<HashMap<String, Arc<SharedStream>>>,
+    streams: Mutex<HashMap<String, StreamEntry>>,
     next_id: AtomicU64,
     next_connection: AtomicU64,
 }
 
 impl Hub {
-    fn subscribe(
+    async fn subscribe(
         self: &Arc<Self>,
         backend: &Backend,
         quota: Option<crate::provider_usage::Ingress>,
+        close_revocation: Option<CloseRevocation>,
     ) -> Subscription {
         let id = self.next_id.fetch_add(1, SeqCst) + 1;
-        let sub = Subscriber::new(id, quota);
-        let mut streams = self.streams.lock().unwrap();
-        if let Some(existing) = streams.get(&backend.base).cloned() {
-            let mut inner = existing.inner.lock().unwrap();
-            if !matches!(inner.phase, Phase::Closed { .. }) && !inner.subscribers.is_empty() {
-                let mut wake_quota = None;
-                if inner.phase == Phase::Open {
-                    let replays: Vec<_> = inner.replays.values().cloned().collect();
-                    let overflowed = sub.seed_opened(&replays);
-                    if let Some(quota) = &sub.quota {
-                        let mut changed = quota.transport_quiet(true);
-                        for frame in &replays {
-                            if frame.0.is_empty() || frame.0 == "message" {
-                                changed |= quota.frame_quiet(&frame.1);
+        let sub = Subscriber::new(id, quota, close_revocation);
+        loop {
+            let wait_done = {
+                let mut streams = self.streams.lock().unwrap();
+                if let Some(entry) = streams.get(&backend.base) {
+                    if !entry.active {
+                        Some(entry.stream.done.clone())
+                    } else {
+                        let existing = entry.stream.clone();
+                        let mut inner = existing.inner.lock().unwrap();
+                        if !matches!(inner.phase, Phase::Closed { .. })
+                            && !inner.subscribers.is_empty()
+                        {
+                            let mut wake_quota = None;
+                            if inner.phase == Phase::Open {
+                                let replays: Vec<_> = inner.replays.values().cloned().collect();
+                                let missing_replay = inner.replays_overflowed
+                                    && !backend.workspace.is_empty()
+                                    && !inner.replays.contains_key(&backend.workspace);
+                                let overflowed = sub.seed_opened(&replays, missing_replay);
+                                if let Some(quota) = &sub.quota {
+                                    let mut changed = quota.transport_quiet(true);
+                                    for frame in &replays {
+                                        if frame.0.is_empty() || frame.0 == "message" {
+                                            changed |= quota.frame_quiet(&frame.1);
+                                        }
+                                    }
+                                    if overflowed {
+                                        changed |= quota.skipped_quiet();
+                                    }
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    if inner.chunk_active {
+                                        quota.begin_chunk();
+                                    }
+                                    if changed {
+                                        wake_quota = Some(quota.clone());
+                                    }
+                                }
                             }
+                            inner.subscribers.push(sub.clone());
+                            drop(inner);
+                            drop(streams);
+                            if let Some(quota) = wake_quota {
+                                quota.wake();
+                            }
+                            return Subscription {
+                                hub: self.clone(),
+                                shared: existing,
+                                sub,
+                                closed: false,
+                            };
                         }
-                        if overflowed {
-                            changed |= quota.skipped_quiet();
-                        }
-                        if changed {
-                            wake_quota = Some(quota.clone());
-                        }
+                        Some(existing.done.clone())
                     }
+                } else {
+                    let seq = self.next_connection.fetch_add(1, SeqCst) + 1;
+                    let connection = format!("hub-{seq}");
+                    let (stop_tx, stop_rx) = bounded(1);
+                    let (done_tx, done_rx) = bounded(1);
+                    let shared = Arc::new(SharedStream {
+                        base: backend.base.clone(),
+                        inner: Mutex::new(StreamInner {
+                            phase: Phase::Connecting,
+                            subscribers: vec![sub.clone()],
+                            replays: HashMap::new(),
+                            replays_overflowed: false,
+                            #[cfg(not(target_arch = "wasm32"))]
+                            chunk_active: false,
+                            stop: Some(stop_tx),
+                        }),
+                        done: done_rx,
+                    });
+                    streams.insert(
+                        backend.base.clone(),
+                        StreamEntry {
+                            stream: shared.clone(),
+                            active: true,
+                        },
+                    );
+                    drop(streams);
+
+                    let hub = self.clone();
+                    let backend = backend.clone();
+                    let pump_shared = shared.clone();
+                    runtime::spawn(async move {
+                        let _done = done_tx;
+                        #[cfg(not(target_arch = "wasm32"))]
+                        super::native::pump_shared(hub, pump_shared, backend, connection, stop_rx)
+                            .await;
+                        #[cfg(target_arch = "wasm32")]
+                        super::browser::pump_shared(hub, pump_shared, backend, connection, stop_rx)
+                            .await;
+                    });
+
+                    return Subscription {
+                        hub: self.clone(),
+                        shared,
+                        sub,
+                        closed: false,
+                    };
                 }
-                inner.subscribers.push(sub.clone());
-                drop(inner);
-                drop(streams);
-                if let Some(quota) = wake_quota {
-                    quota.wake();
-                }
-                return Subscription {
-                    hub: self.clone(),
-                    shared: existing,
-                    sub,
-                    closed: false,
-                };
+            };
+            if let Some(done) = wait_done {
+                let _ = done.recv().await;
             }
-        }
-        let seq = self.next_connection.fetch_add(1, SeqCst) + 1;
-        let connection = format!("hub-{seq}");
-        let (stop_tx, stop_rx) = bounded(1);
-        let (done_tx, done_rx) = bounded(1);
-        let shared = Arc::new(SharedStream {
-            base: backend.base.clone(),
-            inner: Mutex::new(StreamInner {
-                phase: Phase::Connecting,
-                subscribers: vec![sub.clone()],
-                replays: HashMap::new(),
-                stop: Some(stop_tx),
-            }),
-            done: done_rx,
-        });
-        streams.insert(backend.base.clone(), shared.clone());
-        drop(streams);
-
-        let hub = self.clone();
-        let backend = backend.clone();
-        let pump_shared = shared.clone();
-        runtime::spawn(async move {
-            let _done = done_tx;
-            #[cfg(not(target_arch = "wasm32"))]
-            super::native::pump_shared(hub, pump_shared, backend, connection, stop_rx).await;
-            #[cfg(target_arch = "wasm32")]
-            super::browser::pump_shared(hub, pump_shared, backend, connection, stop_rx).await;
-        });
-
-        Subscription {
-            hub: self.clone(),
-            shared,
-            sub,
-            closed: false,
         }
     }
 }
@@ -443,11 +624,10 @@ impl Subscription {
             let mut inner = self.shared.inner.lock().unwrap();
             inner.subscribers.retain(|s| s.id != self.sub.id);
             if inner.subscribers.is_empty() {
-                if streams
-                    .get(&self.shared.base)
-                    .is_some_and(|existing| Arc::ptr_eq(existing, &self.shared))
+                if let Some(entry) = streams.get_mut(&self.shared.base)
+                    && Arc::ptr_eq(&entry.stream, &self.shared)
                 {
-                    streams.remove(&self.shared.base);
+                    entry.active = false;
                 }
                 inner.stop.take();
                 true
@@ -460,7 +640,7 @@ impl Subscription {
 
     async fn close(mut self) {
         if let Some(done) = self.detach() {
-            let _ = runtime::timeout(Duration::from_millis(500), done.recv()).await;
+            let _ = done.recv().await;
         }
     }
 }
@@ -471,18 +651,99 @@ impl Drop for Subscription {
     }
 }
 
+async fn resync_after_skip(
+    shared: &SharedStream,
+    backend: &Backend,
+    epoch: u64,
+    out: &Sender<Input>,
+    state: &State,
+    connection: &str,
+    overflow: bool,
+) -> Result<()> {
+    backend.client.children().invalidate_all(backend);
+    reread(epoch, out, state).await?;
+    if !overflow {
+        return Ok(());
+    }
+    resync_preferences(epoch, out, state).await?;
+    if let Some(status) = shared.replay_for(&backend.workspace) {
+        dispatch(backend, epoch, out, state, connection, &status.0, &status.1).await?;
+    }
+    if state.catalogue.is_none() {
+        out.send(Input::Workspace(epoch, WorkspaceEvent::MemoryChanged))
+            .await?;
+        if crate::history::valid_id(&backend.workspace) {
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::MissionsReconnected {
+                    workspace_id: backend.workspace.clone(),
+                },
+            ))
+            .await?;
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::WorktreesChanged {
+                    workspace_id: backend.workspace.clone(),
+                },
+            ))
+            .await?;
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::ProvidersChanged {
+                    workspace_id: backend.workspace.clone(),
+                },
+            ))
+            .await?;
+            if !backend.session.is_empty() {
+                out.send(Input::Workspace(
+                    epoch,
+                    WorkspaceEvent::PermissionReceiptsChanged { message: None },
+                ))
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) async fn read_shared(
     backend: &Backend,
     epoch: u64,
     out: &Sender<Input>,
     state: &State,
+    stream_guard: Arc<StreamDropGuard>,
 ) -> Result<()> {
     let hub = backend.client.sse_hub();
     let quota = state.quota_ingress(backend);
-    let sub = hub.subscribe(backend, quota);
+    let close_revocation = Some(CloseRevocation {
+        http: backend.client.clone(),
+        guard: stream_guard,
+        client_id: backend.client_id.clone(),
+    });
+    enum SubscribeStep {
+        Ready(Subscription),
+        Cancelled,
+    }
+    let sub = match futures_lite::future::or(
+        async {
+            state.wait_cancelled(out).await;
+            SubscribeStep::Cancelled
+        },
+        async { SubscribeStep::Ready(hub.subscribe(backend, quota, close_revocation).await) },
+    )
+    .await
+    {
+        SubscribeStep::Ready(sub) => sub,
+        SubscribeStep::Cancelled => return Ok(()),
+    };
     let connection = format!("stream-{epoch}");
     let cancelled = AtomicBool::new(false);
-    let result: Result<()> = futures_lite::future::race(
+    let result: Result<()> = futures_lite::future::or(
+        async {
+            state.wait_cancelled(out).await;
+            cancelled.store(true, SeqCst);
+            Ok(())
+        },
         async {
             loop {
                 match sub.sub.recv().await {
@@ -494,9 +755,17 @@ pub(super) async fn read_shared(
                         dispatch(backend, epoch, out, state, &connection, &frame.0, &frame.1)
                             .await?;
                     }
-                    HubItem::Skipped => {
-                        backend.client.children().invalidate_all(backend);
-                        reread(epoch, out, state).await?;
+                    HubItem::Skipped { overflow } => {
+                        resync_after_skip(
+                            &sub.shared,
+                            backend,
+                            epoch,
+                            out,
+                            state,
+                            &connection,
+                            overflow,
+                        )
+                        .await?;
                     }
                     HubItem::Closed { auth_expired } => {
                         if auth_expired {
@@ -506,13 +775,6 @@ pub(super) async fn read_shared(
                     }
                 }
             }
-        },
-        async {
-            while !state.cancelled.load(SeqCst) && !out.is_closed() {
-                runtime::sleep(Duration::from_millis(25)).await;
-            }
-            cancelled.store(true, SeqCst);
-            Ok(())
         },
     )
     .await;
@@ -525,580 +787,5 @@ pub(super) async fn read_shared(
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {
-    use super::*;
-    use crate::{
-        backend::Backend,
-        settings::PreferencesWatch,
-        stream::{CatalogueWatch, start},
-        transport::WorkspaceEvent,
-    };
-    use serde_json::json;
-    use std::sync::atomic::AtomicUsize;
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
-    };
-
-    #[test]
-    fn tabs_catalogue_and_preferences_share_one_sse_connection_and_close_on_zero() {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-                let addr = format!("http://{}/", listener.local_addr().unwrap());
-                let sse_opens = Arc::new(AtomicUsize::new(0));
-                let pong_count = Arc::new(AtomicUsize::new(0));
-                let (frame_tx, frame_rx) = bounded::<String>(16);
-                let (closed_tx, closed_rx) = bounded::<()>(1);
-                let sse_opens_srv = sse_opens.clone();
-                let pong_count_srv = pong_count.clone();
-                let server = tokio::spawn(async move {
-                    loop {
-                        let Ok((mut sock, _)) = listener.accept().await else {
-                            break;
-                        };
-                        let sse_opens = sse_opens_srv.clone();
-                        let pong_count = pong_count_srv.clone();
-                        let frame_rx = frame_rx.clone();
-                        let closed_tx = closed_tx.clone();
-                        tokio::spawn(async move {
-                            let mut buf = [0u8; 4096];
-                            let n = sock.read(&mut buf).await.unwrap_or(0);
-                            let req = String::from_utf8_lossy(&buf[..n]).into_owned();
-                            if req.starts_with("GET /api/events?") {
-                                sse_opens.fetch_add(1, SeqCst);
-                                let init = format!(
-                                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
-                                     data: {}\n\n",
-                                    json!({"type":"instance.eventStatus","instanceId":"ws-a","status":"connected","generation":1})
-                                );
-                                if sock.write_all(init.as_bytes()).await.is_err() {
-                                    return;
-                                }
-                                let mut probe = [0u8; 1];
-                                enum ServerStep {
-                                    Frame(std::result::Result<String, async_channel::RecvError>),
-                                    Read(std::io::Result<usize>),
-                                }
-                                loop {
-                                    let step = futures_lite::future::race(
-                                        async { ServerStep::Frame(frame_rx.recv().await) },
-                                        async { ServerStep::Read(sock.read(&mut probe).await) },
-                                    )
-                                    .await;
-                                    match step {
-                                        ServerStep::Frame(Ok(msg)) => {
-                                            if sock.write_all(msg.as_bytes()).await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                        ServerStep::Frame(Err(_))
-                                        | ServerStep::Read(Ok(0))
-                                        | ServerStep::Read(Err(_)) => break,
-                                        ServerStep::Read(Ok(_)) => {}
-                                    }
-                                }
-                                let _ = closed_tx.try_send(());
-                            } else if req.starts_with("POST /api/client-connections/pong") {
-                                pong_count.fetch_add(1, SeqCst);
-                                let _ = sock
-                                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
-                                    .await;
-                            }
-                        });
-                    }
-                });
-
-                let base = Backend::unauthenticated(&addr).unwrap();
-                let mut tab_a = base.clone();
-                tab_a.workspace = "ws-a".into();
-                tab_a.session = "ses-a".into();
-                let mut tab_b = base.clone();
-                tab_b.workspace = "ws-b".into();
-                tab_b.session = "ses-b".into();
-                tab_b.client_id.push_str("-tab-b");
-
-                let (out_a, in_a) = bounded(16);
-                let state_a = Arc::new(State::default());
-                start(tab_a, 1, out_a, state_a.clone());
-                assert!(matches!(
-                    tokio::time::timeout(Duration::from_secs(2), in_a.recv())
-                        .await
-                        .unwrap()
-                        .unwrap(),
-                    Input::Opened(1)
-                ));
-                assert_eq!(sse_opens.load(SeqCst), 1);
-
-                // Attach second tab, CatalogueWatch, and PreferencesWatch on the same Http.
-                let (out_b, in_b) = bounded(16);
-                let state_b = Arc::new(State::default());
-                start(tab_b, 1, out_b, state_b.clone());
-                assert!(matches!(
-                    tokio::time::timeout(Duration::from_secs(2), in_b.recv())
-                        .await
-                        .unwrap()
-                        .unwrap(),
-                    Input::Opened(1)
-                ));
-
-                let (catalogue, cat_task) = CatalogueWatch::new(base.clone(), Arc::new(|| {}));
-                let cat_handle = tokio::spawn(cat_task);
-                let (prefs, prefs_task) = PreferencesWatch::task(base.clone(), None, Arc::new(|| {}));
-                let prefs_handle = tokio::spawn(prefs_task);
-                tokio::time::timeout(Duration::from_secs(2), async {
-                    while !prefs.is_connected() {
-                        tokio::time::sleep(Duration::from_millis(5)).await;
-                    }
-                })
-                .await
-                .expect("PreferencesWatch must open via shared SSE");
-
-                // All 4 consumers must share exactly ONE physical /api/events connection.
-                assert_eq!(sse_opens.load(SeqCst), 1);
-
-                // A single ping from the server triggers exactly one pong.
-                frame_tx
-                    .send("event: codenomad.client.ping\ndata: {\"ts\":1}\n\n".into())
-                    .await
-                    .unwrap();
-                tokio::time::timeout(Duration::from_secs(2), async {
-                    while pong_count.load(SeqCst) == 0 {
-                        tokio::time::sleep(Duration::from_millis(5)).await;
-                    }
-                })
-                .await
-                .unwrap();
-                tokio::time::sleep(Duration::from_millis(30)).await;
-                assert_eq!(pong_count.load(SeqCst), 1);
-
-                // Broadcast events reach each scoped subscriber cleanly.
-                frame_tx
-                    .send(format!(
-                        "data: {}\n\ndata: {}\n\n",
-                        json!({"type":"workspace.stopped","workspaceId":"ws-b"}),
-                        json!({"type":"storage.configChanged","owner":"ui","value":{}})
-                    ))
-                    .await
-                    .unwrap();
-                assert!(matches!(
-                    tokio::time::timeout(Duration::from_secs(2), in_b.recv())
-                        .await
-                        .unwrap()
-                        .unwrap(),
-                    Input::Workspace(1, WorkspaceEvent::Stopped { workspace_id }) if workspace_id == "ws-b"
-                ));
-                tokio::time::timeout(Duration::from_secs(2), async {
-                    while !prefs.take().0 {
-                        tokio::time::sleep(Duration::from_millis(5)).await;
-                    }
-                })
-                .await
-                .expect("PreferencesWatch must receive storage.configChanged");
-
-                // Closing 3 of 4 subscribers keeps the shared SSE open; closing the last closes it.
-                state_a.cancelled.store(true, SeqCst);
-                drop(catalogue);
-                let _ = prefs.stop().recv().await;
-                let _ = (cat_handle, prefs_handle);
-                tokio::time::sleep(Duration::from_millis(60)).await;
-                assert!(
-                    closed_rx.try_recv().is_err(),
-                    "physical SSE must stay open while tab B is still subscribed"
-                );
-                state_b.cancelled.store(true, SeqCst);
-                tokio::time::timeout(Duration::from_secs(2), closed_rx.recv())
-                    .await
-                    .expect("physical SSE must close immediately when last subscriber leaves")
-                    .unwrap();
-                assert_eq!(sse_opens.load(SeqCst), 1);
-                server.abort();
-            });
-    }
-
-    #[test]
-    fn physical_401_fans_out_authentication_required_to_all_subscribers() {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-                let addr = format!("http://{}/", listener.local_addr().unwrap());
-                let server = tokio::spawn(async move {
-                    if let Ok((mut sock, _)) = listener.accept().await {
-                        let mut buf = [0u8; 4096];
-                        let _ = sock.read(&mut buf).await;
-                        let _ = sock
-                            .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\n\r\n{}")
-                            .await;
-                    }
-                });
-                let base = Backend::unauthenticated(&addr).unwrap();
-                let (out_a, in_a) = bounded(4);
-                let (out_b, in_b) = bounded(4);
-                start(base.clone(), 1, out_a, Arc::new(State::default()));
-                start(base, 2, out_b, Arc::new(State::default()));
-                assert!(matches!(
-                    tokio::time::timeout(Duration::from_secs(2), in_a.recv())
-                        .await
-                        .unwrap()
-                        .unwrap(),
-                    Input::AuthenticationRequired(1)
-                ));
-                assert!(matches!(
-                    tokio::time::timeout(Duration::from_secs(2), in_b.recv())
-                        .await
-                        .unwrap()
-                        .unwrap(),
-                    Input::AuthenticationRequired(2)
-                ));
-                server.abort();
-            });
-    }
-
-    #[test]
-    fn slow_subscriber_overflows_to_reread_without_blocking_sibling() {
-        let hub = Arc::new(Hub::default());
-        let (stop_tx, _stop_rx) = bounded(1);
-        let (_done_tx, done_rx) = bounded(1);
-        let slow = Subscriber::new(1, None);
-        let fast = Subscriber::new(2, None);
-        let shared = Arc::new(SharedStream {
-            base: "http://127.0.0.1:1/".into(),
-            inner: Mutex::new(StreamInner {
-                phase: Phase::Connecting,
-                subscribers: vec![slow.clone(), fast.clone()],
-                replays: HashMap::new(),
-                stop: Some(stop_tx),
-            }),
-            done: done_rx,
-        });
-        assert!(shared.mark_open());
-        assert!(matches!(fast.pop(), Some(HubItem::Opened)));
-        for i in 0..MAX_SUBSCRIBER_FRAMES {
-            shared.broadcast_frame(
-                "message".into(),
-                format!("{{\"type\":\"memory.changed\",\"seq\":{i}}}"),
-            );
-            assert!(
-                matches!(fast.pop(), Some(HubItem::Frame(_))),
-                "fast sibling must receive every frame immediately"
-            );
-        }
-        assert!(
-            matches!(slow.pop(), Some(HubItem::Opened)),
-            "slow subscriber preserves initial Opened"
-        );
-        assert!(
-            matches!(slow.pop(), Some(HubItem::Skipped)),
-            "slow subscriber collapses backlog to Skipped without blocking fast sibling"
-        );
-        assert!(slow.pop().is_none());
-        shared.finish(&hub, false);
-    }
-
-    #[test]
-    fn late_subscriber_receives_cached_instance_event_status_and_quota_authority() {
-        let hub = Arc::new(Hub::default());
-        let (stop_tx, _stop_rx) = bounded(1);
-        let (_done_tx, done_rx) = bounded(1);
-        let first = Subscriber::new(1, None);
-        let shared = Arc::new(SharedStream {
-            base: "http://127.0.0.1:1/".into(),
-            inner: Mutex::new(StreamInner {
-                phase: Phase::Connecting,
-                subscribers: vec![first.clone()],
-                replays: HashMap::new(),
-                stop: Some(stop_tx),
-            }),
-            done: done_rx,
-        });
-        hub.streams
-            .lock()
-            .unwrap()
-            .insert("http://127.0.0.1:1/".into(), shared.clone());
-        assert!(shared.mark_open());
-        shared.broadcast_frame(
-            "message".into(),
-            json!({
-                "type": "instance.eventStatus",
-                "instanceId": "ws-live",
-                "status": "disconnected",
-                "generation": 7
-            })
-            .to_string(),
-        );
-        shared.broadcast_frame(
-            "message".into(),
-            json!({
-                "type": "instance.eventStatus",
-                "instanceId": "ws-stopped",
-                "status": "connected",
-                "generation": 1
-            })
-            .to_string(),
-        );
-        shared.broadcast_frame(
-            "message".into(),
-            json!({"type": "workspace.stopped", "workspaceId": "ws-stopped"}).to_string(),
-        );
-
-        let mut backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
-        backend.workspace = "ws-live".into();
-        backend.session = "ses-1".into();
-        let watch = crate::provider_usage::Watch::default();
-        let wakes = Arc::new(AtomicUsize::new(0));
-        let wakes_cb = wakes.clone();
-        let ingress = crate::provider_usage::Ingress::new(
-            watch.clone(),
-            Arc::new(move || {
-                wakes_cb.fetch_add(1, SeqCst);
-            }),
-            backend.workspace.clone(),
-            backend.session.clone(),
-        );
-        let late = hub.subscribe(&backend, Some(ingress));
-        // Quota watch must have observed transport(true) AND replayed disconnected status.
-        assert!(!watch.current().1);
-        assert!(wakes.load(SeqCst) >= 1);
-        assert!(matches!(late.sub.pop(), Some(HubItem::Opened)));
-        let Some(HubItem::Frame(replayed)) = late.sub.pop() else {
-            panic!("expected replayed instance.eventStatus for ws-live");
-        };
-        assert!(replayed.1.contains("\"ws-live\""));
-        assert!(
-            late.sub.pop().is_none(),
-            "stopped workspace status must be evicted from replay cache"
-        );
-        // Live connected frame updates the late subscriber's quota authority synchronously.
-        let connected = json!({
-            "type": "instance.eventStatus",
-            "instanceId": "ws-live",
-            "status": "connected",
-            "generation": 8
-        })
-        .to_string();
-        for q in shared.snapshot_quotas() {
-            q.frame(&connected);
-        }
-        assert!(watch.current().1);
-        drop(late);
-        shared.finish(&hub, false);
-    }
-
-    #[test]
-    fn shared_stream_staleness_and_hanging_pong_close_all_subscribers_and_unregister_probes() {
-        use super::super::staleness::{Clock, ProbeSource, STALE_THRESHOLD, Stamp, Watchdog};
-        use crate::runtime::Instant;
-        #[derive(Clone)]
-        struct FakeClock(Arc<Mutex<Stamp>>);
-        impl FakeClock {
-            fn new() -> Self {
-                Self(Arc::new(Mutex::new(Stamp {
-                    monotonic: Instant::now(),
-                    wall_ms: 1_000_000,
-                })))
-            }
-            fn advance_wall(&self, ms: u64) {
-                self.0.lock().unwrap().wall_ms += ms;
-            }
-        }
-        impl Clock for FakeClock {
-            fn now(&self) -> Stamp {
-                *self.0.lock().unwrap()
-            }
-        }
-
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-                let addr = format!("http://{}/", listener.local_addr().unwrap());
-                let (frame_tx, frame_rx) = bounded::<String>(8);
-                let (closed_tx, closed_rx) = bounded::<()>(1);
-                let (pong_seen_tx, pong_seen_rx) = bounded::<()>(1);
-                let server = tokio::spawn(async move {
-                    let mut held_pongs = Vec::new();
-                    loop {
-                        let Ok((mut sock, _)) = listener.accept().await else {
-                            break;
-                        };
-                        let mut buf = [0u8; 4096];
-                        let n = sock.read(&mut buf).await.unwrap_or(0);
-                        let req = String::from_utf8_lossy(&buf[..n]);
-                        if req.starts_with("POST /api/client-connections/pong ") {
-                            let _ = pong_seen_tx.try_send(());
-                            // Deliberately hang the pong response to exercise forked pong staleness.
-                            held_pongs.push(sock);
-                            continue;
-                        }
-                        if req.starts_with("GET /api/events?") {
-                            let _ = sock
-                                .write_all(
-                                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n",
-                                )
-                                .await;
-                            let frame_rx = frame_rx.clone();
-                            let closed_tx = closed_tx.clone();
-                            tokio::spawn(async move {
-                                let mut probe = [0u8; 16];
-                                enum Step {
-                                    Frame(std::result::Result<String, async_channel::RecvError>),
-                                    Read(std::io::Result<usize>),
-                                }
-                                loop {
-                                    let step = futures_lite::future::race(
-                                        async { Step::Frame(frame_rx.recv().await) },
-                                        async { Step::Read(sock.read(&mut probe).await) },
-                                    )
-                                    .await;
-                                    match step {
-                                        Step::Frame(Ok(msg)) => {
-                                            if sock.write_all(msg.as_bytes()).await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                        Step::Frame(Err(_))
-                                        | Step::Read(Ok(0))
-                                        | Step::Read(Err(_)) => break,
-                                        Step::Read(Ok(_)) => {}
-                                    }
-                                }
-                                let _ = closed_tx.try_send(());
-                            });
-                        }
-                    }
-                });
-
-                let hub = Arc::new(Hub::default());
-                let (stop_tx, stop_rx) = bounded(1);
-                let (done_tx, done_rx) = bounded(1);
-                let sub_a = Subscriber::new(1, None);
-                let sub_b = Subscriber::new(2, None);
-                let shared = Arc::new(SharedStream {
-                    base: addr.clone(),
-                    inner: Mutex::new(StreamInner {
-                        phase: Phase::Connecting,
-                        subscribers: vec![sub_a.clone(), sub_b.clone()],
-                        replays: HashMap::new(),
-                        stop: Some(stop_tx),
-                    }),
-                    done: done_rx,
-                });
-                hub.streams
-                    .lock()
-                    .unwrap()
-                    .insert(addr.clone(), shared.clone());
-                let clock = FakeClock::new();
-                let watchdog = Arc::new(Watchdog::with_clock(
-                    clock.clone(),
-                    STALE_THRESHOLD,
-                    Duration::from_secs(15),
-                ));
-                let (captured_ids, probes) = ProbeSource::global_capturing();
-                let backend = Backend::unauthenticated(&addr).unwrap();
-                let pump_hub = hub.clone();
-                let pump_shared = shared.clone();
-                tokio::spawn(async move {
-                    let _done = done_tx;
-                    super::super::native::pump_shared_with(
-                        pump_hub,
-                        pump_shared,
-                        backend,
-                        "hub-stale-test".into(),
-                        stop_rx,
-                        watchdog,
-                        probes,
-                    )
-                    .await;
-                });
-
-                assert!(matches!(
-                    tokio::time::timeout(Duration::from_secs(2), sub_a.recv())
-                        .await
-                        .unwrap(),
-                    HubItem::Opened
-                ));
-                assert!(matches!(
-                    tokio::time::timeout(Duration::from_secs(2), sub_b.recv())
-                        .await
-                        .unwrap(),
-                    HubItem::Opened
-                ));
-
-                // Trigger ping whose pong hangs, then send a trailing SSE frame to prove the
-                // forked pong watchdog still closes the shared stream on wake probe.
-                frame_tx
-                    .send("event: codenomad.client.ping\ndata: {\"ts\":1}\n\n".into())
-                    .await
-                    .unwrap();
-                tokio::time::timeout(Duration::from_secs(2), pong_seen_rx.recv())
-                    .await
-                    .unwrap()
-                    .unwrap();
-                frame_tx
-                    .send("data: {\"type\":\"memory.changed\"}\n\n".into())
-                    .await
-                    .unwrap();
-                assert!(matches!(
-                    tokio::time::timeout(Duration::from_secs(2), sub_a.recv())
-                        .await
-                        .unwrap(),
-                    HubItem::Frame(_)
-                ));
-                assert!(matches!(
-                    tokio::time::timeout(Duration::from_secs(2), sub_b.recv())
-                        .await
-                        .unwrap(),
-                    HubItem::Frame(_)
-                ));
-
-                clock.advance_wall(STALE_THRESHOLD.as_millis() as u64 + 1_000);
-                super::super::probe_stale();
-
-                assert!(matches!(
-                    tokio::time::timeout(Duration::from_secs(2), sub_a.recv())
-                        .await
-                        .unwrap(),
-                    HubItem::Closed {
-                        auth_expired: false
-                    }
-                ));
-                assert!(matches!(
-                    tokio::time::timeout(Duration::from_secs(2), sub_b.recv())
-                        .await
-                        .unwrap(),
-                    HubItem::Closed {
-                        auth_expired: false
-                    }
-                ));
-                tokio::time::timeout(Duration::from_secs(2), closed_rx.recv())
-                    .await
-                    .unwrap()
-                    .unwrap();
-                // Wait briefly for the cancelled pong task to drop its probe subscription.
-                tokio::time::timeout(Duration::from_secs(2), async {
-                    loop {
-                        let ids = captured_ids.lock().unwrap().clone();
-                        if !ids.is_empty()
-                            && ids
-                                .iter()
-                                .all(|id| !super::super::staleness::has_probe_id(*id))
-                        {
-                            break;
-                        }
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                    }
-                })
-                .await
-                .expect("all shared-stream and pong probes must unregister after stale close");
-                server.abort();
-            });
-    }
-}
+#[path = "hub_tests.rs"]
+mod tests;

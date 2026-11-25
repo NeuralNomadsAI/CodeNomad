@@ -266,11 +266,7 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                 continue;
             }
             watchdog.activity();
-            let quotas = shared.snapshot_quotas();
-            let guards: Vec<_> = quotas
-                .iter()
-                .map(crate::provider_usage::Ingress::chunk)
-                .collect();
+            let chunk_guard = shared.begin_chunk();
             let mut parse_failed = false;
             for byte in chunk.as_ref() {
                 match parser.byte(*byte) {
@@ -286,18 +282,10 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                         );
                     }
                     Ok(Some(Parsed::Data(kind, data))) => {
-                        if kind.is_empty() || kind == "message" {
-                            for quota in &quotas {
-                                quota.frame(&data);
-                            }
-                        }
                         shared.broadcast_frame(kind, data);
                     }
                     Ok(Some(Parsed::Skipped)) => {
                         b.client.children().invalidate_all(&b);
-                        for quota in &quotas {
-                            quota.skipped();
-                        }
                         shared.broadcast_skipped();
                     }
                     Ok(None) => {}
@@ -308,12 +296,10 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                 }
             }
             if parse_failed {
-                drop(guards);
+                drop(chunk_guard);
                 break;
             }
-            for guard in guards {
-                guard.finish();
-            }
+            chunk_guard.finish();
         }
     }
     shared.finish(&hub, auth_expired);

@@ -46,6 +46,7 @@ pub struct State {
     catalogue: Option<Arc<catalogue::Signals>>,
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
     closed: (Sender<()>, crate::Receiver<()>),
+    cancel_signal: (Sender<()>, crate::Receiver<()>),
     provider_usage: Option<crate::provider_usage::Watch>,
 }
 
@@ -65,6 +66,7 @@ impl Default for State {
             catalogue: None,
             placement: None,
             closed: crate::bounded(1),
+            cancel_signal: crate::bounded(1),
             provider_usage: None,
         }
     }
@@ -111,6 +113,26 @@ impl State {
         self.placement
             .as_ref()
             .is_some_and(|(_, changed)| changed.is_closed())
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.cancelled.store(true, SeqCst);
+        self.cancel_signal.0.close();
+    }
+
+    pub(super) async fn wait_cancelled(&self, out: &Sender<Input>) {
+        loop {
+            if self.cancelled.load(SeqCst) || out.is_closed() {
+                return;
+            }
+            futures_lite::future::or(
+                async {
+                    let _ = self.cancel_signal.1.recv().await;
+                },
+                runtime::sleep(Duration::from_millis(25)),
+            )
+            .await;
+        }
     }
 
     pub(crate) async fn stream_closed(&self) {
@@ -245,6 +267,7 @@ pub(crate) async fn read(
     state: &State,
 ) -> Result<()> {
     let (stream_guard, open_flag) = backend.client.track_stream(&backend.client_id);
+    let stream_guard = Arc::new(stream_guard);
     let _ = state
         .stream_owner
         .set((backend.client.clone(), backend.client_id.clone()));
@@ -255,14 +278,43 @@ pub(crate) async fn read(
     }
     let notices = backend.client.preferences_notices();
     let _ = state.preferences_notices.set(notices.clone());
-    let result = hub::read_shared(backend, epoch, out, state).await;
+    let result = hub::read_shared(backend, epoch, out, state, stream_guard.clone()).await;
     let was_open = stream_guard.release_open();
-    if !state.cancelled.load(SeqCst) && !out.is_closed() {
+    if !state.cancelled.load(SeqCst) && !out.is_closed() && !stream_guard.mark_drop_recorded() {
         backend
             .client
             .record_transport_drop(&backend.client_id, was_open);
     }
     result
+}
+
+pub(super) async fn resync_preferences(
+    epoch: u64,
+    out: &Sender<Input>,
+    state: &State,
+) -> Result<()> {
+    if state.preferences.is_some() {
+        state
+            .storage_changed(epoch, crate::settings::Owner::Config, out)
+            .await?;
+        state
+            .notify_preferences(crate::settings::Owner::State, out)
+            .await?;
+        state
+            .notify_preferences(crate::settings::Owner::Server, out)
+            .await?;
+    } else if state.catalogue.is_none()
+        && let Some(notices) = state.preferences_notices.get()
+    {
+        for owner in [
+            crate::settings::Owner::Config,
+            crate::settings::Owner::State,
+            crate::settings::Owner::Server,
+        ] {
+            notices[owner.index()].fetch_add(1, SeqCst);
+        }
+    }
+    Ok(())
 }
 
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {

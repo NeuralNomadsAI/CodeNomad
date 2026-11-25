@@ -6,33 +6,21 @@ use super::{
     staleness::{ProbeSource, STALE_THRESHOLD, Watchdog, probe_stale},
 };
 use serde_json::json;
-use std::{
-    cell::Cell,
-    rc::Rc,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering::SeqCst},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering::SeqCst},
 };
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::{
     Document, Event, EventSource, EventSourceInit, MessageEvent, VisibilityState, Window,
 };
 
-const BACKLOG_LIMIT: usize = 2 * FRAME_LIMIT;
-
-enum Frame {
-    Open,
-    Data(String, String),
-    Ping,
-    Skipped,
-    Closed,
-}
+type DocumentListener = (Document, Closure<dyn FnMut(Event)>);
 
 struct WakeListeners {
     window: Window,
     online: Option<Closure<dyn FnMut(Event)>>,
-    document: Option<(Document, Closure<dyn FnMut(Event)>)>,
+    document: Option<DocumentListener>,
 }
 
 impl WakeListeners {
@@ -119,7 +107,7 @@ fn spawn_pong(
     in_flight: &Arc<AtomicBool>,
     watchdog: &Arc<Watchdog>,
     cancel_rx: &crate::Receiver<()>,
-    abort_tx: &crate::Sender<bool>,
+    abort_tx: &crate::Sender<()>,
 ) {
     if in_flight
         .compare_exchange(false, true, SeqCst, SeqCst)
@@ -170,12 +158,8 @@ fn spawn_pong(
         .await;
         match step {
             PongStep::Done(Ok(_)) => watchdog.activity(),
-            PongStep::Done(Err(err)) => {
-                let expired = crate::http::authentication_expired(&err.into());
-                let _ = abort_tx.try_send(expired);
-            }
-            PongStep::Stale => {
-                let _ = abort_tx.try_send(false);
+            PongStep::Done(Err(_)) | PongStep::Stale => {
+                let _ = abort_tx.try_send(());
             }
             PongStep::Cancelled => {}
         }
@@ -189,13 +173,16 @@ pub(super) async fn pump_shared(
     connection: String,
     stop_rx: crate::Receiver<()>,
 ) {
+    enum Signal {
+        Ping,
+        Closed,
+    }
     enum Step {
-        Event(std::result::Result<Frame, async_channel::RecvError>),
+        Signal(std::result::Result<Signal, async_channel::RecvError>),
         Stale,
         Stopped,
-        PongAbort(bool),
+        PongAbort,
     }
-    let mut auth_expired = false;
     {
         let Ok(mut url) = reqwest::Url::parse(&format!("{}api/events", b.base)) else {
             shared.finish(&hub, false);
@@ -212,82 +199,71 @@ pub(super) async fn pump_shared(
             shared.finish(&hub, false);
             return;
         };
-        let (tx, rx) = crate::bounded(128);
+        let (signal_tx, signal_rx) = crate::bounded(8);
         let global_probe = ProbeSource::global().subscribe();
         let wake_listeners = WakeListeners::attach();
         let watchdog = Arc::new(Watchdog::new(STALE_THRESHOLD));
-        let overflow = Rc::new(Cell::new(false));
-        let queued_bytes = Rc::new(Cell::new(0usize));
 
-        let tx_open = tx.clone();
-        let fail_open = overflow.clone();
+        let tx_open = signal_tx.clone();
         let close_open = source.clone();
         let watchdog_open = watchdog.clone();
+        let shared_open = shared.clone();
+        let backend_open = b.clone();
         let on_open: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
-            watchdog_open.activity();
-            if tx_open.try_send(Frame::Open).is_err() {
-                fail_open.set(true);
+            if watchdog_open.is_stale() {
                 close_open.close();
+                let _ = tx_open.try_send(Signal::Closed);
+                return;
+            }
+            watchdog_open.activity();
+            backend_open.client.children().invalidate_all(&backend_open);
+            if !shared_open.mark_open() {
+                close_open.close();
+                let _ = tx_open.try_send(Signal::Closed);
             }
         });
 
-        let tx_msg = tx.clone();
-        let overflow_msg = overflow.clone();
-        let queued_msg = queued_bytes.clone();
+        let tx_msg = signal_tx.clone();
         let close_msg = source.clone();
         let shared_msg = shared.clone();
+        let backend_msg = b.clone();
         let watchdog_msg = watchdog.clone();
         let on_message: Closure<dyn FnMut(MessageEvent)> =
             Closure::new(move |event: MessageEvent| {
+                // Reject pre-sleep buffered frames if the stream has already crossed the silence threshold.
+                if watchdog_msg.is_stale() {
+                    close_msg.close();
+                    let _ = tx_msg.try_send(Signal::Closed);
+                    return;
+                }
                 watchdog_msg.activity();
                 let data = event.data().as_string().unwrap_or_default();
-                let quotas = shared_msg.snapshot_quotas();
-                let frame = if data.len() <= FRAME_LIMIT {
-                    for quota in &quotas {
-                        quota.frame(&data);
-                    }
-                    Frame::Data("message".into(), data)
+                if data.len() <= FRAME_LIMIT {
+                    shared_msg.broadcast_frame("message".into(), data);
                 } else {
-                    for quota in &quotas {
-                        quota.skipped();
-                    }
-                    Frame::Skipped
-                };
-                let bytes = match &frame {
-                    Frame::Data(_, data) => data.len(),
-                    _ => 0,
-                };
-                let total = queued_msg.get().saturating_add(bytes);
-                if total > BACKLOG_LIMIT || tx_msg.try_send(frame).is_err() {
-                    overflow_msg.set(true);
-                    close_msg.close();
-                    for quota in &quotas {
-                        quota.transport(false);
-                    }
-                } else {
-                    queued_msg.set(total);
+                    backend_msg.client.children().invalidate_all(&backend_msg);
+                    shared_msg.broadcast_skipped();
                 }
             });
 
-        let tx_ping = tx.clone();
+        let tx_ping = signal_tx.clone();
+        let close_ping = source.clone();
         let watchdog_ping = watchdog.clone();
         let ping: Closure<dyn FnMut(MessageEvent)> = Closure::new(move |_: MessageEvent| {
+            if watchdog_ping.is_stale() {
+                close_ping.close();
+                let _ = tx_ping.try_send(Signal::Closed);
+                return;
+            }
             watchdog_ping.activity();
-            let _ = tx_ping.try_send(Frame::Ping);
+            let _ = tx_ping.try_send(Signal::Ping);
         });
 
-        let tx_error = tx.clone();
-        let fail_error = overflow.clone();
+        let tx_error = signal_tx.clone();
         let close_error = source.clone();
-        let shared_error = shared.clone();
         let on_error: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
-            for quota in shared_error.snapshot_quotas() {
-                quota.transport(false);
-            }
             close_error.close();
-            if tx_error.try_send(Frame::Closed).is_err() {
-                fail_error.set(true);
-            }
+            let _ = tx_error.try_send(Signal::Closed);
         });
 
         source.set_onopen(Some(on_open.as_ref().unchecked_ref()));
@@ -316,65 +292,42 @@ pub(super) async fn pump_shared(
 
         let pong_in_flight = Arc::new(AtomicBool::new(false));
         let (_pong_cancel_tx, pong_cancel_rx) = crate::bounded::<()>(1);
-        let (pong_abort_tx, pong_abort_rx) = crate::bounded::<bool>(1);
+        let (pong_abort_tx, pong_abort_rx) = crate::bounded::<()>(1);
         loop {
-            if overflow.get() || watchdog.is_stale() {
+            if watchdog.is_stale() || pong_abort_rx.try_recv().is_ok() {
                 break;
             }
-            if let Ok(expired) = pong_abort_rx.try_recv() {
-                auth_expired = expired;
-                break;
-            }
-            let step = match rx.try_recv() {
-                Ok(frame) => Step::Event(Ok(frame)),
-                Err(async_channel::TryRecvError::Closed) => {
-                    Step::Event(Err(async_channel::RecvError))
-                }
-                Err(async_channel::TryRecvError::Empty) => {
+            let step = futures_lite::future::or(
+                async {
                     futures_lite::future::or(
                         async {
-                            futures_lite::future::or(
-                                async {
-                                    let _ = stop_rx.recv().await;
-                                    Step::Stopped
-                                },
-                                futures_lite::future::or(
-                                    async {
-                                        if let Ok(expired) = pong_abort_rx.recv().await {
-                                            Step::PongAbort(expired)
-                                        } else {
-                                            std::future::pending().await
-                                        }
-                                    },
-                                    async {
-                                        watchdog.wait_until_stale(&global_probe, None).await;
-                                        Step::Stale
-                                    },
-                                ),
-                            )
-                            .await
+                            let _ = stop_rx.recv().await;
+                            Step::Stopped
                         },
-                        async { Step::Event(rx.recv().await) },
+                        futures_lite::future::or(
+                            async {
+                                if pong_abort_rx.recv().await.is_ok() {
+                                    Step::PongAbort
+                                } else {
+                                    std::future::pending().await
+                                }
+                            },
+                            async {
+                                watchdog.wait_until_stale(&global_probe, None).await;
+                                Step::Stale
+                            },
+                        ),
                     )
                     .await
-                }
-            };
-            // Re-check after awaiting rx so a frame queued before sleep cannot mask staleness.
+                },
+                async { Step::Signal(signal_rx.recv().await) },
+            )
+            .await;
             if watchdog.is_stale() {
                 break;
             }
             match step {
-                Step::Event(Ok(Frame::Open)) => {
-                    b.client.children().invalidate_all(&b);
-                    if !shared.mark_open() {
-                        break;
-                    }
-                }
-                Step::Event(Ok(Frame::Data(kind, data))) => {
-                    queued_bytes.set(queued_bytes.get().saturating_sub(data.len()));
-                    shared.broadcast_frame(kind, data);
-                }
-                Step::Event(Ok(Frame::Ping)) => {
+                Step::Signal(Ok(Signal::Ping)) => {
                     spawn_pong(
                         &b,
                         &connection,
@@ -384,20 +337,13 @@ pub(super) async fn pump_shared(
                         &pong_abort_tx,
                     );
                 }
-                Step::Event(Ok(Frame::Skipped)) => {
-                    b.client.children().invalidate_all(&b);
-                    shared.broadcast_skipped();
-                }
-                Step::Event(Ok(Frame::Closed))
-                | Step::Event(Err(_))
+                Step::Signal(Ok(Signal::Closed))
+                | Step::Signal(Err(_))
                 | Step::Stale
-                | Step::Stopped => break,
-                Step::PongAbort(expired) => {
-                    auth_expired = expired;
-                    break;
-                }
+                | Step::Stopped
+                | Step::PongAbort => break,
             }
         }
     }
-    shared.finish(&hub, auth_expired);
+    shared.finish(&hub, false);
 }

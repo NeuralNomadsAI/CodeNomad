@@ -2713,18 +2713,23 @@ fn hidden_connected_event_does_not_overwrite_healthy_active_tab_or_custom_preset
                 break;
             }
         }
-        // Drop the shared SSE stream; reconnect must probe /api/meta before opening SSE,
-        // detect foreign Server B, and revoke shared attestation so no Preferences PATCH reaches B.
-        drop(sse_a);
-        let reconnect_meta = timeout(Duration::from_secs(4), request(&listener))
+        // 3a. While the shared SSE socket is STILL OPEN (no global transport drop), a foreign
+        // /api/meta mismatch ("server-b") must revoke shared attestation immediately so no
+        // Preferences PATCH reaches Server B.
+        let probe_backend = base.clone();
+        platform::spawn(async move {
+            let _ = probe_backend.attest_server().await;
+        });
+        let mismatch_meta = timeout(Duration::from_secs(4), request(&listener))
             .await
-            .expect("reconnect must attest /api/meta before reopening SSE");
-        assert_eq!(reconnect_meta.first, "GET /api/meta HTTP/1.1");
-        reconnect_meta
+            .expect("probe must request /api/meta");
+        assert_eq!(mismatch_meta.first, "GET /api/meta HTTP/1.1");
+        mismatch_meta
             .reply(200, json!({"apiContract":1,"serverId":"server-b"}))
             .await;
         wait_until(|| client.needs_capability_recheck()).await;
-        // Now attempt a Preferences write: it must NOT send SSE or PATCH to Server B, only /api/meta.
+        // Now attempt a Preferences write while the old SSE socket is still open:
+        // it must NOT send SSE or PATCH to Server B, only /api/meta.
         prefs.set_transcript(None, "minimal");
         assert!(prefs.poll());
         let deadline = std::time::Instant::now() + Duration::from_millis(120);
@@ -2736,12 +2741,21 @@ fn hidden_connected_event_does_not_overwrite_healthy_active_tab_or_custom_preset
                         .await;
                 } else {
                     panic!(
-                        "foreign server must not receive SSE or settings PATCH after reconnect mismatch, got: {}",
+                        "foreign server must not receive SSE or settings PATCH after foreign attestation while SSE is open, got: {}",
                         req.first
                     );
                 }
             }
         }
+        // 3b. Dropping the shared SSE stream must also attest /api/meta before reopening SSE.
+        drop(sse_a);
+        let reconnect_meta = timeout(Duration::from_secs(4), request(&listener))
+            .await
+            .expect("reconnect must attest /api/meta before reopening SSE");
+        assert_eq!(reconnect_meta.first, "GET /api/meta HTTP/1.1");
+        reconnect_meta
+            .reply(200, json!({"apiContract":1,"serverId":"server-b"}))
+            .await;
         let _ = commands_a.send(Command::Close).await;
         let _ = commands_b.send(Command::Close).await;
     });
@@ -3029,18 +3043,19 @@ fn hidden_tab_reconnect_attestation_and_repeated_outage_and_voluntary_close_and_
                 break;
             }
         }
-        // Drop the shared SSE stream and hold reconnect /api/meta, then try saving a masked secret.
+        // Stage a masked secret BEFORE dropping the shared SSE, then drop SSE and hold reconnect
+        // /api/meta so even a pre-staged secret write must attest /api/meta and never leak to server-b.
+        assert!(prefs.stage_environment("API_KEY".into(), Some("top-secret".into()), Some(true),));
         drop(sse_a);
         let client = prefs.backend.as_ref().unwrap().client.clone();
         wait_until(|| client.transport_drops(&tab_b_id) == 1).await;
         let _held_tab_b_meta = request(&listener).await;
         assert_eq!(_held_tab_b_meta.first, "GET /api/meta HTTP/1.1");
-        assert!(prefs.stage_environment("API_KEY".into(), Some("top-secret".into()), Some(true),));
         assert!(prefs.poll());
         let pre_patch_meta = poll_next_request(&mut prefs, &listener).await;
         assert_eq!(
             pre_patch_meta.first, "GET /api/meta HTTP/1.1",
-            "PATCH must attest /api/meta before sending a secret while reconnect is pending"
+            "PATCH must attest /api/meta before sending a pre-staged secret after SSE drop"
         );
         pre_patch_meta
             .reply(200, json!({"apiContract":1,"serverId":"server-b","capabilities":["settings-atomic-patches"]}))

@@ -29,6 +29,7 @@ pub(crate) struct StreamDropGuard {
     open_streams: Arc<AtomicUsize>,
     drop_generation: Arc<AtomicU64>,
     opened: Arc<AtomicBool>,
+    recorded: AtomicBool,
 }
 
 impl StreamDropGuard {
@@ -41,6 +42,10 @@ impl StreamDropGuard {
         } else {
             false
         }
+    }
+
+    pub(crate) fn mark_drop_recorded(&self) -> bool {
+        self.recorded.swap(true, Ordering::SeqCst)
     }
 }
 
@@ -165,6 +170,7 @@ impl Http {
                 open_streams: self.6.open_streams.clone(),
                 drop_generation: self.6.drop_generation.clone(),
                 opened: opened.clone(),
+                recorded: AtomicBool::new(false),
             },
             opened,
         )
