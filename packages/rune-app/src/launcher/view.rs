@@ -7,7 +7,7 @@ use rune_theme_codenomad::{
 #[cfg(test)]
 mod tests;
 pub fn view(s: &State) -> El {
-    let crate::Screen::Launcher(l) = &s.screen else {
+    let Some(l) = s.screen.launcher() else {
         return rune::el();
     };
     #[cfg(target_arch = "wasm32")]
@@ -21,6 +21,7 @@ pub fn view(s: &State) -> El {
     #[cfg(not(target_arch = "wasm32"))]
     let password = true;
     let mut body = col().full_width().separate(Space::Md);
+    let busy = l.pending || l.managed_renewal.is_some();
     if l.connection.is_none() || l.authentication_required {
         body = body
             .child(text(t("rune.server")).text_role(TextRole::Title))
@@ -46,7 +47,7 @@ pub fn view(s: &State) -> El {
         body = body.child(button_tx(
             "connect",
             t("folderSelection.servers.dialog.connect"),
-            l.pending,
+            busy,
             crate::screen::action_tx(&scope, launcher::connect),
         ));
     } else {
@@ -85,6 +86,16 @@ pub fn view(s: &State) -> El {
                         crate::screen::action_tx(&scope, launcher::open),
                     )),
             );
+        if l.projects_stale {
+            body = body.child(button_tx(
+                "refresh-projects",
+                t("sessionList.loadError.retry"),
+                l.projects_refresh.is_some() || waiting,
+                crate::screen::action_tx(&scope, |s: &mut State, _| {
+                    launcher::refresh_projects(s);
+                }),
+            ));
+        }
         for p in &l.projects {
             let path = p.path.clone();
             body = body.child(
@@ -100,7 +111,7 @@ pub fn view(s: &State) -> El {
             );
         }
     }
-    if l.pending {
+    if busy {
         body = body.child(text(t("rune.loading")));
     }
     if let Some(error) = l.error {

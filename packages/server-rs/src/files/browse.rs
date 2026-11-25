@@ -183,31 +183,34 @@ pub fn directory_identity(path: &Path) -> Option<String> {
 
 /// `readDirectoryEntries` with absolute entry paths; links are followed, unreadable entries skipped.
 async fn unrestricted_entries(directory: &str, files: bool) -> io::Result<Vec<Value>> {
-    let mut listing = tokio::fs::read_dir(directory).await?;
-    let mut entries = Vec::new();
-    while let Some(entry) = listing.next_entry().await? {
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else { continue };
-        let Ok(info) = tokio::fs::metadata(entry.path()).await else { continue };
-        if !files && !info.is_dir() {
-            continue;
-        }
-        let path = child(directory, &name);
-        let mut row = json!({"name": name, "path": path, "absolutePath": path,
-            "type": if info.is_dir() { "directory" } else { "file" }, "modifiedAt": modified(&info)});
-        if info.is_dir() {
-            if let Some(identity) = directory_identity(&entry.path()) {
-                row["directoryIdentity"] = json!(identity);
+    let directory = directory.to_owned();
+    tokio::task::spawn_blocking(move || -> io::Result<Vec<Value>> {
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(&directory)? {
+            let entry = entry?;
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else { continue };
+            let entry_path = entry.path();
+            let Ok(info) = std::fs::metadata(&entry_path) else { continue };
+            if !files && !info.is_dir() {
+                continue;
             }
-        } else {
-            row["size"] = json!(info.len());
+            let path = child(&directory, &name);
+            let mut row = json!({"name": name, "path": path, "absolutePath": path,
+                "type": if info.is_dir() { "directory" } else { "file" }, "modifiedAt": modified(&info)});
+            if info.is_dir() {
+                if let Some(identity) = directory_identity(&entry_path) {
+                    row["directoryIdentity"] = json!(identity);
+                }
+            } else {
+                row["size"] = json!(info.len());
+            }
+            entries.push(row);
         }
-        entries.push(row);
-        if entries.len() > 10_000 {
-            return Err(io::Error::other("Directory listing too large"));
-        }
-    }
-    entries.sort_by_cached_key(|row| row["name"].as_str().unwrap_or_default().to_lowercase());
-    Ok(entries)
+        entries.sort_by_cached_key(|row| row["name"].as_str().unwrap_or_default().to_lowercase());
+        Ok(entries)
+    })
+    .await
+    .map_err(|_| io::Error::other("Directory listing cancelled"))?
 }
 
 fn drives(app: &App) -> Value {
@@ -261,50 +264,67 @@ async fn restricted(app: &App, path: Option<PathBuf>, files: bool) -> Result<Jso
     if path.components().any(|c| c == Component::ParentDir) {
         return Err(invalid());
     }
-    let directory = paths::canonical(&app.root, app.root.join(path)).ok_or_else(invalid)?;
-    let relative = |path: &Path| {
-        path.strip_prefix(&app.root)
-            .ok()
-            .map(
-                |path| {
-                    if path.as_os_str().is_empty() { ".".into() } else { path.to_string_lossy().replace('\\', "/") }
-                },
-            )
-            .ok_or_else(invalid)
-    };
-    let current = relative(&directory)?;
-    let mut listing = tokio::fs::read_dir(&directory).await.map_err(|_| invalid())?;
-    let mut entries = Vec::new();
-    while let Some(entry) = listing.next_entry().await.map_err(|_| invalid())? {
-        let absolute = entry.path();
-        // A link can name an unauthorized root. Do not publish it or its stats.
-        let Ok(resolved) = dunce::canonicalize(&absolute) else { continue };
-        if !resolved.starts_with(&app.root) {
-            continue;
-        }
-        let Ok(info) = tokio::fs::metadata(&resolved).await else { continue };
-        if !info.is_dir() && (!info.is_file() || !files) {
-            continue;
-        }
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
-        let mut value = json!({"name":name,"path":relative(&absolute)?,"absolutePath":absolute,
-            "type":if info.is_dir() {"directory"} else {"file"}, "modifiedAt":modified(&info)});
-        if info.is_file() {
-            value["size"] = json!(info.len());
-        }
-        entries.push(value);
-        if entries.len() > 2000 {
-            return Err(error(Status::BAD_REQUEST, "Directory listing too large"));
-        }
-    }
-    entries.sort_by_cached_key(|value| value["name"].as_str().unwrap_or_default().to_lowercase());
+    let root_dir = app.root.clone();
+    let (directory, current, parent_path, entries) =
+        tokio::task::spawn_blocking(move || -> Result<(PathBuf, String, Option<String>, Vec<Value>), Error> {
+            let directory = paths::canonical(&root_dir, root_dir.join(path)).ok_or_else(invalid)?;
+            let rel = |path: &Path| {
+                path.strip_prefix(&root_dir)
+                    .ok()
+                    .map(|path| {
+                        if path.as_os_str().is_empty() { ".".into() } else { path.to_string_lossy().replace('\\', "/") }
+                    })
+                    .ok_or_else(invalid)
+            };
+            let current = rel(&directory)?;
+            let parent_path = if current != "." { Some(rel(directory.parent().ok_or_else(invalid)?)?) } else { None };
+            let mut entries = Vec::new();
+            for entry in std::fs::read_dir(&directory).map_err(|_| invalid())? {
+                let entry = entry.map_err(|_| invalid())?;
+                let absolute = entry.path();
+                // A link can name an unauthorized root. Do not publish it or its stats.
+                let Ok(resolved) = dunce::canonicalize(&absolute) else { continue };
+                if !resolved.starts_with(&root_dir) {
+                    continue;
+                }
+                let Ok(info) = std::fs::metadata(&resolved) else { continue };
+                if !info.is_dir() && (!info.is_file() || !files) {
+                    continue;
+                }
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else { continue };
+                let mut value = json!({"name":name,"path":rel(&absolute)?,"absolutePath":absolute,
+                    "type":if info.is_dir() {"directory"} else {"file"}, "modifiedAt":modified(&info)});
+                if info.is_file() {
+                    value["size"] = json!(info.len());
+                }
+                entries.push(value);
+            }
+            entries.sort_by_cached_key(|value| value["name"].as_str().unwrap_or_default().to_lowercase());
+            Ok((directory, current, parent_path, entries))
+        })
+        .await
+        .map_err(|_| invalid())??;
     let mut metadata = json!({"scope":"restricted","currentPath":current,"rootPath":app.root,
         "homePath":app.root,"displayPath":directory,"pathKind":"relative"});
-    if current != "." {
-        metadata["parentPath"] = json!(relative(directory.parent().ok_or_else(invalid)?)?);
+    if let Some(parent_path) = parent_path {
+        metadata["parentPath"] = json!(parent_path);
     }
     Ok(Json(json!({"entries":entries,"metadata":metadata})))
+}
+
+#[cfg(test)]
+pub(super) async fn browse_restricted_for_test(
+    app: &App,
+    path: Option<PathBuf>,
+    files: bool,
+) -> Result<Json<Value>, Error> {
+    restricted(app, path, files).await
+}
+
+#[cfg(test)]
+pub(super) async fn browse_unrestricted_for_test(directory: &str, files: bool) -> io::Result<Vec<Value>> {
+    unrestricted_entries(directory, files).await
 }
 
 /// `normalizeFolderName`
