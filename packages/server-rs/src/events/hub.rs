@@ -43,8 +43,12 @@ pub struct Frame {
 
 impl Frame {
     fn new(value: &Value) -> Self {
+        Self::new_with_text(value, None)
+    }
+
+    fn new_with_text(value: &Value, text: Option<String>) -> Self {
         let (workspace, scope, fold) = classify(value);
-        Frame { text: value.to_string(), workspace, scope, fold }
+        Frame { text: text.unwrap_or_else(|| value.to_string()), workspace, scope, fold }
     }
 }
 
@@ -153,12 +157,20 @@ impl Hub {
     }
 
     pub fn publish(&self, value: Value) {
+        self.publish_frame(value, None);
+    }
+
+    pub fn publish_serialized(&self, value: Value, text: String) {
+        self.publish_frame(value, Some(text));
+    }
+
+    fn publish_frame(&self, value: Value, text: Option<String>) {
         let status = value["type"] == "instance.eventStatus";
         let subs = self.subs.lock().unwrap();
         if !status && subs.is_empty() {
             return;
         }
-        let frame = Arc::new(Frame::new(&value));
+        let frame = Arc::new(Frame::new_with_text(&value, text));
         let preprojected =
             value["type"] == "instance.event" && crate::sessions::user_files::is_projected_inbox(&value["event"]);
         let projected = if subs.iter().any(|sub| sub.reference_files) {

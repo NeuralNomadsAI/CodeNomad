@@ -1,9 +1,19 @@
 use crate::State;
 
 pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {
+    let clients = crate::workspace::conversation_stream_clients(s);
+    let mut prefs = s.settings.shared.borrow_mut();
     if s.screen.launcher().is_none() {
-        s.settings.shared.borrow_mut().bind(Some(backend.clone()));
+        prefs.bind(Some(backend.clone()));
     }
+    prefs.observe_conversation_clients(&clients);
+}
+
+pub(crate) fn tab_activated(s: &State) {
+    let clients = crate::workspace::conversation_stream_clients(s);
+    let mut prefs = s.settings.shared.borrow_mut();
+    prefs.observe_conversation_clients(&clients);
+    prefs.revalidate_transport();
 }
 
 pub(crate) fn bound_backend(s: &State) -> Option<crate::backend::Backend> {
@@ -44,7 +54,9 @@ pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::B
             launcher.start_managed_renewal(expired)
         });
         drop(prefs);
-        if !renewing {
+        if renewing {
+            s.phase = crate::Phase::Reconnecting;
+        } else {
             s.show_launcher();
         }
         crate::workspace::suspend_missions(s);
@@ -53,7 +65,7 @@ pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::B
 }
 
 pub(crate) fn invalidate(s: &State, owner: codenomad_client::settings::Owner) {
-    s.settings.shared.borrow_mut().invalidate(owner);
+    s.settings.shared.borrow_mut().invalidate_from_sse(owner);
 }
 
 pub(super) fn provider_stopped(s: &State, workspace: &str) {
@@ -92,7 +104,11 @@ pub(super) fn provider_changed(s: &State, workspace: &str) {
     }
 }
 
-pub(crate) fn connection_event(s: &State, event: &crate::transport::Event) {
+pub(crate) fn connection_event(
+    s: &State,
+    event: &crate::transport::Event,
+    affects_preferences: bool,
+) {
     use codenomad_client::transport::{Event, WorkspaceEvent};
     match event {
         Event::Workspace(WorkspaceEvent::StatsChanged {
@@ -123,12 +139,39 @@ pub(crate) fn connection_event(s: &State, event: &crate::transport::Event) {
             provider_stopped(s, workspace_id)
         }
         Event::AgentHint(true) => {
-            s.settings.shared.borrow_mut().memory.transport(true);
-            provider_transport(s, true);
+            if affects_preferences {
+                s.settings.shared.borrow_mut().memory.transport(true);
+                provider_transport(s, true);
+            }
         }
         Event::ConnectionLost => {
-            s.settings.shared.borrow_mut().memory.transport(false);
-            provider_transport(s, false);
+            if affects_preferences {
+                s.settings.transcript_filters.close_preset_menu();
+                let other_healthy =
+                    crate::workspace::conversation_stream_clients(s)
+                        .iter()
+                        .any(|(id, healthy)| {
+                            *healthy && s.conversation_client_id.as_deref() != Some(id.as_str())
+                        });
+                let mut prefs = s.settings.shared.borrow_mut();
+                let other_healthy = other_healthy || prefs.has_healthy_watch_stream();
+                let repeated_outage = s
+                    .conversation_client_id
+                    .as_deref()
+                    .is_some_and(|id| prefs.is_repeated_outage(id));
+                if let Some(id) = s.conversation_client_id.as_deref() {
+                    prefs.note_client_outage(id);
+                }
+                if !repeated_outage && !prefs.is_transport_lost() {
+                    prefs.mark_transport_lost();
+                }
+                if other_healthy && prefs.is_transport_lost() {
+                    prefs.revalidate_transport();
+                }
+                prefs.memory.transport(false);
+                drop(prefs);
+                provider_transport(s, false);
+            }
         }
         _ => {}
     }

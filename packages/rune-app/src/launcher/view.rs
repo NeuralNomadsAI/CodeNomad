@@ -86,6 +86,16 @@ pub fn view(s: &State) -> El {
                         crate::screen::action_tx(&scope, launcher::open),
                     )),
             );
+        if l.projects_stale {
+            body = body.child(button_tx(
+                "refresh-projects",
+                t("sessionList.loadError.retry"),
+                l.projects_refresh.is_some() || waiting,
+                crate::screen::action_tx(&scope, |s: &mut State, _| {
+                    launcher::refresh_projects(s);
+                }),
+            ));
+        }
         for p in &l.projects {
             let path = p.path.clone();
             body = body.child(

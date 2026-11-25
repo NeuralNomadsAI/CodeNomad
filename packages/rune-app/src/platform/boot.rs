@@ -13,7 +13,7 @@ use std::{
 
 enum HostCommand {
     Stop,
-    Renew(codenomad_client::Sender<Option<Backend>>),
+    Renew(codenomad_client::Sender<crate::host::ManagedRenewal>),
 }
 
 #[derive(Default)]
@@ -48,7 +48,7 @@ impl LocalHost {
     pub fn state_directory(&self) -> Option<PathBuf> {
         self.state_directory.clone()
     }
-    pub fn renew_managed_session(&self) -> Option<Receiver<Option<Backend>>> {
+    pub fn renew_managed_session(&self) -> Option<Receiver<crate::host::ManagedRenewal>> {
         if self.stopping.load(Ordering::SeqCst) {
             return None;
         }
@@ -59,7 +59,9 @@ impl LocalHost {
             .map(|()| receiver)
     }
     #[cfg(test)]
-    pub(crate) fn fixture(handler: impl FnMut() -> Option<Backend> + Send + 'static) -> Self {
+    pub(crate) fn fixture(
+        handler: impl FnMut() -> crate::host::ManagedRenewal + Send + 'static,
+    ) -> Self {
         let (commands, rx) = mpsc::channel();
         let stopping = Arc::new(AtomicBool::new(false));
         let mut handler = handler;
@@ -163,9 +165,11 @@ pub fn start(wake: rune::Waker) -> Option<Receiver<Result<(Backend, LocalHost)>>
                         HostCommand::Stop => break,
                         HostCommand::Renew(reply) => {
                             let renewed = if stopping.load(Ordering::SeqCst) {
-                                None
+                                crate::host::ManagedRenewal::Denied
                             } else {
-                                child.renew_managed_session(&stopping).ok().flatten()
+                                child
+                                    .renew_managed_session(&stopping)
+                                    .unwrap_or(crate::host::ManagedRenewal::Denied)
                             };
                             let _ = reply.send_blocking(renewed);
                         }

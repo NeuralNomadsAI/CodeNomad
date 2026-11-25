@@ -45,8 +45,13 @@ impl Monitor {
     }
 
     pub(crate) fn update_feed(&self, settings: &Settings) {
+        settings.with_server_owner_locked(|server| {
+            self.set_feed(super::update_feed(server));
+        });
+    }
+
+    pub(crate) fn set_feed(&self, feed: &'static str) {
         let mut state = self.state.lock().unwrap();
-        let feed = read_feed(settings);
         if state.feed != feed {
             state.feed = feed;
             state.generation = state.generation.wrapping_add(1);

@@ -46,6 +46,7 @@ fn copy(s: &State, id: &str) -> impl Fn(&mut State, &mut Tx) + 'static {
         if let Some(message) = lookup(s, &id) {
             let source = raw(message);
             if !source.trim().is_empty() {
+                s.transcript_display.children.cancel_copy();
                 tx.copy(source);
             }
         }

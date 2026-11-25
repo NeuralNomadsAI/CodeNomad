@@ -332,4 +332,67 @@ mod tests {
         assert!(with_cli_password.renew_managed_session().is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[tokio::test]
+    async fn credential_rotation_fences_stale_login_and_revoked_principal_cannot_set_password() {
+        let f = Fixture::new(true, Duration::from_secs(60)).await;
+        let tok = f.app.auth.bootstrap_token().unwrap();
+        let (status, set_cookie, _) =
+            f.call(reqwest::Method::POST, "/api/auth/token", None, Some(json!({"token": tok}))).await;
+        assert_eq!(status, StatusCode::OK);
+        let cookie = set_cookie.unwrap().split(';').next().unwrap().to_owned();
+
+        // Revoked principal (logged out) cannot write auth.json via set_password.
+        let (status, _, _) = f.call(reqwest::Method::POST, "/api/auth/logout", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, _) = f
+            .call(
+                reqwest::Method::POST,
+                "/api/auth/password",
+                Some(&cookie),
+                Some(json!({"password": "after-logout-password"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert!(!f.dir.join("auth.json").exists(), "logged-out principal must not write auth.json");
+
+        // Opening a session with a stale credential version fails after password rotation.
+        let tok2 = f.issue_token();
+        let (_, set_cookie, _) =
+            f.call(reqwest::Method::POST, "/api/auth/token", None, Some(json!({"token": tok2}))).await;
+        let cookie2 = set_cookie.unwrap().split(';').next().unwrap().to_owned();
+        let (status, _, _) = f
+            .call(
+                reqwest::Method::POST,
+                "/api/auth/password",
+                Some(&cookie2),
+                Some(json!({"password": "first-password-123"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        let version_before = f.app.auth.credentials.lock().unwrap().version;
+        let (status, login_cookie, _) = f
+            .call(
+                reqwest::Method::POST,
+                "/api/auth/login",
+                None,
+                Some(json!({"username": "local", "password": "first-password-123"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        let cookie3 = login_cookie.unwrap().split(';').next().unwrap().to_owned();
+        let (status, _, _) = f
+            .call(
+                reqwest::Method::POST,
+                "/api/auth/password",
+                Some(&cookie3),
+                Some(json!({"password": "second-password-456"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            f.app.auth.open_session_if_credentials_version(version_before, "local".into()).is_err(),
+            "stale credential version must be refused after rotation"
+        );
+    }
 }

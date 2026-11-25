@@ -79,7 +79,10 @@ fn menu(href: &str, point: (f32, f32), scope: &Rc<()>, locale: &'static str, tx:
                     Some("open") => {
                         let _ = tx.open_url(&url);
                     }
-                    Some("copy-link") => tx.copy(url.as_str()),
+                    Some("copy-link") => {
+                        s.transcript_display.children.cancel_copy();
+                        tx.copy(url.as_str());
+                    }
                     _ => {}
                 }
             }

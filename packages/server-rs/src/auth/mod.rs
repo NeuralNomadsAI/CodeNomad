@@ -111,6 +111,12 @@ struct Credentials {
 }
 
 #[derive(Default)]
+struct CredentialStore {
+    version: u64,
+    current: Option<Credentials>,
+}
+
+#[derive(Default)]
 struct SessionState {
     sessions: HashMap<String, Session>,
     managed: Option<managed::ManagedSession>,
@@ -127,7 +133,7 @@ impl Drop for PasswordWriteGuard<'_> {
 pub struct Auth {
     settings: Settings,
     /// `None`: bootstrap only, until a password is set.
-    credentials: Mutex<Option<Credentials>>,
+    credentials: Mutex<CredentialStore>,
     token: Mutex<Option<(String, Instant)>>,
     /// The single principal of `--dangerously-skip-auth`.
     open: Principal,
@@ -177,7 +183,7 @@ impl Auth {
         };
         Ok(Self {
             settings,
-            credentials: Mutex::new(credentials),
+            credentials: Mutex::new(CredentialStore { version: 0, current: credentials }),
             token: Mutex::new(token),
             open: Principal(CancellationToken::new()),
             sessions: Mutex::default(),
@@ -250,7 +256,7 @@ impl Auth {
     }
     /// `{username, passwordUserProvided}` of the reference's `getStatus`.
     fn identity(&self) -> (String, bool) {
-        match &*self.credentials.lock().unwrap() {
+        match &self.credentials.lock().unwrap().current {
             Some(c) if !self.settings.skip => (c.username.clone(), c.user_provided),
             _ => (self.settings.username.clone(), false),
         }
@@ -276,13 +282,23 @@ impl Auth {
         let mut state = self.sessions.lock().unwrap();
         self.insert_session(&mut state, username)
     }
+    fn open_session_if_credentials_version(&self, version: u64, username: String) -> Result<String, Error> {
+        let credentials = self.credentials.lock().unwrap();
+        if credentials.version != version
+            || credentials.current.as_ref().is_none_or(|c| c.username != username)
+        {
+            return Err(error(Status::UNAUTHORIZED, "Invalid credentials"));
+        }
+        let mut state = self.sessions.lock().unwrap();
+        self.insert_session(&mut state, username)
+    }
     fn open_bootstrap_session(&self) -> Result<String, Error> {
         let credentials = self.credentials.lock().unwrap();
-        let username = match &*credentials {
+        let username = match &credentials.current {
             Some(c) if !self.settings.skip => c.username.clone(),
             _ => self.settings.username.clone(),
         };
-        let can_renew = self.can_renew_bootstrap(&credentials);
+        let can_renew = self.can_renew_bootstrap(&credentials.current);
         let mut state = self.sessions.lock().unwrap();
         let id = self.insert_session(&mut state, username)?;
         if can_renew {
@@ -297,7 +313,7 @@ impl Auth {
     }
     pub fn renew_managed_session_if(&self, live: impl Fn() -> bool) -> Option<String> {
         let credentials = self.credentials.lock().unwrap();
-        if !live() || !self.can_renew_bootstrap(&credentials) {
+        if !live() || !self.can_renew_bootstrap(&credentials.current) {
             return None;
         }
         let username = self.settings.username.clone();
@@ -537,12 +553,13 @@ pub async fn login(
     if username.is_empty() || password.is_empty() || username.len() > 1024 || password.len() > 8192 {
         return Err(error(Status::BAD_REQUEST, "Invalid login body"));
     }
-    if !app.auth.settings.skip {
+    let id = if !app.auth.settings.skip {
         let _permit =
             app.auth.login_budget.try_acquire().map_err(|_| error(Status::TOO_MANY_REQUESTS, "Login busy"))?;
-        let Some((expected, record)) =
-            app.auth.credentials.lock().unwrap().as_ref().map(|c| (c.username.clone(), c.record.clone()))
-        else {
+        let Some((version, expected, record)) = ({
+            let store = app.auth.credentials.lock().unwrap();
+            store.current.as_ref().map(|c| (store.version, c.username.clone(), c.record.clone()))
+        }) else {
             return Err(error(Status::UNAUTHORIZED, "Invalid credentials"));
         };
         let valid = tokio::task::spawn_blocking(move || record.verify(&password))
@@ -551,8 +568,10 @@ pub async fn login(
         if !valid || username != expected {
             return Err(error(Status::UNAUTHORIZED, "Invalid credentials"));
         }
-    }
-    let id = app.auth.open_session(username)?;
+        app.auth.open_session_if_credentials_version(version, username)?
+    } else {
+        app.auth.open_session(username)?
+    };
     Ok(([(header::SET_COOKIE, app.auth.issued_session_cookie(&id))], Json(json!({"ok":true}))))
 }
 
@@ -597,6 +616,7 @@ pub async fn token(
 /// `POST /api/auth/logout`: revokes the session (including a managed local renewal right).
 pub async fn logout(State(app): State<Shared>, headers: HeaderMap) -> Result<Response, Error> {
     let (key, _) = cookies(&headers, app.auth.cookie_name())?;
+    let _change = app.auth.password_change.lock().await;
     app.auth.revoke_session(key.as_deref());
     Ok(([(header::SET_COOKIE, app.auth.session_cookie("", Some(0)))], Json(json!({"ok":true}))).into_response())
 }
@@ -612,7 +632,10 @@ pub async fn set_password(
     principal: Option<Extension<Principal>>,
     payload: Result<Json<NewPassword>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    if principal.is_none() {
+    let Some(Extension(principal)) = principal else {
+        return unauthorized().into_response();
+    };
+    if principal.live().is_err() {
         return unauthorized().into_response();
     }
     let password = match payload {
@@ -632,10 +655,18 @@ pub async fn set_password(
             "Server password is provided via CLI/env and cannot be changed while running. Restart without --password / CODENOMAD_SERVER_PASSWORD to use auth.json.",
         );
     };
-    let _change = app.auth.password_change.lock().await;
     let record = match tokio::task::spawn_blocking(move || password::Record::new(&password)).await {
         Ok(Ok(record)) => record,
         _ => return conflict("Password hashing failed"),
+    };
+    let _change = app.auth.password_change.lock().await;
+    let _writing = {
+        let mut state = app.auth.sessions.lock().unwrap();
+        if principal.live().is_err() {
+            return unauthorized().into_response();
+        }
+        state.password_writing = true;
+        PasswordWriteGuard(&app.auth.sessions)
     };
     let username = app.auth.identity().0;
     let stored = password::AuthFile {
@@ -645,16 +676,13 @@ pub async fn set_password(
         user_provided: true,
         updated_at: crate::now(),
     };
-    let _writing = {
-        app.auth.sessions.lock().unwrap().password_writing = true;
-        PasswordWriteGuard(&app.auth.sessions)
-    };
     if let Err(e) = password::save(file, &stored) {
         return conflict(&e.to_string());
     }
     {
         let mut credentials = app.auth.credentials.lock().unwrap();
-        *credentials = Some(Credentials { username: username.clone(), record, user_provided: true });
+        credentials.version = credentials.version.wrapping_add(1);
+        credentials.current = Some(Credentials { username: username.clone(), record, user_provided: true });
         let mut state = app.auth.sessions.lock().unwrap();
         state.managed = None;
         state.sessions.retain(|_, s| {

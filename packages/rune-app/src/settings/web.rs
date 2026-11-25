@@ -63,6 +63,7 @@ pub(super) struct Panel {
     memory_help_failed: bool,
     memory_editor: super::memory::editor::Editor,
     transcript_picker: Option<super::TranscriptRow>,
+    announced_transcript_error: Option<&'static str>,
     catalog: Catalog,
     scope: super::host_support::HostSupport,
     config_files: super::config_files::Editor,
@@ -108,9 +109,26 @@ impl Panel {
         }
     }
 
-    pub(super) fn poll_window_actions(&mut self, prefs: &Preferences, tx: &mut rune::Tx) -> bool {
+    pub(super) fn poll_window_actions(
+        &mut self,
+        prefs: &Preferences,
+        filters_open: bool,
+        tx: &mut rune::Tx,
+    ) -> bool {
         if self.shown && self.section == Section::Info {
             self.info.announce(prefs, tx);
+        }
+        let transcript_error = ((self.shown && self.section == Section::Conversation)
+            || filters_open)
+            .then(|| prefs.transcript_error())
+            .flatten()
+            .filter(|error| *error == "rune.connect_error");
+        if transcript_error != self.announced_transcript_error {
+            self.announced_transcript_error = transcript_error;
+            if let Some(error) = transcript_error {
+                let locale = prefs.locale().unwrap_or_else(crate::strings::locale);
+                crate::strings::with_locale(locale, || layout::announce_alert(tx, t(error)));
+            }
         }
         self.shown
             && self.section == Section::Shortcuts
@@ -146,6 +164,14 @@ impl Panel {
     }
 
     pub fn poll(&mut self, prefs: &mut Preferences, wake: &rune::Waker, paired: bool) -> bool {
+        let mut picker_closed = false;
+        if !paired {
+            self.general.close();
+            self.behavior.close();
+            picker_closed = self.transcript_picker.take().is_some();
+        } else if !prefs.transcript_ready() {
+            picker_closed = self.transcript_picker.take().is_some();
+        }
         let scope_changed = self.poll_scope(prefs, wake, paired);
         let environment = self.environment.poll(
             prefs,
@@ -157,7 +183,8 @@ impl Panel {
             false
         };
         let editor = prefs.memory.poll_editor(&mut self.memory_editor);
-        editor
+        picker_closed
+            | editor
             | scope_changed
             | environment
             | opencode
@@ -465,6 +492,8 @@ pub(super) fn view(
             .child(super::conversation::content(
                 prefs,
                 panel.transcript_picker,
+                cx.window_layout_with("transcript-presets", |rect| chrome::preset_columns(rect[2]))
+                    .unwrap_or_else(|| chrome::preset_columns(s.window_size[0])),
                 &mut layers,
                 |s: &mut State, row| s.settings.web.transcript_picker = row,
                 |s: &mut State, row, mode| s.settings.shared.borrow_mut().set_transcript(row, mode),

@@ -57,6 +57,11 @@ fn launch(s: &mut crate::State, startup: Startup, anchor: Option<String>) {
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);
+    s.conversation_client_id = match &startup {
+        Startup::Bound(backend) => Some(backend.client_id.clone()),
+        Startup::Configured { .. } => None,
+    };
+    s.conversation_stream_connected = false;
     s.commands = Some(commands);
     let reading = match &startup {
         Startup::Bound(_) => {

@@ -117,6 +117,115 @@ fn managed_session_reply_classification_validates_id_and_token() {
 }
 
 #[test]
+fn renewal_pipe_ignores_unrelated_uuid_wakes_on_eof_and_skips_expired_writes() {
+    let id = "9d754f99-0b08-44d0-a99c-0d6c95229647";
+    let wrong_id = "11111111-2222-4333-8444-555555555555";
+    let token = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE";
+
+    // 1. Writer skips an already-expired or superseded renewal command without writing to stdin.
+    let (writer_tx, writer_rx) = mpsc::sync_channel::<Control>(4);
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let authority = Arc::new(AtomicU64::new(1));
+    let pending = Arc::new(Mutex::new(None::<PendingRenewal>));
+    let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
+    struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+    impl Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    writer_tx
+        .send(Control::RenewSession {
+            id: id.into(),
+            command: protocol::renew_command(id),
+            deadline: Instant::now() - Duration::from_millis(1),
+        })
+        .unwrap();
+    drop(writer_tx);
+    write_control_loop(
+        SharedBuf(captured.clone()),
+        writer_rx,
+        shutdown.clone(),
+        authority.clone(),
+        1,
+        pending.clone(),
+    );
+    assert!(
+        captured.lock().unwrap().is_empty(),
+        "expired or cleared renewal command must not be written to stdin"
+    );
+
+    // 2. Unrelated valid UUID is ignored; matching UUID resolves the pending wait.
+    let (writer_tx, writer_rx) = mpsc::sync_channel::<Control>(4);
+    let pending = Arc::new(Mutex::new(None::<PendingRenewal>));
+    let stdout_closed = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(AtomicBool::new(false));
+    let pending_reader = pending.clone();
+    let responder = thread::spawn(move || {
+        let Ok(Control::RenewSession { id: sent_id, .. }) = writer_rx.recv() else {
+            return;
+        };
+        assert_eq!(sent_id, id);
+        for line in [
+            format!("CODENOMAD_MANAGED_SESSION:{wrong_id} -"),
+            format!("CODENOMAD_MANAGED_SESSION:{id} {token}"),
+        ] {
+            if let protocol::Line::ManagedSession { id, session } = protocol::classify(&line) {
+                let mut guard = pending_reader.lock().unwrap();
+                if guard.as_ref().is_some_and(|req| req.id == id)
+                    && let Some(req) = guard.take()
+                {
+                    let _ = req.reply.try_send(session);
+                }
+            }
+        }
+    });
+    let outcome = request_managed_session(
+        &pending,
+        &writer_tx,
+        &stdout_closed,
+        &cancel,
+        || true,
+        id.into(),
+        Instant::now() + Duration::from_secs(2),
+    );
+    responder.join().unwrap();
+    assert_eq!(outcome, RenewalWait::Token(token.into()));
+
+    // 3. Stdout EOF wakes the pending renewal wait immediately with Denied.
+    let (writer_tx, writer_rx) = mpsc::sync_channel::<Control>(4);
+    let pending = Arc::new(Mutex::new(None::<PendingRenewal>));
+    let stdout_closed = Arc::new(AtomicBool::new(false));
+    let eof_flag = stdout_closed.clone();
+    let eof_pending = pending.clone();
+    let eof_thread = thread::spawn(move || {
+        let _ = writer_rx.recv();
+        eof_flag.store(true, Ordering::SeqCst);
+        eof_pending.lock().unwrap().take();
+    });
+    let started = Instant::now();
+    let outcome = request_managed_session(
+        &pending,
+        &writer_tx,
+        &stdout_closed,
+        &cancel,
+        || true,
+        id.into(),
+        Instant::now() + Duration::from_secs(3),
+    );
+    eof_thread.join().unwrap();
+    assert_eq!(outcome, RenewalWait::Denied);
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "stdout EOF must wake pending renewal without waiting for the 3s timeout"
+    );
+}
+
+#[test]
 fn trial_launch_has_explicit_isolated_profile_and_no_parent_secrets() {
     let root = fresh_root("config");
     let config =

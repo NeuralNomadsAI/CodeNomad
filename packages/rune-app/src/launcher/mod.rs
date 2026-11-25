@@ -20,7 +20,7 @@ use crate::{
     history::Result,
 };
 use codenomad_client::{Receiver, bounded, runtime::Instant};
-pub use connection::connect;
+pub use connection::{connect, refresh_projects};
 pub(crate) use placement::place;
 pub(crate) use projects::set_project;
 pub use projects::{choose_project, open, restore};
@@ -32,9 +32,10 @@ use sessions::attach;
 #[cfg(feature = "test-support")]
 pub use sessions::back;
 use sessions::{bind, dismiss_origin_panel, retire_session};
-pub(crate) use sessions::{bind_search, choose_destination};
+pub(crate) use sessions::{bind_search, choose_child_ticket, choose_destination};
 pub use sessions::{
-    can_change_session, can_visit, choose, close_session, create, create_blank, list, visit,
+    can_change_session, can_open_child_session, can_visit, choose, close_session, create,
+    create_blank, list, visit,
 };
 use std::{collections::HashSet, future::Future};
 pub(crate) use visits::Visits;
@@ -76,11 +77,17 @@ pub struct Launcher {
     detached_reconcile_trailing: bool,
     failed_detached_workspaces: HashSet<String>,
     pub(crate) rebind_after_send: Option<String>,
+    resume_after_job: bool,
+    connection_generation: u64,
+    pending_connection_generation: u64,
     selection_ticket: Option<u64>,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
     managed_renewal: Option<connection::ManagedRenewal>,
     managed_renewal_failed_for: Option<Backend>,
+    managed_renewal_attempts: u8,
+    pub(crate) projects_stale: bool,
+    projects_refresh: Option<(u64, Receiver<connection::ProjectsRefresh>)>,
     wake: rune::Waker,
 }
 enum Reply {
@@ -93,7 +100,7 @@ enum Reply {
     CreatePrecheckFailed,
     CreateRejected,
     CreateUncertainLinked(String),
-    Selected(Vec<String>, Option<Selection>, Option<u64>),
+    Selected(Vec<String>, Option<Selection>, Option<u64>, bool),
     #[cfg(target_arch = "wasm32")]
     Reopened(crate::workspace::opening::Opening, Backend, String, String),
     Placed(Backend, String, String, bool, bool),
@@ -203,11 +210,17 @@ impl Launcher {
             detached_reconcile_trailing: false,
             failed_detached_workspaces: HashSet::new(),
             rebind_after_send: None,
+            resume_after_job: false,
+            connection_generation: 0,
+            pending_connection_generation: 0,
             selection_ticket: None,
             boot,
             host: None,
             managed_renewal: None,
             managed_renewal_failed_for: None,
+            managed_renewal_attempts: 0,
+            projects_stale: false,
+            projects_refresh: None,
             wake,
         }
     }
@@ -226,6 +239,7 @@ impl Launcher {
             return;
         }
         self.pending = true;
+        self.pending_connection_generation = self.connection_generation;
         self.pending_stream_generation = self.workspace_stream_generation;
         self.stopped_during_pending.clear();
         self.stopped_during_pending_overflow = false;
@@ -564,7 +578,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         tx.instant();
         return true;
     }
+    if connection::poll_projects_refresh(s) {
+        relayed = true;
+    }
     let blocked = !can_change_session(s)
+        || s.screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required);
+    let child_blocked = !can_open_child_session(s)
         || s.screen
             .launcher()
             .is_some_and(|l| l.authentication_required);
@@ -582,6 +603,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.result = None;
     l.pending = false;
     l.listing = false;
+    let stale_connection = l.pending_connection_generation != l.connection_generation;
     let pending_stream_generation = l.pending_stream_generation;
     let stopped_during_pending = std::mem::take(&mut l.stopped_during_pending);
     let stopped_during_pending_overflow = std::mem::take(&mut l.stopped_during_pending_overflow);
@@ -589,6 +611,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         .take()
         .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
     {
+        if std::mem::take(&mut l.resume_after_job)
+            && !l.authentication_required
+            && l.project.is_none()
+        {
+            crate::workspace::resume(s, tx);
+        }
         tx.instant();
         return true;
     }
@@ -640,7 +668,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             crate::workspace::opened(s, &project);
             match restored {
                 Restored::Bound(backend, title, slug) if !auth_required && !stopped_in_flight => {
-                    bind(s, backend, title, None, &slug, tx);
+                    if stale_connection {
+                        choose_destination(s, backend.session, None, tx);
+                    } else {
+                        bind(s, backend, title, None, &slug, tx);
+                    }
                 }
                 Restored::Bound(_, _, _) if stopped_in_flight => {
                     crate::git::project_opened(s);
@@ -719,6 +751,19 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         },
                     );
                 }
+            } else if stale_connection {
+                let session_id = b.session;
+                if !l.sessions.iter().any(|row| row.id == session_id) {
+                    l.sessions.insert(
+                        0,
+                        Session {
+                            id: session_id.clone(),
+                            title,
+                        },
+                    );
+                }
+                l.rebind_after_send = None;
+                choose_destination(s, session_id, dismiss, tx);
             } else {
                 dismiss_origin_panel(s, dismiss, tx);
                 bind(s, b, title, None, &slug, tx);
@@ -778,7 +823,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 true,
             );
         }
-        Ok(Reply::Selected(missing, selection, dismiss)) => {
+        Ok(Reply::Selected(missing, selection, dismiss, allow_streaming)) => {
+            let selection_blocked = if allow_streaming {
+                child_blocked
+            } else {
+                blocked
+            };
             l.sessions.retain(|row| !missing.contains(&row.id));
             l.linked.rows.retain(|row| !missing.contains(&row.id));
             if let Some(pages) = &mut l.linked.pages {
@@ -805,14 +855,18 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 !auth_required
                     && !stopped_during_pending_overflow
                     && !stopped_during_pending.contains(&b.workspace)
-                    && (!blocked
+                    && (!selection_blocked
                         || s.phase == Phase::Failed
                             && selected.as_deref() == Some(b.session.as_str()))
             }) {
                 l.show_title = false;
-                dismiss_origin_panel(s, dismiss, tx);
-                bind(s, b, title, visit, &slug, tx);
-            } else if !blocked {
+                if stale_connection {
+                    choose_destination(s, b.session, dismiss, tx);
+                } else {
+                    dismiss_origin_panel(s, dismiss, tx);
+                    bind(s, b, title, visit, &slug, tx);
+                }
+            } else if !selection_blocked {
                 l.error = Some("sessionList.reload.error");
                 crate::shell::notifications::emit_outcome(
                     s,
@@ -825,7 +879,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         #[cfg(target_arch = "wasm32")]
         Ok(Reply::Reopened(opening, backend, title, slug)) => {
-            if !l.authentication_required {
+            if !l.authentication_required && !stale_connection {
                 let id = opening.project.id.clone();
                 l.failed_detached_workspaces.remove(&id);
                 let stopped_in_flight = stopped_during_pending.contains(&id);
@@ -886,7 +940,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         || crate::git::placement(s) != Some(slug.as_str())
                         || s.phase == Phase::Failed)
                 {
-                    bind(s, backend, title, None, &slug, tx);
+                    if stale_connection {
+                        choose_destination(s, backend.session, None, tx);
+                    } else {
+                        bind(s, backend, title, None, &slug, tx);
+                    }
                 }
             }
         }
@@ -904,43 +962,59 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 && !stopped_during_pending.contains(&backend.workspace)
                 && (crate::git::placement(s) != Some(slug.as_str()) || s.phase == Phase::Failed)
             {
-                bind(s, backend, title, None, &slug, tx);
+                if stale_connection {
+                    choose_destination(s, backend.session, None, tx);
+                } else {
+                    bind(s, backend, title, None, &slug, tx);
+                }
             }
         }
         Err(error) => {
-            let key = match error.to_string().as_str() {
-                "rune.connect_error" => "rune.connect_error",
-                "rune.list_error" => "rune.list_error",
-                "rune.create_error" => "rune.create_error",
-                "rune.restore_error" => "rune.restore_error",
-                "sessionList.reload.error" => "sessionList.reload.error",
-                "sessionList.worktreeMove.error" => "sessionList.worktreeMove.error",
-                _ => "rune.open_error",
-            };
-            if key == "rune.create_error" {
-                l.creation_uncertain = true;
-            }
-            l.error = Some(key);
-            if matches!(key, "rune.restore_error" | "rune.open_error") {
-                use crate::shell::notifications::{Category, emit_outcome};
-                emit_outcome(s, Category::Projects, None, crate::strings::t(key), true);
-            } else if matches!(key, "sessionList.reload.error" | "rune.create_error") {
-                crate::shell::notifications::emit_outcome(
-                    s,
-                    crate::shell::notifications::Category::Sessions,
-                    None,
-                    crate::strings::t(key),
-                    true,
-                );
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                if key == "rune.restore_error" && !s.screen.is_launcher() {
-                    s.phase = Phase::RestoreFailed;
+            if stale_connection && l.resume_after_job {
+                l.error = None;
+            } else {
+                let key = match error.to_string().as_str() {
+                    "rune.connect_error" => "rune.connect_error",
+                    "rune.list_error" => "rune.list_error",
+                    "rune.create_error" => "rune.create_error",
+                    "rune.restore_error" => "rune.restore_error",
+                    "sessionList.reload.error" => "sessionList.reload.error",
+                    "sessionList.worktreeMove.error" => "sessionList.worktreeMove.error",
+                    _ => "rune.open_error",
+                };
+                if key == "rune.create_error" {
+                    l.creation_uncertain = true;
                 }
-                crate::platform::pairing::observe(s);
+                l.error = Some(key);
+                if matches!(key, "rune.restore_error" | "rune.open_error") {
+                    use crate::shell::notifications::{Category, emit_outcome};
+                    emit_outcome(s, Category::Projects, None, crate::strings::t(key), true);
+                } else if matches!(key, "sessionList.reload.error" | "rune.create_error") {
+                    crate::shell::notifications::emit_outcome(
+                        s,
+                        crate::shell::notifications::Category::Sessions,
+                        None,
+                        crate::strings::t(key),
+                        true,
+                    );
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    if key == "rune.restore_error" && !s.screen.is_launcher() {
+                        s.phase = Phase::RestoreFailed;
+                    }
+                    crate::platform::pairing::observe(s);
+                }
             }
         }
+    }
+    if s.screen.launcher_mut().is_some_and(|l| {
+        !l.pending
+            && !l.authentication_required
+            && std::mem::take(&mut l.resume_after_job)
+            && l.project.is_none()
+    }) {
+        crate::workspace::resume(s, tx);
     }
     if let Some(l) = s.screen.launcher_mut()
         && !l.pending
@@ -976,12 +1050,17 @@ fn apply_connected(
     l.detached_reconcile_trailing = false;
     l.failed_detached_workspaces.clear();
     l.rebind_after_send = None;
+    l.resume_after_job = false;
     l.managed_renewal = None;
     l.managed_renewal_failed_for = None;
+    l.managed_renewal_attempts = 0;
+    l.projects_refresh = None;
+    l.connection_generation = l.connection_generation.wrapping_add(1);
     l.connection = Some(b);
     l.server_id = Some(server_id);
     if let Some(projects) = projects {
         l.projects = projects;
+        l.projects_stale = false;
     }
     l.password = TextEdit::new("");
     if reauthenticated {
@@ -1035,7 +1114,13 @@ fn apply_connected(
                 crate::git::project_opened(s);
                 crate::workspace::restore_files_mode(s);
             }
-            crate::workspace::resume(s, tx);
+            if job_pending {
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.resume_after_job = true;
+                }
+            } else {
+                crate::workspace::resume(s, tx);
+            }
         }
     } else {
         crate::workspace::resume(s, tx);

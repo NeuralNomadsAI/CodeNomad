@@ -110,9 +110,9 @@ pub(super) fn view<S: 'static>(
     let retry = shared.clone();
     col()
         .full_width()
-        .children(prefs.notifications_failed().then(|| {
+        .children(prefs.notifications_error().map(|error| {
             layout::action_row()
-                .child(text(t("settings.preferenceSaveFailed")).role("alert"))
+                .child(text(t(error)).role("alert"))
                 .child(layout::button(
                     t("sessionList.loadError.retry"),
                     !prefs.can_retry(),
