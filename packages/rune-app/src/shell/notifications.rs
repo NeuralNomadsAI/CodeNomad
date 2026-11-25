@@ -290,6 +290,9 @@ fn activate_notice(s: &mut State, target: Target) {
 
 pub(crate) fn focus_changed(s: &mut State, focused: bool, _: &mut Tx) {
     s.notifications.focused = focused;
+    if focused {
+        codenomad_client::stream::probe_stale();
+    }
 }
 
 fn deliver(s: &mut State, notice: Notice) {

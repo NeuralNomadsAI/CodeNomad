@@ -1,9 +1,14 @@
 //! Browser-owned EventSource. Recovery owns reconnect epochs and backoff.
-use super::limits::{FRAME_LIMIT, reread};
-use super::*;
+use super::{
+    limits::{FRAME_LIMIT, reread},
+    staleness::{ProbeSubscription, STALE_THRESHOLD, Watchdog},
+    *,
+};
 use std::{cell::Cell, rc::Rc};
 use wasm_bindgen::{JsCast, closure::Closure};
-use web_sys::{Event, EventSource, EventSourceInit, MessageEvent};
+use web_sys::{
+    Document, Event, EventSource, EventSourceInit, MessageEvent, VisibilityState, Window,
+};
 
 const BACKLOG_LIMIT: usize = 2 * FRAME_LIMIT;
 
@@ -13,12 +18,66 @@ enum Frame {
     Skipped,
     Closed,
 }
+struct WakeListeners {
+    window: Window,
+    online: Option<Closure<dyn FnMut(Event)>>,
+    document: Option<(Document, Closure<dyn FnMut(Event)>)>,
+}
+impl WakeListeners {
+    fn attach(probe: &Sender<()>) -> Option<Self> {
+        let window = web_sys::window()?;
+        let online_tx = probe.clone();
+        let online_cb: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
+            let _ = online_tx.try_send(());
+        });
+        let online = window
+            .add_event_listener_with_callback("online", online_cb.as_ref().unchecked_ref())
+            .is_ok()
+            .then_some(online_cb);
+        let document = window.document().and_then(|doc| {
+            let visible_tx = probe.clone();
+            let visible_doc = doc.clone();
+            let visible_cb: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
+                if visible_doc.visibility_state() == VisibilityState::Visible {
+                    let _ = visible_tx.try_send(());
+                }
+            });
+            doc.add_event_listener_with_callback(
+                "visibilitychange",
+                visible_cb.as_ref().unchecked_ref(),
+            )
+            .is_ok()
+            .then_some((doc, visible_cb))
+        });
+        Some(Self {
+            window,
+            online,
+            document,
+        })
+    }
+}
+impl Drop for WakeListeners {
+    fn drop(&mut self) {
+        if let Some(online) = &self.online {
+            let _ = self
+                .window
+                .remove_event_listener_with_callback("online", online.as_ref().unchecked_ref());
+        }
+        if let Some((document, visible)) = &self.document {
+            let _ = document.remove_event_listener_with_callback(
+                "visibilitychange",
+                visible.as_ref().unchecked_ref(),
+            );
+        }
+    }
+}
 struct Source {
     source: EventSource,
     _open: Closure<dyn FnMut(Event)>,
     _message: Closure<dyn FnMut(MessageEvent)>,
     ping: Closure<dyn FnMut(MessageEvent)>,
     _error: Closure<dyn FnMut(Event)>,
+    _wake: Option<WakeListeners>,
 }
 impl Drop for Source {
     fn drop(&mut self) {
@@ -50,6 +109,10 @@ pub(super) async fn read(
     let source = EventSource::new_with_event_source_init_dict(url.as_str(), &options)
         .map_err(|_| "browser event stream unavailable")?;
     let (tx, rx) = crate::bounded(128);
+    let (wake_tx, wake_rx) = crate::bounded(1);
+    let global_probe = ProbeSubscription::register();
+    let wake_listeners = WakeListeners::attach(&wake_tx);
+    let mut watchdog = Watchdog::new(STALE_THRESHOLD);
     let overflow = Rc::new(Cell::new(false));
     let queued_bytes = Rc::new(Cell::new(0usize));
     let quota = state.quota_ingress(b);
@@ -110,8 +173,9 @@ pub(super) async fn read(
     let tx_error = tx.clone();
     let fail_error = overflow.clone();
     let close_error = source.clone();
+    let quota_error = quota.clone();
     let on_error: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
-        if let Some(quota) = &quota {
+        if let Some(quota) = &quota_error {
             quota.transport(false);
         }
         close_error.close();
@@ -128,6 +192,7 @@ pub(super) async fn read(
         _message: on_message,
         ping,
         _error: on_error,
+        _wake: wake_listeners,
     };
     _source
         .source
@@ -143,16 +208,50 @@ pub(super) async fn read(
         if overflow.get() {
             return Err("browser event queue budget reached".into());
         }
-        match runtime::recv_timeout(&rx, Duration::from_millis(25)).await {
+        let frame = match rx.try_recv() {
+            Ok(frame) => Some(frame),
+            Err(_) => {
+                if watchdog.is_stale() {
+                    if let Some(quota) = &quota {
+                        quota.transport(false);
+                    }
+                    return Err("browser event stream stale".into());
+                }
+                futures_lite::future::race(
+                    async { rx.recv().await.ok() },
+                    futures_lite::future::race(
+                        async {
+                            futures_lite::future::race(
+                                async {
+                                    let _ = wake_rx.recv().await;
+                                },
+                                global_probe.wait(),
+                            )
+                            .await;
+                            None
+                        },
+                        async {
+                            runtime::sleep(Duration::from_millis(25)).await;
+                            None
+                        },
+                    ),
+                )
+                .await
+            }
+        };
+        match frame {
             Some(Frame::Open) => {
+                watchdog.activity();
                 b.client.children().invalidate_all(b);
                 opened(epoch, out, state).await?;
             }
             Some(Frame::Data(kind, data)) => {
+                watchdog.activity();
                 queued_bytes.set(queued_bytes.get() - data.len());
                 dispatch(b, epoch, out, state, &connection, &kind, &data).await?
             }
             Some(Frame::Skipped) => {
+                watchdog.activity();
                 b.client.children().invalidate_all(b);
                 reread(epoch, out, state).await?;
             }
