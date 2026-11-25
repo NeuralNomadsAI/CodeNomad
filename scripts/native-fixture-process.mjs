@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {execFile} from 'node:child_process'
 import {existsSync,lstatSync} from 'node:fs'
-import {readdir,readFile,readlink} from 'node:fs/promises'
+import {readdir,readFile,readlink,realpath} from 'node:fs/promises'
 import path from 'node:path'
 import {promisify} from 'node:util'
 
@@ -9,10 +9,13 @@ const execFileAsync=promisify(execFile)
 
 const SELF_STARTED_MS=Math.floor(Date.now()-process.uptime()*1000)
 const SELF_START_ID=`self-${process.pid}-${SELF_STARTED_MS}`
-const WINDOWS_EPOCH_OFFSET_TICKS=621355968000000000n
+const WINDOWS_EPOCH_OFFSET_MS=62135596800000n
 const SELF_CREATED_AT=process.platform==='win32'
-  ?BigInt(SELF_STARTED_MS-2000)*10000n+WINDOWS_EPOCH_OFFSET_TICKS
+  ?BigInt(SELF_STARTED_MS-2000)+WINDOWS_EPOCH_OFFSET_MS
   :BigInt(SELF_STARTED_MS-2000)
+
+const identityCache=new Map()
+const inFlightIdentity=new Map()
 
 const system32Dir=()=>{
   const systemRoot=process.env.SystemRoot||process.env.WINDIR||'C:\\Windows'
@@ -49,85 +52,146 @@ export function pidAlive(pid){
   try{process.kill(pid,0);return true}catch(error){return error.code==='EPERM'}
 }
 
-export async function processIdentityOf(pid){
-  if(!Number.isSafeInteger(pid)||pid<=0||!pidAlive(pid))return null
-  if(process.platform==='linux'){
-    try{
-      const statText=await readFile(`/proc/${pid}/stat`,'utf8')
-      const closeParen=statText.lastIndexOf(')')
-      if(closeParen<0)return null
-      const fields=statText.slice(closeParen+2).trim().split(/\s+/)
-      const ppid=Number(fields[1])
-      const startId=fields[19]
-      if(!Number.isSafeInteger(ppid)||ppid<=0||!startId||!/^\d+$/.test(startId))return null
-      return {ppid,startId,createdAt:BigInt(startId)}
-    }catch{return null}
+export async function probeProcessIdentity(pid,{refresh=false}={}){
+  if(!Number.isSafeInteger(pid)||pid<=0||!pidAlive(pid)){
+    identityCache.delete(pid)
+    return {status:'dead',identity:null}
   }
   if(pid===process.pid){
-    return {ppid:process.ppid,startId:SELF_START_ID,createdAt:SELF_CREATED_AT}
+    return {status:'ok',identity:{ppid:process.ppid,startId:SELF_START_ID,createdAt:SELF_CREATED_AT}}
   }
-  if(process.platform==='win32'){
-    const powershell=powershellBin()
-    if(!powershell)return null
+  if(!refresh&&identityCache.has(pid)){
+    return {status:'ok',identity:identityCache.get(pid)}
+  }
+  if(inFlightIdentity.has(pid)){
+    return inFlightIdentity.get(pid)
+  }
+  const task=(async()=>{
+    if(process.platform==='linux'){
+      try{
+        const statText=await readFile(`/proc/${pid}/stat`,'utf8')
+        const closeParen=statText.lastIndexOf(')')
+        if(closeParen<0)return {status:pidAlive(pid)?'unknown':'dead',identity:null}
+        const fields=statText.slice(closeParen+2).trim().split(/\s+/)
+        const ppid=Number(fields[1])
+        const startId=fields[19]
+        if(!Number.isSafeInteger(ppid)||ppid<=0||!startId||!/^\d+$/.test(startId)){
+          return {status:pidAlive(pid)?'unknown':'dead',identity:null}
+        }
+        const identity={ppid,startId,createdAt:BigInt(startId)}
+        identityCache.set(pid,identity)
+        return {status:'ok',identity}
+      }catch(error){
+        if(error?.code==='ENOENT'||!pidAlive(pid)){
+          identityCache.delete(pid)
+          return {status:'dead',identity:null}
+        }
+        return {status:'unknown',identity:null}
+      }
+    }
+    if(process.platform==='win32'){
+      const powershell=powershellBin()
+      if(!powershell)return {status:'unknown',identity:null}
+      try{
+        // Query Win32 process start time directly via .NET Process (no WMI/CIM overhead).
+        const {stdout}=await execFileAsync(powershell,['-NoProfile','-NonInteractive','-Command',`try{$p=[Diagnostics.Process]::GetProcessById(${pid});[int64]($p.StartTime.ToUniversalTime().Ticks/10000)}catch{}`],{timeout:15000,windowsHide:true})
+        const startId=stdout.trim()
+        if(!startId||!/^\d+$/.test(startId)){
+          if(!pidAlive(pid)){identityCache.delete(pid);return {status:'dead',identity:null}}
+          return {status:'unknown',identity:null}
+        }
+        const identity={ppid:null,startId,createdAt:BigInt(startId)}
+        identityCache.set(pid,identity)
+        return {status:'ok',identity}
+      }catch{
+        if(!pidAlive(pid)){identityCache.delete(pid);return {status:'dead',identity:null}}
+        return {status:'unknown',identity:null}
+      }
+    }
+    const psBin=psSystemBin()
+    if(!psBin)return {status:'unknown',identity:null}
     try{
-      const {stdout}=await execFileAsync(powershell,['-NoProfile','-NonInteractive','-Command',`$p=Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}'; if($p -and $p.CreationDate){"$($p.ParentProcessId)|$($p.CreationDate.ToUniversalTime().Ticks)"}`],{timeout:5000,windowsHide:true})
-      const [rawPpid,startId]=stdout.trim().split('|')
-      const ppid=Number(rawPpid)
-      if(!Number.isSafeInteger(ppid)||ppid<=0||!startId||!/^\d+$/.test(startId))return null
-      return {ppid,startId,createdAt:BigInt(startId)}
-    }catch{return null}
-  }
-  const psBin=psSystemBin()
-  if(!psBin)return null
-  try{
-    const {stdout}=await execFileAsync(psBin,['-o','ppid=,lstart=','-p',String(pid)],{env:{LC_ALL:'C'},timeout:5000})
-    const trimmed=stdout.trim()
-    const match=/^(\d+)\s+(.+)$/.exec(trimmed)
-    if(!match)return null
-    const ppid=Number(match[1])
-    const startId=match[2].trim()
-    const parsed=Date.parse(startId)
-    if(!Number.isSafeInteger(ppid)||ppid<=0||!startId||!Number.isFinite(parsed))return null
-    return {ppid,startId,createdAt:BigInt(parsed)}
-  }catch{return null}
+      const {stdout}=await execFileAsync(psBin,['-o','ppid=,lstart=','-p',String(pid)],{env:{LC_ALL:'C'},timeout:15000})
+      const trimmed=stdout.trim()
+      const match=/^(\d+)\s+(.+)$/.exec(trimmed)
+      if(!match){
+        if(!pidAlive(pid)){identityCache.delete(pid);return {status:'dead',identity:null}}
+        return {status:'unknown',identity:null}
+      }
+      const ppid=Number(match[1])
+      const startId=match[2].trim()
+      const parsed=Date.parse(startId)
+      if(!Number.isSafeInteger(ppid)||ppid<=0||!startId||!Number.isFinite(parsed)){
+        return {status:pidAlive(pid)?'unknown':'dead',identity:null}
+      }
+      const identity={ppid,startId,createdAt:BigInt(parsed)}
+      identityCache.set(pid,identity)
+      return {status:'ok',identity}
+    }catch{
+      if(!pidAlive(pid)){identityCache.delete(pid);return {status:'dead',identity:null}}
+      return {status:'unknown',identity:null}
+    }
+  })()
+  inFlightIdentity.set(pid,task)
+  try{return await task}finally{inFlightIdentity.delete(pid)}
 }
 
+export async function processIdentityOf(pid,{refresh=false}={}){
+  const res=await probeProcessIdentity(pid,{refresh})
+  return res.status==='ok'?res.identity:null
+}
+
+let inFlightTable=null
+
 async function processTableSnapshot(){
-  if(process.platform==='win32'){
-    const powershell=powershellBin()
-    if(!powershell)return null
+  if(inFlightTable)return inFlightTable
+  const task=(async()=>{
+    if(process.platform==='win32'){
+      const powershell=powershellBin()
+      if(!powershell)return null
+      try{
+        const {stdout}=await execFileAsync(powershell,['-NoProfile','-NonInteractive','-Command','Get-CimInstance Win32_Process | ForEach-Object { if ($_.CreationDate) { "$($_.ProcessId)|$($_.ParentProcessId)|$([int64]($_.CreationDate.ToUniversalTime().Ticks/10000))|$($_.CommandLine -replace \'[\\r\\n]+\',\' \')" } }'],{timeout:15000,windowsHide:true,maxBuffer:16*1024*1024})
+        const table=new Map()
+        for(const line of stdout.split(/\r?\n/)){
+          const first=line.indexOf('|')
+          if(first<0)continue
+          const second=line.indexOf('|',first+1)
+          if(second<0)continue
+          const third=line.indexOf('|',second+1)
+          if(third<0)continue
+          const pid=Number(line.slice(0,first).trim())
+          const ppid=Number(line.slice(first+1,second).trim())
+          const startId=line.slice(second+1,third).trim()
+          const commandLine=line.slice(third+1)
+          if(Number.isSafeInteger(pid)&&pid>0&&Number.isSafeInteger(ppid)&&ppid>=0&&startId&&/^\d+$/.test(startId)){
+            table.set(pid,{ppid,startId,createdAt:BigInt(startId),commandLine})
+          }
+        }
+        return table.size>0?table:null
+      }catch{return null}
+    }
+    const psBin=psSystemBin()
+    if(!psBin)return null
     try{
-      const {stdout}=await execFileAsync(powershell,['-NoProfile','-NonInteractive','-Command','Get-CimInstance Win32_Process | ForEach-Object { if ($_.CreationDate) { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.CreationDate.ToUniversalTime().Ticks)" } }'],{timeout:8000,windowsHide:true,maxBuffer:8*1024*1024})
+      const {stdout}=await execFileAsync(psBin,['-ax','-o','pid=,ppid=,lstart='],{env:{LC_ALL:'C'},timeout:8000,maxBuffer:8*1024*1024})
       const table=new Map()
       for(const line of stdout.split(/\r?\n/)){
-        const [rawPid,rawPpid,startId]=line.trim().split('|')
-        const pid=Number(rawPid),ppid=Number(rawPpid)
-        if(Number.isSafeInteger(pid)&&pid>0&&Number.isSafeInteger(ppid)&&ppid>=0&&startId&&/^\d+$/.test(startId)){
-          table.set(pid,{ppid,startId,createdAt:BigInt(startId)})
+        const match=/^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
+        if(!match)continue
+        const pid=Number(match[1]),ppid=Number(match[2]),startId=match[3].trim()
+        const parsed=Date.parse(startId)
+        if(Number.isSafeInteger(pid)&&pid>0&&Number.isSafeInteger(ppid)&&ppid>=0&&startId&&Number.isFinite(parsed)){
+          table.set(pid,{ppid,startId,createdAt:BigInt(parsed)})
         }
       }
       return table.size>0?table:null
     }catch{return null}
-  }
-  const psBin=psSystemBin()
-  if(!psBin)return null
-  try{
-    const {stdout}=await execFileAsync(psBin,['-ax','-o','pid=,ppid=,lstart='],{env:{LC_ALL:'C'},timeout:8000,maxBuffer:8*1024*1024})
-    const table=new Map()
-    for(const line of stdout.split(/\r?\n/)){
-      const match=/^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
-      if(!match)continue
-      const pid=Number(match[1]),ppid=Number(match[2]),startId=match[3].trim()
-      const parsed=Date.parse(startId)
-      if(Number.isSafeInteger(pid)&&pid>0&&Number.isSafeInteger(ppid)&&ppid>=0&&startId&&Number.isFinite(parsed)){
-        table.set(pid,{ppid,startId,createdAt:BigInt(parsed)})
-      }
-    }
-    return table.size>0?table:null
-  }catch{return null}
+  })()
+  inFlightTable=task
+  try{return await task}finally{if(inFlightTable===task)inFlightTable=null}
 }
 
-export async function isPidInOwnedTree(peerPid,rootPid,expectedRootStartId){
+export async function isPidInOwnedTree(peerPid,rootPid,expectedRootStartId,maxDepth=8){
   if(!Number.isSafeInteger(peerPid)||peerPid<=0||!Number.isSafeInteger(rootPid)||rootPid<=0)return null
   if(peerPid===rootPid){
     const peerInfo=await processIdentityOf(peerPid)
@@ -147,7 +211,7 @@ export async function isPidInOwnedTree(peerPid,rootPid,expectedRootStartId){
   if(!peerInfo)return null
   const visited=new Set([peerPid])
   let childInfo=peerInfo
-  for(let depth=0;depth<8;depth++){
+  for(let depth=0;depth<maxDepth;depth++){
     const parentPid=childInfo.ppid
     if(!Number.isSafeInteger(parentPid)||parentPid<=1||visited.has(parentPid))return null
     const parentInfo=await lookup(parentPid)
@@ -163,6 +227,63 @@ export async function isPidInOwnedTree(peerPid,rootPid,expectedRootStartId){
     childInfo=parentInfo
   }
   return null
+}
+
+async function processCommandLineOf(pid,table){
+  if(process.platform==='linux'){
+    try{
+      const raw=await readFile(`/proc/${pid}/cmdline`,'utf8')
+      return raw.split('\0').filter(Boolean).join(' ')
+    }catch{return null}
+  }
+  if(process.platform==='win32'){
+    const snap=table??await processTableSnapshot()
+    const entry=snap?.get(pid)
+    return typeof entry?.commandLine==='string'&&entry.commandLine.length>0?entry.commandLine:null
+  }
+  const psBin=psSystemBin()
+  if(!psBin)return null
+  try{
+    const {stdout}=await execFileAsync(psBin,['-ww','-o','command=','-p',String(pid)],{env:{LC_ALL:'C'},timeout:8000})
+    const trimmed=stdout.trim()
+    return trimmed.length>0?trimmed:null
+  }catch{return null}
+}
+
+export async function verifyPrivateFixtureServer({targetPid,launcherPid,profile,maxDepth=2}){
+  assert(Number.isSafeInteger(targetPid)&&targetPid>0,'Private fixture target PID required')
+  assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Private fixture launcher PID required')
+  assert(typeof profile==='string'&&profile.length>0,'Private fixture profile path required')
+  const profileReal=await realpath(profile)
+  const table=process.platform==='linux'?null:await processTableSnapshot()
+  const lookup=process.platform==='linux'?processIdentityOf:pid=>Promise.resolve(table?.get(pid)??null)
+  const inTree=async(peerPid)=>{
+    if(peerPid===launcherPid)return Boolean(await lookup(peerPid))
+    const peerInfo=await lookup(peerPid)
+    if(!peerInfo)return false
+    const visited=new Set([peerPid])
+    let childInfo=peerInfo
+    for(let depth=0;depth<maxDepth;depth++){
+      const parentPid=childInfo.ppid
+      if(!Number.isSafeInteger(parentPid)||parentPid<=1||visited.has(parentPid))return false
+      const parentInfo=await lookup(parentPid)
+      if(!parentInfo)return false
+      if(parentInfo.createdAt>childInfo.createdAt)return false
+      if(parentPid===launcherPid)return true
+      visited.add(parentPid)
+      childInfo=parentInfo
+    }
+    return false
+  }
+  assert(await inTree(process.pid),`Fixture runner PID ${process.pid} is not a direct descendant of launcher PID ${launcherPid}`)
+  assert(await inTree(targetPid),`Target server PID ${targetPid} was not launched by private fixture launcher PID ${launcherPid}`)
+  const commandLine=await processCommandLineOf(targetPid,table)
+  assert(typeof commandLine==='string'&&commandLine.length>0,`Unable to inspect OS command line of target server PID ${targetPid}`)
+  const normalize=value=>process.platform==='win32'?value.replace(/\\/g,'/').toLowerCase():value
+  const cmdNorm=normalize(commandLine)
+  const expected=[normalize(profileReal),normalize(path.resolve(profile))]
+  assert(expected.some(candidate=>cmdNorm.includes(candidate)),
+    `Target server PID ${targetPid} command line is not scoped to private fixture profile ${profileReal}`)
 }
 
 export async function verifyLoopbackListenerOwner(port,pid,forbidden='the shared OpenCode service is forbidden'){
@@ -358,22 +479,32 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
           for(const rootPid of [...socketsByPid.keys()]){
             const allowed=allowedEntries.get(rootPid)
             if(!allowed||allowed.tokens.size===0||!allowed.startId||!pidAlive(rootPid)){
-              allowedEntries.delete(rootPid);destroyPidSockets(rootPid);continue
+              allowedEntries.delete(rootPid);identityCache.delete(rootPid);destroyPidSockets(rootPid);continue
             }
-            const info=await processIdentityOf(rootPid).catch(()=>null)
-            if(!info||info.startId!==allowed.startId){
-              allowedEntries.delete(rootPid);destroyPidSockets(rootPid)
+            // Avoid spawning PowerShell/ps every 500ms; only Linux /proc is cheap enough to re-read live.
+            // A probe timeout returns 'unknown' (keep and recheck later), never banning a live PID.
+            if(process.platform==='linux'){
+              const res=await probeProcessIdentity(rootPid,{refresh:true})
+              if(res.status==='dead'||(res.status==='ok'&&res.identity.startId!==allowed.startId)){
+                allowedEntries.delete(rootPid);destroyPidSockets(rootPid)
+              }
             }
           }
           for(const [peerPid,entry] of [...descendantEntries.entries()]){
             const rootAllowed=allowedEntries.get(entry.rootPid)
-            if(!isAllowed(entry.rootPid)||!pidAlive(peerPid)){destroyDescendant(peerPid);continue}
-            const rootInfo=await processIdentityOf(entry.rootPid).catch(()=>null)
-            if(!rootInfo||rootInfo.startId!==rootAllowed.startId){
-              allowedEntries.delete(entry.rootPid);destroyPidSockets(entry.rootPid);continue
+            if(!isAllowed(entry.rootPid)||!pidAlive(peerPid)){
+              identityCache.delete(peerPid);destroyDescendant(peerPid);continue
             }
-            const currentStart=await isPidInOwnedTree(peerPid,entry.rootPid,rootAllowed.startId).catch(()=>null)
-            if(!currentStart||currentStart!==entry.startId)destroyDescendant(peerPid)
+            if(process.platform==='linux'){
+              const rootRes=await probeProcessIdentity(entry.rootPid,{refresh:true})
+              if(rootRes.status==='dead'||(rootRes.status==='ok'&&rootRes.identity.startId!==rootAllowed.startId)){
+                allowedEntries.delete(entry.rootPid);destroyPidSockets(entry.rootPid);continue
+              }
+              const peerRes=await probeProcessIdentity(peerPid,{refresh:true})
+              if(peerRes.status==='dead'||(peerRes.status==='ok'&&peerRes.identity.startId!==entry.startId)){
+                destroyDescendant(peerPid)
+              }
+            }
           }
         }finally{sweeping=false;stopSweepIfIdle()}
       })()
@@ -421,7 +552,13 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
     }
     const task=Promise.resolve(pidOrPromise).then(async resolved=>{
       if(closed||revoked||!Number.isSafeInteger(resolved)||resolved<=0)return
-      const info=await processIdentityOf(resolved).catch(()=>null)
+      let info=null
+      for(let attempt=0;attempt<3;attempt++){
+        const res=await probeProcessIdentity(resolved)
+        if(res.status==='ok'){info=res.identity;break}
+        if(res.status==='dead'||closed||revoked)return
+        if(attempt<2)await new Promise(resolve=>setTimeout(resolve,100))
+      }
       if(closed||revoked||!info?.startId||!pidAlive(resolved))return
       resolvedPid=resolved
       let entry=allowedEntries.get(resolved)
@@ -466,11 +603,22 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
           for(const rootPid of candidates){
             const rootEntry=allowedEntries.get(rootPid)
             if(!rootEntry?.startId)continue
-            const rootInfo=await processIdentityOf(rootPid).catch(()=>null)
-            if(!rootInfo||rootInfo.startId!==rootEntry.startId){
+            const rootRes=await probeProcessIdentity(rootPid)
+            if(rootRes.status==='dead'||(rootRes.status==='ok'&&rootRes.identity.startId!==rootEntry.startId)){
               allowedEntries.delete(rootPid);destroyPidSockets(rootPid);continue
             }
-            const startId=await isPidInOwnedTree(peerPid,rootPid,rootEntry.startId)
+            if(rootRes.status==='unknown')continue
+            const cachedDesc=descendantEntries.get(peerPid)
+            let startId=null
+            if(cachedDesc&&cachedDesc.rootPid===rootPid&&pidAlive(peerPid)){
+              const peerRes=await probeProcessIdentity(peerPid)
+              if(peerRes.status==='ok'&&peerRes.identity.startId===cachedDesc.startId){
+                startId=cachedDesc.startId
+              }
+            }
+            if(!startId){
+              startId=await isPidInOwnedTree(peerPid,rootPid,rootEntry.startId)
+            }
             if(startId&&isAllowed(rootPid)&&!socket.destroyed){
               if(peerPid===rootPid&&rootEntry.startId!==startId)continue
               attestedSockets.set(socket,{rootPid,rootStartId:rootEntry.startId,peerPid,startId})
@@ -486,10 +634,11 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
           if(socket.destroyed||!isAllowed(matchedPid))return false
           const rootEntry=allowedEntries.get(matchedPid)
           if(!rootEntry?.startId)return false
-          const info=await processIdentityOf(matchedPid).catch(()=>null)
-          if(!info||info.startId!==rootEntry.startId){
+          const res=await probeProcessIdentity(matchedPid)
+          if(res.status==='dead'||(res.status==='ok'&&res.identity.startId!==rootEntry.startId)){
             allowedEntries.delete(matchedPid);destroyPidSockets(matchedPid);return false
           }
+          if(res.status==='unknown')return false
           attestedSockets.set(socket,{rootPid:matchedPid,rootStartId:rootEntry.startId,peerPid:matchedPid,startId:rootEntry.startId})
           trackSocket(matchedPid,matchedPid,rootEntry.startId,socket)
           return true

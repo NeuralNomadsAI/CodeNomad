@@ -6,7 +6,7 @@ import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
 import {args,requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
-import {createAttestedFetch,createAttestedRelay} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedRelay,RELAY_PLACEHOLDER_PASSWORD} from '../../../scripts/native-fixture-http.mjs'
 import {prepareRealHistory} from './real-history-prepare.mjs'
 import {seedRealHistory} from './real-history-seed.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
@@ -37,7 +37,7 @@ try{
   const origin=await server.ready(rustOrigin)
   const rustPid=await server.pid()
   rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
-  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true})
+  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true,substitutePassword:rustPassword,isolateSessionCookie:true})
   const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:rustPassword}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const call=(route,init={})=>rustFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
@@ -85,7 +85,7 @@ try{
     }
   })()
   await save();await writeFile(path.join(profile,'session.json'),JSON.stringify({profile,directory,sourceID:source.id,longID:fork.id,longTitle,newTitle}))
-  child=launchFixture(clientBinary,[],{cwd:profile,redact:[native.password,rustPassword],env:{...native.runtimeEnv,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:rustPassword,RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
+  child=launchFixture(clientBinary,[],{cwd:profile,redact:[native.password,rustPassword],env:{...native.runtimeEnv,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
   rustRelay.allowClientPid(child.pid(),child.closed)
   let stderrBuffer=''
   child.child.stderr.on('data',d=>{

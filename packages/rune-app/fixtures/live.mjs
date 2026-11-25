@@ -7,7 +7,7 @@ import path from 'node:path'
 import {prepareLive} from './live-session.mjs'
 import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
-import {createAttestedFetch,createAttestedRelay} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedRelay,RELAY_PLACEHOLDER_PASSWORD} from '../../../scripts/native-fixture-http.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
 const existing=args.indexOf('--reuse')
@@ -30,7 +30,7 @@ try {
   const origin=await server.ready(rustOrigin)
   const rustPid=await server.pid()
   rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
-  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true})
+  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true,substitutePassword:rustPassword,isolateSessionCookie:true})
   const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:rustPassword}),signal:AbortSignal.timeout(15000)})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
@@ -74,7 +74,7 @@ try {
   console.log(JSON.stringify({type:'RUNE_LIVE_READY',profile,project,sessionID,workspace:workspace.id,tools:'deny-all'}))
   child=launchFixture(clientBinary,[],{cwd:profile,redact:[live.password,rustPassword],
     env:{...live.runtimeEnv,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:sessionID,
-      RUNE_PASSWORD:rustPassword,RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:'1',RUNE_LIVE_TITLE:'1'}})
+      RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:'1',RUNE_LIVE_TITLE:'1'}})
   rustRelay.allowClientPid(child.pid(),child.closed)
   console.log(JSON.stringify({type:'RUNE_LIVE_WINDOW',pid:await child.pid()}))
   assert.equal(await child.closed,0,child.output())

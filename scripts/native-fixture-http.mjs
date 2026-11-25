@@ -12,10 +12,12 @@ import {
   createClientPidGate,
   isPidInOwnedTree,
   pidAlive,
+  probeProcessIdentity,
   processIdentityOf,
   resolveLoopbackPeerPid,
   verifyLoopbackConnectionPeer,
   verifyLoopbackListenerOwner,
+  verifyPrivateFixtureServer,
 } from './native-fixture-process.mjs'
 
 export {
@@ -23,10 +25,12 @@ export {
   createClientPidGate,
   isPidInOwnedTree,
   pidAlive,
+  probeProcessIdentity,
   processIdentityOf,
   resolveLoopbackPeerPid,
   verifyLoopbackConnectionPeer,
   verifyLoopbackListenerOwner,
+  verifyPrivateFixtureServer,
 }
 
 const repoRoot=path.resolve(fileURLToPath(new URL('..',import.meta.url)))
@@ -44,11 +48,26 @@ function packageNameOf(specifier){
   return specifier.startsWith('@')?parts.slice(0,2).join('/'):parts[0]
 }
 
-function sameLockfile(dirA,dirB){
-  const lockA=path.join(dirA,'package-lock.json'),lockB=path.join(dirB,'package-lock.json')
-  if(!existsSync(lockA)||!existsSync(lockB))return false
+function sameWorktreeRepoAndManifests(dirA,dirB){
   const hash=file=>createHash('sha256').update(readFileSync(file)).digest('hex')
-  return hash(lockA)===hash(lockB)
+  for(const rel of ['package-lock.json','package.json',path.join('packages','server','package.json')]){
+    const fileA=path.join(dirA,rel),fileB=path.join(dirB,rel)
+    if(!existsSync(fileA)||!existsSync(fileB)||hash(fileA)!==hash(fileB))return false
+  }
+  const commonGitDir=dir=>{
+    const dotGit=path.join(dir,'.git')
+    if(!existsSync(dotGit))return null
+    const raw=readFileSync(dotGit,'utf8').trim()
+    const match=/^gitdir:\s*(.+)$/i.exec(raw)
+    if(!match)return null
+    const resolved=realpathSync(path.resolve(dir,match[1].trim()))
+    const parent=path.dirname(resolved)
+    return path.basename(parent)==='worktrees'?path.dirname(parent):null
+  }
+  try{
+    const gitA=commonGitDir(dirA),gitB=commonGitDir(dirB)
+    return Boolean(gitA&&gitB&&gitA===gitB)
+  }catch{return false}
 }
 
 export const RELAY_PLACEHOLDER_PASSWORD='attested-loopback-relay'
@@ -122,7 +141,7 @@ export function worktreeDependencyRoots(nodeModulesDir=worktreeNodeModules){
     && path.basename(path.dirname(worktreesDir))==='.codenomad'
     && path.basename(rootReal)==='node_modules'
     && path.dirname(path.dirname(rootReal))===worktreesDir
-    && sameLockfile(repoRootReal,path.dirname(rootReal))
+    && sameWorktreeRepoAndManifests(repoRootReal,path.dirname(rootReal))
   assert(inWorktree||inLockMatchedSibling,
     `node_modules resolved outside repository boundary: ${rootReal}`)
   return {repoRootReal,nodeModulesReal:rootReal}
@@ -562,7 +581,7 @@ export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verif
   }=opts
   assert(Number.isSafeInteger(port)&&port>0&&port<=65535,'Invalid loopback port for TCP relay')
   assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID for TCP relay')
-  let closed=false,relayPort=0
+  let closed=false,relayPort=0,currentPid=pid
   const sockets=new Set()
   const clientGate=createClientPidGate(()=>relayPort,verifyPeer)
   for(const clientPid of allowedClientPids)clientGate.allow(clientPid)
@@ -577,18 +596,19 @@ export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verif
     const gate=requireClientAttestation?clientGate.verify(client):Promise.resolve(true)
     gate.then(allowed=>{
       if(!allowed||closed||client.destroyed){client.destroy();return}
-      return verifyOwner(port,pid).then(()=>{
-        if(closed||client.destroyed){client.destroy();return}
+      const targetPid=currentPid
+      return verifyOwner(port,targetPid).then(()=>{
+        if(closed||client.destroyed||currentPid!==targetPid){client.destroy();return}
         upstream=net.createConnection({host:'127.0.0.1',port})
         sockets.add(upstream)
         upstream.once('close',()=>{sockets.delete(upstream);client.destroy()})
         upstream.once('error',teardown)
         upstream.once('connect',()=>{
-          if(closed||client.destroyed||upstream.destroyed||!upstream.localPort){
+          if(closed||client.destroyed||upstream.destroyed||!upstream.localPort||currentPid!==targetPid){
             teardown();return
           }
-          attestPeerWithRetry(upstream.localPort,port,pid,verifyPeer,()=>closed||client.destroyed||upstream.destroyed).then(()=>{
-            if(closed||client.destroyed||upstream.destroyed){teardown();return}
+          attestPeerWithRetry(upstream.localPort,port,targetPid,verifyPeer,()=>closed||client.destroyed||upstream.destroyed||currentPid!==targetPid).then(()=>{
+            if(closed||client.destroyed||upstream.destroyed||currentPid!==targetPid){teardown();return}
             client.pipe(upstream)
             upstream.pipe(client)
             client.resume()
@@ -602,6 +622,12 @@ export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verif
   return {
     port:relayPort,
     allowClientPid:clientGate.allow,
+    setTargetPid(nextPid){
+      assert(Number.isSafeInteger(nextPid)&&nextPid>0,'Invalid fixture target PID')
+      currentPid=nextPid
+      for(const s of [...sockets]){try{s.destroy()}catch{}}
+      sockets.clear()
+    },
     close:()=>{
       closed=true
       clientGate.close()

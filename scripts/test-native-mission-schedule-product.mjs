@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite"
 import { setTimeout as delay } from "node:timers/promises"
 import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
-import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, hardKillFixtureChild, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 import { createAttestedFetch, createAttestedRelay, RELAY_PLACEHOLDER_PASSWORD, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
 import { collectColdFailure } from "./native-fixture-cold-diagnostics.mjs"
@@ -670,8 +670,9 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       await save("before-pending-crash", beforeCrash)
       const killedPID = await fixtureChildPid(child), owned = children.find(entry => entry.child === child)
       assert(Number.isSafeInteger(killedPID) && killedPID > 0, "Expected owned child PID before hard kill")
+      await hardKillFixtureChild(child, owned.closed)
       await attestedFetch?.close().catch(() => {}); attestedFetch = undefined
-      process.kill(killedPID, "SIGKILL"); await owned.closed; client = undefined; endpoint = undefined
+      client = undefined; endpoint = undefined
       for (const deadline = Date.now() + 5000; providerOpen.size > 0;) { assert(Date.now() < deadline, "Killed provider connection did not close"); await delay(10) }
       assert(!reportedInputs.has(pending.messageID), "The disconnected original HTTP handler must not emit a report")
       const afterKill = snapshot(id)

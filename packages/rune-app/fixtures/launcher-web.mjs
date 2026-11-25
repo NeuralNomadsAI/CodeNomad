@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises'
 import {chromium} from 'playwright'
 import path from 'node:path'
 import {spawnFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {createAttestedTcpRelay} from '../../../scripts/native-fixture-http.mjs'
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 import {serverBinary} from './fixture-binaries.mjs'
@@ -44,20 +45,23 @@ export async function launchWeb({
   state.staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,backend:ts?'ts':'rust',serverBinary:ts?.args[0]??serverBinary,ui:solid||ui,paired}
 
   const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
-  const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
+  const args=webAndroid
+    ?[uiOrigin,profile,project,ui,String(serverPid),String(process.pid)]
+    :['--url',`${uiOrigin}/`,...(Number.isSafeInteger(serverPid)&&serverPid>0?['--target-pid',String(serverPid)]:[]),'--launcher-pid',String(process.pid),...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
   if(webTimeline)args.push(webTouchHistory?'--touch-history':'--timeline')
   if(webSearch)args.push('--history-search')
   if(webOutline)args.push('--outline')
   if(mobileSessionSearch)args.push('--mobile-session-search')
   if(historyReturnOnly)args.push('--history-return-only')
   if(webGitImages)args.push('--git-images')
-  if(historyReturnOnly)args.push('--history-return-only')
   if(webMoreActions)args.push('--more-actions-only')
   const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
   if(webAndroid){
     androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
-    state.deviceLease=androidLease(androidDevice(androidEnv),uiOrigin)
-    await state.deviceLease.open()
+    const androidRelay=await createAttestedTcpRelay(Number(new URL(uiOrigin).port),serverPid)
+    state.androidRelay=androidRelay
+    state.deviceLease=androidLease(androidDevice(androidEnv),uiOrigin,{localPort:androidRelay.port,closeRelay:()=>androidRelay.close()})
+    try{await state.deviceLease.open()}catch(error){await androidRelay.close().catch(()=>{});throw error}
   }
   const launch=webMobile?spawn:spawnFixtureChild
   const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
@@ -73,6 +77,7 @@ export async function launchWeb({
         if(action==='restart'){
           const resumed=await restart(http,uiOrigin)
           http=resumed.http
+          state.androidRelay?.setTargetPid(resumed.value.serverPid)
           return {value:resumed.value}
         }
         return {value:await mobile.command(action,http,ts?.https)}

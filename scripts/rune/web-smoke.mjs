@@ -8,7 +8,7 @@ import {isExpectedWaitError, now, withBudget} from './web-budget.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation as defaultFulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {activateControl,launchChromium,launchOwnedChromium} from './web-chromium.mjs'
-import {createAttestedFetch,verifyLoopbackListenerOwner} from '../native-fixture-http.mjs'
+import {createAttestedFetch,parseCookiePairs,substitutePlaceholderCookies,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
 import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste, mobileMoreActions, menuPrompt} from './web-paste.mjs'
@@ -20,9 +20,9 @@ import {checkGitImages, gitImageReadAllowed} from './web-git-images.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, 'target-pid': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'},'history-return-only':{type:'boolean'},'more-actions-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, 'target-pid': {type: 'string'}, 'launcher-pid': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'},'history-return-only':{type:'boolean'},'more-actions-only':{type:'boolean'}}})
 const url = new URL(values.url)
-assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
+assert(url.hostname === '127.0.0.1', 'Use an isolated 127.0.0.1 server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
 if(values.connected){assert(values.workspace&&values.project&&values['storage-state']);url.searchParams.delete('scene')}
 else url.searchParams.set('scene', values['paste-only'] ? 'synthetic-paste' : 'synthetic')
@@ -43,7 +43,7 @@ const messages = JSON.parse(await readFile(path.join(root, `crates/rune-theme-co
 const out = path.resolve(root, values.out)
 const relativeOut = path.relative(path.join(root, 'target'), out)
 assert(relativeOut && relativeOut !== '..' && !relativeOut.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeOut), 'Smoke output must stay inside this checkout target directory')
-let privateScope, ownedBrowser, browser, attestedFetch, browserStorageState, realCookieHeader, currentTargetPid
+let privateScope, ownedBrowser, browser, attestedFetch, browserStorageState, realCookieHeader, realCookieMap = new Map(), currentTargetPid, launcherPid, outputAuthorized = false
 const cookieHeaderFor = async context => url.protocol === 'http:'
   ? realCookieHeader
   : (await context.cookies(url.origin)).map(c => `${c.name}=${c.value}`).join('; ')
@@ -52,8 +52,9 @@ const fulfillWorkspaceCreation=async(route,policy,context)=>{
   const req=route.request()
   const headers={...(await req.allHeaders())}
   delete headers['host'];delete headers['content-length']
-  const cookie=await cookieHeaderFor(context)
-  if(cookie)headers['cookie']=cookie
+  if(url.protocol==='http:'&&headers['cookie']&&realCookieMap.size){
+    headers['cookie']=substitutePlaceholderCookies(headers['cookie'],realCookieMap)
+  }
   const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
   const bytes=Buffer.from(await res.arrayBuffer())
   assert(bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
@@ -70,17 +71,22 @@ const connectedPalettes = values.connected
   : null
 const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??(values.connected?'target/rune-web-connected':'target/rune-web')))
 if(values.mobile)assets.add('/remote-pair')
-await mkdir(out, {recursive: true})
 let primaryError=null
 try {
   if(values.connected){
     privateScope=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
-    assert(privateScope.inside(privateScope.profile,await realpath(out)),'Output link escapes fixture')
     currentTargetPid=Number(values['target-pid'])
     assert(Number.isSafeInteger(currentTargetPid)&&currentTargetPid>0,'Connected web smoke requires --target-pid <owned server PID>')
+    launcherPid=Number(values['launcher-pid'])
+    assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Connected web smoke requires --launcher-pid <private launcher PID>')
     await verifyLoopbackListenerOwner(Number(url.port),currentTargetPid)
+    await verifyPrivateFixtureServer({targetPid:currentTargetPid,launcherPid,profile:privateScope.profile})
+    await mkdir(out, {recursive: true})
+    assert(privateScope.inside(privateScope.profile,await realpath(out)),'Output link escapes fixture')
+    outputAuthorized=true
     const rawStorage=JSON.parse(await readFile(values['storage-state'],'utf8'))
     realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
+    realCookieMap=parseCookiePairs(realCookieHeader)
     if(url.protocol==='http:'){
       browserStorageState={
         ...rawStorage,
@@ -100,10 +106,15 @@ try {
     })
     browser=ownedBrowser.browser
   }else{
+    await mkdir(out, {recursive: true})
+    outputAuthorized=true
     browser=await launchChromium(values.executable)
   }
   const imagePage = await browser.newPage()
   const onRestart = async nextPid => {
+    assert(Number.isSafeInteger(nextPid)&&nextPid>0,'Restarted fixture must report owned server PID')
+    await verifyLoopbackListenerOwner(Number(url.port),nextPid)
+    await verifyPrivateFixtureServer({targetPid:nextPid,launcherPid,profile:privateScope.profile})
     currentTargetPid = nextPid
     ownedBrowser?.setTargetPid(nextPid)
     await attestedFetch?.close().catch(() => {})
@@ -898,12 +909,14 @@ try {
     console.error(`Failed to close browser: ${closeError.message}`)
     if (!primaryError) throw closeError
   }
-  try {
-    await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
-      scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
-  } catch (writeError) {
-    console.error(`Failed to write smoke-report.json: ${writeError.message}`)
-    if (!primaryError) throw writeError
+  if (outputAuthorized) {
+    try {
+      await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
+        scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
+    } catch (writeError) {
+      console.error(`Failed to write smoke-report.json: ${writeError.message}`)
+      if (!primaryError) throw writeError
+    }
   }
 }
 console.log(`Rune web smoke evidence: ${out}`)

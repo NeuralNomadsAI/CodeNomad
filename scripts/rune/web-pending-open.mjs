@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict'
 import {appendFile,writeFile} from 'node:fs/promises'
 import path from 'node:path'
+import {parseCookiePairs,substitutePlaceholderCookies} from '../native-fixture-http.mjs'
 
 export async function pendingBrowser({values,m,out,browser,storageState,realCookieHeader,attestedFetch}) {
   assert(browser&&typeof attestedFetch==='function','Attested browser and attestedFetch required for pendingBrowser')
   const origin=new URL(values.url).origin,results=[]
   const authHeaders=realCookieHeader?{cookie:realCookieHeader}:{}
+  const realCookieMap=parseCookiePairs(realCookieHeader)
   const forwardRoute=async route=>{
     const req=route.request()
     const headers={...(await req.allHeaders())}
     delete headers['host'];delete headers['content-length']
-    if(realCookieHeader)headers['cookie']=realCookieHeader
+    if(headers['cookie']&&realCookieMap.size){
+      headers['cookie']=substitutePlaceholderCookies(headers['cookie'],realCookieMap)
+    }
     const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
     const body=Buffer.from(await res.arrayBuffer())
     return {status:res.status,headers:Object.fromEntries(res.headers.entries()),body,json:()=>JSON.parse(body.toString('utf8'))}

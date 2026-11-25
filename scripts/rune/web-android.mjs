@@ -4,6 +4,7 @@ import {createHash,X509Certificate} from 'node:crypto'
 import {readFile,readdir,writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {_android} from 'playwright'
+import {verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
 import {androidDevice,hierarchy} from '../../packages/rune-app/fixtures/android-device.mjs'
 import {bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {command,navigatePair} from './web-live.mjs'
@@ -12,10 +13,15 @@ import {chromeMemory,scrollMeasure} from './web-android-metrics.mjs'
 import {observeRenderer,traceSwipe} from './web-android-trace.mjs'
 import {observeGpu,gpuState,chromeGraphicsReport,observeBoot,bootActivity} from './web-android-gpu.mjs'
 
-const [origin,profile,project,bundle]=process.argv.slice(2)
+const [origin,profile,project,bundle,rawServerPid,rawLauncherPid]=process.argv.slice(2)
 const useTs=process.env.RUNE_ANDROID_TS_SERVER==='1'
 assert.match(origin,useTs?/^https:\/\/rune-server\.fixture\.test:\d+$/:/^https:\/\/127\.0\.0\.1:\d+$/)
 assert(process.send&&path.basename(profile).startsWith('launcher-'))
+const serverPid=Number(rawServerPid),launcherPid=Number(rawLauncherPid)
+assert(Number.isSafeInteger(serverPid)&&serverPid>0,'Android fixture requires owned server PID')
+assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Android fixture requires private launcher PID')
+await verifyLoopbackListenerOwner(Number(new URL(origin).port),serverPid)
+await verifyPrivateFixtureServer({targetPid:serverPid,launcherPid,profile})
 const auth=new X509Certificate(await readFile(path.join(profile,'identity.data/tls/server-cert.pem')))
 const pin=createHash('sha256').update(auth.publicKey.export({type:'spki',format:'der'})).digest('base64')
 const solid=process.env.RUNE_ANDROID_SOLID_DIR
@@ -268,6 +274,10 @@ async function runAndroid() {
   assert(events>0)
   const previous=[...policy.workspaces],beforeRestart=events,restart=performance.now()
   evidence.restart=await command('restart')
+  const restartedPid=Number(evidence.restart?.serverPid)
+  assert(Number.isSafeInteger(restartedPid)&&restartedPid>0,'Restarted Android fixture must report owned server PID')
+  await verifyLoopbackListenerOwner(Number(new URL(origin).port),restartedPid)
+  await verifyPrivateFixtureServer({targetPid:restartedPid,launcherPid,profile})
   try { await page.getByText('Mobile Rust restart history',{exact:true}).waitFor({timeout:45000}) }
   catch(error){evidence.restartWaitMs=performance.now()-restart;throw error}
   await recovering.waitFor({state:'hidden'})

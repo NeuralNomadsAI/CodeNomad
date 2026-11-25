@@ -19,6 +19,8 @@ mod date;
 #[cfg(any(unix, test))]
 #[path = "date/posix.rs"]
 mod posix_date;
+#[cfg(any(target_os = "macos", test))]
+mod procargs;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
@@ -111,9 +113,9 @@ impl OwnedProcess {
 
     #[cfg(unix)]
     fn spawn_unix(command: &mut Command) -> io::Result<Self> {
-        Family::prepare(command);
+        let marker = Family::prepare(command);
         let mut child = command.spawn()?;
-        match Family::adopt(&mut child) {
+        match Family::adopt(&mut child, marker) {
             Ok(family) => Ok(Self {
                 child: Some(child),
                 family,

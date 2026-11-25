@@ -4,7 +4,7 @@ import {mkdir,readFile,realpath,writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
-import {createAttestedFetch,verifyLoopbackListenerOwner} from '../native-fixture-http.mjs'
+import {createAttestedFetch,parseCookiePairs,substitutePlaceholderCookies,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
 import {launchOwnedChromium} from './web-chromium.mjs'
 import {pendingBrowser} from './web-pending-open.mjs'
 import {fileWrapBrowser} from './web-file-wrap.mjs'
@@ -13,31 +13,38 @@ import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
-const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},'target-pid':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},outline:{type:'boolean'}}})
+const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},'target-pid':{type:'string'},'launcher-pid':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},outline:{type:'boolean'}}})
 assert(values.url&&values.project&&values['storage-state']&&values.out,'Pass --url --project --storage-state --out')
 const url=new URL(values.url)
-assert(['127.0.0.1','localhost','[::1]'].includes(url.hostname)&&['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&url.pathname==='/'&&!url.hash,'Explicit isolated loopback root required')
+assert(url.hostname==='127.0.0.1'&&['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&url.pathname==='/'&&!url.hash,'Explicit isolated 127.0.0.1 root required')
 const targetPid=Number(values['target-pid'])
 assert(Number.isSafeInteger(targetPid)&&targetPid>0,'Connected web-restore requires --target-pid <owned server PID>')
-await verifyLoopbackListenerOwner(Number(url.port),targetPid)
-url.search='?locale=fr'
+const launcherPid=Number(values['launcher-pid'])
+assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Connected web-restore requires --launcher-pid <private launcher PID>')
 const out=path.resolve(values.out)
 const {profile,storage,inside}=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
+await verifyLoopbackListenerOwner(Number(url.port),targetPid)
+await verifyPrivateFixtureServer({targetPid,launcherPid,profile})
+url.search='?locale=fr'
 await mkdir(out,{recursive:true});assert(inside(profile,await realpath(out)),'Output link escapes fixture')
+const outputAuthorized=true
 const rawStorage=JSON.parse(await readFile(storage,'utf8'))
 const realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
+const realCookieMap=parseCookiePairs(realCookieHeader)
 const browserStorageState=url.protocol==='http:'
   ?{...rawStorage,cookies:(rawStorage?.cookies??[]).map(c=>({...c,value:'fixture-relay-placeholder'}))}
   :rawStorage
 const m=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/catalogues/fr.json'),'utf8'))
-let attestedFetch,ownedBrowser
+let attestedFetch,ownedBrowser,primaryError=null
 const results=[]
 let wroteSummary=false
 const attestedFulfillWorkspaceCreation=async(route,policy)=>{
   const req=route.request()
   const headers={...(await req.allHeaders())}
   delete headers['host'];delete headers['content-length']
-  if(realCookieHeader)headers['cookie']=realCookieHeader
+  if(url.protocol==='http:'&&headers['cookie']&&realCookieMap.size){
+    headers['cookie']=substitutePlaceholderCookies(headers['cookie'],realCookieMap)
+  }
   const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
   const bytes=Buffer.from(await res.arrayBuffer())
   assert(bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
@@ -388,9 +395,17 @@ const imagePage=await browser.newPage()
     finally{forbidRelease=false;try{await localProof(await page.evaluate(()=>globalThis.__runeRestoreProofDocumentId))}catch{}await context.close();await writeFile(path.join(out,`${spec.name}-proof.json`),JSON.stringify(record,null,2))}
   }
   }
+}catch(error){
+  primaryError=error
+  throw error
 }finally{
   await attestedFetch?.close().catch(()=>{})
-  await ownedBrowser?.close().catch(()=>{})
-  if(!wroteSummary)await writeFile(path.join(out,'summary.json'),JSON.stringify({runner:'web-restore',origin:url.origin,contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure})),scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions'},null,2))
+  if(ownedBrowser){
+    try{await ownedBrowser.close()}catch(closeError){
+      console.error(`Failed to close browser: ${closeError.message}`)
+      if(!primaryError)throw closeError
+    }
+  }
+  if(outputAuthorized&&!wroteSummary)await writeFile(path.join(out,'summary.json'),JSON.stringify({runner:'web-restore',origin:url.origin,contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure})),scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions'},null,2))
 }
 console.log(JSON.stringify({runner:'web-restore',contexts:results.map(r=>({context:r.context,result:r.result})),out}))

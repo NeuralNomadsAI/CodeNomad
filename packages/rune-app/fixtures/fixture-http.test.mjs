@@ -360,15 +360,46 @@ test('createAttestedRelay isolates cookies strictly to placeholder headers and c
   })
   assert.equal(withPlaceholder.status,200)
   assert.equal(seenCookies.at(-1),'codenomad_session=real-secret-token')
-  // Closing clientGate invalidates an in-flight allow() and safely handles a rejected exitPromise.
-  const gate=createClientPidGate(()=>0)
+  // Closing clientGate invalidates an in-flight allow() without needing exitPromise rejection,
+  // and verify() refuses sockets after close().
+  const net=await import('node:net')
+  const probeServer=net.createServer()
+  await new Promise(resolve=>probeServer.listen(0,'127.0.0.1',resolve))
+  const accepted=new Promise(resolve=>probeServer.once('connection',resolve))
+  const clientSock=net.createConnection({host:'127.0.0.1',port:probeServer.address().port})
+  const serverSock=await accepted
+  t.after(async()=>{
+    clientSock.destroy()
+    serverSock.destroy()
+    await new Promise(resolve=>probeServer.close(resolve))
+  })
+  const gate=createClientPidGate(()=>probeServer.address().port)
   const deferredPid=Promise.withResolvers()
-  const rejectedExit=Promise.reject(new Error('expected exit rejection'))
-  const allowTask=gate.allow(deferredPid.promise,rejectedExit)
+  const allowTask=gate.allow(deferredPid.promise)
   gate.close()
   deferredPid.resolve(process.pid)
   await allowTask
+  assert.equal(await gate.verify(serverSock),false)
+  // Separately, a rejected exitPromise revokes the PID without triggering an unhandled rejection.
+  const gate2=createClientPidGate(()=>probeServer.address().port)
+  t.after(()=>gate2.close())
+  const rejectedExit=Promise.reject(new Error('expected exit rejection'))
+  await gate2.allow(process.pid,rejectedExit)
   await new Promise(resolve=>setTimeout(resolve,20))
+  assert.equal(await gate2.verify(serverSock),false)
+})
+
+test('createAttestedTcpRelay supports setTargetPid and verifyPrivateFixtureServer rejects foreign servers',{timeout:15000},async t=>{
+  const {verifyPrivateFixtureServer}=await import('../../../scripts/native-fixture-http.mjs')
+  const target=await listen(t,(_req,res)=>{res.end('tcp-ok')})
+  const relay=await createAttestedTcpRelay(Number(new URL(target.origin).port),process.pid)
+  t.after(()=>relay.close())
+  const ok=await fixtureFetch(`http://127.0.0.1:${relay.port}/before`,{signal:AbortSignal.timeout(5000)})
+  assert.equal(ok.status,200)
+  relay.setTargetPid(999999999)
+  await assert.rejects(fixtureFetch(`http://127.0.0.1:${relay.port}/after`,{signal:AbortSignal.timeout(3000)}))
+  await assert.rejects(verifyPrivateFixtureServer({targetPid:process.pid,launcherPid:999999999,profile:process.cwd()}),/direct descendant|launcher/i)
+  await assert.rejects(verifyPrivateFixtureServer({targetPid:process.pid,launcherPid:process.pid,profile:process.cwd()}),/command line|profile/i)
 })
 
 test('originGuardProxy attests HTTPS CONNECT tunnels, rejects foreign authorities, and tears down on setTargetPid',{timeout:15000},async t=>{

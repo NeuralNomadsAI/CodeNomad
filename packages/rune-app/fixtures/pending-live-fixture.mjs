@@ -7,7 +7,7 @@ import {setTimeout as delay} from 'node:timers/promises'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 import {fixtureTarget,requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
-import {createAttestedFetch,createAttestedRelay,redactSecrets,resolveWorktreePackage} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedRelay,redactSecrets,RELAY_PLACEHOLDER_PASSWORD,resolveWorktreePackage} from '../../../scripts/native-fixture-http.mjs'
 
 const {OpenCode}=await import(resolveWorktreePackage('@opencode/client'))
 requirePrivateCli();requireTestSupport()
@@ -57,7 +57,7 @@ try{
   origin=await rust.ready(rustOrigin)
   const rustPid=await rust.pid()
   rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
-  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true})
+  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true,substitutePassword:rustPassword,isolateSessionCookie:true})
   const login=await rustFetch(`${origin}/api/auth/login`,{...post({username:'codenomad',password:rustPassword}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await relay('/api/workspaces',post({path:project,requestId:`rune-native-ui-${randomUUID()}`}));assert.equal(opened.status,201);assert.equal(path.resolve(opened.body.path),project);proof.workspace=opened.body.id
   await until(async remaining=>{
@@ -68,7 +68,7 @@ try{
     proof.historyStatus={status:window.status,kind:window.body?.status,reason:window.body?.reason}
     return window.body?.status==='window'
   },'native history window ready')
-  ui=launchFixture(clientBinary,['--probe-real-pending'],{cwd:root,redact:[password,rustPassword],env:{...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:rustPassword,RUNE_WORKSPACE:proof.workspace,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_PENDING_OUT:root,RUNE_PENDING_IDS:JSON.stringify(ids),RUNE_LOCALE:'fr'}})
+  ui=launchFixture(clientBinary,['--probe-real-pending'],{cwd:root,redact:[password,rustPassword],env:{...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_WORKSPACE:proof.workspace,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_PENDING_OUT:root,RUNE_PENDING_IDS:JSON.stringify(ids),RUNE_LOCALE:'fr'}})
   rustRelay.allowClientPid(ui.pid(),ui.closed)
   ui.child.stdout.on('data',b=>{
     uiLines+=b

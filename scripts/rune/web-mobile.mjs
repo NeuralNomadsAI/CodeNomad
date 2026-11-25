@@ -38,7 +38,7 @@ export async function pairFixture({origin, targetPid, profile: fixtureProfile, p
   assert.match(url.hash, /^#[\w-]{32}$/)
   const pairProfile = path.join(fixtureProfile, 'pair-chromium')
   await mkdir(pairProfile, {recursive: true})
-  let ownedBrowser, attestedFetch
+  let ownedBrowser, attestedFetch, primaryError = null
   try {
     ownedBrowser = await launchOwnedChromium({profile: pairProfile, env: process.env, origin, targetPid})
     attestedFetch = createAttestedFetch(origin, Number(url.port), targetPid, {allowSelfSigned: true})
@@ -126,9 +126,18 @@ export async function pairFixture({origin, targetPid, profile: fixtureProfile, p
     assert.equal(sha256, manifest.files.find(row => row.file === 'app_bg.wasm').sha256)
     await context.storageState({path:storage})
     return {origin, sha256, paired:true, crossOriginLink:fromLink, clientBootReady:true, pairedEntry}
+  } catch (error) {
+    primaryError = error
+    throw error
   } finally {
     await attestedFetch?.close().catch(() => {})
-    await ownedBrowser?.close().catch(() => {})
+    if (ownedBrowser) {
+      try {
+        await ownedBrowser.close()
+      } catch (closeError) {
+        if (!primaryError) throw closeError
+      }
+    }
   }
 }
 
