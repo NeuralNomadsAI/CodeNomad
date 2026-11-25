@@ -20,8 +20,21 @@
       "Target.setAutoAttach",
       {
         "autoAttach": true,
-        "waitForDebuggerOnStart": false,
-        "flatten": true
+        "waitForDebuggerOnStart": true,
+        "flatten": true,
+        "filter": [
+          {
+            "type": "iframe",
+            "exclude": false
+          },
+          {
+            "type": "worker",
+            "exclude": false
+          },
+          {
+            "exclude": true
+          }
+        ]
       }
     ]
   ],
@@ -57,5 +70,6 @@
   "maxEvents": 4000,
   "maxBytes": 8388608,
   "maxRead": 1000,
-  "maxReadBytes": 2097152
+  "maxReadBytes": 2097152,
+  "maxContexts": 512
 }

@@ -31,7 +31,8 @@ export class PreviewDiagnostics {
   private readonly chains = new Map<string, Chain>()
   /** Request IDs that hold only queued ExtraInfo, oldest first. */
   private readonly stashed = new Set<string>()
-  /** Execution contexts of the page's own world per session; other worlds' console calls are not the page's. */
+  /** Execution contexts per session, and whether each is a page world (a frame's default context); console calls
+   * from other worlds or unknown contexts are not the page's, as in OpenCode's browser. */
   private readonly contexts = new Map<string, boolean>()
   private readonly scope = randomUUID()
   private sequence = 0
@@ -51,7 +52,14 @@ export class PreviewDiagnostics {
     this.droppedMessages += Math.max(0, read.lost.messages - this.lost.messages)
     this.droppedRequests += Math.max(0, read.lost.requests - this.lost.requests)
     this.lost = { ...read.lost }
+    // The host's live contexts cover those whose creation this readout never saw (an earlier epoch or an eviction).
+    for (const context of read.contexts) this.contexts.set(`${context.session ?? ""}:${context.id}`, context.page)
     for (const event of read.events) this.apply(event.method, event.params as Params, event.session)
+    // Once the buffer is read up to now, the host's live set is exact: contexts it no longer has are gone.
+    if (!read.more) {
+      const live = new Set(read.contexts.map(context => `${context.session ?? ""}:${context.id}`))
+      for (const key of this.contexts.keys()) if (!live.has(key)) this.contexts.delete(key)
+    }
     this.cursor = read.next
     return true
   }
@@ -114,13 +122,14 @@ export class PreviewDiagnostics {
   }
 
   private page(context: unknown, session: string | undefined) {
-    return typeof context !== "number" || this.contexts.get(`${session ?? ""}:${context}`) !== false
+    return typeof context !== "number" || this.contexts.get(`${session ?? ""}:${context}`) === true
   }
 
   private apply(method: string, event: Params, session: string | undefined): void {
     switch (method) {
       case "Runtime.executionContextCreated":
-        if (typeof event.context?.id === "number") this.contexts.set(`${session ?? ""}:${event.context.id}`, event.context.auxData?.isDefault !== false)
+        if (typeof event.context?.id === "number") this.contexts.set(`${session ?? ""}:${event.context.id}`,
+          typeof event.context.auxData?.frameId === "string" && event.context.auxData.isDefault === true)
         return
       case "Runtime.executionContextDestroyed": this.contexts.delete(`${session ?? ""}:${event.executionContextId}`); return
       case "Runtime.executionContextsCleared":
@@ -129,6 +138,7 @@ export class PreviewDiagnostics {
       // An out-of-process frame that detaches never finishes its requests.
       case "Target.detachedFromTarget":
         for (const key of [...this.chains.keys()]) if (key.startsWith(`${event.sessionId}:`)) this.transition(key, { type: "detached" })
+        for (const key of this.contexts.keys()) if (key.startsWith(`${event.sessionId}:`)) this.contexts.delete(key)
         return
       case "Runtime.consoleAPICalled": {
         if (!this.page(event.executionContextId, session) || extensionSource(undefined, event.stackTrace as StackTrace | undefined)) return

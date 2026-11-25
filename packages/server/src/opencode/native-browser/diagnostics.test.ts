@@ -1,10 +1,21 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { DiagnosticEvent, DiagnosticRead } from "../../automation/page/diagnostic-events"
+import type { DiagnosticContext, DiagnosticEvent, DiagnosticRead } from "../../automation/page/diagnostic-events"
 import { PreviewDiagnostics } from "./diagnostics"
 
-const read = (events: DiagnosticEvent[], epoch = "buffer:0", next = events.length, lost = { messages: 0, requests: 0 }): DiagnosticRead =>
-  ({ epoch, events, next, lost, more: false })
+/** The host's live contexts after `events`, as a buffer that saw them reports. */
+const live = (events: DiagnosticEvent[]): DiagnosticContext[] => {
+  const contexts = new Map<number, DiagnosticContext>()
+  for (const { method, params } of events) {
+    const context = params.context as { id: number; auxData?: { frameId?: string; isDefault?: boolean } } | undefined
+    if (method === "Runtime.executionContextCreated" && context)
+      contexts.set(context.id, { id: context.id, page: typeof context.auxData?.frameId === "string" && context.auxData.isDefault === true })
+    if (method === "Runtime.executionContextDestroyed") contexts.delete(params.executionContextId as number)
+  }
+  return [...contexts.values()]
+}
+const read = (events: DiagnosticEvent[], epoch = "buffer:0", next = events.length, lost = { messages: 0, requests: 0 },
+  contexts = live(events)): DiagnosticRead => ({ epoch, events, next, lost, more: false, contexts })
 const event = (method: string, params: Record<string, unknown>): DiagnosticEvent => ({ method, params })
 const request = (requestId: string, url: string, extra: Record<string, unknown> = {}) => event("Network.requestWillBeSent", {
   requestId, documentURL: "https://site.test/", timestamp: 10, wallTime: 1_700_000_000, type: "Fetch",
@@ -15,8 +26,8 @@ const request = (requestId: string, url: string, extra: Record<string, unknown> 
 test("console readout: levels, sources, Chromium log entries, exceptions, and only the page's own world", () => {
   const diagnostics = new PreviewDiagnostics()
   diagnostics.ingest(read([
-    event("Runtime.executionContextCreated", { context: { id: 1, auxData: { isDefault: true } } }),
-    event("Runtime.executionContextCreated", { context: { id: 2, auxData: { isDefault: false } } }),
+    event("Runtime.executionContextCreated", { context: { id: 1, auxData: { frameId: "main", isDefault: true } } }),
+    event("Runtime.executionContextCreated", { context: { id: 2, auxData: { frameId: "main", isDefault: false } } }),
     event("Runtime.consoleAPICalled", { type: "log", executionContextId: 1, timestamp: 5, args: [{ type: "string", value: "hello" }, { type: "number", value: 2 }],
       stackTrace: { callFrames: [{ url: "https://site.test/app.js", lineNumber: 9, columnNumber: 4 }] } }),
     event("Runtime.consoleAPICalled", { type: "warning", executionContextId: 2, timestamp: 6, args: [{ type: "string", value: "isolated world" }] }),
@@ -116,4 +127,21 @@ test("at most 500 messages are retained", () => {
   assert.equal(all.messages.length, 500)
   assert.equal(all.messages[0].text, "m10")
   assert.equal(all.dropped, 10)
+})
+
+test("only known page contexts log, across a document reopened in place and frames that detach", () => {
+  const diagnostics = new PreviewDiagnostics()
+  const say = (executionContextId: number, value: string, session?: string): DiagnosticEvent =>
+    ({ ...event("Runtime.consoleAPICalled", { type: "log", executionContextId, timestamp: 1, args: [{ type: "string", value }] }), ...(session ? { session } : {}) })
+  const contexts: DiagnosticContext[] = [{ id: 1, page: true }, { id: 7, page: false }, { session: "frame", id: 3, page: true }]
+  diagnostics.ingest(read([say(1, "page"), say(7, "isolated"), say(9, "unknown"), say(3, "frame", "frame")], "buffer:0", 4, undefined, contexts))
+  assert.deepEqual(diagnostics.console({}).messages.map(entry => entry.text), ["page", "frame"])
+  // document.open() starts another epoch: the host's live contexts still tell the page's world from an isolated one.
+  diagnostics.ingest(read([], "buffer:1", 4, undefined, contexts))
+  diagnostics.ingest(read([say(7, "isolated after reopen"), say(1, "page after reopen")], "buffer:1", 6, undefined, contexts))
+  assert.deepEqual(diagnostics.console({}).messages.map(entry => entry.text), ["page after reopen"])
+  // A detached frame's contexts go with it.
+  diagnostics.ingest(read([event("Target.detachedFromTarget", { sessionId: "frame" }), say(3, "late", "frame")], "buffer:1", 8, undefined, contexts.slice(0, 2)))
+  assert.deepEqual(diagnostics.console({}).messages.map(entry => entry.text), ["page after reopen"])
+  assert.equal((diagnostics as any).contexts.size, 2, "only live contexts are kept")
 })

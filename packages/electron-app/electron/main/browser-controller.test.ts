@@ -238,7 +238,12 @@ describe("BrowserController private page channel", () => {
     assert.deepEqual(sent.at(-1), ["Network.getResponseBody", { requestId: "r1" }, "child-session"])
     guest.debugger.emit("message", {}, "Target.attachedToTarget", { sessionId: "frame-1", targetInfo: { type: "iframe", url: "https://other.test/" } })
     await new Promise(resolve => setImmediate(resolve))
-    assert.deepEqual(sent.filter(call => call[2] === "frame-1").map(call => call[0]), DIAGNOSTICS.enable.map(([method]) => method), "a frame gets the same domains")
+    assert.deepEqual(sent.filter(call => call[2] === "frame-1").map(call => call[0]), [...DIAGNOSTICS.enable.map(([method]) => method), "Runtime.runIfWaitingForDebugger"], "a frame gets the same domains, then runs")
+    guest.debugger.emit("message", {}, "Target.attachedToTarget", { sessionId: "worker-1", targetInfo: { type: "worker", url: "https://site.test/w.js" } })
+    await new Promise(resolve => setImmediate(resolve))
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(sent.filter(call => call[2] === "worker-1").map(call => call[0]), ["Runtime.runIfWaitingForDebugger"], "a worker only runs")
+    assert.deepEqual(sent.at(-1), ["Target.detachFromTarget", { sessionId: "worker-1" }], "and is left")
     await page(h.controller, "end", lease)
     guest.emit("did-start-navigation", {}, "https://example.com/", true, true)
     guest.emit("did-start-navigation", {}, "https://example.com/next", false, true)
@@ -266,6 +271,21 @@ describe("BrowserController private page channel", () => {
     const reopened = await page(h.controller, "send", { ...next, operation: { op: "diagnostics", after: 0 } }) as DiagnosticRead
     assert.deepEqual(reopened.events, [])
     assert.notEqual(reopened.epoch, first.epoch, "document.open() starts a new document's diagnostics")
+  })
+  it("resumes paused child targets even when the preview's diagnostics are unavailable", async () => {
+    const h = createHarness()
+    const sent: Array<[string, string | undefined]> = []
+    const { guest } = createGuest({ id: 8, owner: h.owner, sendCommand: async (method, _params, session) => {
+      sent.push([method, session])
+      if (method === "Log.enable" && !session) throw new Error("Log domain unavailable")
+      return {}
+    } })
+    h.controller.guestCreated(guest)
+    await new Promise(resolve => setImmediate(resolve))
+    guest.debugger.emit("message", {}, "Target.attachedToTarget", { sessionId: "frame-9", targetInfo: { type: "iframe", url: "https://other.test/" } })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(sent.filter(([, session]) => session === "frame-9").map(([method]) => method), ["Runtime.runIfWaitingForDebugger"],
+      "a frame of a preview without diagnostics runs at once")
   })
   it("accepts only the fixed protocol commands and bounded object params/responses", async () => {
     const h = createHarness()

@@ -37,6 +37,22 @@ const fixture = createServer((req, res) => {
     res.setHeader("Content-Type", "application/json")
     res.setHeader("Set-Cookie", `p7=${run}`)
     res.end(JSON.stringify({ saved: true }))
+  } else if (req.url === "/frames") {
+    // A cross-site frame (localhost against 127.0.0.1) runs out of process; it and a worker start paused by diagnostics.
+    res.setHeader("Content-Type", "text/html")
+    res.end(`<title>Frames</title><output id="frame">Frame waiting</output> <output id="worker">Worker waiting</output>
+<iframe src="http://localhost:${fixture.address().port}/child"></iframe><script>
+addEventListener("message", event => { if (event.data === "child-ready") document.querySelector("#frame").textContent = "Frame loaded" })
+new Worker("/worker.js").onmessage = () => { document.querySelector("#worker").textContent = "Worker ran" }</script>`)
+  } else if (req.url === "/child") {
+    res.setHeader("Content-Type", "text/html")
+    res.end(`<script>console.warn("frame warning ${run}");fetch("/frame-api").then(() => parent.postMessage("child-ready", "*"))</script>`)
+  } else if (req.url === "/frame-api") {
+    res.setHeader("Content-Type", "application/json")
+    res.end("{}")
+  } else if (req.url === "/worker.js") {
+    res.setHeader("Content-Type", "text/javascript")
+    res.end("postMessage('ran')")
   } else if (req.url === "/oauth") {
     res.setHeader("Content-Type", "text/html")
     res.end("<title>OAuth fixture</title><script>opener.postMessage('oauth-complete',location.origin);setTimeout(()=>close(),300)</script>")
@@ -229,6 +245,17 @@ return { warnings: logged.messages.map(entry => entry.text), requests: listed.re
   assert.deepEqual(diagnostics.requestBody, { state: "text", text: "{\"count\":1}", truncated: false })
   assert.deepEqual(diagnostics.responseBody, { state: "text", text: "{\"saved\":true}", truncated: false })
   assert.equal(diagnostics.cookie, "<redacted>")
+  // Out-of-process frames and workers start paused: they must run, and the frame's own startup is captured.
+  const frames = await step("frames and workers", `const tabID = ${tabID};
+await tools.browser.navigate({ tabID, url: ${JSON.stringify(`http://127.0.0.1:${fixture.address().port}/frames`)} });
+const waits = [];
+for (const text of ["Frame loaded", "Worker ran"]) waits.push((await tools.browser.wait({ tabID, text, timeout: 10000 })).met);
+const listed = await tools.browser.network.list({ tabID, urlContains: "/frame-api" });
+const logged = await tools.browser.console({ tabID, level: "warning" });
+return { waits, requests: listed.requests.map(item => [item.method, item.statusCode, item.state]), warnings: logged.messages.map(entry => entry.text) }`)
+  assert.deepEqual(frames.waits, [true, true], JSON.stringify(frames))
+  assert.deepEqual(frames.requests, [["GET", 200, "completed"]], JSON.stringify(frames))
+  assert.ok(frames.warnings.includes(`frame warning ${run}`), JSON.stringify(frames))
   const shot = await step("screenshot", `const shot = await tools.browser.screenshot({ tabID: ${tabID} }); return { files: shot.files }`)
   assert.equal(shot.files?.[0]?.mime, "image/png")
   await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, run, sessionID: session.id, project, app: appPath,

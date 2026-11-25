@@ -411,23 +411,33 @@ export class BrowserController {
     if (!this.recording.has(guest)) {
       this.recording.add(guest)
       guest.debugger.on("message", (_event, method, params, sessionId) => {
-        const current = this.diagnostics.get(guest)
-        if (!current) return
-        // An out-of-process frame of the page: it gets the same domains in its own session.
-        if (method === "Target.attachedToTarget" && params?.targetInfo?.type === "iframe" && typeof params.sessionId === "string"
-          && !/^[a-z-]*extension:/i.test(String(params.targetInfo.url ?? ""))) {
-          void (async () => {
-            for (const [command, options] of DIAGNOSTICS.enable) await guest.debugger.sendCommand(command, options, params.sessionId)
-          })().catch(() => undefined)
-        }
-        current.record(method, params, sessionId || undefined)
+        if (method === "Target.attachedToTarget" && typeof params?.sessionId === "string") this.startChild(guest, params)
+        this.diagnostics.get(guest)?.record(method, params, sessionId || undefined)
       })
     }
     try {
-      for (const [method, params] of DIAGNOSTICS.enable) await withDeadline(() => guest.debugger.sendCommand(method, params), deadline)
+      // Sent together, so the domains are on before the guest's first request.
+      await Promise.all(DIAGNOSTICS.enable.map(([method, params]) => withDeadline(() => guest.debugger.sendCommand(method, params), deadline)))
     } catch {
       if (this.diagnostics.get(guest) === buffer) this.diagnostics.delete(guest)
     }
+  }
+
+  /** A child target paused at start by the auto-attach, as in OpenCode's browser: a worker runs and is left; a page
+   * frame gets the diagnostic domains first; an extension frame only runs. Every one is resumed, even when its
+   * domains fail or diagnostics are off, so no frame or worker stays paused. */
+  private startChild(guest: WebContents, params: { sessionId: string; targetInfo?: { type?: unknown; url?: unknown } }): void {
+    const session = params.sessionId
+    const send = (method: string, options: Record<string, unknown> = {}) => guest.debugger.sendCommand(method, options, session)
+    const resume = () => send("Runtime.runIfWaitingForDebugger")
+    const type = params.targetInfo?.type
+    const extension = /^[a-z-]*extension:/i.test(String(params.targetInfo?.url ?? ""))
+    const started = type === "worker"
+      ? resume().then(() => guest.debugger.sendCommand("Target.detachFromTarget", { sessionId: session }))
+      : type === "iframe" && !extension && this.diagnostics.has(guest)
+        ? Promise.allSettled(DIAGNOSTICS.enable.map(([method, options]) => send(method, options))).then(resume)
+        : resume()
+    void started.catch(() => undefined)
   }
 
   /** Observes the renderer even between page leases, with the console and network domains of its diagnostics. */

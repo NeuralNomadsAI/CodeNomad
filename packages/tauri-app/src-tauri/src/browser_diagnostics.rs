@@ -13,6 +13,7 @@ pub(super) struct Spec {
     max_bytes: usize,
     max_read: usize,
     max_read_bytes: usize,
+    max_contexts: usize,
 }
 
 pub(super) fn spec() -> &'static Spec {
@@ -45,6 +46,7 @@ pub(super) fn spec() -> &'static Spec {
             max_bytes: number("maxBytes"),
             max_read: number("maxRead"),
             max_read_bytes: number("maxReadBytes"),
+            max_contexts: number("maxContexts"),
         }
     })
 }
@@ -63,6 +65,43 @@ struct Buffer {
     navigation: Option<u64>,
     bytes: usize,
     events: VecDeque<(u64, String, Value, Option<String>, usize)>,
+    /// Live execution contexts by session and ID, oldest first, and whether each is a page world. They outlast
+    /// epochs (document.open() keeps the page's) and evictions.
+    contexts: VecDeque<(Option<String>, i64, bool)>,
+}
+
+impl Buffer {
+    fn track(&mut self, method: &str, params: &Value, session: Option<&str>, max: usize) {
+        let session = session.map(str::to_string);
+        match method {
+            "Runtime.executionContextCreated" => {
+                let Some(id) = params["context"]["id"].as_i64() else {
+                    return;
+                };
+                let aux = &params["context"]["auxData"];
+                let page = aux["frameId"].is_string() && aux["isDefault"] == true;
+                self.contexts
+                    .retain(|(owner, context, _)| *owner != session || *context != id);
+                self.contexts.push_back((session, id, page));
+                if self.contexts.len() > max {
+                    self.contexts.pop_front();
+                }
+            }
+            "Runtime.executionContextDestroyed" => {
+                let id = params["executionContextId"].as_i64();
+                self.contexts
+                    .retain(|(owner, context, _)| *owner != session || Some(*context) != id);
+            }
+            "Runtime.executionContextsCleared" => self.contexts.retain(|(owner, ..)| *owner != session),
+            "Target.detachedFromTarget" => {
+                let detached = params["sessionId"].as_str().map(str::to_string);
+                if detached.is_some() {
+                    self.contexts.retain(|(owner, ..)| *owner != detached);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// One buffer per registration generation; events of a replaced webview never reach its successor.
@@ -85,6 +124,7 @@ impl Buffers {
                     navigation: None,
                     bytes: 0,
                     events: VecDeque::new(),
+                    contexts: VecDeque::new(),
                 },
             );
         }
@@ -120,6 +160,7 @@ impl Buffers {
         else {
             return;
         };
+        buffer.track(method, &value, session, spec.max_contexts);
         buffer.sequence += 1;
         buffer.bytes += params.len();
         buffer
@@ -198,6 +239,13 @@ impl Buffers {
             "next": next,
             "lost": { "messages": buffer.lost_messages, "requests": buffer.lost_requests },
             "more": next < buffer.sequence,
+            "contexts": buffer.contexts.iter().map(|(session, id, page)| {
+                let mut context = json!({ "id": id, "page": page });
+                if let Some(session) = session {
+                    context["session"] = json!(session);
+                }
+                context
+            }).collect::<Vec<_>>(),
         }))
     }
 }
@@ -239,22 +287,44 @@ pub(super) fn install(
                 let Ok(value) = serde_json::from_str::<Value>(&parameters) else {
                     return Ok(());
                 };
-                let (Some(frame), Some(core)) = (value["sessionId"].as_str(), sender) else {
+                let (Some(child), Some(core)) = (value["sessionId"].as_str(), sender) else {
                     return Ok(());
                 };
-                if value["targetInfo"]["type"] != "iframe" {
-                    return Ok(());
-                }
-                let core = core.cast::<ICoreWebView2_11>()?;
-                let frame = CoTaskMemPWSTR::from(frame);
-                for (command, params) in &spec().enable {
+                // Paused at start by the auto-attach, as in OpenCode's browser: a page frame gets the diagnostic
+                // domains first, then every child runs; a worker is then left.
+                let kind = value["targetInfo"]["type"].as_str().unwrap_or_default();
+                let mut commands: Vec<(String, String)> = if kind == "iframe" {
+                    spec()
+                        .enable
+                        .iter()
+                        .map(|(command, params)| (command.clone(), params.to_string()))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                commands.push(("Runtime.runIfWaitingForDebugger".into(), "{}".into()));
+                let core11 = core.cast::<ICoreWebView2_11>()?;
+                let child_session = CoTaskMemPWSTR::from(child);
+                for (command, params) in &commands {
                     let command = CoTaskMemPWSTR::from(command.as_str());
-                    let params = CoTaskMemPWSTR::from(params.to_string().as_str());
+                    let params = CoTaskMemPWSTR::from(params.as_str());
                     let done = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_, _| Ok(())));
-                    // A frame that refuses a domain only lacks its diagnostics.
+                    // A frame that refuses a domain only lacks its diagnostics; its resumption is sent regardless.
                     let _ = unsafe {
-                        core.CallDevToolsProtocolMethodForSession(
-                            *frame.as_ref().as_pcwstr(),
+                        core11.CallDevToolsProtocolMethodForSession(
+                            *child_session.as_ref().as_pcwstr(),
+                            *command.as_ref().as_pcwstr(),
+                            *params.as_ref().as_pcwstr(),
+                            &done,
+                        )
+                    };
+                }
+                if kind == "worker" {
+                    let command = CoTaskMemPWSTR::from("Target.detachFromTarget");
+                    let params = CoTaskMemPWSTR::from(json!({ "sessionId": child }).to_string().as_str());
+                    let done = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_, _| Ok(())));
+                    let _ = unsafe {
+                        core.CallDevToolsProtocolMethod(
                             *command.as_ref().as_pcwstr(),
                             *params.as_ref().as_pcwstr(),
                             &done,
@@ -323,5 +393,31 @@ mod tests {
         assert_eq!(read["lost"]["messages"], 3);
         assert_eq!(read["lost"]["requests"], 0);
         assert_eq!(read["more"], true);
+    }
+    #[test]
+    fn live_contexts_outlast_restarts_and_a_detached_frames_go() {
+        let buffers = Buffers::default();
+        buffers.start("preview", 1);
+        let created = |id: i64, default: bool, session: Option<&str>| {
+            buffers.record(
+                "preview",
+                1,
+                "Runtime.executionContextCreated",
+                &json!({ "context": { "id": id, "auxData": { "frameId": "f", "isDefault": default } } }).to_string(),
+                session,
+            )
+        };
+        created(1, true, None);
+        created(2, false, None);
+        created(3, true, Some("frame"));
+        buffers.restart("preview", 1, None);
+        let contexts = buffers.read("preview", 1, 0).unwrap()["contexts"].clone();
+        assert_eq!(
+            contexts,
+            json!([{ "id": 1, "page": true }, { "id": 2, "page": false }, { "id": 3, "page": true, "session": "frame" }])
+        );
+        buffers.record("preview", 1, "Target.detachedFromTarget", r#"{"sessionId":"frame"}"#, None);
+        buffers.record("preview", 1, "Runtime.executionContextDestroyed", r#"{"executionContextId":2}"#, None);
+        assert_eq!(buffers.read("preview", 1, 0).unwrap()["contexts"], json!([{ "id": 1, "page": true }]));
     }
 }
