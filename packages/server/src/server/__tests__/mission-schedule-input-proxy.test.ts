@@ -14,10 +14,12 @@ const prefix = "/workspaces/w/instance"
 
 function fixture() {
   const events: string[] = [], reads: Array<{ sessionID: string; directory: string }> = []
+  const uncertainSessions: string[] = []
   const state = {
     owned: false, metadata: undefined as Record<string, unknown> | undefined, directory: "/repo/worktree",
     result: undefined as unknown, failure: undefined as unknown, current: true,
     afterRead: async () => {},
+    beforeFetchCheck: async () => {},
   }
   const sessions = new Map<string, { id: string; location: { directory: string }; metadata?: Record<string, unknown>;
     model?: { providerID: string; id: string }; title?: string }>()
@@ -45,7 +47,19 @@ function fixture() {
   const connection = {
     endpoint, client, profile: async () => "modern" as const,
     assertCurrent() { if (!state.current) throw new Error("replaced connection") }, invalidate() {},
-    fetch: async () => { connection.assertCurrent(); events.push("forward"); return Response.json({ ok: true }) },
+    fetch: async (
+      _input: unknown,
+      _init?: unknown,
+      _media?: unknown,
+      dispatchHooks?: { beforeFetch?: () => Promise<void>; onDispatch?: () => void },
+    ) => {
+      await state.beforeFetchCheck()
+      await dispatchHooks?.beforeFetch?.()
+      connection.assertCurrent()
+      dispatchHooks?.onDispatch?.()
+      events.push("forward")
+      return Response.json({ ok: true })
+    },
   }
   const workspace = { id: "w", path: "/repo" }
   const manager: InstanceProxyWorkspaceManager = {
@@ -60,9 +74,16 @@ function fixture() {
   }
   const app = Fastify(), fence = new WorktreeDeletionFence()
   apps.push(app)
-  registerInstanceProxyRoutes(app, { workspaceManager: manager, worktreeDeletionFence: fence,
-    logger: { debug() {}, error() {}, isLevelEnabled: () => false } as never })
-  return { app, state, reads, events, sessions, missing, fence, manager }
+  registerInstanceProxyRoutes(app, {
+    workspaceManager: manager,
+    worktreeDeletionFence: fence,
+    sessionCleanup: {
+      enterMutation: () => () => {},
+      markUncertain: (sessionId: string) => { uncertainSessions.push(sessionId) },
+    } as never,
+    logger: { debug() {}, error() {}, isLevelEnabled: () => false } as never,
+  })
+  return { app, state, reads, events, sessions, missing, fence, manager, uncertainSessions }
 }
 
 test("every ordinary session mutation rejects the real unmarked carrier before auxiliary writes or forwarding", async () => {
@@ -266,4 +287,39 @@ test("carrier reads and ordinary session reads remain distinct; importing a fore
   assert.deepEqual(f.events, ["forward"])
   const release = f.fence.enter(["/repo"])
   assert.ok(release); release()
+})
+
+test("late beforeFetch connection replacement rejects prompt with 502 before dispatch without markUncertain", async () => {
+  const f = fixture()
+  f.state.beforeFetchCheck = async () => { f.state.current = false }
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_late_fail/prompt`,
+    payload: { text: "blocked before send" },
+  })
+  assert.equal(response.statusCode, 502, response.body)
+  assert.deepEqual(response.json(), { error: "opencode_unavailable_before_send" })
+  assert.deepEqual(f.events, ["environment"])
+  assert.deepEqual(f.uncertainSessions, [])
+})
+
+test("session move fence blocks concurrent prompt posts with 409 before dispatch", async () => {
+  const f = fixture()
+  let releaseMove!: () => void
+  const moveEntered = new Promise<void>(resolve => {
+    void f.fence.runSession("ses_moving", async () => {
+      resolve()
+      await new Promise<void>(done => { releaseMove = done })
+    })
+  })
+  await moveEntered
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_moving/prompt`,
+    payload: { text: "blocked during move" },
+  })
+  assert.equal(response.statusCode, 409, response.body)
+  assert.deepEqual(f.events, [])
+  assert.deepEqual(f.uncertainSessions, [])
+  releaseMove()
 })

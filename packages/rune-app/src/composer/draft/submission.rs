@@ -42,7 +42,7 @@ impl Draft {
         let mut result = String::new();
         let mut spans = Vec::new();
         let mut cursor = 0;
-        for literal in literal.chain([text.len()..text.len()]) {
+        for literal in literal.chain(std::iter::once(text.len()..text.len())) {
             let inline = text.get(cursor..literal.start)?;
             let inline = if cursor == 0 {
                 inline.trim_start_matches(whitespace)

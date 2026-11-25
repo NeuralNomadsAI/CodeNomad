@@ -11,24 +11,32 @@ pub const MAX_WINDOW_DEVICE_FILES: usize = super::super::MAX_DRAFTS * MAX_FILES;
 pub(super) struct LiveDraft {
     text: Option<String>,
     parts: Option<(Draft, bool)>,
-    unconfirmed: Option<crate::composer::PendingSend>,
+    unconfirmed: Option<crate::composer::UnconfirmedPrompt>,
+    command_unconfirmed: Option<crate::composer::UnconfirmedCommand>,
 }
 
 impl LiveDraft {
     pub(super) fn unconfirmed_id(&self) -> Option<&str> {
-        self.unconfirmed.as_ref().map(|send| send.id())
+        self.unconfirmed.as_ref().map(crate::composer::UnconfirmedPrompt::id)
     }
 
-    pub(super) fn unconfirmed_restored_text(&self) -> Option<&str> {
-        self.unconfirmed
-            .as_ref()
-            .and_then(|send| send.restored_text())
+    pub(super) fn unconfirmed_state(&self) -> Option<&crate::composer::UnconfirmedPrompt> {
+        self.unconfirmed.as_ref()
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.text.is_none()
+            && self.parts.is_none()
+            && self.unconfirmed.is_none()
+            && self.command_unconfirmed.is_none()
     }
 
     pub(super) fn clear_unconfirmed_matching(
         &mut self,
         attempt_id: &str,
         saved_text: Option<&str>,
+        saved_parts: Option<&SavedParts>,
+        saved_has_attachment_draft: bool,
     ) -> bool {
         if self.unconfirmed_id() != Some(attempt_id) {
             return false;
@@ -36,8 +44,17 @@ impl LiveDraft {
         let Some(send) = self.unconfirmed.take() else {
             return false;
         };
-        let text = self.text.as_deref().or(saved_text);
-        if send.matches_restored_draft(text, self.parts.as_ref().map(|(draft, _)| draft)) {
+        let matches = if let Some((draft, missing)) = self.parts.as_ref() {
+            let edit = rune::edit::TextEdit::new(self.text.as_deref().or(saved_text).unwrap_or(""));
+            send.matches_live(&edit, draft, *missing || saved_has_attachment_draft)
+        } else {
+            send.matches_saved(
+                self.text.as_deref().or(saved_text),
+                saved_parts,
+                saved_has_attachment_draft,
+            )
+        };
+        if matches {
             self.text = None;
             self.parts = None;
             return true;
@@ -67,8 +84,9 @@ fn oversized(text: &str) -> bool {
 pub fn window_inline_usage_without_history(
     s: &State,
     seen: &mut std::collections::HashSet<usize>,
+    include_active_draft: bool,
 ) -> (usize, usize) {
-    let (mut files, mut bytes) = s.composer.add_unique_inline_usage(seen, true);
+    let (mut files, mut bytes) = s.composer.add_unique_inline_usage(seen, include_active_draft);
     let Some(ui) = &s.workspace else {
         return (files, bytes);
     };
@@ -90,11 +108,6 @@ pub fn window_inline_usage_without_history(
                 files = files.saturating_add(f);
                 bytes = bytes.saturating_add(b);
             }
-            if let Some(send) = draft.unconfirmed.as_ref() {
-                let (f, b) = send.draft().add_unique_inline_usage(seen);
-                files = files.saturating_add(f);
-                bytes = bytes.saturating_add(b);
-            }
         }
     }
     (files, bytes)
@@ -102,7 +115,7 @@ pub fn window_inline_usage_without_history(
 
 pub fn attachment_draft_admissible(s: &State) -> bool {
     let mut seen = std::collections::HashSet::new();
-    let (mut files, mut bytes) = window_inline_usage_without_history(s, &mut seen);
+    let (mut files, mut bytes) = window_inline_usage_without_history(s, &mut seen, true);
     let (history_files, history_bytes) = s.prompt_history.unique_inline_usage(&mut seen);
     files = files.saturating_add(history_files);
     bytes = bytes.saturating_add(history_bytes);
@@ -174,14 +187,35 @@ pub(super) fn note_unconfirmed_for(
         confirm_unconfirmed_for(s, ui, saved, key, attempt_id);
         return;
     }
-    let restored_text = s
+    let unconfirmed = s
         .composer
         .unconfirmed_state()
         .filter(|send| send.id() == attempt_id)
-        .and_then(|send| send.restored_text())
-        .filter(|text| !oversized(text))
-        .map(str::to_owned);
-    ui.remember_closed_unconfirmed(saved, key.to_owned(), attempt_id.to_owned(), restored_text);
+        .cloned()
+        .or_else(|| {
+            ui.entries.iter().enumerate().find_map(|(index, entry)| {
+                if !matches!(&entry.saved, Tab::Workspace(current) if same_backend(current, saved)) {
+                    return None;
+                }
+                if index != ui.active
+                    && let Some(found) = entry
+                        .cache
+                        .as_ref()
+                        .and_then(super::Cache::unconfirmed_state)
+                        .filter(|send| send.id() == attempt_id)
+                {
+                    return Some(found.clone());
+                }
+                entry
+                    .live_drafts
+                    .get(key)
+                    .and_then(LiveDraft::unconfirmed_state)
+                    .filter(|send| send.id() == attempt_id)
+                    .cloned()
+            })
+        })
+        .unwrap_or_else(|| crate::composer::UnconfirmedPrompt::locked(attempt_id.to_owned()));
+    ui.remember_closed_unconfirmed(saved, key.to_owned(), unconfirmed);
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if matches!(&entry.saved, Tab::Workspace(current) if same_backend(current, saved)) {
             let same_active_session = matches!(
@@ -191,20 +225,21 @@ pub(super) fn note_unconfirmed_for(
             if index == ui.active {
                 if same_active_session && s.composer.unconfirmed_state().is_none() {
                     s.composer
-                        .restore_unconfirmed(crate::composer::PendingSend::locked(
+                        .restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(
                             attempt_id.to_owned(),
                         ));
                 }
             } else if same_active_session && let Some(cache) = &mut entry.cache {
-                cache.restore_unconfirmed(crate::composer::PendingSend::locked(
+                cache.restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(
                     attempt_id.to_owned(),
                 ));
             }
             if let Some(live) = entry.live_drafts.get_mut(key)
                 && live.unconfirmed.is_none()
             {
-                live.unconfirmed =
-                    Some(crate::composer::PendingSend::locked(attempt_id.to_owned()));
+                live.unconfirmed = Some(crate::composer::UnconfirmedPrompt::locked(
+                    attempt_id.to_owned(),
+                ));
             }
         }
     }
@@ -268,33 +303,34 @@ pub(super) fn confirm_unconfirmed_for(
     key: &str,
     attempt_id: &str,
 ) {
-    let mut restored_text = ui.forget_closed_unconfirmed(saved, key, attempt_id);
-    if restored_text.is_none() {
-        restored_text = ui.entries.iter().enumerate().find_map(|(index, entry)| {
+    let mut matched = ui
+        .forget_closed_unconfirmed(saved, key, attempt_id)
+        .filter(|send| !send.is_edited());
+    if matched.is_none() {
+        matched = ui.entries.iter().enumerate().find_map(|(index, entry)| {
             if !matches!(&entry.saved, Tab::Workspace(current) if same_backend(current, saved)) {
                 return None;
             }
-            if index == ui.active {
+            let active_or_cached = if index == ui.active {
                 s.composer
                     .unconfirmed_state()
-                    .filter(|send| send.id() == attempt_id)
-                    .and_then(|send| send.restored_text())
-                    .map(str::to_owned)
+                    .filter(|send| send.id() == attempt_id && !send.is_edited())
+                    .cloned()
             } else {
                 entry
                     .cache
                     .as_ref()
-                    .filter(|cache| cache.unconfirmed_id() == Some(attempt_id))
-                    .and_then(|cache| cache.unconfirmed_restored_text())
-                    .map(str::to_owned)
-            }
-            .or_else(|| {
+                    .and_then(super::Cache::unconfirmed_state)
+                    .filter(|send| send.id() == attempt_id && !send.is_edited())
+                    .cloned()
+            };
+            active_or_cached.or_else(|| {
                 entry
                     .live_drafts
                     .get(key)
-                    .filter(|live| live.unconfirmed_id() == Some(attempt_id))
-                    .and_then(|live| live.unconfirmed_restored_text())
-                    .map(str::to_owned)
+                    .and_then(LiveDraft::unconfirmed_state)
+                    .filter(|send| send.id() == attempt_id && !send.is_edited())
+                    .cloned()
             })
         });
     }
@@ -315,12 +351,24 @@ pub(super) fn confirm_unconfirmed_for(
             } else if same_active_session && let Some(cache) = &mut entry.cache {
                 cleared_draft |= cache.clear_unconfirmed_matching(attempt_id);
             }
-            let saved_text = match &entry.saved {
-                Tab::Workspace(current) => current.drafts.get(key).map(String::as_str),
-                _ => None,
+            let (saved_text, saved_parts, saved_has_attachment_draft) = match &entry.saved {
+                Tab::Workspace(current) => (
+                    current.drafts.get(key).map(String::as_str),
+                    current.attachment_parts.get(key),
+                    current.attachment_drafts.contains(key),
+                ),
+                _ => (None, None, false),
             };
             if let Some(live) = entry.live_drafts.get_mut(key) {
-                cleared_draft |= live.clear_unconfirmed_matching(attempt_id, saved_text);
+                cleared_draft |= live.clear_unconfirmed_matching(
+                    attempt_id,
+                    saved_text,
+                    saved_parts,
+                    saved_has_attachment_draft,
+                );
+            }
+            if entry.live_drafts.get(key).is_some_and(LiveDraft::is_empty) {
+                entry.live_drafts.remove(key);
             }
             if cleared_draft && let Tab::Workspace(current) = &mut entry.saved {
                 if current.drafts.remove(key).is_some() {
@@ -329,18 +377,17 @@ pub(super) fn confirm_unconfirmed_for(
                 }
                 persisted_changed |= current.attachment_drafts.remove(key);
                 persisted_changed |= current.attachment_parts.remove(key).is_some();
-                if entry.live_drafts.get(key).is_some_and(|live| {
-                    live.text.is_none() && live.parts.is_none() && live.unconfirmed.is_none()
-                }) {
-                    entry.live_drafts.remove(key);
-                }
             }
         }
     }
-    if let Some(expected_text) = restored_text.as_deref() {
+    if let Some(unconfirmed) = matched.as_ref() {
         for closed in &mut ui.closed {
             if same_project(closed, saved)
-                && closed.drafts.get(key).map(String::as_str) == Some(expected_text)
+                && unconfirmed.matches_saved(
+                    closed.drafts.get(key).map(String::as_str),
+                    closed.attachment_parts.get(key),
+                    closed.attachment_drafts.contains(key),
+                )
             {
                 closed.drafts.remove(key);
                 closed.attachment_drafts.remove(key);
@@ -386,6 +433,37 @@ pub fn capture(s: &mut State) {
     s.workspace = Some(ui);
 }
 
+pub fn unconfirmed_drafts_full(s: &State) -> bool {
+    if s.composer.unconfirmed_id().is_none() && s.composer.command_unconfirmed.is_none() {
+        return false;
+    }
+    let Some(ui) = &s.workspace else {
+        return false;
+    };
+    let Some(item) = ui.entries.get(ui.active) else {
+        return false;
+    };
+    let Tab::Workspace(saved) = &item.saved else {
+        return false;
+    };
+    let key = saved
+        .active_session_id
+        .as_deref()
+        .unwrap_or("__no_session_draft__");
+    let closed_full = ui.closed_unconfirmed_count() >= super::MAX_UNCONFIRMED_LOCKS
+        && !ui.has_closed_unconfirmed_for(saved, key);
+    closed_full
+        || item
+            .live_drafts
+            .iter()
+            .filter(|(existing, draft)| {
+                existing.as_str() != key
+                    && (draft.unconfirmed.is_some() || draft.command_unconfirmed.is_some())
+            })
+            .count()
+            >= super::super::MAX_DRAFTS
+}
+
 pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
     let (edit, draft, missing) = crate::composer::recall::fresh(s);
     let text = &edit.text;
@@ -401,8 +479,9 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
         if owns_draft {
             let too_long = oversized(text);
             let has_device_parts = draft.inline_usage().0 != 0;
-            let unconfirmed = s.composer.unconfirmed_state().cloned();
-            if too_long || has_device_parts || unconfirmed.is_some() {
+            let unconfirmed = s.composer.clone_unconfirmed();
+            let has_unconfirmed = unconfirmed.is_some() || s.composer.command_unconfirmed.is_some();
+            if too_long || has_device_parts || has_unconfirmed {
                 let live = item.live_drafts.entry(key.into()).or_default();
                 live.text = too_long.then(|| text.clone());
                 live.parts = (too_long || has_device_parts).then(|| {
@@ -411,6 +490,7 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
                     (draft, missing)
                 });
                 live.unconfirmed = unconfirmed;
+                live.command_unconfirmed = s.composer.command_unconfirmed.clone();
             } else {
                 item.live_drafts.remove(key);
             }
@@ -467,7 +547,7 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
     let closed_unconfirmed = match &ui.entries[ui.active].saved {
         Tab::Workspace(saved) => ui
             .closed_unconfirmed_entry(saved, &backend.session)
-            .map(|(id, text)| (id.to_owned(), text.map(str::to_owned))),
+            .cloned(),
         Tab::Blank => None,
     };
     let item = &mut ui.entries[ui.active];
@@ -480,12 +560,11 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
     if !same_session {
         if let Some(unconfirmed) = live.and_then(|draft| draft.unconfirmed.as_ref()) {
             s.composer.restore_unconfirmed(unconfirmed.clone());
-        } else if let Some((attempt_id, restored_text)) = closed_unconfirmed {
-            s.composer
-                .restore_unconfirmed(crate::composer::PendingSend::locked_with_text(
-                    attempt_id,
-                    restored_text,
-                ));
+        } else if let Some(unconfirmed) = closed_unconfirmed {
+            s.composer.restore_unconfirmed(unconfirmed);
+        }
+        if let Some(slash) = live.and_then(|draft| draft.command_unconfirmed.as_ref()) {
+            s.composer.command_unconfirmed = Some(slash.clone());
         }
     }
     if !same_session && let Some((draft, missing)) = live.and_then(|draft| draft.parts.as_ref()) {
@@ -565,5 +644,72 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         w.drafts.remove(id);
         w.attachment_drafts.remove(id);
         w.attachment_parts.remove(id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pure_unconfirmed_live_drafts_stay_bounded_to_max_drafts() {
+        let mut s = crate::init();
+        let mut ui = Ui::new();
+        ui.fixture_ready();
+        ui.entries[0].saved = Tab::Workspace(crate::workspace::Workspace {
+            backend_id: None,
+            server_id: None,
+            folder: "/repo".into(),
+            occurrence: 0,
+            workspace_id: Some("ws".into()),
+            active_session_id: None,
+            drafts: Default::default(),
+            attachment_drafts: Default::default(),
+            attachment_parts: Default::default(),
+            view: Default::default(),
+        });
+        s.workspace = Some(ui);
+        let mut b = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        b.workspace = "ws".into();
+        // A session with an edited saved draft must never lose its draft when other sessions
+        // accumulate unconfirmed locks.
+        b.session = "kept-edited".into();
+        let _ = bound(&mut s, &b);
+        s.draft = rune::edit::TextEdit::new("edited user draft");
+        s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
+            "compact",
+            &"x".repeat(1024),
+        ));
+        capture(&mut s);
+
+        // Sessions with unconfirmed locks preserve every lock up to MAX_DRAFTS (including those
+        // with saved draft text) and then block leaving an additional unconfirmed session instead
+        // of evicting earlier locks.
+        for index in 0..(crate::workspace::MAX_DRAFTS - 1) {
+            b.session = format!("ses-{index}");
+            let _ = bound(&mut s, &b);
+            s.draft = rune::edit::TextEdit::new("");
+            s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
+                "compact",
+                &"x".repeat(1024),
+            ));
+            assert!(!unconfirmed_drafts_full(&s));
+            capture(&mut s);
+        }
+        b.session = "ses-overflow".into();
+        let _ = bound(&mut s, &b);
+        s.draft = rune::edit::TextEdit::new("draft with unconfirmed lock");
+        s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
+            "compact",
+            &"x".repeat(1024),
+        ));
+        assert!(unconfirmed_drafts_full(&s));
+        // Every previously recorded unconfirmed session retains its anti-replay lock.
+        b.session = "ses-0".into();
+        let _ = bound(&mut s, &b);
+        assert!(s.composer.command_unconfirmed.is_some());
+        b.session = "kept-edited".into();
+        assert_eq!(bound(&mut s, &b), "edited user draft");
+        assert!(s.composer.command_unconfirmed.is_some());
     }
 }

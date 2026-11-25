@@ -10,15 +10,9 @@ pub(crate) enum Bookmark {
 pub(crate) struct Reading {
     following: bool,
     top: Option<(String, f32)>,
+    passage: Option<Passage>,
     jump: Option<String>,
     lookup: Option<Jump>,
-    passage: Option<Passage>,
-}
-
-struct Jump {
-    scope: std::rc::Rc<()>,
-    position: Option<String>,
-    result: codenomad_client::Receiver<Option<String>>,
 }
 
 struct Passage {
@@ -28,14 +22,20 @@ struct Passage {
     mode: Option<crate::settings::TranscriptRow>,
 }
 
+struct Jump {
+    scope: std::rc::Rc<()>,
+    position: Option<String>,
+    result: codenomad_client::Receiver<Option<String>>,
+}
+
 impl Default for Reading {
     fn default() -> Self {
         Self {
             following: true,
             top: None,
+            passage: None,
             jump: None,
             lookup: None,
-            passage: None,
         }
     }
 }
@@ -84,6 +84,65 @@ impl Reading {
     }
 }
 
+pub(crate) fn keep_passage(s: &State, tx: &mut Tx) {
+    let reading = s.transcript_display.reading();
+    if !reading.following
+        && let (Some((message, _)), Some(passage)) = (&reading.top, &reading.passage)
+        && *message == passage.message
+        && passage
+            .mode
+            .is_none_or(|row| crate::settings::transcript_mode(s, row) != "hidden")
+    {
+        let group = matches!(passage.mode, Some(crate::settings::TranscriptRow::Tool(_)))
+            .then(|| {
+                super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key)
+            })
+            .flatten();
+        tx.scroll_key_to(
+            group.unwrap_or_else(|| format!("{message}/{}", passage.key)),
+            passage.offset,
+        );
+    }
+}
+
+pub(super) fn passage(
+    s: &State,
+    body: El,
+    message: &str,
+    key: String,
+    mode: Option<crate::settings::TranscriptRow>,
+    marker: Option<codenomad_client::timeline::Marker<'_>>,
+) -> El {
+    let scope = s.input_scope.clone();
+    let message = message.to_owned();
+    let body = body.key(key.clone());
+    let observe = move |s: &mut State, [_, y, _, height]: [f32; 4], tx: &mut Tx| {
+        if s.current_scope(&scope) {
+            let [_, top, _, viewport] = s.tool_diff_preferences.history_bounds.get();
+            let reading = s.transcript_display.reading_mut();
+            if viewport > 0.0 && y <= top && y + height > top {
+                reading.passage = Some(Passage {
+                    message: message.clone(),
+                    key: key.clone(),
+                    offset: y - top,
+                    mode,
+                });
+            } else if reading
+                .passage
+                .as_ref()
+                .is_some_and(|old| old.message == message && old.key == key)
+            {
+                reading.passage = None;
+            }
+        }
+        tx.live_only();
+    };
+    if let Some(marker) = marker {
+        crate::timeline::watch_block(s, marker, body, observe)
+    } else {
+        body.on_drawn_layout_tx(observe)
+    }
+}
 fn user_position(s: &State) -> Option<&str> {
     let reading = s.transcript_display.reading();
     reading.jump.as_deref().or_else(|| {
@@ -212,67 +271,6 @@ pub(crate) fn poll_jump(s: &mut State, tx: &mut Tx) -> bool {
     }
     false
 }
-
-pub(crate) fn keep_passage(s: &State, tx: &mut Tx) {
-    let reading = s.transcript_display.reading();
-    if !reading.following
-        && let (Some((message, _)), Some(passage)) = (&reading.top, &reading.passage)
-        && *message == passage.message
-        && passage
-            .mode
-            .is_none_or(|row| crate::settings::transcript_mode(s, row) != "hidden")
-    {
-        let group = matches!(passage.mode, Some(crate::settings::TranscriptRow::Tool(_)))
-            .then(|| {
-                super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key)
-            })
-            .flatten();
-        tx.scroll_key_to(
-            group.unwrap_or_else(|| format!("{message}/{}", passage.key)),
-            passage.offset,
-        );
-    }
-}
-
-pub(super) fn passage(
-    s: &State,
-    body: El,
-    message: &str,
-    key: String,
-    mode: Option<crate::settings::TranscriptRow>,
-    marker: Option<codenomad_client::timeline::Marker<'_>>,
-) -> El {
-    let scope = s.input_scope.clone();
-    let message = message.to_owned();
-    let body = body.key(key.clone());
-    let observe = move |s: &mut State, [_, y, _, height]: [f32; 4], tx: &mut Tx| {
-        if s.current_scope(&scope) {
-            let [_, top, _, viewport] = s.tool_diff_preferences.history_bounds.get();
-            let reading = s.transcript_display.reading_mut();
-            if viewport > 0.0 && y <= top && y + height > top {
-                reading.passage = Some(Passage {
-                    message: message.clone(),
-                    key: key.clone(),
-                    offset: y - top,
-                    mode,
-                });
-            } else if reading
-                .passage
-                .as_ref()
-                .is_some_and(|old| old.message == message && old.key == key)
-            {
-                reading.passage = None;
-            }
-        }
-        tx.live_only();
-    };
-    if let Some(marker) = marker {
-        crate::timeline::watch_block(s, marker, body, observe)
-    } else {
-        body.on_drawn_layout_tx(observe)
-    }
-}
-
 pub(crate) fn viewport(s: &State, history: El) -> El {
     let scope = s.input_scope.clone();
     let layout_scope = scope.clone();

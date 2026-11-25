@@ -45,16 +45,8 @@ pub(super) async fn slash(
                 if before_dispatch {
                     PromptOutcome::Rejected
                 } else {
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        // In a browser, another tab may have re-paired the shared cookie jar after revocation.
-                        PromptOutcome::Unconfirmed
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        // Native backends own an isolated cookie jar: a live status proves synchronous rejection.
-                        PromptOutcome::Rejected
-                    }
+                    // Without the pre-dispatch marker, a 401 may come from a detached write or upstream after dispatch.
+                    PromptOutcome::Unconfirmed
                 }
             }
         }
@@ -122,16 +114,8 @@ pub(super) async fn prompt_encoded(
             if before_dispatch {
                 PromptOutcome::Rejected
             } else {
-                #[cfg(target_arch = "wasm32")]
-                {
-                    // In a browser, another tab may have re-paired the shared cookie jar after revocation.
-                    PromptOutcome::Unconfirmed
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    // Native backends own an isolated cookie jar: a live status proves synchronous rejection.
-                    PromptOutcome::Rejected
-                }
+                // Without the pre-dispatch marker, a 401 may come from a detached write or upstream after dispatch.
+                PromptOutcome::Unconfirmed
             }
         }
         Err(error)

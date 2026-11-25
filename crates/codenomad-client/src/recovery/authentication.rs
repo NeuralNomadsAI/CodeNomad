@@ -38,8 +38,8 @@ pub(super) async fn rejected_by_authentication(
     }
     close_for_authentication(wire, out).await;
     let confirmed = matches!(authenticated, Ok(false));
-    // A pre-dispatch middleware 401 proved no native POST left the server; a detached 401 cannot.
-    let outcome = if before_dispatch && confirmed {
+    // A pre-dispatch middleware 401 proved no native POST left the server regardless of /api/auth/status availability.
+    let outcome = if before_dispatch {
         PromptOutcome::Rejected
     } else {
         PromptOutcome::Unconfirmed

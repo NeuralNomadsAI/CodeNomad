@@ -23,8 +23,8 @@ import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
 const webMoreActions=process.argv.includes('--web-mobile-more-actions')
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||webMoreActions||process.argv.includes('--web-mobile')
 const mobileSessionSearch=process.argv.includes('--mobile-session-search')
-assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation requires the Chromium mobile smoke')
 const historyReturnOnly=process.argv.includes('--history-return-only')
+assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation requires the Chromium mobile smoke')
 assert(!historyReturnOnly || webMobile&&!webAndroid)
 assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes('--web-mobile'))
 if(process.platform==='win32'&&webMobile&&!process.argv.includes('--owned-mobile-worker')){
@@ -470,8 +470,8 @@ try{
   const origin=await startServer()
   if(web){
     await signIn(origin)
-    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog:host.stdout(),http,mobile,restart:restartWeb,records,
-      webMobile,webAndroid,mobileSessionSearch,historyReturnOnly,webMoreActions,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
+    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog:host.stdout(),http,mobile,restart:restartWeb,
+      webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
     client=webState.client
   }else if(pendingOpen){
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0

@@ -16,6 +16,12 @@ pub(crate) fn has_preview(s: &crate::State) -> bool {
         .is_some_and(|ui| ui.reader.target().is_some())
 }
 
+pub(crate) fn modal_open(s: &crate::State) -> bool {
+    s.files
+        .as_ref()
+        .is_some_and(|ui| ui.document.confirmation().is_some() || ui.actions.is_menu_open())
+}
+
 pub(crate) fn poll_notices(s: &mut crate::State) -> bool {
     let saved = s.files.as_mut().is_some_and(Ui::observe_document_write);
     if saved {
@@ -49,12 +55,27 @@ pub(crate) fn poll(s: &mut crate::State, now: f64, tx: &mut rune::Tx) -> bool {
     let notices = poll_notices(s);
     let changed = s.files.as_mut().is_some_and(|ui| {
         let selected = ui.sync_tree_focus(tx);
-        ui.poll(now) || selected
+        let polled = ui.poll(now);
+        if let Some(deadline) = ui.next_wake() {
+            tx.wake_after(std::time::Duration::from_secs_f64(
+                (deadline - now).max(0.0),
+            ));
+        }
+        polled || selected
     });
     notices | changed | view::poll_actions(s, tx)
 }
 
 pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {
+    if let Some(ui) = s.files.as_mut().filter(|ui| {
+        ui.backend.workspace == backend.workspace
+            && ui.backend.base == backend.base
+            && (ui.uses_connection(backend) || ui.same_server_identity(backend))
+            && ui.backend.session.is_empty()
+    }) {
+        ui.rebind_session(backend);
+        return;
+    }
     s.files = s.screen.launcher().and_then(|launcher| {
         let project = launcher
             .project

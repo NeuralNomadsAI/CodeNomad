@@ -1,4 +1,4 @@
-use super::{connection, keys, right_panel, sidebar};
+use super::{connection, panel_keys, right_panel, sidebar};
 use crate::{State, strings};
 use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
@@ -293,7 +293,7 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
         .on_layout_tx(move |s: &mut State, [_, _, width, height], tx| {
             s.shell.measure(width, height, touch, tx)
         })
-        .on_key(keys);
+        .on_key(panel_keys);
     if project {
         for i in 0..2 {
             root = root.child(shell::toggle(

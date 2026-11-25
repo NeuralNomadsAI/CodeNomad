@@ -434,7 +434,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 data["listWorktreeSlug"] = json!(slug);
             }
             app.workspace(id)?;
-            principal.live()?;
+            if principal.0.is_cancelled() {
+                return Ok(crate::auth::unauthorized_before_dispatch());
+            }
             return Ok(Json(json!({ "data": data })).into_response());
         }
     }
@@ -664,7 +666,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         if command && let Some(Value::Object(input)) = &input {
             super::prompt::validate(&app, &workspace, input).await?;
         }
-        recheck_input().await?;
+        match recheck_input().await {
+            Ok(_) => {}
+            Err(e) if e.0 == Status::UNAUTHORIZED => return Ok(crate::auth::unauthorized_before_dispatch()),
+            Err(e) => return Err(e),
+        }
         if prompt_locations.iter().any(|(raw, p, _)| {
             crate::worktrees::ownership::resolve_directory(raw).as_deref() != Some(std::path::Path::new(&p.directory))
         }) {
@@ -685,14 +691,23 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         // `syncSessionMemoryContext`: advisory, bounded to its own 2 s budget.
         crate::memory::sync(&app, &endpoint, session, || async { recheck_input().await.is_ok() }).await;
-        let fresh = recheck_input().await?;
+        let fresh = match recheck_input().await {
+            Ok(fresh) => fresh,
+            Err(e) if e.0 == Status::UNAUTHORIZED => return Ok(crate::auth::unauthorized_before_dispatch()),
+            Err(e) => return Err(e),
+        };
         #[cfg(test)]
         crate::worktrees::fence_test_trace::record("permission rules", "waiting for send refresh");
-        crate::sessions::permission_mode::refresh_before_send(&app, &endpoint, &fresh, || {
+        match crate::sessions::permission_mode::refresh_before_send(&app, &endpoint, &fresh, || {
             principal.live().is_ok() && app.native.current(&endpoint) && input_location_live()
         })
         .await
-        .map_err(|e| if e.0 == Status::BAD_GATEWAY { super::pre_dispatch_unavailable() } else { e })?;
+        {
+            Ok(()) => {}
+            Err(_) if principal.0.is_cancelled() => return Ok(crate::auth::unauthorized_before_dispatch()),
+            Err(e) if e.0 == Status::BAD_GATEWAY => return Err(super::pre_dispatch_unavailable()),
+            Err(e) => return Err(e),
+        }
         #[cfg(test)]
         crate::worktrees::fence_test_trace::record("permission rules", "send refresh finished");
     }
@@ -763,12 +778,18 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if let Some(input) = &input {
         upstream = upstream.json(input);
     }
-    principal.live()?;
+    if principal.0.is_cancelled() {
+        return Ok(crate::auth::unauthorized_before_dispatch());
+    }
     if send_input {
         if command && let Some(Value::Object(input)) = &input {
             super::prompt::validate(&app, &workspace, input).await?;
         }
-        recheck_input().await?;
+        match recheck_input().await {
+            Ok(_) => {}
+            Err(e) if e.0 == Status::UNAUTHORIZED => return Ok(crate::auth::unauthorized_before_dispatch()),
+            Err(e) => return Err(e),
+        }
     }
     if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
         return Err(if send_input { super::pre_dispatch_unavailable() } else { upstream_error() });
@@ -777,7 +798,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
     let dispatch_session = session.map(str::to_owned);
-    let dispatch = move |detached: tokio_util::sync::CancellationToken| async move {
+    let dispatch = move |detached: tokio_util::sync::CancellationToken, gate: super::proxy_write::DispatchGate| async move {
         if principal.0.is_cancelled() {
             return Ok(crate::auth::unauthorized_before_dispatch());
         }
@@ -834,6 +855,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             if detached.is_cancelled() || !app.native.current(&endpoint) {
                 return Err(super::pre_dispatch_unavailable());
             }
+        }
+        if !gate.try_dispatch() {
+            return Ok(crate::auth::unauthorized_before_dispatch());
         }
         // Undici's default headers deadline for the TypeScript runtime transport.
         // Do not cap the total lifetime of a streaming native response.
@@ -946,7 +970,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if let Some(permit) = mutation {
         super::proxy_write::forward(permit, rules_lock, observer, dispatch).await
     } else {
-        dispatch(tokio_util::sync::CancellationToken::new()).await
+        dispatch(tokio_util::sync::CancellationToken::new(), super::proxy_write::DispatchGate::new()).await
     }
 }
 

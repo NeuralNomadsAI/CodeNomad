@@ -6,8 +6,6 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let expanded = interruption_expanded(s);
     let mut overlays = Vec::new();
     let worktree = git::session_worktree(s, &mut overlays);
-    let (more, menu) = composer::menu::view(s);
-    overlays.extend(menu);
     overlays.extend(super::media::preview(s));
     super::message_actions::overlays(s, &mut overlays);
     let controls = (!git::has_preview(s) && !crate::files::has_preview(s)).then(|| {
@@ -17,6 +15,8 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             cx.touch_controls(),
         ))
     });
+    let (more, menu) = composer::menu::view(s);
+    overlays.extend(menu);
     let body = rune_theme_codenomad::interruption::session_surface(expanded)
         .children(controls)
         .children(super::message_actions::restore(s))

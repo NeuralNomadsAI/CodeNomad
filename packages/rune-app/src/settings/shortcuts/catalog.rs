@@ -25,16 +25,114 @@ fn definitions() -> &'static [Value] {
 }
 
 pub(in crate::settings) fn active(id: &str) -> bool {
-    matches!(id, "new-instance" | "close-instance" | FILE_SAVE)
+    matches!(
+        id,
+        "new-instance"
+            | "close-instance"
+            | "instance-prev"
+            | "instance-next"
+            | "app-tab-1"
+            | "app-tab-2"
+            | "app-tab-3"
+            | "app-tab-4"
+            | "app-tab-5"
+            | "app-tab-6"
+            | "app-tab-7"
+            | "app-tab-8"
+            | "app-tab-9"
+            | "session-new"
+            | "session-prev"
+            | "session-next"
+            | "session-search"
+            | "close-session"
+            | FILE_SAVE
+    ) || id == "browse-folder" && crate::platform::folder_picker_available()
+}
+
+fn default_index(prefs: &Preferences, platform: KeyPlatform) -> usize {
+    let no_enter = prefs
+        .saved(super::super::preferences::Owner::Config)
+        .is_some_and(|doc| doc["settings"]["promptSubmitOnEnter"] == false);
+    2 * usize::from(platform == KeyPlatform::Mac) + usize::from(no_enter)
+}
+
+fn is_region_cycle(chord: &Chord, platform: KeyPlatform) -> bool {
+    let f6 = Chord::new(rune::ChordKey::Function(6));
+    chord.same_keys(&f6, platform) || chord.same_keys(&f6.with(rune::ChordMod::Shift), platform)
+}
+
+fn is_valid_rule(rule: &Value) -> bool {
+    let Some(obj) = rule.as_object() else {
+        return false;
+    };
+    if !obj.get("key").and_then(Value::as_str).is_some_and(|key| {
+        let lower = key.to_lowercase();
+        !key.is_empty()
+            && key.encode_utf16().count() <= 40
+            && !key.chars().any(char::is_control)
+            && !matches!(
+                lower.as_str(),
+                "control"
+                    | "ctrl"
+                    | "meta"
+                    | "shift"
+                    | "alt"
+                    | "altgraph"
+                    | "unidentified"
+                    | "dead"
+                    | "process"
+            )
+    }) {
+        return false;
+    }
+    ["mod", "ctrl", "meta", "alt", "shift"]
+        .iter()
+        .all(|name| obj.get(*name).is_none_or(Value::is_boolean))
+}
+
+fn resolve_def(
+    overrides: Option<&[Value]>,
+    def: &Value,
+    index: usize,
+    platform: KeyPlatform,
+) -> Vec<Chord> {
+    let mut chords = Vec::new();
+    let source = overrides.filter(|rules| rules.len() <= 8 && rules.iter().all(is_valid_rule));
+    let iter: &[Value] = match source {
+        Some(rules) => rules,
+        None => def["defaults"][index].as_array().map_or(&[], Vec::as_slice),
+    };
+    for chord in iter
+        .iter()
+        .filter_map(decode)
+        .filter(|chord| !is_region_cycle(chord, platform))
+    {
+        if !chords
+            .iter()
+            .any(|existing: &Chord| existing.same_keys(&chord, platform))
+        {
+            chords.push(chord);
+        }
+    }
+    chords
+}
+
+pub(super) fn resolve(prefs: &Preferences, id: &str) -> Vec<Chord> {
+    let Some(def) = definitions()
+        .iter()
+        .find(|def| def["id"].as_str() == Some(id))
+    else {
+        return Vec::new();
+    };
+    let platform = KeyPlatform::current();
+    let index = default_index(prefs, platform);
+    resolve_def(prefs.shortcut(id), def, index, platform)
 }
 
 pub(in crate::settings) fn rows(prefs: &Preferences, filter: &str) -> Vec<Row> {
     let locale = crate::strings::locale();
     let platform = KeyPlatform::current();
-    let no_enter = prefs
-        .saved(super::super::preferences::Owner::Config)
-        .is_some_and(|doc| doc["settings"]["promptSubmitOnEnter"] == false);
-    let index = 2 * usize::from(platform == KeyPlatform::Mac) + usize::from(no_enter);
+    let index = default_index(prefs, platform);
     let mut rows: Vec<_> = definitions()
         .iter()
         .filter_map(|def| {
@@ -51,17 +149,7 @@ pub(in crate::settings) fn rows(prefs: &Preferences, filter: &str) -> Vec<Row> {
                 ],
             );
             let overrides = prefs.shortcut(id);
-            let chords: Vec<Chord> = overrides
-                .filter(|rules| rules.len() <= 8)
-                .and_then(|rules| rules.iter().map(decode).collect())
-                .unwrap_or_else(|| {
-                    def["defaults"][index]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(decode)
-                        .collect()
-                });
+            let chords = resolve_def(overrides, def, index, platform);
             Some(Row {
                 id,
                 label,
@@ -129,7 +217,10 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
     let keys: std::collections::BTreeSet<_> =
         defs.iter().filter_map(|def| def["id"].as_str()).collect();
     assert_eq!(keys.len(), 75);
-    assert_eq!(keys.iter().filter(|id| active(id)).count(), 3);
+    assert_eq!(
+        keys.iter().filter(|id| active(id)).count(),
+        19 + usize::from(crate::platform::folder_picker_available())
+    );
     for def in defs {
         for defaults in def["defaults"].as_array().unwrap() {
             for binding in defaults.as_array().unwrap() {
@@ -164,10 +255,37 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
             .is_empty()
     );
     assert!(
-        !rows
-            .iter()
+        rows.iter()
             .find(|row| row.id == "session-search")
             .unwrap()
             .active
     );
+    assert!(
+        !rows
+            .iter()
+            .find(|row| row.id == "session-tab-1")
+            .unwrap()
+            .active
+    );
+
+    let utf16_40 = "é".repeat(40);
+    let utf16_41 = "é".repeat(41);
+    let mut invalid = Preferences::default();
+    invalid.fixture_shortcuts(serde_json::json!({
+        "close-session": [{"key": "Dead"}],
+        "close-instance": [{"key": utf16_41}],
+        "instance-prev": [{"key": "F8"}, {"key": "f8"}, {"key": "A+B"}],
+        "instance-next": [{"key": "BrowserBack"}],
+        "session-prev": [{"key": utf16_40}],
+        "new-instance": [],
+    }));
+    assert!(!resolve(&invalid, "close-session").is_empty());
+    assert!(!resolve(&invalid, "close-instance").is_empty());
+    assert_eq!(
+        resolve(&invalid, "instance-prev"),
+        vec![Chord::new(rune::ChordKey::Function(8))]
+    );
+    assert!(resolve(&invalid, "instance-next").is_empty());
+    assert!(resolve(&invalid, "session-prev").is_empty());
+    assert!(resolve(&invalid, "new-instance").is_empty());
 }

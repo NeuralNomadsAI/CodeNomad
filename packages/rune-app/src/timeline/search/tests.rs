@@ -309,7 +309,9 @@ fn keyboard_opens_the_search_and_query_edits_revoke_obsolete_results() {
             &KeyEvent {
                 key: Key::Command('f'),
                 mods: Mods {
-                    ctrl: true,
+                    ctrl: !cfg!(target_os = "macos"),
+                    cmd: true,
+                    logo: cfg!(target_os = "macos"),
                     ..Default::default()
                 }
             },

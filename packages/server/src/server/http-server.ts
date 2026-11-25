@@ -1488,13 +1488,24 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     reply.code(409).send({ error: "Worktree deletion is in progress" })
     return
   }
+  const releaseSessionMove = isPromptOrCommandPost && sessionId
+    ? worktreeDeletionFence.enterSession(sessionId)
+    : undefined
+  if (isPromptOrCommandPost && sessionId && !releaseSessionMove) {
+    releaseFence?.()
+    reply.code(409).send({ error: "Session move is in progress" })
+    return
+  }
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
   const releaseAccount = connection && isMutation
     && /^\/api\/(?:credential|integration)(?:\/|$)/.test(pathname) ? args.accounts?.manual(connection) : undefined
-  const releasePhysicalMutation = releaseFence || releaseAccount ? () => { releaseAccount?.(); releaseFence?.() } : undefined
+  const releasePhysicalMutation = releaseFence || releaseSessionMove || releaseAccount
+    ? () => { releaseAccount?.(); releaseSessionMove?.(); releaseFence?.() }
+    : undefined
   const releaseMutation = !isMutation ? releasePhysicalMutation
     : () => { releasePhysicalMutation?.(); releaseSession() }
 
+  let enteredForward = false
   try {
     connection?.assertCurrent()
     if (ordinarySessionMutation) {
@@ -1753,7 +1764,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       // A transcript page read by the UI: large tool images load on demand.
       const deferMedia = request.method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(pathname)
         && wantsDeferredMedia(request.headers)
-      const forward = () => forwardRuntimeRequest({
+      const forward = () => {
+        enteredForward = true
+        return forwardRuntimeRequest({
         transform: deferMedia && sessionId
           ? body => deferToolMedia((body as { data?: unknown } | null)?.data, { workspaceId, sessionId })
           : undefined,
@@ -1789,6 +1802,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           : confirmRoot || patchSession ? () => {} : undefined,
         invalidate: () => connection ? connection.invalidate() : workspaceManager.invalidateSharedServiceConnection?.(),
       })
+      }
       if (!patchSession) return await forward()
       const client = await clientForRequest()
       const target = sessionPermissionTarget(patchSession, {
@@ -1870,6 +1884,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     })
   } catch (error) {
     releaseMutation?.()
+    if (isPromptOrCommandPost && !enteredForward && !signal.aborted && !reply.sent) {
+      return reply.code(502).send({ error: "opencode_unavailable_before_send" })
+    }
     throw error
   }
 }

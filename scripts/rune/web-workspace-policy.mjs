@@ -63,6 +63,9 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if((method==='GET'||method==='HEAD')&&assets.has(p))return true
       if(method==='GET'&&['/api/workspaces','/api/meta','/api/events','/api/auth/status'].includes(p))return true
       if(method==='GET'&&(p==='/api/storage/config/ui'||p==='/api/storage/state/ui'))return true
+      if(mobilePreferences&&method==='GET'&&p==='/api/memory/settings')return true
+      if(markerFilters&&method==='PATCH'&&p==='/api/storage/config/ui')
+        return !!hidesFixtureThinking(body)
       const history=p.match(/^\/api\/storage\/instances\/([^/]+)$/)
       if(history&&workspaces.size){
         let key
@@ -72,9 +75,6 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
           body?.messageHistory?.[0]===menuPrompt&&Array.isArray(body.messageHistory)&&
           Object.keys(body).every(key=>['messageHistory','agentModelSelections'].includes(key))
       }
-      if(mobilePreferences&&method==='GET'&&p==='/api/memory/settings')return true
-      if(markerFilters&&method==='PATCH'&&p==='/api/storage/config/ui')
-        return !!hidesFixtureThinking(body)
       if(method==='POST'&&p==='/api/client-connections/pong')return true
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)
@@ -94,6 +94,7 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
        if(method==='DELETE'&&!owned[2])return !forbidRelease
        if(allowOwned)return allowOwned({method,path:owned[2]??'',body,query,native:false})
       if(method==='GET'&&owned[2]==='worktrees')return true
+      if(method==='GET'&&/^sessions\/(ses_existing|ses_another|ses_linked|ses_linked_next)\/permission-mode$/.test(owned[2]))return true
       if(method==='POST'&&['session-history/window','session-history/outline'].includes(owned[2]))return ['ses_existing','ses_another','ses_linked','ses_linked_next'].includes(body?.sessionID)
       if(method==='POST'&&owned[2]==='session-history/outlinePreview')return body?.sessionID==='ses_existing'
         &&Array.isArray(body.messageIDs)&&body.messageIDs.length>0&&body.messageIDs.length<=12

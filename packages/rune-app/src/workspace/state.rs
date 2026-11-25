@@ -1,6 +1,6 @@
 mod tabs;
 use tabs::{activate, close_blocked};
-pub use tabs::{can_new, close, new_tab, select};
+pub use tabs::{can_new, close, new_tab, select, select_index, select_relative};
 
 mod drafts;
 mod notification;
@@ -11,7 +11,8 @@ mod strip;
 
 pub(crate) use drafts::{
     MAX_WINDOW_DEVICE_FILES, attachment_draft_admissible, bound, capture, confirm_unconfirmed,
-    draft_changed, has_unconfirmed, note_unconfirmed, window_inline_usage_without_history,
+    draft_changed, has_unconfirmed, note_unconfirmed, unconfirmed_drafts_full,
+    window_inline_usage_without_history,
 };
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
@@ -19,14 +20,18 @@ pub(crate) use notification::{
 };
 #[cfg(target_arch = "wasm32")]
 pub(crate) use observation::poll_cached_notifications;
+pub(super) use panel_state::event_workspace_id;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use panel_state::set_files_tab;
 pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
 };
 pub(crate) use panel_state::{
-    mission_confirmation, mission_event, mission_observation_project, mission_panel,
-    mission_supported, right_panel_tab, set_right_panel_tab, suspend_missions,
+    deliver_detached_events, detached_workspace_ids, has_detached_panels,
+    has_unopened_detached_panels, mission_confirmation, mission_event, mission_observation_project,
+    mission_panel, mission_supported, missions_composing, reconcile_detached_online,
+    right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
+    suspend_missions,
 };
 pub use polling::{poll, status};
 pub use strip::strip;
@@ -51,6 +56,8 @@ pub(super) struct Entry {
     sessions: Vec<Session>,
     listed_sessions: HashSet<String>,
     creation_uncertain: bool,
+    creation_uncertain_linked: Option<String>,
+    rebind_after_send: Option<String>,
     next: Option<String>,
     linked: crate::launcher::linked::Linked,
     consumed_cursors: HashSet<u64>,
@@ -114,13 +121,12 @@ pub struct Ui {
     // Bounded in-memory lock registry across tabs (kept out of Snapshot to preserve the v1 client-state-codec schema).
     closed_unconfirmed: Vec<ClosedUnconfirmed>,
 }
-const MAX_UNCONFIRMED_LOCKS: usize = 64;
+pub(super) const MAX_UNCONFIRMED_LOCKS: usize = super::MAX_DRAFTS;
 struct ClosedUnconfirmed {
     backend_id: Option<String>,
     server_id: Option<String>,
     session_id: String,
-    attempt_id: String,
-    restored_text: Option<String>,
+    unconfirmed: crate::composer::UnconfirmedPrompt,
 }
 impl ClosedUnconfirmed {
     fn matches(&self, workspace: &Workspace, session_id: &str) -> bool {
@@ -134,38 +140,38 @@ impl Ui {
         &mut self,
         workspace: &Workspace,
         session_id: String,
-        attempt_id: String,
-        restored_text: Option<String>,
+        unconfirmed: crate::composer::UnconfirmedPrompt,
     ) {
-        let existing_text = self
+        if let Some(existing) = self
             .closed_unconfirmed
-            .iter()
-            .rev()
-            .find(|item| item.matches(workspace, &session_id) && item.attempt_id == attempt_id)
-            .and_then(|item| item.restored_text.clone());
-        self.closed_unconfirmed
-            .retain(|item| !item.matches(workspace, &session_id));
-        if self.closed_unconfirmed.len() >= MAX_UNCONFIRMED_LOCKS {
-            self.closed_unconfirmed.remove(0);
+            .iter_mut()
+            .find(|item| item.matches(workspace, &session_id))
+        {
+            if existing.unconfirmed.id() == unconfirmed.id() {
+                if existing.unconfirmed.is_edited() && !unconfirmed.is_edited() {
+                    existing.unconfirmed = unconfirmed;
+                }
+            } else {
+                existing.unconfirmed = unconfirmed;
+            }
+            return;
         }
         self.closed_unconfirmed.push(ClosedUnconfirmed {
             backend_id: workspace.backend_id.clone(),
             server_id: workspace.server_id.clone(),
             session_id,
-            attempt_id,
-            restored_text: restored_text.or(existing_text),
+            unconfirmed,
         });
     }
     pub(super) fn closed_unconfirmed_entry(
         &self,
         workspace: &Workspace,
         session_id: &str,
-    ) -> Option<(&str, Option<&str>)> {
+    ) -> Option<&crate::composer::UnconfirmedPrompt> {
         self.closed_unconfirmed
             .iter()
-            .rev()
             .find(|item| item.matches(workspace, session_id))
-            .map(|item| (item.attempt_id.as_str(), item.restored_text.as_deref()))
+            .map(|item| &item.unconfirmed)
     }
     pub(super) fn closed_unconfirmed_id(
         &self,
@@ -173,26 +179,38 @@ impl Ui {
         session_id: &str,
     ) -> Option<&str> {
         self.closed_unconfirmed_entry(workspace, session_id)
-            .map(|(id, _)| id)
+            .map(crate::composer::UnconfirmedPrompt::id)
+    }
+    pub(super) fn closed_unconfirmed_count(&self) -> usize {
+        self.closed_unconfirmed.len()
+    }
+    pub(super) fn has_closed_unconfirmed_for(
+        &self,
+        workspace: &Workspace,
+        session_id: &str,
+    ) -> bool {
+        self.closed_unconfirmed
+            .iter()
+            .any(|item| item.matches(workspace, session_id))
     }
     pub(super) fn forget_closed_unconfirmed(
         &mut self,
         workspace: &Workspace,
         session_id: &str,
         attempt_id: &str,
-    ) -> Option<String> {
-        let mut restored = None;
+    ) -> Option<crate::composer::UnconfirmedPrompt> {
+        let mut removed = None;
         self.closed_unconfirmed.retain(|item| {
-            if item.matches(workspace, session_id) && item.attempt_id == attempt_id {
-                if restored.is_none() {
-                    restored = item.restored_text.clone();
+            if item.matches(workspace, session_id) && item.unconfirmed.id() == attempt_id {
+                if removed.is_none() {
+                    removed = Some(item.unconfirmed.clone());
                 }
                 false
             } else {
                 true
             }
         });
-        restored
+        removed
     }
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key
@@ -203,6 +221,22 @@ impl Ui {
     #[cfg(test)]
     pub(crate) fn set_ready_for_test(&mut self) {
         self.ready = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_ready(&mut self) {
+        self.ready = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_hydrate(&mut self, saved: Snapshot) {
+        self.hydrate(saved);
+    }
+    #[cfg(test)]
+    pub(crate) fn active_index(&self) -> usize {
+        self.active
+    }
+    #[cfg(test)]
+    pub(crate) fn tab_count(&self) -> usize {
+        self.entries.len()
     }
     pub fn new() -> Self {
         Self {
@@ -347,6 +381,8 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         sessions: Vec::new(),
         listed_sessions: HashSet::new(),
         creation_uncertain: false,
+        creation_uncertain_linked: None,
+        rebind_after_send: None,
         next: None,
         linked: Default::default(),
         consumed_cursors: HashSet::new(),
@@ -363,6 +399,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
 }
 fn busy(s: &State) -> bool {
     s.status_permissions.settling()
+        || s.transcript_display.messages.pending()
         || s.screen.launcher().is_some_and(|l| l.pending)
         || s.workspace.as_ref().is_some_and(|ui| !ui.ready)
 }
@@ -453,7 +490,7 @@ pub(crate) fn renew_connection(s: &mut State) {
         return;
     };
     if let Some(ui) = &mut s.workspace {
-        for item in &mut ui.entries {
+        for (index, item) in ui.entries.iter_mut().enumerate() {
             if let Some(backend) = &mut item.binding
                 && backend.base == current.base
                 && backend.client.server_identity().is_some()
@@ -461,6 +498,13 @@ pub(crate) fn renew_connection(s: &mut State) {
             {
                 backend.client = current.client.clone();
                 backend.client_id.clone_from(&current.client_id);
+                if index != ui.active
+                    && item.cache.is_some()
+                    && let Tab::Workspace(w) = &item.saved
+                    && let Some(id) = &w.active_session_id
+                {
+                    item.rebind_after_send = Some(id.clone());
+                }
             }
         }
     }
@@ -578,10 +622,23 @@ pub fn opened(s: &mut State, project: &Project) {
 }
 
 pub fn schedule_catalogue(s: &mut State) {
-    if cfg!(target_os = "windows")
-        && let Some(ui) = &mut s.workspace
-    {
+    let allow = cfg!(target_os = "windows")
+        || cfg!(not(target_arch = "wasm32"))
+            && s.screen
+                .launcher()
+                .is_some_and(|l| l.creation_uncertain_linked.is_some());
+    if allow && let Some(ui) = &mut s.workspace {
         ui.entries[ui.active].catalogue.schedule(ui.clock);
+    }
+}
+
+pub fn schedule_catalogue_refresh(s: &mut State) {
+    if let Some(ui) = &mut s.workspace {
+        ui.entries[ui.active].catalogue.schedule_urgent(ui.clock);
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(l) = s.screen.launcher_mut() {
+        l.linked.mark_reload();
     }
 }
 pub fn has_conversation_stream(s: &State) -> bool {

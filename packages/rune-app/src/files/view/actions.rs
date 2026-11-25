@@ -46,6 +46,9 @@ impl Default for Actions {
 }
 
 impl Actions {
+    pub(in crate::files) fn is_menu_open(&self) -> bool {
+        self.open.is_some()
+    }
     pub(in crate::files) fn revoke(&mut self) {
         *self = Self::default();
     }

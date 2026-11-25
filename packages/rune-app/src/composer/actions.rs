@@ -18,7 +18,8 @@ pub struct Owner {
     pub(crate) announce_send_error: bool,
     pub(crate) announce_unconfirmed: bool,
     optimistic_id: Option<String>,
-    unconfirmed: Option<PendingSend>,
+    unconfirmed: Option<UnconfirmedPrompt>,
+    pub command_unconfirmed: Option<UnconfirmedCommand>,
     pub restored: bool,
     pub attachments_missing: bool,
     pub(crate) recall: Option<super::recall::Recall>,
@@ -27,14 +28,20 @@ impl Owner {
     pub fn pending(&self) -> bool {
         self.sending.is_some()
     }
+    pub fn blocks_navigation(&self) -> bool {
+        self.sending.is_some()
+    }
     pub(crate) fn editing_locked(&self) -> bool {
         self.sending.as_ref().is_some_and(|send| !send.recallable)
     }
     pub fn unconfirmed_id(&self) -> Option<&str> {
         self.unconfirmed.as_ref().map(|send| send.id.as_str())
     }
-    pub(crate) fn unconfirmed_state(&self) -> Option<&PendingSend> {
+    pub(crate) fn unconfirmed_state(&self) -> Option<&UnconfirmedPrompt> {
         self.unconfirmed.as_ref()
+    }
+    pub(crate) fn clone_unconfirmed(&self) -> Option<UnconfirmedPrompt> {
+        self.unconfirmed.clone()
     }
     pub(crate) fn add_unique_inline_usage(
         &self,
@@ -57,9 +64,6 @@ impl Owner {
         if let Some(send) = &self.sending {
             add(&send.draft);
         }
-        if let Some(send) = &self.unconfirmed {
-            add(&send.draft);
-        }
         (files, bytes)
     }
     pub(crate) fn clear_optimistic(&mut self, id: Option<&str>) {
@@ -77,7 +81,7 @@ impl Owner {
                 .iter()
                 .any(|row| row.id == id && row.role == "user")
     }
-    pub(crate) fn restore_unconfirmed(&mut self, pending: PendingSend) {
+    pub(crate) fn restore_unconfirmed(&mut self, pending: UnconfirmedPrompt) {
         self.unconfirmed = Some(pending);
     }
     pub(crate) fn confirm_unconfirmed_matching(
@@ -95,16 +99,13 @@ impl Owner {
         self.announce_send_error = false;
         self.announce_unconfirmed = false;
         if let Some(recall) = &mut self.recall {
-            if !send.edited && recall.matches_draft(&send.edit, &send.draft) {
+            if send.matches_live(recall.edit(), recall.draft(), false) {
                 recall.clear_draft();
                 return true;
             }
             return false;
         }
-        if !send.edited
-            && draft_edit.text == send.edit.text
-            && self.draft.attachments == send.draft.attachments
-        {
+        if send.matches_live(draft_edit, &self.draft, self.attachments_missing) {
             draft_edit.clear();
             self.draft = Draft::default();
             self.attachments_missing = false;
@@ -117,7 +118,7 @@ impl Owner {
             send.clear_retained();
         }
         if let Some(send) = &mut self.unconfirmed {
-            send.clear_retained();
+            send.mark_edited();
         }
     }
     #[cfg(test)]
@@ -125,8 +126,190 @@ impl Owner {
         self.sending.as_ref().map(|send| send.edit.text.as_str())
     }
 }
-#[derive(Clone)]
-pub(crate) struct PendingSend {
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct UnconfirmedPrompt {
+    id: String,
+    text_len: usize,
+    text_hash: u64,
+    attachments_len: usize,
+    attachments_hash: u64,
+    saved_parts_fingerprint: Option<(usize, u64)>,
+    had_device_attachments: bool,
+    edited: bool,
+}
+impl UnconfirmedPrompt {
+    fn from_send(send: &PendingSend) -> Self {
+        let (text_len, text_hash) = hash_text(&send.edit.text);
+        let (attachments_len, attachments_hash) =
+            hash_attachments(&send.edit, &send.draft.attachments);
+        let saved_parts_fingerprint =
+            super::draft_storage::SavedParts::capture(&send.draft, false, &send.edit)
+                .map(|parts| parts.fingerprint());
+        Self {
+            id: send.id.clone(),
+            text_len,
+            text_hash,
+            attachments_len,
+            attachments_hash,
+            saved_parts_fingerprint,
+            had_device_attachments: send.draft.inline_usage().0 > 0,
+            edited: send.edited,
+        }
+    }
+    pub(crate) fn locked(id: String) -> Self {
+        Self {
+            id,
+            text_len: 0,
+            text_hash: 0,
+            attachments_len: 0,
+            attachments_hash: 0,
+            saved_parts_fingerprint: None,
+            had_device_attachments: false,
+            edited: true,
+        }
+    }
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+    pub(crate) fn is_edited(&self) -> bool {
+        self.edited
+    }
+    pub(crate) fn mark_edited(&mut self) {
+        self.edited = true;
+    }
+    pub(crate) fn matches_live(&self, edit: &TextEdit, draft: &Draft, missing: bool) -> bool {
+        if self.edited || (self.text_len, self.text_hash) != hash_text(&edit.text) {
+            return false;
+        }
+        if (self.attachments_len, self.attachments_hash)
+            == hash_attachments(edit, &draft.attachments)
+        {
+            return true;
+        }
+        // After closing and reopening a tab, inline device bytes are dropped while non-device
+        // references and literal spans are restored from SavedParts.
+        self.had_device_attachments
+            && draft.inline_usage().0 == 0
+            && super::draft_storage::SavedParts::capture(draft, true, edit)
+                .map(|parts| parts.fingerprint())
+                == self.saved_parts_fingerprint
+            && (missing || self.saved_parts_fingerprint.is_some())
+    }
+    pub(crate) fn matches_saved(
+        &self,
+        text: Option<&str>,
+        parts: Option<&super::draft_storage::SavedParts>,
+        has_attachment_draft: bool,
+    ) -> bool {
+        if self.edited {
+            return false;
+        }
+        let text = text.unwrap_or("");
+        if (self.text_len, self.text_hash) != hash_text(text) {
+            return false;
+        }
+        if has_attachment_draft != self.saved_parts_fingerprint.is_some() {
+            return false;
+        }
+        parts.map(super::draft_storage::SavedParts::fingerprint) == self.saved_parts_fingerprint
+    }
+}
+fn hash_text(text: &str) -> (usize, u64) {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    (text.len(), hasher.finish())
+}
+fn hash_attachments(edit: &TextEdit, attachments: &[super::draft::Attachment]) -> (usize, u64) {
+    use super::draft::Attachment;
+    use std::collections::BTreeSet;
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let pasted: BTreeSet<_> = super::long_paste::active_tokens(edit)
+        .map(|(_, id)| id)
+        .collect();
+    let mut hasher = DefaultHasher::new();
+    let mut count = 0usize;
+    for item in attachments {
+        match item {
+            Attachment::Pasted { id, text } if pasted.contains(id) => {
+                count += 1;
+                0u8.hash(&mut hasher);
+                id.hash(&mut hasher);
+                text.hash(&mut hasher);
+            }
+            Attachment::Pasted { .. } => continue,
+            Attachment::Device {
+                name,
+                mime,
+                bytes,
+                token,
+            } => {
+                count += 1;
+                1u8.hash(&mut hasher);
+                name.hash(&mut hasher);
+                mime.hash(&mut hasher);
+                bytes.len().hash(&mut hasher);
+                bytes.as_ref().hash(&mut hasher);
+                token.hash(&mut hasher);
+            }
+            Attachment::Project {
+                name,
+                path,
+                uri,
+                directory,
+            } => {
+                count += 1;
+                2u8.hash(&mut hasher);
+                name.hash(&mut hasher);
+                path.hash(&mut hasher);
+                uri.hash(&mut hasher);
+                directory.hash(&mut hasher);
+            }
+            Attachment::Path(path) => {
+                count += 1;
+                3u8.hash(&mut hasher);
+                path.hash(&mut hasher);
+            }
+            Attachment::Agent(name) => {
+                count += 1;
+                4u8.hash(&mut hasher);
+                name.hash(&mut hasher);
+            }
+            Attachment::Skill { id, name } => {
+                count += 1;
+                5u8.hash(&mut hasher);
+                id.hash(&mut hasher);
+                name.hash(&mut hasher);
+            }
+        }
+    }
+    count.hash(&mut hasher);
+    (count, hasher.finish())
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UnconfirmedCommand {
+    name_len: usize,
+    name_hash: u64,
+    args_len: usize,
+    args_hash: u64,
+}
+impl UnconfirmedCommand {
+    pub(crate) fn new(name: &str, args: &str) -> Self {
+        let (name_len, name_hash) = hash_text(name);
+        let (args_len, args_hash) = hash_text(args);
+        Self {
+            name_len,
+            name_hash,
+            args_len,
+            args_hash,
+        }
+    }
+    fn matches(&self, name: &str, args: &str) -> bool {
+        (self.name_len, self.name_hash) == hash_text(name)
+            && (self.args_len, self.args_hash) == hash_text(args)
+    }
+}
+struct PendingSend {
     id: String,
     edit: TextEdit,
     draft: Draft,
@@ -136,51 +319,30 @@ pub(crate) struct PendingSend {
     recallable: bool,
 }
 impl PendingSend {
-    pub(crate) fn locked_with_text(id: String, restored_text: Option<String>) -> Self {
-        let (edit, edited) = match restored_text {
-            Some(text) => (TextEdit::new(text), false),
-            None => (TextEdit::default(), true),
-        };
-        Self {
-            id,
-            edit,
-            draft: Draft::default(),
-            was_running: false,
-            slash: None,
-            edited,
-            recallable: false,
-        }
-    }
-    pub(crate) fn locked(id: String) -> Self {
-        Self::locked_with_text(id, None)
-    }
-    pub(crate) fn id(&self) -> &str {
-        &self.id
-    }
-    pub(crate) fn restored_text(&self) -> Option<&str> {
-        (!self.edited).then_some(self.edit.text.as_str())
-    }
-    pub(crate) fn draft(&self) -> &Draft {
-        &self.draft
-    }
-    #[cfg(test)]
-    pub(crate) fn inline_usage(&self) -> (usize, usize) {
-        self.draft.inline_usage()
-    }
-    pub(crate) fn matches_restored_draft(&self, text: Option<&str>, draft: Option<&Draft>) -> bool {
-        !self.edited
-            && text.is_none_or(|t| t == self.edit.text)
-            && draft.is_none_or(|d| d.attachments == self.draft.attachments)
-    }
-    pub(crate) fn clear_retained(&mut self) {
+    fn clear_retained(&mut self) {
         self.edited = true;
         self.edit = TextEdit::default();
         self.draft = Draft::default();
     }
 }
 
+fn repeats_uncertain_command(s: &State) -> bool {
+    s.composer
+        .command_unconfirmed
+        .as_ref()
+        .is_some_and(|unconfirmed| {
+            super::picker::command_parts(&s.draft.text).is_some_and(|(candidate, args)| {
+                s.composer
+                    .draft
+                    .resolve_args(&s.draft, args)
+                    .is_some_and(|resolved| unconfirmed.matches(candidate, &resolved))
+            })
+        })
+}
+
 pub(crate) fn command_held(s: &State) -> bool {
     command_receipts::repeats(s)
+        || repeats_uncertain_command(s)
         || s.command_receipts.full() && s.composer.picker.selected_command(&s.draft.text).is_some()
 }
 
@@ -401,7 +563,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     {
         return;
     }
-    let Some(mut send) = s.composer.sending.take() else {
+    let Some(send) = s.composer.sending.take() else {
         return;
     };
     let may_restore = !send.edited
@@ -419,6 +581,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
             s.composer.restored = true;
         }
         if matches!(outcome, PromptOutcome::Unconfirmed) {
+            s.composer.command_unconfirmed = Some(UnconfirmedCommand::new(&slash.name, &slash.args));
             s.command_receipts.hold(send.id, slash);
             s.composer.announce_unconfirmed = true;
         }
@@ -430,13 +593,15 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         return;
     }
     if matches!(outcome, PromptOutcome::Unconfirmed) {
-        if may_restore && s.composer.draft.attachments.is_empty() {
-            super::recall::replace_edit(s, send.edit.clone());
-            s.composer.draft = send.draft.clone();
+        let unconfirmed = if may_restore && s.composer.draft.attachments.is_empty() {
+            let unconfirmed = UnconfirmedPrompt::from_send(&send);
+            super::recall::replace_edit(s, send.edit);
+            s.composer.draft = send.draft;
+            unconfirmed
         } else {
-            send.clear_retained();
-        }
-        s.composer.unconfirmed = Some(send);
+            UnconfirmedPrompt::locked(send.id)
+        };
+        s.composer.unconfirmed = Some(unconfirmed);
         s.composer.restored = true;
         s.composer.announce_unconfirmed = true;
         workspace::note_unconfirmed(s, attempted);
@@ -734,12 +899,11 @@ mod tests {
         rt.state.phase = Phase::Ready;
         rt.state.commands = Some(sender.clone());
         assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
+        let mut reopened_seen = std::collections::HashSet::new();
         assert_eq!(
             rt.state
                 .composer
-                .unconfirmed_state()
-                .unwrap()
-                .inline_usage(),
+                .add_unique_inline_usage(&mut reopened_seen, true),
             (0, 0),
             "closing a tab must drop retained inline attachment bytes from the lock"
         );
@@ -968,5 +1132,148 @@ mod tests {
         let mut rt = Runtime::new(s, crate::view, (600.0, 600.0), Env::new(false, 1.0));
         rt.update(|s, tx| crate::chat::reader::oldest(s, tx));
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn closed_tab_reconcile_matches_attachments_and_forgets_recall_bytes() {
+        let (sender, receiver) = codenomad_client::bounded(2);
+        let mut s = crate::init();
+        crate::gallery::shell::fixture(&mut s);
+        let mut ui = workspace::Ui::new();
+        ui.set_ready_for_test();
+        s.workspace = Some(ui);
+        let mut first = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        first.workspace = "ws".into();
+        first.session = "ses-1".into();
+        let project = crate::catalog::Project {
+            id: "ws".into(),
+            path: "/tmp/ws".into(),
+        };
+        s.screen.launcher_mut().unwrap().project = Some(project.clone());
+        workspace::opened(&mut s, &project);
+        workspace::bound(&mut s, &first);
+        s.phase = Phase::Ready;
+        s.commands = Some(sender.clone());
+        s.composer.picker.set_attachments_supported(true);
+        // Send an attachment-only prompt (empty text + skill + device file) -> Unconfirmed.
+        s.composer.draft.attachments.push(Attachment::Skill {
+            id: "review".into(),
+            name: "Review".into(),
+        });
+        s.composer.draft.attachments.push(Attachment::Device {
+            name: "big.bin".into(),
+            mime: "application/octet-stream".into(),
+            bytes: std::sync::Arc::from(vec![3u8; 4 * 1024 * 1024]),
+            token: None,
+        });
+        let mut rt = Runtime::new(s, crate::view, (600.0, 600.0), Env::new(false, 1.0));
+        rt.update(|s, tx| send(s, tx, false));
+        let Command::Prompt(prompt) = receiver.try_recv().unwrap() else {
+            panic!("expected prompt")
+        };
+        let id = prompt.id.unwrap();
+        let row = rt.state.messages.pop().unwrap();
+        acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
+        assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
+        // Closing the tab must release Recall's 4 MiB device bytes for that tab.
+        let tab_key = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+        rt.update(|s, tx| workspace::close(s, &tab_key, tx));
+        let mut seen = std::collections::HashSet::new();
+        assert_eq!(
+            rt.state.prompt_history.unique_inline_usage(&mut seen),
+            (0, 0),
+            "closing a tab must drop Recall inline bytes belonging to that tab"
+        );
+        // Reopen the project and session: attachment-only draft is restored (with Skill kept),
+        // and confirming the native message clears the restored Skill attachment too.
+        workspace::opened(&mut rt.state, &project);
+        let reopened_text = workspace::bound(&mut rt.state, &first);
+        rt.state.draft = TextEdit::new(reopened_text);
+        assert!(rt.state.draft.text.is_empty());
+        assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+        assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
+        crate::chat::reader::install_page(
+            &mut rt.state,
+            crate::history::Page {
+                rows: vec![row],
+                older: None,
+                newer: None,
+                running: false,
+                user_file_references: false,
+            },
+            None,
+        );
+        assert!(rt.state.composer.unconfirmed_id().is_none());
+        assert!(
+            rt.state.composer.draft.attachments.is_empty(),
+            "confirming an attachment-only unconfirmed send must clear its restored attachments"
+        );
+        assert!(!rt.state.composer.attachments_missing);
+    }
+
+    #[test]
+    fn closed_tab_reconcile_preserves_independent_draft_with_different_attachments() {
+        let (sender, receiver) = codenomad_client::bounded(2);
+        let mut s = crate::init();
+        crate::gallery::shell::fixture(&mut s);
+        let mut ui = workspace::Ui::new();
+        ui.set_ready_for_test();
+        s.workspace = Some(ui);
+        let mut first = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        first.workspace = "ws".into();
+        first.session = "ses-1".into();
+        let project = crate::catalog::Project {
+            id: "ws".into(),
+            path: "/tmp/ws".into(),
+        };
+        s.screen.launcher_mut().unwrap().project = Some(project.clone());
+        workspace::opened(&mut s, &project);
+        workspace::bound(&mut s, &first);
+        s.phase = Phase::Ready;
+        s.commands = Some(sender.clone());
+        s.composer.picker.set_attachments_supported(true);
+        // Tab A has text "same" + Skill("alpha"), closes and enters ui.closed.
+        s.draft = TextEdit::new("same");
+        s.composer.draft.attachments.push(Attachment::Skill {
+            id: "alpha".into(),
+            name: "Alpha".into(),
+        });
+        let mut rt = Runtime::new(s, crate::view, (600.0, 600.0), Env::new(false, 1.0));
+        let tab_a = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+        rt.update(|s, tx| workspace::new_tab(s, tx));
+        workspace::opened(&mut rt.state, &project);
+        workspace::bound(&mut rt.state, &first);
+        rt.state.phase = Phase::Ready;
+        rt.state.commands = Some(sender.clone());
+        rt.state.composer.picker.set_attachments_supported(true);
+        // Close Tab A so its draft ("same" + Skill("alpha")) sits in ui.closed.
+        rt.update(|s, tx| workspace::close(s, &tab_a, tx));
+        // Tab B sends text "same" with NO attachments -> Unconfirmed, then confirmed.
+        rt.state.draft = TextEdit::new("same");
+        rt.update(|s, tx| send(s, tx, false));
+        let Command::Prompt(prompt) = receiver.try_recv().unwrap() else {
+            panic!("expected prompt")
+        };
+        let id = prompt.id.unwrap();
+        let row = rt.state.messages.pop().unwrap();
+        acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
+        crate::chat::reader::install_page(
+            &mut rt.state,
+            crate::history::Page {
+                rows: vec![row],
+                older: None,
+                newer: None,
+                running: false,
+                user_file_references: false,
+            },
+            None,
+        );
+        assert!(rt.state.composer.unconfirmed_id().is_none());
+        // Reopening a fresh tab must still see Tab A's distinct draft ("same" + Skill("alpha")) intact.
+        rt.update(|s, tx| workspace::new_tab(s, tx));
+        workspace::opened(&mut rt.state, &project);
+        let text = workspace::bound(&mut rt.state, &first);
+        assert_eq!(text, "same");
+        assert_eq!(rt.state.composer.draft.attachments.len(), 1);
     }
 }

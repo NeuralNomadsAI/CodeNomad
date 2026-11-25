@@ -132,7 +132,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       const targetDirectory = await deps.workspaceManager.getServiceDirectoryForPath(workspace.id, target.directory)
       if (!projectLocation || !targetDirectory) throw new ProjectSessionError("Unable to resolve OpenCode worktree paths", 409)
       await deps.workspaceManager.desktopPluginsReady?.()
-      const moved = await moveProjectSessionFamily({
+      const moved = await deps.worktreeDeletionFence.runSession(request.params.sessionId, async () => moveProjectSessionFamily({
         client: await deps.workspaceManager.getSharedServiceClient(),
         projectLocation,
         sessionId: request.params.sessionId,
@@ -160,7 +160,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
             release()
           }
         },
-      })
+      }))
       const response: WorktreeSessionMoveResponse = { ...moved, worktreeSlug }
       return response
     } catch (error) {

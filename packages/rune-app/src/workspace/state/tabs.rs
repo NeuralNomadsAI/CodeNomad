@@ -40,6 +40,8 @@ fn stash(s: &mut State) {
             entry.sessions = std::mem::take(&mut l.sessions);
             entry.listed_sessions = std::mem::take(&mut l.listed_sessions);
             entry.creation_uncertain = l.creation_uncertain;
+            entry.creation_uncertain_linked = l.creation_uncertain_linked.take();
+            entry.rebind_after_send = l.rebind_after_send.take();
             entry.next = l.next.take();
             entry.linked = std::mem::take(&mut l.linked);
             entry.consumed_cursors = std::mem::take(&mut l.consumed_cursors);
@@ -73,6 +75,8 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             _ => "",
         });
         l.creation_uncertain = std::mem::take(&mut item.creation_uncertain);
+        l.creation_uncertain_linked = std::mem::take(&mut item.creation_uncertain_linked);
+        l.rebind_after_send = item.rebind_after_send.take();
         l.error = l.creation_uncertain.then_some("rune.create_error");
         (l.title, l.show_title, l.search, l.show_search) = item
             .sidebar_edits
@@ -93,9 +97,22 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             && s.composer.unconfirmed_state().is_none()
         {
             s.composer
-                .restore_unconfirmed(crate::composer::PendingSend::locked(attempt_id));
+                .restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(attempt_id));
         }
         s.renew_scope();
+        if s.screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required)
+        {
+            s.show_launcher();
+        } else if s
+            .screen
+            .launcher()
+            .is_some_and(|l| l.rebind_after_send.is_some())
+            && crate::launcher::session_loaded(s)
+        {
+            s.show_chat();
+        }
         if super::active_session(s).is_none()
             && s.screen
                 .launcher()
@@ -128,8 +145,60 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
     tx.instant();
 }
 pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
-    s.notifications.supersede_navigation();
+    let allowed = s.workspace.as_ref().is_some_and(|ui| {
+        ui.entries
+            .iter()
+            .position(|e| e.key == id)
+            .is_some_and(|index| ui.active == index || !busy(s))
+    });
+    if allowed {
+        s.notifications.supersede_navigation();
+    }
     select_destination(s, id, tx);
+}
+
+pub fn select_relative(s: &mut State, next: bool, tx: &mut Tx) {
+    let Some(key) = s.workspace.as_ref().and_then(|ui| {
+        let len = ui.entries.len();
+        if len <= 1 {
+            return None;
+        }
+        let target = if next {
+            (ui.active + 1) % len
+        } else if ui.active == 0 {
+            len - 1
+        } else {
+            ui.active - 1
+        };
+        ui.entries.get(target).map(|entry| entry.key.clone())
+    }) else {
+        return;
+    };
+    select(s, &key, tx);
+    if s.workspace
+        .as_ref()
+        .is_some_and(|ui| ui.entries.get(ui.active).is_some_and(|e| e.key == key))
+    {
+        tx.scroll_into_view_in("project-tabs-scroll", format!("t-{key}"));
+    }
+}
+
+pub fn select_index(s: &mut State, index: usize, tx: &mut Tx) {
+    let Some(key) = s
+        .workspace
+        .as_ref()
+        .and_then(|ui| ui.entries.get(index))
+        .map(|entry| entry.key.clone())
+    else {
+        return;
+    };
+    select(s, &key, tx);
+    if s.workspace
+        .as_ref()
+        .is_some_and(|ui| ui.entries.get(ui.active).is_some_and(|e| e.key == key))
+    {
+        tx.scroll_into_view_in("project-tabs-scroll", format!("t-{key}"));
+    }
 }
 
 pub(super) fn select_destination(s: &mut State, id: &str, tx: &mut Tx) {
@@ -201,6 +270,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     } else {
         capture(s);
     }
+    crate::composer::recall::forget_tab(s, id);
     let Some(ui) = &mut s.workspace else {
         return;
     };
@@ -224,43 +294,25 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         // Preserve unconfirmed attempt locks across tab closure without retaining inline attachment bytes.
         for (session_id, live) in &removed.live_drafts {
             if !removed.pending_drafts.contains(session_id)
-                && let Some(attempt_id) = live.unconfirmed_id()
+                && let Some(unconfirmed) = live.unconfirmed_state()
             {
-                let restored_text = live
-                    .unconfirmed_restored_text()
-                    .filter(|text| text.encode_utf16().nth(super::super::MAX_DRAFT).is_none())
-                    .map(str::to_owned);
-                ui.remember_closed_unconfirmed(
-                    &saved,
-                    session_id.clone(),
-                    attempt_id.to_owned(),
-                    restored_text,
-                );
-                propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.to_owned()));
+                let attempt_id = unconfirmed.id().to_owned();
+                ui.remember_closed_unconfirmed(&saved, session_id.clone(), unconfirmed.clone());
+                propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.clone()));
                 if active_matches(ui, &saved, session_id) {
-                    propagate_to_active = Some(attempt_id.to_owned());
+                    propagate_to_active = Some(attempt_id);
                 }
             }
         }
         if let Some(session_id) = &saved.active_session_id
             && !removed.pending_drafts.contains(session_id)
-            && let Some(attempt_id) = removed.cache.as_ref().and_then(Cache::unconfirmed_id)
+            && let Some(unconfirmed) = removed.cache.as_ref().and_then(Cache::unconfirmed_state)
         {
-            let restored_text = removed
-                .cache
-                .as_ref()
-                .and_then(Cache::unconfirmed_restored_text)
-                .filter(|text| text.encode_utf16().nth(super::super::MAX_DRAFT).is_none())
-                .map(str::to_owned);
-            ui.remember_closed_unconfirmed(
-                &saved,
-                session_id.clone(),
-                attempt_id.to_owned(),
-                restored_text,
-            );
-            propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.to_owned()));
+            let attempt_id = unconfirmed.id().to_owned();
+            ui.remember_closed_unconfirmed(&saved, session_id.clone(), unconfirmed.clone());
+            propagate_locks.push((saved.clone(), session_id.clone(), attempt_id.clone()));
             if active_matches(ui, &saved, session_id) {
-                propagate_to_active = Some(attempt_id.to_owned());
+                propagate_to_active = Some(attempt_id);
             }
         }
         // Undelivered copies still belong to their closed source.
@@ -297,7 +349,9 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
                 && current.active_session_id.as_deref() == Some(session_id.as_str()))
                 && let Some(cache) = &mut entry.cache
             {
-                cache.restore_unconfirmed(crate::composer::PendingSend::locked(attempt_id.clone()));
+                cache.restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(
+                    attempt_id.clone(),
+                ));
             }
         }
     }
@@ -316,7 +370,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         && s.composer.unconfirmed_state().is_none()
     {
         s.composer
-            .restore_unconfirmed(crate::composer::PendingSend::locked(attempt_id));
+            .restore_unconfirmed(crate::composer::UnconfirmedPrompt::locked(attempt_id));
     }
     if active {
         activate(s, tx);
@@ -335,8 +389,39 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
     if ui.entries[index].has_unsaved_large_drafts() {
         return true;
     }
+    if let Tab::Workspace(saved) = &ui.entries[index].saved {
+        let mut added = std::collections::BTreeSet::new();
+        for (session_id, live) in &ui.entries[index].live_drafts {
+            if !ui.entries[index].pending_drafts.contains(session_id)
+                && live.unconfirmed_id().is_some()
+                && !ui.has_closed_unconfirmed_for(saved, session_id)
+            {
+                added.insert(session_id.as_str());
+            }
+        }
+        if let Some(session_id) = saved.active_session_id.as_deref()
+            && !ui.entries[index].pending_drafts.contains(session_id)
+            && !ui.has_closed_unconfirmed_for(saved, session_id)
+        {
+            let active_unconfirmed = if ui.active == index {
+                s.composer.unconfirmed_id().is_some()
+            } else {
+                ui.entries[index]
+                    .cache
+                    .as_ref()
+                    .and_then(Cache::unconfirmed_id)
+                    .is_some()
+            };
+            if active_unconfirmed {
+                added.insert(session_id);
+            }
+        }
+        if ui.closed_unconfirmed_count() + added.len() > super::MAX_UNCONFIRMED_LOCKS {
+            return true;
+        }
+    }
     if ui.active == index {
-        s.composer.pending() || crate::agent::navigation_blocked(s)
+        s.composer.blocks_navigation() || crate::agent::navigation_blocked(s)
     } else {
         ui.entries[index]
             .cache

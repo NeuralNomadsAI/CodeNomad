@@ -1787,3 +1787,142 @@ fn pre_dispatch_401_rejects_prompt_while_detached_401_stays_unconfirmed() {
         .expect("pre-dispatch vs detached 401 settlement must complete");
     });
 }
+
+#[test]
+fn unmarked_401_with_live_auth_stays_unconfirmed_and_marked_401_with_failed_status_rejects() {
+    use crate::transport::{Event, PromptOutcome};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                // Case 1: unmarked 401 + /api/auth/status => authenticated: true -> Outcome(Unconfirmed)
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut req = BufReader::new(socket);
+                let mut line = String::new();
+                assert!(req.read_line(&mut line).await.unwrap() > 0);
+                let body = r#"{"error":"Unauthorized"}"#;
+                req.get_mut()
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                let (status_socket, _) = listener.accept().await.unwrap();
+                let mut status_req = BufReader::new(status_socket);
+                let mut status_line = String::new();
+                assert!(status_req.read_line(&mut status_line).await.unwrap() > 0);
+                let status_body = r#"{"authenticated":true}"#;
+                status_req
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{status_body}",
+                            status_body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+
+                // Case 2: marked before-dispatch 401 + /api/auth/status fails (500) -> AuthenticationRequired{confirmed:false} + Rejected
+                let (socket2, _) = listener.accept().await.unwrap();
+                let mut req2 = BufReader::new(socket2);
+                let mut line2 = String::new();
+                assert!(req2.read_line(&mut line2).await.unwrap() > 0);
+                req2.get_mut()
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 401 Unauthorized\r\nx-codenomad-before-dispatch: 1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                let (status_socket2, _) = listener.accept().await.unwrap();
+                let mut status_req2 = BufReader::new(status_socket2);
+                let mut status_line2 = String::new();
+                assert!(status_req2.read_line(&mut status_line2).await.unwrap() > 0);
+                let err_body = r#"{"error":"boom"}"#;
+                status_req2
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{err_body}",
+                            err_body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            });
+
+            let mut backend = Backend::unauthenticated(&format!("http://{address}/")).unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let wake: crate::Wake = Arc::new(|| {});
+
+            let (out1, _events1) = bounded(4);
+            let wire1 = crate::stream::State::default();
+            let id1 = "msg_00000000000000000000000000000023";
+            let settled1 = crate::recovery::receipts::prompt(
+                &backend,
+                &out1,
+                &wake,
+                &wire1,
+                true,
+                id1,
+                &crate::prompt::Prompt {
+                    id: Some(id1.into()),
+                    text: "unmarked 401 live auth".into(),
+                    ..Default::default()
+                },
+            )
+            .await;
+            assert!(matches!(
+                settled1,
+                crate::recovery::receipts::PromptReceipt::Outcome(PromptOutcome::Unconfirmed)
+            ));
+
+            let (out2, events2) = bounded(4);
+            let wire2 = crate::stream::State::default();
+            let id2 = "msg_00000000000000000000000000000024";
+            let settled2 = crate::recovery::receipts::prompt(
+                &backend,
+                &out2,
+                &wake,
+                &wire2,
+                true,
+                id2,
+                &crate::prompt::Prompt {
+                    id: Some(id2.into()),
+                    text: "marked 401 failed status".into(),
+                    ..Default::default()
+                },
+            )
+            .await;
+            assert!(matches!(
+                settled2,
+                crate::recovery::receipts::PromptReceipt::AuthenticationRequired { confirmed: false }
+            ));
+            assert!(matches!(
+                events2.recv().await.unwrap(),
+                Event::PromptAcknowledged {
+                    attempted,
+                    outcome: PromptOutcome::Rejected
+                } if attempted == id2
+            ));
+
+            server.await.unwrap();
+        })
+        .await
+        .expect("401 edge cases must complete");
+    });
+}

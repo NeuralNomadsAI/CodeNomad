@@ -128,6 +128,7 @@ impl State {
             && self.alive.load(SeqCst)
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)
+            && !self.placement_closed()
     }
     pub(crate) fn history_current(&self, revision: u64) -> bool {
         self.history_revision.load(SeqCst) == revision

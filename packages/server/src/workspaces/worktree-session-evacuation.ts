@@ -19,6 +19,10 @@ export class WorktreeDeletionFence {
   private readonly blocked = new Map<string, number>()
   private readonly active = new Map<string, number>()
   private readonly idleWaiters = new Map<string, Set<() => void>>()
+  private readonly sessionQueues = new Map<string, Promise<unknown>>()
+  private readonly sessionBlocked = new Map<string, number>()
+  private readonly sessionActive = new Map<string, number>()
+  private readonly sessionIdleWaiters = new Map<string, Set<() => void>>()
   private displayRevision = 0n
 
   constructor(private readonly mutationDrainTimeoutMs = MUTATION_DRAIN_TIMEOUT_MS) {}
@@ -84,6 +88,60 @@ export class WorktreeDeletionFence {
         else this.blocked.delete(directory)
       }
       if (this.queues.get(normalizedKey) === current) this.queues.delete(normalizedKey)
+    })
+  }
+
+  enterSession(sessionId: string): (() => void) | undefined {
+    if (this.sessionBlocked.has(sessionId)) return undefined
+    this.sessionActive.set(sessionId, (this.sessionActive.get(sessionId) ?? 0) + 1)
+
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      const count = this.sessionActive.get(sessionId) ?? 0
+      if (count > 1) {
+        this.sessionActive.set(sessionId, count - 1)
+        return
+      }
+      this.sessionActive.delete(sessionId)
+      for (const resolve of this.sessionIdleWaiters.get(sessionId) ?? []) resolve()
+      this.sessionIdleWaiters.delete(sessionId)
+    }
+  }
+
+  runSession<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    this.sessionBlocked.set(sessionId, (this.sessionBlocked.get(sessionId) ?? 0) + 1)
+
+    const previous = this.sessionQueues.get(sessionId) ?? Promise.resolve()
+    const current = previous.catch(() => {}).then(async () => {
+      await this.waitForSessionIdle(sessionId)
+      return operation()
+    })
+    this.sessionQueues.set(sessionId, current)
+    return current.finally(() => {
+      const count = this.sessionBlocked.get(sessionId) ?? 0
+      if (count > 1) this.sessionBlocked.set(sessionId, count - 1)
+      else this.sessionBlocked.delete(sessionId)
+      if (this.sessionQueues.get(sessionId) === current) this.sessionQueues.delete(sessionId)
+    })
+  }
+
+  private waitForSessionIdle(sessionId: string): Promise<void> {
+    if (!this.sessionActive.has(sessionId)) return Promise.resolve()
+    return new Promise((resolve, reject) => {
+      const waiters = this.sessionIdleWaiters.get(sessionId) ?? new Set()
+      const done = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+      waiters.add(done)
+      this.sessionIdleWaiters.set(sessionId, waiters)
+      const timer = setTimeout(() => {
+        waiters.delete(done)
+        if (!waiters.size) this.sessionIdleWaiters.delete(sessionId)
+        reject(new Error("Timed out waiting for session mutations to finish"))
+      }, this.mutationDrainTimeoutMs)
     })
   }
 

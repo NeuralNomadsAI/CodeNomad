@@ -20,7 +20,7 @@ pub struct Display {
     pub(crate) search_highlight: Option<super::search_hit::SearchHit>,
     pub(super) children: super::tools::children::Children,
     pub(crate) usage_family: super::usage::family::Totals,
-    pub(super) pictures: super::media::Pictures,
+    pub(crate) pictures: super::media::Pictures,
     pub(crate) receipts: super::receipts::Receipts,
     pub(crate) messages: super::message_actions::Actions,
 }

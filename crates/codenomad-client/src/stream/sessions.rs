@@ -12,16 +12,37 @@ pub(super) async fn relay(
 ) -> Result<()> {
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
-    if own
+    let own_session_event = own
         && value["type"] == "instance.event"
+        && (native["data"]["sessionID"] == b.session
+            || native["data"]["form"]["sessionID"] == b.session);
+    if own_session_event
         && matches!(
             native["type"].as_str(),
             Some("session.moved" | "session.deleted")
         )
-        && native["data"]["sessionID"] == b.session
     {
         // Closing the signal before any send fences reads and prompts even if the relay inbox is full.
         state.close_placement();
+    }
+    if own_session_event
+        && matches!(
+            native["type"].as_str(),
+            Some(
+                "session.moved"
+                    | "session.deleted"
+                    | "session.revert.committed"
+                    | "session.revert.staged"
+                    | "session.revert.cleared"
+                    | "session.inbox.cancelled"
+                    | "session.compaction.started"
+                    | "session.compaction.ended"
+                    | "session.compaction.failed"
+            )
+        )
+    {
+        // Bump history_revision before awaiting any channel send so boundary events fence concurrent offers immediately.
+        state.history_revision.fetch_add(1, SeqCst);
     }
     if own && value["type"] == "instance.event" {
         children::observe(b, native);
@@ -159,22 +180,6 @@ pub(super) async fn relay(
             out.send(Input::Workspace(epoch, event)).await?;
         }
         let version = state.version.fetch_add(1, SeqCst) + 1;
-        if matches!(
-            native["type"].as_str(),
-            Some(
-                "session.moved"
-                    | "session.deleted"
-                    | "session.revert.committed"
-                    | "session.revert.staged"
-                    | "session.revert.cleared"
-                    | "session.inbox.cancelled"
-                    | "session.compaction.started"
-                    | "session.compaction.ended"
-                    | "session.compaction.failed"
-            )
-        ) {
-            state.history_revision.fetch_add(1, SeqCst);
-        }
         out.send(Input::Native(epoch, version, native.clone()))
             .await?;
     }
@@ -271,11 +276,15 @@ fn session_deleted_closes_placement_before_waiting_on_a_full_relay_channel() {
                 !relay_task.is_finished(),
                 "relay must still be blocked on the full inbox"
             );
-            while !relay_task.is_finished() {
-                if inbox.try_recv().is_err() {
-                    tokio::task::yield_now().await;
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                while !relay_task.is_finished() {
+                    if inbox.try_recv().is_err() {
+                        tokio::task::yield_now().await;
+                    }
                 }
-            }
+            })
+            .await
+            .expect("relay task must finish once inbox is drained");
             relay_task.await.unwrap().unwrap();
             assert!(state.placement_closed());
         });

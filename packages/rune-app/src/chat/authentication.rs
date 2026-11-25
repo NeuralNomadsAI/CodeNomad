@@ -145,7 +145,7 @@ async fn attest(mut backend: Backend, expected: Option<&str>) -> Reply {
     if expected.is_some_and(|expected| expected != id) {
         return Reply::Failed("authRecovery.unavailable");
     }
-    if !backend.session.is_empty() && backend.session_directory.is_none() {
+    if !backend.session.is_empty() {
         match backend.prompt_directory().await {
             Ok(directory) => backend.session_directory = Some(directory),
             Err(error) if codenomad_client::http::authentication_expired(&error) => {
@@ -192,6 +192,13 @@ pub(crate) fn poll(s: &mut State) -> bool {
         }
     }
     true
+}
+
+pub(crate) fn open(s: &State) -> bool {
+    s.direct_authentication
+        .challenge
+        .as_ref()
+        .is_some_and(|challenge| challenge.required)
 }
 
 pub(crate) fn dialog(s: &State) -> Option<El> {

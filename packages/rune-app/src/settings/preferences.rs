@@ -119,11 +119,6 @@ impl Preferences {
             .map(Vec::as_slice)
     }
 
-    pub(super) fn queues_follow_ups(&self) -> bool {
-        self.saved(Owner::Config)
-            .is_some_and(|data| data["settings"]["followUpBehavior"] == "queue")
-    }
-
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn stage_file_save(&mut self, binding: Value) {
         self.stage_shortcut(super::shortcuts::FILE_SAVE, binding);
@@ -162,6 +157,11 @@ impl Preferences {
             self.config.reset_shortcuts();
             self.revision += 1;
         }
+    }
+
+    pub(super) fn queues_follow_ups(&self) -> bool {
+        self.saved(Owner::Config)
+            .is_some_and(|data| data["settings"]["followUpBehavior"] == "queue")
     }
 
     #[cfg(test)]

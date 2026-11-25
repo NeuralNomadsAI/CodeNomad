@@ -158,6 +158,10 @@ pub(crate) struct Recall {
 }
 
 impl Recall {
+    pub(crate) fn edit(&self) -> &TextEdit {
+        &self.edit
+    }
+
     pub(crate) fn draft(&self) -> &Draft {
         &self.draft
     }
@@ -214,7 +218,7 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
             .sum::<usize>();
     let mut base_seen = std::collections::HashSet::new();
     let (base_inline_files, base_inline_bytes) =
-        workspace::window_inline_usage_without_history(s, &mut base_seen);
+        workspace::window_inline_usage_without_history(s, &mut base_seen, false);
     let mut with_new = base_seen.clone();
     let (new_files, new_bytes) = draft.add_unique_inline_usage(&mut with_new);
     let new_inline_files = base_inline_files.saturating_add(new_files);
@@ -257,6 +261,32 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
         id: history.next,
     });
     true
+}
+
+pub(crate) fn forget_tab(s: &mut State, tab_key: &str) {
+    let history = &mut s.prompt_history;
+    let mut index = 0;
+    while index < history.entries.len() {
+        let owned_by_closed_tab = history.entries[index]
+            .origin
+            .as_ref()
+            .is_some_and(|(tab, _)| tab == tab_key);
+        if !owned_by_closed_tab {
+            index += 1;
+            continue;
+        }
+        if history.entries[index].resolved.is_empty() {
+            history.discard(index);
+            continue;
+        }
+        let entry = &mut history.entries[index];
+        entry.origin = None;
+        entry.draft = Draft::default();
+        let next_bytes = entry.edit.text.len() + entry.resolved.len();
+        history.bytes = history.bytes.saturating_sub(entry.bytes) + next_bytes;
+        entry.bytes = next_bytes;
+        index += 1;
+    }
 }
 
 pub(crate) fn fresh(s: &State) -> (&TextEdit, &Draft, bool) {
