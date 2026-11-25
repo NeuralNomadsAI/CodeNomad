@@ -381,9 +381,15 @@ impl Http {
         }
         matched
     }
-    pub(crate) fn record_server_identity_mismatch(&self, generation: u64, seq: u64) {
-        self.6.identity_mismatch.store(true, Ordering::SeqCst);
-        self.revoke_server_attestation_at(generation, seq);
+    pub(crate) fn record_server_identity_mismatch(&self, generation: u64, seq: u64) -> bool {
+        let state = self.6.observed.lock().unwrap();
+        if generation == self.6.drop_generation.load(Ordering::SeqCst) && seq >= state.1 {
+            self.6.identity_mismatch.store(true, Ordering::SeqCst);
+            self.6.drop_generation.fetch_add(1, Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
     }
     pub(crate) fn verify_server_identity_at(
         &self,
@@ -829,6 +835,8 @@ fn watched_streams_cannot_evict_and_stale_capability_generation_is_discarded() {
     http.mark_drop_epoch_attested(drop_epoch_fresh);
     assert!(!http.has_unattested_stream_drop());
     assert!(!http.revoke_server_attestation_at(gen_cur, seq_stale));
+    assert!(!http.record_server_identity_mismatch(gen_cur, seq_stale));
+    assert!(!http.server_identity_mismatch());
     assert!(http.supports_atomic_settings_patches());
     assert!(!http.needs_capability_recheck());
     drop((guard_a, guard_b));

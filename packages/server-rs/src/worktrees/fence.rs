@@ -158,7 +158,14 @@ pub(crate) fn admit(directories: &[String]) -> Result<Entered, crate::Error> {
             );
         }
     }
-    permit.ok_or_else(|| crate::error(axum::http::StatusCode::CONFLICT, "Worktree deletion is in progress"))
+    permit.ok_or_else(|| {
+        let message = if directories.iter().filter(|key| !key.starts_with("session:")).any(|dir| is_blocked(dir)) {
+            "Worktree deletion is in progress"
+        } else {
+            "Session move is in progress"
+        };
+        crate::error(axum::http::StatusCode::CONFLICT, message)
+    })
 }
 
 /// A deletion in progress; dropping it unblocks its directories.

@@ -523,6 +523,20 @@ async fn native_move(app: &App, id: &str, where_to: &str) -> Result<(), Error> {
     let body = Some(json!({"directory": where_to}));
     native(app, Method::POST, &format!("/api/session/{id}/move"), &[], body, 16384).await.map(drop)
 }
+enum MoveOutcome {
+    Moved,
+    Retry,
+}
+
+fn family_signature(members: &[Value]) -> Result<Vec<(String, String)>, Error> {
+    let mut sig = members
+        .iter()
+        .map(|row| Ok((row_id(row)?.to_owned(), directory(row)?.to_owned())))
+        .collect::<Result<Vec<_>, Error>>()?;
+    sig.sort();
+    Ok(sig)
+}
+
 async fn move_members(
     app: &App,
     w: &Workspace,
@@ -531,10 +545,18 @@ async fn move_members(
     members: &[Value],
     target: &Tree,
     principal: &crate::auth::Principal,
-) -> Result<(), Error> {
+) -> Result<MoveOutcome, Error> {
     let keys = members.iter().map(|row| row_id(row).map(super::fence::session)).collect::<Result<Vec<_>, _>>()?;
     let _placing = super::fence::try_block(&keys).ok_or_else(|| conflict("A session request is in progress"))?;
     inactive(app, members).await?;
+    if evacuating.is_none() {
+        let expected = family_signature(members)?;
+        let fresh_rows = sessions(app, &cat.project).await?;
+        let (_, fresh_members) = family(&fresh_rows, row_id(&members[0])?)?;
+        if family_signature(&fresh_members)? != expected {
+            return Ok(MoveOutcome::Retry);
+        }
+    }
     for member in members {
         let from = directory(member)?;
         if member_owner(cat, evacuating, from).is_none() {
@@ -595,7 +617,7 @@ async fn move_members(
         }
         return Err(e);
     }
-    Ok(())
+    Ok(MoveOutcome::Moved)
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -623,17 +645,21 @@ async fn place_owned(
     principal.live()?;
     let cat = catalogue(&app, &w, true).await?;
     let target = cat.get(input.worktree_slug.trim())?;
-    let (root, members) = family(&sessions(&app, &cat.project).await?, &session)?;
-    let mut paths = vec![super::fence::identity(target.registered())];
-    for member in &members {
-        let tree = owner(&cat, directory(member)?).ok_or_else(|| conflict("Session worktree is not owned"))?;
-        paths.push(super::fence::identity(tree.registered()));
+    for _ in 0..3 {
+        let (root, members) = family(&sessions(&app, &cat.project).await?, &session)?;
+        let mut paths = vec![super::fence::identity(target.registered())];
+        for member in &members {
+            let tree = owner(&cat, directory(member)?).ok_or_else(|| conflict("Session worktree is not owned"))?;
+            paths.push(super::fence::identity(tree.registered()));
+        }
+        let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A session worktree is being removed"))?;
+        if matches!(move_members(&app, &w, &cat, None, &members, target, &principal).await?, MoveOutcome::Moved) {
+            announce(&app, &w);
+            let ids: Vec<_> = members.iter().map(|m| &m["id"]).collect();
+            return Ok(Json(json!({"rootSessionId": root, "sessionIds": ids, "worktreeSlug": target.slug})));
+        }
     }
-    let _admitted = super::fence::enter(&paths).ok_or_else(|| conflict("A session worktree is being removed"))?;
-    move_members(&app, &w, &cat, None, &members, target, &principal).await?;
-    announce(&app, &w);
-    let ids: Vec<_> = members.iter().map(|m| &m["id"]).collect();
-    Ok(Json(json!({"rootSessionId": root, "sessionIds": ids, "worktreeSlug": target.slug})))
+    Err(conflict("Session family changed before the session move"))
 }
 
 async fn no_blockers(app: &App, target: &Tree, catalogue: &Catalogue, allow_owned: bool) -> Result<(), Error> {
@@ -841,7 +867,7 @@ async fn remove_owned(
     let removal = async {
         for members in &families {
             principal.live()?;
-            move_members(&app, &w, &cat, Some(target), members, root, &principal).await?;
+            let _ = move_members(&app, &w, &cat, Some(target), members, root, &principal).await?;
             moved.extend(members.iter());
         }
         no_blockers(&app, target, &cat, false).await?;

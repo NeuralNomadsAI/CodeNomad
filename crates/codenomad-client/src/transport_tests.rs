@@ -2212,13 +2212,19 @@ fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
                 }
             }
             assert!(!backend.client.server_identity_mismatch());
-            // Now switch /api/meta to a replacement server and exercise the real production re-attestation path.
+            // Now switch /api/meta to a replacement server and drop the SSE stream so automatic
+            // reconnect re-attests through stream.rs -> Backend::attest_server().
             serve_replacement.store(true, Ordering::SeqCst);
-            let reattest_err = backend.attest_server().await.unwrap_err();
-            assert!(
-                reattest_err.to_string().contains("Server identity changed"),
-                "expected identity mismatch error, got: {reattest_err}"
-            );
+            drop_stream_tx.send(()).await.unwrap();
+            loop {
+                if backend.client.server_identity_mismatch() {
+                    break;
+                }
+                match events.recv().await {
+                    Ok(_) => continue,
+                    Err(_) => break,
+                }
+            }
             assert!(backend.client.server_identity_mismatch());
             let attempt = "msg_00000000000000000000000000000099".to_owned();
             cmd_tx

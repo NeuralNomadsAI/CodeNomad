@@ -80,7 +80,7 @@ pub(crate) fn cancel_page(s: &mut State) {
     }
 }
 
-pub(super) fn fail_pending_page(s: &mut State) {
+pub(crate) fn fail_pending_page(s: &mut State) {
     let timeline = &mut s.transcript_display.timeline;
     if let Some((_ticket, edge)) = timeline.paging.take() {
         s.paging = false;

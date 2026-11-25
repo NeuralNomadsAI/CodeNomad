@@ -327,6 +327,6 @@ mod tests;
 mod pages;
 pub(crate) use pages::install_page;
 pub(crate) use pages::{
-    admit_page, announce_paging, cancel_page, install_anchor, older, oldest, request_page,
-    set_timeline_position,
+    admit_page, announce_paging, cancel_page, fail_pending_page, install_anchor, older, oldest,
+    request_page, set_timeline_position,
 };

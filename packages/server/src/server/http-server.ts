@@ -1021,7 +1021,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
     instance.setErrorHandler((error, request, reply) => {
       const pathOnly = routedPath(request.raw.url ?? "") ?? (request.raw.url ?? "").split(/[?;]/, 1)[0] ?? ""
       const isSendInput = request.method === "POST"
-        && /^\/workspaces\/[^/]+\/instance\/api\/session\/[^/]+\/(?:prompt|command)\/*$/.test(pathOnly)
+        && /^\/workspaces\/[^/]+\/instance\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathOnly)
       const statusCode = (error as { statusCode?: unknown } | undefined)?.statusCode
       if (isSendInput && typeof statusCode === "number" && statusCode >= 400 && statusCode < 500) {
         reply.header("x-codenomad-before-dispatch", "1")
@@ -1108,26 +1108,26 @@ function sameSessionTarget(
   initial: {
     id: string
     location: LocationRef
-    projectID?: string
-    parentID?: string
+    projectID?: string | null
+    parentID?: string | null
     fork?: unknown
-    time?: { created?: number }
+    time?: { created?: number | null }
   },
   current: {
     id: string
     location: LocationRef
-    projectID?: string
-    parentID?: string
+    projectID?: string | null
+    parentID?: string | null
     fork?: unknown
-    time?: { created?: number }
+    time?: { created?: number | null }
   },
 ): boolean {
   return current.id === initial.id
     && deepJsonEqual(current.location, initial.location)
-    && current.projectID === initial.projectID
-    && current.parentID === initial.parentID
+    && (current.projectID ?? null) === (initial.projectID ?? null)
+    && (current.parentID ?? null) === (initial.parentID ?? null)
     && deepJsonEqual(current.fork ?? null, initial.fork ?? null)
-    && current.time?.created === initial.time?.created
+    && (current.time?.created ?? null) === (initial.time?.created ?? null)
 }
 
 async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission: ReturnType<typeof requestAdmission>,
@@ -1139,7 +1139,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   const workspace = workspaceManager.get(workspaceId)
   const rawRoutePath = args.pathSuffix ? `/${args.pathSuffix.replace(/^\/+/, "")}` : ""
   const earlyPromptOrCommandPost = request.method === "POST"
-    && /^\/api\/session\/[^/]+\/(?:prompt|command)\/*$/.test(rawRoutePath)
+    && /^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(rawRoutePath)
   let markBeforeDispatch = earlyPromptOrCommandPost
   const sendPreDispatch = (statusCode: number, payload: Record<string, unknown>) =>
     (markBeforeDispatch ? reply.header("x-codenomad-before-dispatch", "1") : reply).code(statusCode).send(payload)
@@ -1167,7 +1167,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     return
   }
   const isPromptOrCommandPost = request.method === "POST"
-    && /^\/api\/session\/[^/]+\/(?:prompt|command)\/*$/.test(pathname)
+    && /^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathname)
   markBeforeDispatch = isPromptOrCommandPost
   const kind = controlKind(request.method, pathname.replace(/\/+$/, ""))
   const sessionControl = kind && !isGlobalFormAction(pathname, request.method) ? kind : undefined
@@ -1475,14 +1475,17 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   const sessionId = getSessionRouteId(pathname)
   const sessionInput = promptBody as {
     id?: unknown
-    parentID?: unknown
     info?: { id?: unknown; parentID?: unknown }
   } | undefined
   const normalizedRoute = pathname.replace(/\/+$/, "")
-  const suppliedSessionId = normalizedRoute === "/api/session" ? sessionInput?.id : sessionInput?.info?.id
+  const suppliedSessionId = normalizedRoute === "/api/session"
+    ? sessionInput?.id
+    : normalizedRoute === "/api/experimental/session/import"
+      ? sessionInput?.info?.id
+      : undefined
   const suppliedParentId = normalizedRoute === "/api/experimental/session/import"
     ? sessionInput?.info?.parentID
-    : normalizedRoute === "/api/session" ? sessionInput?.parentID : undefined
+    : undefined
   if (ordinarySessionMutation && (sessionId || typeof suppliedSessionId === "string")) {
     await wait(Promise.resolve(workspaceManager.desktopPluginsReady?.()))
   }
@@ -2309,7 +2312,7 @@ function hasDotSegment(value: string): boolean {
 const SESSION_SETTLEMENT_WAIT = /^\/api\/experimental\/session\/[^/]+\/wait$/
 
 function isAllowedInstanceApiRoute(method: string, pathname: string): boolean {
-  const route = pathname.replace(/\/+$/, "")
+  const route = pathname.replace(/\/$/, "")
   const allowed: Array<[string, RegExp]> = [
     ["GET", /^\/api\/(?:agent|command|config|integration|location|mcp|model|plugin|provider|reference|skill)$/],
     ["GET", /^\/api\/(?:mcp\/resource|websearch\/provider)$/],
@@ -2432,7 +2435,7 @@ function stripLocationSelectors(targetUrl: URL, body: unknown, workspaceDirector
 
 function readPromptFilePaths(pathname: string, method: string, body: unknown) {
   const result = { paths: [] as string[], invalid: false }
-  if (method !== "POST" || !/^\/api\/session\/[^/]+\/(?:prompt|command)$/.test(pathname.replace(/\/+$/, ""))) return result
+  if (method !== "POST" || !/^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathname)) return result
   if (!body || typeof body !== "object" || Array.isArray(body) || Buffer.isBuffer(body)) return result
   const files = (body as Record<string, unknown>).files
   if (files === undefined) return result

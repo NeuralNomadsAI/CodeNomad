@@ -47,6 +47,7 @@ fn is_send_input_request(method: &Method, path: &str) -> bool {
     if *method != Method::POST {
         return false;
     }
+    let path = path.split(';').next().unwrap_or(path);
     let Some(tail) = path.strip_prefix("/workspaces/") else {
         return false;
     };
@@ -59,7 +60,7 @@ fn is_send_input_request(method: &Method, path: &str) -> bool {
     let Some(route) = safe_route(suffix) else {
         return false;
     };
-    let route = route.trim_end_matches('/');
+    let route = route.strip_suffix('/').unwrap_or(&route);
     route.starts_with("/api/session/") && (route.ends_with("/prompt") || route.ends_with("/command"))
 }
 
@@ -72,12 +73,13 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
     let (head, body) = request.into_parts();
     let principal = head.extensions.get::<crate::auth::Principal>().cloned().ok_or_else(crate::auth::unauthorized)?;
     let invalid = || error(Status::BAD_REQUEST, "Invalid workspace instance path");
-    let tail = head.uri.path().strip_prefix("/workspaces/").ok_or_else(invalid)?;
+    let raw_path = head.uri.path().split(';').next().unwrap_or(head.uri.path());
+    let tail = raw_path.strip_prefix("/workspaces/").ok_or_else(invalid)?;
     let (id, suffix) = tail.split_once('/').ok_or_else(invalid)?;
     let suffix = suffix.strip_prefix("instance").ok_or_else(invalid)?;
     let workspace = app.workspace(id)?;
     let route = safe_route(suffix).ok_or_else(invalid)?;
-    let route = route.trim_end_matches('/');
+    let route = route.strip_suffix('/').unwrap_or(&route);
     let prompt = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/prompt");
     let command = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/command");
     let send_input = prompt || command;
@@ -852,4 +854,33 @@ async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, E
         mutation,
         rules_lock,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_send_input_request;
+    use axum::http::Method;
+
+    #[test]
+    fn send_input_request_matches_routed_variants_and_rejects_double_slash() {
+        assert!(is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/prompt"));
+        assert!(is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/prompt/"));
+        assert!(is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/prompt;v=1"));
+        assert!(is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/%70rompt"));
+        assert!(is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/command/"));
+        assert!(!is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/prompt//"));
+        assert!(!is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/command//"));
+        assert!(!is_send_input_request(&Method::GET, "/workspaces/w/instance/api/session/ses_1/prompt"));
+    }
+
+    #[test]
+    fn fence_admit_reports_session_move_distinct_from_worktree_deletion() {
+        let session_key = crate::worktrees::fence::session("ses_admit_msg_test");
+        let _block = crate::worktrees::fence::try_block(std::slice::from_ref(&session_key)).unwrap();
+        let err = crate::worktrees::fence::admit(&["/repo/unused_admit_dir".into(), session_key])
+            .err()
+            .expect("session move block must refuse admit");
+        assert_eq!(err.0, axum::http::StatusCode::CONFLICT);
+        assert_eq!(err.1.0, serde_json::json!({ "error": "Session move is in progress" }));
+    }
 }

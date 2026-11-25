@@ -24,6 +24,7 @@ function fixture() {
     owned: false, metadata: undefined as Record<string, unknown> | undefined, directory: "/repo/worktree",
     locationWorkspaceID: undefined as string | undefined,
     projectID: "project-a",
+    parentID: undefined as string | null | undefined,
     createdAt: 1,
     fork: undefined as Record<string, unknown> | undefined,
     result: undefined as unknown, failure: undefined as unknown, current: true,
@@ -33,12 +34,13 @@ function fixture() {
     afterRead: async () => {},
     beforeFetchCheck: async () => {},
   }
-  const sessions = new Map<string, { id: string; location: { directory: string; workspaceID?: string }; projectID?: string; fork?: Record<string, unknown>; time?: { created: number }; metadata?: Record<string, unknown>;
+  const sessions = new Map<string, { id: string; location: { directory: string; workspaceID?: string }; projectID?: string; parentID?: string | null; fork?: Record<string, unknown>; time?: { created: number }; metadata?: Record<string, unknown>;
     model?: { providerID: string; id: string }; title?: string }>()
   const missing = new Set<string>()
   const session = (id: string) => sessions.get(id) ?? {
     id,
     projectID: state.projectID,
+    ...(state.parentID !== undefined ? { parentID: state.parentID } : {}),
     fork: state.fork,
     time: { created: state.createdAt },
     location: state.locationWorkspaceID !== undefined
@@ -405,16 +407,19 @@ test("a plain fetch without dispatch-hook support is rejected with marked 502 be
 test("a session replaced under the same ID and location before dispatch is rejected with marked 403 while reordered fork keys stay allowed", async () => {
   const f = fixture()
   f.state.fork = { sessionID: "ses_parent", messageID: "msg_1" }
+  f.state.parentID = undefined
   f.state.beforeFetchCheck = async () => {
     f.state.fork = { messageID: "msg_1", sessionID: "ses_parent" }
+    f.state.parentID = null
   }
   const reordered = await f.app.inject({
     method: "POST",
     url: `${prefix}/api/session/ses_reordered_fork/prompt`,
-    payload: { text: "reordered fork keys must stay allowed" },
+    payload: { text: "reordered fork keys and absent-vs-null parentID must stay allowed" },
   })
   assert.equal(reordered.statusCode, 200, reordered.body)
   assert.deepEqual(f.events, ["environment", "forward"])
+  f.state.parentID = undefined
 
   f.events.length = 0
   f.state.beforeFetchCheck = async () => {
@@ -483,24 +488,47 @@ test("pre-handler 400/413/426 keep Fastify error envelopes and carry x-codenomad
   assert.equal(tooLargeBody.code, "FST_ERR_CTP_BODY_TOO_LARGE")
   assert.equal(tooLargeBody.error, "Payload Too Large")
 
-  // Multiple trailing slashes must still run attachment budget and file ownership validation.
+  // Single trailing slash runs attachment budget validation; double trailing slashes are rejected with 403 (parity with Rust).
   const trailingInvalidData = await f.app.inject({
     method: "POST",
-    url: `${prefix}/api/session/ses_trailing/prompt//`,
+    url: `${prefix}/api/session/ses_trailing/prompt/`,
     payload: { text: "bad attachment", files: [{ uri: "data:;base64,abc" }] },
   })
   assert.equal(trailingInvalidData.statusCode, 400, trailingInvalidData.body)
   assert.equal(trailingInvalidData.headers["x-codenomad-before-dispatch"], "1")
 
+  for (const doubleSlash of [
+    `${prefix}/api/session/ses_trailing/prompt//`,
+    `${prefix}/api/session/ses_trailing/command//`,
+  ]) {
+    const refused = await f.app.inject({
+      method: "POST",
+      url: doubleSlash,
+      payload: { text: "double slash not allowed" },
+    })
+    assert.equal(refused.statusCode, 403, refused.body)
+  }
+
   f.state.profileError = new UnsupportedOpenCodeError("2.0.0")
   const upgrade = await f.app.inject({
     method: "POST",
-    url: `${prefix}/api/session/ses_old_runtime/command//`,
+    url: `${prefix}/api/session/ses_old_runtime/command/`,
     payload: { name: "build", text: "blocked on 426" },
   })
   assert.equal(upgrade.statusCode, 426, upgrade.body)
   assert.equal(upgrade.headers["x-codenomad-before-dispatch"], "1")
-  assert.equal(upgrade.json().error, "opencode_update_required")
+  const upgradeBody = upgrade.json() as {
+    error?: string
+    message?: string
+    actualVersion?: string
+    minimumVersion?: string
+    reason?: string
+  }
+  assert.equal(upgradeBody.error, "opencode_update_required")
+  assert.equal(upgradeBody.actualVersion, "2.0.0")
+  assert.equal(typeof upgradeBody.minimumVersion, "string")
+  assert.equal(typeof upgradeBody.message, "string")
+  assert.equal(typeof upgradeBody.reason, "string")
   assert.deepEqual(f.events, [])
 })
 

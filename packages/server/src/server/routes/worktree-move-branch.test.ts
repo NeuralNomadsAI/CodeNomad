@@ -283,6 +283,15 @@ test("a family move fails fast while a session mutation is active, widens for a 
       })
       assert.equal(importChild.statusCode, 409, importChild.body)
       assert.deepEqual(importChild.json(), { error: "Session move is in progress" })
+
+      // An import targeting a locked session solely by info.id (without parentID) must also be blocked.
+      const importById = await app.inject({
+        method: "POST",
+        url: "/workspaces/workspace/instance/api/experimental/session/import",
+        payload: { info: { id: "ses_child_late", directory: repo } },
+      })
+      assert.equal(importById.statusCode, 409, importById.body)
+      assert.deepEqual(importById.json(), { error: "Session move is in progress" })
       assert.deepEqual(forwarded, [])
     } finally {
       releaseMoveOnce()
@@ -290,5 +299,61 @@ test("a family move fails fast while a session mutation is active, widens for a 
     const moveResponse = await movePromise
     assert.equal(moveResponse.statusCode, 200, moveResponse.body)
     assert.equal(lateChild.location.directory, childWt)
+  } finally { await app.close(); rmSync(root, { recursive: true, force: true }) }
+})
+
+test("a child appearing already at the destination mid-move triggers cardinality failure and rollback", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "codenomad-move-rollback-")), repo = path.join(root, "main"), childWt = path.join(root, "child")
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim()
+  git(root, "init", "-q", "-b", "main", repo)
+  git(repo, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "base")
+  git(repo, "worktree", "add", "-q", "-b", "issue-15", childWt)
+  const entry = (await fixtureCatalogue(repo)).worktrees.find(worktree => worktree.branch === "issue-15")!
+  const rootSession = { id: "ses_root", projectID: "project", location: { directory: repo }, time: { created: 1, updated: 1 } }
+  const midMoveChild = { id: "ses_mid_child", parentID: "ses_root", projectID: "project", location: { directory: childWt }, time: { created: 2, updated: 2 } }
+  const sessions = new Map<string, any>([["ses_root", rootSession]])
+  const moves: Array<{ id: string; directory: string }> = []
+  const client = {
+    rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
+    location: { get: async ({ location }: any) => ({ directory: location.directory, project: { id: "project", canonical: repo, directory: repo } }) },
+    session: {
+      get: async ({ sessionID }: any) => structuredClone(sessions.get(sessionID)),
+      list: async () => ({ data: Array.from(sessions.values(), s => structuredClone(s)), cursor: {} }),
+      active: async () => ({}),
+      move: async ({ sessionID, directory }: any) => {
+        moves.push({ id: sessionID, directory })
+        sessions.get(sessionID)!.location = { directory }
+        // Inject a new child already located at childWt after ses_root moves so only the cardinality check catches it.
+        if (sessionID === "ses_root" && directory === childWt) {
+          sessions.set("ses_mid_child", midMoveChild)
+        }
+      },
+    },
+  }
+  const app = Fastify()
+  registerWorktreeRoutes(app, {
+    worktreeDeletionFence: new WorktreeDeletionFence(),
+    workspaceManager: {
+      get: () => ({ id: "workspace", path: repo }),
+      getWorktrees: () => fixtureCatalogue(repo),
+      getServiceLocation: () => ({ directory: repo }),
+      getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
+      getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
+      getSharedServiceClient: async () => client,
+    } as any,
+  })
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/workspaces/workspace/sessions/ses_root/worktree",
+      payload: { worktreeSlug: entry.slug, branch: "issue-15" },
+    })
+    assert.equal(response.statusCode, 409, response.body)
+    assert.deepEqual(response.json(), { error: "Session family changed during the move" })
+    assert.equal(rootSession.location.directory, repo, "root must roll back to its original worktree")
+    assert.deepEqual(moves, [
+      { id: "ses_root", directory: childWt },
+      { id: "ses_root", directory: repo },
+    ])
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }) }
 })

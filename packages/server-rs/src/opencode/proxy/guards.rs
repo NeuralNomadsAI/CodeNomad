@@ -258,6 +258,16 @@ mod tests {
             "time": { "created": 100, "updated": 100 }
         });
         assert!(!same_target(&initial, &location_changed));
+
+        // Absent optional fields and explicit null fields represent the same target state.
+        let absent_parent = json!({
+            "id": "ses_1",
+            "location": { "directory": "/repo", "workspaceID": "ws_1" },
+            "projectID": "proj_1",
+            "fork": { "sessionID": "ses_parent", "messageID": "msg_1" },
+            "time": { "created": 100 }
+        });
+        assert!(same_target(&initial, &absent_parent));
     }
 }
 

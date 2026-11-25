@@ -506,9 +506,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
                 if let Some(reader) = &mut s.reader {
                     reader.failed();
                 }
-                if let Some((_, edge)) = s.transcript_display.timeline.paging.take() {
-                    s.transcript_display.timeline.page_retry = Some(edge);
-                }
+                chat::reader::fail_pending_page(s);
                 s.paging = false;
                 s.history_error = true;
             }
