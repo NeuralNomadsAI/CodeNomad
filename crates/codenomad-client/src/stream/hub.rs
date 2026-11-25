@@ -779,7 +779,7 @@ mod tests {
         });
         assert!(shared.mark_open());
         assert!(matches!(fast.pop(), Some(HubItem::Opened)));
-        for i in 0..=MAX_SUBSCRIBER_FRAMES {
+        for i in 0..MAX_SUBSCRIBER_FRAMES {
             shared.broadcast_frame(
                 "message".into(),
                 format!("{{\"type\":\"memory.changed\",\"seq\":{i}}}"),
@@ -888,5 +888,217 @@ mod tests {
         assert!(watch.current().1);
         drop(late);
         shared.finish(&hub, false);
+    }
+
+    #[test]
+    fn shared_stream_staleness_and_hanging_pong_close_all_subscribers_and_unregister_probes() {
+        use super::super::staleness::{Clock, ProbeSource, STALE_THRESHOLD, Stamp, Watchdog};
+        use crate::runtime::Instant;
+        #[derive(Clone)]
+        struct FakeClock(Arc<Mutex<Stamp>>);
+        impl FakeClock {
+            fn new() -> Self {
+                Self(Arc::new(Mutex::new(Stamp {
+                    monotonic: Instant::now(),
+                    wall_ms: 1_000_000,
+                })))
+            }
+            fn advance_wall(&self, ms: u64) {
+                self.0.lock().unwrap().wall_ms += ms;
+            }
+        }
+        impl Clock for FakeClock {
+            fn now(&self) -> Stamp {
+                *self.0.lock().unwrap()
+            }
+        }
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let addr = format!("http://{}/", listener.local_addr().unwrap());
+                let (frame_tx, frame_rx) = bounded::<String>(8);
+                let (closed_tx, closed_rx) = bounded::<()>(1);
+                let (pong_seen_tx, pong_seen_rx) = bounded::<()>(1);
+                let server = tokio::spawn(async move {
+                    let mut held_pongs = Vec::new();
+                    loop {
+                        let Ok((mut sock, _)) = listener.accept().await else {
+                            break;
+                        };
+                        let mut buf = [0u8; 4096];
+                        let n = sock.read(&mut buf).await.unwrap_or(0);
+                        let req = String::from_utf8_lossy(&buf[..n]);
+                        if req.starts_with("POST /api/client-connections/pong ") {
+                            let _ = pong_seen_tx.try_send(());
+                            // Deliberately hang the pong response to exercise forked pong staleness.
+                            held_pongs.push(sock);
+                            continue;
+                        }
+                        if req.starts_with("GET /api/events?") {
+                            let _ = sock
+                                .write_all(
+                                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n",
+                                )
+                                .await;
+                            let frame_rx = frame_rx.clone();
+                            let closed_tx = closed_tx.clone();
+                            tokio::spawn(async move {
+                                let mut probe = [0u8; 16];
+                                enum Step {
+                                    Frame(std::result::Result<String, async_channel::RecvError>),
+                                    Read(std::io::Result<usize>),
+                                }
+                                loop {
+                                    let step = futures_lite::future::race(
+                                        async { Step::Frame(frame_rx.recv().await) },
+                                        async { Step::Read(sock.read(&mut probe).await) },
+                                    )
+                                    .await;
+                                    match step {
+                                        Step::Frame(Ok(msg)) => {
+                                            if sock.write_all(msg.as_bytes()).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                        Step::Frame(Err(_))
+                                        | Step::Read(Ok(0))
+                                        | Step::Read(Err(_)) => break,
+                                        Step::Read(Ok(_)) => {}
+                                    }
+                                }
+                                let _ = closed_tx.try_send(());
+                            });
+                        }
+                    }
+                });
+
+                let hub = Arc::new(Hub::default());
+                let (stop_tx, stop_rx) = bounded(1);
+                let (done_tx, done_rx) = bounded(1);
+                let sub_a = Subscriber::new(1, None);
+                let sub_b = Subscriber::new(2, None);
+                let shared = Arc::new(SharedStream {
+                    base: addr.clone(),
+                    inner: Mutex::new(StreamInner {
+                        phase: Phase::Connecting,
+                        subscribers: vec![sub_a.clone(), sub_b.clone()],
+                        replays: HashMap::new(),
+                        stop: Some(stop_tx),
+                    }),
+                    done: done_rx,
+                });
+                hub.streams
+                    .lock()
+                    .unwrap()
+                    .insert(addr.clone(), shared.clone());
+                let clock = FakeClock::new();
+                let watchdog = Arc::new(Watchdog::with_clock(
+                    clock.clone(),
+                    STALE_THRESHOLD,
+                    Duration::from_secs(15),
+                ));
+                let (captured_ids, probes) = ProbeSource::global_capturing();
+                let backend = Backend::unauthenticated(&addr).unwrap();
+                let pump_hub = hub.clone();
+                let pump_shared = shared.clone();
+                tokio::spawn(async move {
+                    let _done = done_tx;
+                    super::super::native::pump_shared_with(
+                        pump_hub,
+                        pump_shared,
+                        backend,
+                        "hub-stale-test".into(),
+                        stop_rx,
+                        watchdog,
+                        probes,
+                    )
+                    .await;
+                });
+
+                assert!(matches!(
+                    tokio::time::timeout(Duration::from_secs(2), sub_a.recv())
+                        .await
+                        .unwrap(),
+                    HubItem::Opened
+                ));
+                assert!(matches!(
+                    tokio::time::timeout(Duration::from_secs(2), sub_b.recv())
+                        .await
+                        .unwrap(),
+                    HubItem::Opened
+                ));
+
+                // Trigger ping whose pong hangs, then send a trailing SSE frame to prove the
+                // forked pong watchdog still closes the shared stream on wake probe.
+                frame_tx
+                    .send("event: codenomad.client.ping\ndata: {\"ts\":1}\n\n".into())
+                    .await
+                    .unwrap();
+                tokio::time::timeout(Duration::from_secs(2), pong_seen_rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                frame_tx
+                    .send("data: {\"type\":\"memory.changed\"}\n\n".into())
+                    .await
+                    .unwrap();
+                assert!(matches!(
+                    tokio::time::timeout(Duration::from_secs(2), sub_a.recv())
+                        .await
+                        .unwrap(),
+                    HubItem::Frame(_)
+                ));
+                assert!(matches!(
+                    tokio::time::timeout(Duration::from_secs(2), sub_b.recv())
+                        .await
+                        .unwrap(),
+                    HubItem::Frame(_)
+                ));
+
+                clock.advance_wall(STALE_THRESHOLD.as_millis() as u64 + 1_000);
+                super::super::probe_stale();
+
+                assert!(matches!(
+                    tokio::time::timeout(Duration::from_secs(2), sub_a.recv())
+                        .await
+                        .unwrap(),
+                    HubItem::Closed {
+                        auth_expired: false
+                    }
+                ));
+                assert!(matches!(
+                    tokio::time::timeout(Duration::from_secs(2), sub_b.recv())
+                        .await
+                        .unwrap(),
+                    HubItem::Closed {
+                        auth_expired: false
+                    }
+                ));
+                tokio::time::timeout(Duration::from_secs(2), closed_rx.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                // Wait briefly for the cancelled pong task to drop its probe subscription.
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        let ids = captured_ids.lock().unwrap().clone();
+                        if !ids.is_empty()
+                            && ids
+                                .iter()
+                                .all(|id| !super::super::staleness::has_probe_id(*id))
+                        {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .expect("all shared-stream and pong probes must unregister after stale close");
+                server.abort();
+            });
     }
 }

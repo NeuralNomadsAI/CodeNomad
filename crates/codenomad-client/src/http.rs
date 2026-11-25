@@ -97,7 +97,6 @@ impl Http {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .cookie_store(true)
-            .timeout(REQUEST_TIMEOUT)
             .build()?;
         #[cfg(target_arch = "wasm32")]
         let client = Client::new();
@@ -401,6 +400,10 @@ impl Http {
     }
     pub fn get(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::GET, url)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn stream_get(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.0.get(url)
     }
     pub fn post(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::POST, url)
