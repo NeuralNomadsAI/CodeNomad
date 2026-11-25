@@ -72,7 +72,7 @@ export function MissionSelectedActions(props: {
     refresh: () => missionStore.refresh(props.instanceId) })
   const recordedBrief = () => {
     const inputs = brief.values()
-    return inputs ? missionRecordedBrief(inputs.target, inputs) : { objective: "", notes: "", template: props.mission?.template ?? "custom" as const }
+    return inputs ? missionRecordedBrief(inputs.target, inputs) : undefined
   }
   const requestLabel = () => !briefing.waiting() ? t("missionsPanel.action.requestUpdate")
     : t(briefing.state() === "uncertain" ? "missionsPanel.action.requestUpdateUncertain" : "missionsPanel.action.requestUpdatePending")

@@ -90,6 +90,7 @@ export const recurrenceControlRecordSchema = z.object({ requestID: recurrenceIDS
 export type RecurrenceControlRecord = z.infer<typeof recurrenceControlRecordSchema>
 const documentSchema = z.object({ version: z.literal(1), projectID: id, projectCanonical: z.string().min(1).max(4096),
   id: recurrenceIDSchema, revision: counter, scheduleRevision: counter, createdAt: timestamp,
+  updatedAt: timestamp.optional(),
   state: z.enum(["paused", "running", "stopped"]), config: recurrenceConfigSchema,
   interruptionReason: z.enum(["service-restart", "error"]).optional(),
   profileSource: z.object({ profileID: id, executionHost: id, configYamlPath: z.string().min(1).max(4096) }).strict().optional(),
@@ -138,6 +139,7 @@ export function parseRecurrenceDocument(input: unknown, projectID: string, proje
   const doc = documentSchema.parse(JSON.parse(json))
   const fail = () => { throw new Error("Invalid recurrence storage identity") }
   if (doc.projectID !== projectID || doc.projectCanonical !== projectCanonical || doc.id !== scheduleID
+    || doc.updatedAt !== undefined && doc.updatedAt < doc.createdAt
     || doc.scheduleRevision > doc.revision || doc.history.length !== Math.min(doc.settledCount, RECURRENCE_HISTORY_LIMIT)
     || doc.revision < 2 * doc.settledCount + (doc.pending ? 1 : 0)
     || doc.settledCount === 0 && doc.cursors.length !== 0) fail()

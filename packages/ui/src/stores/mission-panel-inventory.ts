@@ -23,10 +23,11 @@ interface Lane { pages: Map<number, Page>; loading: boolean; cycle: number; fail
   inventoryRows?: Map<string, { value: unknown; revision: number; serial: number; epoch: number }> }
 interface Entry {
   attachment?: AbortSignal
-  controller: AbortController; epoch: number; owners: Map<string, { id: string; reader: boolean; detail: boolean }>; panel: boolean
+  controller: AbortController; epoch: number; owners: Map<string, { id: string; reader: boolean; detail: boolean; activity: boolean }>; panel: boolean
   maps: Map<string, { header: PanelHeader; map: MissionPanelMap; epoch: number; tasksLoaded: boolean }>; lanes: Map<string, Lane>; projectID?: string; baseline?: number; seeded?: boolean
   missionOwners: Map<string, AbortController>
   detailOwners: Map<string, AbortController>
+  activityOwners: Map<string, AbortController>
   refreshDeadline?: number
   headerReads: Map<string, { owner: AbortController; promise: Promise<void>; trailing: boolean; current(): boolean }>
   headerErrors: Map<string, { revision: number; reason: "changed" | "failed"; unavailableReason?: MissionUnavailableReason }>; missing: Set<string>
@@ -56,12 +57,14 @@ export function createMissionPanelInventory(input: {
     own.headerErrors.clear(); own.missing.clear(); own.headerReads.clear()
     for (const controller of own.detailOwners.values()) controller.abort()
     own.detailOwners.clear()
+    for (const controller of own.activityOwners.values()) controller.abort()
+    own.activityOwners.clear()
     for (const lane of own.lanes.values()) { lane.pending = undefined; lane.pendingCurrent = undefined; lane.pendingSelector = undefined; lane.loading = false }
     previous.abort()
   }
   const entry = (id: string): Entry => {
     let own = entries.get(id)
-    if (!own) entries.set(id, own = { controller: new AbortController(), epoch: 0, owners: new Map(), panel: false, maps: new Map(), lanes: new Map(), missionOwners: new Map(), detailOwners: new Map(), headerReads: new Map(), headerErrors: new Map(), missing: new Set() })
+    if (!own) entries.set(id, own = { controller: new AbortController(), epoch: 0, owners: new Map(), panel: false, maps: new Map(), lanes: new Map(), missionOwners: new Map(), detailOwners: new Map(), activityOwners: new Map(), headerReads: new Map(), headerErrors: new Map(), missing: new Set() })
     const attachment = input.signal?.(id)
     const project = input.projectID?.(id), differentProject = Boolean(own.projectID && project && own.projectID !== project)
     if (own.attachment !== attachment || differentProject || own.originCurrent && !own.originCurrent()) {
@@ -130,6 +133,24 @@ export function createMissionPanelInventory(input: {
         if (own.baseline === undefined) own.baseline = value
       } }
   }
+  const activityScope = (instanceId: string, own: Entry, missionID: string, expires = performance.now() + TASK_READ_TIMEOUT_MS): MissionPanelReadScope => {
+    const baseLife = scope(instanceId, own, missionID, expires)
+    const wanted = [...own.owners.values()].some(item => item.id === missionID && item.activity)
+    if (!wanted) {
+      const aborted = new AbortController()
+      aborted.abort(new DOMException("Activity owner released", "AbortError"))
+      return { ...baseLife, signal: aborted.signal, current: () => false }
+    }
+    let owner = own.activityOwners.get(missionID)
+    if (!owner) own.activityOwners.set(missionID, owner = new AbortController())
+    const signal = AbortSignal.any([baseLife.signal!, owner.signal])
+    return {
+      ...baseLife,
+      signal,
+      current: () => baseLife.current() && !owner!.signal.aborted && own.activityOwners.get(missionID) === owner
+        && [...own.owners.values()].some(item => item.id === missionID && item.activity),
+    }
+  }
   const adopt = (own: Entry, answer: Answer) => {
     if (own.projectID && own.projectID !== answer.envelope.projectID) throw new MissionTaskPageReadError("invalid")
     own.projectID = answer.envelope.projectID
@@ -182,7 +203,9 @@ export function createMissionPanelInventory(input: {
     const admittedFailures = new Map(target.failures)
     const fieldDigest = selector.source === "mission" && selector.field ? own.maps.get(selector.missionID)?.header.collections[selector.field]?.digest : undefined
     const signature = JSON.stringify([selector.source, "missionID" in selector ? selector.missionID : null, selector.source === "mission" ? [selector.field, selector.part, selector.text] : null, offsetOf(selector), orderOf(selector)]), waiting = target.pendingCurrent?.() ? target.pending : undefined
-    const ownLife = scope(instanceId, own, selector.source === "mission" || selector.source === "activity" ? selector.missionID : undefined)
+    const ownLife = selector.source === "activity"
+      ? activityScope(instanceId, own, selector.missionID)
+      : scope(instanceId, own, selector.source === "mission" ? selector.missionID : undefined)
     const life = parent ? { ...ownLife, deadline: Math.min(ownLife.deadline!, parent.deadline!), signal: AbortSignal.any([ownLife.signal!, parent.signal!]), current: () => ownLife.current() && parent.current() } : ownLife
     if (!restart && waiting && target.pendingSelector === signature && target.pendingCurrent?.()) {
       // A refresh that arrives after native IO began needs one trailing read. A
@@ -417,7 +440,8 @@ export function createMissionPanelInventory(input: {
     recordMissionTaskSource(map, header.tasks.version)
     own.maps.set(id, { header, map, epoch: own.epoch, tasksLoaded })
     own.projection = undefined
-    if (detailLife?.current()) void readLane(instanceId, `activity:${id}`, { source: "activity", missionID: id }, detailLife, false, true).catch(() => {})
+    if ([...own.owners.values()].some(owner => owner.id === id && owner.activity) && life.current())
+      void readLane(instanceId, `activity:${id}`, { source: "activity", missionID: id }, life, false, true).catch(() => {})
     return map
   }
   const base = createMissionStore(async (instanceId, request, signal): Promise<MissionDisplayResponse> => {
@@ -610,28 +634,43 @@ export function createMissionPanelInventory(input: {
       base.setDemand(instanceId, demanded)
       if (own.epoch !== epoch) changed(own)
     },
-    want: (instanceId: string, owner: string, id: string | undefined, reader = false, signal = input.signal?.(instanceId), detail = true) => untrack(() => {
+    want: (instanceId: string, owner: string, id: string | undefined, reader = false, signal = input.signal?.(instanceId), detail = true, wantActivity = detail) => untrack(() => {
       const own = entry(instanceId), previous = own.owners.get(owner), old = previous?.id
+      const wantsActivity = detail || wantActivity
       const alreadyWanted = id !== undefined && [...own.owners.values()].some(value => value.id === id)
       const hadDetail = id !== undefined && [...own.owners.values()].some(value => value.id === id && value.detail)
+      const hadActivity = id !== undefined && [...own.owners.values()].some(value => value.id === id && value.activity)
       const oldHadDetail = old !== undefined && [...own.owners.values()].some(value => value.id === old && value.detail)
-      if (old !== id || previous?.detail !== detail) own.projection = undefined
-      if (id) own.owners.set(owner, { id, reader, detail }); else own.owners.delete(owner)
+      const oldHadActivity = old !== undefined && [...own.owners.values()].some(value => value.id === old && value.activity)
+      const modeChanged = old !== id || previous?.detail !== detail || previous?.activity !== wantsActivity
+      if (modeChanged) own.projection = undefined
+      if (id) own.owners.set(owner, { id, reader, detail, activity: wantsActivity }); else own.owners.delete(owner)
       if (old && old !== id && ![...own.owners.values()].some(item => item.id === old)) {
         own.missionOwners.get(old)?.abort(); own.missionOwners.delete(old)
         own.detailOwners.get(old)?.abort(); own.detailOwners.delete(old)
+        own.activityOwners.get(old)?.abort(); own.activityOwners.delete(old)
         own.headerErrors.delete(old); own.missing.delete(old)
         for (const key of own.lanes.keys()) if (key === `activity:${old}` || key.startsWith(`field:${old}:`) || key.startsWith(`text:${old}:`)) own.lanes.delete(key)
-      } else if (old && oldHadDetail && ![...own.owners.values()].some(item => item.id === old && item.detail)) {
-        own.detailOwners.get(old)?.abort(); own.detailOwners.delete(old)
-        own.lanes.delete(`activity:${old}`)
+      } else if (old) {
+        if (oldHadDetail && ![...own.owners.values()].some(item => item.id === old && item.detail)) {
+          own.detailOwners.get(old)?.abort(); own.detailOwners.delete(old)
+        }
+        if (oldHadActivity && ![...own.owners.values()].some(item => item.id === old && item.activity)) {
+          own.activityOwners.get(old)?.abort(); own.activityOwners.delete(old)
+          own.lanes.delete(`activity:${old}`)
+        }
       }
       base.want(instanceId, owner, id, reader); stop(own)
       if (old !== id) publishHeaders(instanceId, own, Infinity, signal)
-      const needsUpgrade = id !== undefined && detail && !hadDetail && (!own.maps.get(id)?.tasksLoaded || !own.lanes.has(`activity:${id}`))
+      const needsTasks = id !== undefined && detail && !hadDetail && !own.maps.get(id)?.tasksLoaded
+      const needsActivityOnly = id !== undefined && wantsActivity && !hadActivity && !needsTasks && !own.lanes.has(`activity:${id}`)
       if (own.controller.signal.aborted) base.setDemand(instanceId, false)
-      else if (id && (!alreadyWanted || needsUpgrade) && (own.panel || reader)) void refreshMap(instanceId, id, true, false, signal)
-      if (old !== id || previous?.detail !== detail) changed(own)
+      else if (id && (!alreadyWanted || needsTasks) && (own.panel || reader)) void refreshMap(instanceId, id, true, false, signal)
+      else if (id && needsActivityOnly && (own.panel || reader)) {
+        if (own.maps.get(id)) void readLane(instanceId, `activity:${id}`, { source: "activity", missionID: id }, undefined, false, true).catch(() => {})
+        else void refreshMap(instanceId, id, true, false, signal)
+      }
+      if (modeChanged) changed(own)
     }),
     invalidateTasks: (instanceId: string) => {
       const own = entries.get(instanceId)

@@ -618,16 +618,16 @@ test(`a late revision-R display cannot release a publication hold after ${change
   } finally { c.dispose(); h.dispose() }
 })
 
-test("activity events do not refresh schedules when idle or belonging to an unrelated conversation", async () => {
+test("activity events skip idle schedules but keep events from independent actors on native pending passages", async () => {
   const listeners = new Set<(event: any) => void>()
   const originalOn = fixture.backendEvents.on
-  ;(fixture as any).activityEvent = (event: { type: string }) => event.type === "session.execution.started"
+  ;(fixture as any).activityEvent = (event: { type: string }) => event.type === "session.execution.started" || event.type === "form.created"
   fixture.backendEvents.on = ((type: string, listener: (event: any) => void) => {
     if (type === "instance.event") listeners.add(listener)
     return () => { listeners.delete(listener) }
   }) as typeof fixture.backendEvents.on
   const sessionMap = new Map([
-    ["ses_chat", { parentID: null }],
+    ["ses_independent_actor", { parentID: null }],
     ["ses_passage", { parentID: null }],
     ["ses_passage_child", { parentID: "ses_passage" }],
   ])
@@ -644,39 +644,88 @@ test("activity events do not refresh schedules when idle or belonging to an unre
     fixture.list = async () => {
       listCalls++
       const doc = activePassage
-        ? { ...running, pendingPassage: { id: "psg_1", missionID: "msn_1", coordinatorSessionID: "ses_passage", admittedAt: 100, createdAt: 90, dueAt: 80 } }
+        ? { ...running, pendingPassage: { id: "psg_1", missionID: "msn_1", coordinatorSessionID: "ses_passage", admittedAt: 100 } }
         : { ...running, pendingPassage: null }
       return { version: 1, projectID: "project", schedules: [doc] }
     }
     h.store.refresh()
     await settled(() => listCalls >= 1 && !h.store.loading())
     const idleCount = listCalls
-    // Idle schedule (no pendingPassage): unknown and sessionless events trigger zero reads
-    // (must distinguish the idle guard from unrelated-root filtering).
+    // Idle schedule (no pendingPassage): activity events trigger zero reads.
     for (const emit of listeners) {
       emit({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: { sessionID: "ses_unknown_idle" } } })
-      emit({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: {} } })
+      emit({ type: "instance.event", instanceId: "instance", event: { type: "form.created", data: { form: { sessionID: "ses_independent_actor" } } } })
     }
     await new Promise(resolve => setTimeout(resolve, ACTIVITY_REFRESH_INTERVAL_MS + 500))
     assert.equal(listCalls, idleCount, "no activity refresh when no schedule has pendingPassage")
 
-    // Active native pendingPassage: unrelated root conversation triggers zero reads.
+    // Active native pendingPassage: a native passage may reuse an independent root actor
+    // (parentID: null), so form.created from that actor MUST refresh the schedule list.
     activePassage = true
     h.store.refresh()
     await settled(() => listCalls > idleCount && !h.store.loading())
     const activeCount = listCalls
-    for (const emit of listeners) emit({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: { sessionID: "ses_chat" } } })
-    await new Promise(resolve => setTimeout(resolve, ACTIVITY_REFRESH_INTERVAL_MS + 500))
-    assert.equal(listCalls, activeCount, "unrelated root session does not refresh active native schedule")
-
-    // Child of the active passage's coordinator DOES trigger a refresh.
-    for (const emit of listeners) emit({ type: "instance.event", instanceId: "instance", event: { type: "session.execution.started", data: { sessionID: "ses_passage_child" } } })
+    for (const emit of listeners) emit({ type: "instance.event", instanceId: "instance", event: { type: "form.created", data: { form: { sessionID: "ses_independent_actor" } } } })
     for (const deadline = Date.now() + ACTIVITY_REFRESH_INTERVAL_MS + 2_000; listCalls <= activeCount && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, 25))
-    assert.ok(listCalls > activeCount, "descendant of pendingPassage coordinator refreshes schedule")
+    assert.ok(listCalls > activeCount, "form.created from an independent actor root refreshes active native schedule")
   } finally {
     h.dispose()
     delete (fixture as any).sessions
     delete (fixture as any).activityEvent
     fixture.backendEvents.on = originalOn
   }
+})
+
+test("selecting a loaded schedule serves from snapshot without list reload; off-page selection uses point-read only; refreshNow awaits coalesced reads", async () => {
+  const h = setup(false)
+  let listCalls = 0
+  const detailCalls: string[] = []
+  let listGate: ReturnType<typeof deferred<MissionScheduleList>> | undefined
+  try {
+    fixture.list = async () => {
+      listCalls++
+      if (listGate) { const gate = listGate; listGate = undefined; return gate.promise }
+      return { version: 1, projectID: "project", schedules: page, next: "aaa_7" }
+    }
+    fixture.detail = async id => {
+      detailCalls.push(id)
+      return { pending: false, document: { ...selected, id } }
+    }
+    await until(() => !h.store.loading())
+    const initialList = listCalls, initialDetail = detailCalls.length
+
+    // Selecting an already-loaded schedule from the current page triggers zero list and zero detail requests.
+    h.select(page[0].id)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(listCalls, initialList, "selecting a loaded schedule does not reload the schedule directory")
+    assert.equal(detailCalls.length, initialDetail, "selecting a loaded schedule does not point-read")
+
+    // Selecting an off-page schedule issues a single point-read and zero directory reloads.
+    h.select("off_page_schedule")
+    await until(() => h.store.fresh("off_page_schedule"))
+    assert.equal(listCalls, initialList, "off-page selection never reloads the schedule directory")
+    assert.deepEqual(detailCalls.slice(initialDetail), ["off_page_schedule"])
+
+    // refreshNow awaits an in-flight read plus its coalesced trailing read before resolving.
+    const poll = async (predicate: () => boolean) => {
+      for (const deadline = Date.now() + 5_000; !predicate() && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, 10))
+      assert.ok(predicate(), "poll condition reached")
+    }
+    const first = deferred<MissionScheduleList>(), second = deferred<MissionScheduleList>()
+    let step = 0
+    fixture.list = async () => { listCalls++; return ++step === 1 ? first.promise : second.promise }
+    h.store.refresh()
+    await poll(() => listCalls === initialList + 1)
+    let resolved = false
+    const manual = h.store.refreshNow().then(() => { resolved = true })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(resolved, false, "refreshNow waits while initial read is in flight")
+    first.resolve({ version: 1, projectID: "project", schedules: page, next: "aaa_7" })
+    await poll(() => listCalls === initialList + 2)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(resolved, false, "refreshNow waits for its coalesced trailing read")
+    second.resolve({ version: 1, projectID: "project", schedules: page, next: "aaa_7" })
+    await manual
+    assert.equal(resolved, true)
+  } finally { h.dispose() }
 })

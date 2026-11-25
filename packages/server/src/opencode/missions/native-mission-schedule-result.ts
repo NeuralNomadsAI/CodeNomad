@@ -20,11 +20,24 @@ export function nativeMissionScheduleActorControl(doc: MissionDocument, requestI
     : [...owner?.receipts ?? []].reverse().find(item => ["pause", "stop", "resume", "play"].includes(item.action))
 }
 
+/** Best-effort read of the active passage journal's latest activity timestamp. */
+export async function readMissionDocumentPassageUpdatedAt(ctx: Plugin.Context, doc: MissionDocument, run: MissionNativeRunner): Promise<number | undefined> {
+  if (!doc.pending) return undefined
+  try {
+    const storage: MissionStorage = { get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
+      set: async () => { throw new Error("schedule-status-read-only") } }
+    const latest = await missionDocumentPassage(storage, doc, () => true).journal.readHints(hints => hints.aggregate().latestUpdatedAt)
+    return latest > 0 ? latest : undefined
+  } catch { return undefined }
+}
+
 /** Status joins the two durable control ledgers. Calendar completion alone never
  * releases an actor-family control whose receipt is still absent or partial. */
 export async function nativeMissionScheduleResult(ctx: Plugin.Context, doc: MissionDocument | MissionDocumentTombstone | undefined,
   run: MissionNativeRunner, forcePending = false, requestID?: string) {
-  const result = missionScheduleView(doc, undefined, doc && !("deletedAt" in doc) ? await nativeMissionScheduleObservation(ctx, doc, run) : undefined)
+  const observation = doc && !("deletedAt" in doc) ? await nativeMissionScheduleObservation(ctx, doc, run) : undefined
+  const passageUpdatedAt = doc && !("deletedAt" in doc) ? await readMissionDocumentPassageUpdatedAt(ctx, doc, run) : undefined
+  const result = missionScheduleView(doc, undefined, observation, passageUpdatedAt)
   if (!doc || "deletedAt" in doc) return { ...result,
     pending: result.pending || forcePending || !!(requestID && (!doc || doc.requestID !== requestID)) }
   const owner = doc.calendarOwner

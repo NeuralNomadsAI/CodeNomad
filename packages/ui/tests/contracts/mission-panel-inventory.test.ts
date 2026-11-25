@@ -725,3 +725,58 @@ test("collapsing to header-only revokes an in-flight task read and starts no act
     store.clear("fixture")
   }
 })
+
+test("activity-only demand skips tasks, in-place collapse keeps header lifetime, and explicit activity retry aborts on release", async () => {
+  const f = seeded(120, 1)
+  let headerReads = 0, taskReads = 0, activityReads = 0, retryAborted = false
+  let releaseRetry!: () => void, retryStarted!: () => void
+  const retryGate = new Promise<void>(resolve => { releaseRetry = resolve })
+  const retryReached = new Promise<void>(resolve => { retryStarted = resolve })
+  const store = createMissionPanelInventory({
+    scope: () => "activity-lifetime",
+    tasks: async (_instance, id, request, scope) => {
+      taskReads++
+      return readMissionTaskPage(id, request, { ...scope, exchange: f.exchange })
+    },
+    read: async (_instance, selector, scope) => {
+      if (selector.source === "marks") return Promise.reject(new Error("Native unknown"))
+      if (selector.source === "mission" && selector.header) headerReads++
+      if (selector.source === "activity") {
+        activityReads++
+        if (activityReads === 1) return Promise.reject(new Error("Temporary activity error"))
+        if (activityReads === 2) {
+          scope.signal?.addEventListener("abort", () => { retryAborted = true }, { once: true })
+          retryStarted()
+          await retryGate
+          return Promise.reject(new DOMException("Aborted", "AbortError"))
+        }
+      }
+      return readMissionPanelWindow(selector, { ...scope, runTransfer: read => read(), exchange: f.exchange })
+    },
+  })
+  const settled = async (predicate: () => boolean) => {
+    for (const deadline = Date.now() + 5_000; !predicate() && Date.now() < deadline;) await new Promise(resolve => setTimeout(resolve, 10))
+    assert.ok(predicate())
+  }
+  try {
+    store.setDemand("fixture", true)
+    await store.ensure("fixture")
+    // Collapsed with incomplete marks: detail=false, activity=true loads header + activity with ZERO task reads.
+    store.want("fixture", "selection", "msn_119", false, undefined, false, true)
+    await settled(() => store.state("fixture").missions.some(m => m.id === "msn_119") && activityReads === 1 && !store.reading("fixture"))
+    assert.equal(headerReads, 1)
+    assert.equal(taskReads, 0, "activity-only demand loads zero task pages")
+    assert.equal(store.progress("fixture", "activity:msn_119").failure, "failed")
+
+    // Explicit Retry on activity lane uses activity lifetime (aborted on release even while header stays owned).
+    const retryPromise = store.more("fixture", "activity:msn_119", true)
+    await retryReached
+    store.want("fixture", "selection", "msn_119", false, undefined, false, false)
+    await retryPromise
+    assert.equal(retryAborted, true, "explicit activity retry/continuation aborts when activity demand is released")
+    assert.equal(headerReads, 1, "downgrading in place does not re-read the header")
+  } finally {
+    releaseRetry?.()
+    store.clear("fixture")
+  }
+})

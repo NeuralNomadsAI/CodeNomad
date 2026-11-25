@@ -51,21 +51,27 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
     return () => operation.current() && alive && props.active() && capabilityOwner() === owner && parent()
   }
   let previousOwner: ReturnType<typeof capabilityOwner> | undefined
+  let capabilityAbort: AbortController | undefined
+  const refreshCapability = (): Promise<void> => {
+    capabilityAbort?.abort()
+    if (!props.active()) { capabilityAbort = undefined; return Promise.resolve() }
+    const owner = capabilityOwner(), currentView = capture(), abort = new AbortController()
+    capabilityAbort = abort
+    const current = () => currentView() && !abort.signal.aborted
+    return backendOf(props.instanceId).api.fetchMissionScheduleCapability(props.instanceId, props.directory, AbortSignal.any([owner.signal, abort.signal])).then(value => {
+      if (current()) {
+        setCapability(value.api.available ? value.enabled ? "available" : value.activation.available ? "activatable" : "missing" : "missing")
+        setRefusal(value.api.available && !value.activation.available ? value.activation.refusal : undefined)
+        if (value.activation.available && feedback() === "missions.scheduleList.activationRefused") setFeedback(undefined)
+      }
+    }).catch(() => { if (current()) setCapability("missing") })
+  }
+  onCleanup(() => { capabilityAbort?.abort(); capabilityAbort = undefined })
   createEffect(() => {
     const owner = capabilityOwner(); props.refreshVersion()
     untrack(() => {
       if (owner !== previousOwner) { setBusy(false); setPendingAction(undefined); setRefusal(undefined); setFeedback(undefined); setCapability("loading"); previousOwner = owner }
-      if (!props.active()) return
-      const currentView = capture(), abort = new AbortController()
-      const current = () => currentView() && !abort.signal.aborted
-      void backendOf(props.instanceId).api.fetchMissionScheduleCapability(props.instanceId, props.directory, AbortSignal.any([owner.signal, abort.signal])).then(value => {
-        if (current()) {
-          setCapability(value.api.available ? value.enabled ? "available" : value.activation.available ? "activatable" : "missing" : "missing")
-          setRefusal(value.api.available && !value.activation.available ? value.activation.refusal : undefined)
-          if (value.activation.available && feedback() === "missions.scheduleList.activationRefused") setFeedback(undefined)
-        }
-      }).catch(() => { if (current()) setCapability("missing") })
-      onCleanup(() => abort.abort())
+      void refreshCapability()
     })
   })
   const settle = (key: string, hold: Hold, current: () => boolean, revision?: number) => {
@@ -216,5 +222,5 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
     : pendingAction() === "resume" ? "missionsPanel.action.resuming" : pendingAction() === "run-now" ? "missionsPanel.action.runningNow"
       : "missions.control.mutation.pending" : undefined
   return { held, publishing, busy, pendingAction, progress, feedback, refusal, capability, capable, act, reconcile, label,
-    startCreated: () => act("play", true) }
+    refreshCapability, startCreated: () => act("play", true) }
 }

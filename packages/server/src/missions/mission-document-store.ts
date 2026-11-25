@@ -121,7 +121,8 @@ export class NativeMissionDocumentStore {
         || doc.createdAt !== previous.createdAt || previous.firstPlayedAt !== null && doc.firstPlayedAt !== previous.firstPlayedAt
         || doc.launchedCount < previous.launchedCount || doc.settledCount < previous.settledCount || doc.successfulCount < previous.successfulCount
          || doc.successfulCount === previous.successfulCount && doc.lastSuccessfulPassageID !== previous.lastSuccessfulPassageID
-         || previous.checks && (!doc.checks || doc.checks.since !== previous.checks.since || doc.checks.count < previous.checks.count)
+         || previous.checks && (!doc.checks || doc.checks.since !== previous.checks.since || doc.checks.count < previous.checks.count
+           || previous.checks.lastAt !== undefined && (doc.checks.lastAt === undefined || doc.checks.lastAt < previous.checks.lastAt))
          || previous.pending?.admissionAttempted && doc.pending?.id === previous.pending.id && doc.pending.admissionAttempted !== true
           || previous.pending && doc.pending?.id === previous.pending.id && doc.pending.manualExpectedRevision !== previous.pending.manualExpectedRevision
           || previous.pending?.coordinatorBaseline && doc.pending?.id === previous.pending.id

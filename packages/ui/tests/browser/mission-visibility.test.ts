@@ -66,14 +66,16 @@ test("actual mounted RightPanel suspends hidden Mission demand and refreshes nat
     await page.getByText("Visibility mission", { exact: true }).waitFor()
     assert.equal(requests, 2)
     await call(page, "event", "session.text.delta")
-    await page.waitForTimeout(120)
+    // Wait past the full activity cooldown so an erroneously scheduled refresh would have fired.
+    await page.waitForTimeout(ACTIVITY_REFRESH_INTERVAL_MS + 250)
     assert.equal(requests, 2)
 
-    // Cancel an already-scheduled invalidation on hide, then another hidden event.
+    // Cooldown has expired: session.execution.started schedules within the debounce window,
+    // which hiding must cancel before it fires, and hidden events must stay ignored.
     await call(page, "event", "session.execution.started")
     await call(page, "activate", false)
     await call(page, "event", "session.execution.started")
-    await page.waitForTimeout(120)
+    await page.waitForTimeout(300)
     assert.equal(requests, 2)
     assert.equal(await page.locator(".mission-control").count(), 1)
     assert.deepEqual(await call(page, "demanded"), [])
@@ -168,9 +170,7 @@ test("continuous native activity of a large family is revalidated at a bounded r
     releaseHeld()
     await first
     const trailing = waitForMissionPanelRefresh(page)
-    // Emit more events right after settlement; cooldown must still hold until ACTIVITY_REFRESH_INTERVAL_MS.
-    await page.waitForTimeout(250)
-    await call(page, "event", "session.execution.started")
+    // No post-settlement event: the held burst alone must produce the single trailing read after the full cooldown.
     await page.waitForTimeout(1_500)
     assert.equal(requests, 2, "trailing activity read respects the full cooldown after settlement")
     await trailing

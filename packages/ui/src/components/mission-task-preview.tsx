@@ -1,13 +1,10 @@
-import { Show, createEffect, createMemo, createUniqueId, onCleanup, untrack } from "solid-js"
+import { Show, createEffect, createUniqueId, onCleanup, untrack } from "solid-js"
 import type { MissionActivityProjection, MissionPanelMap, MissionPanelTask } from "../../../server/src/api-types"
 import { missionStore } from "../stores/missions"
 import { useMissionCurrentPassage } from "../stores/mission-recurrence"
-import { missionDerivedTaskSession, useMissionTaskSessionDemand } from "../stores/mission-task-sessions"
 import { MissionPanelScope } from "./mission-panel-scope"
 import { MissionTracking } from "./mission-tracking"
-import { MissionTaskTree } from "./mission-task-tree"
-import { missionTaskConversation } from "./mission-task-navigation"
-import { missionQuestions, type MissionQuestionStore } from "./mission-questions"
+import type { MissionQuestionStore } from "./mission-questions"
 import type { MissionQuestion } from "./mission-question-owners"
 
 /** An unselected, expanded one-time Mission's tasks: its full map is wanted only
@@ -17,7 +14,7 @@ export function MissionTaskPreview(props: {
   instanceId: string; missionId: string; activity?: MissionActivityProjection; active: boolean
   selected: (mission: MissionPanelMap, task: MissionPanelTask) => boolean
   onSelect: (mission: MissionPanelMap, task: MissionPanelTask) => void
-  onAnswer: (mission: MissionPanelMap, sessionId: string, request?: MissionQuestion["request"]) => void
+  onAnswer: (mission: MissionPanelMap, sessionId: string, request?: MissionQuestion["request"]) => Promise<void>
 }) {
   const owner = `preview:${createUniqueId()}`
   // Hidden (inactive panel, creation form), the preview keeps its expansion and wants nothing.
@@ -29,19 +26,10 @@ export function MissionTaskPreview(props: {
   })
   const map = () => missionStore.tasksLoaded(props.instanceId, props.missionId)
     ? missionStore.state(props.instanceId).missions.find(value => value.id === props.missionId) : undefined
-  const observed = () => props.activity?.missions.find(value => value.missionId === props.missionId)
-  // Like the selected Mission's tree: native task conversations and their activity,
-  // paced by the activity projection's generation, while the panel is shown.
-  useMissionTaskSessionDemand({ instanceId: () => props.instanceId, mission: map, active: () => props.active,
-    pulse: () => props.activity?.generatedAt })
-  const questions = createMemo(() => { const value = map(); return value ? missionQuestions({ instanceId: props.instanceId, mission: value,
-    actors: value.actors, family: observed()?.family, store: missionStore }) : [] })
   return <Show when={map()}>
-    {value => <MissionTaskTree mission={value()} instanceId={props.instanceId} activity={observed()?.actors} active={props.active}
+    {value => <MissionTracking instanceId={props.instanceId} mission={value()} activity={props.activity} active={props.active}
       selected={task => props.selected(value(), task)} onSelect={task => props.onSelect(value(), task)}
-      questions={questions()} onAnswer={(sessionId, request) => props.onAnswer(value(), sessionId, request)}
-      conversation={task => missionTaskConversation(value(), task, observed()?.family, missionDerivedTaskSession(props.instanceId, value(), task.key),
-        [...value().actors, ...missionStore.observedActors(props.instanceId, value().id)])} />}
+      onOpenActor={(sessionId, request) => props.onAnswer(value(), sessionId, request)} />}
   </Show>
 }
 
@@ -70,6 +58,7 @@ export interface MissionPassageActorClick {
 export function MissionPassagePreview(props: {
   instanceId: string; projectID?: string; directory: string
   scheduleId: string; owner: "daily" | "scheduled"; active: boolean; refresh: number
+  onRegisterRefresh?: (refresh: () => Promise<void>) => () => void
   selected: (mission: MissionPanelMap, task: MissionPanelTask) => boolean
   onSelect: (mission: MissionPanelMap, task: MissionPanelTask, passage: MissionPassageIdentity) => void
   onOpenActor: (click: MissionPassageActorClick) => Promise<void>
@@ -85,6 +74,8 @@ export function MissionPassagePreview(props: {
     active: () => props.active,
     refresh: () => props.refresh,
   })
+  const unregister = props.onRegisterRefresh?.(() => passage.refreshNow())
+  onCleanup(() => unregister?.())
   const store = () => passage.inventory() ?? missionStore
   const current = () => {
     const snapshot = passage.snapshot()

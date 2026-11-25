@@ -56,9 +56,8 @@ export function MissionRows(props: {
   /** Expanded row keys, newest last, and their update (the caller persists them). */
   expanded?: () => readonly string[]; onExpanded?: (keys: readonly string[]) => void
   detail: JSX.Element; paging?: JSX.Element; hidden?: boolean
-  /** An unselected row this returns content for expands from its chevron without
-   * being selected (a one-time Mission's tasks, read on demand); others select. */
-  preview?: (key: string) => JSX.Element | undefined; expandable?: (key: string) => boolean
+  /** An unselected row's expanded preview content, rendered without changing selection. */
+  preview?: (key: string) => JSX.Element | undefined
   /** Receives the command expanding the selected row (for a toolbar action that
    * opens content inside its detail, such as the brief name field). */
   revealDetail?: (reveal: () => void) => void
@@ -113,11 +112,7 @@ export function MissionRows(props: {
             activity={entry().childActivity} label={label()} title={label()}
             markReadLabel={t("sessionList.expand.markRead")} markReadDisabled={!markRead()}
             onMarkRead={() => markRead()?.()} onOpenChange={open => { if (open) setMarkRead(() => props.markRead?.(key)) }}
-            onToggle={() => {
-              // Expanding a row whose preview is supported keeps the current selection intact.
-              if (!isSelected() && !props.expandable?.(key)) props.onSelect(entry())
-              setOpen(key, !open())
-            }} />
+            onToggle={() => setOpen(key, !open())} />
         </Show>
         <button type="button" class="session-item-select mission-row-select" aria-current={highlighted() ? "true" : undefined} title={describe(entry())}
           onClick={() => props.onSelect(entry())}>

@@ -1,4 +1,4 @@
-import { For, Show, createComputed, createMemo, createSignal, createEffect, untrack, type JSX } from "solid-js"
+import { For, Show, createComputed, createMemo, createSignal, createEffect, onCleanup, untrack, type JSX } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { useMissionSchedules, unifiedScheduleHold, type UnifiedMissionSchedule } from "../stores/mission-schedules"
 import { missionMarkStateKey, unifiedScheduleActivityAt, unifiedScheduleMark, type MissionPickerEntry } from "./mission-picker-model"
@@ -72,6 +72,10 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
         criteria(doc), nextWake(doc)].filter(Boolean).join(" · ") }
   }))
   const refresh = () => setRevision(value => value + 1)
+  let refreshSelectedCapability: (() => Promise<void>) | undefined
+  const refreshNow = async () => {
+    await Promise.allSettled([list.refreshNow(), refreshSelectedCapability?.()])
+  }
   const publishing = () => unifiedScheduleHold(JSON.stringify([props.instanceId, props.projectID, props.directory, props.selected]))?.phase === "publication"
   /** Inventory-wide notice; the directory owns the shared continuation button. */
   const listView = () => <Show when={list.error()}><p role="status" class="mission-control-stale">{t("missions.scheduleList.readFailed")}</p></Show>
@@ -86,6 +90,8 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
         get directory() { return props.directory }, document: doc, active: props.active,
         enabled: () => props.enabled() && !list.error() && list.fresh(id), refreshVersion: () => props.refresh + revision(), refresh,
         onDeleted: () => props.onDeleted(id) })
+      refreshSelectedCapability = controls.refreshCapability
+      onCleanup(() => { if (refreshSelectedCapability === controls.refreshCapability) refreshSelectedCapability = undefined })
       const [expanded, expand] = createMissionDisclosure(() => props.instanceId, () => id, () => "schedule:instructions")
       const primary = () => (["pause", "resume", "play"] as const).find(action => controls.pendingAction() === action)
         ?? (["pause", "resume", "play"] as const).find(action => doc().availableActions.includes(action))
@@ -172,7 +178,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
     return doc && result?.outcome === "completed" && !scheduleSuccessSeen(scope, "scheduled", doc.id, result.id)
       ? () => markScheduleSuccessSeen(scope, "scheduled", doc.id, result.id) : undefined
   }
-  return { entries, view, preview, listView, refresh, ownsSession, loading: list.loading,
+  return { entries, view, preview, listView, refresh, refreshNow, ownsSession, loading: list.loading,
     next: list.next, more: list.more, retry: list.refresh, error: list.error, markRead,
     representation: (id: string) => list.error() || list.loading() || !list.fresh(id) ? undefined : list.rows().find(row => row.id === id)?.kind }
 }

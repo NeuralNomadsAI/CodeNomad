@@ -47,6 +47,7 @@ interface RecurrenceEntry {
   demanded: boolean
   stopped: boolean
   controller?: AbortController
+  activeRead?: Promise<void>
   timer?: ReturnType<typeof setTimeout>
   due?: number
   trailing: boolean
@@ -77,12 +78,13 @@ function cancel(entry: RecurrenceEntry): void {
   entry.controller?.abort()
   entry.inventory?.setDemand(entry.instanceId, false)
   entry.controller = undefined
+  entry.activeRead = undefined
   changed()
 }
-function read(entry: RecurrenceEntry, attachment = entry.attachment): void {
-  if (attachment.aborted || attachment !== entry.attachment) return
-  if (!entry.demand || !current(entry)) return
-  if (entry.controller) { entry.trailing = true; return }
+function read(entry: RecurrenceEntry, attachment = entry.attachment): Promise<void> {
+  if (attachment.aborted || attachment !== entry.attachment) return Promise.resolve()
+  if (!entry.demand || !current(entry)) return Promise.resolve()
+  if (entry.controller) { entry.trailing = true; return entry.activeRead ?? Promise.resolve() }
   if (entry.timer) clearTimeout(entry.timer)
   entry.timer = undefined
   entry.trailing = false
@@ -97,7 +99,7 @@ function read(entry: RecurrenceEntry, attachment = entry.attachment): void {
     return entry.scheduleID ? api.fetchMissionCurrentPassage(workspaceId, entry.scheduleID, signal, entry.owner)
       : api.fetchMissionRecurrence(workspaceId, signal)
   })
-  void request.then(async value => {
+  const task = request.then(async value => {
     if (!admitted()) return
     if (value?.version !== 1 || typeof value.projectID !== "string"
       || entry.projectID && value.projectID !== entry.projectID) throw new Error("Foreign recurrence snapshot")
@@ -134,16 +136,31 @@ function read(entry: RecurrenceEntry, attachment = entry.attachment): void {
   }).finally(() => {
     if (entry.controller !== controller) return
     entry.controller = undefined
+    if (entry.activeRead === task) entry.activeRead = undefined
     entry.settledAt = Date.now()
     const trailing = entry.trailing, activity = entry.activityTrailing
     entry.trailing = false
     entry.activityTrailing = false
     changed()
     if (!signal.aborted) {
-      if (trailing) read(entry, attachment)
+      if (trailing) void read(entry, attachment)
       else if (activity) scheduleRefresh(entry, "activity")
     }
   })
+  entry.activeRead = task
+  return task
+}
+async function refreshEntry(entry: RecurrenceEntry): Promise<void> {
+  if (!entry.demand || !current(entry)) return
+  const attachment = entry.attachment
+  if (entry.timer) { clearTimeout(entry.timer); entry.timer = undefined }
+  if (entry.activeRead) {
+    entry.trailing = true
+    await entry.activeRead
+    if (attachment.aborted || attachment !== entry.attachment || !entry.demand || !current(entry)) return
+    if (entry.activeRead) { await entry.activeRead; return }
+  }
+  await read(entry, attachment)
 }
 function scheduleRefresh(entry: RecurrenceEntry, urgency: RefreshUrgency = "urgent"): void {
   if (!entry.demand || !current(entry)) return
@@ -245,13 +262,14 @@ function useRecurrenceRead(props: ReadDemand) {
     error: () => state()?.error ?? false,
     stale: () => Boolean(state()?.snapshot && state()?.error),
     loading: () => Boolean(state()?.controller),
+    refreshNow: () => { const entry = state(); return entry ? refreshEntry(entry) : Promise.resolve() },
   }
 }
 
 export function useMissionRecurrence(props: Omit<ReadDemand, "scheduleID">) { return useRecurrenceRead(props) }
 export function useMissionCurrentPassage(props: ReadDemand & { scheduleID: () => string | undefined }) {
   const read = useRecurrenceRead(props)
-  return { snapshot: read.currentSnapshot, inventory: read.inventory, error: read.error, loading: read.loading }
+  return { snapshot: read.currentSnapshot, inventory: read.inventory, error: read.error, loading: read.loading, refreshNow: read.refreshNow }
 }
 
 serverEvents.on("instance.event", event => {

@@ -6,7 +6,9 @@ import { acquireNativeRecurrenceStore } from "./native-recurrence-storage"
 import { qualifyNativeRecurrenceControl } from "./native-recurrence-capability"
 import { readRecurrenceWakeError } from "./native-recurrence-wake-status"
 import type { MissionRecurrenceSnapshot } from "../../api-types"
+import type { MissionStorage } from "../../missions/journal"
 import { recurrenceIDSchema } from "../../missions/recurrence-contract"
+import { recurrencePassage } from "../../missions/recurrence-passage"
 import { displayMissionText } from "../../missions/truncate-text"
 
 const locationTag = Context.Service<never, Location.Info>("@opencode/Location")
@@ -24,6 +26,12 @@ export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurr
   const schedules = (input.scheduleID === undefined ? yield* Effect.promise(() => store.list()) : doc ? [doc] : [])
     .filter(doc => doc.config.roots.some(root => root.directory === location.directory))
   const qualified = yield* qualifyNativeRecurrenceControl().pipe(Effect.catchCause(() => Effect.succeed(false)))
+  const graph = yield* Effect.context<never>()
+  const rawStorage: MissionStorage = {
+    get: key => Effect.runPromise(ctx.storage.get(key).pipe(Effect.provide(graph))) as ReturnType<MissionStorage["get"]>,
+    scan: input => Effect.runPromise(ctx.storage.scan(input).pipe(Effect.provide(graph))) as ReturnType<MissionStorage["scan"]>,
+    set: async () => { throw new Error("Recurrence snapshot is read-only") },
+  }
   const results: MissionRecurrenceSnapshot["schedules"] = []
   for (const doc of schedules) {
     const placement = { projectID: doc.projectID,
@@ -63,12 +71,15 @@ export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurr
     const settlementUnknown = lastError?.code === "settlement-failed"
     const pendingStatus = doc.pending?.admission && observed && !settlementUnknown ? "running" as const
       : !doc.pending?.admission && observed && !blocked ? "starting" as const : "uncertain" as const
-    results.push({ id: doc.id, title: displayMissionText(doc.config.title), revision: doc.revision, createdAt: doc.createdAt, state, clock: doc.config.clock,
+    const passageUpdatedAt = doc.pending ? yield* Effect.promise(() =>
+      recurrencePassage(rawStorage, doc, () => true).journal.readHints(hints => hints.aggregate().latestUpdatedAt).catch(() => 0)) : 0
+    const activityAt = Math.max(doc.createdAt, doc.updatedAt ?? 0, doc.pending?.passage.createdAt ?? 0,
+      history.at(-1)?.settledAt ?? 0, lastError?.at ?? 0, passageUpdatedAt)
+    results.push({ id: doc.id, title: displayMissionText(doc.config.title), revision: doc.revision, activityAt, state, clock: doc.config.clock,
       nextDueAt: state === "running" ? recurrenceNextDueAt(doc, Date.now()) : null,
       ...(state === "interrupted" ? { interruptionReason: jobStatus === "error" ? "error" as const : doc.interruptionReason ?? "service-restart" } : {}),
       ...(lastError ? { lastError } : {}),
       pending: doc.pending ? { passageID: doc.pending.passage.id, status: pendingStatus, trigger: doc.pending.passage.due.kind,
-        createdAt: doc.pending.passage.createdAt, dueAt: doc.pending.passage.due.at,
         ...(pendingStatus === "uncertain" ? { reason: !doc.pending.admission && observed ? "admission-failing" as const : "not-observed" as const } : {}),
         ...(doc.pending.admission ? { missionID: doc.pending.admission.missionID, conversationID: doc.pending.admission.conversationID } : {}) } : null,
       latestResult: history.at(-1) ?? null, history, actions,

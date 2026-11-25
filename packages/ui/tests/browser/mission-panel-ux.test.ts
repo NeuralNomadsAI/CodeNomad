@@ -38,11 +38,21 @@ const profiles = {
 
 async function openPanel(options: {
   includeActiveMission?: boolean
+  includeActiveSchedule?: boolean
   emptyOneTime?: boolean
   withPassages?: boolean
   initialMissionView?: Record<string, unknown>
   holdSummaries?: () => Promise<void>
   holdHeader?: () => Promise<void>
+  holdSchedules?: () => Promise<void>
+  holdRecurrence?: () => Promise<void>
+  holdSessionGet?: (url: string) => Promise<void>
+  extraMissions?: (seed: (missionID: string, value: Record<string, unknown>) => void) => void
+  activeSessions?: Record<string, { status: string }>
+  forms?: Array<{ id: string; sessionID: string; title: string; fields: Array<{ id: string; type: string; label: string }> }>
+  extraSessions?: Array<[string, Record<string, unknown>]>
+  omitSessions?: string[]
+  secondDailySchedule?: boolean
 } = {}) {
   const f = missionPluginFixture(), journal = new MissionJournal(f.storage, FIXTURE_PROJECT.id, FIXTURE_PROJECT.canonical), location = FIXTURE_PROJECT.location
   const seed = (missionID: string, value: Record<string, unknown>) => {
@@ -62,6 +72,7 @@ async function openPanel(options: {
       template: "custom", coordinator: { sessionID: "ses_active", title: "Coordinator", location }, createdAt: 3_000 })
     seed("msn_active", { id: "evt_task", type: "task.created", task: { id: "tsk_active", key: "active-task", title: "Active task", brief: "Brief", role: "specialist", blockedBy: [], executionMode: { kind: "native", parentTaskKey: null } }, createdAt: 3_500 })
   }
+  options.extraMissions?.(seed)
 
   // Unified schedules: one idle with a far-future nextDueAt (activityAt = 500), one with an active pendingPassage (activityAt = 5_000).
   const docValues = new Map<string, MissionJsonValue>()
@@ -94,20 +105,27 @@ async function openPanel(options: {
   }
   const unifiedSchedules = [
     missionScheduleView(idleDoc, false, { state: "known", nativeStatus: "active", nextDueAt: future, wakeCount: 0, timeGeneration: idleDoc.timeGeneration, kind: "launch" }).document!,
-    runningView,
+    ...(options.includeActiveSchedule === false ? [] : [runningView]),
   ]
 
   // Legacy daily schedule with recent result (activityAt = 4_000) and far-future nextDueAt.
   const dailySchedules: RecurrenceSchedule[] = [{
-    id: "rec_recent", title: "Recent daily schedule", revision: 2, createdAt: 900, state: "running", clock: { time: "08:00", zone: "UTC" },
+    id: "rec_recent", title: "Recent daily schedule", revision: 2, activityAt: 4_000, state: "running", clock: { time: "08:00", zone: "UTC" },
     nextDueAt: future,
     pending: options.withPassages
-      ? { passageID: "psg_daily_live", status: "running", trigger: "daily", missionID: "msn_daily_live", conversationID: "ses_daily_coord", createdAt: 4_000, dueAt: 3_950 }
+      ? { passageID: "psg_daily_live", status: "running", trigger: "daily", missionID: "msn_daily_live", conversationID: "ses_daily_coord" }
       : null,
     controls: [], actions: ["pause", "stop", "run-now"],
     latestResult: { passageID: "psg_d1", dueAt: 3_900, settledAt: 4_000, outcome: "completed" },
     history: [{ passageID: "psg_d1", dueAt: 3_900, settledAt: 4_000, outcome: "completed" }],
-  }]
+  }, ...(options.secondDailySchedule ? [{
+    id: "rec_second", title: "Second daily schedule", revision: 2, activityAt: 3_800, state: "running" as const, clock: { time: "09:00", zone: "UTC" },
+    nextDueAt: future,
+    pending: { passageID: "psg_daily_second", status: "running" as const, trigger: "daily" as const, missionID: "msn_daily_second", conversationID: "ses_daily_second" },
+    controls: [], actions: ["pause", "stop", "run-now"] as RecurrenceSchedule["actions"],
+    latestResult: { passageID: "psg_d2", dueAt: 3_700, settledAt: 3_800, outcome: "completed" as const },
+    history: [{ passageID: "psg_d2", dueAt: 3_700, settledAt: 3_800, outcome: "completed" as const }],
+  }] : [])]
 
   const schedCoord = runningDoc.pending!.coordinatorSessionID
   const passageMaps: Record<string, { passageID: string; owner: "daily" | "scheduled"; map: MissionMap; withForm?: boolean }> = options.withPassages ? {
@@ -155,11 +173,11 @@ async function openPanel(options: {
     session: {
       get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, projectID: FIXTURE_PROJECT.id, location }),
       list: async () => ({ data: [], cursor: { next: null } }),
-      active: async () => ({}),
+      active: async () => options.activeSessions ?? {},
       inbox: { list: async () => [] },
     },
     shell: { list: async () => ({ location, data: [] }) },
-    form: { list: async () => ({ location, data: [] }) },
+    form: { list: async () => ({ location, data: options.forms ?? [] }) },
     permission: { request: { list: async () => ({ location, data: [] }) } },
   }
   const app = Fastify({ logger: false })
@@ -189,6 +207,7 @@ async function openPanel(options: {
     // A held stream: a closed one reconnects continuously, and each reconnection refreshes the panel.
     if (path === "/api/events") return new Promise<void>(() => {})
     if (path === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: "en" } } })
+    if (options.holdSessionGet && path.includes("/session/")) await options.holdSessionGet(request.url())
     if (path.endsWith("/missions/panel-page")) {
       const input = request.postDataJSON()
       panelRequests.push(input)
@@ -207,7 +226,15 @@ async function openPanel(options: {
     }
     if (path.endsWith("/missions/scheduled")) {
       scheduleListCalls.push(Date.now())
+      if (options.holdSchedules) await options.holdSchedules()
       return route.fulfill({ json: { version: 1, projectID: FIXTURE_PROJECT.id, schedules: unifiedSchedules } })
+    }
+    if (/\/missions\/recurrence\/[^/]+\/passages\/[^/]+$/.test(path)) {
+      return route.fulfill({ json: { version: 1, projectID: FIXTURE_PROJECT.id, scheduleID: "rec_recent", passageID: "psg_d1",
+        dueAt: 3_900, settledAt: 4_000, outcome: "completed", mission: { version: 1, id: "msn_d1", projectID: FIXTURE_PROJECT.id,
+          projectCanonical: FIXTURE_PROJECT.canonical, objective: "Past daily run", title: "Past daily run", template: "custom",
+          status: "completed", coordinatorSessionId: "ses_daily_coord", revision: 1, createdAt: 3_900, updatedAt: 4_000,
+          actors: [], tasks: [], reports: [], frontier: [], claims: [], history: [], historyTruncated: false } } })
     }
     const passageMatch = path.match(/\/missions\/recurrence\/([^/]+)\/current(?:\/[^/]+\/page)?$/)
     if (passageMatch) {
@@ -255,33 +282,38 @@ async function openPanel(options: {
       }
     }
     if (path.endsWith("/missions/recurrence")) {
+      if (options.holdRecurrence) await options.holdRecurrence()
       return route.fulfill({ json: { version: 1, projectID: FIXTURE_PROJECT.id, schedules: dailySchedules } })
     }
     return route.fulfill({ json: {} })
   })
   await page.goto(url)
-  await page.evaluate(async ([initialView, sc, projId]) => {
+  await page.evaluate(async ([initialView, sc, projId, extraSessions, omitSessions]) => {
     ;(window as any).missionFixture.connectCatalog()
     const { updateInstance } = await import("/src/stores/instances.ts")
     updateInstance("fixture", { metadata: { project: { id: projId } } as any })
     ;(window as any).inventoryStore = (await import("/src/stores/missions.ts")).missionStore
     const { setSessions } = await import("/src/stores/session-state.ts")
-    setSessions(new Map([["fixture", new Map([
+    const entries: Array<[string, any]> = [
       ["ses_chat", { id: "ses_chat", parentID: null, title: "Ordinary chat", time: { created: 1, updated: 1 } } as any],
       ["ses_done", { id: "ses_done", parentID: null, title: "Done coord", time: { created: 1, updated: 1 } } as any],
       ["ses_active", { id: "ses_active", parentID: null, title: "Active coord", time: { created: 1, updated: 1 } } as any],
       ["ses_daily_coord", { id: "ses_daily_coord", parentID: null, title: "Daily coord", time: { created: 1, updated: 1 } } as any],
       ["ses_daily_actor", { id: "ses_daily_actor", parentID: "ses_daily_coord", title: "Daily actor", time: { created: 1, updated: 1 } } as any],
+      ["ses_daily_second", { id: "ses_daily_second", parentID: null, title: "Second daily coord", time: { created: 1, updated: 1 } } as any],
       [sc, { id: sc, parentID: null, title: "Sched coord", time: { created: 1, updated: 1 } } as any],
       ["ses_sched_actor", { id: "ses_sched_actor", parentID: sc, title: "Sched actor", time: { created: 1, updated: 1 } } as any],
       ["ses_sched_plain", { id: "ses_sched_plain", parentID: sc, title: "Sched plain", time: { created: 1, updated: 1 } } as any],
       ["ses_sched_child", { id: "ses_sched_child", parentID: "ses_sched_actor", title: "Sched child", time: { created: 1, updated: 1 } } as any],
-    ])]]))
+      ...extraSessions,
+    ]
+    const omitted = new Set(omitSessions.map(id => id === "__schedCoord__" ? sc : id))
+    setSessions(new Map([["fixture", new Map(entries.filter(([id]) => !omitted.has(id)))]]))
     if (initialView) {
       const { updateMissionProjectView } = await import("/src/stores/mission-view-state.ts")
       updateMissionProjectView("fixture", initialView as any)
     }
-  }, [options.initialMissionView ?? null, schedCoord, FIXTURE_PROJECT.id] as const)
+  }, [options.initialMissionView ?? null, schedCoord, FIXTURE_PROJECT.id, options.extraSessions ?? [], options.omitSessions ?? []] as const)
   await page.waitForFunction(() => (window as any).missionFixture?.snapshot().status === "ready")
   if (!options.holdHeader) await page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
   return { page, panelRequests, scheduleListCalls, currentPassageCalls, errors, schedCoord, close: async () => { await page.context().close(); await app.close(); await plugin.dispose() } }
@@ -308,42 +340,49 @@ test("selecting collapsed rows skips task/activity/passage reads until chevron e
   const f = await openPanel({ includeActiveMission: true })
   try {
     await (await inlineMissionEntry(f.page, "Old completed mission")).waitFor()
-    f.panelRequests.length = 0; f.currentPassageCalls.length = 0
+    f.panelRequests.length = 0; f.currentPassageCalls.length = 0; f.scheduleListCalls.length = 0
 
-    // 1. Collapsed completed one-time mission: ZERO header/task/activity requests, NO MissionTracking.
+    // 1. Collapsed completed one-time mission: ZERO header/task/activity/schedule-list requests, NO MissionTracking.
     await (await inlineMissionEntry(f.page, "Old completed mission")).click()
     await f.page.waitForTimeout(150)
     assert.equal(f.panelRequests.filter(r => r.source === "mission" || r.source === "tasks" || r.source === "activity").length, 0,
       "selecting collapsed completed mission issues zero header/task/activity reads")
+    assert.equal(f.scheduleListCalls.length, 0, "selecting a mission does not reload the schedule directory")
     assert.equal(await f.page.locator(".mission-tree").count(), 0, "collapsed completed mission mounts no task tree")
     assert.equal(await missionToolbarAction(f.page, "Summary").isEnabled(), true)
     assert.equal(await missionToolbarAction(f.page, "Open conversation").isEnabled(), true)
     assert.equal(await missionToolbarAction(f.page, "Delete selected mission…").isEnabled(), true)
 
-    // 2. Collapsed active one-time mission: header-only read, ZERO tasks/activity, NO MissionTracking.
-    f.panelRequests.length = 0
+    // 2. Collapsed active one-time mission: header-only read, ZERO tasks/activity/schedule-list, NO MissionTracking.
+    f.panelRequests.length = 0; f.scheduleListCalls.length = 0
     await (await inlineMissionEntry(f.page, "Active one-time mission")).click()
     await f.page.waitForFunction(() => (window as any).inventoryStore.state("fixture").missions.some((m: any) => m.id === "msn_active"))
     await f.page.waitForTimeout(150)
     assert.equal(f.panelRequests.filter(r => r.source === "mission" && r.header).length, 1, "active collapsed row loads header only")
     assert.equal(f.panelRequests.filter(r => r.source === "tasks" || r.source === "activity").length, 0,
       "collapsed active mission loads zero tasks and zero activity")
+    assert.equal(f.scheduleListCalls.length, 0, "selecting active mission does not reload the schedule directory")
     assert.equal(await f.page.locator(".mission-tree").count(), 0, "collapsed active mission mounts no task tree")
     assert.equal(await missionToolbarAction(f.page, "Stop mission permanently").isEnabled(), true)
 
-    // 3. Expanding the chevron loads tasks + activity and mounts MissionTracking; collapsing unmounts it.
+    // 3. Expanding the chevron loads tasks + activity and mounts MissionTracking; collapsing unmounts it with ZERO extra header reads.
     await missionRow(f.page, "Active one-time mission").locator(".session-item-expander").click()
     await f.page.locator(".mission-tree").getByText("Active task", { exact: true }).waitFor()
     assert.ok(f.panelRequests.some(r => r.source === "tasks"), "expanding chevron loads tasks")
     assert.ok(f.panelRequests.some(r => r.source === "activity"), "expanding chevron starts activity observation")
+    f.panelRequests.length = 0
     await missionRow(f.page, "Active one-time mission").locator(".session-item-expander").click()
     await f.page.locator(".mission-tree").waitFor({ state: "detached" })
+    await f.page.waitForTimeout(150)
+    assert.equal(f.panelRequests.filter(r => r.source === "mission" || r.source === "tasks" || r.source === "activity").length, 0,
+      "collapsing selected mission revokes only detail demand without re-reading the header")
 
-    // 4. Selecting a collapsed schedule triggers ZERO /current reads; expanding chevron triggers /current.
-    f.currentPassageCalls.length = 0
+    // 4. Selecting a collapsed schedule triggers ZERO /current and ZERO schedule-list reads; expanding chevron triggers /current.
+    f.currentPassageCalls.length = 0; f.scheduleListCalls.length = 0
     await (await inlineMissionEntry(f.page, "Active unified schedule")).click()
     await f.page.waitForTimeout(150)
     assert.equal(f.currentPassageCalls.length, 0, "selecting collapsed schedule issues zero /current reads")
+    assert.equal(f.scheduleListCalls.length, 0, "selecting a loaded schedule serves from snapshot without reloading schedule list")
     assert.equal(await missionToolbarAction(f.page, "Pause").isEnabled(), true)
     await missionRow(f.page, "Active unified schedule").locator(".session-item-expander").click()
     await f.page.waitForFunction(() => document.querySelector('.mission-row[data-mission-key="scheduled:msn_sched_active"] .session-item-expander')?.getAttribute("aria-expanded") === "true")
@@ -354,7 +393,7 @@ test("selecting collapsed rows skips task/activity/passage reads until chevron e
 })
 
 test("unrelated non-mission activity events do not trigger idle refreshes or spin the refresh button", async () => {
-  const f = await openPanel({ includeActiveMission: false })
+  const f = await openPanel({ includeActiveMission: false, includeActiveSchedule: false })
   try {
     await (await inlineMissionEntry(f.page, "Old completed mission")).waitFor()
     await f.page.waitForTimeout(200)
@@ -369,7 +408,7 @@ test("unrelated non-mission activity events do not trigger idle refreshes or spi
     // An activity refresh is due only ACTIVITY_REFRESH_INTERVAL_MS after the previous one settled.
     await f.page.waitForTimeout(ACTIVITY_REFRESH_INTERVAL_MS + 1_000)
     assert.equal(f.panelRequests.length, beforePanel, "zero panel refreshes for unrelated activity when no active mission exists")
-    assert.equal(f.scheduleListCalls.length, beforeSchedules, "zero schedule refreshes for unrelated activity on native schedules")
+    assert.equal(f.scheduleListCalls.length, beforeSchedules, "zero schedule refreshes for unrelated activity when no schedule has pendingPassage")
     assert.equal(await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').count(), 0)
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
@@ -400,6 +439,16 @@ test("schedule previews preserve reader passage identity, open Form requests, ke
     assert.equal(dailyTarget?.recurrence?.owner, undefined)
     assert.deepEqual(await order(), initialOrder, "selecting/expanding daily schedule with newer live passage updatedAt does not reorder rows")
 
+    // 1c (H). With the daily passage task reader open, selecting a task from an expanded one-time mission preview is explicitly passage-free.
+    await missionRow(f.page, "Active one-time mission").locator(".session-item-expander").click()
+    const oneTimeTask = f.page.locator('.mission-tree .mission-tree-node[data-task-key="active-task"] .mission-tree-task')
+    await oneTimeTask.waitFor()
+    await oneTimeTask.click()
+    await f.page.locator(".mission-reader .window-title").getByText("Active task", { exact: true }).waitFor()
+    const oneTimeTarget = await f.page.evaluate(async () => (await import("/src/stores/mission-view-state.ts")).missionProjectView("fixture").reader)
+    assert.equal(oneTimeTarget?.missionId, "msn_active")
+    assert.equal(oneTimeTarget?.recurrence, undefined, "selecting a one-time task never inherits the previous daily passage")
+
     // 1b. Expand unselected unified preview and select its ordinary task while the reader is STILL open.
     await missionRow(f.page, "Active unified schedule").locator(".session-item-expander").click()
     const schedTask = f.page.locator('.mission-tree .mission-tree-node[data-task-key="sched-plain-task"] .mission-tree-task')
@@ -411,11 +460,21 @@ test("schedule previews preserve reader passage identity, open Form requests, ke
     assert.equal(schedTarget?.recurrence?.owner, "scheduled")
     assert.deepEqual(await order(), initialOrder, "selecting/expanding unified schedule does not reorder rows")
 
-    // 3. Collapsing the schedule while one of its tasks is selected keeps the task toolbar consistent.
-    await missionToolbar(f.page).getByRole("button", { name: "Open the task's conversation", exact: true }).and(f.page.locator(":enabled")).waitFor()
+    // 3 (F). Passive passage update must NOT remount the selected task toolbar DOM; collapsing keeps it mounted.
+    const openTaskBtn = missionToolbar(f.page).getByRole("button", { name: "Open the task's conversation", exact: true })
+    await openTaskBtn.and(f.page.locator(":enabled")).waitFor()
+    await openTaskBtn.evaluate(node => { (node as any).__stableToolbarNode = true })
+    const beforeCurrent = f.currentPassageCalls.length
+    await f.page.evaluate(async () => {
+      const { serverEvents } = await import("/src/lib/server-events.ts")
+      serverEvents.dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: { type: "rpc.codenomad.missions.changed" } } as any])
+    })
+    for (const deadline = Date.now() + 5_000; f.currentPassageCalls.length <= beforeCurrent && Date.now() < deadline;) await f.page.waitForTimeout(25)
+    await f.page.waitForTimeout(150)
+    assert.equal(await openTaskBtn.evaluate(node => Boolean((node as any).__stableToolbarNode)), true,
+      "passive passage update does not remount the selected task toolbar")
     await missionRow(f.page, "Active unified schedule").locator(".session-item-expander").click()
     await schedTask.waitFor({ state: "detached" })
-    const openTaskBtn = missionToolbar(f.page).getByRole("button", { name: "Open the task's conversation", exact: true })
     assert.equal(await openTaskBtn.count(), 1, "collapsing a schedule with a selected task keeps the task toolbar mounted")
     assert.equal(await openTaskBtn.isEnabled(), true, "task conversation button remains enabled after collapse")
 
@@ -475,7 +534,7 @@ test("expanded native schedule passage skips /current re-read on unrelated activ
   } finally { await f.close() }
 })
 
-test("schedule-only project keeps refresh button unspun and enabled during passive refreshes, spinning only on manual click", async () => {
+test("schedule-only project keeps refresh button unspun and enabled during passive refreshes, spinning on manual click until ALL reads settle", async () => {
   let holdNext = false, started!: () => void, release!: () => void
   const arm = () => {
     holdNext = true
@@ -484,6 +543,10 @@ test("schedule-only project keeps refresh button unspun and enabled during passi
     return { reached, release: () => { holdNext = false; release() }, gate }
   }
   let activeGate: Promise<void> | undefined
+  let holdSched = false, schedStarted!: () => void, releaseSched!: () => void
+  let schedGate: Promise<void> | undefined
+  let holdRec = false, recStarted!: () => void, releaseRec!: () => void
+  let recGate: Promise<void> | undefined
   const f = await openPanel({
     emptyOneTime: true,
     holdSummaries: async () => {
@@ -491,6 +554,18 @@ test("schedule-only project keeps refresh button unspun and enabled during passi
       holdNext = false
       started()
       await activeGate
+    },
+    holdSchedules: async () => {
+      if (!holdSched) return
+      holdSched = false
+      schedStarted()
+      await schedGate
+    },
+    holdRecurrence: async () => {
+      if (!holdRec) return
+      holdRec = false
+      recStarted()
+      await recGate
     },
   })
   try {
@@ -510,19 +585,33 @@ test("schedule-only project keeps refresh button unspun and enabled during passi
     passive.release()
     await f.page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "ready")
 
-    // Clicking refresh manually DOES spin and disable until settled.
+    // Clicking refresh manually spins and disables until journal, schedule AND recurrence reads all settle.
     const manual = arm()
     activeGate = manual.gate
+    holdSched = true
+    const schedReached = new Promise<void>(resolve => { schedStarted = resolve })
+    schedGate = new Promise<void>(resolve => { releaseSched = resolve })
+    holdRec = true
+    const recReached = new Promise<void>(resolve => { recStarted = resolve })
+    recGate = new Promise<void>(resolve => { releaseRec = resolve })
     await refreshBtn.click()
-    await manual.reached
+    await Promise.all([manual.reached, schedReached, recReached])
     assert.equal(await refreshBtn.locator(".animate-spin").count(), 1, "manual refresh spins the button")
     assert.equal(await refreshBtn.isDisabled(), true, "manual refresh disables the button while running")
+    // Release journal first: spinner must STAY active while schedule and recurrence reads are still in flight.
     manual.release()
+    await f.page.waitForTimeout(120)
+    assert.equal(await refreshBtn.locator(".animate-spin").count(), 1, "spinner stays active while schedule and recurrence reads finish")
+    assert.equal(await refreshBtn.isDisabled(), true)
+    releaseSched()
+    await f.page.waitForTimeout(120)
+    assert.equal(await refreshBtn.locator(".animate-spin").count(), 1, "spinner stays active while recurrence read finishes")
+    releaseRec()
     await f.page.waitForFunction(() => !(document.querySelector('.mission-control-header button[aria-label="Refresh mission map"]') as HTMLButtonElement)?.disabled)
     assert.equal(await refreshBtn.locator(".animate-spin").count(), 0)
     assert.deepEqual(f.errors, [])
   } finally {
-    release?.()
+    release?.(); releaseSched?.(); releaseRec?.()
     await f.close()
   }
 })
@@ -551,4 +640,149 @@ test("restored selectedTask on a collapsed completed mission waits for the real 
     releaseHeader?.()
     await f.close()
   }
+})
+
+test("collapsed >10-actor missions keep bounded activity observation for toolbar Recover and Interrupt now without loading task pages (A)", async () => {
+  const location = FIXTURE_PROJECT.location
+  const seedMany = (seed: (missionID: string, value: Record<string, unknown>) => void, missionID: string, title: string, baseAt: number, gracefulPause: boolean) => {
+    seed(missionID, { id: "evt_create", type: "mission.created", projectCanonical: "/repo", objective: title, title,
+      template: "custom", coordinator: { sessionID: `ses_${missionID}_coord`, title: "Coordinator", location }, createdAt: baseAt })
+    for (let i = 1; i <= 10; i++) {
+      seed(missionID, { id: `evt_task_${i}`, type: "task.created", task: { id: `tsk_${missionID}_${i}`, key: `t-${i}`, title: `Task ${i}`,
+        brief: "Brief", role: "specialist", blockedBy: [], executionMode: { kind: "native", parentTaskKey: null } }, createdAt: baseAt + i * 2 })
+      seed(missionID, { id: `evt_bound_${i}`, type: "task.native-bound", taskKey: `t-${i}`,
+        binding: { generation: 1, parentSessionID: `ses_${missionID}_coord`, parentMessageID: `msg_${i}`, toolCallID: `call_${i}` },
+        actor: { sessionID: `ses_${missionID}_a${i}`, title: `Actor ${i}`, managed: true, location }, createdAt: baseAt + i * 2 + 1 })
+    }
+    if (gracefulPause) {
+      seed(missionID, { id: "evt_pause", type: "mission.control-requested", requestID: "req_gpause", expectedRevision: 21,
+        action: "pause", graceful: true, targets: [], createdAt: baseAt + 30 })
+    }
+  }
+  const f = await openPanel({
+    includeActiveMission: false,
+    extraMissions: seed => {
+      seedMany(seed, "msn_recover_11", "Idle coordinator 11 actors", 6_000, false)
+      seedMany(seed, "msn_pause_11", "Gracefully paused 11 actors", 7_000, true)
+    },
+    // Actor #10 (the 11th actor, beyond MISSION_MARK_ACTORS = 10) is running on msn_pause_11.
+    activeSessions: { ses_msn_pause_11_a10: { status: "running" } },
+  })
+  try {
+    await (await inlineMissionEntry(f.page, "Idle coordinator 11 actors")).waitFor()
+    await (await inlineMissionEntry(f.page, "Gracefully paused 11 actors")).waitFor()
+
+    // Scenario A1: collapsed running mission with 11 actors and idle-without-report coordinator shows Recover instead of Pause.
+    f.panelRequests.length = 0
+    await (await inlineMissionEntry(f.page, "Idle coordinator 11 actors")).click()
+    await missionToolbarAction(f.page, "Recover interrupted mission").and(f.page.locator(":enabled")).waitFor()
+    assert.equal(f.panelRequests.some(r => r.source === "activity" && r.missionID === "msn_recover_11"), true, "reads bounded activity for >10-actor selected mission")
+    assert.equal(f.panelRequests.some(r => r.source === "tasks"), false, "collapsed mission loads zero task pages")
+    assert.equal(await f.page.locator(".mission-tree").count(), 0)
+
+    // Scenario A2: collapsed gracefully paused mission whose only running actor is actor #11 offers Interrupt now.
+    f.panelRequests.length = 0
+    await (await inlineMissionEntry(f.page, "Gracefully paused 11 actors")).click()
+    await f.page.waitForFunction(() => (window as any).inventoryStore.observations("fixture", "msn_pause_11").length > 0)
+    await missionToolbarAction(f.page, "More actions").click()
+    await f.page.getByRole("menuitem", { name: "Interrupt now", exact: true }).waitFor()
+    assert.equal(await f.page.getByRole("menuitem", { name: "Interrupt now", exact: true }).isEnabled(), true,
+      "Interrupt now is enabled when the only running actor is beyond directory marks")
+    assert.equal(f.panelRequests.some(r => r.source === "tasks"), false, "collapsed gracefully paused mission loads zero task pages")
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("passage demand stays owned by its exact schedule and reader target, never leaking to another collapsed schedule (G)", async () => {
+  let hydrateReached!: () => void, releaseHydrate!: () => void
+  const hydrateStarted = new Promise<void>(resolve => { hydrateReached = resolve })
+  const hydrateGate = new Promise<void>(resolve => { releaseHydrate = resolve })
+  const f = await openPanel({
+    includeActiveMission: false,
+    withPassages: true,
+    secondDailySchedule: true,
+    omitSessions: ["__schedCoord__"],
+    holdSessionGet: async url => {
+      if (url.includes("/session/")) {
+        hydrateReached()
+        await hydrateGate
+      }
+    },
+  })
+  try {
+    await (await inlineMissionEntry(f.page, "Active unified schedule")).waitFor()
+    await (await inlineMissionEntry(f.page, "Recent daily schedule")).waitFor()
+    await (await inlineMissionEntry(f.page, "Second daily schedule")).waitFor()
+
+    // Scenario G2: select collapsed "Second daily schedule", expand "Recent daily schedule" preview and open one of its archived past runs.
+    // Opening an unrelated archived reader must NOT make collapsed "Second daily schedule" read its /current.
+    f.currentPassageCalls.length = 0
+    await (await inlineMissionEntry(f.page, "Second daily schedule")).click()
+    await f.page.waitForTimeout(100)
+    assert.equal(f.currentPassageCalls.filter(u => u.includes("rec_second")).length, 0)
+    await missionRow(f.page, "Recent daily schedule").locator(".session-item-expander").click()
+    const pastRun = f.page.locator(".mission-schedule-preview .mission-past-run").first()
+    await pastRun.waitFor()
+    await pastRun.click()
+    await f.page.locator(".mission-reader").waitFor()
+    await f.page.waitForTimeout(150)
+    assert.equal(f.currentPassageCalls.filter(u => u.includes("rec_second")).length, 0,
+      "opening another schedule's archived run never triggers /current on an unrelated collapsed selected schedule")
+
+    // Close the reader by toggling the past run button off before Scenario G1.
+    await pastRun.click()
+    await f.page.locator(".mission-reader").waitFor({ state: "detached" })
+    // Collapse Recent daily schedule preview.
+    await missionRow(f.page, "Recent daily schedule").locator(".session-item-expander").click()
+
+    // Scenario G1: mark Active unified schedule red via permission on its coordinator, click it so openingPassage holds during session hydration,
+    // then immediately select collapsed Second daily schedule: Second daily schedule must NOT read /current.
+    await f.page.evaluate(sc => (window as any).missionFixture.queuePermission(sc, "perm_sched_g1"), f.schedCoord)
+    await f.page.locator('.mission-row[data-mission-key="scheduled:msn_sched_active"] .mission-row-mark[data-mark="permission"]').waitFor()
+    f.currentPassageCalls.length = 0
+    await (await inlineMissionEntry(f.page, "Active unified schedule")).click()
+    await hydrateStarted
+    await (await inlineMissionEntry(f.page, "Second daily schedule")).click()
+    await f.page.waitForTimeout(150)
+    assert.equal(f.currentPassageCalls.filter(u => u.includes("rec_second")).length, 0,
+      "selecting schedule B while schedule A's question navigation is in flight never loads B's /current")
+    assert.deepEqual(f.errors, [])
+  } finally {
+    releaseHydrate?.()
+    await f.close()
+  }
+})
+
+test("clicking a red task in an unselected >10-actor one-time preview opens the asking actor beyond directory marks on the FIRST click (I)", async () => {
+  const location = FIXTURE_PROJECT.location
+  const f = await openPanel({
+    includeActiveMission: false,
+    extraMissions: seed => {
+      seed("msn_preview_11", { id: "evt_create", type: "mission.created", projectCanonical: "/repo", objective: "Preview 11 actors", title: "Preview 11 actors",
+        template: "custom", coordinator: { sessionID: "ses_p11_coord", title: "Coordinator", location }, createdAt: 6_000 })
+      for (let i = 1; i <= 10; i++) {
+        seed("msn_preview_11", { id: `evt_task_${i}`, type: "task.created", task: { id: `tsk_p11_${i}`, key: `p11-${i}`, title: `Preview task ${i}`,
+          brief: "Brief", role: "specialist", blockedBy: [], executionMode: { kind: "native", parentTaskKey: null } }, createdAt: 6_000 + i * 2 })
+        seed("msn_preview_11", { id: `evt_bound_${i}`, type: "task.native-bound", taskKey: `p11-${i}`,
+          binding: { generation: 1, parentSessionID: "ses_p11_coord", parentMessageID: `msg_p11_${i}`, toolCallID: `call_p11_${i}` },
+          actor: { sessionID: `ses_p11_a${i}`, title: `Actor ${i}`, managed: true, location }, createdAt: 6_000 + i * 2 + 1 })
+      }
+    },
+    forms: [{ id: "form_p11_10", sessionID: "ses_p11_a10", title: "Approve 11th actor", fields: [{ id: "ok", type: "text", label: "Ok" }] }],
+    extraSessions: [
+      ["ses_p11_coord", { id: "ses_p11_coord", parentID: null, title: "P11 coord", time: { created: 1, updated: 1 } }],
+      ["ses_p11_a10", { id: "ses_p11_a10", parentID: "ses_p11_coord", title: "P11 actor 10", time: { created: 1, updated: 1 } }],
+    ],
+  })
+  try {
+    // Select another row so "Preview 11 actors" is UNSELECTED.
+    await (await inlineMissionEntry(f.page, "Old completed mission")).click()
+    await missionRow(f.page, "Preview 11 actors").locator(".session-item-expander").click()
+    const redTask = f.page.locator('.mission-tree .mission-tree-node[data-task-key="p11-10"][data-state="input"] .mission-tree-task')
+    await redTask.waitFor()
+    await redTask.click()
+    await f.page.waitForFunction(() => (window as any).missionFixture.selectedSession() === "ses_p11_a10")
+    assert.equal(await f.page.locator(".mission-control-stale[role='alert']").count(), 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
 })

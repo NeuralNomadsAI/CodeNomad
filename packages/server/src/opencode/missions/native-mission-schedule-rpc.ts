@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { z } from "zod"
 import { documentID, nativeDocumentID } from "../../missions/launch-policy"
-import { nativeMissionScheduleResult } from "./native-mission-schedule-result"
+import { nativeMissionScheduleResult, readMissionDocumentPassageUpdatedAt } from "./native-mission-schedule-result"
 import { NativeMissionDocumentStore } from "../../missions/mission-document-store"
 import { nativeInvocation } from "./native-invocation"
 import { nativeScheduleCarrierLookupKey } from "./native-schedule-carrier-binding"
@@ -33,7 +33,8 @@ export function nativeMissionScheduleHandlers(ctx: Plugin.Context, artifacts?: N
     scheduleSetting: () => readNativeScheduleFlag(ctx).pipe(Effect.orDie),
     scheduleList: (raw: unknown) => invocation.capture(Effect.tryPromise(() => invocation.check(run =>
       readMissionSchedulePage({ scan: input => run(ctx.storage.scan(input)) }, ctx.location.project, raw,
-        doc => nativeMissionScheduleObservation(ctx, doc, run)))).pipe(Effect.orDie)),
+        doc => nativeMissionScheduleObservation(ctx, doc, run),
+        doc => readMissionDocumentPassageUpdatedAt(ctx, doc, run)))).pipe(Effect.orDie)),
     scheduleRead: (raw: unknown) => invocation.capture(Effect.gen(function* () {
       const { missionID, requestID } = readInput.parse(raw)
       const doc = yield* Effect.tryPromise({ try: () => invocation.check(run => {

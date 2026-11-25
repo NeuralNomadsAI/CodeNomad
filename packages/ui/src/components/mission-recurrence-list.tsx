@@ -230,7 +230,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   selectedRequests?: { passageID: string; count: number } }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
-  const { snapshot, error, loading } = useMissionRecurrence({ instanceId: () => props.instanceId,
+  const { snapshot, error, loading, refreshNow } = useMissionRecurrence({ instanceId: () => props.instanceId,
     projectID: () => props.projectID, directory: () => instances().get(props.instanceId)?.folder ?? "", refresh: () => props.refresh + revision(), active: props.active })
   // An exact retry names its held identity, not the snapshot revision: the
   // explicit refresh's own in-flight row read must not silently skip it.
@@ -343,5 +343,5 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
     return schedule && result?.outcome === "completed" && !scheduleSuccessSeen(scope, "daily", schedule.id, result.passageID)
       ? () => markScheduleSuccessSeen(scope, "daily", schedule.id, result.passageID) : undefined
   }
-  return { entries, view, preview, listView, loading, markRead, ownsPendingSession }
+  return { entries, view, preview, listView, loading, refreshNow, markRead, ownsPendingSession }
 }

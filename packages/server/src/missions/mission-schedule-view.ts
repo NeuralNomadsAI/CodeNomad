@@ -3,9 +3,30 @@ import { missionDocumentSummary } from "./mission-document-one-time"
 import { missionScheduleAvailableActions, unobservedMissionSchedule, type MissionScheduleObservation } from "./mission-schedule-display"
 import { displayMissionText } from "./truncate-text"
 
+/** Most recent real activity timestamp from the schedule owner's own events,
+ * independent of selection, expansion or future scheduled wakes. */
+export function missionDocumentActivityAt(doc: MissionDocument, passageUpdatedAt?: number): number {
+  return Math.max(
+    doc.createdAt,
+    doc.firstPlayedAt ?? 0,
+    doc.checks?.lastAt ?? 0,
+    doc.deletion?.requestedAt ?? 0,
+    doc.oneTime?.firstPlay?.requestedAt ?? 0,
+    doc.oneTime?.firstPlay?.admittedAt ?? 0,
+    doc.calendarOwner?.operation.startedAt ?? 0,
+    doc.calendarOwner?.operation.textEdit?.createdAt ?? 0,
+    ...(doc.calendarOwner?.receipts.map(item => item.startedAt) ?? []),
+    doc.pending?.createdAt ?? 0,
+    doc.pending?.admittedAt ?? 0,
+    doc.history.at(-1)?.settledAt ?? 0,
+    passageUpdatedAt ?? 0,
+  )
+}
+
 /** Public schedule data contains no runtime path, proof cookie, environment or
  * stored provider descriptors. The document remains the mutation authority. */
-export function missionScheduleView(doc: MissionDocument | MissionDocumentTombstone | undefined, pending?: boolean, observation?: MissionScheduleObservation) {
+export function missionScheduleView(doc: MissionDocument | MissionDocumentTombstone | undefined, pending?: boolean,
+  observation?: MissionScheduleObservation, passageUpdatedAt?: number) {
   if (!doc || "deletedAt" in doc) return { document: null, pending: false, ...(doc ? { deleted: true,
     deletionReceipt: { id: doc.id, requestID: doc.requestID, expectedRevision: doc.expectedRevision, deleteManagedSessions: doc.deleteManagedSessions } } : {}) }
   const projection = projectMissionDocument(doc), operation = doc.calendarOwner?.operation
@@ -17,6 +38,7 @@ export function missionScheduleView(doc: MissionDocument | MissionDocumentTombst
     timeGeneration: item.descriptor.timeGeneration, sessionID: item.descriptor.sessionID, scheduleID: item.descriptor.scheduleID,
     retiring: true, cleanupPending: !item.scheduleRemoved || !item.sessionRemoved || !item.indexRemoved })
   return { document: { ...missionDocumentSummary(doc), id: doc.id, createdAt: doc.createdAt,
+    activityAt: missionDocumentActivityAt(doc, passageUpdatedAt),
      configuration: { ...doc.configuration, title: displayMissionText(doc.configuration.title) },
     ...(doc.creation ? { creation: doc.creation } : {}),
     kind: doc.oneTime && !doc.dormantJournal ? "one-time" as const : "schedule" as const,

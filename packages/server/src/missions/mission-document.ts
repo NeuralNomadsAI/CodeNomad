@@ -105,7 +105,7 @@ const document = z.object({ version: z.literal(1), id: documentID, projectID: na
   state: z.enum(["paused", "running", "stopped", "finished"]),
   firstPlayedAt: documentTimestamp.nullable(), oneShotAt: documentTimestamp.nullable(), slotEndsAt: documentTimestamp.nullable(),
   launchedCount: documentCounter, settledCount: documentCounter, successfulCount: documentCounter.default(0),
-  checks: z.object({ count: documentCounter, since: documentTimestamp }).strict().nullable().optional(),
+  checks: z.object({ count: documentCounter, since: documentTimestamp, lastAt: documentTimestamp.optional() }).strict().nullable().optional(),
   lastSuccessfulPassageID: documentID.nullable().default(null), everCreatedTask: z.boolean(),
   blocked: z.enum(["failed", "ended-without-report", "unknown"]).nullable(),
   creation: missionPreparationCreationSchema.optional(),
@@ -151,7 +151,8 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
     || (doc.successfulCount === 0) !== (doc.lastSuccessfulPassageID === null)
     || doc.history.some(item => item.id === doc.lastSuccessfulPassageID && item.outcome !== "completed")
     || doc.history.some(item => item.outcome === "completed") && doc.history.filter(item => item.outcome === "completed").at(-1)!.id !== doc.lastSuccessfulPassageID
-    || doc.checks && (doc.checks.since < doc.createdAt || doc.firstPlayedAt === null && doc.checks.count > 0)
+    || doc.checks && (doc.checks.since < doc.createdAt || doc.firstPlayedAt === null && doc.checks.count > 0
+      || doc.checks.lastAt !== undefined && (doc.checks.lastAt < doc.checks.since || doc.checks.count === 0))
     || doc.firstPlayedAt !== null && doc.firstPlayedAt < doc.createdAt
     || doc.firstPlayedAt === null && (doc.launchedCount || doc.pending || doc.settledCount || doc.calendars.length || doc.state === "running"
       || doc.oneShotAt !== null || doc.slotEndsAt !== null)
@@ -309,8 +310,7 @@ export function projectMissionDocument(doc: MissionDocument) {
     firstPlayedAt: doc.firstPlayedAt, slotEndsAt: doc.slotEndsAt, launchedCount: doc.launchedCount,
     remaining: limit === null ? null : Math.max(0, limit - doc.launchedCount), reserved: !!doc.pending && doc.pending.admittedAt === null,
     everCreatedTask: doc.everCreatedTask, pending: doc.pending ? { id: doc.pending.id, missionID: doc.pending.missionID,
-      coordinatorSessionID: doc.pending.coordinatorSessionID, admittedAt: doc.pending.admittedAt,
-      createdAt: doc.pending.createdAt, dueAt: doc.pending.dueAt } : null,
+      coordinatorSessionID: doc.pending.coordinatorSessionID, admittedAt: doc.pending.admittedAt } : null,
     latestResult: doc.history.at(-1) ?? null, history: doc.history,
     edit: { structural: lock === null, template: lock === null && !doc.everCreatedTask, reason: lock,
       templateReason: lock ?? (doc.everCreatedTask ? "ever-created-task" : null) },

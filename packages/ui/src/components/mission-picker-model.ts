@@ -97,30 +97,22 @@ export function missionMarkStateKey(mark: MissionMark): string | undefined {
 }
 
 export function unifiedScheduleActivityAt(doc: UnifiedMissionSchedule): number {
-  const pending = doc.pendingPassage
+  if (typeof doc.activityAt === "number") return doc.activityAt
   return Math.max(
     0,
-    pending?.admittedAt ?? 0,
-    pending?.dueAt ?? 0,
-    pending?.createdAt ?? 0,
+    doc.pendingPassage?.admittedAt ?? 0,
     doc.latestResult?.settledAt ?? 0,
-    doc.latestResult?.dueAt ?? 0,
-    doc.checks?.since ?? 0,
     doc.firstPlayedAt ?? 0,
     doc.createdAt ?? 0,
   )
 }
 
 export function recurrenceScheduleActivityAt(schedule: RecurrenceSchedule): number {
-  const pending = schedule.pending
+  if (typeof schedule.activityAt === "number") return schedule.activityAt
   return Math.max(
     0,
-    pending?.createdAt ?? 0,
-    pending?.dueAt ?? 0,
     schedule.latestResult?.settledAt ?? 0,
-    schedule.latestResult?.dueAt ?? 0,
     schedule.lastError?.at ?? 0,
-    schedule.createdAt ?? 0,
   )
 }
 

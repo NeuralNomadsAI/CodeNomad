@@ -66,8 +66,9 @@ export const panelObservationSchema = z.object({ context: z.object({ id, project
     || requests.items.some(item => !roots.has(item.actorSessionId) || item.request.sessionID !== item.actorSessionId && members.get(item.request.sessionID)?.actorSessionId !== item.actorSessionId)
     || page.total > roots.size && (value.coverage === "observed" || requests.state === "observed")) ctx.addIssue({ code: "custom", message: "Invalid observation membership/coverage" })
 })
+export const MISSION_MARK_ACTORS = 10
 export const panelMarksSchema = z.object({ missionPage: panelWindowSchema, observations: z.array(panelObservationSchema).max(16) }).strict()
   .refine(value => value.observations.length === value.missionPage.end - value.missionPage.offset
-    && new Set(value.observations.map(item => item.context.id)).size === value.observations.length && value.observations.every(item => item.context.actors.length <= 10))
+    && new Set(value.observations.map(item => item.context.id)).size === value.observations.length && value.observations.every(item => item.context.actors.length <= MISSION_MARK_ACTORS))
 export type PanelHeader = z.infer<typeof panelHeaderSchema>
 export type PanelObservation = z.infer<typeof panelObservationSchema>

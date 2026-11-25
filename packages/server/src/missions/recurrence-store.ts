@@ -39,7 +39,8 @@ const RETIRED_LIMIT = 4096
 export class NativeMissionRecurrenceStore {
   readonly projectToken: string
   private readonly prefix: string
-  constructor(private readonly storage: RecurrenceStorage, readonly projectID: string, readonly projectCanonical: string) {
+  constructor(private readonly storage: RecurrenceStorage, readonly projectID: string, readonly projectCanonical: string,
+    private readonly now: () => number = Date.now) {
     if (!projectID.trim() || projectID.length > 240 || !projectCanonical || projectCanonical.length > 4096) throw new Error("Invalid recurrence project")
     this.projectToken = stableToken(`${projectID}\0${projectCanonical}`, 24)
     this.prefix = `${RECURRENCE_STORAGE_PREFIX}/project/${this.projectToken}/`
@@ -97,6 +98,7 @@ export class NativeMissionRecurrenceStore {
       }
       doc.config = config
       doc.scheduleRevision++
+      this.touch(doc, this.now())
       // Deliberately retain createdAt, original daily high-water and cursors.
     })
   }
@@ -107,6 +109,7 @@ export class NativeMissionRecurrenceStore {
     return this.change(id, expectedRevision, current, doc => {
       if (doc.state === "stopped") throw new Error("Recurrence is terminal")
       doc.state = state
+      this.touch(doc, this.now())
     })
   }
 
@@ -137,6 +140,7 @@ export class NativeMissionRecurrenceStore {
       if (input.action === "stop") doc.state = "stopped"
       delete doc.interruptionReason
       doc.revision++
+      this.touch(doc, this.now())
       doc.controls.push({ requestID: input.requestID, action: input.action, expectedRevision: input.expectedRevision,
         revision: doc.revision, state: doc.state, controlsComplete: false,
         targets: [], targetsKnown: false })
@@ -164,6 +168,7 @@ export class NativeMissionRecurrenceStore {
       if (input.controlsComplete && input.action !== "run-now") supersedeStartIntents(doc, index)
       if (options.clockError && doc.state === "running") doc.interruptionReason = "error"
       doc.revision++
+      this.touch(doc, this.now())
       return this.publish(doc, current, doc.revision - 1)
     })
   }
@@ -174,6 +179,7 @@ export class NativeMissionRecurrenceStore {
       if (doc.state !== "running" || doc.interruptionReason === "error") return doc
       doc.interruptionReason = "error"
       doc.revision++
+      this.touch(doc, this.now())
       return this.publish(doc, current, doc.revision - 1)
     })
   }
@@ -192,6 +198,7 @@ export class NativeMissionRecurrenceStore {
         scheduleRevision: doc.scheduleRevision, createdAt: now }, admission: null }
       doc.controls.push({ requestID, expectedRevision, action: "run-now", revision: expectedRevision + 1,
         state: doc.state, controlsComplete: false, targetsKnown: true, targets: [] })
+      this.touch(doc, now)
     })
   }
 
@@ -209,6 +216,7 @@ export class NativeMissionRecurrenceStore {
       doc.pending = { passage: { id: passageID, messageID: recurrenceMessageID(passageID),
         coordinatorSessionID: recurrenceCoordinatorSessionID(this.projectID, passageID, now),
         scheduleRevision: doc.scheduleRevision, due, createdAt: now }, admission: null }
+      this.touch(doc, now)
     })
   }
 
@@ -223,6 +231,7 @@ export class NativeMissionRecurrenceStore {
       pending.admission = admission
       completePassageControls(doc, false)
       doc.revision++
+      this.touch(doc, now)
       return this.publish(doc, current, doc.revision - 1)
     })
   }
@@ -259,6 +268,10 @@ export class NativeMissionRecurrenceStore {
     doc.history = doc.history.slice(-RECURRENCE_HISTORY_LIMIT)
     doc.settledCount++
     doc.pending = null
+    this.touch(doc, now)
+  }
+  private touch(doc: RecurrenceDocument, at: number) {
+    doc.updatedAt = Math.max(doc.updatedAt ?? doc.createdAt, at)
   }
   /** Exact status refusal of a request with no record. Besides the pure CAS proof,
    * a backend-held proof `issuedAt` that this host's clock already expired proves

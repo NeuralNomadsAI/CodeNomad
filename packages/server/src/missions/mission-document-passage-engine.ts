@@ -333,8 +333,10 @@ export class MissionDocumentPassageEngine {
     if (!missionLaunchModel(doc.configuration.launch).events.length) return
     // Commit the verified observation together with its high-water/reservation.
     // Records without tracking begin here; never invent their earlier total.
-    doc.checks ??= { count: 0, since: this.ports.now() }
+    const now = this.ports.now()
+    doc.checks ??= { count: 0, since: now }
     doc.checks.count++
+    doc.checks.lastAt = Math.max(doc.checks.lastAt ?? doc.checks.since, now)
   }
   private contiguous(doc: MissionDocument, wakes: MissionWake[]) {
     if (wakes.length > 256 || new Set(wakes.map(wake => `${wake.scheduleID}:${wake.run}`)).size !== wakes.length) return false

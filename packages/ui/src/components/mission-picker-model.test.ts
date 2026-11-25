@@ -84,38 +84,46 @@ test("filter matches titles case-insensitively", () => {
   assert.equal(filterMissionPickerEntries(entries, "").length, 2)
 })
 
-test("unified activity timestamps ignore future nextDueAt and sort all mission kinds together", () => {
+test("unified activity timestamps use owner-projected activityAt, ignore future nextDueAt and checks.since, and sort all mission kinds together", () => {
   const future = Date.now() + 86_400_000
   const idleUnified = {
-    createdAt: 100, firstPlayedAt: 200, checks: { count: 1, since: 250 },
+    createdAt: 100, firstPlayedAt: 200, activityAt: 300,
+    checks: { count: 1, since: 9_999 },
     pendingPassage: null, latestResult: { settledAt: 300, dueAt: 290 },
     observation: { state: "known", nativeStatus: "active", timeGeneration: 1, nextDueAt: future, wakeCount: 0, kind: "launch" },
   } as unknown as UnifiedMissionSchedule
-  assert.equal(unifiedScheduleActivityAt(idleUnified), 300, "future nextDueAt is never used")
+  assert.equal(unifiedScheduleActivityAt(idleUnified), 300, "uses owner-projected activityAt, ignoring future nextDueAt and checks.since")
+
+  const legacyUnified = {
+    createdAt: 100, firstPlayedAt: 200, checks: { count: 1, since: 9_999 },
+    pendingPassage: null, latestResult: { settledAt: 300, dueAt: 290 },
+    observation: { state: "known", nativeStatus: "active", timeGeneration: 1, nextDueAt: future, wakeCount: 0, kind: "launch" },
+  } as unknown as UnifiedMissionSchedule
+  assert.equal(unifiedScheduleActivityAt(legacyUnified), 300, "older unified snapshots without activityAt ignore checks.since and future nextDueAt")
 
   const activeUnified = {
-    ...idleUnified,
-    pendingPassage: { id: "psg_1", missionID: "msn_1", coordinatorSessionID: "ses_1", admittedAt: 800, createdAt: 750, dueAt: 700 },
+    ...idleUnified, activityAt: 800,
+    pendingPassage: { id: "psg_1", missionID: "msn_1", coordinatorSessionID: "ses_1", admittedAt: 800 },
   } as unknown as UnifiedMissionSchedule
   assert.equal(unifiedScheduleActivityAt(activeUnified), 800)
 
-  const idleDaily = {
-    id: "rec_1", revision: 1, title: "Daily", createdAt: 150, clock: { time: "09:00", zone: "UTC" }, state: "running",
+  const idleDaily: RecurrenceSchedule = {
+    id: "rec_1", revision: 1, title: "Daily", activityAt: 400, clock: { time: "09:00", zone: "UTC" }, state: "running",
     nextDueAt: future, pending: null, latestResult: { passageID: "p1", dueAt: 350, settledAt: 400, outcome: "completed" },
     history: [], actions: [], controls: [],
-  } as RecurrenceSchedule
+  }
   assert.equal(recurrenceScheduleActivityAt(idleDaily), 400, "future nextDueAt is never used for daily schedules")
 
   const freshDaily: RecurrenceSchedule = {
-    ...idleDaily, id: "rec_new", createdAt: 600, pending: null, latestResult: null, history: [],
+    ...idleDaily, id: "rec_new", activityAt: 600, pending: null, latestResult: null, history: [],
   }
-  assert.equal(recurrenceScheduleActivityAt(freshDaily), 600, "new daily schedule sorts by persisted creation time, not epoch 0")
-  const legacyDaily: RecurrenceSchedule = { ...freshDaily, id: "rec_legacy", createdAt: undefined }
-  assert.equal(recurrenceScheduleActivityAt(legacyDaily), 0, "older daily snapshots without createdAt stay valid")
+  assert.equal(recurrenceScheduleActivityAt(freshDaily), 600, "new daily schedule sorts by owner-projected activityAt, not epoch 0")
+  const legacyDaily: RecurrenceSchedule = { ...freshDaily, id: "rec_legacy", activityAt: undefined }
+  assert.equal(recurrenceScheduleActivityAt(legacyDaily), 0, "older daily snapshots without activityAt stay valid")
 
   const activeDaily: RecurrenceSchedule = {
-    ...idleDaily,
-    pending: { passageID: "p2", status: "running", createdAt: 850, dueAt: 820, conversationID: "ses_daily" },
+    ...idleDaily, activityAt: 850,
+    pending: { passageID: "p2", status: "running", conversationID: "ses_daily" },
   }
   assert.equal(recurrenceScheduleActivityAt(activeDaily), 850)
 

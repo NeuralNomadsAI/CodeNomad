@@ -113,7 +113,7 @@ test("business checks count committed source observations once per fan-in, with 
   f.ports.snapshot = async () => ({ news: { triggers: changed, conditions: changed }, checkpoints: [checkpoint], current })
   const first = f.wake(0); f.wake(1)
   await f.engine.wake({ missionID: "review", wake: first })
-  assert.deepEqual((await f.read()).checks, { count: 1, since: start })
+  assert.deepEqual((await f.read()).checks, { count: 1, since: start, lastAt: start + 1000 })
   await new MissionDocumentPassageEngine(f.store, f.ports).wake({ missionID: "review", wake: first })
   assert.equal((await f.read()).checks!.count, 1, "replay never counts a second observation")
   f.tick(); changed = true
@@ -121,6 +121,7 @@ test("business checks count committed source observations once per fan-in, with 
   f.crash = true
   await f.engine.wake({ missionID: "review", wake: second })
   assert.equal((await f.read()).checks!.count, 2, "verified reservation counts even when launch ACK is lost")
+  assert.equal((await f.read()).checks!.lastAt, start + 2000, "second check advances checks.lastAt without changing since")
   await f.engine.reconcile({ missionID: "review" })
   assert.equal((await f.read()).checks!.count, 2)
   f.tick(); const overlap = f.wake(0, 3); f.wake(1, 3)
@@ -140,7 +141,7 @@ test("business checks count committed source observations once per fan-in, with 
   assert.equal((await legacy.read()).checks, undefined)
   legacy.ports.snapshot = async () => ({ news: { triggers: false, conditions: false }, checkpoints: [checkpoint], current })
   await legacy.engine.wake({ missionID: "review", wake })
-  assert.deepEqual((await legacy.read()).checks, { count: 1, since: start + 1000 })
+  assert.deepEqual((await legacy.read()).checks, { count: 1, since: start + 1000, lastAt: start + 1000 })
 })
 
 test("calendar reservation, false-condition consumption and manual reservation await source revalidation before publishing", async () => {

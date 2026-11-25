@@ -44,11 +44,12 @@ export async function readMissionDocumentPage(storage: Pick<MissionStorage, "sca
 
 /** Display pages omit tombstones while counting them toward capacity and cursor progress. */
 export async function readMissionSchedulePage(storage: Pick<MissionStorage, "scan">,
-  project: { id: string; canonical: string }, raw: unknown, observe?: (doc: MissionDocument) => Promise<MissionScheduleObservation>) {
+  project: { id: string; canonical: string }, raw: unknown, observe?: (doc: MissionDocument) => Promise<MissionScheduleObservation>,
+  passageUpdatedAt?: (doc: MissionDocument) => Promise<number | undefined>) {
   const page = await readMissionDocumentPage(storage, project, raw)
   const schedules: NonNullable<ReturnType<typeof missionScheduleView>["document"]>[] = []
   for (const doc of page.documents) if (!("deletedAt" in doc))
-    schedules.push(missionScheduleView(doc, undefined, await observe?.(doc)).document!)
+    schedules.push(missionScheduleView(doc, undefined, await observe?.(doc), await passageUpdatedAt?.(doc)).document!)
   return { version: 1 as const, projectID: project.id, schedules, ...(page.next === undefined ? {} : { next: page.next }) }
 }
 export type MissionScheduleList = Awaited<ReturnType<typeof readMissionSchedulePage>>

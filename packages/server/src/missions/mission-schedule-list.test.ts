@@ -84,3 +84,58 @@ test("list/detail projection retains frozen result identities and durable counte
   const validate = new Ajv().compile(missionScheduleRpcMethods.scheduleList.output)
   assert.equal(validate(page), true, JSON.stringify(validate.errors))
 })
+
+test("schedule activityAt tracks controls, checks.lastAt (not checks.since), and live passage progress while keeping older docs valid", async () => {
+  const f = await fixture()
+  const eventConfig: MissionConfiguration = { ...f.config, launch: { when: [{ kind: "files-changed", paths: ["README.md"] }] } }
+  await f.store.create("schedule_act", eventConfig, 1_000, f.current)
+  let page = await readMissionSchedulePage(f.storage, f.project, {})
+  assert.equal(page.schedules[0].activityAt, 1_000)
+
+  // Older document without checks.lastAt stays valid even with count > 0, and checks.since alone never bumps activityAt.
+  await f.store.change("schedule_act", 0, f.current, doc => {
+    doc.firstPlayedAt = 1_500; doc.state = "running"
+    doc.checks = { count: 2, since: 1_000 }
+  })
+  page = await readMissionSchedulePage(f.storage, f.project, {})
+  assert.equal(page.schedules[0].activityAt, 1_500, "checks.since is a baseline, not a check time")
+
+  // Recording checks.lastAt advances activityAt.
+  await f.store.change("schedule_act", 1, f.current, doc => {
+    doc.checks = { count: 3, since: 1_000, lastAt: 2_500 }
+  })
+  page = await readMissionSchedulePage(f.storage, f.project, {})
+  assert.equal(page.schedules[0].activityAt, 2_500)
+
+  // A control (pause/resume/stop) advances activityAt via calendarOwner.operation.startedAt.
+  const digest = "a".repeat(64)
+  await f.store.change("schedule_act", 2, f.current, doc => {
+    doc.state = "paused"
+    doc.calendarOwner = {
+      version: 1,
+      installation: { registrationFile: "/reg", provider: { file: "/p", sha256: digest }, runtime: { file: "/r", sha256: digest } },
+      profileSource: { profileID: "profile", executionHost: "host", configYamlPath: "/cfg" },
+      placement: { rootsDigest: digest, roots: [{ directory: "/project", physical: "/project", dev: "1", ino: "2", birth: "3" }], routing: [], gitEnvironmentDigest: digest },
+      operation: { requestID: "req_pause", expectedRevision: 2, fingerprint: digest, action: "pause", pending: false, startedAt: 3_200 },
+      receipts: [], checks: [], slots: [], retired: [], auxiliaryReady: false, error: null,
+    }
+  })
+  page = await readMissionSchedulePage(f.storage, f.project, {})
+  assert.equal(page.schedules[0].activityAt, 3_200, "control timestamp advances activityAt")
+
+  // Active passage progress advances activityAt independently of selection/expansion; pendingPassage omits sorting-only dueAt/createdAt.
+  await f.store.change("schedule_act", 3, f.current, doc => {
+    doc.state = "running"
+    doc.checkpoints = [{ key: "d".repeat(64), kind: "files-changed", placementDigest: digest, value: { files: {} } }]
+    // Reserve with a manual origin after satisfying baseline via simple non-event config or matching key:
+    doc.configuration = f.config; doc.configurationGeneration++; doc.checkpoints = []
+    changes.reserve(doc, { kind: "manual", requestID: "req_live" }, 3_500, [])
+    changes.admitted(doc, doc.pending!.id, 3_600)
+  })
+  page = await readMissionSchedulePage(f.storage, f.project, {}, undefined, async () => 4_800)
+  assert.equal(page.schedules[0].activityAt, 4_800, "live passage progress advances activityAt")
+  assert.equal("dueAt" in (page.schedules[0].pendingPassage as object), false, "pendingPassage omits sorting-only dueAt")
+  assert.equal("createdAt" in (page.schedules[0].pendingPassage as object), false, "pendingPassage omits sorting-only createdAt")
+  const validate = new Ajv().compile(missionScheduleRpcMethods.scheduleList.output)
+  assert.equal(validate(page), true, JSON.stringify(validate.errors))
+})
