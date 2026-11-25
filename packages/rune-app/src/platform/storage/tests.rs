@@ -102,6 +102,7 @@ fn relative_directory_and_file_in_place_of_directory_are_rejected() {
 }
 
 #[test]
+#[allow(clippy::await_holding_lock)]
 fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
     let root = Root::new();
     let path = root.0.join("rune");
