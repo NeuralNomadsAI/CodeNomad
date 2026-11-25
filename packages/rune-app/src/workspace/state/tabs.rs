@@ -417,7 +417,9 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
                 added.insert(session_id);
             }
         }
-        if ui.closed_unconfirmed_count() + added.len() > super::MAX_UNCONFIRMED_LOCKS {
+        if !added.is_empty()
+            && ui.closed_unconfirmed_count() + added.len() > super::MAX_UNCONFIRMED_LOCKS
+        {
             return true;
         }
     }

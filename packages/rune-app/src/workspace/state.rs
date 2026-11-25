@@ -157,6 +157,9 @@ impl Ui {
             }
             return;
         }
+        if self.closed_unconfirmed.len() >= MAX_UNCONFIRMED_LOCKS {
+            return;
+        }
         self.closed_unconfirmed.push(ClosedUnconfirmed {
             backend_id: workspace.backend_id.clone(),
             server_id: workspace.server_id.clone(),
@@ -218,10 +221,6 @@ impl Ui {
     }
     pub(crate) fn has_tab_key(&self, key: &str) -> bool {
         self.entries.iter().any(|entry| entry.key == key)
-    }
-    #[cfg(test)]
-    pub(crate) fn set_ready_for_test(&mut self) {
-        self.ready = true;
     }
     #[cfg(test)]
     pub(crate) fn fixture_ready(&mut self) {

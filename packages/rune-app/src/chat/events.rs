@@ -577,7 +577,21 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool, affects_preferences: b
             s.composer.picker.set_attachments_supported(false);
             s.status_permissions.online(false);
             s.status_usage.disconnect();
+            let saved_retry = s.transcript_display.timeline.page_retry;
+            let saved_history_error = s.history_error;
+            let pending_edge = s
+                .transcript_display
+                .timeline
+                .paging
+                .as_ref()
+                .map(|(_, edge)| *edge);
             chat::reader::suspend(s);
+            if let Some(edge) = pending_edge.or(saved_retry) {
+                s.transcript_display.timeline.page_retry = Some(edge);
+                s.history_error = true;
+            } else {
+                s.history_error = saved_history_error;
+            }
             git::online(s, false);
             if let Some(files) = &mut s.files {
                 files.online(false);

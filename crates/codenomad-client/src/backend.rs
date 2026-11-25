@@ -43,10 +43,7 @@ pub(crate) fn send_transport_error(error: &reqwest::Error) -> crate::prompt::Pro
     crate::prompt::PromptError::Unconfirmed
 }
 
-pub(crate) async fn classify_http_error(
-    _backend: &Backend,
-    response: reqwest::Response,
-) -> crate::prompt::PromptError {
+pub(crate) async fn classify_http_error(response: reqwest::Response) -> crate::prompt::PromptError {
     let status = response.status();
     let before_dispatch = response
         .headers()
@@ -55,6 +52,9 @@ pub(crate) async fn classify_http_error(
         == Some("1");
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return crate::prompt::PromptError::AuthenticationRequired { before_dispatch };
+    }
+    if !before_dispatch {
+        return crate::prompt::PromptError::Unconfirmed;
     }
     if status.is_client_error() {
         return crate::prompt::PromptError::Rejected;
@@ -67,7 +67,7 @@ pub(crate) async fn classify_http_error(
                 return crate::prompt::PromptError::Rejected;
             }
         }
-        reqwest::StatusCode::BAD_GATEWAY if before_dispatch => {
+        reqwest::StatusCode::BAD_GATEWAY => {
             if let Ok(body) = crate::prompt_receipt::read(response).await
                 && matches!(
                     body["error"].as_str(),
@@ -327,7 +327,7 @@ impl Backend {
             .await
             .map_err(|error| send_transport_error(&error))?;
         if !response.status().is_success() {
-            return Err(classify_http_error(self, response).await.into());
+            return Err(classify_http_error(response).await.into());
         }
         let response = crate::prompt_receipt::read(response)
             .await

@@ -713,7 +713,7 @@ mod tests {
         let mut s = crate::init();
         crate::gallery::shell::fixture(&mut s);
         let mut ui = Ui::new();
-        ui.set_ready_for_test();
+        ui.fixture_ready();
         s.workspace = Some(ui);
         let project = crate::catalog::Project {
             id: "ws".into(),
@@ -741,12 +741,30 @@ mod tests {
         // Open a second tab, switch back to Tab 1, recall the command and confirm the hold remains.
         let first_tab = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
         rt.update(|s, tx| crate::workspace::new_tab(s, tx));
+        let second_tab = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+        assert_ne!(
+            second_tab, first_tab,
+            "new_tab must activate a distinct tab"
+        );
         rt.update(|s, tx| crate::workspace::select(s, &first_tab, tx));
+        assert_eq!(
+            rt.state.workspace.as_ref().unwrap().active_key(),
+            first_tab,
+            "select must return to the original tab"
+        );
         rt.state.draft.clear();
         rt.update(|s, tx| assert!(crate::composer::recall::step(s, true, true, tx)));
         assert_eq!(rt.state.draft.text.trim(), "/compact now");
         assert!(crate::composer::command_held(&rt.state));
         assert!(!crate::composer::can_send(&rt.state));
+
+        // An unrelated attempt receipt must not release the hold.
+        crate::composer::acknowledge(
+            &mut rt.state,
+            "cmd_unrelated",
+            PromptOutcome::Confirmed("cmd_unrelated".into()),
+        );
+        assert!(crate::composer::command_held(&rt.state));
 
         // Exact late receipt releases the hold.
         crate::composer::acknowledge(

@@ -759,23 +759,27 @@ mod diagnostic_tests {
                 Some(Some(Err(PageFailure::StreamClosed)))
             ));
 
-            // Even if the HTTP future is ready with an ordinary read error on the same poll as
-            // stream closure, read_page must classify it as StreamClosed rather than Read.
-            let closed_wire = stream::State::default();
-            closed_wire
+            // Exercise the HTTP-error branch directly: wire is still open when polling starts,
+            // closes during the HTTP poll, and the HTTP future returns Err(...) so read_page
+            // must reclassify the read error as StreamClosed rather than Read.
+            let closing_wire = std::sync::Arc::new(stream::State::default());
+            closing_wire
                 .alive
                 .store(true, std::sync::atomic::Ordering::SeqCst);
-            closed_wire
+            closing_wire
                 .upstream
                 .store(true, std::sync::atomic::Ordering::SeqCst);
-            closed_wire.close_stream();
+            let close_on_poll = std::sync::Arc::clone(&closing_wire);
             let outcome = read_page(
                 &backend,
                 None,
                 0,
-                &closed_wire,
+                &closing_wire,
                 super::Fence::Live(0),
-                std::future::ready(Err("transient read failure".into())),
+                std::future::poll_fn(move |_| {
+                    close_on_poll.close_stream();
+                    std::task::Poll::Ready(Err("transient read failure".into()))
+                }),
             )
             .await;
             assert!(matches!(outcome, Some(Err(PageFailure::StreamClosed))));

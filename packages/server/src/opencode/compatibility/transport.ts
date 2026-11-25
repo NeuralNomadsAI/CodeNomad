@@ -12,6 +12,17 @@ export type RuntimeFetchDispatchHooks = {
 type RuntimeFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1],
   mediaResponseProcessor?: SessionMediaResponseProcessor, dispatchHooks?: RuntimeFetchDispatchHooks) => Promise<Response>
 
+const dispatchHookAwareFetches = new WeakSet<Function>()
+
+export function markDispatchHookAwareFetch<T extends Function>(fn: T): T {
+  dispatchHookAwareFetches.add(fn)
+  return fn
+}
+
+export function supportsDispatchHooks(fn: unknown): boolean {
+  return typeof fn === "function" && dispatchHookAwareFetches.has(fn)
+}
+
 function object(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
 }
@@ -72,7 +83,7 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     }
     return response
   }
-  return { fetch: adaptedFetch, profile: resolveProfile }
+  return { fetch: markDispatchHookAwareFetch(adaptedFetch), profile: resolveProfile }
 }
 
 // A cancelled subscriber must not cancel the connection's negotiation or wait

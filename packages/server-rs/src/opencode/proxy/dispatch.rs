@@ -75,7 +75,11 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
             || !app.native.current(&endpoint)
             || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
         {
-            return Err(if send_input { pre_dispatch_unavailable() } else { upstream_error() });
+            return if send_input {
+                Ok(super::before_dispatch_error(pre_dispatch_unavailable()))
+            } else {
+                Err(upstream_error())
+            };
         }
         if send_input {
             let recheck = InputRecheck {
@@ -95,13 +99,13 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
             match recheck.verify().await {
                 Ok(_) => {}
                 Err(e) if e.0 == Status::UNAUTHORIZED => return Ok(crate::auth::unauthorized_before_dispatch()),
-                Err(e) => return Err(e),
+                Err(e) => return Ok(super::before_dispatch_error(e)),
             }
             if principal.0.is_cancelled() {
                 return Ok(crate::auth::unauthorized_before_dispatch());
             }
             if detached.is_cancelled() || !app.native.current(&endpoint) {
-                return Err(pre_dispatch_unavailable());
+                return Ok(super::before_dispatch_error(pre_dispatch_unavailable()));
             }
         }
         if !gate.try_dispatch() {
@@ -128,11 +132,11 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                 Ok(Ok(response)) => response,
                 Ok(Err(err)) => {
                     app.native.invalidate(&endpoint);
-                    return Err(if send_input && err.is_connect() {
-                        pre_dispatch_unavailable()
+                    return if send_input && err.is_connect() {
+                        Ok(super::before_dispatch_error(pre_dispatch_unavailable()))
                     } else {
-                        upstream_error()
-                    });
+                        Err(upstream_error())
+                    };
                 }
                 Err(_) => return Err(upstream_error()),
             },

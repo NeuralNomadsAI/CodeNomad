@@ -14,7 +14,7 @@ pub(crate) mod recall;
 mod shortcuts;
 mod tokens;
 pub(crate) mod view;
-#[cfg(all(not(target_arch = "wasm32"), feature = "test-support"))]
+#[cfg(any(test, all(not(target_arch = "wasm32"), feature = "test-support")))]
 pub(crate) use actions::command_held;
 pub(crate) use actions::{
     Owner, UnconfirmedPrompt, acknowledge, can_send, reconcile, send, settle_pending,

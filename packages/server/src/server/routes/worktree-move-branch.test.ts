@@ -8,6 +8,7 @@ import Fastify from "fastify"
 import { registerWorktreeRoutes } from "./worktrees"
 import { registerInstanceProxyRoutes } from "../http-server"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { markDispatchHookAwareFetch } from "../../opencode/compatibility/transport"
 import { fixtureCatalogue } from "../../workspaces/__tests__/native-worktree-fixture"
 
 test("a family move for an expected branch is refused once the target checks out another one", async () => {
@@ -77,12 +78,12 @@ test("a worktree family move blocks concurrent prompts targeting a sibling child
     profile: async () => "modern" as const,
     assertCurrent() {},
     invalidate() {},
-    fetch: async (_input: unknown, _init?: unknown, _media?: unknown, dispatchHooks?: { beforeFetch?: () => Promise<void>; onDispatch?: () => void }) => {
+    fetch: markDispatchHookAwareFetch(async (_input: unknown, _init?: unknown, _media?: unknown, dispatchHooks?: { beforeFetch?: () => Promise<void>; onDispatch?: () => void }) => {
       await dispatchHooks?.beforeFetch?.()
       dispatchHooks?.onDispatch?.()
       forwarded.push("forward")
       return Response.json({ ok: true })
-    },
+    }),
   }
   const workspaceManager = {
     get: () => ({ id: "workspace", path: repo }),
@@ -113,16 +114,159 @@ test("a worktree family move blocks concurrent prompts targeting a sibling child
       url: "/api/workspaces/workspace/sessions/ses_root/worktree",
       payload: { worktreeSlug: entry.slug, branch: "issue-13" },
     })
-    await inMove
-    const promptResponse = await app.inject({
-      method: "POST",
-      url: "/workspaces/workspace/instance/api/session/ses_child/prompt",
-      payload: { text: "blocked during family move" },
-    })
-    assert.equal(promptResponse.statusCode, 409, promptResponse.body)
-    assert.deepEqual(forwarded, [], "child prompt must be blocked before environment or dispatch")
-    releaseMove()
+    let moveReleased = false
+    const releaseMoveOnce = () => {
+      if (moveReleased) return
+      moveReleased = true
+      releaseMove?.()
+    }
+    try {
+      await Promise.race([
+        inMove,
+        movePromise.then((res) => {
+          throw new Error(`move completed before entering move hook (${res.statusCode}): ${res.body}`)
+        }),
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(() => reject(new Error("timed out waiting for family move to enter lock")), 25000)
+          timer.unref?.()
+        }),
+      ])
+      const promptResponse = await app.inject({
+        method: "POST",
+        url: "/workspaces/workspace/instance/api/session/ses_child/prompt",
+        payload: { text: "blocked during family move" },
+      })
+      assert.equal(promptResponse.statusCode, 409, promptResponse.body)
+      assert.equal(promptResponse.headers["x-codenomad-before-dispatch"], "1")
+      assert.deepEqual(promptResponse.json(), { error: "Session move is in progress" })
+      assert.deepEqual(forwarded, [], "child prompt must be blocked before environment or dispatch")
+    } finally {
+      releaseMoveOnce()
+    }
     const moveResponse = await movePromise
     assert.equal(moveResponse.statusCode, 200, moveResponse.body)
+  } finally { await app.close(); rmSync(root, { recursive: true, force: true }) }
+})
+
+test("a child session created while draining the parent is locked before moving the family", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "codenomad-move-late-child-")), repo = path.join(root, "main"), childWt = path.join(root, "child")
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim()
+  git(root, "init", "-q", "-b", "main", repo)
+  git(repo, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "base")
+  git(repo, "worktree", "add", "-q", "-b", "issue-14", childWt)
+  const entry = (await fixtureCatalogue(repo)).worktrees.find(worktree => worktree.branch === "issue-14")!
+  const rootSession = { id: "ses_root", projectID: "project", location: { directory: repo }, time: { created: 1, updated: 1 } }
+  const lateChild = { id: "ses_child_late", parentID: "ses_root", projectID: "project", location: { directory: repo }, time: { created: 2, updated: 2 } }
+  const sessions = new Map<string, any>([["ses_root", rootSession]])
+  let releaseMove!: () => void
+  let moveEntered!: () => void
+  const inMove = new Promise<void>(resolve => { moveEntered = resolve })
+  const forwarded: string[] = []
+  const fence = new WorktreeDeletionFence()
+  // Hold an active in-flight prompt on ses_root while the family move starts draining it.
+  const releaseParentPrompt = fence.enterSession("ses_root")!
+  assert.ok(releaseParentPrompt)
+  let listCalls = 0
+  const client = {
+    rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
+    location: { get: async ({ location }: any) => ({ directory: location.directory, project: { id: "project", canonical: repo, directory: repo } }) },
+    session: {
+      get: async ({ sessionID }: any) => structuredClone(sessions.get(sessionID)),
+      list: async () => {
+        listCalls += 1
+        if (listCalls === 1) {
+          // Spawn the child while the parent prompt is still draining, then let the parent finish.
+          setTimeout(() => {
+            sessions.set("ses_child_late", lateChild)
+            releaseParentPrompt()
+          }, 15)
+        }
+        return { data: Array.from(sessions.values(), s => structuredClone(s)), cursor: {} }
+      },
+      active: async () => ({}),
+      environment: async () => { forwarded.push("env") },
+      move: async ({ sessionID, directory }: any) => {
+        if (sessionID === "ses_root") {
+          moveEntered()
+          await new Promise<void>(resolve => { releaseMove = resolve })
+        }
+        sessions.get(sessionID)!.location = { directory }
+      },
+    },
+  }
+  const connection = {
+    endpoint: { url: "http://private-fixture.invalid" },
+    client,
+    profile: async () => "modern" as const,
+    assertCurrent() {},
+    invalidate() {},
+    fetch: markDispatchHookAwareFetch(async (_input: unknown, _init?: unknown, _media?: unknown, dispatchHooks?: { beforeFetch?: () => Promise<void>; onDispatch?: () => void }) => {
+      await dispatchHooks?.beforeFetch?.()
+      dispatchHooks?.onDispatch?.()
+      forwarded.push("forward")
+      return Response.json({ ok: true })
+    }),
+  }
+  const workspaceManager = {
+    get: () => ({ id: "workspace", path: repo }),
+    getWorktrees: () => fixtureCatalogue(repo),
+    getServiceLocation: () => ({ directory: repo }),
+    getServiceDirectory: () => repo,
+    getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
+    getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
+    getSharedServiceClient: async () => client,
+    getSharedServiceConnection: async () => connection,
+    getSharedServiceEndpoint: async () => connection.endpoint,
+    getInstanceAuthorizationHeader: () => undefined,
+    getSessionEnvironment: async () => ({}),
+    ownsLocation: async () => true,
+    ownsDirectory: async () => true,
+    ownsPath: async () => true,
+  } as any
+  const app = Fastify()
+  registerWorktreeRoutes(app, { worktreeDeletionFence: fence, workspaceManager })
+  registerInstanceProxyRoutes(app, {
+    workspaceManager,
+    worktreeDeletionFence: fence,
+    logger: { debug() {}, error() {}, isLevelEnabled: () => false } as any,
+  })
+  try {
+    const movePromise = app.inject({
+      method: "POST",
+      url: "/api/workspaces/workspace/sessions/ses_root/worktree",
+      payload: { worktreeSlug: entry.slug, branch: "issue-14" },
+    })
+    let moveReleased = false
+    const releaseMoveOnce = () => {
+      if (moveReleased) return
+      moveReleased = true
+      releaseMove?.()
+    }
+    try {
+      await Promise.race([
+        inMove,
+        movePromise.then((res) => {
+          throw new Error(`move completed before entering move hook (${res.statusCode}): ${res.body}`)
+        }),
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(() => reject(new Error("timed out waiting for retried family move")), 25000)
+          timer.unref?.()
+        }),
+      ])
+      const childPrompt = await app.inject({
+        method: "POST",
+        url: "/workspaces/workspace/instance/api/session/ses_child_late/prompt",
+        payload: { text: "must be blocked under widened family lock" },
+      })
+      assert.equal(childPrompt.statusCode, 409, childPrompt.body)
+      assert.equal(childPrompt.headers["x-codenomad-before-dispatch"], "1")
+      assert.deepEqual(childPrompt.json(), { error: "Session move is in progress" })
+      assert.deepEqual(forwarded, [])
+    } finally {
+      releaseMoveOnce()
+    }
+    const moveResponse = await movePromise
+    assert.equal(moveResponse.statusCode, 200, moveResponse.body)
+    assert.equal(lateChild.location.directory, childWt)
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }) }
 })

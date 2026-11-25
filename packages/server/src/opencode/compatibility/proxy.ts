@@ -1,6 +1,6 @@
 import { PassThrough, Readable } from "node:stream"
 import type { FastifyReply, FastifyRequest } from "fastify"
-import type { RuntimeFetchDispatchHooks } from "./transport"
+import { supportsDispatchHooks, type RuntimeFetchDispatchHooks } from "./transport"
 
 export class PreDispatchHttpError extends Error {
   constructor(readonly statusCode: number, readonly payload: Record<string, unknown>) {
@@ -72,6 +72,9 @@ export async function forwardRuntimeRequest(args: {
     if (body === undefined) headers.delete("content-type")
     let response: Response
     if (args.beforeDispatch) {
+      if (!supportsDispatchHooks(args.fetch)) {
+        throw new PreDispatchHttpError(502, { error: "opencode_unavailable_before_send" })
+      }
       let beforeRan = false
       const dispatchHooks: RuntimeFetchDispatchHooks = {
         beforeFetch: async () => {
@@ -83,7 +86,9 @@ export async function forwardRuntimeRequest(args: {
       response = await args.fetch(args.url, { method: args.request.method, headers, body, signal: controller.signal }, undefined, dispatchHooks)
       if (!beforeRan) {
         await response.body?.cancel().catch(() => {})
-        throw new PreDispatchHttpError(502, { error: "opencode_unavailable_before_send" })
+        release()
+        if (detached) return
+        return args.reply.code(502).send({ error: "OpenCode dispatch hook did not run" })
       }
     } else {
       dispatched = true
@@ -147,9 +152,7 @@ export async function forwardRuntimeRequest(args: {
     release()
     if (error instanceof PreDispatchHttpError) {
       if (detached) return
-      if (error.statusCode === 502 || error.statusCode === 401) {
-        args.reply.header("x-codenomad-before-dispatch", "1")
-      }
+      args.reply.header("x-codenomad-before-dispatch", "1")
       return args.reply.code(error.statusCode).send(error.payload)
     }
     if (!dispatched && args.beforeDispatch && !controller.signal.aborted) {

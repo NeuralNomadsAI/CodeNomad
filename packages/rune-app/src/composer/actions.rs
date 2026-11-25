@@ -784,7 +784,7 @@ mod tests {
         let mut s = crate::init();
         crate::gallery::shell::fixture(&mut s);
         let mut ui = workspace::Ui::new();
-        ui.set_ready_for_test();
+        ui.fixture_ready();
         s.workspace = Some(ui);
         let mut first = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
         first.workspace = "ws".into();
@@ -911,7 +911,7 @@ mod tests {
         let mut s = crate::init();
         crate::gallery::shell::fixture(&mut s);
         let mut ui = workspace::Ui::new();
-        ui.set_ready_for_test();
+        ui.fixture_ready();
         s.workspace = Some(ui);
         let mut first = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
         first.workspace = "ws".into();
@@ -1105,7 +1105,7 @@ mod tests {
         let mut s = crate::init();
         crate::gallery::shell::fixture(&mut s);
         let mut ui = workspace::Ui::new();
-        ui.set_ready_for_test();
+        ui.fixture_ready();
         s.workspace = Some(ui);
         let mut first = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
         first.workspace = "ws".into();
@@ -1182,7 +1182,7 @@ mod tests {
         let mut s = crate::init();
         crate::gallery::shell::fixture(&mut s);
         let mut ui = workspace::Ui::new();
-        ui.set_ready_for_test();
+        ui.fixture_ready();
         s.workspace = Some(ui);
         let mut first = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
         first.workspace = "ws".into();

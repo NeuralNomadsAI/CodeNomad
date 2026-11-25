@@ -120,28 +120,47 @@ export async function moveProjectSessionFamily(params: {
   runMutation?: <T>(directories: string[], operation: () => Promise<T>, sessionIds?: string[]) => Promise<T>
 }): Promise<SessionFamilyMoveResult> {
   return withProject(params.client, params.projectLocation, async (context) => {
-    if (params.validateTarget && !await params.validateTarget()) {
-      throw new ProjectSessionError("Worktree changed before the session move", 409)
-    }
-    const inventory = await listCompleteProjectSessions(context.client, context.project.id)
-    const families = resolveSessionFamilies(inventory)
-    const family = Array.from(families.entries()).find(([, members]) => members.some(({ id }) => id === params.sessionId))
-    if (!family) throw new ProjectSessionError("Session not found in project", 404)
-    assertWorkspaceFamily(family[1], context.workspaceID)
-    const target = await resolveProjectLocation(context, params.targetDirectory, params.resolveExactDirectory)
-    const sessionIds = family[1].map(({ id }) => id)
-    const move = async () => {
-      await assertInactive(context.client, family[1])
-      for (const session of family[1]) await assertOrdinaryMissionScheduleSession(context.client, session)
+    const familySignature = (members: SessionInfo[]) =>
+      members
+        .map((member) => `${member.id}\0${member.location.directory}\0${member.location.workspaceID ?? ""}`)
+        .sort()
+        .join("\n")
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
       if (params.validateTarget && !await params.validateTarget()) {
         throw new ProjectSessionError("Worktree changed before the session move", 409)
       }
-      await moveWithRollback(context, family[1], target)
-      return { rootSessionId: family[0], sessionIds }
+      const inventory = await listCompleteProjectSessions(context.client, context.project.id)
+      const families = resolveSessionFamilies(inventory)
+      const family = Array.from(families.entries()).find(([, members]) => members.some(({ id }) => id === params.sessionId))
+      if (!family) throw new ProjectSessionError("Session not found in project", 404)
+      assertWorkspaceFamily(family[1], context.workspaceID)
+      const target = await resolveProjectLocation(context, params.targetDirectory, params.resolveExactDirectory)
+      const sessionIds = family[1].map(({ id }) => id)
+      const expectedSignature = familySignature(family[1])
+      const move = async (): Promise<{ retry: true } | SessionFamilyMoveResult> => {
+        const freshInventory = await listCompleteProjectSessions(context.client, context.project.id)
+        const freshFamilies = resolveSessionFamilies(freshInventory)
+        const freshFamily = Array.from(freshFamilies.entries()).find(([, members]) => members.some(({ id }) => id === params.sessionId))
+        if (!freshFamily) throw new ProjectSessionError("Session not found in project", 404)
+        if (familySignature(freshFamily[1]) !== expectedSignature) {
+          return { retry: true }
+        }
+        assertWorkspaceFamily(freshFamily[1], context.workspaceID)
+        await assertInactive(context.client, freshFamily[1])
+        for (const session of freshFamily[1]) await assertOrdinaryMissionScheduleSession(context.client, session)
+        if (params.validateTarget && !await params.validateTarget()) {
+          throw new ProjectSessionError("Worktree changed before the session move", 409)
+        }
+        await moveWithRollback(context, freshFamily[1], target)
+        return { rootSessionId: freshFamily[0], sessionIds }
+      }
+      const outcome = params.runMutation
+        ? await params.runMutation([...family[1].map(({ location }) => location.directory), target.directory], move, sessionIds)
+        : await move()
+      if (!("retry" in outcome)) return outcome
     }
-    return params.runMutation
-      ? params.runMutation([...family[1].map(({ location }) => location.directory), target.directory], move, sessionIds)
-      : move()
+    throw new ProjectSessionError("Session family changed before the session move", 409)
   })
 }
 

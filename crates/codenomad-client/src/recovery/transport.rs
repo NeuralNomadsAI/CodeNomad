@@ -93,6 +93,7 @@ async fn finish_authentication_required(
 }
 
 fn can_admit_send(
+    backend: &Backend,
     wire: &stream::State,
     reading: Option<&ReadingLane>,
     reader: &Reader,
@@ -100,6 +101,7 @@ fn can_admit_send(
     out: &Sender<Event>,
 ) -> bool {
     !out.is_closed()
+        && !backend.client.attestation_revoked()
         && !wire.placement_closed()
         && !wire.auth_expired.load(SeqCst)
         && !reading.is_some_and(|lane| lane.revoked.load(SeqCst))
@@ -348,7 +350,7 @@ pub(crate) async fn run_with_reading(
                 name,
                 text,
             })) => {
-                let admitted = can_admit_send(&wire, reading, &reader, ever_opened, &out);
+                let admitted = can_admit_send(&backend, &wire, reading, &reader, ever_opened, &out);
                 if let receipts::SlashReceipt::AuthenticationRequired { confirmed } =
                     receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
                         .await
@@ -369,14 +371,17 @@ pub(crate) async fn run_with_reading(
             Some(Input::Command(Command::Prompt(prompt))) => {
                 let Some(id) = &prompt.id else { continue };
                 // The compose gesture owns one attempt even if its tab suspends before dispatch.
-                let encoded = if can_admit_send(&wire, reading, &reader, ever_opened, &out) {
-                    crate::prompt::encode(&prompt).ok()
-                } else {
-                    None
-                };
+                let encoded =
+                    if can_admit_send(&backend, &wire, reading, &reader, ever_opened, &out) {
+                        crate::prompt::encode(&prompt).ok()
+                    } else {
+                        None
+                    };
                 // Re-check placement and revocation right after encoding, before dispatching the POST.
                 let outcome = match encoded {
-                    Some(body) if can_admit_send(&wire, reading, &reader, ever_opened, &out) => {
+                    Some(body)
+                        if can_admit_send(&backend, &wire, reading, &reader, ever_opened, &out) =>
+                    {
                         match receipts::prompt_encoded(&backend, &out, &wake, &wire, id, body).await
                         {
                             receipts::PromptReceipt::Outcome(outcome) => outcome,

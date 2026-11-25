@@ -1231,12 +1231,13 @@ fn prompt_501_prototype_is_rejected_and_native_401_is_unconfirmed() {
                 let responses = [
                     (
                         "501 Not Implemented",
+                        true,
                         r#"{"error":"Route not implemented in this prototype"}"#,
                     ),
-                    ("401 Unauthorized", r#"{"error":"unauthorized"}"#),
-                    ("200 OK", r#"{"authenticated":false}"#),
+                    ("401 Unauthorized", false, r#"{"error":"unauthorized"}"#),
+                    ("200 OK", false, r#"{"authenticated":false}"#),
                 ];
-                for (status, body) in responses {
+                for (status, before_dispatch, body) in responses {
                     let (socket, _) = listener.accept().await.unwrap();
                     let mut req = BufReader::new(socket);
                     let mut len = 0usize;
@@ -1257,10 +1258,15 @@ fn prompt_501_prototype_is_rejected_and_native_401_is_unconfirmed() {
                         let mut discard = vec![0; len];
                         req.read_exact(&mut discard).await.unwrap();
                     }
+                    let marker = if before_dispatch {
+                        "x-codenomad-before-dispatch: 1\r\n"
+                    } else {
+                        ""
+                    };
                     req.get_mut()
                         .write_all(
                             format!(
-                                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                "HTTP/1.1 {status}\r\n{marker}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                                 body.len()
                             )
                             .as_bytes(),
@@ -1942,5 +1948,233 @@ fn unmarked_401_with_live_auth_stays_unconfirmed_and_marked_401_with_failed_stat
         })
         .await
         .expect("401 edge cases must complete");
+    });
+}
+
+#[test]
+fn unmarked_native_4xx_501_503_are_unconfirmed_while_marked_pre_dispatch_are_rejected() {
+    use crate::prompt::PromptError;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut backend =
+                Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+                    .await
+                    .unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let cases = [
+                ("400 Bad Request", true, r#"{"error":"Invalid session ID"}"#, PromptError::Rejected),
+                ("400 Bad Request", false, r#"{"error":"Invalid session ID"}"#, PromptError::Unconfirmed),
+                ("404 Not Found", true, r#"{"error":"Session not found"}"#, PromptError::Rejected),
+                ("404 Not Found", false, r#"{"error":"Session not found"}"#, PromptError::Unconfirmed),
+                ("409 Conflict", true, r#"{"error":"Session move is in progress"}"#, PromptError::Rejected),
+                ("409 Conflict", false, r#"{"error":"Session move is in progress"}"#, PromptError::Unconfirmed),
+                (
+                    "501 Not Implemented",
+                    true,
+                    r#"{"error":"Route not implemented in this prototype"}"#,
+                    PromptError::Rejected,
+                ),
+                (
+                    "501 Not Implemented",
+                    false,
+                    r#"{"error":"Route not implemented in this prototype"}"#,
+                    PromptError::Unconfirmed,
+                ),
+                (
+                    "503 Service Unavailable",
+                    true,
+                    r#"{"error":"Conversation permissions unavailable"}"#,
+                    PromptError::Rejected,
+                ),
+                (
+                    "503 Service Unavailable",
+                    false,
+                    r#"{"error":"Conversation permissions unavailable"}"#,
+                    PromptError::Unconfirmed,
+                ),
+            ];
+            let server_cases: Vec<_> = cases.iter().map(|(s, m, b, _)| (*s, *m, *b)).collect();
+            let server = tokio::spawn(async move {
+                for (status, before_dispatch, body) in server_cases {
+                    let (socket, _) = listener.accept().await.unwrap();
+                    let mut req = BufReader::new(socket);
+                    let mut len = 0usize;
+                    loop {
+                        let mut line = String::new();
+                        assert!(req.read_line(&mut line).await.unwrap() > 0);
+                        if line == "\r\n" {
+                            break;
+                        }
+                        if let Some(rest) = line
+                            .strip_prefix("content-length:")
+                            .or_else(|| line.strip_prefix("Content-Length:"))
+                        {
+                            len = rest.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if len > 0 {
+                        let mut discard = vec![0; len];
+                        req.read_exact(&mut discard).await.unwrap();
+                    }
+                    let marker = if before_dispatch {
+                        "x-codenomad-before-dispatch: 1\r\n"
+                    } else {
+                        ""
+                    };
+                    req.get_mut()
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 {status}\r\n{marker}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .await
+                        .unwrap();
+                }
+            });
+            for (index, (status, before_dispatch, _, expected)) in cases.iter().enumerate() {
+                let err = backend
+                    .prompt(&crate::prompt::Prompt {
+                        id: Some(format!("msg_0000000000000000000000000000003{index}")),
+                        text: format!("{status} marked={before_dispatch}"),
+                        ..Default::default()
+                    })
+                    .await
+                    .unwrap_err();
+                assert_eq!(
+                    err.downcast_ref::<PromptError>(),
+                    Some(expected),
+                    "unexpected classification for {status} (before_dispatch={before_dispatch})"
+                );
+            }
+            server.await.unwrap();
+        })
+        .await
+        .expect("pre-dispatch vs unmarked native error classification must complete");
+    });
+}
+
+#[test]
+fn revoked_server_attestation_rejects_queued_prompt_without_http_post() {
+    use crate::transport::{Command, Event, PromptOutcome};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut backend =
+                Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+                    .await
+                    .unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            assert!(backend.client.attest("server-original", Vec::new()));
+            let posts = Arc::new(AtomicUsize::new(0));
+            let server_posts = posts.clone();
+            let (sse_open_tx, sse_open_rx) = bounded(1);
+            let server = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut req = BufReader::new(socket);
+                let mut head = String::new();
+                assert!(req.read_line(&mut head).await.unwrap() > 0);
+                if head.starts_with("POST ") {
+                    server_posts.fetch_add(1, Ordering::SeqCst);
+                }
+                loop {
+                    let mut line = String::new();
+                    assert!(req.read_line(&mut line).await.unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                // Respond to GET /api/meta on initial stream attestation, then open SSE.
+                if head.contains("/api/meta") {
+                    let meta = r#"{"serverId":"server-original","capabilities":[]}"#;
+                    req.get_mut()
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{meta}",
+                                meta.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .await
+                        .unwrap();
+                    let (socket, _) = listener.accept().await.unwrap();
+                    let mut req = BufReader::new(socket);
+                    let mut sse_head = String::new();
+                    assert!(req.read_line(&mut sse_head).await.unwrap() > 0);
+                    if sse_head.starts_with("POST ") {
+                        server_posts.fetch_add(1, Ordering::SeqCst);
+                    }
+                    loop {
+                        let mut line = String::new();
+                        assert!(req.read_line(&mut line).await.unwrap() > 0);
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    req.get_mut()
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n: ok\n\n")
+                        .await
+                        .unwrap();
+                    let _ = sse_open_tx.try_send(());
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+            });
+            let (out, events) = bounded(16);
+            let (cmd_tx, cmd_rx) = bounded(4);
+            let wake: crate::Wake = Arc::new(|| {});
+            let run_backend = backend.clone();
+            let transport = tokio::spawn(async move {
+                let _ = crate::recovery::run_with_reading(run_backend, out, cmd_rx, wake, None)
+                    .await;
+            });
+            let _ = sse_open_rx.recv().await;
+            // Wait until the stream is established so direct send authority would normally be active.
+            while let Ok(event) = events.recv().await {
+                if matches!(event, Event::Reconnecting) {
+                    continue;
+                }
+                break;
+            }
+            // Simulate a detected replacement server revoking server attestation.
+            assert!(!backend.client.attest("server-replacement", Vec::new()));
+            assert!(backend.client.attestation_revoked());
+            let attempt = "msg_00000000000000000000000000000099".to_owned();
+            cmd_tx
+                .send(Command::Prompt(crate::prompt::Prompt {
+                    id: Some(attempt.clone()),
+                    text: "must never post to replacement server".into(),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
+            let mut saw_rejected = false;
+            while let Ok(event) = events.recv().await {
+                if let Event::PromptAcknowledged { attempted, outcome } = event {
+                    assert_eq!(attempted, attempt);
+                    assert!(
+                        matches!(outcome, PromptOutcome::Rejected),
+                        "revoked server attestation must reject without HTTP POST"
+                    );
+                    saw_rejected = true;
+                    break;
+                }
+            }
+            assert!(saw_rejected);
+            assert_eq!(posts.load(Ordering::SeqCst), 0);
+            drop(cmd_tx);
+            let _ = transport.await;
+            let _ = server.await;
+        })
+        .await
+        .expect("revoked attestation send refusal must complete");
     });
 }

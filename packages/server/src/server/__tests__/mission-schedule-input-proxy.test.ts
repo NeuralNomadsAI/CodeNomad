@@ -6,6 +6,7 @@ import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { MISSION_SCHEDULE_CARRIER_SESSION_PREFIX } from "../../missions/mission-schedule-carrier-identity"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { NATIVE_SCHEDULE_CARRIER_MODEL, NATIVE_SCHEDULE_CARRIER_TITLE } from "../../opencode/missions/native-schedule-carrier"
+import { markDispatchHookAwareFetch } from "../../opencode/compatibility/transport"
 import { registerInstanceProxyRoutes, type InstanceProxyWorkspaceManager } from "../http-server"
 
 const apps: FastifyInstance[] = []
@@ -17,16 +18,25 @@ function fixture() {
   const uncertainSessions: string[] = []
   const state = {
     owned: false, metadata: undefined as Record<string, unknown> | undefined, directory: "/repo/worktree",
+    projectID: "project-a",
+    createdAt: 1,
     result: undefined as unknown, failure: undefined as unknown, current: true,
     connectionError: undefined as unknown,
     profileError: undefined as unknown,
+    usePlainFetch: false,
     afterRead: async () => {},
     beforeFetchCheck: async () => {},
   }
-  const sessions = new Map<string, { id: string; location: { directory: string }; metadata?: Record<string, unknown>;
+  const sessions = new Map<string, { id: string; location: { directory: string }; projectID?: string; time?: { created: number }; metadata?: Record<string, unknown>;
     model?: { providerID: string; id: string }; title?: string }>()
   const missing = new Set<string>()
-  const session = (id: string) => sessions.get(id) ?? { id, location: { directory: state.directory }, metadata: state.metadata }
+  const session = (id: string) => sessions.get(id) ?? {
+    id,
+    projectID: state.projectID,
+    time: { created: state.createdAt },
+    location: { directory: state.directory },
+    metadata: state.metadata,
+  }
   const client = {
     rpc: (definition: unknown) => {
       assert.equal(definition, CODENOMAD_MISSIONS_RPC)
@@ -46,21 +56,28 @@ function fixture() {
     },
   } as unknown as OpenCodeClient
   const endpoint = { url: "http://private-fixture.invalid" }
+  const hookAwareFetch = markDispatchHookAwareFetch(async (
+    _input: unknown,
+    _init?: unknown,
+    _media?: unknown,
+    dispatchHooks?: { beforeFetch?: () => Promise<void>; onDispatch?: () => void },
+  ) => {
+    await state.beforeFetchCheck()
+    await dispatchHooks?.beforeFetch?.()
+    connection.assertCurrent()
+    dispatchHooks?.onDispatch?.()
+    events.push("forward")
+    return Response.json({ ok: true })
+  })
+  const plainFetch = async () => {
+    events.push("plain-forward")
+    return Response.json({ ok: true })
+  }
   const connection = {
     endpoint, client, profile: async () => { if (state.profileError) throw state.profileError; return "modern" as const },
     assertCurrent() { if (!state.current) throw new Error("replaced connection") }, invalidate() {},
-    fetch: async (
-      _input: unknown,
-      _init?: unknown,
-      _media?: unknown,
-      dispatchHooks?: { beforeFetch?: () => Promise<void>; onDispatch?: () => void },
-    ) => {
-      await state.beforeFetchCheck()
-      await dispatchHooks?.beforeFetch?.()
-      connection.assertCurrent()
-      dispatchHooks?.onDispatch?.()
-      events.push("forward")
-      return Response.json({ ok: true })
+    get fetch() {
+      return state.usePlainFetch ? plainFetch : hookAwareFetch
     },
   }
   const workspace = { id: "w", path: "/repo" }
@@ -357,7 +374,40 @@ test("duplicate x-codenomad-session-directory headers are rejected with 400 befo
     payload: { text: "duplicate header" },
   })
   assert.equal(response.statusCode, 400, response.body)
+  assert.equal(response.headers["x-codenomad-before-dispatch"], "1")
   assert.deepEqual(f.events, [])
+})
+
+test("a plain fetch without dispatch-hook support is rejected with marked 502 before any upstream call", async () => {
+  const f = fixture()
+  f.state.usePlainFetch = true
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_plain_fetch/prompt`,
+    payload: { text: "must never reach upstream" },
+  })
+  assert.equal(response.statusCode, 502, response.body)
+  assert.equal(response.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(response.json(), { error: "opencode_unavailable_before_send" })
+  assert.deepEqual(f.events, ["environment"], "plain fetch must never be invoked")
+  assert.deepEqual(f.uncertainSessions, [])
+})
+
+test("a session replaced under the same ID and location before dispatch is rejected with marked 403", async () => {
+  const f = fixture()
+  f.state.beforeFetchCheck = async () => {
+    f.state.projectID = "project-replaced"
+    f.state.createdAt = 999
+  }
+  const response = await f.app.inject({
+    method: "POST",
+    url: `${prefix}/api/session/ses_replaced_identity/prompt`,
+    payload: { text: "blocked on replaced record identity" },
+  })
+  assert.equal(response.statusCode, 403, response.body)
+  assert.equal(response.headers["x-codenomad-before-dispatch"], "1")
+  assert.deepEqual(f.events, ["environment"])
+  assert.deepEqual(f.uncertainSessions, [])
 })
 
 test("session move fence blocks concurrent prompt posts with 409 before dispatch", async () => {

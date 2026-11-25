@@ -24,21 +24,51 @@ use guards::{
     resolve_media_path_async, safe_route, schedule_input, verify_mutation_at,
 };
 
+pub(super) fn before_dispatch_error((status, body): Error) -> Response {
+    (status, [("x-codenomad-before-dispatch", "1")], body).into_response()
+}
+
 pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Response, Error> {
-    match relay_inner(app, request).await {
-        Err((Status::BAD_GATEWAY, body))
-            if matches!(
-                body.0["error"].as_str(),
-                Some("opencode_unavailable_before_send" | "session_environment_failed")
-            ) =>
-        {
-            Ok((Status::BAD_GATEWAY, [("x-codenomad-before-dispatch", "1")], body).into_response())
+    let send_input = is_send_input_request(request.method(), request.uri().path());
+    match prepare_relay(app, request).await {
+        Ok(PreparedRelay::Response(mut response)) => {
+            if send_input && !response.status().is_success() {
+                response.headers_mut().insert("x-codenomad-before-dispatch", header::HeaderValue::from_static("1"));
+            }
+            Ok(response)
         }
-        other => other,
+        Ok(PreparedRelay::Dispatch(ctx)) => dispatch::dispatch_upstream(ctx).await,
+        Err(err) if send_input => Ok(before_dispatch_error(err)),
+        Err(err) => Err(err),
     }
 }
 
-async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
+fn is_send_input_request(method: &Method, path: &str) -> bool {
+    if *method != Method::POST {
+        return false;
+    }
+    let Some(tail) = path.strip_prefix("/workspaces/") else {
+        return false;
+    };
+    let Some((_, suffix)) = tail.split_once('/') else {
+        return false;
+    };
+    let Some(suffix) = suffix.strip_prefix("instance") else {
+        return false;
+    };
+    let Some(route) = safe_route(suffix) else {
+        return false;
+    };
+    let route = route.trim_end_matches('/');
+    route.starts_with("/api/session/") && (route.ends_with("/prompt") || route.ends_with("/command"))
+}
+
+enum PreparedRelay {
+    Response(Response),
+    Dispatch(dispatch::DispatchContext),
+}
+
+async fn prepare_relay(app: Shared, request: Request) -> Result<PreparedRelay, Error> {
     let (head, body) = request.into_parts();
     let principal = head.extensions.get::<crate::auth::Principal>().cloned().ok_or_else(crate::auth::unauthorized)?;
     let invalid = || error(Status::BAD_REQUEST, "Invalid workspace instance path");
@@ -57,7 +87,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         return Err(error(Status::FORBIDDEN, "OpenCode route is not available through a workspace"));
     }
     if control.is_none() && !guarded(route, &head.method) {
-        return Ok(unavailable());
+        return Ok(PreparedRelay::Response(unavailable()));
     }
     let declared =
         head.headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<usize>().ok());
@@ -110,7 +140,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         biased;
         _ = principal.0.cancelled() => {
             return if send_input {
-                Ok(crate::auth::unauthorized_before_dispatch())
+                Ok(PreparedRelay::Response(crate::auth::unauthorized_before_dispatch()))
             } else {
                 Err(crate::auth::unauthorized())
             };
@@ -139,7 +169,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         biased;
         _ = principal.0.cancelled() => {
             return if send_input {
-                Ok(crate::auth::unauthorized_before_dispatch())
+                Ok(PreparedRelay::Response(crate::auth::unauthorized_before_dispatch()))
             } else {
                 Err(crate::auth::unauthorized())
             };
@@ -647,7 +677,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         explicit = true;
     }
     if session_path.is_some_and(|path| path.split('/').next() == Some("global")) {
-        return Ok(unavailable());
+        return Ok(PreparedRelay::Response(unavailable()));
     }
     if let Some(session) = session {
         let record = actual.as_ref().ok_or_else(upstream_error)?;
@@ -658,7 +688,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         }
         if head.method != Method::GET {
             if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
-                return Ok(unavailable());
+                return Ok(PreparedRelay::Response(unavailable()));
             }
             verify_mutation_at(&app, &endpoint, session, directory, record).await.map_err(|e| {
                 if send_input && e.0 == Status::BAD_GATEWAY { super::pre_dispatch_unavailable() } else { e }
@@ -672,9 +702,9 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             }
             app.workspace(id)?;
             if principal.0.is_cancelled() {
-                return Ok(crate::auth::unauthorized_before_dispatch());
+                return Ok(PreparedRelay::Response(crate::auth::unauthorized_before_dispatch()));
             }
-            return Ok(Json(json!({ "data": data })).into_response());
+            return Ok(PreparedRelay::Response(Json(json!({ "data": data })).into_response()));
         }
     }
     let recheck = mutation::InputRecheck {
@@ -712,7 +742,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         .await?
         {
             mutation::MutationOutcome::Ready(prepared) => prepared,
-            mutation::MutationOutcome::Early(response) => return Ok(response),
+            mutation::MutationOutcome::Early(response) => return Ok(PreparedRelay::Response(response)),
         };
     let mut upstream = app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password));
     // Forward all sanitized request headers across every proxied route (including Accept,
@@ -759,7 +789,7 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         upstream = upstream.json(input);
     }
     if principal.0.is_cancelled() {
-        return Ok(crate::auth::unauthorized_before_dispatch());
+        return Ok(PreparedRelay::Response(crate::auth::unauthorized_before_dispatch()));
     }
     if send_input {
         if command && let Some(Value::Object(input)) = &input {
@@ -767,7 +797,9 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         }
         match recheck.verify().await {
             Ok(_) => {}
-            Err(e) if e.0 == Status::UNAUTHORIZED => return Ok(crate::auth::unauthorized_before_dispatch()),
+            Err(e) if e.0 == Status::UNAUTHORIZED => {
+                return Ok(PreparedRelay::Response(crate::auth::unauthorized_before_dispatch()));
+            }
             Err(e) => return Err(e),
         }
     }
@@ -788,14 +820,15 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
             input_checkout: &input_checkout,
             upstream,
         })
-        .await;
+        .await
+        .map(PreparedRelay::Response);
     }
     let opened = opened.to_owned();
     let directory = directory.to_owned();
     let route = route.to_owned();
     let id = id.to_owned();
     let dispatch_session = session.map(str::to_owned);
-    dispatch::dispatch_upstream(dispatch::DispatchContext {
+    Ok(PreparedRelay::Dispatch(dispatch::DispatchContext {
         app,
         workspace,
         endpoint,
@@ -818,6 +851,5 @@ async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
         receipt,
         mutation,
         rules_lock,
-    })
-    .await
+    }))
 }

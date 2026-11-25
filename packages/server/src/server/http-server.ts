@@ -124,6 +124,7 @@ import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaS
 import { PREVIEW_SANDBOX_FLAGS } from "../previews/sandbox"
 import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { forwardRuntimeRequest, PreDispatchHttpError } from "../opencode/compatibility/proxy"
+import { markDispatchHookAwareFetch, supportsDispatchHooks } from "../opencode/compatibility/transport"
 import { SessionModeConflict, SessionPermissionModes } from "../permissions/session-mode"
 import { appendSessionProjection, sessionPermissionRules, blockPositions } from "../permissions/session-mode-rules"
 import { recordPermissionFork, registerSessionPermissionModeRoutes, sessionPermissionTarget } from "./routes/session-permission-mode"
@@ -1018,7 +1019,18 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
 
     instance.post(
       "/workspaces/:id/instance/api/session/:sessionId/prompt",
-      { bodyLimit: PROMPT_INLINE_FILE_LIMITS.maxRequestBodyBytes },
+      {
+        bodyLimit: PROMPT_INLINE_FILE_LIMITS.maxRequestBodyBytes,
+        errorHandler: (error, _request, reply) => {
+          const statusCode = (error as { statusCode?: unknown } | undefined)?.statusCode
+          if (statusCode === 413) {
+            return reply.header("x-codenomad-before-dispatch", "1").code(413).send({
+              error: error instanceof Error ? error.message : "Request body is too large",
+            })
+          }
+          throw error
+        },
+      },
       proxyPromptHandler,
     )
     instance.all("/workspaces/:id/instance", proxyBaseHandler)
@@ -1060,6 +1072,32 @@ async function proxyWorkspaceRequest(args: InstanceProxyRequestArgs) {
   }
 }
 
+function sameSessionTarget(
+  initial: {
+    id: string
+    location: LocationRef
+    projectID?: string
+    parentID?: string
+    fork?: unknown
+    time?: { created?: number }
+  },
+  current: {
+    id: string
+    location: LocationRef
+    projectID?: string
+    parentID?: string
+    fork?: unknown
+    time?: { created?: number }
+  },
+): boolean {
+  return current.id === initial.id
+    && sameLocation(readLocationRef(current.location), readLocationRef(initial.location))
+    && current.projectID === initial.projectID
+    && current.parentID === initial.parentID
+    && JSON.stringify(current.fork ?? null) === JSON.stringify(initial.fork ?? null)
+    && current.time?.created === initial.time?.created
+}
+
 async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission: ReturnType<typeof requestAdmission>,
   enterSessionMutation: (id: string) => boolean, releaseSession: () => void) {
   const { request, reply, workspaceManager, logger, worktreeDeletionFence } = args
@@ -1067,29 +1105,38 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   const wait = admission.wait
   const workspaceId = (request.params as { id: string }).id
   const workspace = workspaceManager.get(workspaceId)
+  const rawRoutePath = args.pathSuffix ? `/${args.pathSuffix.replace(/^\/+/, "")}` : ""
+  const earlyPromptOrCommandPost = request.method === "POST"
+    && /^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(rawRoutePath)
+  let markBeforeDispatch = earlyPromptOrCommandPost
+  const sendPreDispatch = (statusCode: number, payload: Record<string, unknown>) =>
+    (markBeforeDispatch ? reply.header("x-codenomad-before-dispatch", "1") : reply).code(statusCode).send(payload)
+  const sendUnavailableBeforeSend = () =>
+    sendPreDispatch(502, { error: "opencode_unavailable_before_send" })
 
   if (!workspace) {
-    reply.code(404).send({ error: "Workspace not found" })
+    sendPreDispatch(404, { error: "Workspace not found" })
     return
   }
 
   const rawInstancePath = (request.raw.url ?? "").split("?", 1)[0]?.match(/\/instance(?:\/(.*))?$/)?.[1] ?? ""
   if (/\\|%2f|%5c/i.test(rawInstancePath) || hasDotSegment(rawInstancePath)) {
-    reply.code(400).send({ error: "Invalid workspace instance path" })
+    sendPreDispatch(400, { error: "Invalid workspace instance path" })
     return
   }
   const routeUrl = buildInstanceTargetUrl("http://127.0.0.1", args.pathSuffix)
   if (!routeUrl) {
-    reply.code(400).send({ error: "Invalid workspace instance path" })
+    sendPreDispatch(400, { error: "Invalid workspace instance path" })
     return
   }
   const pathname = decodeURIComponent(routeUrl.pathname)
   if (!isAllowedInstanceApiRoute(request.method, pathname)) {
-    reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
+    sendPreDispatch(403, { error: "OpenCode route is not available through a workspace" })
     return
   }
   const isPromptOrCommandPost = request.method === "POST"
     && /^\/api\/session\/[^/]+\/(?:prompt|command)\/?$/.test(pathname)
+  markBeforeDispatch = isPromptOrCommandPost
   const kind = controlKind(request.method, pathname.replace(/\/+$/, ""))
   const sessionControl = kind && !isGlobalFormAction(pathname, request.method) ? kind : undefined
   const workspaceOperation = sessionControl ? workspaceManager.captureWorkspaceOperation?.(workspaceId) : undefined
@@ -1102,7 +1149,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   if (ordinarySessionMutation) {
     try { assertOrdinaryMissionScheduleBody(request.body, pathname.replace(/\/+$/, "") === "/api/experimental/session/import") }
     catch (error) {
-      if (error instanceof MissionScheduleInputError) return reply.code(error.statusCode).send({ error: error.message })
+      if (error instanceof MissionScheduleInputError) return sendPreDispatch(error.statusCode, { error: error.message })
       throw error
     }
   }
@@ -1129,7 +1176,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   } catch (error) {
     const statusCode = (error as { statusCode?: unknown } | undefined)?.statusCode
     if (isPromptOrCommandPost && !signal.aborted && !(typeof statusCode === "number" && statusCode >= 400 && statusCode < 500)) {
-      reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
+      sendUnavailableBeforeSend()
       return
     }
     throw error
@@ -1140,7 +1187,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   }
   if (!endpoint) {
     if (isPromptOrCommandPost) {
-      reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
+      sendUnavailableBeforeSend()
       return
     }
     reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "OpenCode service is not ready" })
@@ -1152,18 +1199,18 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   } catch (error) {
     const statusCode = (error as { statusCode?: unknown } | undefined)?.statusCode
     if (isPromptOrCommandPost && !signal.aborted && !(typeof statusCode === "number" && statusCode >= 400 && statusCode < 500)) {
-      reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
+      sendUnavailableBeforeSend()
       return
     }
     throw error
   }
   let locationContext: LocationRef | undefined
   try { locationContext = readLocationContext(request.headers[LOCATION_CONTEXT_HEADER]) }
-  catch { return reply.code(400).send({ error: "Invalid location context" }) }
+  catch { return sendPreDispatch(400, { error: "Invalid location context" }) }
 
   const targetUrl = buildInstanceTargetUrl(endpoint.url, args.pathSuffix)
   if (!targetUrl) {
-    reply.code(400).send({ error: "Invalid workspace instance path" })
+    sendPreDispatch(400, { error: "Invalid workspace instance path" })
     return
   }
   appendIncomingQuery(targetUrl, request.raw.url ?? "")
@@ -1264,7 +1311,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   const promptFiles = readPromptFilePaths(pathname, request.method, imported.body)
   const promptBudget = validatePromptAttachmentBudget(pathname, request.method, imported.body)
   if (!promptBudget.ok) {
-    reply.code(promptBudget.reason === "limit" ? 413 : 400).send({
+    sendPreDispatch(promptBudget.reason === "limit" ? 413 : 400, {
       error: promptBudget.reason === "limit"
         ? "Prompt attachments exceed the supported limits"
         : "Prompt attachment data is invalid",
@@ -1274,7 +1321,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   if (requestLocations.invalid
     || !(await wait(allDirectoriesOwned(workspaceManager, workspaceId, requestLocations.directories)))
     || !(await wait(allLocationsOwned(workspaceManager, workspaceId, requestLocations.locations, connection?.client, signal)))) {
-    reply.code(requestLocations.invalid ? 400 : 403).send({ error: "Location does not belong to workspace" })
+    sendPreDispatch(requestLocations.invalid ? 400 : 403, { error: "Location does not belong to workspace" })
     return
   }
   const translatedDirectories = new Map<string, string>()
@@ -1283,7 +1330,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       ? await wait(workspaceManager.getServiceDirectoryForPath(workspaceId, directory))
       : directory
     if (!translated) {
-      reply.code(403).send({ error: "Location does not belong to workspace" })
+      sendPreDispatch(403, { error: "Location does not belong to workspace" })
       return
     }
     translatedDirectories.set(directory, translated)
@@ -1291,23 +1338,23 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   if (locationContext && explicitLocations.some(location =>
     translatedDirectories.get(location.directory) !== translatedDirectories.get(locationContext!.directory)
       || (location.workspaceID !== undefined && location.workspaceID !== locationContext!.workspaceID))) {
-    return reply.code(400).send({ error: "Conflicting location context" })
+    return sendPreDispatch(400, { error: "Conflicting location context" })
   }
   const fileListPath = readFileListPath(targetUrl, request.method, requestLocations.directories[0] ?? workspace.path)
   if (fileListPath.invalid) {
-    reply.code(400).send({ error: "Invalid filesystem path" })
+    sendPreDispatch(400, { error: "Invalid filesystem path" })
     return
   }
   if (fileListPath.candidate) {
     if (!(await wait(workspaceManager.ownsPath(workspaceId, fileListPath.candidate)))) {
-      reply.code(403).send({ error: "Filesystem path does not belong to workspace" })
+      sendPreDispatch(403, { error: "Filesystem path does not belong to workspace" })
       return
     }
     const translated = workspaceManager.getServicePathForPath
       ? await wait(workspaceManager.getServicePathForPath(workspaceId, fileListPath.candidate))
       : fileListPath.candidate
     if (!translated) {
-      reply.code(403).send({ error: "Filesystem path does not belong to workspace" })
+      sendPreDispatch(403, { error: "Filesystem path does not belong to workspace" })
       return
     }
     targetUrl.searchParams.set("path", translated)
@@ -1317,7 +1364,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   const mutationDirectories = new Set(requestLocations.directories)
   const serviceBody = replaceRequestDirectories(targetUrl, imported.body, translatedDirectories, pathname, request.method)
   if (promptFiles.invalid || !(await wait(allPathsOwned(workspaceManager, workspaceId, promptFiles.paths)))) {
-    reply.code(promptFiles.invalid ? 400 : 403).send({ error: "Prompt file does not belong to workspace" })
+    sendPreDispatch(promptFiles.invalid ? 400 : 403, { error: "Prompt file does not belong to workspace" })
     return
   }
   const translatedPromptPaths = new Map<string, string>()
@@ -1326,7 +1373,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       ? await wait(workspaceManager.getServicePathForPath(workspaceId, candidate))
       : candidate
     if (!translated) {
-      reply.code(403).send({ error: "Prompt file does not belong to workspace" })
+      sendPreDispatch(403, { error: "Prompt file does not belong to workspace" })
       return
     }
     translatedPromptPaths.set(candidate, translated)
@@ -1419,17 +1466,17 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       session = await wait((await clientForRequest()).session.get({ sessionID: targetSessionId }, { signal }))
     } catch (error) {
       if (isInvalidRequestError(error)) {
-        reply.code(400).send({ error: "Invalid session ID" })
+        sendPreDispatch(400, { error: "Invalid session ID" })
         return
       }
       if (isSessionNotFoundError(error) && sessionId) {
         // Parent-chain hydration must distinguish a missing session from a
         // transport/authorization failure. Retain only the native public shape.
-        reply.code(404).send({ _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
+        sendPreDispatch(404, { _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
         return
       }
       if (isPromptOrCommandPost && !isSessionNotFoundError(error) && !signal.aborted) {
-        reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
+        sendUnavailableBeforeSend()
         return
       }
       if (!isSessionNotFoundError(error)) throw error
@@ -1447,7 +1494,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         const elsewhere = await wait(ownsSession(true)).then(owned => !owned, () => false)
         signal.throwIfAborted()
         connection?.assertCurrent()
-        return reply.code(403).send({ error: "Session does not belong to workspace",
+        return sendPreDispatch(403, { error: "Session does not belong to workspace",
           ...(elsewhere ? { reason: SESSION_LOCATED_ELSEWHERE_REASON } : {}) })
       }
       if (typeof ownership === "object") {
@@ -1457,7 +1504,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       }
     }
     if (ordinarySessionMutation && !enterSessionMutation(targetSessionId)) {
-      return reply.code(409).send({ error: "Session cleanup in progress" })
+      return sendPreDispatch(409, { error: "Session cleanup in progress" })
     }
     authorizedSessionDirectory = session?.location.directory
     authorizedSession = session
@@ -1471,24 +1518,24 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         }
       }
       if (headerOccurrences > 1 || typeof sessionDirectoryHeader !== "string" || sessionDirectoryHeader.length > 16_384) {
-        reply.code(400).send({ error: "Invalid session directory header" })
+        sendPreDispatch(400, { error: "Invalid session directory header" })
         return
       }
       try {
         boundSessionDirectory = decodeURIComponent(sessionDirectoryHeader)
       } catch {
-        reply.code(400).send({ error: "Invalid session directory header" })
+        sendPreDispatch(400, { error: "Invalid session directory header" })
         return
       }
       if (!await matchesBoundSessionDirectory(session.location.directory, boundSessionDirectory)) {
-        reply.code(403).send({ error: "Location does not belong to workspace" })
+        sendPreDispatch(403, { error: "Location does not belong to workspace" })
         return
       }
     }
     if (session && isMutation) {
       const sessionWorktree = await wait(workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory))
       if (!sessionWorktree) {
-        reply.code(403).send({ error: "Session does not belong to workspace" })
+        sendPreDispatch(403, { error: "Session does not belong to workspace" })
         return
       }
       mutationIdentities.add(sessionWorktree)
@@ -1505,7 +1552,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     for (const directory of mutationDirectories) {
       const identity = await workspaceManager.getWorktreeIdentityForPath(workspaceId, directory)
       if (!identity) {
-        reply.code(403).send({ error: "Location does not belong to workspace" })
+        sendPreDispatch(403, { error: "Location does not belong to workspace" })
         return
       }
       mutationIdentities.add(identity)
@@ -1516,7 +1563,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   signal.throwIfAborted()
   const releaseFence = isMutation ? worktreeDeletionFence.enter([...mutationIdentities]) : undefined
   if (isMutation && !releaseFence) {
-    reply.code(409).send({ error: "Worktree deletion is in progress" })
+    sendPreDispatch(409, { error: "Worktree deletion is in progress" })
     return
   }
   const releaseSessionMove = isPromptOrCommandPost && sessionId
@@ -1524,7 +1571,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     : undefined
   if (isPromptOrCommandPost && sessionId && !releaseSessionMove) {
     releaseFence?.()
-    reply.code(409).send({ error: "Session move is in progress" })
+    sendPreDispatch(409, { error: "Session move is in progress" })
     return
   }
   logger.debug({ workspaceId, method: request.method, targetUrl: targetUrl.toString() }, "Proxying request to instance")
@@ -1547,7 +1594,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           await wait(assertOrdinaryMissionScheduleSession(client, session, { signal, current }))
           const fresh = await wait(client.session.get({ sessionID: session.id }, { signal }))
           current()
-          if (fresh.id !== session.id || !sameLocation(readLocationRef(fresh.location), readLocationRef(session.location))
+          if (!sameSessionTarget(session, fresh)
             || !await wait(workspaceManager.ownsLocation(workspaceId, fresh.location, client, { signal }))) {
             throw new MissionScheduleInputError(403)
           }
@@ -1563,14 +1610,14 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       } catch (error) {
         if (error instanceof MissionScheduleInputError) {
           releaseMutation?.()
-          return reply.code(error.statusCode).send({ error: error.message })
+          return sendPreDispatch(error.statusCode, { error: error.message })
         }
         if (isPromptOrCommandPost && !signal.aborted) {
           releaseMutation?.()
           if (isSessionNotFoundError(error) && sessionId) {
-            return reply.code(404).send({ _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
+            return sendPreDispatch(404, { _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
           }
-          return reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
+          return sendUnavailableBeforeSend()
         }
         throw error
       }
@@ -1685,7 +1732,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         // Never log the SDK error: it can contain the complete environment body.
         releaseMutation?.()
         logger.error({ workspaceId, sessionId }, "Failed to apply profile environment")
-        return reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: SESSION_ENVIRONMENT_FAILED_ERROR_CODE })
+        return sendPreDispatch(502, { error: SESSION_ENVIRONMENT_FAILED_ERROR_CODE })
       }
       if (!pathname.replace(/\/$/, "").endsWith("/shell")) {
         try {
@@ -1713,7 +1760,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         } catch (error) {
           releaseMutation?.()
           if (error instanceof AccountSelectionFailed) {
-            return reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "PROVIDER_ACCOUNT_SELECTION_FAILED" })
+            return sendPreDispatch(502, { error: "PROVIDER_ACCOUNT_SELECTION_FAILED" })
           }
           throw error
         }
@@ -1736,7 +1783,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         } catch {
           signal.throwIfAborted()
           releaseMutation?.()
-          return reply.code(503).send({ error: "Conversation permissions unavailable" })
+          return sendPreDispatch(503, { error: "Conversation permissions unavailable" })
         }
       }
     }
@@ -1777,8 +1824,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
             signal.throwIfAborted()
             connection?.assertCurrent()
             stillOwned = workspaceManager.get(workspaceId) === workspace
-              && fresh.id === authorizedSession.id
-              && sameLocation(readLocationRef(fresh.location), readLocationRef(authorizedSession.location))
+              && sameSessionTarget(authorizedSession, fresh)
               && await wait(workspaceManager.ownsLocation(workspaceId, fresh.location, client, { signal }))
               && (boundSessionDirectory === undefined
                 || await matchesBoundSessionDirectory(fresh.location.directory, boundSessionDirectory))
@@ -1805,6 +1851,41 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       // A transcript page read by the UI: large tool images load on demand.
       const deferMedia = request.method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(pathname)
         && wantsDeferredMedia(request.headers)
+      const forwardFetch = confirmPermission || confirmDeletion || confirmRoot || forkSource
+        ? (() => {
+          const wrapped = async (
+            input: Parameters<typeof fetch>[0],
+            init?: Parameters<typeof fetch>[1],
+            mediaResponseProcessor?: undefined,
+            dispatchHooks?: Parameters<typeof runtimeFetch>[3],
+          ) => {
+            const response = await runtimeFetch(input, init, mediaResponseProcessor, dispatchHooks)
+            if (response.ok) {
+              await confirmPermission?.()
+              await confirmDeletion?.()
+              if (forkSource) {
+                try {
+                  const client = await clientForRequest()
+                  const forkSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+                  await recordPermissionFork(response, args.permissionModes!, forkSource, {
+                    client, distro: workspaceManager.getServiceWslDistro?.(workspaceId),
+                    signal: forkSignal,
+                    current: () => {
+                      forkSignal.throwIfAborted()
+                      connection?.assertCurrent()
+                      if (workspaceManager.get(workspaceId) !== workspace) throw new SessionModeConflict("Workspace changed")
+                    },
+                  }, location => workspaceManager.ownsLocation(workspaceId, location, client, { signal: forkSignal }))
+                } catch {
+                  logger.warn({ workspaceId }, "Unable to record forked conversation permissions")
+                }
+              }
+            }
+            return confirmRoot ? confirmRoot(response) : response
+          }
+          return supportsDispatchHooks(runtimeFetch) ? markDispatchHookAwareFetch(wrapped) : wrapped
+        })()
+        : runtimeFetch
       const forward = () => {
         enteredForward = true
         return forwardRuntimeRequest({
@@ -1813,31 +1894,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           : undefined,
         beforeDispatch: verifyPromptPlacementBeforeDispatch,
         request, reply, url: targetUrl.toString(), body, headers,
-        fetch: confirmPermission || confirmDeletion || confirmRoot || forkSource ? async (input, init, mediaResponseProcessor, dispatchHooks) => {
-          const response = await runtimeFetch(input, init, mediaResponseProcessor, dispatchHooks)
-          if (response.ok) {
-            await confirmPermission?.()
-            await confirmDeletion?.()
-            if (forkSource) {
-              try {
-                const client = await clientForRequest()
-                const forkSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-                await recordPermissionFork(response, args.permissionModes!, forkSource, {
-                  client, distro: workspaceManager.getServiceWslDistro?.(workspaceId),
-                  signal: forkSignal,
-                  current: () => {
-                    forkSignal.throwIfAborted()
-                    connection?.assertCurrent()
-                    if (workspaceManager.get(workspaceId) !== workspace) throw new SessionModeConflict("Workspace changed")
-                  },
-                }, location => workspaceManager.ownsLocation(workspaceId, location, client, { signal: forkSignal }))
-              } catch {
-                logger.warn({ workspaceId }, "Unable to record forked conversation permissions")
-              }
-            }
-          }
-          return confirmRoot ? confirmRoot(response) : response
-        } : runtimeFetch, release: releaseMutation,
+        fetch: forwardFetch, release: releaseMutation,
         retainMutation: ordinarySessionMutation && targetSessionId && args.sessionCleanup
           ? confirmed => { if (!confirmed) args.sessionCleanup!.markUncertain(targetSessionId) }
           : confirmRoot || patchSession ? () => {} : undefined,
@@ -1873,7 +1930,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     }
     if (confirmRoot || patchSession || ordinarySessionMutation && targetSessionId && args.sessionCleanup) {
       releaseMutation?.()
-      return reply.code(503).send({ error: "Session mutation transport is unavailable" })
+      return sendPreDispatch(503, { error: "Session mutation transport is unavailable" })
     }
     signal.throwIfAborted()
     return reply.from(targetUrl.toString(), {
@@ -1926,7 +1983,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   } catch (error) {
     releaseMutation?.()
     if (isPromptOrCommandPost && !enteredForward && !signal.aborted && !reply.sent) {
-      return reply.header("x-codenomad-before-dispatch", "1").code(502).send({ error: "opencode_unavailable_before_send" })
+      return sendUnavailableBeforeSend()
     }
     throw error
   }

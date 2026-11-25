@@ -459,4 +459,34 @@ fn linked_disconnect_during_historical_page_preserves_error_and_retry_direction(
     assert!(poll_chat(&mut state, 8));
     assert!(!state.history_error);
     assert_eq!(state.transcript_display.timeline.page_retry, None);
+
+    // Terminal incoming channel closure preserves page_retry direction and history_error.
+    let mut state = init();
+    let (mut reader, _lane) = Reader::open();
+    reader.install(true);
+    state.reader = Some(reader);
+    state.phase = Phase::Ready;
+    state.history_detached = true;
+    state.can_older = true;
+    let (cmd_tx, cmd_rx) = bounded(4);
+    let (out, incoming) = bounded(4);
+    state.commands = Some(cmd_tx);
+    state.incoming = Some(incoming);
+    assert!(request_page(&mut state, HistoryEdge::After));
+    let _ = cmd_rx.try_recv().unwrap();
+    out.try_send(Event::ConnectionLost).unwrap();
+    assert!(poll_chat(&mut state, 8));
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::After)
+    );
+    drop(out);
+    assert!(poll_chat(&mut state, 8));
+    assert!(matches!(state.phase, Phase::Failed));
+    assert!(state.history_error);
+    assert_eq!(
+        state.transcript_display.timeline.page_retry,
+        Some(HistoryEdge::After)
+    );
 }
