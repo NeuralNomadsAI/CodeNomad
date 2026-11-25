@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { checkState, keyRefusal, PreviewTab, type PreviewHost } from "./commands"
+import { checkState, keyRefusal, matchesURL, PreviewTab, type PreviewHost } from "./commands"
 
 function fixture() {
   const calls: Record<string, unknown>[] = []
@@ -157,7 +157,7 @@ test("options the preview cannot honor are refused, defaults are accepted, and m
     [{ type: "find", text: "Go", interactive: true }, "interactive"], [{ type: "reload", ignoreCache: true }, "ignoreCache"],
     [{ type: "click", ref: "e1", button: "right" }, "button"], [{ type: "click", ref: "e1", count: 2 }, "count"],
     [{ type: "click", ref: "e1", modifiers: ["Shift"] }, "modifiers"], [{ type: "screenshot", fullPage: true }, "fullPage"],
-    [{ type: "screenshot", format: "jpeg" }, "format"], [{ type: "wait", condition: "url", url: "x" }, "url"],
+    [{ type: "screenshot", format: "jpeg" }, "format"], [{ type: "wait", condition: "text", text: "x", frameID: "f1" }, "frameID"],
   ] as const) {
     const outcome = await tab.run({ ...action, tabID: tab.id }, undefined, signal) as any
     assert.equal(outcome.code, "unsupported", `${action.type} ${option}`)
@@ -353,4 +353,43 @@ test("each web open gives a new tab ID, a replaced preview too, and the address 
   const current = (await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value.tabs[0]
   const moved = await tab.run({ type: "navigate", tabID: current.id, url: "http://127.0.0.1/requested" }, current.generation, signal) as any
   assert.equal(moved.result.value.url, "http://127.0.0.1/intervening")
+})
+
+test("a preview that comes back as another registration is another tab, commands conclude before the next runs, and URL waits match", async () => {
+  const { tab, state } = fixture()
+  const host = (tab as any).host as PreviewHost
+  const probe = host.probe, open = host.open
+  let registration = "window-a"
+  host.probe = async (...args) => { const probed = await probe(...args); return probed && { ...probed, registration } }
+  host.open = async (...args) => ({ ...await open(...args), registration })
+  const opened = (await tab.run({ type: "tabs.open", url: "http://127.0.0.1/a" }, undefined, signal) as any).result.value
+  // Preview A goes away, then B shows: A's ID never reaches B.
+  const shown = state.target
+  state.target = undefined
+  await tab.run({ type: "tabs.list" }, undefined, signal)
+  state.target = shown
+  registration = "window-b"
+  assert.equal((await tab.run({ type: "navigate", tabID: opened.id, url: "http://127.0.0.1/b" }, undefined, signal) as any).code, "operation_failed")
+
+  // The next command waits for the previous one's conclusion (its inventory publication).
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  let opens = 0
+  const counting = host.open
+  host.open = async (...args) => { opens++; return counting(...args) }
+  const first = tab.run({ type: "tabs.open", url: "http://127.0.0.1/c" }, undefined, signal, undefined, async outcome => { await held; return outcome })
+  const second = tab.run({ type: "tabs.open", url: "http://127.0.0.1/d" }, undefined, signal)
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.equal(opens, 1, "the second open waits for the first to conclude")
+  release()
+  await Promise.all([first, second])
+  assert.equal(opens, 2)
+
+  // A same-document route change satisfies a glob URL wait.
+  const current = (await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value.tabs[0]
+  setTimeout(() => { state.url = "http://127.0.0.1/app/dashboard" }, 150)
+  const waited = await tab.run({ type: "wait", tabID: current.id, condition: "url", url: "**/dashboard", timeoutMs: 2_000 }, undefined, signal) as any
+  assert.equal(waited.type, "success")
+  assert.equal(matchesURL("https://app.test/dashboard?tab=1", "/dashboard"), true)
+  assert.equal(matchesURL("https://app.test/dashboard/settings", "**/dashboard"), false)
 })

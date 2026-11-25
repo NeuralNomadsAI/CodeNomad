@@ -39,7 +39,7 @@ const HONORED: Record<string, readonly string[]> = {
   snapshot: ["ref", "maxChars", "maxLines"], find: ["text", "maxChars", "maxLines"],
   click: ["ref"], hover: ["ref"], drag: ["from", "to"], fill: ["ref", "text"], fill_form: ["fields"],
   select: ["ref", "values"], check: ["ref", "checked"], press: ["key"], scroll: ["deltaX", "deltaY"],
-  wait: ["condition", "text", "timeoutMs"], screenshot: [],
+  wait: ["condition", "text", "url", "timeoutMs"], screenshot: [],
 }
 /** Option values that ask for what the operation does anyway. */
 const DEFAULTS: Record<string, unknown> = { focus: true, ignoreCache: false, button: "left", count: 1, interactive: false, boxes: false, fullPage: false, format: "png" }
@@ -94,7 +94,9 @@ export class PreviewTab {
     const probed = await this.host.probe(deadline, signal).catch(() => undefined)
     if (ticket < this.applied) return
     this.applied = ticket
-    if (!probed) { this.target = undefined; this.registration = undefined; this.loading = false; return }
+    // The last registration is kept while no preview shows: whichever preview shows next is another tab unless it is
+    // the same registration.
+    if (!probed) { this.target = undefined; this.loading = false; return }
     this.loading = probed.loading
     if (this.registration !== undefined && probed.registration !== this.registration) this.tabID = `tab_${randomUUID()}`
     this.registration = probed.registration
@@ -122,11 +124,12 @@ export class PreviewTab {
   /** Commands run one at a time: a check reads, then clicks, and another command must not act in between.
    * `admit` runs when the command's turn comes, before it reads or acts; an outcome it returns refuses the command. */
   async run(action: Action, generation: number | undefined, signal: AbortSignal,
-    admit: () => Promise<BrowserOutcome | undefined> = async () => undefined): Promise<BrowserOutcome> {
+    admit: () => Promise<BrowserOutcome | undefined> = async () => undefined,
+    conclude: (outcome: BrowserOutcome) => Promise<BrowserOutcome> = async outcome => outcome): Promise<BrowserOutcome> {
     if (action.type === "tabs.list") {
       // Same-document navigation keeps the target: the address, title and history are read again.
       this.urlTarget = undefined
-      return await admit() ?? this.execute(action, generation, signal)
+      return conclude(await admit() ?? await this.execute(action, generation, signal))
     }
     const previous = this.queue
     let release!: () => void
@@ -134,7 +137,9 @@ export class PreviewTab {
     try {
       await previous
       if (signal.aborted) return failure("operation_failed", "The browser action was cancelled.")
-      return await admit() ?? await this.execute(action, generation, signal)
+      // `conclude` (the inventory publication) runs before the next command: a later open cannot replace the tab an
+      // earlier one is about to report.
+      return await conclude(await admit() ?? await this.execute(action, generation, signal))
     } finally {
       // The page may have changed its history or title: the next refresh reads them again.
       this.urlTarget = undefined
@@ -259,6 +264,20 @@ export class PreviewTab {
   private async wait(action: Action, deadline: number, signal: AbortSignal): Promise<BrowserOutcome> {
     const timeout = Math.min(MAX_WAIT_MS, Number(action.timeoutMs) || 10_000)
     const started = Date.now()
+    // A wait belongs to its tab: another preview replacing it ends the wait.
+    const tab = this.id
+    const gone = () => failure("operation_failed", "This tab is no longer shown. Call browser.tabs.list({}).")
+    if (action.condition === "url") {
+      for (;;) {
+        // The address is read again each time: a same-document route change keeps the target.
+        this.urlTarget = undefined
+        await this.refresh(deadline, signal)
+        if (!this.target || this.id !== tab) return gone()
+        if (matchesURL(this.url, String(action.url ?? ""))) return this.success(this.tab())
+        if (Date.now() - started >= timeout) return failure("condition_unmet", `The address did not match ${String(action.url ?? "")} in time.`)
+        await sleep(LOAD_POLL_MS, undefined, { signal })
+      }
+    }
     if (action.condition === "load") {
       // The native host reports a main-frame load from its start, before the new document commits.
       for (;;) {
@@ -293,6 +312,7 @@ export class PreviewTab {
         if (moved) {
           await sleep(LOAD_POLL_MS, undefined, { signal })
           await this.refresh(deadline, signal)
+          if (this.id !== tab) return gone()
         }
       }
     }
@@ -372,4 +392,21 @@ function failed(error: unknown): BrowserOutcome {
   if (/unavailable in WebKit previews/.test(message)) return failure("unsupported", message)
   if (/changed|navigation|replaced|stale/i.test(message)) return failure("document_changed", message)
   return failure("operation_failed", message)
+}
+
+// OpenCode's URL wait pattern (plugin-browser/src/rpc.ts, v2.4.1, MIT): a glob such as **/dashboard matches the
+// whole address; plain text matches anywhere in it.
+export function matchesURL(url: string, pattern: string): boolean {
+  if (!pattern.includes("*")) return url.includes(pattern)
+  const parts = pattern.split(/\*+/)
+  const first = parts.shift() ?? ""
+  const last = parts.pop() ?? ""
+  if (!url.startsWith(first) || !url.endsWith(last)) return false
+  let offset = first.length
+  for (const part of parts) {
+    const found = url.indexOf(part, offset)
+    if (found < 0) return false
+    offset = found + part.length
+  }
+  return offset + last.length <= url.length
 }

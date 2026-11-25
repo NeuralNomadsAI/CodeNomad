@@ -307,18 +307,23 @@ class SessionAttachment {
         lost = !this.workspaceID || !this.owners.includes(this.workspaceID)
         return lost ? failure("No project shown on this computer owns this conversation's browser.") : undefined
       }
-      let outcome: BrowserOutcome = command.inspect
-        ? { type: "failure", code: "unsupported", message: "Target inspection is unavailable in the CodeNomad browser." }
-        : await this.tab.run(command.action, command.generation, signal, admit)
+      // OpenCode resolves tab IDs against the published inventory, so it is published and acknowledged before every
+      // result and before the next command runs, as in its own desktop browser: a success whose inventory was refused
+      // would name a tab OpenCode cannot use. A preview this desktop no longer owns is not read.
+      const conclude = async (outcome: BrowserOutcome): Promise<BrowserOutcome> => {
+        if (lost || connectionID !== this.connectionID) return outcome
+        return this.publish(signal).then(() => outcome, error => {
+          if (signal.aborted) throw error
+          this.warn("Browser state publication failed", error)
+          return outcome.type === "success"
+            ? failure(`The action ran, but the browser tabs could not be published: ${reason(error)}. Call browser.tabs.list({}).`)
+            : outcome
+        })
+      }
+      const outcome: BrowserOutcome = command.inspect
+        ? await conclude({ type: "failure", code: "unsupported", message: "Target inspection is unavailable in the CodeNomad browser." })
+        : await this.tab.run(command.action, command.generation, signal, admit, conclude)
       if (connectionID !== this.connectionID) return
-      // OpenCode resolves tab IDs against the published inventory, so it precedes every result, as in its own desktop
-      // browser: a success whose inventory was refused would name a tab OpenCode cannot use. A preview this desktop no
-      // longer owns is not read.
-      if (!lost) await this.publish(signal).catch(error => {
-        if (signal.aborted) throw error
-        this.warn("Browser state publication failed", error)
-        if (outcome.type === "success") outcome = failure(`The action ran, but the browser tabs could not be published: ${reason(error)}. Call browser.tabs.list({}).`)
-      })
       await settle(outcome).catch(async error => {
         // A result OpenCode refuses (for example an oversized file) still settles the request.
         if (signal.aborted) throw error
