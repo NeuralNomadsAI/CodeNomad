@@ -17,6 +17,7 @@ pub enum SessionActivityKind {
     Working,
     Idle,
     Deleted,
+    ResetWorkspace,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,12 +245,21 @@ impl Signals {
             Some("instance.eventStatus") => {
                 let mut stats = self.stats.lock().unwrap();
                 let state = (frame["status"] == "connected", frame["generation"].as_u64());
+                let prev = stats.status.get(id).copied();
                 if !stats.status.contains_key(id) && stats.status.len() >= 128 {
                     stats.status.clear();
                 }
-                stats.status.insert(id.to_owned(), state) != Some(state)
+                let changed = stats.status.insert(id.to_owned(), state) != Some(state);
+                drop(stats);
+                if !state.0 || prev.is_some_and(|(_, g)| g != state.1) {
+                    self.push_session_activity(id, "", SessionActivityKind::ResetWorkspace);
+                }
+                changed
             }
-            Some("workspace.stopped") => self.stats.lock().unwrap().status.remove(id).is_some(),
+            Some("workspace.stopped") => {
+                self.push_session_activity(id, "", SessionActivityKind::ResetWorkspace);
+                self.stats.lock().unwrap().status.remove(id).is_some()
+            }
             _ => false,
         };
         let attention =
@@ -287,6 +297,18 @@ impl Signals {
         }
     }
 
+    fn push_session_activity(&self, workspace: &str, session: &str, kind: SessionActivityKind) {
+        let mut queue = self.session_activity.lock().unwrap();
+        if queue.len() >= 256 {
+            queue.pop_front();
+        }
+        queue.push_back(SessionActivityHint {
+            workspace: workspace.into(),
+            session: session.into(),
+            kind,
+        });
+    }
+
     fn observe_session_activity(&self, workspace: &str, event: &Value) -> bool {
         let kind = match event["type"].as_str() {
             Some(
@@ -297,7 +319,7 @@ impl Signals {
                 | "session.execution.failed"
                 | "session.execution.interrupted",
             ) => SessionActivityKind::Idle,
-            Some("session.deleted") => SessionActivityKind::Deleted,
+            Some("session.deleted" | "session.moved") => SessionActivityKind::Deleted,
             _ => return false,
         };
         let Some(session) = event["data"]["sessionID"]
@@ -306,15 +328,7 @@ impl Signals {
         else {
             return false;
         };
-        let mut queue = self.session_activity.lock().unwrap();
-        if queue.len() >= 256 {
-            queue.pop_front();
-        }
-        queue.push_back(SessionActivityHint {
-            workspace: workspace.into(),
-            session: session.into(),
-            kind,
-        });
+        self.push_session_activity(workspace, session, kind);
         true
     }
 

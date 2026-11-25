@@ -26,10 +26,20 @@ struct FenceInner {
     uncertain: HashSet<String>,
 }
 
+const MAX_UNCERTAIN: usize = 1024;
+const MAX_CONCURRENT_CLEANUPS: usize = 4;
+
 /// Mutual exclusion between blank-session cleanup and addressed session mutations across tabs.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Fence {
     inner: Arc<Mutex<FenceInner>>,
+    slots: Arc<tokio::sync::Semaphore>,
+}
+
+impl Default for Fence {
+    fn default() -> Self {
+        Self { inner: Arc::default(), slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CLEANUPS)) }
+    }
 }
 
 pub struct CleanupGuard {
@@ -64,7 +74,11 @@ impl Drop for MutationGuard {
 impl Fence {
     pub fn enter_cleanup(&self, id: &str) -> Option<CleanupGuard> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.cleaning.contains(id) || inner.mutations.contains_key(id) || inner.uncertain.contains(id) {
+        if inner.cleaning.contains(id)
+            || inner.mutations.contains_key(id)
+            || inner.uncertain.contains(id)
+            || inner.uncertain.len() >= MAX_UNCERTAIN
+        {
             return None;
         }
         inner.cleaning.insert(id.to_owned());
@@ -174,6 +188,14 @@ pub async fn route(
     };
     let skipped = || Json(json!({"deleted": false})).into_response();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let slot = tokio::select! {
+        biased;
+        _ = principal.0.cancelled() => return Status::UNAUTHORIZED.into_response(),
+        permit = tokio::time::timeout_at(deadline, app.session_cleanup.slots.clone().acquire_owned()) => match permit {
+            Ok(Ok(permit)) => permit,
+            _ => return skipped(),
+        }
+    };
     let preflight = async {
         if !current(&app, &workspace, &endpoint, &principal) {
             return None;
@@ -218,11 +240,12 @@ pub async fn route(
             crate::worktrees::fence::session(&session_id),
         ])?;
         guards::verify_mutation_at(&app, &endpoint, &session_id, &session_dir, &session).await.ok()?;
+        // Omit `project` so children moved to another project are still detected before recursive DELETE.
         let children = native_get(
             &app,
             &endpoint,
             &["api", "session"],
-            &[("parentID", &session_id), ("project", initial_project), ("limit", "1")],
+            &[("parentID", &session_id), ("limit", "1")],
             Duration::from_secs(4),
         )
         .await
@@ -317,6 +340,10 @@ pub async fn route(
     {
         return skipped();
     }
+    let app_check = app.clone();
+    let ws_check = workspace.clone();
+    let ep_check = endpoint.clone();
+    let principal_check = Principal(principal.0.clone());
     settle_delete(
         app.native.client.clone(),
         app.session_cleanup.clone(),
@@ -324,11 +351,28 @@ pub async fn route(
         session_id,
         url,
         guards,
+        Some(slot),
         &principal,
+        move || current(&app_check, &ws_check, &ep_check, &principal_check),
     )
     .await
 }
 
+pub fn deleted(app: &App, event: &Value) {
+    if event["type"] != "session.deleted" {
+        return;
+    }
+    let Some(target) = event["data"]["sessionID"].as_str().filter(|s| id_ok(s)) else { return };
+    app.session_cleanup.observe_absent(target);
+}
+
+enum SettleOutcome {
+    Deleted,
+    Skipped,
+    Uncertain,
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn settle_delete(
     client: reqwest::Client,
     fence: Fence,
@@ -336,31 +380,39 @@ async fn settle_delete(
     session_id: String,
     url: reqwest::Url,
     guards: (CleanupGuard, crate::worktrees::fence::Entered),
+    slot: Option<tokio::sync::OwnedSemaphorePermit>,
     principal: &Principal,
+    still_current: impl FnOnce() -> bool + Send + 'static,
 ) -> Response {
     let (tx, rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let (_cleanup_guard, _worktree_guard) = guards;
+        let _slot = slot;
+        if !still_current() {
+            let _ = tx.send(SettleOutcome::Skipped);
+            return;
+        }
         let response = client
             .request(Method::DELETE, url)
             .basic_auth("opencode", Some(&password))
             .timeout(Duration::from_secs(60))
             .send()
             .await;
-        let deleted = match response {
-            Ok(resp) if resp.status().is_success() => true,
+        let outcome = match response {
+            Ok(resp) if matches!(resp.status(), Status::NO_CONTENT | Status::OK) => SettleOutcome::Deleted,
             _ => {
                 fence.mark_uncertain(&session_id);
-                false
+                SettleOutcome::Uncertain
             }
         };
-        let _ = tx.send(deleted);
+        let _ = tx.send(outcome);
     });
     tokio::select! {
         biased;
         _ = principal.0.cancelled() => Status::UNAUTHORIZED.into_response(),
         outcome = rx => match outcome {
-            Ok(true) => Json(json!({"deleted": true})).into_response(),
+            Ok(SettleOutcome::Deleted) => Json(json!({"deleted": true})).into_response(),
+            Ok(SettleOutcome::Skipped) => Json(json!({"deleted": false})).into_response(),
             _ => Status::SERVICE_UNAVAILABLE.into_response(),
         },
     }
@@ -437,7 +489,18 @@ mod tests {
         let call = tokio::spawn({
             let fence = fence.clone();
             async move {
-                settle_delete(client, fence, "pw".into(), sid, url, (cleanup_guard, worktree_guard), &principal).await
+                settle_delete(
+                    client,
+                    fence,
+                    "pw".into(),
+                    sid,
+                    url,
+                    (cleanup_guard, worktree_guard),
+                    None,
+                    &principal,
+                    || true,
+                )
+                .await
             }
         });
         received_rx.await.unwrap();
@@ -457,6 +520,58 @@ mod tests {
         }
         assert!(fence.has_uncertain("ses_detach_test"));
         assert!(fence.enter_mutation("ses_detach_test").is_none());
+    }
+
+    #[tokio::test]
+    async fn settle_delete_skips_when_authority_lost_and_rejects_202() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        let fence = Fence::default();
+        let sid = "ses_skip_auth".to_owned();
+        let keys = ["/cleanup-skip-test/checkout".to_owned(), crate::worktrees::fence::session(&sid)];
+        let response = settle_delete(
+            reqwest::Client::new(),
+            fence.clone(),
+            "pw".into(),
+            sid.clone(),
+            reqwest::Url::parse("http://127.0.0.1:1/api/session/ses_skip_auth").unwrap(),
+            (fence.enter_cleanup(&sid).unwrap(), crate::worktrees::fence::enter(&keys).unwrap()),
+            None,
+            &Principal(tokio_util::sync::CancellationToken::new()),
+            || false,
+        )
+        .await;
+        assert_eq!(response.status(), Status::OK);
+        assert!(!fence.has_uncertain(&sid));
+
+        // 202 Accepted must not be treated as confirmed deletion.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 512];
+            let _ = socket.read(&mut buf).await;
+            let _ = socket.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+        });
+        let sid2 = "ses_accept_202".to_owned();
+        let keys2 = ["/cleanup-202-test/checkout".to_owned(), crate::worktrees::fence::session(&sid2)];
+        let resp2 = settle_delete(
+            reqwest::Client::new(),
+            fence.clone(),
+            "pw".into(),
+            sid2.clone(),
+            reqwest::Url::parse(&format!("http://{addr}/api/session/{sid2}")).unwrap(),
+            (fence.enter_cleanup(&sid2).unwrap(), crate::worktrees::fence::enter(&keys2).unwrap()),
+            None,
+            &Principal(tokio_util::sync::CancellationToken::new()),
+            || true,
+        )
+        .await;
+        server.await.unwrap();
+        assert_eq!(resp2.status(), Status::SERVICE_UNAVAILABLE);
+        assert!(fence.has_uncertain(&sid2));
     }
 
     #[test]

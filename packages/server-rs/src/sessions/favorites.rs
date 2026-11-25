@@ -20,6 +20,7 @@ type Store = BTreeMap<String, Entries>;
 const MAX_FILE: usize = 8 * 1024 * 1024;
 const MAX_FAVORITES: usize = 512;
 static STORE_LOCK: Mutex<()> = Mutex::new(());
+static STATE_YAML_CACHE: Mutex<Option<(std::path::PathBuf, String, Option<Store>)>> = Mutex::new(None);
 
 fn any_session_id_ok(id: &str) -> bool {
     id.starts_with("ses")
@@ -58,8 +59,16 @@ fn key(workspace: &Workspace) -> String {
     format!("{:x}", Sha256::digest(path.as_bytes()))
 }
 fn read(app: &App) -> Result<Store, Status> {
-    let data = storage::read_bounded(&app.data.join("session-favorites.json"), json!({}), MAX_FILE)
-        .map_err(|_| Status::SERVICE_UNAVAILABLE)?;
+    let path = app.data.join("session-favorites.json");
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Store::new()),
+        Err(_) => return Err(Status::SERVICE_UNAVAILABLE),
+        Ok(meta) if meta.file_type().is_symlink() && std::fs::metadata(&path).is_err() => {
+            return Err(Status::SERVICE_UNAVAILABLE);
+        }
+        Ok(_) => {}
+    }
+    let data = storage::read_bounded(&path, json!({}), MAX_FILE).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
     let state: Store = serde_json::from_value(data).map_err(|_| Status::SERVICE_UNAVAILABLE)?;
     if !valid_store(&state, id_ok) {
         return Err(Status::SERVICE_UNAVAILABLE);
@@ -217,20 +226,53 @@ pub async fn update(
     }
 }
 
+fn file_stamp(path: &std::path::Path) -> Result<String, ()> {
+    let link = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok("missing".into()),
+        Err(_) => return Err(()),
+    };
+    let meta = if link.file_type().is_symlink() { std::fs::metadata(path).map_err(|_| ())? } else { link };
+    let modified =
+        meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
+    let created = meta.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
+    Ok(format!("{}:{:?}:{:?}", meta.len(), modified, created))
+}
+
 fn state_yaml_protects(state_path: &std::path::Path, session_id: &str) -> bool {
+    let Ok(before) = file_stamp(state_path) else {
+        return true;
+    };
+    if before == "missing" {
+        return false;
+    }
+    if let Some((cached_path, cached_stamp, cached_store)) = STATE_YAML_CACHE.lock().unwrap().as_ref()
+        && cached_path == state_path
+        && cached_stamp == &before
+    {
+        return cached_store.as_ref().is_some_and(|store| store_protects(store, session_id));
+    }
     let Ok(doc) = crate::settings::document::read(state_path) else {
         return true;
     };
-    let Some(raw) = doc.get("sessionFavorites") else {
-        return false;
+    let parsed = match doc.get("sessionFavorites") {
+        None => None,
+        Some(raw) => {
+            let Ok(yaml_state) = serde_json::from_value::<Store>(raw.clone()) else {
+                return true;
+            };
+            if !valid_store(&yaml_state, any_session_id_ok) {
+                return true;
+            }
+            Some(yaml_state)
+        }
     };
-    let Ok(yaml_state) = serde_json::from_value::<Store>(raw.clone()) else {
-        return true;
-    };
-    if !valid_store(&yaml_state, any_session_id_ok) {
+    if file_stamp(state_path).ok().as_deref() != Some(before.as_str()) {
         return true;
     }
-    store_protects(&yaml_state, session_id)
+    let protected = parsed.as_ref().is_some_and(|store| store_protects(store, session_id));
+    *STATE_YAML_CACHE.lock().unwrap() = Some((state_path.to_path_buf(), before, parsed));
+    protected
 }
 
 pub fn is_protected(app: &App, session_id: &str) -> bool {

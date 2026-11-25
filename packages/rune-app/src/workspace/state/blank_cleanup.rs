@@ -27,9 +27,8 @@ struct InFlight {
 struct Sweep {
     backend: Backend,
     project: Project,
-    generation: u64,
     watch_generation: Option<u64>,
-    exclude: String,
+    protected: HashSet<String>,
     candidates: VecDeque<String>,
     in_flight: Option<InFlight>,
     deleted_count: usize,
@@ -64,7 +63,6 @@ pub(crate) fn schedule(s: &mut State, exclude_session_id: &str) {
     let (Some(backend), Some(project)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
-    let generation = l.catalogue_generation;
     let watch_generation = l.catalogue_watch.as_ref().map(|w| w.generation());
     let mut seen = HashSet::new();
     let mut candidates = VecDeque::new();
@@ -86,21 +84,23 @@ pub(crate) fn schedule(s: &mut State, exclude_session_id: &str) {
     if entry.project.as_ref().map(|p| p.id.as_str()) != Some(project.id.as_str()) {
         return;
     }
-    if let Some(existing) = &entry.blank_cleanup.sweep
+    if let Some(existing) = &mut entry.blank_cleanup.sweep
         && existing.project.id == project.id
-        && existing.generation == generation
         && existing.watch_generation == watch_generation
         && existing.backend.client.same_connection(&backend.client)
     {
-        // One bounded sweep per connection generation, matching Solid `automaticCleanupRequests`.
+        // Reuse the in-flight sweep on the same connection (matching Solid `automaticCleanupRequests`)
+        // so creating another blank session never restarts a sweep that could delete the first one.
+        existing.protected.insert(exclude_session_id.to_owned());
         return;
     }
+    let mut protected = HashSet::new();
+    protected.insert(exclude_session_id.to_owned());
     entry.blank_cleanup.sweep = Some(Sweep {
         backend,
         project,
-        generation,
         watch_generation,
-        exclude: exclude_session_id.to_owned(),
+        protected,
         candidates,
         in_flight: None,
         deleted_count: 0,
@@ -167,7 +167,6 @@ fn sweep_current(ui: &Ui, index: usize, s: &State, sweep: &Sweep) -> bool {
         return false;
     };
     if l.authentication_required
-        || l.catalogue_generation != sweep.generation
         || l.catalogue_watch.as_ref().map(|w| w.generation()) != sweep.watch_generation
     {
         return false;
@@ -254,7 +253,7 @@ pub(super) fn poll(s: &mut State, ui: &mut Ui, _tx: &mut Tx) -> bool {
         }
 
         if let Some(in_flight) = &sweep.in_flight
-            && (in_flight.session_id == sweep.exclude
+            && (sweep.protected.contains(&in_flight.session_id)
                 || locally_protected(ui, index, s, &in_flight.session_id))
         {
             // Abort preflight or cleanup immediately if user opened, typed or attached.
@@ -265,7 +264,7 @@ pub(super) fn poll(s: &mut State, ui: &mut Ui, _tx: &mut Tx) -> bool {
             match in_flight.reply.try_recv() {
                 Ok(true) => match in_flight.step {
                     Step::Preflight => {
-                        if in_flight.session_id != sweep.exclude
+                        if !sweep.protected.contains(&in_flight.session_id)
                             && !locally_protected(ui, index, s, &in_flight.session_id)
                         {
                             sweep.in_flight = Some(spawn_step(
@@ -294,7 +293,7 @@ pub(super) fn poll(s: &mut State, ui: &mut Ui, _tx: &mut Tx) -> bool {
             let Some(candidate) = sweep.candidates.pop_front() else {
                 break;
             };
-            if candidate == sweep.exclude || locally_protected(ui, index, s, &candidate) {
+            if sweep.protected.contains(&candidate) || locally_protected(ui, index, s, &candidate) {
                 continue;
             }
             sweep.in_flight = Some(spawn_step(
@@ -684,6 +683,62 @@ mod tests {
             !rt.state.workspace.as_ref().unwrap().entries[0]
                 .blank_cleanup
                 .active()
+        );
+    }
+
+    #[test]
+    fn second_session_creation_reuses_active_sweep_and_protects_both_new_sessions() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        state.workspace = Some(workspace::Ui::new());
+        workspace::connected(&mut state);
+        crate::settings::fixture_config(
+            &mut state,
+            json!({"settings": {"autoCleanupBlankSessions": true}}),
+        );
+        let project = Project {
+            id: "ws1".into(),
+            path: "/repo".into(),
+        };
+        {
+            let l = state.screen.launcher_mut().unwrap();
+            l.connection = Some(Backend::unauthenticated("http://127.0.0.1:1/").unwrap());
+            l.project = Some(project.clone());
+            l.sessions = vec![
+                Session {
+                    id: "ses_old".into(),
+                    title: "Old".into(),
+                },
+                Session {
+                    id: "ses_new_1".into(),
+                    title: "New 1".into(),
+                },
+            ];
+        }
+        workspace::opened(&mut state, &project);
+        schedule(&mut state, "ses_new_1");
+
+        // Creating a second session bumps catalogue_generation and adds ses_new_2.
+        {
+            let l = state.screen.launcher_mut().unwrap();
+            l.catalogue_generation += 1;
+            l.sessions.push(Session {
+                id: "ses_new_2".into(),
+                title: "New 2".into(),
+            });
+        }
+        schedule(&mut state, "ses_new_2");
+
+        let sweep = state.workspace.as_ref().unwrap().entries[0]
+            .blank_cleanup
+            .sweep
+            .as_ref()
+            .expect("sweep reused");
+        assert!(sweep.protected.contains("ses_new_1"));
+        assert!(sweep.protected.contains("ses_new_2"));
+        assert_eq!(
+            sweep.candidates.iter().cloned().collect::<Vec<_>>(),
+            vec!["ses_old"]
         );
     }
 }

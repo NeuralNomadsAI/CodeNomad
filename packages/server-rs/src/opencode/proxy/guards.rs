@@ -115,7 +115,7 @@ pub(crate) async fn verify_mutation_at(
         .await
         .map_err(|_| uncertain())?;
     let status = response.status();
-    let body: Value = response.json().await.map_err(|_| uncertain())?;
+    let body: Value = crate::opencode::read_json(response, 128 * 1024).await.map_err(|_| uncertain())?;
     if status.is_success() {
         match body["output"]["owned"].as_bool() {
             Some(false) => {}

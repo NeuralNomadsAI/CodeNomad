@@ -46,7 +46,7 @@ pub(crate) async fn handle(
     response
 }
 
-async fn run(app: &App, wid: &str, id: &str, p: &Principal, request: Request) -> Result<Json<Value>, Error> {
+async fn run(app: &Shared, wid: &str, id: &str, p: &Principal, request: Request) -> Result<Json<Value>, Error> {
     let invalid = || error(Status::BAD_REQUEST, "Invalid conversation permission mode request");
     if !ordinary(id) {
         return Err(invalid());
@@ -103,15 +103,8 @@ async fn run(app: &App, wid: &str, id: &str, p: &Principal, request: Request) ->
         }
         session_id = parent.ok_or_else(family)?;
     }
-    let authority = || {
-        Instant::now() < deadline
-            && p.live().is_ok()
-            && current(app, &endpoint)
-            && workspace_current(app, &workspace)
-            && paths.iter().all(|(path, identity)| files::host_identity(path).as_ref().ok() == Some(identity))
-    };
     let root = chain.last().unwrap();
-    let (_permit, _cleanup_guards) = if write.is_some() {
+    let mode = if let Some(write) = write {
         let mut cleanup_guards = Vec::with_capacity(chain.len());
         for session in &chain {
             let sid = session["id"].as_str().ok_or_else(family)?;
@@ -135,12 +128,40 @@ async fn run(app: &App, wid: &str, id: &str, p: &Principal, request: Request) ->
                 return Err(family());
             }
         }
-        (Some(permit), cleanup_guards)
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let app_task = app.clone();
+        let endpoint_task = endpoint.clone();
+        let root_owned = root.clone();
+        let p_task = Principal(p.0.clone());
+        tokio::spawn(async move {
+            let (_permit, _cleanup_guards) = (permit, cleanup_guards);
+            let authority = || {
+                Instant::now() < deadline
+                    && p_task.live().is_ok()
+                    && current(&app_task, &endpoint_task)
+                    && workspace_current(&app_task, &workspace)
+                    && paths.iter().all(|(path, identity)| files::host_identity(path).as_ref().ok() == Some(identity))
+            };
+            let target =
+                Target { app: &app_task, endpoint: &endpoint_task, session: &root_owned, authority: &authority };
+            let _ = tx.send(mode(&target, Some(write)).await);
+        });
+        tokio::select! {
+            biased;
+            _ = p.0.cancelled() => return Err(crate::auth::unauthorized()),
+            outcome = rx => outcome.map_err(|_| super::unavailable())??,
+        }
     } else {
-        (None, Vec::new())
+        let authority = || {
+            Instant::now() < deadline
+                && p.live().is_ok()
+                && current(app, &endpoint)
+                && workspace_current(app, &workspace)
+                && paths.iter().all(|(path, identity)| files::host_identity(path).as_ref().ok() == Some(identity))
+        };
+        let target = Target { app, endpoint: &endpoint, session: root, authority: &authority };
+        mode(&target, None).await?
     };
-    let target = Target { app, endpoint: &endpoint, session: root, authority: &authority };
-    let mode = mode(&target, write).await?;
     Ok(Json(if id == session_id { json!({"mode":mode}) } else { json!({"mode":mode,"rootSessionID":session_id}) }))
 }
 

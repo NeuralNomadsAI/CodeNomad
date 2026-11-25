@@ -346,6 +346,10 @@ pub async fn admit(
     let Some((id, principal)) = owner else {
         return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
     };
+    let paired_server = app.devices.as_ref().is_some_and(|d| d.lock().unwrap().is_server_device(id));
+    if browser_only_cleanup && paired_server {
+        return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
+    }
     {
         let mut socket = channel.principal.lock().unwrap();
         if socket.is_some_and(|previous| previous != id) {
@@ -368,7 +372,7 @@ pub async fn admit(
         }
     }
     req.extensions_mut().insert(Principal(principal.clone()));
-    if !server {
+    if !server && !paired_server {
         req.extensions_mut().insert(BrowserDevice(id));
     }
     let dispatch = async {

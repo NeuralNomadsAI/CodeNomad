@@ -276,6 +276,8 @@ impl Tracker {
         for marker in self.sessions.values_mut() {
             marker.working = false;
         }
+        self.parent_lookup = None;
+        self.pending_parents.clear();
         self.bound_working = None;
     }
 
@@ -420,6 +422,9 @@ fn apply_hints(
                 }
                 SessionActivityKind::Deleted => {
                     entry.idle_markers.remove(&hint.session);
+                }
+                SessionActivityKind::ResetWorkspace => {
+                    entry.idle_markers.reset_working_on_reconnect();
                 }
             }
         }
@@ -715,5 +720,23 @@ mod tests {
                 "subagent idle marker must expire after 5 seconds when keepUnseenSubagentIdleStatus is false"
             );
         });
+    }
+
+    #[test]
+    fn reset_workspace_clears_working_markers_and_moved_removes_stale_marker() {
+        let mut tracker = Tracker::default();
+        tracker.observe_working("ses_busy", None, 1.0, true);
+        assert!(tracker.any_working());
+        assert!(!tracker.pending_parents.is_empty());
+
+        tracker.reset_working_on_reconnect();
+        assert!(!tracker.any_working());
+        assert!(tracker.pending_parents.is_empty());
+
+        tracker.observe_working("ses_moved", Some(Some("ses_root")), 2.0, true);
+        tracker.observe_idle("ses_moved", Some(Some("ses_root")), 3.0);
+        assert!(tracker.tab_idle_visible(4.0, true));
+        tracker.remove("ses_moved");
+        assert!(!tracker.tab_idle_visible(4.0, true));
     }
 }
