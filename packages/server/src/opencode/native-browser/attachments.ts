@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { setTimeout as sleep } from "node:timers/promises"
 import { OpenCode, type OpenCodeClient } from "@opencode/client"
 import { Service } from "@opencode/client/service"
 import { Agent, fetch as undiciFetch } from "undici"
@@ -147,12 +148,14 @@ export class NativeBrowserAttachments {
       })
     }
     const execute = (command: Record<string, unknown>, target: string, deadline: number, signal: AbortSignal) =>
-      native<{ url: string }>("browser.execute", { command, target }, deadline, signal)
+      native<{ url: string; registration?: string }>("browser.execute", { command, target }, deadline, signal)
     return {
       // Only a view in a verified owner's project tab is the session's preview for its agents.
       probe: async (deadline, signal) => {
-        const result = await native<{ available?: boolean; target?: string; loading?: boolean }>("browser.probe", { workspaceIDs: owners() }, deadline, signal)
-        return result?.available === true && typeof result.target === "string" ? { target: result.target, loading: result.loading === true } : undefined
+        const result = await native<{ available?: boolean; target?: string; loading?: boolean; registration?: string }>("browser.probe", { workspaceIDs: owners() }, deadline, signal)
+        return result?.available === true && typeof result.target === "string"
+          ? { target: result.target, loading: result.loading === true, ...(typeof result.registration === "string" ? { registration: result.registration } : {}) }
+          : undefined
       },
       // The views that show the session are in these workspaces' project tabs.
       open: (url, deadline, signal) => native("browser.execute", { command: { action: "open", url }, workspaceIDs: owners() }, deadline, signal),
@@ -271,7 +274,8 @@ class SessionAttachment {
       this.workspaceID = undefined
       this.cancelRequests()
       if (this.stopping.signal.aborted) return
-      if (!this.attachment.signal.aborted) await new Promise(resolve => setTimeout(resolve, wait))
+      // Closing the registry ends the wait, so a retry never holds the process open.
+      if (!this.attachment.signal.aborted) await sleep(wait, undefined, { signal: AbortSignal.any([this.stopping.signal, this.attachment.signal]) }).catch(() => undefined)
     }
   }
 

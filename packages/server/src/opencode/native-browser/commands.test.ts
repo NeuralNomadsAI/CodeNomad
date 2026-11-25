@@ -135,7 +135,7 @@ test("back, forward, reload, check by state attribute, select by value and fill_
     ],
   }, undefined, signal)
   assert.equal(filled.type, "success")
-  assert.deepEqual(calls.map(c => c.action), ["type", "select", "snapshot", "click", "snapshot"])
+  assert.deepEqual(calls.map(c => c.action), ["type", "select", "snapshot", "checked", "click", "snapshot", "checked"])
   assert.equal(calls[1].byValue, true)
 })
 
@@ -264,4 +264,50 @@ test("a navigation whose preview disappears fails, snapshots render within maxCh
   const outcome = await tab.run({ type: "navigate", tabID: tab.id, url: "http://127.0.0.1/next" }, opened.result.value.generation, signal) as any
   assert.equal(outcome.type, "failure")
   assert.deepEqual((await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value.tabs, [])
+})
+test("a load ending in another preview fails, an older probe never overwrites a newer one, wait ignores the document and check reads the native property", async () => {
+  const { tab, calls, state } = fixture()
+  const host = (tab as any).host as PreviewHost
+  const probe = host.probe
+  let registration = "window-a"
+  host.probe = async (...args) => { const probed = await probe(...args); return probed && { ...probed, registration } }
+  const navigate = host.navigate
+  host.navigate = async (...args) => { const loaded = await navigate(...args); registration = "window-b"; return { ...loaded, registration: "window-a" } }
+  const opened = await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal) as any
+  const moved = await tab.run({ type: "navigate", tabID: tab.id, url: "http://127.0.0.1/next" }, opened.result.value.generation, signal) as any
+  assert.equal(moved.type, "failure", "the load's receipt belongs to the replaced preview")
+  host.navigate = navigate
+
+  // An older probe that answers last does not bring back its document.
+  let release!: () => void
+  host.probe = async (...args) => {
+    const probed = await probe(...args)
+    if (probed?.target === "doc-2") await new Promise<void>(resolve => { release = resolve })
+    return probed
+  }
+  const older = tab.run({ type: "tabs.list" }, undefined, signal)
+  await new Promise(resolve => setImmediate(resolve))
+  state.target = "doc-9"
+  const newer = await tab.run({ type: "tabs.list" }, undefined, signal) as any
+  release()
+  await older
+  assert.equal(newer.result.value.tabs[0].generation, (await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value.tabs[0].generation)
+  host.probe = probe
+
+  const current = (await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value.tabs[0].generation
+  state.target = `doc-${++state.document}`
+  assert.equal((await tab.run({ type: "wait", tabID: tab.id, condition: "load" }, current, signal)).type, "success", "a wait reads whichever document is current")
+
+  // A mixed checkbox whose native property is checked is unchecked by a click.
+  let checked = true
+  const page = host.page
+  host.page = async (action, at, deadline, abort) => {
+    if (action.action === "snapshot" && action.ref === "e7") return { url: "", snapshot: `- checkbox "Mixed" [e7] ${checked ? "checked=mixed" : "unchecked"}` }
+    if (action.action === "checked") return { url: "", checked }
+    if (action.action === "click" && action.ref === "e7") { checked = false; return { url: "" } }
+    return page(action, at, deadline, abort)
+  }
+  assert.equal((await tab.run({ type: "check", tabID: tab.id, ref: "e7", checked: false }, undefined, signal)).type, "success")
+  assert.equal(checked, false, "the click happened")
+  assert.ok(calls)
 })

@@ -112,6 +112,12 @@
     "handle": false,
     "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const body = element.ownerDocument.body;\n  return !!body && body.innerText.includes(String(args[0])); }"
   },
+  "checked-state": {
+    "scope": "element",
+    "args": [],
+    "handle": false,
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); return element instanceof HTMLInputElement && (element.type === \"checkbox\" || element.type === \"radio\") ? element.checked : null; }"
+  },
   "active-element": {
     "scope": "global",
     "args": [],

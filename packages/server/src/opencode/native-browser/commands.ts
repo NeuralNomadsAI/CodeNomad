@@ -5,16 +5,20 @@ import { keyChord } from "../../automation/page/keys"
 
 /** What CodeNomad's native session preview offers this adapter, already bound to its session. */
 export interface PreviewHost {
-  /** The visible preview's target and whether a main-frame load is in progress, or undefined when the session shows none. */
-  probe(deadline: number, signal: AbortSignal): Promise<{ target: string; loading: boolean } | undefined>
+  /** The visible preview's target, its registration and whether a main-frame load is in progress, or undefined when
+   * the session shows none. */
+  probe(deadline: number, signal: AbortSignal): Promise<{ target: string; loading: boolean; registration?: string } | undefined>
   open(url: string, deadline: number, signal: AbortSignal): Promise<{ url: string }>
-  navigate(url: string, target: string, deadline: number, signal: AbortSignal): Promise<{ url: string }>
-  back(target: string, deadline: number, signal: AbortSignal): Promise<{ url: string }>
-  forward(target: string, deadline: number, signal: AbortSignal): Promise<{ url: string }>
-  reload(target: string, deadline: number, signal: AbortSignal): Promise<{ url: string }>
+  /** Loads end with the URL and the registration of the preview that loaded it. */
+  navigate(url: string, target: string, deadline: number, signal: AbortSignal): Promise<Loaded>
+  back(target: string, deadline: number, signal: AbortSignal): Promise<Loaded>
+  forward(target: string, deadline: number, signal: AbortSignal): Promise<Loaded>
+  reload(target: string, deadline: number, signal: AbortSignal): Promise<Loaded>
   screenshot(target: string, deadline: number, signal: AbortSignal): Promise<{ image: { mime: string; data: string } }>
   page(action: BrowserPageAction, target: string, deadline: number, signal: AbortSignal): Promise<Record<string, unknown>>
 }
+
+export interface Loaded { url: string; registration?: string }
 
 export interface BrowserTab {
   id: string; url: string; title: string; loading: boolean; canGoBack: boolean; canGoForward: boolean; generation: number
@@ -64,6 +68,10 @@ export class PreviewTab {
   private url = "about:blank"
   /** The target whose address `url` holds: a failed read is retried on the next refresh. */
   private urlTarget: string | undefined
+  /** The preview registration the target belongs to: a load that ends in another preview is no receipt for this tab. */
+  private registration: string | undefined
+  private refreshes = 0
+  private applied = 0
   private title = ""
   private canGoBack = false
   private canGoForward = false
@@ -79,15 +87,21 @@ export class PreviewTab {
 
   /** Reads the visible target; a different document advances the generation. */
   async refresh(deadline: number, signal: AbortSignal): Promise<void> {
+    // tabs.list refreshes outside the command queue: a probe answered after a later one has been applied is stale.
+    const ticket = ++this.refreshes
     const probed = await this.host.probe(deadline, signal).catch(() => undefined)
-    if (!probed) { this.target = undefined; this.loading = false; return }
+    if (ticket < this.applied) return
+    this.applied = ticket
+    if (!probed) { this.target = undefined; this.registration = undefined; this.loading = false; return }
     this.loading = probed.loading
+    this.registration = probed.registration
     if (probed.target !== this.target) {
       this.target = probed.target
       this.generation++
     }
     if (this.urlTarget === probed.target) return
     const location = await this.host.page({ action: "location" }, probed.target, deadline, signal).catch(() => undefined)
+    if (ticket < this.applied) return
     this.noteURL(probed.target, location?.url)
     if (location && this.target === probed.target) {
       this.title = typeof location.title === "string" ? location.title.slice(0, 2_048) : ""
@@ -135,7 +149,8 @@ export class PreviewTab {
     const target = this.target
     if (typeof action.tabID === "string" && (action.tabID !== this.id || !target))
       return failure("operation_failed", "This tab is no longer shown. Call browser.tabs.list({}) or browser.tabs.open({ url }).")
-    if (generation !== undefined && generation !== this.generation)
+    // A navigation replaces the document anyway and a wait reads whichever is current, as in OpenCode's browser.
+    if (generation !== undefined && generation !== this.generation && action.type !== "navigate" && action.type !== "wait")
       return failure("document_changed", "The page changed before this action ran; take a new snapshot.")
     if (!target) return failure("operation_failed", "No page is shown. Call browser.tabs.open({ url }).")
     try {
@@ -224,11 +239,12 @@ export class PreviewTab {
     } catch (error) { return failed(error) }
   }
 
-  private async loaded({ url }: { url: string }, deadline: number, signal: AbortSignal) {
+  private async loaded({ url, registration }: Loaded, deadline: number, signal: AbortSignal) {
     this.target = undefined
     await this.refresh(deadline, signal)
-    // The result names a tab only while the inventory still lists it.
-    if (!this.target) return failure("operation_failed", "The page loaded, but its preview is no longer visible to the agent.")
+    // The result names a tab only while the inventory still lists the preview that loaded the page.
+    if (!this.target || registration !== this.registration)
+      return failure("operation_failed", "The page loaded, but its preview is no longer the one shown to the agent. Call browser.tabs.list({}).")
     this.url = url
     return this.success(this.tab())
   }
@@ -270,7 +286,12 @@ export class PreviewTab {
     const line = String(result.snapshot ?? "").split("\n", 1)[0] ?? ""
     const state = checkState(line, targetRef)
     if (!state) return failure("operation_failed", `${targetRef} is not a checkbox or radio control`)
-    const current = state === "checked"
+    // A native control's `checked` property decides, as in OpenCode's browser: a mixed checkbox may be either.
+    const property = async () => {
+      const read = await page({ action: "checked", ref: targetRef })
+      return typeof read.checked === "boolean" ? read.checked : undefined
+    }
+    const current = await property() ?? state === "checked"
     if (current === wanted) return this.success(this.tab())
     if (/^-\s+radio\b/.test(line) && !wanted) {
       return failure("operation_failed", "A selected radio button cannot be unchecked; check another option in its group.")
@@ -278,7 +299,10 @@ export class PreviewTab {
     await page({ action: "click", ref: targetRef })
     // The page may refuse the change or replace the control: only the checked state read back counts.
     const after = await page({ action: "snapshot", ref: targetRef })
-    if (checkState(String(after.snapshot ?? "").split("\n", 1)[0] ?? "", targetRef) !== (wanted ? "checked" : "unchecked"))
+    const afterState = checkState(String(after.snapshot ?? "").split("\n", 1)[0] ?? "", targetRef)
+    const native = afterState && await property()
+    const kept = afterState !== undefined && (typeof native === "boolean" ? native === wanted : afterState === (wanted ? "checked" : "unchecked"))
+    if (!kept)
       return failure("operation_failed", `${targetRef} did not stay ${wanted ? "checked" : "unchecked"}; the page kept its previous state.`)
     return this.success(this.tab())
   }

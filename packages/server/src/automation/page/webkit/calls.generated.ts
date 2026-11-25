@@ -225,6 +225,7 @@ export const readCalls = {
     if ([item.getAttribute("aria-label"), item.getAttribute("title"), item.getAttribute("placeholder"), item.value].some(value => text(value).includes(needle))) return true;
   }
   return false; },
+"checked-state": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); return element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio") ? element.checked : null; },
 "body-text-includes": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const body = element.ownerDocument.body;
   return !!body && body.innerText.includes(String(args[0])); }
 };

@@ -16,6 +16,8 @@ export type RefAction =
   | { action: "press"; key: string; ref?: string }
   /** `literal` matches the body's visible text exactly, as OpenCode's browser does. */
   | { action: "wait"; text: string; gone: boolean; timeout: number; literal?: true }
+  /** A native checkbox or radio's `checked` property, or null for other controls. */
+  | { action: "checked"; ref: string }
 
 export const PAGE_ACTIONS = ["click", "type", "select", "hover", "drag", "scroll", "press", "wait"] as const
 export const MAX_WAIT_MS = 15_000

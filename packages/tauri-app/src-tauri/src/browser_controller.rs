@@ -891,7 +891,12 @@ impl BrowserController {
             .map_err(|error| error.to_string())?
             .page_loading
             .contains_key(&registration.registration_id);
-        Ok(json!({ "available": true, "target": target, "loading": loading }))
+        Ok(json!({
+            "available": true,
+            "target": target,
+            "loading": loading,
+            "registration": registration_identity(&registration),
+        }))
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -931,7 +936,7 @@ impl BrowserController {
                     None,
                     || Ok(()),
                 )?;
-                Ok(json!({ "url": url }))
+                Ok(json!({ "url": url, "registration": registration_identity(&registration) }))
             }
             "back" | "forward" | "reload" => {
                 let nav_deadline = deadline.min(Instant::now() + Duration::from_secs(15));
@@ -1007,7 +1012,7 @@ impl BrowserController {
                     )?
                 };
                 #[cfg(windows)]
-                return Ok(json!({ "url": url }));
+                return Ok(json!({ "url": url, "registration": registration_identity(&registration) }));
                 // WebKit previews do not report a load receipt for history traversal or reload.
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 {
@@ -1630,6 +1635,11 @@ fn allowed_url(raw: &str) -> Result<tauri::Url, String> {
 
 fn navigation_error() -> String {
     "Browser navigation requires a credential-free HTTP(S) URL".to_string()
+}
+
+/// The preview a probe or a load used: a load that ends in another registration is no receipt for the agent's tab.
+fn registration_identity(registration: &Registration) -> String {
+    format!("{}:{}", registration.registration_id, registration.generation)
 }
 
 /// The project tabs a probe may use, from the backend's verified owners.

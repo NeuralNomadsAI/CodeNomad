@@ -548,7 +548,7 @@ describe("BrowserController preview lifecycle", () => {
         const lease = await pageBegin() as { generation: string }
         await page(h.controller, "end", { sessionID, operationID, generation: lease.generation })
         assert.deepEqual(await execute(screenshot), { image: { mime: "image/png", data: "png" }, url: "https://example.com/" })
-        assert.deepEqual(await execute(navigation), { url: navigation.url })
+        assert.equal((await execute(navigation) as { url: string }).url, navigation.url)
       } else {
         const error = change === "ambiguous" ? /Multiple visible browser targets exist for this session/
           : change === "absent" ? /A current browser target is required/ : /Browser target is stale/
@@ -590,7 +590,7 @@ describe("BrowserController preview lifecycle", () => {
       else if (scenario === "reopened") guest.debugger.emit("message", {}, "Page.documentOpened", { frame: { id: "main", url: guest.getURL() } })
       else events.emit("did-navigate")
       release()
-      if (scenario === "navigate") assert.deepEqual(await first, { url: navigation.url })
+      if (scenario === "navigate") assert.equal((await first as { url: string }).url, navigation.url)
       else await assert.rejects(first, /Browser target is stale/)
       if (queued) {
         await assert.rejects(queued, /Browser target is stale/)
@@ -801,9 +801,10 @@ describe("BrowserController preview lifecycle", () => {
       const { target } = await h.controller.probe("session")
       return handleNativeBrowserRequest(h.controller, "browser.execute", { sessionID: "session", target, command: { action } })
     }
-    assert.deepEqual(await run("back"), { url: "https://example.com/a" })
-    assert.deepEqual(await run("forward"), { url: "https://example.com/b" })
-    assert.deepEqual(await run("reload"), { url: "https://example.com/b" })
+    assert.equal((await run("back") as { url: string }).url, "https://example.com/a")
+    const { registration } = await h.controller.probe("session")
+    assert.deepEqual(await run("forward"), { url: "https://example.com/b", registration }, "a load names the preview that made it")
+    assert.deepEqual(await run("reload"), { url: "https://example.com/b", registration })
     assert.ok(cdpCalls.some(call => call.method === "Page.navigateToHistoryEntry" && call.params?.entryId === 10))
     assert.ok(cdpCalls.some(call => call.method === "Page.navigateToHistoryEntry" && call.params?.entryId === 11))
     assert.ok(cdpCalls.some(call => call.method === "Page.reload"))
@@ -908,7 +909,7 @@ describe("BrowserController preview lifecycle", () => {
       assert.equal(completed, false)
     } finally {
       events.emit("did-finish-load")
-      assert.deepEqual(await navigation, { url })
+      assert.equal((await navigation as { url: string }).url, url)
     }
   })
 

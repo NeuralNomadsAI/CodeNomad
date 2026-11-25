@@ -249,7 +249,11 @@ test("an OpenCode older than 2.4 is never attached, and an unreadable command is
   attachments.hold("hold", "ws", "ses-1")
   await new Promise(resolve => setTimeout(resolve, 300))
   assert.equal(rpcCalls.some(call => call.method === "attach"), false, "2.3 would let the preview bypass a browser deny")
+  const timers = () => process.getActiveResourcesInfo().filter(kind => kind === "Timeout").length
+  const waiting = timers()
   attachments.close()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.ok(timers() < waiting, "closing ends the retry wait, so it never holds the process open")
 
   connection = runtime("2.4.1")
   const current = new NativeBrowserAttachments({

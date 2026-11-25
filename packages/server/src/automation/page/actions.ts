@@ -15,7 +15,8 @@ export type PageAction =
   | { kind: "scroll"; target?: Target; delta: { x: number; y: number } }
   | { kind: "press"; key: string; target?: Target }
   | { kind: "wait"; text: string; gone: boolean; timeoutMs: number; literal?: true }
-export interface PageActionResult { value?: string; selected?: string[]; focused?: string; found?: boolean; waitedMs?: number }
+  | Target & { kind: "checked" }
+export interface PageActionResult { value?: string; selected?: string[]; focused?: string; found?: boolean; waitedMs?: number; checked?: boolean | null }
 
 export function bindRefs(action: RefAction, resolve: (ref: string) => number): PageAction {
   const target = (ref: string): Target => ({ ref, backendNodeId: resolve(ref) })
@@ -33,6 +34,7 @@ export function bindRefs(action: RefAction, resolve: (ref: string) => number): P
     }
     case "press": return { kind: "press", key: action.key, ...(action.ref ? { target: target(action.ref) } : {}) }
     case "wait": return { kind: "wait", text: action.text, gone: action.gone, timeoutMs: action.timeout, ...(action.literal ? { literal: true as const } : {}) }
+    case "checked": return { kind: "checked", ...target(action.ref) }
   }
 }
 export async function readAccessibilityTree(session: PageSession): Promise<AxNode[]> {
@@ -84,6 +86,11 @@ export async function performAction(session: PageSession, action: PageAction): P
         catch (error) { throw new Error("Key input was sent, but the current focus could not be read; inspect before retrying.", { cause: error }) }
       }
       case "wait": return await waitForText(session, action.text, action.gone, action.timeoutMs, action.literal)
+      case "checked": {
+        const element = await resolveElement(session, action.ref, action.backendNodeId)
+        const checked = await callOn(session, action.ref, element, "checked-state", [])
+        return { checked: typeof checked === "boolean" ? checked : null }
+      }
     }
   } finally { await releaseObjects(session) }
 }

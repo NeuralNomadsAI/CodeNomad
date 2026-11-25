@@ -390,7 +390,7 @@ export class BrowserController {
 
   /** `workspaceIDs` are the project tabs whose views may serve the session: another tab's preview is no target. */
   async probe(sessionID: string, deadline = Number.POSITIVE_INFINITY, checkAdmission: () => void = () => {},
-    workspaceIDs?: readonly string[]): Promise<{ available: true; target: string; loading: boolean }> {
+    workspaceIDs?: readonly string[]): Promise<{ available: true; target: string; loading: boolean; registration: string }> {
     ensureDeadline(deadline)
     checkAdmission()
     const registration = this.resolve(sessionID, workspaceIDs)
@@ -423,7 +423,7 @@ export class BrowserController {
     ensureDeadline(deadline)
     checkAdmission()
     this.resolveWitness(sessionID, target)
-    return { available: true, target, loading: guest.isLoading() }
+    return { available: true, target, loading: guest.isLoading(), registration: registration.generation }
   }
 
   async execute(sessionID: string, command: Exclude<BrowserCommand, { action: "open" }>, deadline = Number.POSITIVE_INFINITY, target?: unknown, checkAdmission: () => void = () => {}): Promise<unknown> {
@@ -444,7 +444,7 @@ export class BrowserController {
       switch (command.action) {
         case "navigate": {
           if (!isBrowserUrlAllowed(command.url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
-          return loadNavigation(guest, command.url, deadline, () => check(false))
+          return { ...await loadNavigation(guest, command.url, deadline, () => check(false)), registration: registration.generation }
         }
         case "back":
         case "forward": {
@@ -458,14 +458,14 @@ export class BrowserController {
           const next = entries[command.action === "back" ? index - 1 : index + 1]
           if (!next) throw new Error(command.action === "back" ? "No previous page in browser history" : "No next page in browser history")
           if (!isBrowserUrlAllowed(next.url)) throw new Error("Browser history entry requires a credential-free HTTP(S) URL")
-          return loadTriggeredNavigation(guest, next.url, deadline, () => check(false),
-            () => guest.debugger.sendCommand("Page.navigateToHistoryEntry", { entryId: next.id }).then(() => undefined))
+          return { registration: registration.generation, ...await loadTriggeredNavigation(guest, next.url, deadline, () => check(false),
+            () => guest.debugger.sendCommand("Page.navigateToHistoryEntry", { entryId: next.id }).then(() => undefined)) }
         }
         case "reload": {
           const currentUrl = guest.getURL()
           if (!isBrowserUrlAllowed(currentUrl)) throw new Error("Browser reload requires a credential-free HTTP(S) URL")
-          return loadTriggeredNavigation(guest, currentUrl, deadline, () => check(false),
-            () => guest.debugger.sendCommand("Page.reload", {}).then(() => undefined))
+          return { registration: registration.generation, ...await loadTriggeredNavigation(guest, currentUrl, deadline, () => check(false),
+            () => guest.debugger.sendCommand("Page.reload", {}).then(() => undefined)) }
         }
         case "screenshot": {
           const result = await withDeadline(() => guest.debugger.sendCommand("Page.captureScreenshot", {

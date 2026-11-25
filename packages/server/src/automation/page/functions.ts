@@ -171,6 +171,7 @@ export const ELEMENT_FUNCTIONS = {
     if ([item.getAttribute("aria-label"), item.getAttribute("title"), item.getAttribute("placeholder"), item.value].some(value => text(value).includes(needle))) return true;
   }
   return false;`,
+  "checked-state": `return element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio") ? element.checked : null;`,
   "body-text-includes": `const body = element.ownerDocument.body;
   return !!body && body.innerText.includes(String(args[0]));`,
 } as const
@@ -190,7 +191,7 @@ export const GLOBAL_FUNCTIONS = {
 export type PageFunctionId = keyof typeof ELEMENT_FUNCTIONS | keyof typeof GLOBAL_FUNCTIONS
 export const FUNCTION_ARGS: Record<PageFunctionId, readonly string[]> = {
   "option-click": [], "programmatic-click": [], select: ["strings"], "select-values": ["strings"], "file-input": [], focus: [], describe: [], field: [], prepare: ["boolean"],
-  "set-value": ["string", "boolean"], "delete-selection": [], "read-value": [], receives: ["handle"], "receives-wheel": ["handle"], contains: ["string"], "body-text-includes": ["string"],
+  "set-value": ["string", "boolean"], "delete-selection": [], "read-value": [], receives: ["handle"], "receives-wheel": ["handle"], contains: ["string"], "body-text-includes": ["string"], "checked-state": [],
   "active-element": [], "document-root": [], "input-acceptance": [], "mark-input": [], "unmark-input": [],
 }
 export const handleResult = (id: PageFunctionId) => ["field", "active-element", "document-root"].includes(id)
