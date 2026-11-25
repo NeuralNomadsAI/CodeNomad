@@ -25,7 +25,7 @@ function fixture() {
       if (action.action === "diagnostics") {
         if (state.diagnosticsUnavailable) throw new Error("Browser diagnostics are unavailable in WebKit previews")
         const events = state.events.slice(action.after)
-        return { epoch: state.epoch, events, next: state.events.length, lost: { messages: 0, requests: 0 }, more: false, contexts: [] }
+        return { epoch: state.epoch, events, next: state.events.length, lost: { messages: 0, requests: 0 }, more: false, contexts: [], lostRequests: [] }
       }
       if (action.action === "response-body") return { body: `body of ${action.request}`, base64Encoded: false }
       if (action.action === "location") {
@@ -425,4 +425,29 @@ test("console and network read the host's events for the current document; WebKi
   state.diagnosticsUnavailable = true
   assert.equal((await tab.run({ type: "console", tabID: tab.id }, undefined, signal) as any).code, "unsupported")
   assert.equal((await tab.run({ type: "console", tabID: tab.id, frameID: "f" }, undefined, signal) as any).code, "unsupported")
+})
+
+test("a new tab starts with empty readouts, and a body read on a lease the page replaced is document_changed", async () => {
+  const { tab, state } = fixture()
+  await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
+  state.events.push(
+    { method: "Network.requestWillBeSent", params: { requestId: "r1", timestamp: 1, wallTime: 1, type: "XHR", request: { url: "http://127.0.0.1/api", method: "GET", headers: {} } } },
+    { method: "Network.responseReceived", params: { requestId: "r1", hasExtraInfo: false, response: { status: 200, mimeType: "text/plain", headers: {} } } },
+    { method: "Network.loadingFinished", params: { requestId: "r1", timestamp: 2 } },
+  )
+  const listed = await tab.run({ type: "network.list", tabID: tab.id }, undefined, signal) as any
+  const old = listed.result.value.requests[0].id
+  const host = (tab as any).host as PreviewHost
+  const page = host.page
+  host.page = async (action, at, deadline, abort) => {
+    if (action.action === "response-body") throw new Error("Browser page lease is no longer current")
+    return page(action, at, deadline, abort)
+  }
+  assert.equal((await tab.run({ type: "network.get", tabID: tab.id, id: old, includeResponseBody: true }, undefined, signal) as any).code, "document_changed")
+  host.page = page
+  // A fragment-only open keeps the document and its buffer epoch, but it is a new tab.
+  const reopened = (await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page#next" }, undefined, signal) as any).result.value
+  assert.deepEqual((await tab.run({ type: "network.list", tabID: reopened.id }, undefined, signal) as any).result.value.requests, [])
+  assert.equal((await tab.run({ type: "network.get", tabID: reopened.id, id: old }, undefined, signal) as any).code, "operation_failed",
+    "the previous tab's request IDs are refused")
 })

@@ -261,6 +261,7 @@ impl BrowserController {
             .and_then(|()| webkit_navigation::install(&webview, self.clone(), registration.clone()))
             .and_then(|()| crate::embedded_view::input::install_read(&webview));
         if let Err(error) = installed {
+            self.diagnostics.remove(&input.registration_id, generation);
             let _ = self
                 .embedded_views
                 .close(window.app_handle(), window.label(), &label);
@@ -280,6 +281,8 @@ impl BrowserController {
         {
             Ok(previous) => previous,
             Err(error) => {
+                // A refused candidate drops only its own buffer: the published preview keeps its diagnostics.
+                self.diagnostics.remove(&input.registration_id, generation);
                 let _ = self
                     .embedded_views
                     .close(window.app_handle(), window.label(), &label);
@@ -287,6 +290,8 @@ impl BrowserController {
             }
         };
         if let Some(previous) = previous {
+            self.diagnostics
+                .remove(&previous.registration_id, previous.generation);
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             webkit_history::remove(window.app_handle(), previous.webview_label.clone());
             let _ = self.embedded_views.close(
@@ -693,7 +698,8 @@ impl BrowserController {
         inner.page_load_expectations.remove(registration_id);
         inner.page_loading.remove(registration_id);
         drop(inner);
-        self.diagnostics.remove(registration_id);
+        self.diagnostics
+            .remove(registration_id, registration.generation);
         ready.notify_all();
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         webkit_history::remove(app, registration.webview_label.clone());
@@ -779,7 +785,9 @@ impl BrowserController {
                 inner.navigation_versions.remove(&id);
                 inner.page_load_expectations.remove(&id);
                 inner.page_loading.remove(&id);
-                self.diagnostics.remove(&id);
+                if let Some(registration) = inner.registrations.get(&id) {
+                    self.diagnostics.remove(&id, registration.generation);
+                }
                 inner.registrations.remove(&id);
                 inner.emulation_profiles.remove(&id);
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1953,7 +1961,7 @@ fn install_webview2_handlers(
     // Diagnostics are an extra: a preview whose domains cannot be enabled still serves the page channel.
     for (method, params) in &diagnostics::spec().enable {
         if cdp(webview, method, params.clone(), deadline).is_err() {
-            controller_diagnostics.remove(&diagnostics_registration_id);
+            controller_diagnostics.remove(&diagnostics_registration_id, generation);
             break;
         }
     }

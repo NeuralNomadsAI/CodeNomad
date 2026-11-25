@@ -15,7 +15,7 @@ const live = (events: DiagnosticEvent[]): DiagnosticContext[] => {
   return [...contexts.values()]
 }
 const read = (events: DiagnosticEvent[], epoch = "buffer:0", next = events.length, lost = { messages: 0, requests: 0 },
-  contexts = live(events)): DiagnosticRead => ({ epoch, events, next, lost, more: false, contexts })
+  contexts = live(events), lostRequests: string[] = []): DiagnosticRead => ({ epoch, events, next, lost, more: false, contexts, lostRequests })
 const event = (method: string, params: Record<string, unknown>): DiagnosticEvent => ({ method, params })
 const request = (requestId: string, url: string, extra: Record<string, unknown> = {}) => event("Network.requestWillBeSent", {
   requestId, documentURL: "https://site.test/", timestamp: 10, wallTime: 1_700_000_000, type: "Fetch",
@@ -144,4 +144,14 @@ test("only known page contexts log, across a document reopened in place and fram
   diagnostics.ingest(read([event("Target.detachedFromTarget", { sessionId: "frame" }), say(3, "late", "frame")], "buffer:1", 8, undefined, contexts.slice(0, 2)))
   assert.deepEqual(diagnostics.console({}).messages.map(entry => entry.text), ["page after reopen"])
   assert.equal((diagnostics as any).contexts.size, 2, "only live contexts are kept")
+})
+
+test("a request whose later events the host lost ends as failed instead of staying pending", () => {
+  const diagnostics = new PreviewDiagnostics()
+  diagnostics.ingest(read([request("slow", "https://site.test/slow")]))
+  assert.equal(diagnostics.list({}).requests[0].state, "pending")
+  diagnostics.ingest(read([], "buffer:0", 1, { messages: 0, requests: 1 }, [], [":slow"]))
+  const [slow] = diagnostics.list({}).requests
+  assert.equal(slow.state, "failed")
+  assert.equal(diagnostics.list({}).dropped, 1)
 })

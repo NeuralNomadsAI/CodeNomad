@@ -46,7 +46,7 @@ addEventListener("message", event => { if (event.data === "child-ready") documen
 new Worker("/worker.js").onmessage = () => { document.querySelector("#worker").textContent = "Worker ran" }</script>`)
   } else if (req.url === "/child") {
     res.setHeader("Content-Type", "text/html")
-    res.end(`<script>console.warn("frame warning ${run}");fetch("/frame-api").then(() => parent.postMessage("child-ready", "*"))</script>`)
+    res.end(`<script>console.warn("frame warning ${run}");fetch("/frame-api").then(response => response.text()).then(() => parent.postMessage("child-ready", "*"))</script>`)
   } else if (req.url === "/frame-api") {
     res.setHeader("Content-Type", "application/json")
     res.end("{}")
@@ -256,7 +256,13 @@ return { warnings: logged.messages.map(entry => entry.text), requests: listed.re
 await tools.browser.navigate({ tabID, url: ${JSON.stringify(`http://127.0.0.1:${fixture.address().port}/frames`)} });
 const waits = [];
 for (const text of ["Frame loaded", "Worker ran"]) waits.push((await tools.browser.wait({ tabID, text, timeout: 10000 })).met);
-const listed = await tools.browser.network.list({ tabID, urlContains: "/frame-api" });
+// The page has its body; the network service reports the request finished a moment later.
+let listed;
+for (let attempt = 0; attempt < 20; attempt++) {
+  listed = await tools.browser.network.list({ tabID, urlContains: "/frame-api" });
+  if (listed.requests.every(item => item.state !== "pending")) break;
+  await tools.browser.wait({ tabID, delayMs: 100 });
+}
 const logged = await tools.browser.console({ tabID, level: "warning" });
 return { waits, requests: listed.requests.map(item => [item.method, item.statusCode, item.state]), warnings: logged.messages.map(entry => entry.text) }`)
     assert.deepEqual(frames.waits, [true, true], JSON.stringify(frames))

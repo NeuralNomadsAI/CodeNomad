@@ -47,6 +47,8 @@ export interface DiagnosticContext { session?: string; id: number; page: boolean
  * evictions. */
 export interface DiagnosticRead {
   epoch: string; events: DiagnosticEvent[]; next: number; lost: DiagnosticLoss; more: boolean; contexts: DiagnosticContext[]
+  /** The requests (`${session}:${requestId}`) that lost an unread event this epoch: their readout cannot finish them. */
+  lostRequests: string[]
 }
 
 /** The raw event buffer of one preview, restarted for each new document. */
@@ -133,7 +135,7 @@ export class DiagnosticEventBuffer {
     }
     this.delivered = Math.max(this.delivered, next)
     return { epoch: `${this.instance}:${this.epoch}`, events, next, lost: { ...this.lost }, more: next < this.sequence,
-      contexts: [...this.contexts.values()] }
+      contexts: [...this.contexts.values()], lostRequests: [...this.lostRequests] }
   }
 }
 

@@ -81,7 +81,8 @@ export type ChainEvent =
   | { readonly type: "finished"; readonly timestamp: number }
   | { readonly type: "failed"; readonly timestamp: number; readonly errorText: string }
   /** The frame target that owns the request ID went away; it sends nothing more. */
-  | { readonly type: "detached" }
+  /** The frame target that owns the request ID went away, or the host lost the request's later events: it ends. */
+  | { readonly type: "detached"; readonly failure?: string }
 
 const EMPTY: Chain = { hops: [], requestWire: [], responseWire: [] }
 
@@ -211,7 +212,7 @@ export function transitionChain(chain: Chain | undefined, event: ChainEvent): Ch
       if (current.hops.every(hop => hop.wire === "none" && !open(hop)) && !current.requestWire.length && !current.responseWire.length) return chain
       return {
         hops: current.hops.map(hop => open(hop)
-          ? { ...hop, wire: "none", phase: { status: "failed", durationMs: 0, failure: "Frame detached before request completed" } }
+          ? { ...hop, wire: "none", phase: { status: "failed", durationMs: 0, failure: event.failure ?? "Frame detached before request completed" } }
           : hop.wire === "none" ? hop : { ...hop, wire: "none" }),
         requestWire: [],
         responseWire: [],

@@ -55,6 +55,10 @@ export class PreviewDiagnostics {
     // The host's live contexts cover those whose creation this readout never saw (an earlier epoch or an eviction).
     for (const context of read.contexts) this.contexts.set(`${context.session ?? ""}:${context.id}`, context.page)
     for (const event of read.events) this.apply(event.method, event.params as Params, event.session)
+    // A request whose later events the host evicted unread would stay pending: it ends as failed, with the reason.
+    for (const key of read.lostRequests ?? []) {
+      if (this.chains.has(key)) this.transition(key, { type: "detached", failure: "The preview did not keep this request's later events." })
+    }
     // Once the buffer is read up to now, the host's live set is exact: contexts it no longer has are gone.
     if (!read.more) {
       const live = new Set(read.contexts.map(context => `${context.session ?? ""}:${context.id}`))
@@ -101,6 +105,16 @@ export class PreviewDiagnostics {
       requestBody: requestBody(hop, input.includeBody, max),
       responseBody: known === "fetch" ? await fetchBody() : known,
     }
+  }
+
+  /** A new tab starts with no entries; the host buffer's position and contexts carry on. */
+  forget(): void {
+    this.messages.length = 0
+    this.requests.clear()
+    this.chains.clear()
+    this.stashed.clear()
+    this.droppedMessages = 0
+    this.droppedRequests = 0
   }
 
   private clear(): void {

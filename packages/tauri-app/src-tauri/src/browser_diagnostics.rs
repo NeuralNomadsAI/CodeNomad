@@ -168,22 +168,16 @@ impl Buffer {
     }
 }
 
-/// One buffer per registration generation; events of a replaced webview never reach its successor.
+/// One buffer per registration generation: a candidate's setup or an older generation's removal never touches the
+/// published one, and events of a replaced webview never reach its successor.
 #[derive(Default)]
-pub(super) struct Buffers(Mutex<HashMap<String, Buffer>>);
+pub(super) struct Buffers(Mutex<HashMap<(String, u64), Buffer>>);
 
 impl Buffers {
-    /// A registration's newer generation replaces its buffer; a late, older one never does.
     pub(super) fn start(&self, registration_id: &str, generation: u64) {
         if let Ok(mut buffers) = self.0.lock() {
-            if buffers
-                .get(registration_id)
-                .is_some_and(|buffer| buffer.generation > generation)
-            {
-                return;
-            }
             buffers.insert(
-                registration_id.to_string(),
+                (registration_id.to_string(), generation),
                 Buffer {
                     generation,
                     instance: uuid::Uuid::new_v4().to_string(),
@@ -201,9 +195,9 @@ impl Buffers {
         }
     }
 
-    pub(super) fn remove(&self, registration_id: &str) {
+    pub(super) fn remove(&self, registration_id: &str, generation: u64) {
         if let Ok(mut buffers) = self.0.lock() {
-            buffers.remove(registration_id);
+            buffers.remove(&(registration_id.to_string(), generation));
         }
     }
 
@@ -226,8 +220,7 @@ impl Buffers {
             return;
         };
         let Some(buffer) = buffers
-            .get_mut(registration_id)
-            .filter(|buffer| buffer.generation == generation)
+            .get_mut(&(registration_id.to_string(), generation))
         else {
             return;
         };
@@ -272,8 +265,7 @@ impl Buffers {
     pub(super) fn restart(&self, registration_id: &str, generation: u64, navigation: Option<u64>) {
         if let Ok(mut buffers) = self.0.lock() {
             if let Some(buffer) = buffers
-                .get_mut(registration_id)
-                .filter(|buffer| buffer.generation == generation)
+                .get_mut(&(registration_id.to_string(), generation))
             {
                 if navigation.is_some() && buffer.navigation == navigation {
                     return;
@@ -292,8 +284,7 @@ impl Buffers {
         let spec = spec();
         let mut buffers = self.0.lock().map_err(|error| error.to_string())?;
         let buffer = buffers
-            .get_mut(registration_id)
-            .filter(|buffer| buffer.generation == generation)
+            .get_mut(&(registration_id.to_string(), generation))
             .ok_or("Browser diagnostics are unavailable for this preview")?;
         let first = buffer
             .events
@@ -322,6 +313,7 @@ impl Buffers {
             "events": events,
             "next": next,
             "lost": { "messages": buffer.lost_messages, "requests": buffer.lost_requests.len() },
+            "lostRequests": buffer.lost_requests.iter().collect::<Vec<_>>(),
             "more": next < buffer.sequence,
             "contexts": buffer.contexts.iter().map(|(session, id, page)| {
                 let mut context = json!({ "id": id, "page": page });
@@ -505,12 +497,30 @@ mod tests {
         assert_eq!(buffers.read("preview", 1, 0).unwrap()["contexts"], json!([{ "id": 1, "page": true }]));
     }
     #[test]
-    fn a_late_older_generation_keeps_the_current_buffer() {
+    fn each_generation_keeps_its_own_buffer_through_setup_and_removal() {
         let buffers = Buffers::default();
-        buffers.start("preview", 2);
         buffers.start("preview", 1);
-        assert!(buffers.read("preview", 2, 0).is_ok());
+        buffers.record("preview", 1, "Log.entryAdded", r#"{"entry":{}}"#, None);
+        // A candidate's setup leaves the published preview's events.
+        buffers.start("preview", 2);
+        assert_eq!(buffers.read("preview", 1, 0).unwrap()["events"].as_array().unwrap().len(), 1);
+        // Removing the older generation leaves the newer one.
+        buffers.remove("preview", 1);
         assert!(buffers.read("preview", 1, 0).is_err());
+        assert!(buffers.read("preview", 2, 0).is_ok());
+        buffers.record("preview", 2, "Network.requestWillBeSent", r#"{"requestId":"r1"}"#, None);
+        for _ in 0..spec().max_events + 1 {
+            buffers.record("preview", 2, "Network.loadingFinished", r#"{"requestId":"r2"}"#, None);
+        }
+        let read = buffers.read("preview", 2, 0).unwrap();
+        let mut lost = read["lostRequests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        lost.sort();
+        assert_eq!(lost, [":r1", ":r2"], "each request that lost an unread event is named");
     }
 
     #[test]

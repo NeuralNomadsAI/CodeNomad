@@ -85,6 +85,8 @@ export class PreviewTab {
   private loading = false
   private generation = 0
   private readonly diagnostics = new PreviewDiagnostics()
+  /** The tab the readouts belong to. */
+  private diagnosticsTab = ""
 
   constructor(private readonly host: PreviewHost) {}
 
@@ -362,6 +364,11 @@ export class PreviewTab {
 
   /** Takes the host's new console and network events for the current document. */
   private async pull(page: (step: BrowserPageAction) => Promise<Record<string, unknown>>): Promise<void> {
+    // A new tab (a web open or another preview) starts with empty readouts, as a fresh tab does in OpenCode.
+    if (this.diagnosticsTab !== this.id) {
+      this.diagnostics.forget()
+      this.diagnosticsTab = this.id
+    }
     for (let read = 0; read < 16; read++) {
       const events = await page({ action: "diagnostics", after: this.diagnostics.cursor }) as unknown as DiagnosticRead
       if (!this.diagnostics.ingest(events)) continue
@@ -415,7 +422,7 @@ function failed(error: unknown): BrowserOutcome {
   const message = error instanceof Error ? error.message : String(error)
   if (/Unknown or stale ref/.test(message)) return failure("stale_ref", message)
   if (/unavailable in WebKit previews|diagnostics are unavailable|does not support diagnostics/.test(message)) return failure("unsupported", message)
-  if (/changed|navigation|replaced|stale/i.test(message)) return failure("document_changed", message)
+  if (/changed|navigation|replaced|stale|no longer current/i.test(message)) return failure("document_changed", message)
   return failure("operation_failed", message)
 }
 
