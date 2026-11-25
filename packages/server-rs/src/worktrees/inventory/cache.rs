@@ -526,7 +526,9 @@ pub(in crate::worktrees) async fn http_list(
                                 // refresh: follow up immediately without waiting for another
                                 // display request; passive follow-ups are not capped by the
                                 // strict-read restart budget (TS `worktree-inventory.ts:61-78`).
-                                let _ = http_read_core(&shared, &w_owned, ReadMode::Validated, None, usize::MAX).await;
+                                let _ =
+                                    Box::pin(http_read_core(&shared, &w_owned, ReadMode::Validated, None, usize::MAX))
+                                        .await;
                             }
                         });
                     }
@@ -540,11 +542,11 @@ pub(in crate::worktrees) async fn http_list(
             return Ok(display);
         }
     }
-    http_read_core(app, w, mode, None, RESTART_LIMIT).await.map(|hit| hit.snapshot)
+    Box::pin(http_read_core(app, w, mode, None, RESTART_LIMIT)).await.map(|hit| hit.snapshot)
 }
 
 pub(crate) async fn http_read(app: &App, w: &Workspace, mode: ReadMode) -> Result<CachedHttp, Error> {
-    http_read_core(app, w, mode, None, RESTART_LIMIT).await
+    Box::pin(http_read_core(app, w, mode, None, RESTART_LIMIT)).await
 }
 
 pub(in crate::worktrees) async fn media_http_read(
@@ -553,7 +555,7 @@ pub(in crate::worktrees) async fn media_http_read(
     endpoint: &Arc<crate::opencode::Endpoint>,
     mode: ReadMode,
 ) -> Result<CachedHttp, Error> {
-    http_read_core(app, w, mode, Some(endpoint), RESTART_LIMIT).await
+    Box::pin(http_read_core(app, w, mode, Some(endpoint), RESTART_LIMIT)).await
 }
 
 async fn http_read_core(
@@ -783,7 +785,7 @@ async fn http_read_core(
             }
             Step::RunInline { flight_id, epoch, done } => {
                 let mut guard = HttpFlightGuard { app, workspace_id: w.id, flight_id, committed: false };
-                let outcome = run_http_scan(app, w, pinned_endpoint).await;
+                let outcome = Box::pin(run_http_scan(app, w, pinned_endpoint)).await;
                 guard.committed = true;
                 let res = finish_http_scan(app, w, flight_id, epoch, outcome);
                 let _ = done.send(res.clone());
@@ -812,7 +814,7 @@ pub(in crate::worktrees) async fn history_catalogue(
     w: &Workspace,
     endpoint: &Arc<crate::opencode::Endpoint>,
 ) -> Option<Arc<Catalogue>> {
-    http_read_core(app, w, ReadMode::Validated, Some(endpoint), RESTART_LIMIT)
+    Box::pin(http_read_core(app, w, ReadMode::Validated, Some(endpoint), RESTART_LIMIT))
         .await
         .ok()
         .and_then(|hit| hit.snapshot.catalogue())

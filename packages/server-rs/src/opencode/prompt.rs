@@ -168,6 +168,10 @@ fn physical(scope: &Path, candidate: &str) -> Option<PathBuf> {
 }
 
 async fn owns_physical(app: &App, workspace: &Workspace, target: &Path) -> bool {
+    Box::pin(owns_physical_inner(app, workspace, target)).await
+}
+
+async fn owns_physical_inner(app: &App, workspace: &Workspace, target: &Path) -> bool {
     if target.starts_with(&workspace.path) {
         return dunce::canonicalize(&workspace.path).ok().as_ref() == Some(&workspace.path);
     }
