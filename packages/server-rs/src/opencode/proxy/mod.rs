@@ -404,7 +404,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     // departure, so the UI can drop a conversation moved out of the project.
     // For `message_list`, reuse the already-verified `input_checkout` instead of
     // running a second worktree inventory (`list_slug` is only used on session GET).
-    let list_slug = match &actual {
+    let verified_placement = match &actual {
         Some(record) if message_list && input_checkout.is_some() && record["location"].get("workspaceID").is_none() => {
             None
         }
@@ -417,14 +417,14 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     _ = workspace_closed() => return Err(not_found()),
                     res = tokio::time::timeout_at(
                         list_deadline,
-                        crate::worktrees::placement(&app, &workspace, &record["location"]),
+                        crate::worktrees::placement_verified(&app, &workspace, &record["location"]),
                     ) => res.map_err(|_| upstream_error())?,
                 }
             } else {
-                crate::worktrees::placement(&app, &workspace, &record["location"]).await
+                crate::worktrees::placement_verified(&app, &workspace, &record["location"]).await
             };
             match placement {
-                Ok(slug) => Some(slug),
+                Ok(verified) => Some(verified),
                 Err(elsewhere) => {
                     if input_checkout.is_some() && record["location"].get("workspaceID").is_none() {
                         None
@@ -440,25 +440,25 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         None => None,
     };
-    let placement_verified = if list_slug.is_some() && native_directory == Some(directory) {
-        if directory == opened {
-            true
-        } else {
-            let scope = app.scope.clone();
-            let dir = directory.to_owned();
-            tokio::task::spawn_blocking(move || {
-                crate::files::paths::canonical(&scope, &dir).is_some_and(|path| path.starts_with(&scope))
-            })
-            .await
-            .unwrap_or(false)
+    let list_slug = verified_placement.as_ref().map(|p| p.slug.clone());
+    if allow_subfolder {
+        if input_checkout.is_none() {
+            return Err(foreign());
         }
     } else {
-        false
-    };
-    if (allow_subfolder && input_checkout.is_none())
-        || (!allow_subfolder && !placement_verified && !crate::worktrees::owns(&app, &workspace, directory).await)
-    {
-        return Err(foreign());
+        let reused_ok =
+            if let Some(verified) = verified_placement.as_ref().filter(|_| native_directory == Some(directory)) {
+                let verified = verified.clone();
+                let scope = app.scope.clone();
+                let ws = workspace.clone();
+                let dir = directory.to_owned();
+                tokio::task::spawn_blocking(move || verified.owns_now(&scope, &ws, &dir)).await.unwrap_or(false)
+            } else {
+                false
+            };
+        if !reused_ok && !crate::worktrees::owns(&app, &workspace, directory).await {
+            return Err(foreign());
+        }
     }
     drop(list_admission_slot);
     target.path_segments_mut().map_err(|_| invalid())?.clear().extend(route.trim_start_matches('/').split('/'));
@@ -507,7 +507,16 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             // `x-codenomad-location` only needs to belong to this workspace and agree with any
             // explicit query selector, NOT with the target session's own linked worktree.
             let ctx_dir = context["directory"].as_str().ok_or_else(invalid)?;
-            let ctx_verified = placement_verified && ctx_dir == directory;
+            let ctx_verified =
+                if let Some(verified) = verified_placement.as_ref().filter(|_| native_directory == Some(ctx_dir)) {
+                    let verified = verified.clone();
+                    let scope = app.scope.clone();
+                    let ws = workspace.clone();
+                    let dir = ctx_dir.to_owned();
+                    tokio::task::spawn_blocking(move || verified.owns_now(&scope, &ws, &dir)).await.unwrap_or(false)
+                } else {
+                    false
+                };
             if !ctx_verified && !crate::worktrees::owns(&app, &workspace, ctx_dir).await {
                 return Err(foreign());
             }

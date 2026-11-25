@@ -54,6 +54,7 @@ pub(crate) struct Physical {
     backlink: Option<Vec<u8>>,
     common_marker: Option<Vec<u8>>,
     stamp: [Option<ConfigStamp>; 2],
+    ancestors: Vec<(PathBuf, [Option<MetaStamp>; 3])>,
 }
 pub(super) const CONFIG_CHANGED_ERROR: &str = "Git configuration changed during worktree validation";
 
@@ -133,6 +134,36 @@ fn small(path: &Path) -> Result<Vec<u8>, Error> {
     file.take(4097).read_to_end(&mut value).map_err(|_| native_error())?;
     if value.len() > 4096 { Err(native_error()) } else { Ok(value) }
 }
+fn ancestor_markers(opened: &Path, root: &Path) -> Option<Vec<(PathBuf, [Option<MetaStamp>; 3])>> {
+    let mut out = Vec::new();
+    let mut cur = opened.to_path_buf();
+    while cur != root {
+        let stamps = [".git", "HEAD", "commondir"]
+            .map(|name| std::fs::symlink_metadata(cur.join(name)).ok().and_then(|meta| meta_stamp(&meta)));
+        out.push((cur.clone(), stamps));
+        if !cur.pop() {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+fn is_local_git_target(text: &str) -> bool {
+    if text.is_empty() || text.len() > 32_768 || text.contains('\0') {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        let b = text.as_bytes();
+        let sep = |c: u8| c == b'\\' || c == b'/';
+        b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && sep(b[2]) && !text[2..].contains(':')
+    }
+    #[cfg(not(windows))]
+    {
+        text.starts_with('/')
+    }
+}
+
 impl Physical {
     fn live(&self) -> bool {
         let canonical = |path: &Path| dunce::canonicalize(path).ok().as_deref() == Some(path);
@@ -142,6 +173,7 @@ impl Physical {
             && identity(&self.root).ok().as_ref() == Some(&self.root_id)
             && identity(&self.admin).ok().as_ref() == Some(&self.admin_id)
             && identity(&self.common).ok().as_ref() == Some(&self.common_id)
+            && std::fs::symlink_metadata(self.admin.join("HEAD")).is_ok()
             && config_stamp(&self.common.join("config")).as_ref() == Some(&self.stamp[0])
             && config_stamp(&self.admin.join("config.worktree")).as_ref() == Some(&self.stamp[1])
             && match (&self.marker, &self.backlink, &self.common_marker) {
@@ -159,24 +191,12 @@ impl Physical {
                 _ => false,
             }
     }
-    /// Also verifies that `opened` still canonicalizes to itself and no nested `.git` marker
-    /// appeared between `opened` and `self.root` after a pre-checked probe.
+    /// Also verifies that `opened` still canonicalizes to itself and intermediate discovery markers
+    /// (`.git`, `HEAD`, `commondir`) between `opened` and `self.root` are unchanged since probing.
     fn live_for(&self, opened: &Path) -> bool {
-        if !self.live() || dunce::canonicalize(opened).ok().as_deref() != Some(opened) {
-            return false;
-        }
-        let mut cur = opened.to_path_buf();
-        while cur != self.root {
-            if !std::fs::symlink_metadata(cur.join(".git"))
-                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-            {
-                return false;
-            }
-            if !cur.pop() {
-                return false;
-            }
-        }
-        true
+        self.live()
+            && dunce::canonicalize(opened).ok().as_deref() == Some(opened)
+            && ancestor_markers(opened, &self.root).as_ref() == Some(&self.ancestors)
     }
 }
 /// The checkout's `.git`, its `gitdir:` admin directory, or an administrative backlink
@@ -284,7 +304,7 @@ fn pre_config_stamps(path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigSta
                     .and_then(|t| t.trim_end().strip_prefix("gitdir: "))
                     .filter(|s| !s.is_empty())?;
                 let admin_path = if Path::new(gitdir).is_absolute() {
-                    if !files::paths::local_absolute(gitdir) {
+                    if !is_local_git_target(gitdir) {
                         return None;
                     }
                     PathBuf::from(gitdir)
@@ -295,7 +315,7 @@ fn pre_config_stamps(path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigSta
                 let common = if let Ok(cb) = small(&admin.join("commondir")) {
                     let ct = std::str::from_utf8(&cb).ok()?.trim_end();
                     let common_path = if Path::new(ct).is_absolute() {
-                        if !files::paths::local_absolute(ct) {
+                        if !is_local_git_target(ct) {
                             return None;
                         }
                         PathBuf::from(ct)
@@ -325,6 +345,7 @@ pub(crate) enum RootCheckout {
 }
 
 async fn parse_checkout(
+    opened: PathBuf,
     text: String,
     pre: Option<(PathBuf, PathBuf, [Option<ConfigStamp>; 2])>,
 ) -> Result<Physical, Error> {
@@ -357,6 +378,11 @@ async fn parse_checkout(
         {
             return Err(config_changed_error());
         }
+        if std::fs::symlink_metadata(admin.join("HEAD")).is_err() {
+            return Err(native_error());
+        }
+        let opened = dunce::canonicalize(&opened).map_err(|_| native_error())?;
+        let ancestors = ancestor_markers(&opened, &root).ok_or_else(native_error)?;
         Ok(Physical {
             stamp,
             root_id: identity(&root)?,
@@ -368,6 +394,7 @@ async fn parse_checkout(
             marker,
             backlink,
             common_marker,
+            ancestors,
         })
     })
     .await
@@ -392,8 +419,10 @@ pub(crate) async fn probe_root_checkout(workspace: &Workspace) -> Result<RootChe
     }
     let args = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"];
     match crate::git::run(&workspace.path, &args, 128 * 1024).await {
-        Ok(out) if out.code == 0 => Ok(RootCheckout::Git(parse_checkout(out.text(), pre).await.map(Box::new))),
-        Ok(out) if out.not_a_repository() => Ok(RootCheckout::NonGit),
+        Ok(out) if out.code == 0 => {
+            Ok(RootCheckout::Git(parse_checkout(workspace.path.clone(), out.text(), pre).await.map(Box::new)))
+        }
+        Ok(out) if out.code == 128 && out.stderr_contains("not a git repository") => Ok(RootCheckout::NonGit),
         Err(err) if crate::git::is_missing_git(&err) => Ok(RootCheckout::MissingGit),
         Ok(out) => {
             crate::bench::route_trace(format_args!("root-proof git exited {}", out.code));
@@ -418,7 +447,7 @@ async fn checkout(path: &Path) -> Result<Physical, Error> {
     .flatten();
     let text =
         git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]).await?;
-    parse_checkout(text, pre).await
+    parse_checkout(path.to_path_buf(), text, pre).await
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tree {
@@ -509,7 +538,7 @@ impl Tree {
             workspace_path.strip_prefix(root_registered).ok().map(Path::to_path_buf)
         }
     }
-    fn owns_path(&self, dir: &Path) -> bool {
+    pub(super) fn owns_path(&self, dir: &Path) -> bool {
         self.path == dir
             && !self.nested_missing
             && self.projected_link.is_none()

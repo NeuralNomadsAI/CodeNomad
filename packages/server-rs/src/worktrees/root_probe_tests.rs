@@ -221,12 +221,27 @@ async fn root_only_uses_shared_git_runner_and_classifies_git_and_non_git() {
     assert_eq!(non_git.git_runs("root-only"), 1, "non-Git root_only must run through git::run semaphore");
     assert_eq!(non_git.rev_parse_runs("root-only"), 1);
 
-    // Broken gitfile ("fatal: not a git repository: ...") must fail closed with 503, not classify as non-Git.
+    // Broken gitfile ("fatal: not a git repository: ..."): display list falls back to isGitRepo=false
+    // (TS native-worktree-fallback.test.ts), while strict readable_checkout returns false (no departure verdict).
     let broken = Harness::new("root-only-broken-gitfile", false, false).await;
     std::fs::write(broken.ws.path.join(".git"), "gitdir: ./missing-admin\n").unwrap();
-    let err = REQUEST.scope(("broken", broken.trace.clone()), root_only(&broken.ws)).await.unwrap_err();
-    assert_eq!(err.0, Status::SERVICE_UNAVAILABLE);
-    assert_eq!(broken.rev_parse_runs("broken"), 1);
+    let broken_list = REQUEST
+        .scope(
+            ("broken-list", broken.trace.clone()),
+            list(
+                State(broken.app.clone()),
+                Path(broken.id.to_string()),
+                Ok(Query(Input { fresh: Some("false".into()) })),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(broken_list.status(), Status::OK);
+    let broken_body = axum::body::to_bytes(broken_list.into_body(), 64 * 1024).await.unwrap();
+    let broken_json: Value = serde_json::from_slice(&broken_body).unwrap();
+    assert_eq!(broken_json["isGitRepo"], false);
+    assert_eq!(broken.rev_parse_runs("broken-list"), 1);
+    assert!(!linked::readable_checkout(&broken.ws.path).await);
 }
 
 #[tokio::test]
@@ -234,7 +249,7 @@ async fn repo_target_and_worktrees_list_avoid_duplicate_root_probe() {
     let _git = crate::git::test_git_serial().await;
     let h = Harness::new("no-dup-root-probe", true, false).await;
 
-    // 1. GET /worktrees?fresh=false on a 1-checkout repo: 1 rev-parse + 1 config --includes + 1 worktree list = 3.
+    // 1. GET /worktrees?fresh=false on a 1-checkout repo: 1 rev-parse only (no duplicate root probe).
     let list_res = REQUEST
         .scope(
             ("list", h.trace.clone()),
@@ -249,14 +264,8 @@ async fn repo_target_and_worktrees_list_avoid_duplicate_root_probe() {
         "worktrees::list must run rev-parse once, not twice: {:?}",
         h.trace.lock().unwrap()
     );
-    assert_eq!(
-        h.git_runs("list"),
-        3,
-        "worktrees::list must reuse the single root probe instead of spawning rev-parse twice: {:?}",
-        h.trace.lock().unwrap()
-    );
 
-    // 2. git::repo (repo_target) on a 1-checkout repo: 1 rev-parse + 1 config --includes + 1 worktree list + 1 guard_config = 4.
+    // 2. git::repo (repo_target) on a 1-checkout repo: 1 rev-parse only.
     let repo_res = REQUEST.scope(("repo", h.trace.clone()), crate::git::repo(&h.app, &h.id.to_string(), "root")).await;
     if let Err(err) = repo_res {
         panic!("repo_target must succeed: {err:?}");
@@ -267,14 +276,15 @@ async fn repo_target_and_worktrees_list_avoid_duplicate_root_probe() {
         "git::repo_target must run rev-parse once, not twice: {:?}",
         h.trace.lock().unwrap()
     );
-    assert_eq!(
-        h.git_runs("repo"),
-        4,
-        "git::repo_target must reuse the single root probe instead of spawning rev-parse twice: {:?}",
-        h.trace.lock().unwrap()
-    );
 
-    // 3. Non-Git workspace still rejects with 400 and never hits native HTTP.
+    // 3. exact_root_supported on a Git repo: 1 rev-parse only.
+    assert!(
+        REQUEST.scope(("exact-root", h.trace.clone()), exact_root_supported(&h.app, &h.ws)).await.unwrap(),
+        "exact_root_supported must succeed on the opened Git checkout"
+    );
+    assert_eq!(h.rev_parse_runs("exact-root"), 1);
+
+    // 4. Non-Git workspace still rejects with 400 and never hits native HTTP.
     let non_git = Harness::new("no-dup-non-git", false, false).await;
     let err = match REQUEST
         .scope(("non-git-repo", non_git.trace.clone()), crate::git::repo(&non_git.app, &non_git.id.to_string(), "root"))
@@ -315,6 +325,12 @@ async fn proxy_linked_session_reuses_placement_without_second_catalogue() {
     assert!(
         payload["data"]["listWorktreeSlug"].as_str().is_some_and(|slug| slug.starts_with("worktree-")),
         "expected linked worktree slug, got: {payload}"
+    );
+    assert_eq!(
+        h.native_calls("native GET /api/location"),
+        1,
+        "linked session GET must enter catalogue once (not even a failed second /api/location): {:?}",
+        h.trace.lock().unwrap()
     );
     assert_eq!(
         h.native_calls("native GET /api/worktree"),

@@ -68,6 +68,9 @@ impl Output {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
     }
+    pub fn stderr_contains(&self, needle: &str) -> bool {
+        String::from_utf8_lossy(&self.err).contains(needle)
+    }
     pub fn ok(self) -> Result<Self, Error> {
         if self.code == 0 { Ok(self) } else { Err(bad("Git read failed")) }
     }
