@@ -361,6 +361,7 @@ impl PendingNewWindow {
 struct LaunchDispatch {
     pending: VecDeque<LaunchIntent>,
     draining: bool,
+    closed: bool,
 }
 
 impl LocalWindows {
@@ -975,44 +976,120 @@ pub(crate) fn restore_windows(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn handle_intents(app: &AppHandle, intents: Vec<LaunchIntent>) {
-    {
-        let windows = app.state::<LocalWindows>();
-        let Ok(mut dispatch) = windows.launch_dispatch.lock() else {
-            return;
+impl LocalWindows {
+    fn queue_launch_intents(&self, intents: Vec<LaunchIntent>) -> bool {
+        let Ok(mut dispatch) = self.launch_dispatch.lock() else {
+            return false;
         };
+        if dispatch.closed {
+            return false;
+        }
         dispatch.pending.extend(intents);
-        if dispatch.draining {
-            return;
+        if dispatch.draining || dispatch.pending.is_empty() {
+            return false;
         }
         dispatch.draining = true;
+        true
     }
-    drain_intents(app);
+
+    fn take_next_launch_intent(&self, shutdown: &ShutdownCoordinator) -> Option<LaunchIntent> {
+        let mut dispatch = self.launch_dispatch.lock().ok()?;
+        if dispatch.closed {
+            dispatch.pending.clear();
+            dispatch.draining = false;
+            return None;
+        }
+        if shutdown.with_navigation_authority(|| ()).is_none() {
+            // Keep accepted intents queued while Quit is pending; a failed or
+            // canceled shutdown resumes draining in FIFO order.
+            dispatch.draining = false;
+            return None;
+        }
+        let intent = dispatch.pending.pop_front();
+        if intent.is_none() {
+            dispatch.draining = false;
+        }
+        intent
+    }
+
+    fn requeue_launch_intent_front(&self, intent: LaunchIntent) {
+        let Ok(mut dispatch) = self.launch_dispatch.lock() else {
+            return;
+        };
+        if !dispatch.closed {
+            dispatch.pending.push_front(intent);
+        }
+    }
+
+    fn dispatch_launch_intents(
+        &self,
+        shutdown: &ShutdownCoordinator,
+        intents: Vec<LaunchIntent>,
+        handle: impl FnMut(LaunchIntent) -> Result<bool, String>,
+    ) {
+        if !self.queue_launch_intents(intents) {
+            return;
+        }
+        self.drain_launch_intents(shutdown, handle);
+    }
+
+    fn drain_launch_intents(
+        &self,
+        shutdown: &ShutdownCoordinator,
+        mut handle: impl FnMut(LaunchIntent) -> Result<bool, String>,
+    ) {
+        while let Some(intent) = self.take_next_launch_intent(shutdown) {
+            match handle(intent) {
+                Ok(true) => return, // Resume when the new window has an MRU entry.
+                Ok(false) => {}
+                Err(error) => eprintln!("[tauri-startup] launch intent failed: {error}"),
+            }
+        }
+    }
+
+    pub(crate) fn discard_pending_intents(&self) {
+        let Ok(mut dispatch) = self.launch_dispatch.lock() else {
+            return;
+        };
+        dispatch.closed = true;
+        dispatch.pending.clear();
+        dispatch.draining = false;
+    }
+}
+
+pub(crate) fn handle_intents(app: &AppHandle, intents: Vec<LaunchIntent>) {
+    app.state::<LocalWindows>().dispatch_launch_intents(
+        &app.state::<ShutdownCoordinator>(),
+        intents,
+        |intent| handle_intent(app, intent),
+    );
+}
+
+pub(crate) fn resume_pending_intents(app: &AppHandle) {
+    if app.try_state::<LocalWindows>().is_none() {
+        return;
+    }
+    let dispatch = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if dispatch.try_state::<LocalWindows>().is_some()
+            && dispatch.try_state::<ShutdownCoordinator>().is_some()
+        {
+            handle_intents(&dispatch, Vec::new());
+        }
+    });
+}
+
+pub(crate) fn clear_pending_intents(app: &AppHandle) {
+    if let Some(windows) = app.try_state::<LocalWindows>() {
+        windows.discard_pending_intents();
+    }
 }
 
 fn drain_intents(app: &AppHandle) {
-    loop {
-        let allowed = crate::shutdown::with_navigation_authority(app, || ()).is_some();
-        let intent = {
-            let windows = app.state::<LocalWindows>();
-            let Ok(mut dispatch) = windows.launch_dispatch.lock() else {
-                return;
-            };
-            if !allowed {
-                dispatch.pending.clear();
-            }
-            let Some(intent) = dispatch.pending.pop_front() else {
-                dispatch.draining = false;
-                return;
-            };
-            intent
-        };
-        match handle_intent(app, intent) {
-            Ok(true) => return, // Resume when the new window has an MRU entry.
-            Ok(false) => {}
-            Err(error) => eprintln!("[tauri-startup] launch intent failed: {error}"),
-        }
-    }
+    app.state::<LocalWindows>().drain_launch_intents(
+        &app.state::<ShutdownCoordinator>(),
+        |intent| handle_intent(app, intent),
+    );
 }
 
 fn handle_intent(app: &AppHandle, intent: LaunchIntent) -> Result<bool, String> {
@@ -1041,13 +1118,31 @@ fn handle_intent(app: &AppHandle, intent: LaunchIntent) -> Result<bool, String> 
             return deliver_intent(app, record, intent).map(|()| false);
         }
     }
-    schedule_new_window(app, move |app, result| {
-        if let Err(error) = result.and_then(|record| deliver_intent(app, record, intent)) {
-            eprintln!("[tauri-startup] launch intent failed: {error}");
+    let retry_intent = intent.clone();
+    match schedule_new_window(app, move |app, result| {
+        match result {
+            Ok(record) => {
+                if let Err(error) = deliver_intent(app, record, intent) {
+                    eprintln!("[tauri-startup] launch intent failed: {error}");
+                }
+            }
+            Err(error) if error == SHUTDOWN_IN_PROGRESS => {
+                app.state::<LocalWindows>()
+                    .requeue_launch_intent_front(intent);
+            }
+            Err(error) => {
+                eprintln!("[tauri-startup] launch intent failed: {error}");
+            }
         }
         drain_intents(app);
-    })?;
-    Ok(true)
+    }) {
+        Ok(()) => Ok(true),
+        Err(error) if error == SHUTDOWN_IN_PROGRESS => {
+            windows.requeue_launch_intent_front(retry_intent);
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn deliver_intent(

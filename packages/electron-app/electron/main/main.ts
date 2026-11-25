@@ -257,6 +257,9 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     removeWindowState: (id) => clientState.removeWindow(id), getAllowedRendererOrigins: getAllowedOrigins,
     isTrustedRendererOrigin: isAllowedRendererOrigin,
     navigationLifecycle,
+    onShutdownPending: () => intentQueue.pause(),
+    onShutdownCanceled: () => intentQueue.resume(),
+    onShutdownCompleted: () => intentQueue.close(),
     ...(previousRestart && { defaultRelaunchOptions: { execPath: artifact.execPath, args: artifact.appArgs } }),
     stopSpeech: () => { remoteDictation.revoke(); return deviceSpeech.revokeAll() },
   })
@@ -412,7 +415,6 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     return createWindow(identity.id, identity.persisted)
   }
   const handleIntent = async (intent: LaunchIntent) => {
-    if (navigationLifecycle.stopped) return
     if (isConnectOnlyLaunch(intent) && !registry.mruRecord()) {
       // Nothing to run the connection in: a hidden, unpersisted window runs it and closes once it settles.
       const record = createWindow(randomUUID(), false, true)

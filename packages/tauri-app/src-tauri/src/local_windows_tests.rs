@@ -770,3 +770,195 @@ fn boot_splash_renders_the_real_logo_and_loading_palette() {
         );
     }
 }
+
+#[test]
+fn forwarded_launches_survive_failed_or_canceled_quit_in_order_and_drop_on_completion() {
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+
+    let timeout = Duration::from_secs(5);
+    let root = tempfile::tempdir().unwrap();
+    let first_dir = root.path().join("first");
+    let second_dir = root.path().join("second");
+    let third_dir = root.path().join("third");
+    let dropped_dir = root.path().join("dropped");
+    let expected_first = first_dir.to_string_lossy().into_owned();
+    let expected_second = second_dir.to_string_lossy().into_owned();
+    let expected_third = third_dir.to_string_lossy().into_owned();
+
+    let windows = Arc::new(LocalWindows::default());
+    let shutdown = Arc::new(ShutdownCoordinator::default());
+    let delivered = Arc::new(Mutex::new(Vec::<LaunchIntent>::new()));
+
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (queued_tx, queued_rx) = mpsc::channel();
+
+    let worker_windows = Arc::clone(&windows);
+    let worker_shutdown = Arc::clone(&shutdown);
+    let worker_delivered = Arc::clone(&delivered);
+    let worker_first = first_dir.clone();
+    let worker_second = second_dir.clone();
+    let worker_third = third_dir.clone();
+    let worker_dropped = dropped_dir.clone();
+
+    let worker = crate::launch::ForwardedLaunchWorker::with_io(
+        root.path().join("config.yaml"),
+        true,
+        move |path| {
+            if path == worker_first {
+                entered_tx.send(()).unwrap();
+                release_rx.recv_timeout(timeout).unwrap();
+                true
+            } else {
+                path == worker_second || path == worker_third || path == worker_dropped
+            }
+        },
+        |_| Err(std::io::Error::from(std::io::ErrorKind::NotFound)),
+        move |tag: &'static str, intent| {
+            let sink = Arc::clone(&worker_delivered);
+            worker_windows.dispatch_launch_intents(&worker_shutdown, vec![intent], move |intent| {
+                sink.lock().unwrap().push(intent);
+                Ok(false)
+            });
+            queued_tx.send(tag).unwrap();
+        },
+    );
+
+    let cwd = root.path().to_string_lossy().into_owned();
+    // Accepted before Quit starts; folder validation completes while Quit is pending.
+    worker.enqueue(
+        "first",
+        vec!["codenomad.exe".into(), "--folder".into(), "first".into()],
+        cwd.clone(),
+    );
+    entered_rx.recv_timeout(timeout).unwrap();
+
+    let requests = shutdown.begin_shutdown(["main".into()]).unwrap();
+    release_tx.send(()).unwrap();
+    assert_eq!(queued_rx.recv_timeout(timeout).unwrap(), "first");
+
+    // Accepted during the pending Quit.
+    worker.enqueue(
+        "second",
+        vec!["codenomad.exe".into(), "--folder".into(), "second".into()],
+        cwd.clone(),
+    );
+    assert_eq!(queued_rx.recv_timeout(timeout).unwrap(), "second");
+    assert!(
+        delivered.lock().unwrap().is_empty(),
+        "forwarded launches must wait while Quit is pending"
+    );
+
+    // Quit fails after cleanup begins: held launches must deliver in FIFO order.
+    assert!(shutdown.acknowledge_global("main", requests[0].1));
+    assert!(shutdown.begin_cleanup());
+    let _ = shutdown.cleanup_failed(|| {});
+    let resume_sink = Arc::clone(&delivered);
+    windows.dispatch_launch_intents(&shutdown, Vec::new(), move |intent| {
+        resume_sink.lock().unwrap().push(intent);
+        Ok(false)
+    });
+    assert_eq!(
+        delivered
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|intent| intent.folders.clone())
+            .collect::<Vec<_>>(),
+        vec![expected_first.clone(), expected_second.clone()]
+    );
+
+    // Quit canceled via timeout or Windows session-end cancellation also delivers held launches.
+    #[cfg(windows)]
+    {
+        assert!(shutdown.begin_windows_session_end(["main".into()]).is_some());
+        worker.enqueue(
+            "third",
+            vec!["codenomad.exe".into(), "--folder".into(), "third".into()],
+            cwd.clone(),
+        );
+        assert_eq!(queued_rx.recv_timeout(timeout).unwrap(), "third");
+        assert_eq!(delivered.lock().unwrap().len(), 2);
+        let _ = shutdown.cancel_windows_session_end();
+        let resume_sink = Arc::clone(&delivered);
+        windows.dispatch_launch_intents(&shutdown, Vec::new(), move |intent| {
+            resume_sink.lock().unwrap().push(intent);
+            Ok(false)
+        });
+        assert_eq!(
+            delivered
+                .lock()
+                .unwrap()
+                .iter()
+                .flat_map(|intent| intent.folders.clone())
+                .collect::<Vec<_>>(),
+            vec![expected_first.clone(), expected_second.clone(), expected_third.clone()]
+        );
+    }
+
+    // When Quit actually completes, held launches are dropped.
+    let final_requests = shutdown.begin_shutdown(["main".into()]).unwrap();
+    worker.enqueue(
+        "dropped",
+        vec!["codenomad.exe".into(), "--folder".into(), "dropped".into()],
+        cwd,
+    );
+    assert_eq!(queued_rx.recv_timeout(timeout).unwrap(), "dropped");
+    assert!(shutdown.acknowledge_global("main", final_requests[0].1));
+    assert!(shutdown.begin_cleanup());
+    windows.discard_pending_intents();
+    let _ = shutdown.complete_cleanup();
+    let final_count = delivered.lock().unwrap().len();
+    let final_sink = Arc::clone(&delivered);
+    windows.dispatch_launch_intents(&shutdown, Vec::new(), move |intent| {
+        final_sink.lock().unwrap().push(intent);
+        Ok(false)
+    });
+    assert_eq!(delivered.lock().unwrap().len(), final_count);
+}
+
+#[test]
+fn mid_dispatch_shutdown_requeues_intent_at_front_for_failed_quit_recovery() {
+    let windows = LocalWindows::default();
+    let shutdown = ShutdownCoordinator::default();
+    let first = LaunchIntent {
+        new_window: true,
+        folders: vec!["first".into()],
+        connect_server: None,
+    };
+    let second = LaunchIntent {
+        new_window: true,
+        folders: vec!["second".into()],
+        connect_server: None,
+    };
+
+    let mut delivered = Vec::new();
+    let mut requests = None;
+    windows.dispatch_launch_intents(&shutdown, vec![first, second], |intent| {
+        if requests.is_none() {
+            // Quit begins while the first intent is attempting to reserve a window.
+            requests = shutdown.begin_shutdown(["main".into()]);
+            windows.requeue_launch_intent_front(intent);
+            return Ok(false);
+        }
+        delivered.push(intent);
+        Ok(false)
+    });
+    assert!(delivered.is_empty());
+
+    // Shutdown expires without completing: first intent must still run ahead of second.
+    let expired = shutdown.expire_pending_shutdown(&requests.unwrap());
+    assert_eq!(expired.len(), 1);
+    windows.dispatch_launch_intents(&shutdown, Vec::new(), |intent| {
+        delivered.push(intent);
+        Ok(false)
+    });
+    assert_eq!(
+        delivered
+            .into_iter()
+            .flat_map(|intent| intent.folders)
+            .collect::<Vec<_>>(),
+        vec!["first".to_string(), "second".to_string()]
+    );
+}

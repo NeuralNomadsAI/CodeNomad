@@ -282,7 +282,7 @@ impl ShutdownCoordinator {
         Some(requests)
     }
 
-    fn acknowledge_global(&self, label: &str, generation: u64) -> bool {
+    pub(crate) fn acknowledge_global(&self, label: &str, generation: u64) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.global_pending.get(label).copied() != Some(generation) {
             return false;
@@ -337,7 +337,7 @@ impl ShutdownCoordinator {
             && state.releasing_local_closes.is_empty()
     }
 
-    fn begin_cleanup(&self) -> bool {
+    pub(crate) fn begin_cleanup(&self) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if !state.shutdown_started
             || state.cleanup_started
@@ -371,7 +371,7 @@ impl ShutdownCoordinator {
         })
     }
 
-    fn cleanup_failed(&self, reopen: impl FnOnce()) -> Vec<(String, u64)> {
+    pub(crate) fn cleanup_failed(&self, reopen: impl FnOnce()) -> Vec<(String, u64)> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         #[cfg(windows)]
         if state.windows_session_end_deadline.is_some() {
@@ -389,7 +389,7 @@ impl ShutdownCoordinator {
         cancellations
     }
 
-    fn expire_pending_shutdown(&self, requests: &[(String, u64)]) -> Vec<(String, u64)> {
+    pub(crate) fn expire_pending_shutdown(&self, requests: &[(String, u64)]) -> Vec<(String, u64)> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if !state.shutdown_started || state.cleanup_started
             || state.global_requests.is_empty()
@@ -520,7 +520,7 @@ impl ShutdownCoordinator {
         }
     }
 
-    fn complete_cleanup(&self) -> bool {
+    pub(crate) fn complete_cleanup(&self) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.exit_allowed = true;
         self.release_acknowledged.notify_all();
@@ -544,7 +544,7 @@ impl ShutdownCoordinator {
     }
 
     #[cfg(windows)]
-    fn begin_windows_session_end(
+    pub(crate) fn begin_windows_session_end(
         &self,
         labels: impl IntoIterator<Item = String>,
     ) -> Option<Vec<(String, u64)>> {
@@ -597,7 +597,7 @@ impl ShutdownCoordinator {
     }
 
     #[cfg(windows)]
-    fn cancel_windows_session_end(&self) -> Vec<(String, u64)> {
+    pub(crate) fn cancel_windows_session_end(&self) -> Vec<(String, u64)> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.windows_session_end_deadline.is_some() || !state.windows_session_end_queried {
             return Vec::new();
@@ -674,6 +674,7 @@ fn emit_flush_cancellations(app: &AppHandle, cancellations: Vec<(String, u64)>) 
     for (label, generation) in cancellations {
         emit_flush_cancelled(app, &label, generation);
     }
+    crate::local_windows::resume_pending_intents(app);
 }
 
 pub(crate) fn request_local_window_close(app: AppHandle, label: String) {
@@ -945,6 +946,7 @@ fn start_cleanup(app: AppHandle) {
             return;
         }
         client_state::release(&app);
+        crate::local_windows::clear_pending_intents(&app);
         let restart = coordinator.complete_cleanup();
         if restart {
             #[cfg(target_os = "macos")]
@@ -1161,6 +1163,7 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
             if saved {
                 client_state::release(&cleanup_app);
             }
+            crate::local_windows::clear_pending_intents(&cleanup_app);
             cleanup_app.state::<ShutdownCoordinator>().complete_cleanup();
         });
     }

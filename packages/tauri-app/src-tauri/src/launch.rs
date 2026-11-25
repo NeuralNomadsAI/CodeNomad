@@ -275,7 +275,7 @@ impl<T: Send + 'static> ForwardedLaunchWorker<T> {
         )
     }
 
-    fn with_io(
+    pub(crate) fn with_io(
         config_path: PathBuf,
         windows_forwarding: bool,
         mut is_dir: impl FnMut(&Path) -> bool + Send + 'static,

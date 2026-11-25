@@ -35,6 +35,9 @@ interface Dependencies {
   isWindows?: boolean
   navigationLifecycle?: SerializedLifecycle
   defaultRelaunchOptions?: Electron.RelaunchOptions
+  onShutdownPending?(): void
+  onShutdownCanceled?(): void
+  onShutdownCompleted?(): void
 }
 
 export class MultiwindowLifecycle {
@@ -162,6 +165,7 @@ export class MultiwindowLifecycle {
           if (this.needsShutdownFlush(window) && !this.dependencies.isSupportWindow?.(window)) this.resumeCapture(window)
           if (visibleWindows.includes(window)) window.show()
         }
+        this.dependencies.onShutdownCanceled?.()
         console.warn("[client-state] shutdown remains pending", error)
       })
     })
@@ -198,6 +202,7 @@ export class MultiwindowLifecycle {
 
   private startShutdown(preparedFlush?: Promise<void>): Promise<void> {
     if (this.shutdown) return this.shutdown
+    this.dependencies.onShutdownPending?.()
     const cleanup = async () => {
       const speech = this.dependencies.stopSpeech?.()
       if (preparedFlush) await preparedFlush
@@ -323,6 +328,7 @@ export class MultiwindowLifecycle {
   private exit(): void {
     if (this.exitAllowed) return
     this.exitAllowed = true
+    this.dependencies.onShutdownCompleted?.()
     const options = this.relaunchRequested === true ? this.dependencies.defaultRelaunchOptions : this.relaunchRequested
     if (options) this.dependencies.app.relaunch(options)
     else if (this.relaunchRequested === true) this.dependencies.app.relaunch()

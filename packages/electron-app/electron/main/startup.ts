@@ -210,16 +210,57 @@ export function createLaunchIntentQueue(
   handle: (intent: LaunchIntent) => void | Promise<void>,
   reportError: (error: unknown) => void,
 ) {
-  let start!: () => void
-  const ready = new Promise<void>((resolve) => { start = resolve })
+  let started = false
+  let paused = false
+  let closed = false
+  let releaseGate: (() => void) | undefined
+  let gate = new Promise<void>((resolve) => { releaseGate = resolve })
   let tail = Promise.resolve()
+
+  const openGateIfAllowed = () => {
+    if (started && !paused && releaseGate) {
+      const release = releaseGate
+      releaseGate = undefined
+      release()
+    }
+  }
+
+  const waitUntilAllowed = async (): Promise<boolean> => {
+    while (!closed && (!started || paused)) {
+      await gate
+    }
+    return !closed
+  }
+
   return {
     enqueue(intent: LaunchIntent): Promise<void> {
-      const operation = tail.then(() => ready).then(() => handle(intent))
+      const operation = tail.then(async () => {
+        if (!await waitUntilAllowed()) return
+        await handle(intent)
+      })
       tail = operation.catch(reportError)
       return operation
     },
-    start,
+    start(): void {
+      started = true
+      openGateIfAllowed()
+    },
+    pause(): void {
+      if (closed || paused) return
+      paused = true
+      gate = new Promise<void>((resolve) => { releaseGate = resolve })
+    },
+    resume(): void {
+      if (closed || !paused) return
+      paused = false
+      openGateIfAllowed()
+    },
+    close(): void {
+      closed = true
+      const release = releaseGate
+      releaseGate = undefined
+      release?.()
+    },
     idle: () => tail,
   }
 }

@@ -8,6 +8,8 @@ import { ClientStateManager } from "./client-state"
 import { CrossHostRegistration } from "./client-state-cross-host"
 import { DeveloperMode } from "./developer-mode"
 import { MultiwindowLifecycle, type LifecycleWindow } from "./multiwindow-lifecycle"
+import { SerializedLifecycle } from "./serialized-lifecycle"
+import { createForwardedLaunchQueue, createLaunchIntentQueue, type LaunchIntent } from "./startup"
 import { WindowStateTracker } from "./window-state"
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
@@ -887,4 +889,95 @@ test("failed primary release is retried by the next shutdown attempt", async () 
     "hide:one", "renderer:one", "native:one", "workspace-release:one", "stop", "recover", "show:one",
     "hide:one", "renderer:one", "native:one", "workspace-release:one", "stop", "exit",
   ])
+})
+
+test("forwarded launches accepted before or during a failed quit are held and delivered in order after quit fails, and dropped when quit completes", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  const first = windowRecord("one", calls)
+  const navigationLifecycle = new SerializedLifecycle()
+  let quitAttempts = 0
+  let rejectFirstQuit!: (error: Error) => void
+  const firstQuit = new Promise<void>((_resolve, reject) => { rejectFirstQuit = reject })
+  let resolveSecondQuit!: () => void
+  const secondQuit = new Promise<void>((resolve) => { resolveSecondQuit = resolve })
+
+  const delivered: string[] = []
+  const intentQueue = createLaunchIntentQueue(async (intent: LaunchIntent) => {
+    delivered.push(intent.folders[0] ?? "")
+    calls.push(`deliver:${intent.folders[0] ?? ""}`)
+  }, (error) => assert.fail(String(error)))
+  intentQueue.start()
+
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: (name: string, handler: Function) => events.set(name, handler), quit: () => {}, exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => {} } as never,
+    cliManager: {
+      shutdown: () => {
+        quitAttempts += 1
+        calls.push(`stop:${quitAttempts}`)
+        return quitAttempts === 1 ? firstQuit : secondQuit
+      },
+    } as never,
+    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => true,
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+    navigationLifecycle,
+    onShutdownPending: () => intentQueue.pause(),
+    onShutdownCanceled: () => intentQueue.resume(),
+    onShutdownCompleted: () => intentQueue.close(),
+  })
+  lifecycle.registerAppEvents()
+
+  const root = join(tmpdir(), `codenomad-quit-launch-${process.pid}`)
+  const folderFirst = join(root, "first")
+  const folderSecond = join(root, "second")
+  const folderThird = join(root, "third")
+  let releaseFirstStat!: (exists: boolean) => void
+  const firstStat = new Promise<boolean>((resolve) => { releaseFirstStat = resolve })
+  const forwardedLaunches = createForwardedLaunchQueue(
+    join(root, "config.yaml"),
+    (intent) => intentQueue.enqueue(intent),
+    (error) => assert.fail(String(error)),
+    {
+      isDirectory: async (path) => path === folderFirst ? firstStat : (path === folderSecond || path === folderThird),
+      readConfig: async () => "",
+      argvSliceIndex: () => 1,
+      fallbackCwd: () => root,
+    },
+  )
+
+  // Launch accepted before Quit starts; its async validation finishes while Quit is pending.
+  const beforeQuit = forwardedLaunches.enqueueSecondInstance(["CodeNomad", "--folder", "first"], root, undefined)
+  events.get("before-quit")?.({ preventDefault: () => {} })
+  await tick()
+  assert.equal(navigationLifecycle.stopped, true)
+
+  releaseFirstStat(true)
+  // Second launch accepted during the pending Quit.
+  const duringQuit = forwardedLaunches.enqueueSecondInstance(["CodeNomad", "--folder", "second"], root, undefined)
+  await Promise.all([beforeQuit, duringQuit, forwardedLaunches.idle()])
+  await tick()
+  assert.deepEqual(delivered, [], "accepted launches must wait while Quit is pending")
+
+  // Quit fails: windows return and held launches deliver in FIFO order.
+  rejectFirstQuit(new Error("CLI failed"))
+  await tick(); await tick()
+  await intentQueue.idle()
+  assert.equal(navigationLifecycle.stopped, false)
+  assert.deepEqual(delivered, [folderFirst, folderSecond])
+  assert.ok(calls.indexOf("show:one") < calls.indexOf(`deliver:${folderFirst}`), "launches deliver after window restoration")
+
+  // Second Quit completes: a launch accepted during it is dropped once shutdown finishes.
+  events.get("before-quit")?.({ preventDefault: () => {} })
+  await tick()
+  await forwardedLaunches.enqueueSecondInstance(["CodeNomad", "--folder", "third"], root, undefined)
+  await forwardedLaunches.idle()
+  await tick()
+  assert.deepEqual(delivered, [folderFirst, folderSecond])
+
+  resolveSecondQuit()
+  await tick(); await tick()
+  await intentQueue.idle()
+  assert.ok(calls.includes("exit"))
+  assert.deepEqual(delivered, [folderFirst, folderSecond], "launches held when shutdown completes are dropped")
 })
