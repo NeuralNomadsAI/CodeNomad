@@ -130,7 +130,9 @@ app.whenReady().then(async () => {
         target.on("did-finish-load", onLoad)
       })
       // Automation would wait for the pending open's guest slot; manual guest input does not.
-      target.debugger.attach("1.3")
+      // Production attaches the guest's debugger at creation for its diagnostics; the fixture shares that attachment.
+      const attached = target.debugger.isAttached()
+      if (!attached) target.debugger.attach("1.3")
       try {
         const { result: { value: point } } = await target.debugger.sendCommand("Runtime.evaluate", {
           expression: `(() => { const r = document.querySelector('a').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`,
@@ -143,7 +145,7 @@ app.whenReady().then(async () => {
         return { url: target.getURL(), sameGuest: openGuests.get(session) === target }
       } finally {
         target.removeListener("did-finish-load", onLoad)
-        if (!target.isDestroyed() && target.debugger.isAttached()) target.debugger.detach()
+        if (!attached && !target.isDestroyed() && target.debugger.isAttached()) target.debugger.detach()
       }
     },
     openState: session => {

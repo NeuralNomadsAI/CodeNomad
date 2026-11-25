@@ -318,7 +318,13 @@ impl BrowserController {
                 operation.as_ref().and_then(operations::Operation::cdp)
             };
             #[cfg(windows)]
-            let response = if let Some((command, params)) = command {
+            let response = if let Some(operations::Operation::Diagnostics { after }) = &operation {
+                self.diagnostics.read(
+                    &lease.registration.registration_id,
+                    lease.registration.generation,
+                    *after,
+                )?
+            } else if let Some((command, params)) = command {
                 let webview = app
                     .get_webview(&lease.registration.webview_label)
                     .ok_or("Browser preview is no longer available")?;
@@ -326,8 +332,9 @@ impl BrowserController {
                 let guard_lease = lease.clone();
                 let guard_app = app.clone();
                 let guard_fence = fence.clone();
-                cdp_guarded(
+                cdp_guarded_in(
                     &webview,
+                    operation.as_ref().and_then(operations::Operation::session),
                     command,
                     params,
                     deadline.min(lease.expires),
@@ -368,6 +375,16 @@ impl BrowserController {
                     );
                 }
                 refuse_file_panels(app, &lease.registration.webview_label, true);
+            }
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if matches!(
+                &operation,
+                Some(
+                    operations::Operation::Diagnostics { .. }
+                        | operations::Operation::ResponseBody { .. }
+                )
+            ) {
+                return Err("Browser diagnostics are unavailable in WebKit previews".into());
             }
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             let response = if let Some(_) = &operation {

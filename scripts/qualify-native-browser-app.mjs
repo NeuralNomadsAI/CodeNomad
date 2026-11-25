@@ -33,6 +33,26 @@ const fixture = createServer((req, res) => {
   if (req.url === "/download") {
     res.setHeader("Content-Disposition", `attachment; filename="p7-${run}.txt"`)
     res.end(`native-download-${run}`)
+  } else if (req.url === "/api/count") {
+    res.setHeader("Content-Type", "application/json")
+    res.setHeader("Set-Cookie", `p7=${run}`)
+    res.end(JSON.stringify({ saved: true }))
+  } else if (req.url === "/frames") {
+    // A cross-site frame (localhost against 127.0.0.1) runs out of process; it and a worker start paused by diagnostics.
+    res.setHeader("Content-Type", "text/html")
+    res.end(`<title>Frames</title><output id="frame">Frame waiting</output> <output id="worker">Worker waiting</output>
+<iframe src="http://localhost:${fixture.address().port}/child"></iframe><script>
+addEventListener("message", event => { if (event.data === "child-ready") document.querySelector("#frame").textContent = "Frame loaded" })
+new Worker("/worker.js").onmessage = () => { document.querySelector("#worker").textContent = "Worker ran" }</script>`)
+  } else if (req.url === "/child") {
+    res.setHeader("Content-Type", "text/html")
+    res.end(`<script>console.warn("frame warning ${run}");fetch("/frame-api").then(response => response.text()).then(() => parent.postMessage("child-ready", "*"))</script>`)
+  } else if (req.url === "/frame-api") {
+    res.setHeader("Content-Type", "application/json")
+    res.end("{}")
+  } else if (req.url === "/worker.js") {
+    res.setHeader("Content-Type", "text/javascript")
+    res.end("postMessage('ran')")
   } else if (req.url === "/oauth") {
     res.setHeader("Content-Type", "text/html")
     res.end("<title>OAuth fixture</title><script>opener.postMessage('oauth-complete',location.origin);setTimeout(()=>close(),300)</script>")
@@ -211,6 +231,43 @@ return { waits, found, refused, copyRefused, pickerRefused, loaded, oauth }`)
     }
     const accepted = await step("dialog accepted", `return { met: (await tools.browser.wait({ tabID: ${tabID}, text: "Dialog accepted", timeout: 10000 })).met }`)
     assert.equal(accepted.met, true)
+  }
+  // WebKit previews (macOS and Linux Tauri) refuse diagnostics: there the qualification checks that refusal.
+  const support = await step("diagnostics support", `try { await tools.browser.console({ tabID: ${tabID} }); return { supported: true } }
+catch (error) { return { supported: false, message: String(error?.message ?? error) } }`)
+  if (!support.supported) {
+    assert.ok(!dev && process.platform !== "win32" && /WebKit previews/.test(support.message), JSON.stringify(support))
+  } else {
+    // Increment logged a warning and posted its count: OpenCode's console and network tools read them back.
+    const diagnostics = await step("console and network", `const tabID = ${tabID};
+const logged = await tools.browser.console({ tabID, level: "warning" });
+const listed = await tools.browser.network.list({ tabID, urlContains: "/api/count" });
+const got = listed.requests[0] && await tools.browser.network.get({ tabID, id: listed.requests[0].id, includeBody: true });
+return { warnings: logged.messages.map(entry => entry.text), requests: listed.requests.map(item => [item.method, item.statusCode, item.state]),
+    requestBody: got?.requestBody, responseBody: got?.responseBody,
+    cookie: got?.responseHeaders.find(header => header.name === "set-cookie")?.value }`)
+    assert.ok(diagnostics.warnings.includes("Count is 1"), JSON.stringify(diagnostics))
+    assert.deepEqual(diagnostics.requests, [["POST", 200, "completed"]])
+    assert.deepEqual(diagnostics.requestBody, { state: "text", text: "{\"count\":1}", truncated: false })
+    assert.deepEqual(diagnostics.responseBody, { state: "text", text: "{\"saved\":true}", truncated: false })
+    assert.equal(diagnostics.cookie, "<redacted>")
+    // Out-of-process frames and workers start paused: they must run, and the frame's own startup is captured.
+    const frames = await step("frames and workers", `const tabID = ${tabID};
+await tools.browser.navigate({ tabID, url: ${JSON.stringify(`http://127.0.0.1:${fixture.address().port}/frames`)} });
+const waits = [];
+for (const text of ["Frame loaded", "Worker ran"]) waits.push((await tools.browser.wait({ tabID, text, timeout: 10000 })).met);
+// The page has its body; the network service reports the request finished a moment later.
+let listed;
+for (let attempt = 0; attempt < 20; attempt++) {
+  listed = await tools.browser.network.list({ tabID, urlContains: "/frame-api" });
+  if (listed.requests.length && listed.requests.every(item => item.state !== "pending")) break;
+  await tools.browser.wait({ tabID, delayMs: 100 });
+}
+const logged = await tools.browser.console({ tabID, level: "warning" });
+return { waits, requests: listed.requests.map(item => [item.method, item.statusCode, item.state]), warnings: logged.messages.map(entry => entry.text) }`)
+    assert.deepEqual(frames.waits, [true, true], JSON.stringify(frames))
+    assert.deepEqual(frames.requests, [["GET", 200, "completed"]], JSON.stringify(frames))
+    assert.ok(frames.warnings.includes(`frame warning ${run}`), JSON.stringify(frames))
   }
   const shot = await step("screenshot", `const shot = await tools.browser.screenshot({ tabID: ${tabID} }); return { files: shot.files }`)
   assert.equal(shot.files?.[0]?.mime, "image/png")

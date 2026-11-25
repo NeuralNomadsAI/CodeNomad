@@ -10,7 +10,7 @@
 <label>Upload<input id="upload" type="file"></label><a id="download" href="/download" download>Download fixture</a><button id="dialog">Native dialog</button><output id="dialogState">Dialog idle</output>
 <script>
 let count=0,drag=false;
-increment.onclick=()=>document.querySelector('#count').textContent='Count '+ ++count;
+increment.onclick=()=>{document.querySelector('#count').textContent='Count '+ ++count;console.warn('Count is '+count);fetch('/api/count',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({count})})};
 document.querySelector('#name').onkeydown=e=>{if(e.key==='Enter')keys.textContent='Pressed Enter'};
 document.querySelector('#plan').onchange=e=>keys.textContent='Plan '+e.target.value;
 hover.onmouseover=()=>hovered.textContent='Hovered';

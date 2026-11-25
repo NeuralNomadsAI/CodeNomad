@@ -43,6 +43,8 @@ mod open;
 mod open_navigation;
 #[path = "browser_controller_page.rs"]
 mod page;
+#[path = "browser_diagnostics.rs"]
+mod diagnostics;
 use open::OpenClaim;
 #[path = "browser_preview_owners.rs"]
 mod preview_owners;
@@ -150,6 +152,7 @@ pub(crate) struct BrowserController {
     registration_sequence: Arc<AtomicU64>,
     run_id: Arc<String>,
     pub(crate) embedded_views: EmbeddedViews,
+    diagnostics: Arc<diagnostics::Buffers>,
 }
 
 impl BrowserController {
@@ -165,6 +168,7 @@ impl BrowserController {
             registration_sequence: Arc::new(AtomicU64::new(1)),
             run_id: Arc::new(uuid::Uuid::new_v4().to_string()),
             embedded_views: EmbeddedViews::default(),
+            diagnostics: Arc::default(),
         }
     }
 
@@ -257,6 +261,7 @@ impl BrowserController {
             .and_then(|()| webkit_navigation::install(&webview, self.clone(), registration.clone()))
             .and_then(|()| crate::embedded_view::input::install_read(&webview));
         if let Err(error) = installed {
+            self.diagnostics.remove(&input.registration_id, generation);
             let _ = self
                 .embedded_views
                 .close(window.app_handle(), window.label(), &label);
@@ -276,6 +281,8 @@ impl BrowserController {
         {
             Ok(previous) => previous,
             Err(error) => {
+                // A refused candidate drops only its own buffer: the published preview keeps its diagnostics.
+                self.diagnostics.remove(&input.registration_id, generation);
                 let _ = self
                     .embedded_views
                     .close(window.app_handle(), window.label(), &label);
@@ -283,6 +290,8 @@ impl BrowserController {
             }
         };
         if let Some(previous) = previous {
+            self.diagnostics
+                .remove(&previous.registration_id, previous.generation);
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             webkit_history::remove(window.app_handle(), previous.webview_label.clone());
             let _ = self.embedded_views.close(
@@ -689,6 +698,8 @@ impl BrowserController {
         inner.page_load_expectations.remove(registration_id);
         inner.page_loading.remove(registration_id);
         drop(inner);
+        self.diagnostics
+            .remove(registration_id, registration.generation);
         ready.notify_all();
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         webkit_history::remove(app, registration.webview_label.clone());
@@ -774,6 +785,9 @@ impl BrowserController {
                 inner.navigation_versions.remove(&id);
                 inner.page_load_expectations.remove(&id);
                 inner.page_loading.remove(&id);
+                if let Some(registration) = inner.registrations.get(&id) {
+                    self.diagnostics.remove(&id, registration.generation);
+                }
                 inner.registrations.remove(&id);
                 inner.emulation_profiles.remove(&id);
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1370,6 +1384,8 @@ impl BrowserController {
         let frame = &parameters["frame"];
         if frame["id"].as_str().is_some_and(|id| !id.is_empty()) && frame.get("parentId").is_none()
         {
+            // document.open() replaces the document without a navigation: its diagnostics restart too.
+            self.diagnostics.restart(registration_id, generation, None);
             self.invalidate_page_for_generation(registration_id, generation);
         }
     }
@@ -1764,6 +1780,8 @@ fn install_webview2_handlers(
 
     let app = webview.app_handle().clone();
     let deadline = Instant::now() + Duration::from_secs(5);
+    let (controller_diagnostics, diagnostics_registration_id) =
+        (controller.diagnostics.clone(), registration_id.clone());
     let (sender, receiver) = mpsc::sync_channel(1);
     webview
         .with_webview(move |platform| {
@@ -1780,6 +1798,10 @@ fn install_webview2_handlers(
                     unsafe { args.NavigationId(&mut navigation_id)? };
                     let mut raw = Default::default();
                     unsafe { args.Uri(&mut raw)? };
+                    // A new document's diagnostics start with its own request, as in OpenCode's browser.
+                    started_controller
+                        .diagnostics
+                        .restart(&started_registration_id, generation, Some(navigation_id));
                     started_controller.mark_page_started(
                         &started_registration_id,
                         generation,
@@ -1898,6 +1920,7 @@ fn install_webview2_handlers(
                     }
                     .map_err(|error| preview_error("install document-opened handler", error))
                 })?;
+                diagnostics::install(&core, controller.clone(), registration_id.clone(), generation)?;
 
                 let source = SourceChangedEventHandler::create(Box::new(move |core, args| {
                     let Some(core) = core else {
@@ -1934,7 +1957,15 @@ fn install_webview2_handlers(
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .map_err(|error| preview_error("wait for WebView2 navigation handlers", error))??;
     // Confirm Page events are enabled before this guest can publish any witness.
-    cdp(webview, "Page.enable", json!({}), deadline).map(|_| ())
+    cdp(webview, "Page.enable", json!({}), deadline)?;
+    // Diagnostics are an extra: a preview whose domains cannot be enabled still serves the page channel.
+    for (method, params) in &diagnostics::spec().enable {
+        if cdp(webview, method, params.clone(), deadline).is_err() {
+            controller_diagnostics.remove(&diagnostics_registration_id, generation);
+            break;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -1974,16 +2005,33 @@ fn cdp_guarded(
     guard: impl Fn() -> Result<(), String> + Send + 'static,
     response_limit: usize,
 ) -> Result<Value, String> {
+    cdp_guarded_in(webview, None, method, params, deadline, guard, response_limit)
+}
+
+/// `session` sends the command to an out-of-process frame's protocol session.
+#[cfg(windows)]
+fn cdp_guarded_in(
+    webview: &tauri::Webview,
+    session: Option<String>,
+    method: &str,
+    params: Value,
+    deadline: Instant,
+    guard: impl Fn() -> Result<(), String> + Send + 'static,
+    response_limit: usize,
+) -> Result<Value, String> {
     let step = format!("CDP {method}");
     let deadline = deadline.min(Instant::now() + Duration::from_secs(20));
     guard()
-        .and_then(|()| cdp_guarded_inner(webview, method, params, deadline, guard, response_limit))
+        .and_then(|()| {
+            cdp_guarded_inner(webview, session, method, params, deadline, guard, response_limit)
+        })
         .map_err(|error| preview_error(&step, error))
 }
 
 #[cfg(windows)]
 fn cdp_guarded_inner(
     webview: &tauri::Webview,
+    session: Option<String>,
     method: &str,
     params: Value,
     deadline: Instant,
@@ -1991,7 +2039,11 @@ fn cdp_guarded_inner(
     response_limit: usize,
 ) -> Result<Value, String> {
     use std::sync::mpsc;
-    use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, CoTaskMemPWSTR};
+    use webview2_com::{
+        CallDevToolsProtocolMethodCompletedHandler, CoTaskMemPWSTR,
+        Microsoft::Web::WebView2::Win32::ICoreWebView2_11,
+    };
+    use windows_core::Interface;
 
     let (sender, receiver) = mpsc::sync_channel(1);
     let method = method.to_string();
@@ -2020,6 +2072,21 @@ fn cdp_guarded_inner(
                 // side effect too, not just the operation that queues this closure.
                 if let Err(error) = run_before_deadline(deadline, || {
                     guard()?;
+                    if let Some(session) = &session {
+                        let core = core
+                            .cast::<ICoreWebView2_11>()
+                            .map_err(|error| error.to_string())?;
+                        let session = CoTaskMemPWSTR::from(session.as_str());
+                        return unsafe {
+                            core.CallDevToolsProtocolMethodForSession(
+                                *session.as_ref().as_pcwstr(),
+                                *method.as_ref().as_pcwstr(),
+                                *params.as_ref().as_pcwstr(),
+                                &handler,
+                            )
+                            .map_err(|error| error.to_string())
+                        };
+                    }
                     unsafe {
                         core.CallDevToolsProtocolMethod(
                             *method.as_ref().as_pcwstr(),

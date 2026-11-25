@@ -5,6 +5,7 @@ import { isBrowserUrlAllowed } from "./browser-webview-security"
 import { setBrowserEmulation } from "./browser-emulation"
 import { executeCdpOperation } from "../../../server/src/automation/page/cdp-driver"
 import { parsePageOperation, pageEnvelope } from "../../../server/src/automation/page/operations"
+import { DIAGNOSTICS, DiagnosticEventBuffer } from "../../../server/src/automation/page/diagnostic-events"
 import { PAGE_DRIVER_VERSION } from "../../../server/src/automation/page/protocol"
 import { setBrowserLogicalAddress } from "./browser-presentation"
 import { BrowserPreviewOwners, type PreviewOwner } from "./browser-preview-owners"
@@ -77,6 +78,9 @@ export class BrowserController {
   private readonly pageLeases = new Map<string, PageLease>()
   private readonly controlledDetach = new WeakSet<WebContents>()
   private readonly documentWatches = new WeakMap<WebContents, boolean>()
+  /** Console and network events of a watched preview's current document. */
+  private readonly diagnostics = new WeakMap<WebContents, DiagnosticEventBuffer>()
+  private readonly recording = new WeakSet<WebContents>()
   private readonly commandQueues = new WeakMap<WebContents, Promise<void>>()
   private readonly navigationVersions = new WeakMap<WebContents, number>()
   private readonly documentRoots = new WeakMap<WebContents, number>()
@@ -175,6 +179,13 @@ export class BrowserController {
 
   guestCreated(guest: WebContents): void {
     if (guest.getType() !== "webview") return
+    // Before the first page loads, so its own requests and startup console output are kept.
+    try { if (!guest.debugger.isAttached()) guest.debugger.attach("1.3") } catch { /* diagnostics start with the document watch */ }
+    if (guest.debugger.isAttached()) {
+      // Page events too, so a document.open() before the first probe still restarts the diagnostics.
+      void guest.debugger.sendCommand("Page.enable").catch(() => undefined)
+      void this.enableDiagnostics(guest, Number.POSITIVE_INFINITY)
+    }
     const owner = guest.hostWebContents
     const session = owner && this.attaching.get(owner)
     if (!session || !owner) return
@@ -205,13 +216,20 @@ export class BrowserController {
       this.releaseTarget(guest)
     })
     guest.debugger.on("message", (_event, method, params, sessionId) => {
-      if (!sessionId && method === "Page.documentOpened" && params?.frame?.id && !params.frame.parentId) invalidate()
+      if (!sessionId && method === "Page.documentOpened" && params?.frame?.id && !params.frame.parentId) {
+        // document.open() replaces the document without a navigation: its diagnostics restart too.
+        this.diagnostics.get(guest)?.restart()
+        invalidate()
+      }
     })
     guest.debugger.on("detach", () => {
       this.documentWatches.delete(guest)
+      this.diagnostics.delete(guest)
       if (!this.controlledDetach.has(guest)) invalidate()
     })
-    guest.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
+    guest.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      // A new document's diagnostics start with its own request, as in OpenCode's browser.
+      if (isMainFrame && !isInPlace) this.diagnostics.get(guest)?.restart()
       if (isMainFrame) invalidateNavigation()
     })
     guest.once("destroyed", () => {
@@ -388,6 +406,62 @@ export class BrowserController {
     for (const [requestID, claim] of this.openClaims) if (claim.owner === owner) this.releaseOpen(owner, requestID)
   }
 
+  /** Keeps the guest's console and network events from now on. Diagnostics are an extra: a preview whose
+   * domains cannot be enabled still serves the page channel. */
+  private async enableDiagnostics(guest: WebContents, deadline: number): Promise<void> {
+    if (this.diagnostics.has(guest)) return
+    const buffer = new DiagnosticEventBuffer()
+    this.diagnostics.set(guest, buffer)
+    if (!this.recording.has(guest)) {
+      this.recording.add(guest)
+      guest.debugger.on("message", (_event, method, params, sessionId) => {
+        if (method === "Target.attachedToTarget" && typeof params?.sessionId === "string") this.startChild(guest, params)
+        this.diagnostics.get(guest)?.record(method, params, sessionId || undefined)
+      })
+    }
+    try {
+      // Sent together, so the domains are on before the guest's first request.
+      await Promise.all(DIAGNOSTICS.enable.map(([method, params]) => withDeadline(() => guest.debugger.sendCommand(method, params), deadline)))
+    } catch {
+      if (this.diagnostics.get(guest) === buffer) this.diagnostics.delete(guest)
+    }
+  }
+
+  /** A child target paused at start by the auto-attach, as in OpenCode's browser: a worker runs and is left; a page
+   * frame gets the diagnostic domains first; an extension frame only runs. Every one is resumed, even when its
+   * domains fail or diagnostics are off, so no frame or worker stays paused. */
+  private startChild(guest: WebContents, params: { sessionId: string; targetInfo?: { type?: unknown; url?: unknown } }): void {
+    const session = params.sessionId
+    const send = (method: string, options: Record<string, unknown> = {}) => guest.debugger.sendCommand(method, options, session)
+    const resume = () => send("Runtime.runIfWaitingForDebugger")
+    const type = params.targetInfo?.type
+    const extension = /^[a-z-]*extension:/i.test(String(params.targetInfo?.url ?? ""))
+    const started = type === "worker"
+      ? resume().then(() => guest.debugger.sendCommand("Target.detachFromTarget", { sessionId: session }))
+      : type === "iframe" && !extension && this.diagnostics.has(guest)
+        ? Promise.allSettled(DIAGNOSTICS.enable.map(([method, options]) => send(method, options))).then(resume)
+        : resume()
+    void started.catch(() => undefined)
+  }
+
+  /** Observes the renderer even between page leases, with the console and network domains of its diagnostics. */
+  private async watchDocument(guest: WebContents, deadline: number, check: () => void): Promise<void> {
+    if (this.documentWatches.has(guest)) return
+    const ownsDebugger = !guest.debugger.isAttached()
+    if (ownsDebugger) guest.debugger.attach("1.3")
+    try {
+      await withDeadline(() => guest.debugger.sendCommand("Page.enable"), deadline)
+      check()
+      if (!guest.debugger.isAttached()) throw new Error(staleTarget)
+      this.documentWatches.set(guest, ownsDebugger)
+      await this.enableDiagnostics(guest, deadline)
+      check()
+    } catch (error) {
+      if (ownsDebugger) this.detachDebugger(guest)
+      throw error
+    }
+  }
+
   /** `workspaceIDs` are the project tabs whose views may serve the session: another tab's preview is no target. */
   async probe(sessionID: string, deadline = Number.POSITIVE_INFINITY, checkAdmission: () => void = () => {},
     workspaceIDs?: readonly string[]): Promise<{ available: true; target: string; loading: boolean; registration: string }> {
@@ -403,20 +477,7 @@ export class BrowserController {
         if (this.resolveWitness(sessionID, undefined, workspaceIDs) !== registration || this.pageGeneration(registration) !== generation) throw new Error(staleTarget)
       }
       check()
-      if (!this.documentWatches.has(guest)) {
-        const ownsDebugger = !guest.debugger.isAttached()
-        if (ownsDebugger) guest.debugger.attach("1.3")
-        try {
-          // Observe the renderer even between page leases.
-          await withDeadline(() => guest.debugger.sendCommand("Page.enable"), deadline)
-          check()
-          if (!guest.debugger.isAttached()) throw new Error(staleTarget)
-          this.documentWatches.set(guest, ownsDebugger)
-        } catch (error) {
-          if (ownsDebugger) this.detachDebugger(guest)
-          throw error
-        }
-      }
+      await this.watchDocument(guest, deadline, check)
       await this.refreshDocument(guest, deadline, check)
       return this.pageGeneration(registration)
     }, deadline)
@@ -646,7 +707,7 @@ export class BrowserController {
       try {
         await this.refreshDocument(guest, stopAt, check)
         if (!operation) return { url: check() }
-        const result = await executeCdpOperation({ send: async (command, params = {}) => {
+        const result = await executeCdpOperation({ send: async (command, params = {}, sessionId) => {
           check()
           // Electron's native insertion reaches the guest's focused frame even
           // when CDP Input.insertText is ignored in an embedded/background view.
@@ -654,11 +715,16 @@ export class BrowserController {
             () => command === "Input.insertText" && typeof (params as { text?: unknown }).text === "string"
               ? guest.insertText((params as { text: string }).text).then(() => ({}))
               : command === "Input.dispatchKeyEvent" ? sendGuestKey(guest, params as Record<string, unknown>)
-              : guest.debugger.sendCommand(command, params), stopAt,
+              : guest.debugger.sendCommand(command, params, sessionId), stopAt,
           )
           check()
           if (Buffer.byteLength(JSON.stringify(response ?? null)) > 4 * 1024 * 1024) throw new Error("Browser page response is too large")
           return response as Record<string, unknown>
+        }, diagnostics: async after => {
+          check()
+          const buffer = this.diagnostics.get(guest)
+          if (!buffer) throw new Error("Browser diagnostics are unavailable for this preview")
+          return buffer.read(after) as unknown as Record<string, unknown>
         } }, operation)
         await this.refreshDocument(guest, stopAt, check)
         check()

@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto"
 import { setTimeout as sleep } from "node:timers/promises"
 import type { BrowserPageAction } from "../../automation/browser-page"
+import type { DiagnosticRead } from "../../automation/page/diagnostic-events"
 import { keyChord } from "../../automation/page/keys"
+import { PreviewDiagnostics } from "./diagnostics"
 
 /** What CodeNomad's native session preview offers this adapter, already bound to its session. */
 export interface PreviewHost {
@@ -40,6 +42,8 @@ const HONORED: Record<string, readonly string[]> = {
   click: ["ref"], hover: ["ref"], drag: ["from", "to"], fill: ["ref", "text"], fill_form: ["fields"],
   select: ["ref", "values"], check: ["ref", "checked"], press: ["key"], scroll: ["deltaX", "deltaY"],
   wait: ["condition", "text", "url", "timeoutMs"], screenshot: [],
+  console: ["level", "limit"], "network.list": ["urlContains", "resourceType", "limit"],
+  "network.get": ["id", "includeBody", "includeResponseBody", "maxBodyChars"],
 }
 /** Option values that ask for what the operation does anyway. */
 const DEFAULTS: Record<string, unknown> = { focus: true, ignoreCache: false, button: "left", count: 1, interactive: false, boxes: false, fullPage: false, format: "png" }
@@ -55,7 +59,7 @@ function unhonored(action: Action): string | undefined {
 }
 const failure = (code: string, message: string): BrowserOutcome => ({ type: "failure", code, message: message.slice(0, 2_000) })
 const unsupported = (action: string) => failure("unsupported",
-  `browser.${action} is not available in the CodeNomad browser. Use tabs, navigate, back, forward, reload, snapshot, find, click, hover, drag, fill, fill_form, select, check, press, scroll, wait or screenshot.`)
+  `browser.${action} is not available in the CodeNomad browser. Use tabs, navigate, back, forward, reload, snapshot, find, click, hover, drag, fill, fill_form, select, check, press, scroll, wait, screenshot, console or network.`)
 
 /**
  * One session's preview as OpenCode's browser contract sees it: at most one tab, the visible preview.
@@ -80,6 +84,9 @@ export class PreviewTab {
   private queue: Promise<void> = Promise.resolve()
   private loading = false
   private generation = 0
+  private readonly diagnostics = new PreviewDiagnostics()
+  /** The tab the readouts belong to. */
+  private diagnosticsTab = ""
 
   constructor(private readonly host: PreviewHost) {}
 
@@ -223,6 +230,23 @@ export class PreviewTab {
         return this.success(this.tab())
       }
       case "wait": return this.wait(action, deadline, signal)
+      // A readout belongs to the tab and document it was read for: a tabs.list that sees either change meanwhile fails it.
+      case "console": {
+        const tab = this.id, document = this.generation
+        await this.pull(page)
+        return this.id !== tab || this.generation !== document ? replaced() : this.success({ tab: this.tab(), ...this.diagnostics.console(action as Parameters<PreviewDiagnostics["console"]>[0]) })
+      }
+      case "network.list": {
+        const tab = this.id, document = this.generation
+        await this.pull(page)
+        return this.id !== tab || this.generation !== document ? replaced() : this.success({ tab: this.tab(), ...this.diagnostics.list(action as Parameters<PreviewDiagnostics["list"]>[0]) })
+      }
+      case "network.get": {
+        const tab = this.id, document = this.generation
+        await this.pull(page)
+        const request = await this.diagnostics.get(action as Action & { id: string }, async (nativeID, session) => page({ action: "response-body", request: nativeID, ...(session ? { session } : {}) }))
+        return this.id !== tab || this.generation !== document ? replaced() : this.success({ tab: this.tab(), ...request })
+      }
       case "screenshot": {
         const { image } = await this.host.screenshot(target, deadline, signal)
         const bytes = Math.floor(image.data.length * 3 / 4) - (image.data.endsWith("==") ? 2 : image.data.endsWith("=") ? 1 : 0)
@@ -237,6 +261,11 @@ export class PreviewTab {
     const url = typeof action.url === "string" ? action.url : "about:blank"
     if (!/^https?:/i.test(url)) return failure("unsupported", "The CodeNomad browser opens http:// and https:// addresses only.")
     try {
+      // The host's events so far belong to the previous tab: they are read before the open, so the new tab's readouts
+      // start with the open itself, its own document's startup included, even when it keeps the document (a
+      // fragment). Previews without diagnostics, or without a page yet, skip this.
+      const shown = this.target
+      if (shown) await this.pull(step => this.host.page(step, shown, deadline, signal)).catch(() => undefined)
       const opened = await this.host.open(url, deadline, signal)
       // A new guest or document: refs from the previous one expire.
       this.target = undefined
@@ -344,6 +373,20 @@ export class PreviewTab {
     return this.success(this.tab())
   }
 
+  /** Takes the host's new console and network events for the current document. */
+  private async pull(page: (step: BrowserPageAction) => Promise<Record<string, unknown>>): Promise<void> {
+    // A new tab (a web open or another preview) starts with empty readouts, as a fresh tab does in OpenCode.
+    if (this.diagnosticsTab !== this.id) {
+      this.diagnostics.forget()
+      this.diagnosticsTab = this.id
+    }
+    for (let read = 0; read < 16; read++) {
+      const events = await page({ action: "diagnostics", after: this.diagnostics.cursor }) as unknown as DiagnosticRead
+      if (!this.diagnostics.ingest(events)) continue
+      if (!events.more) return
+    }
+  }
+
   private tab(): BrowserTab {
     return { id: this.id, url: this.url.slice(0, 16_384), title: this.title, loading: this.loading,
       canGoBack: this.canGoBack, canGoForward: this.canGoForward, generation: this.generation }
@@ -386,11 +429,13 @@ export function keyRefusal(chord: string): string | undefined {
     return "Agent input cannot use clipboard or context-menu shortcuts. Use fill to enter text and snapshot to read page text."
 }
 
+const replaced = () => failure("document_changed", "The tab or its page changed while it was read. Call browser.tabs.list({}) and read again.")
+
 function failed(error: unknown): BrowserOutcome {
   const message = error instanceof Error ? error.message : String(error)
   if (/Unknown or stale ref/.test(message)) return failure("stale_ref", message)
-  if (/unavailable in WebKit previews/.test(message)) return failure("unsupported", message)
-  if (/changed|navigation|replaced|stale/i.test(message)) return failure("document_changed", message)
+  if (/unavailable in WebKit previews|diagnostics are unavailable|does not support diagnostics/.test(message)) return failure("unsupported", message)
+  if (/changed|navigation|replaced|stale|no longer current/i.test(message)) return failure("document_changed", message)
   return failure("operation_failed", message)
 }
 

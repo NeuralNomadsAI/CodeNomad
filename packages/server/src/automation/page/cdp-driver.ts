@@ -1,5 +1,5 @@
 import { declaration, ELEMENT_FUNCTIONS, GLOBAL_FUNCTIONS, handleResult } from "./functions"
-import { OBJECT_GROUP, type PageChannel, type PageOperation } from "./protocol"
+import { OBJECT_GROUP, PageDriverUnsupportedError, type PageChannel, type PageOperation } from "./protocol"
 import { semanticTree } from "./semantic-tree"
 import type { AxNode } from "./snapshot"
 import { operationDriver } from "./driver"
@@ -46,6 +46,10 @@ export async function executeCdpOperation(channel: PageChannel, raw: PageOperati
       const title = entries[index]?.title
       return { title: typeof title === "string" ? title.slice(0, 2_048) : "", canGoBack: index > 0, canGoForward: index >= 0 && index < entries.length - 1 }
     }
+    case "diagnostics":
+      if (!channel.diagnostics) throw new PageDriverUnsupportedError("cdp", "diagnostics")
+      return channel.diagnostics(operation.after)
+    case "response-body": return channel.send("Network.getResponseBody", { requestId: operation.request }, operation.session)
   }
 }
 export function cdpDriver(channel: PageChannel, checkpoint: () => Promise<void>, mark = false) {

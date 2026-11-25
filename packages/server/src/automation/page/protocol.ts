@@ -1,8 +1,12 @@
 import { VALUE_LIMIT, type PageFunctionId } from "./functions"
 export { VALUE_LIMIT, INPUT_MARK_LEASE_MS } from "./functions"
 
-/** Low-level CDP transport, used only by the CDP adapter. */
-export interface PageChannel { send(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> }
+/** Low-level CDP transport, used only by the CDP adapter. A native preview also serves its diagnostic event buffer. */
+export interface PageChannel {
+  /** `sessionId` reaches an out-of-process frame's protocol session. */
+  send(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<Record<string, unknown>>
+  diagnostics?(after: number): Promise<Record<string, unknown>>
+}
 export const PAGE_DRIVER_VERSION = 1
 export const OBJECT_GROUP = "codenomad-automation"
 export type DriverKind = "cdp" | "webkit"
@@ -28,6 +32,10 @@ export type PageOperation =
   | { op: "insert-text"; text: string }
   /** The document's title and whether its tab can go back or forward (`{ title, canGoBack, canGoForward }`). */
   | { op: "history" }
+  /** The preview's console and network events after a sequence number (`DiagnosticRead`). */
+  | { op: "diagnostics"; after: number }
+  /** A retained response's body by its protocol request ID, in its frame's session when it has one. */
+  | { op: "response-body"; request: string; session?: string }
 
 /** One semantic page; drivers own protocol/native adaptation, never arbitrary evaluation. */
 export interface PageDriver {
