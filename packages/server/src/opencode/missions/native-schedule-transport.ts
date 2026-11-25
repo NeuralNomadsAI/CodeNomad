@@ -6,7 +6,7 @@ import { nativeScheduleIncarnationGuard, readNativeScheduleIncarnation, sameNati
 import { assertNativeScheduleWake, NativeScheduleTransportRpc, nativeScheduleWakeIdentity, nativeScheduleWakeKey } from "./native-schedule-transport-contract"
 import type { NativeScheduleTransportReply, NativeScheduleWake, NativeSchedulePreflight } from "./native-schedule-transport-contract"
 
-export const NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS = 8_000
+export const NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS = 15_000
 export const NATIVE_SCHEDULE_TRANSPORT_RESPONSE_BYTES = 1024 * 1024
 type FailureReason = "busy" | "held" | "deadline" | "unavailable"
 export type NativeScheduleTransportResult =

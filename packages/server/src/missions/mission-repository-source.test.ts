@@ -60,6 +60,7 @@ for (const [provider, endpoint] of [
   assert.deepEqual(missionLaunchPolicySchema.parse({ when: [condition] }), { when: [condition] })
   const baseline = await read()
   assert.equal(baseline.changed, false)
+  assert.equal(f.requests.filter(path => path === "user").length, 1, "one account read before commit-time revalidation")
   assert.equal((await read(baseline.checkpoint)).changed, false)
   oid = "b".repeat(40)
   const update = await read(baseline.checkpoint)

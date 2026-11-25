@@ -79,3 +79,34 @@ test("Mission source edges are walked across every listed event, refusing a cycl
   documents.set("msn_c", document("msn_c", [commits], [{ kind: "schedule-success", missionID: "msn_a" }]))
   await assert.rejects(assertMissionSourceAcyclic(documents.get("msn_a")!, store), /cycle/)
 })
+
+test("multiple external conditions read and revalidate concurrently", async () => {
+  const doc = document("parallel", [commits, files])
+  let activeReads = 0, maxReads = 0, activeRevalidates = 0, maxRevalidates = 0
+  const releaseReads: Array<() => void> = [], releaseRevalidates: Array<() => void> = []
+  const reader = async (_doc: MissionDocument, condition: MissionCondition) => {
+    maxReads = Math.max(maxReads, ++activeReads)
+    await new Promise<void>(resolve => {
+      releaseReads.push(resolve)
+      if (releaseReads.length === 2) for (const done of releaseReads) done()
+    })
+    activeReads--
+    return {
+      checkpoint: { key: missionSourceKey(condition), kind: condition.kind, placementDigest: "a".repeat(64), value: { kind: condition.kind } },
+      changed: false, current,
+      revalidate: async () => {
+        maxRevalidates = Math.max(maxRevalidates, ++activeRevalidates)
+        await new Promise<void>(resolve => {
+          releaseRevalidates.push(resolve)
+          if (releaseRevalidates.length === 2) for (const done of releaseRevalidates) done()
+        })
+        activeRevalidates--
+      },
+    }
+  }
+  const snapshot = await prepareNativeDocumentSources(doc, native, new AbortController().signal, current, reader)
+  await snapshot.revalidate?.()
+  assert.equal(maxReads, 2)
+  assert.equal(maxRevalidates, 2)
+  assert.deepEqual(snapshot.checkpoints.map(item => item.kind), ["branch-commits", "files-changed"])
+})
