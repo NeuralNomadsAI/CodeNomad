@@ -1,10 +1,13 @@
-use super::{Actions, Intent, available, empty_draft, start};
+use super::{
+    Actions, Intent, available, cleanup, clear_prune_hover, empty_draft, set_prune_hover, start,
+};
 use crate::{
     Message, State,
     content::Part,
     screen,
     strings::{locale, t},
 };
+use codenomad_client::message_actions::PruneMessageTarget;
 use rune::{El, Tx, text};
 use rune_theme_codenomad::{
     action_menu::{self, Item, Menu},
@@ -104,30 +107,48 @@ fn controls(s: &State, message: &Message) -> Option<Rc<Menu<State>>> {
         edit.disabled = !available(s) || !empty_draft(s);
         items.push(Rc::new(edit));
     }
-    if eligible
-        && !user
-        && message
-            .parts
-            .iter()
-            .any(|part| matches!(part, Part::Tool(_) | Part::Reasoning(_)))
-    {
-        let mut prune = Item::new(
-            "delete-technical-parts",
-            t("messageItem.actions.deleteTechnicalParts"),
-            screen::action_tx(&s.input_scope, {
-                let id = id.clone();
-                move |s, _| {
-                    if lookup(s, &id).is_some_and(|row| row.role == "assistant" && row.completed) {
-                        start(s, Intent::PreviewPrune(id.clone()));
+    if eligible && !user {
+        let targets = cleanup::response_targets(s, id);
+        if !targets.is_empty() {
+            let hover_owner = format!("menu:{id}");
+            let mut prune = Item::new(
+                "delete-technical-parts",
+                t("messageItem.actions.deleteTechnicalParts"),
+                screen::action_tx(&s.input_scope, {
+                    let id = id.clone();
+                    move |s, _| {
+                        let targets = cleanup::response_targets(s, &id);
+                        if !targets.is_empty() {
+                            start(
+                                s,
+                                Intent::PreviewPrune {
+                                    targets,
+                                    group: false,
+                                },
+                            );
+                        }
                     }
-                }
-            }),
-        );
-        prune.disabled = !available(s) || owner.backend.is_none();
-        if owner.backend.is_none() {
-            prune.description = Some(t("history.sessionUnavailable").into());
+                }),
+            );
+            prune.disabled = !available(s) || owner.backend.is_none();
+            if owner.backend.is_none() {
+                prune.description = Some(t("history.sessionUnavailable").into());
+            } else {
+                let enter_owner = hover_owner.clone();
+                let leave_owner = hover_owner;
+                let hover_id = id.clone();
+                prune.on_mouse_enter =
+                    Some(Rc::new(screen::action_tx(&s.input_scope, move |s, _| {
+                        let targets = cleanup::response_targets(s, &hover_id);
+                        set_prune_hover(s, enter_owner.clone(), &targets);
+                    })));
+                prune.on_mouse_leave =
+                    Some(Rc::new(screen::action_tx(&s.input_scope, move |s, _| {
+                        clear_prune_hover(s, &leave_owner);
+                    })));
+            }
+            items.push(Rc::new(prune));
         }
-        items.push(Rc::new(prune));
     }
     if items.is_empty() || items.len() == 1 && items[0].key == "copy" {
         return None;
@@ -168,6 +189,47 @@ pub(in crate::chat) fn header(s: &State, message: &Message, header: El) -> El {
         .children(controls(s, message).map(|menu| parts(s, menu).0))
 }
 
+pub(in crate::chat) fn group_delete_button(
+    s: &State,
+    key: &str,
+    targets: &[PruneMessageTarget],
+) -> El {
+    let disabled = !available(s) || s.transcript_display.messages.backend.is_none();
+    let targets = targets.to_vec();
+    let click_targets = targets.clone();
+    let hover_targets = targets;
+    let hover_owner = format!("group:{key}");
+    let hover_scope = s.input_scope.clone();
+    let button = layout::button(
+        t("messagePart.actions.delete"),
+        disabled,
+        screen::action(&s.input_scope, move |s| {
+            start(
+                s,
+                Intent::PreviewPrune {
+                    targets: click_targets.clone(),
+                    group: true,
+                },
+            );
+        }),
+    )
+    .key(format!("delete-group-{key}"));
+    if disabled {
+        button
+    } else {
+        button.on_hover_change(move |s: &mut State, inside, _| {
+            if !s.current_scope(&hover_scope) {
+                return;
+            }
+            if inside {
+                set_prune_hover(s, hover_owner.clone(), &hover_targets);
+            } else {
+                clear_prune_hover(s, &hover_owner);
+            }
+        })
+    }
+}
+
 pub(in crate::chat) fn overlays(s: &State, layers: &mut Vec<El>) {
     let owner = &s.transcript_display.messages;
     if let Some(menu) = owner
@@ -179,7 +241,7 @@ pub(in crate::chat) fn overlays(s: &State, layers: &mut Vec<El>) {
     {
         layers.push(popup);
     }
-    if let Some((scope, preview)) = &owner.confirmation
+    if let Some((scope, preview, _)) = &owner.confirmation
         && scope.ptr_eq(&Rc::downgrade(&s.input_scope))
     {
         let owner_scope = scope.clone();
@@ -201,10 +263,10 @@ pub(in crate::chat) fn overlays(s: &State, layers: &mut Vec<El>) {
                 if !owner_scope.ptr_eq(&Rc::downgrade(&s.input_scope)) {
                     return;
                 }
-                if let Some((_, preview)) = s.transcript_display.messages.confirmation.take()
+                if let Some((_, preview, group)) = s.transcript_display.messages.confirmation.take()
                     && accepted
                 {
-                    start(s, Intent::Prune(preview));
+                    start(s, Intent::Prune { preview, group });
                 }
             },
         ));
@@ -240,4 +302,5 @@ pub(super) fn close(owner: &mut Actions) {
     owner.menu = Default::default();
     owner.open_menu = None;
     owner.confirmation = None;
+    owner.prune_hover = None;
 }

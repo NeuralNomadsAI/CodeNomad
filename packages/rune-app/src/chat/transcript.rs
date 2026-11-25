@@ -225,7 +225,10 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                     }
                     None => Some(super::reading::passage(
                         s,
-                        tools::view(s, &m.id, tool),
+                        layout::prune_preview(
+                            tools::view(s, &m.id, tool),
+                            super::message_actions::part_highlighted(s, &m.id, tool.part_index),
+                        ),
                         &m.id,
                         tools::tool_key(&m.id, &tool.id),
                         Some(crate::settings::TranscriptRow::tool(&tool.name)),

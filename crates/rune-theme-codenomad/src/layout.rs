@@ -79,6 +79,15 @@ pub fn focusable_disabled_button(label: &str) -> El {
         .aria_disabled(true)
 }
 
+/// Highlight technical transcript parts targeted by a pending cleanup hover.
+pub fn prune_preview(el: El, active: bool) -> El {
+    if active {
+        el.fill(tokens(dark()).color("status-error-bg"))
+    } else {
+        el
+    }
+}
+
 pub(crate) fn enter_action<S: 'static>(
     action: Rc<impl Fn(&mut S, &mut rune::Tx) + 'static>,
 ) -> impl Fn(&mut S, &rune::KeyEvent, &mut rune::Tx) -> bool + 'static {

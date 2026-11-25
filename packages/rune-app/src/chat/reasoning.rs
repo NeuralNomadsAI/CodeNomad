@@ -113,6 +113,7 @@ pub(super) struct GroupView<'a> {
     pub expanded: bool,
     pub search_id: Option<u64>,
     pub first: bool,
+    pub prune_targets: &'a [codenomad_client::message_actions::PruneMessageTarget],
 }
 
 /// Resolve a rail run to the first displayed fragment of its visible segment.
@@ -265,8 +266,17 @@ pub(super) fn view_chunk<'a>(
         )
         .child(text(title))
         .child(text(steps))
-        .children(duration.map(text));
+        .children(duration.map(text))
+        .children((!expanded && !group.prune_targets.is_empty()).then(|| {
+            super::message_actions::group_delete_button(s, group.key, group.prune_targets)
+        }));
     let mut container = col().full_width().separate(Space::Sm).child(header);
+    if !expanded {
+        container = layout::prune_preview(
+            container,
+            super::message_actions::targets_highlighted(s, group.prune_targets),
+        );
+    }
     if expanded {
         let mut is_first_visible = true;
         for (offset, part) in parts.iter().enumerate() {
@@ -405,23 +415,26 @@ fn reasoning_card(
             .expanded(open),
         )
         .child(meta);
-    let card = col()
-        .full_width()
-        .pad(Space::Sm)
-        .separate(Space::Sm)
-        .inset_surface()
-        .child(header)
-        .children(open.then(|| {
-            body(
-                s,
-                message,
-                fragment,
-                part,
-                summary.body,
-                (retained, total),
-                query,
-            )
-        }));
+    let card = layout::prune_preview(
+        col()
+            .full_width()
+            .pad(Space::Sm)
+            .separate(Space::Sm)
+            .inset_surface()
+            .child(header)
+            .children(open.then(|| {
+                body(
+                    s,
+                    message,
+                    fragment,
+                    part,
+                    summary.body,
+                    (retained, total),
+                    query,
+                )
+            })),
+        super::message_actions::part_highlighted(s, message, part.part_index),
+    );
     match card_key {
         Some(key) => card.key(key),
         None => card,

@@ -1,4 +1,8 @@
-use super::{actions::Display, reasoning, tools};
+use super::{
+    actions::Display,
+    message_actions::{self, GroupPrune},
+    reasoning, tools,
+};
 use crate::{
     State,
     content::{Part, Tool},
@@ -7,7 +11,10 @@ use crate::{
     settings::{TranscriptRow, transcript_mode},
     strings::locale,
 };
-use codenomad_client::search::Kind as SearchKind;
+use codenomad_client::{
+    message_actions::{PruneKind, PruneMessageTarget},
+    search::Kind as SearchKind,
+};
 use rune::{El, col};
 use rune_theme_codenomad::{
     Space, catalogue,
@@ -44,11 +51,13 @@ struct Summary {
     title: Option<String>,
     completed: bool,
     search_hit: bool,
+    prune_targets: Vec<PruneMessageTarget>,
 }
 
 struct Run {
     summary: Summary,
     chunks: Vec<(usize, std::ops::Range<usize>)>,
+    prune: GroupPrune,
 }
 
 pub(super) struct Chunk {
@@ -146,8 +155,10 @@ impl Groups {
                                 title: None,
                                 completed: false,
                                 search_hit: false,
+                                prune_targets: Vec::new(),
                             },
                             chunks: Vec::new(),
+                            prune: GroupPrune::default(),
                         });
                         run.summary.keys.push(member);
                         run.summary.count += 1;
@@ -157,6 +168,12 @@ impl Groups {
                             .saturating_add(reasoning::duration_ms(fragment));
                         run.summary.title = reasoning::extract_title(&fragment.text);
                         run.summary.completed = message.completed;
+                        run.prune.push(
+                            &message.id,
+                            message.completed,
+                            fragment.part_index,
+                            PruneKind::Reasoning,
+                        );
                         run.summary.search_hit |= super::search_hit::query(
                             s,
                             &message.id,
@@ -190,13 +207,21 @@ impl Groups {
                                 title: None,
                                 completed: false,
                                 search_hit: false,
+                                prune_targets: Vec::new(),
                             },
                             chunks: Vec::new(),
+                            prune: GroupPrune::default(),
                         });
                         run.summary.keys.push(member);
                         run.summary.count += 1;
                         run.summary.reads += usize::from(tool.name == "read");
                         run.summary.completed = message.completed;
+                        run.prune.push(
+                            &message.id,
+                            message.completed,
+                            tool.part_index,
+                            PruneKind::Tool,
+                        );
                         run.summary.search_hit |= super::search_hit::query(
                             s,
                             &message.id,
@@ -221,6 +246,7 @@ impl Groups {
         let Some(Run {
             mut summary,
             chunks,
+            prune,
         }) = run.filter(|run| match run.summary.kind {
             Kind::Reasoning => run.summary.count > 0,
             Kind::Exploration | Kind::Shell => run.summary.count > 1,
@@ -229,6 +255,7 @@ impl Groups {
             return;
         };
         summary.completed |= closed;
+        summary.prune_targets = prune.finish(summary.completed && summary.count > 1);
         let summary = Rc::new(summary);
         for (i, (row, range)) in chunks.into_iter().enumerate() {
             self.chunks.insert(
@@ -387,6 +414,7 @@ impl Chunk {
                     expanded,
                     search_id,
                     first: self.first,
+                    prune_targets: &summary.prune_targets,
                 },
                 marker,
             );
@@ -397,7 +425,7 @@ impl Chunk {
         }
         let header = self.first.then(|| {
             let toggle = summary.keys.clone();
-            layout::button(
+            let toggle_button = layout::button(
                 &summary.label(),
                 false,
                 screen::action(&s.input_scope, move |s| {
@@ -412,16 +440,27 @@ impl Chunk {
                 }),
             )
             .key(format!("toggle-{key}"))
-            .expanded(expanded)
+            .expanded(expanded);
+            if !expanded && !summary.prune_targets.is_empty() {
+                layout::action_row().child(toggle_button).child(
+                    message_actions::group_delete_button(s, key, &summary.prune_targets),
+                )
+            } else {
+                toggle_button
+            }
         });
         let mut body = col().full_width().separate(Space::Sm).children(header);
         if expanded {
             body = body.children(parts.iter().enumerate().filter_map(
                 |(offset, part)| match part {
                     Part::Tool(tool) if tools::visible(s, message, tool) => {
+                        let card = layout::prune_preview(
+                            tools::view(s, message, tool),
+                            message_actions::part_highlighted(s, message, tool.part_index),
+                        );
                         Some(super::reading::passage(
                             s,
-                            tools::view(s, message, tool),
+                            card,
                             message,
                             tools::tool_key(message, &tool.id),
                             Some(TranscriptRow::tool(&tool.name)),
@@ -433,6 +472,12 @@ impl Chunk {
             ));
         }
         if self.first {
+            if !expanded {
+                body = layout::prune_preview(
+                    body,
+                    message_actions::targets_highlighted(s, &summary.prune_targets),
+                );
+            }
             body = super::reading::passage(
                 s,
                 body,

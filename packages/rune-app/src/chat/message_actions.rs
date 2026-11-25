@@ -1,15 +1,22 @@
 use crate::{Phase, State, backend::Backend, platform};
 use codenomad_client::{
     Receiver, Sender, bounded,
-    message_actions::{PrunePreview, PruneUnavailable},
+    message_actions::{PruneBlocked, PruneMessageTarget, PrunePreview, PruneUnavailable},
 };
 use rune::Tx;
-use std::rc::{Rc, Weak};
+use std::{
+    collections::HashSet,
+    rc::{Rc, Weak},
+};
 
+mod cleanup;
 mod menu;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod multi_prune_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
-pub(super) use menu::{header, overlays, restore};
+pub(super) use cleanup::GroupPrune;
+pub(super) use menu::{group_delete_button, header, overlays, restore};
 
 #[derive(Default)]
 pub(crate) struct Actions {
@@ -18,10 +25,11 @@ pub(crate) struct Actions {
     refresh_boundary: bool,
     read: Option<Receiver<codenomad_client::history::Result<Option<String>>>>,
     job: Option<Job>,
-    confirmation: Option<(Weak<()>, PrunePreview)>,
+    confirmation: Option<(Weak<()>, PrunePreview, bool)>,
     error: Option<&'static str>,
     menu: rune_theme_codenomad::action_menu::State<State>,
     open_menu: Option<String>,
+    prune_hover: Option<(String, HashSet<(String, u64)>)>,
 }
 
 struct Job {
@@ -33,18 +41,27 @@ struct Job {
 }
 
 enum Intent {
-    Edit { id: String, text: String },
+    Edit {
+        id: String,
+        text: String,
+    },
     Restore,
     Fork(String),
-    PreviewPrune(String),
-    Prune(PrunePreview),
+    PreviewPrune {
+        targets: Vec<PruneMessageTarget>,
+        group: bool,
+    },
+    Prune {
+        preview: PrunePreview,
+        group: bool,
+    },
 }
 
 enum Outcome {
     Edit { id: String, text: String },
     Restore,
     Fork(String),
-    PreviewPrune(PrunePreview),
+    PreviewPrune { preview: PrunePreview, group: bool },
     Pruned,
 }
 
@@ -106,7 +123,7 @@ impl Actions {
     pub(crate) fn confirmation_open(&self, scope: &Rc<()>) -> bool {
         self.confirmation
             .as_ref()
-            .is_some_and(|(owner, _)| owner.ptr_eq(&Rc::downgrade(scope)))
+            .is_some_and(|(owner, _, _)| owner.ptr_eq(&Rc::downgrade(scope)))
     }
 
     pub(crate) fn menu_open(&self) -> bool {
@@ -120,7 +137,7 @@ impl Actions {
 
     #[cfg(test)]
     pub(crate) fn fixture_confirmation(&mut self, scope: &Rc<()>, preview: Option<PrunePreview>) {
-        self.confirmation = preview.map(|preview| (Rc::downgrade(scope), preview));
+        self.confirmation = preview.map(|preview| (Rc::downgrade(scope), preview, false));
     }
 
     #[cfg(test)]
@@ -170,12 +187,20 @@ fn start(s: &mut State, intent: Intent) {
         Intent::Edit { .. } => ("sessionView.alerts.revertFailed.message", true),
         Intent::Restore if owner.can_restore() => ("commands.redoLastMessage.failed.message", true),
         Intent::Fork(_) => ("sessionView.alerts.forkFailed.message", false),
-        Intent::PreviewPrune(_) => (
-            "messageItem.actions.deleteTechnicalParts.failedMessage",
+        Intent::PreviewPrune { group, .. } => (
+            if *group {
+                "messagePart.actions.deleteFailedMessage"
+            } else {
+                "messageItem.actions.deleteTechnicalParts.failedMessage"
+            },
             false,
         ),
-        Intent::Prune(_) => (
-            "messageItem.actions.deleteTechnicalParts.failedMessage",
+        Intent::Prune { group, .. } => (
+            if *group {
+                "messagePart.actions.deleteFailedMessage"
+            } else {
+                "messageItem.actions.deleteTechnicalParts.failedMessage"
+            },
             true,
         ),
         _ => return,
@@ -183,6 +208,7 @@ fn start(s: &mut State, intent: Intent) {
     let (cancel, cancelled) = bounded(1);
     let (done, returned) = bounded(1);
     owner.error = None;
+    owner.prune_hover = None;
     owner.job = Some(Job {
         scope: Rc::downgrade(&s.input_scope),
         cancel,
@@ -208,11 +234,12 @@ fn start(s: &mut State, intent: Intent) {
                 Intent::Fork(id) => {
                     Outcome::Fork(backend.fork_after_message(&id, &cancelled).await?)
                 }
-                Intent::PreviewPrune(id) => {
-                    Outcome::PreviewPrune(backend.preview_message_prune(&id).await?)
-                }
-                Intent::Prune(preview) => {
-                    backend.prune_message(preview).await?;
+                Intent::PreviewPrune { targets, group } => Outcome::PreviewPrune {
+                    preview: backend.preview_prune_targets(&targets, &cancelled).await?,
+                    group,
+                },
+                Intent::Prune { preview, .. } => {
+                    backend.prune_targets(preview, &cancelled).await?;
                     Outcome::Pruned
                 }
             })
@@ -221,6 +248,61 @@ fn start(s: &mut State, intent: Intent) {
         let _ = done.send(result).await;
         wake();
     });
+}
+
+pub(super) fn set_prune_hover(s: &mut State, owner: String, targets: &[PruneMessageTarget]) {
+    let set: HashSet<(String, u64)> = targets
+        .iter()
+        .flat_map(|target| {
+            target
+                .parts
+                .iter()
+                .map(move |part| (target.message.clone(), part.index))
+        })
+        .collect();
+    if set.is_empty() {
+        clear_prune_hover(s, &owner);
+        return;
+    }
+    let next = Some((owner, set));
+    if s.transcript_display.messages.prune_hover != next {
+        s.transcript_display.messages.prune_hover = next;
+        s.revision += 1;
+    }
+}
+
+pub(super) fn clear_prune_hover(s: &mut State, owner: &str) {
+    if s.transcript_display
+        .messages
+        .prune_hover
+        .as_ref()
+        .is_some_and(|(current, _)| current == owner)
+    {
+        s.transcript_display.messages.prune_hover = None;
+        s.revision += 1;
+    }
+}
+
+pub(in crate::chat) fn part_highlighted(s: &State, message: &str, index: Option<usize>) -> bool {
+    let Some((_, set)) = &s.transcript_display.messages.prune_hover else {
+        return false;
+    };
+    let Some(index) = index.and_then(|value| u64::try_from(value).ok()) else {
+        return false;
+    };
+    set.contains(&(message.to_owned(), index))
+}
+
+pub(in crate::chat) fn targets_highlighted(s: &State, targets: &[PruneMessageTarget]) -> bool {
+    let Some((_, set)) = &s.transcript_display.messages.prune_hover else {
+        return false;
+    };
+    targets.iter().any(|target| {
+        target
+            .parts
+            .iter()
+            .any(|part| set.contains(&(target.message.clone(), part.index)))
+    })
 }
 
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
@@ -257,14 +339,16 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         s.revision += 1;
                     }
                     Ok(Outcome::Fork(id)) => crate::launcher::choose(s, id, tx),
-                    Ok(Outcome::PreviewPrune(preview)) => {
+                    Ok(Outcome::PreviewPrune { preview, group }) => {
                         s.transcript_display.messages.confirmation =
-                            Some((Rc::downgrade(&s.input_scope), preview));
+                            Some((Rc::downgrade(&s.input_scope), preview, group));
                     }
                     Err(err) => {
                         s.transcript_display.messages.error =
                             Some(if err.is::<PruneUnavailable>() {
                                 "session.messageActions.serverUnavailable"
+                            } else if let Some(blocked) = err.downcast_ref::<PruneBlocked>() {
+                                blocked.reason.message_key()
                             } else {
                                 error
                             });
