@@ -409,6 +409,10 @@ mod tests {
 
     #[tokio::test]
     async fn wildcard_listener_opens_and_issues_localhost_cert() {
+        // Binding `0.0.0.0` triggers the Windows Firewall prompt for each new test binary; run in CI only.
+        if !crate::host::ci_enabled() {
+            return;
+        }
         let dir = std::env::temp_dir().join(format!("cnrs-tls-wildcard-{}", uuid::Uuid::new_v4()));
         let settings = Settings {
             bind: crate::host::Bind { ip: [0, 0, 0, 0].into(), port: 0, fallback: false },
