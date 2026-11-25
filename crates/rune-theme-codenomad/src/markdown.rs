@@ -305,10 +305,11 @@ pub fn link_menu<S: 'static>(
     open: &str,
     copy: &str,
     help: Option<String>,
+    style: rune::PopupMenuStyle,
     pick: impl FnOnce(&mut S, Option<&str>, &mut rune::Tx) + 'static,
 ) {
     use rune::{PopupItem, PopupMenu};
-    let mut menu = PopupMenu::new();
+    let mut menu = PopupMenu::new().style(style);
     if let Some(help) = help {
         menu = menu.item(PopupItem::new("link-help", help).enabled(false));
     }

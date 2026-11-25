@@ -76,6 +76,7 @@ pub(crate) fn sync_locale(s: &State, locale: &'static str) -> bool {
 
 #[cfg(target_os = "windows")]
 fn menus(locale: &'static str) -> El {
+    let menu_style = rune_theme_codenomad::layout::popup_menu_style();
     row()
         .role("navigation")
         .label(t("window.menu.ariaLabel"))
@@ -86,6 +87,7 @@ fn menus(locale: &'static str) -> El {
                 ("window.menu.window", Menu::Window),
             ]
             .map(|(key, menu)| {
+                let menu_style = menu_style.clone();
                 shell::titlebar_menu(t(key), move |s: &mut State, tx| {
                     crate::shell::Panels::dismiss_outside(s, tx);
                     let items = match menu {
@@ -121,7 +123,12 @@ fn menus(locale: &'static str) -> El {
                         (id, label, enabled, checked)
                     });
                     let scope = s.input_scope.clone();
-                    shell::open_titlebar_menu(tx, key, items, move |s: &mut State, choice, tx| {
+                    shell::open_titlebar_menu(
+                        tx,
+                        key,
+                        menu_style.clone(),
+                        items,
+                        move |s: &mut State, choice, tx| {
                         match choice {
                             Some("close") => tx.close_window(),
                             Some("fullscreen") => tx.toggle_full_screen(),

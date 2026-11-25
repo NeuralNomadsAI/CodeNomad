@@ -110,14 +110,31 @@ pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
 pub fn composer_input(edit: &TextEdit, placeholder: &str) -> El {
     base_editor(edit).hint(placeholder)
 }
+pub fn popup_menu_style() -> rune::PopupMenuStyle {
+    let t = tokens(dark());
+    rune::PopupMenuStyle::new()
+        .background(t.color("surface-overlay"))
+        .text(t.color("text-primary"))
+        .muted(t.color("text-muted"))
+        .separator(t.color("border-base"))
+        .highlight(t.color("menu-item-hover-bg"))
+        .font_family(t.string("font-family-sans"))
+        .font_size(t.metric("actionMenuItem", "fontSize").px())
+        .line_height(t.metric("actionMenuItem", "lineHeight").px())
+        .padding(t.metric("actionMenu", "paddingTop").px())
+        .corner_radius(t.metric("actionMenu", "borderRadius").px())
+        .item_corner_radius(t.metric("actionMenuItem", "borderRadius").px())
+}
 pub fn editor_menu<S: 'static>(
     tx: &mut rune::Tx,
     point: (f32, f32),
     selected: bool,
+    style: rune::PopupMenuStyle,
     pick: impl FnOnce(&mut S, Option<&str>, &mut rune::Tx) + 'static,
 ) {
     use rune::{Label, PopupItem, PopupMenu, labels::label};
     let mut menu = PopupMenu::new()
+        .style(style)
         .item(PopupItem::new("cut", label(Label::Cut)).enabled(selected))
         .item(PopupItem::new("copy", label(Label::Copy)).enabled(selected))
         .item(PopupItem::new("paste", label(Label::Paste)));
@@ -517,6 +534,79 @@ mod tests {
                     .find(|node| node.key.as_deref() == Some(key))
                     .unwrap();
                 assert_eq!(node.fill, tokens(dark).color("surface-field"));
+            }
+        }
+    }
+    #[test]
+    fn popup_menu_style_follows_theme_palettes_with_square_corners() {
+        for dark in [false, true] {
+            let style = with_appearance(dark, popup_menu_style);
+            let t = tokens(dark);
+            let expected = rune::PopupMenuStyle::new()
+                .background(t.color("surface-overlay"))
+                .text(t.color("text-primary"))
+                .muted(t.color("text-muted"))
+                .separator(t.color("border-base"))
+                .highlight(t.color("menu-item-hover-bg"))
+                .font_family(t.string("font-family-sans"))
+                .font_size(t.metric("actionMenuItem", "fontSize").px())
+                .line_height(t.metric("actionMenuItem", "lineHeight").px())
+                .padding(t.metric("actionMenu", "paddingTop").px())
+                .corner_radius(0.0)
+                .item_corner_radius(0.0);
+            assert_eq!(style, expected);
+
+            let contrast = crate::palettes::increased_contrast(None, dark).unwrap();
+            let high_contrast =
+                crate::palettes::with_palette(Some(contrast), || with_appearance(dark, popup_menu_style));
+            assert_ne!(high_contrast, style);
+
+            // Verify every theme popup-menu helper attaches the provided style.
+            let mut rt = rune::Runtime::new(
+                (),
+                |_, _| rune::el().key("anchor").size(40.0, 20.0),
+                (200.0, 120.0),
+                rune::Env::new(dark, 1.0),
+            );
+            rt.frame(0.0);
+
+            let editor_style = style.clone();
+            rt.update(move |_, tx| editor_menu(tx, (10.0, 10.0), true, editor_style, |_: &mut (), _, _| {}));
+            rt.frame(0.0);
+            assert_eq!(rt.popup_menu().unwrap().menu_style(), Some(&style));
+            rt.resolve_popup(None).unwrap();
+
+            let link_style = style.clone();
+            rt.update(move |_, tx| {
+                crate::markdown::link_menu(
+                    tx,
+                    (10.0, 10.0),
+                    "Open",
+                    "Copy link",
+                    None,
+                    link_style,
+                    |_: &mut (), _, _| {},
+                )
+            });
+            rt.frame(0.0);
+            assert_eq!(rt.popup_menu().unwrap().menu_style(), Some(&style));
+            rt.resolve_popup(None).unwrap();
+
+            #[cfg(target_os = "windows")]
+            {
+                let title_style = style.clone();
+                rt.update(move |_, tx| {
+                    crate::shell::open_titlebar_menu(
+                        tx,
+                        "anchor",
+                        title_style,
+                        [("close", "Close", true, false)],
+                        |_: &mut (), _, _| {},
+                    )
+                });
+                rt.frame(0.0);
+                assert_eq!(rt.popup_menu().unwrap().menu_style(), Some(&style));
+                rt.resolve_popup(None).unwrap();
             }
         }
     }
