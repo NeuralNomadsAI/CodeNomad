@@ -20,6 +20,7 @@ import type { NativeScheduleCalendarOwner } from "./native-schedule-owner"
 import type { NativeScheduleCalendarService } from "./native-schedule-calendar-service"
 import { missionCodeWakeProof } from "./native-mission-automation"
 import { admitNativeMissionScheduleCodeWake } from "./native-mission-schedule-code-admission"
+import { compactNativeMissionDocumentDeletion } from "./native-mission-schedule-deletion"
 
 const text = z.string().min(1).max(4096)
 const inputSchema = z.object({ registrationFile: text, incarnation: z.object({ id: text, pid: z.number().int().positive(), url: text, version: text.optional() }).strict(),
@@ -31,7 +32,8 @@ export type NativeMissionScheduleWakePorts = { store: NativeMissionDocumentStore
   runtime: Pick<NativeScheduledPassageRuntime, "preflight" | "wake" | "reconcile">;
   read(): Promise<{ binding: NativeScheduleCarrierBinding; wake: MissionWake }>;
   claim(): Promise<ReturnType<typeof parseNativeMissionScheduleClaim>>;
-  close(locked: NativeMissionDocumentStore): Promise<boolean> }
+  close(locked: NativeMissionDocumentStore): Promise<boolean>;
+  compact?(): Promise<void> }
 
 const nonCodeReply = (wake: NativeScheduleWake): NativeScheduleTransportReply =>
   ({ key: nativeScheduleWakeKey(wake), state: "rejected", reason: "schedule-calendar-requires-code" })
@@ -101,9 +103,11 @@ async function receive(mode: "wake" | "status", input: Input, entry: Entry,
   const fresh = await ports.store.read(wake.missionID)
   const settled = await ports.claim()
   entry.current()
-  return reply(fresh && !("deletedAt" in fresh) && ([...fresh.calendars, ...fresh.synchronization?.retiredCalendars ?? []]
+  const isApplied = !!(fresh && !("deletedAt" in fresh) && ([...fresh.calendars, ...fresh.synchronization?.retiredCalendars ?? []]
     .some(item => item.scheduleID === wake.scheduleID && item.highWater >= wake.run)
-    || settled?.key === key && settled.settled && settled.settled.revision <= fresh.revision) ? "applied" : "pending")
+    || settled?.key === key && settled.settled && settled.settled.revision <= fresh.revision))
+  if (isApplied && fresh && !("deletedAt" in fresh) && fresh.deletion) await ports.compact?.()
+  return reply(isApplied ? "applied" : "pending")
 }
 
 export async function readNativeMissionScheduleWakeProof(input: {
@@ -178,7 +182,8 @@ export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context) {
     })
     return yield* Effect.tryPromise(() => receiveNativeMissionScheduleWake(mode, input, { current, signal: controller.signal, consumed: () => { consumed = true } }, { store, owner, runtime, read,
       claim: async () => parseNativeMissionScheduleClaim(await run(ctx.storage.get(nativeScheduleClaimKey(ctx, doc.id))), doc.id),
-      close: locked => closeNativeScheduleCarrierClaimLocked(ctx, doc.id, run, current, locked) }))
+      close: locked => closeNativeScheduleCarrierClaimLocked(ctx, doc.id, run, current, locked),
+      compact: () => compactNativeMissionDocumentDeletion(ctx, store, doc.id, run, current).then(() => undefined) }))
   })).pipe(Effect.orDie))
   return { wake: (raw: unknown) => handler("wake", raw), status: (raw: unknown) => handler("status", raw), admit: (raw: unknown) => handler("admit", raw) }
 }

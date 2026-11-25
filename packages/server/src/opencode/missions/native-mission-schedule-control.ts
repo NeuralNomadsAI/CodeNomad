@@ -14,11 +14,9 @@ import { acquireNativeScheduledPassageRuntime } from "./native-scheduled-passage
 import { nativeImmediatePlayPassage, nativeMissionScheduleActorControl, nativeMissionScheduleResult } from "./native-mission-schedule-result"
 import { immediateMissionControlReceipts, prepareNativeImmediateMissionControl } from "./native-mission-schedule-immediate"
 import { NativeScheduleControlRefusal, nativeScheduleOwnerControlReceipt, type NativeScheduleOwnerControl } from "./native-schedule-owner"
-import { finishMissionDocumentDeletion } from "../../missions/mission-document-deletion"
+import { compactNativeMissionDocumentDeletion } from "./native-mission-schedule-deletion"
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { configureNativeMissionPreparation } from "./native-mission-preparation"
-import { deleteDormantMissionJournal } from "../../missions/mission-dormant-journal"
-import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 import { assertAgentScheduledCoordinatorSelection, prevalidateAgentScheduledCoordinatorCreation } from "./native-scheduled-coordinator-adoption"
 import { ScheduledCoordinatorRefusal } from "./native-source-fence"
 
@@ -228,22 +226,8 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
   // Re-evaluate the quota after admission/settlement, preserving mapping proofs.
   yield* Effect.tryPromise(() => owner.reconcile(missionID))
   if (action === "delete" || action === "check") {
-    const deleting = yield* Effect.promise(() => store.read(missionID))
-    if (deleting && !("deletedAt" in deleting) && deleting.deletion) {
-      const deletion = deleting.deletion
-      const managedCleanup = deletion.deleteManagedSessions && deleting.launchedCount > 0
-      if (managedCleanup || deleting.coordinatorReleases.length) actorPending = true
-      else if (!actorPending && !deleting.pending && !deleting.calendarOwner?.operation.pending
-        && !deleting.calendarOwner?.slots.length && !deleting.calendarOwner?.retired.length) {
-        const range = yield* optionalOrdinaryJournalRange(ctx, run)
-        yield* Effect.tryPromise(() => store.withExclusion(async locked => {
-          await deleteDormantMissionJournal(locked, { range, get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
-            set: async (key, value, guard) => { current(); guard?.(); await run(ctx.storage.set(key, value)) } }, deleting, current)
-          await finishMissionDocumentDeletion(use => use(locked), use => use(locked),
-            { missionID, ...deletion }, Date.now(), current, true)
-        }))
-      }
-    }
+    const compacted = yield* Effect.tryPromise(() => compactNativeMissionDocumentDeletion(ctx, store, missionID, run, current, actorPending))
+    if (compacted.managedOrReleasePending) actorPending = true
   }
   return yield* Effect.promise(async () => nativeMissionScheduleResult(ctx, await store.read(missionID), run, actorPending, requestID))
 })
