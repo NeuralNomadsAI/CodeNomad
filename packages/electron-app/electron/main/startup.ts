@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { readFileSync, statSync } from "node:fs"
-import { readFile, stat } from "node:fs/promises"
+import * as fsPromises from "node:fs/promises"
+import { createRequire } from "node:module"
 import { homedir } from "node:os"
 import { isAbsolute, join, normalize, resolve } from "node:path"
 import { parse as parseYaml } from "yaml"
@@ -223,6 +224,24 @@ export function createLaunchIntentQueue(
   }
 }
 
+interface PhysicalFsPromises {
+  stat: typeof fsPromises.stat
+  readFile: typeof fsPromises.readFile
+}
+
+const nodeRequire = createRequire(import.meta.url)
+
+/** Loads Electron's ASAR-free filesystem promises API, falling back to `node:fs/promises` outside Electron. */
+function resolvePhysicalFsPromises(): PhysicalFsPromises {
+  try {
+    const originalFs = nodeRequire("original-fs") as { promises?: Partial<PhysicalFsPromises> } | undefined
+    if (typeof originalFs?.promises?.stat === "function" && typeof originalFs?.promises?.readFile === "function") {
+      return originalFs.promises as PhysicalFsPromises
+    }
+  } catch {}
+  return fsPromises
+}
+
 function isExistingDirectorySync(candidate: string): boolean {
   try {
     return statSync(candidate).isDirectory()
@@ -231,9 +250,12 @@ function isExistingDirectorySync(candidate: string): boolean {
   }
 }
 
-async function isExistingDirectoryAsync(candidate: string): Promise<boolean> {
+async function isExistingDirectoryAsync(
+  candidate: string,
+  physicalFs: PhysicalFsPromises = resolvePhysicalFsPromises(),
+): Promise<boolean> {
   try {
-    return (await stat(candidate)).isDirectory()
+    return (await physicalFs.stat(candidate)).isDirectory()
   } catch {
     return false
   }
@@ -294,12 +316,16 @@ export function parseLaunchIntent(argv: string[], cwd: string): LaunchIntent {
 export async function parseLaunchIntentAsync(
   argv: readonly string[],
   cwd: string,
-  isDirectory: (path: string) => Promise<boolean> = isExistingDirectoryAsync,
+  isDirectory?: (path: string) => Promise<boolean>,
 ): Promise<LaunchIntent> {
   const { newWindow, folderCandidates, connectServer } = parseRawLaunchArguments(argv, cwd)
+  const checkDirectory = isDirectory ?? (() => {
+    const physicalFs = resolvePhysicalFsPromises()
+    return (path: string) => isExistingDirectoryAsync(path, physicalFs)
+  })()
   const folders: string[] = []
   for (const candidate of folderCandidates) {
-    if (await isDirectory(candidate)) folders.push(candidate)
+    if (await checkDirectory(candidate)) folders.push(candidate)
   }
   return { newWindow, folders, ...(connectServer !== undefined ? { connectServer } : {}) }
 }
@@ -358,15 +384,19 @@ export function readForwardedLaunchIntent(data: unknown): LaunchIntent | undefin
 
 export async function readForwardedLaunchIntentAsync(
   data: unknown,
-  isDirectory: (path: string) => Promise<boolean> = isExistingDirectoryAsync,
+  isDirectory?: (path: string) => Promise<boolean>,
 ): Promise<LaunchIntent | undefined> {
   const parsed = parseForwardedLaunchShape(data)
   if (!parsed) return undefined
+  const checkDirectory = isDirectory ?? (() => {
+    const physicalFs = resolvePhysicalFsPromises()
+    return (path: string) => isExistingDirectoryAsync(path, physicalFs)
+  })()
   const folders: string[] = []
   const seen = new Set<string>()
   for (const folder of parsed.folders) {
     if (!isAbsolute(folder) || seen.has(folder)) continue
-    if (await isDirectory(resolve(folder))) {
+    if (await checkDirectory(resolve(folder))) {
       seen.add(folder)
       folders.push(folder)
     }
@@ -395,7 +425,7 @@ export function prepareSecondLaunchIntent(intent: LaunchIntent, configPath: stri
 export async function prepareSecondLaunchIntentAsync(
   intent: LaunchIntent,
   configPath: string,
-  readConfig: (path: string) => Promise<string> = (path) => readFile(path, "utf8"),
+  readConfig: (path: string) => Promise<string> = (path) => resolvePhysicalFsPromises().readFile(path, "utf8"),
 ): Promise<LaunchIntent> {
   // A connection runs in an existing window; a new window would be left empty beside the remote one.
   if (isConnectOnlyLaunch(intent)) return intent
@@ -418,8 +448,9 @@ export function createForwardedLaunchQueue(
   reportError: (error: unknown) => void,
   dependencies: ForwardedLaunchDependencies = {},
 ) {
-  const isDirectory = dependencies.isDirectory ?? isExistingDirectoryAsync
-  const readConfig = dependencies.readConfig ?? ((path: string) => readFile(path, "utf8"))
+  const physicalFs = dependencies.isDirectory && dependencies.readConfig ? undefined : resolvePhysicalFsPromises()
+  const isDirectory = dependencies.isDirectory ?? ((path: string) => isExistingDirectoryAsync(path, physicalFs!))
+  const readConfig = dependencies.readConfig ?? ((path: string) => physicalFs!.readFile(path, "utf8"))
   const argvSliceIndex = dependencies.argvSliceIndex ?? ((argv: readonly string[]) => argv.length > 0 ? 1 : 0)
   const fallbackCwd = dependencies.fallbackCwd ?? process.cwd
   let tail = Promise.resolve()

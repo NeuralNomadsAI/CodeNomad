@@ -101,7 +101,7 @@ fn parse_launch_intent_with(
     intent
 }
 
-#[cfg(any(windows, test))]
+#[cfg(test)]
 pub(crate) fn parse_windows_forwarded_launch_intent(
     arguments: &[String],
     cwd: &Path,
@@ -185,6 +185,7 @@ struct LaunchConfig {
     ui: Option<LaunchUiConfig>,
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_second_launch_intent(
     intent: LaunchIntent,
     config_path: &Path,

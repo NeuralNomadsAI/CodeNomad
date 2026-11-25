@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { Module } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -397,5 +398,61 @@ test("forwarded queue resolves real directories and config.yaml asynchronously o
     assert.deepEqual(delivered, [{ newWindow: false, folders: [folder] }])
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("default forwarded queue uses Electron original-fs promises so .asar paths bypass ASAR patching", async () => {
+  const root = join(tmpdir(), `codenomad-forwarded-asar-${process.pid}`)
+  const asarFolder = join(root, "workspace.asar")
+  const asarOpened = join(root, "opened.asar")
+  const asarConfig = join(root, "profile.asar", "config.yaml")
+  const statCalls: string[] = []
+  const readCalls: string[] = []
+  let originalFsLoads = 0
+
+  const moduleApi = Module as unknown as {
+    _load: (request: string, parent: unknown, isMain: boolean) => unknown
+  }
+  const realLoad = moduleApi._load
+  moduleApi._load = function (request: string, parent: unknown, isMain: boolean) {
+    if (request === "original-fs") {
+      originalFsLoads++
+      return {
+        promises: {
+          stat: async (target: string) => {
+            statCalls.push(target)
+            return { isDirectory: () => target === asarFolder || target === asarOpened }
+          },
+          readFile: async (target: string, encoding: string) => {
+            readCalls.push(`${target}:${encoding}`)
+            assert.equal(target, asarConfig)
+            return "ui:\n  settings:\n    focusExistingWindowOnSecondLaunch: true\n"
+          },
+        },
+      }
+    }
+    return realLoad.call(this, request, parent, isMain)
+  }
+
+  try {
+    const delivered: LaunchIntent[] = []
+    const queue = createForwardedLaunchQueue(
+      asarConfig,
+      (intent) => { delivered.push(intent) },
+      (error) => assert.fail(String(error)),
+    )
+    const first = queue.enqueueSecondInstance(["CodeNomad", "--folder", "workspace.asar"], root, undefined)
+    const second = queue.enqueueOpenFile(asarOpened)
+    await Promise.all([first, second, queue.idle()])
+
+    assert.equal(originalFsLoads, 1, "default queue must load original-fs once")
+    assert.deepEqual(statCalls, [asarFolder, asarOpened])
+    assert.deepEqual(readCalls, [`${asarConfig}:utf8`])
+    assert.deepEqual(delivered, [
+      { newWindow: false, folders: [asarFolder] },
+      { newWindow: false, folders: [asarOpened] },
+    ])
+  } finally {
+    moduleApi._load = realLoad
   }
 })
