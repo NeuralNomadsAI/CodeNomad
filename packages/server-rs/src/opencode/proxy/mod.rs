@@ -1,5 +1,7 @@
 //! /workspaces/:id/instance/*: the allowlisted relay to the daemon, confined to the workspace's
 //! locations and sessions.
+#[cfg(test)]
+mod background_tests;
 mod defer_media;
 mod dispatch;
 mod guards;
