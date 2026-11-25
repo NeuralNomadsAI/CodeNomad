@@ -11,6 +11,13 @@ async fn start(
 ) -> (Request, Sender<Command>, Receiver<Event>) {
     backend.workspace = "project".into();
     backend.session = "session".into();
+    let expected_identity = backend.client.tracks_server_attestation().then(|| {
+        backend
+            .client
+            .server_identity()
+            .unwrap_or("fixture-profile")
+            .to_owned()
+    });
     let (out, events) = bounded(16);
     let (commands, input) = bounded(4);
     platform::spawn(async move {
@@ -18,6 +25,12 @@ async fn start(
             .await
             .unwrap();
     });
+    if let Some(id) = expected_identity {
+        let meta = request(listener).await;
+        assert_eq!(meta.first, "GET /api/meta HTTP/1.1");
+        meta.reply(200, json!({"apiContract":1,"serverId":id}))
+            .await;
+    }
     let mut sse = request(listener).await;
     assert!(sse.first.starts_with("GET /api/events?"));
     sse.socket
@@ -95,6 +108,10 @@ fn pagination_401_checks_authentication_without_replaying_the_page() {
                     .await
                     .unwrap();
             });
+            let meta = request(&listener).await;
+            assert_eq!(meta.first, "GET /api/meta HTTP/1.1");
+            meta.reply(200, json!({"apiContract":1,"serverId":"fixture-profile"}))
+                .await;
             let mut sse = request(&listener).await;
             assert!(sse.first.starts_with("GET /api/events?"));
             sse.socket
@@ -458,7 +475,7 @@ fn a_native_command_401_with_a_live_backend_session_has_one_rejection_and_no_rel
         status.reply(200, json!({"authenticated":true})).await;
         assert!(
             matches!(until(&events, |_| true).await, Event::PromptAcknowledged {
-            attempted, outcome: crate::transport::PromptOutcome::Rejected,
+            attempted, outcome: crate::transport::PromptOutcome::Unconfirmed,
         } if attempted == "fixture-attempt")
         );
         assert!(
@@ -526,6 +543,10 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
         );
         let reconnect = if prompt_reply.is_none() {
             drop(stream.take());
+            let meta = request(&listener).await;
+            assert_eq!(meta.first, "GET /api/meta HTTP/1.1");
+            meta.reply(200, json!({"apiContract":1,"serverId":"fixture-profile"}))
+                .await;
             let reconnect = request(&listener).await;
             assert!(reconnect.first.starts_with("GET /api/events?"));
             wait_until(|| {
@@ -584,6 +605,10 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
             .await;
             assert_eq!(runtime.state.draft.text, "refused prompt");
             drop(stream.take());
+            let meta = request(&listener).await;
+            assert_eq!(meta.first, "GET /api/meta HTTP/1.1");
+            meta.reply(200, json!({"apiContract":1,"serverId":"fixture-profile"}))
+                .await;
             let reconnect = request(&listener).await;
             assert!(reconnect.first.starts_with("GET /api/events?"));
             reconnect.reply(401, json!({})).await;
@@ -729,6 +754,11 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
         );
         assert!(runtime.find("direct-recovery-dialog").is_none());
         assert_eq!(runtime.state.draft.text, "refused prompt");
+        let resumed_meta = request(&listener).await;
+        assert_eq!(resumed_meta.first, "GET /api/meta HTTP/1.1");
+        resumed_meta
+            .reply(200, json!({"apiContract":1,"serverId":"fixture-profile"}))
+            .await;
         let mut resumed = request(&listener).await;
         assert!(resumed.first.starts_with("GET /api/events?"));
         assert!(

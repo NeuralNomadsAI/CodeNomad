@@ -13,6 +13,7 @@ impl Reader {
             backend,
             reading,
             wire,
+            rx,
             out,
             wake,
             ..
@@ -60,10 +61,15 @@ impl Reader {
                 return Ok(Turn::Next);
             };
             match page {
-                Ok(page) if wire.history_current(revision) => {
+                Ok(mut page) if wire.history_current(revision) && rx.is_empty() => {
                     if advances(&page, edge, &target)
                         && history::edge_page(&page, &self.resident, edge).is_ok()
                     {
+                        let raw_rows = page.rows.clone();
+                        let mut merged = page.rows.clone();
+                        if crate::content::merge_page(&self.resident, &mut merged).is_ok() {
+                            page.rows = merged;
+                        }
                         if !crate::timeline::page_offer(
                             cancel,
                             &page,
@@ -84,9 +90,19 @@ impl Reader {
                             self.first = self.resident.first().map(|r| r.id.clone());
                             self.known = self.resident.iter().map(|r| r.id.clone()).collect();
                             self.owed.retain(|(id, _)| self.known.contains(id));
+                            self.owed_tools.retain(|(id, call), _| {
+                                self.known.contains(id) && !tool_settled(&raw_rows, id, call)
+                            });
+                            self.frozen_tools.retain(|(id, call), _| {
+                                self.known.contains(id) && !tool_settled(&raw_rows, id, call)
+                            });
                             if !self.historical && !wire.valid(stamp) {
                                 self.dirty = true;
                                 self.quiet = Instant::now();
+                            } else if !self.historical && !self.owed_tools.is_empty() && !self.dirty
+                            {
+                                self.dirty = true;
+                                self.quiet = Instant::now() + Duration::from_millis(100);
                             }
                         }
                         self.older = page.older.clone();
@@ -99,7 +115,7 @@ impl Reader {
                         reader_event(reading, self.generation, out, wake, failed()).await;
                     }
                 }
-                Ok(_) => {
+                Ok(_) | Err(PageFailure::StreamClosed) => {
                     self.dirty = true;
                     self.quiet = Instant::now() + Duration::from_millis(100);
                     reader_event(reading, self.generation, out, wake, failed()).await;
@@ -152,7 +168,7 @@ impl Reader {
             })
             .await
         {
-            crate::timeline::JumpOffer::Loaded(page, stamp) => {
+            crate::timeline::JumpOffer::Loaded(page, raw_rows, stamp) => {
                 self.historical = page.newer.is_some();
                 self.fence = stamp;
                 self.first = page.rows.first().map(|row| row.id.clone());
@@ -161,11 +177,23 @@ impl Reader {
                 self.known = page.rows.iter().map(|row| row.id.clone()).collect();
                 self.resident = page.rows;
                 self.owed.retain(|(id, _)| self.known.contains(id));
+                self.owed_tools.retain(|(id, call), _| {
+                    self.known.contains(id) && !tool_settled(&raw_rows, id, call)
+                });
+                self.frozen_tools.retain(|(id, call), _| {
+                    self.known.contains(id) && !tool_settled(&raw_rows, id, call)
+                });
                 self.anchored = None;
                 self.parked = false;
-                self.dirty = !self.historical && !wire.valid(stamp);
-                if self.dirty {
-                    self.quiet = Instant::now();
+                if !self.historical && !wire.valid(stamp) {
+                    self.dirty = true;
+                    self.quiet = crate::runtime::Instant::now();
+                } else if !self.historical && !self.owed_tools.is_empty() {
+                    self.dirty = true;
+                    self.quiet =
+                        crate::runtime::Instant::now() + std::time::Duration::from_millis(100);
+                } else {
+                    self.dirty = false;
                 }
                 Turn::Next
             }

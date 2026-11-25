@@ -12,10 +12,10 @@ async fn check(base: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     backend.workspace = "workspace".into();
     backend.session = "parent".into();
-    let child = backend
+    let (child, _) = backend
         .watch_child("child")
         .ok_or("child watch unavailable")?;
-    let foreign = backend
+    let (foreign, _) = backend
         .watch_child("foreign")
         .ok_or("foreign watch unavailable")?;
     let observer = backend.clone();

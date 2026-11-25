@@ -166,6 +166,7 @@ fn a_new_navigation_intent_invalidates_an_admitted_notification_selection() {
             vec![],
             Some((backend, "Stale".into(), None, Instant::now(), "root".into())),
             None,
+            false,
         )))
         .is_ok()
     );
@@ -219,7 +220,8 @@ fn a_selection_reply_cannot_replace_a_session_that_resumed_streaming() {
                 Instant::now(),
                 "root".into()
             )),
-            None
+            None,
+            false,
         )))
         .is_ok()
     );
@@ -532,6 +534,7 @@ fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
                     vec![],
                     Some((rebound, "Chat".into(), None, Instant::now(), "root".into())),
                     None,
+                    false,
                 )))
                 .is_ok()
         );
@@ -585,6 +588,7 @@ fn failed_session_selection_reply_cannot_hide_authentication_required() {
                 "root".into()
             )),
             None,
+            false,
         )))
         .is_ok()
     );
@@ -1199,6 +1203,7 @@ fn reauthentication_hydrates_unbound_restored_attachment_draft() {
                     "root".into()
                 )),
                 None,
+                false,
             )))
             .is_ok()
     );

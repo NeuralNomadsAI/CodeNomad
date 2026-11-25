@@ -80,6 +80,15 @@ pub(crate) fn cancel_page(s: &mut State) {
     }
 }
 
+pub(super) fn fail_pending_page(s: &mut State) {
+    let timeline = &mut s.transcript_display.timeline;
+    if let Some((_ticket, edge)) = timeline.paging.take() {
+        s.paging = false;
+        s.history_error = true;
+        timeline.page_retry = Some(edge);
+    }
+}
+
 pub(crate) fn admit_page(
     s: &mut State,
     cancelled: &Receiver<()>,
@@ -120,6 +129,11 @@ pub(crate) fn install_page(s: &mut State, page: crate::history::Page, edge: Opti
         }
         s.composer.clear_optimistic(None);
         s.messages = page.rows;
+        if s.history_detached {
+            s.transcript_display.tool_clock.pause();
+        } else {
+            s.transcript_display.tool_clock.resume();
+        }
         crate::composer::reconcile(s);
     }
     s.can_older = page.older.is_some();
@@ -133,6 +147,7 @@ pub(crate) fn install_anchor(s: &mut State, page: crate::history::Page) {
     s.attachments.cancel();
     s.history_detached = page.newer.is_some();
     s.can_older = page.older.is_some();
+    cancel_page(s);
     s.paging = false;
     s.history_error = false;
     if let Some(reader) = &mut s.reader {
@@ -144,6 +159,11 @@ pub(crate) fn install_anchor(s: &mut State, page: crate::history::Page) {
     s.composer.clear_optimistic(None);
     s.messages = page.rows;
     crate::composer::reconcile(s);
+    if s.history_detached {
+        s.transcript_display.tool_clock.pause();
+    } else {
+        s.transcript_display.tool_clock.resume();
+    }
 }
 
 pub(crate) fn set_timeline_position(s: &mut State, message: String) {

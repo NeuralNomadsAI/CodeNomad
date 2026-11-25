@@ -356,6 +356,66 @@ async fn desktop_dev_launch_proxies_the_ui() {
     server.stop(b"").await;
 }
 
+/// Tauri's "all interfaces" listening mode (`--host 0.0.0.0`): HTTPS binds the wildcard while native
+/// desktop HTTP stays on 127.0.0.1, matching `packages/server/src/index.ts`.
+#[tokio::test]
+async fn desktop_launch_accepts_wildcard_host_and_keeps_http_on_loopback() {
+    let args = [
+        "serve",
+        "--host",
+        "0.0.0.0",
+        "--auth-cookie-name",
+        COOKIE,
+        "--generate-token",
+        "--unrestricted-root",
+        "--https",
+        "true",
+        "--http",
+        "true",
+        "--http-port",
+        "0",
+        "--https-port",
+        "0",
+    ];
+    let mut server = Server::start(scratch("wildcard"), Path::new(env!("CARGO_BIN_EXE_codenomad-rs")), &args);
+    let (token, url, remote) = server.ready().await;
+    assert!(url.starts_with("http://127.0.0.1:"), "{url}");
+    let remote_url = remote.strip_prefix("Remote Connection URL : ").expect(&remote);
+    assert!(remote_url.starts_with("https://") && !remote_url.contains("0.0.0.0"), "{remote}");
+    for file in ["ca-cert.pem", "server-cert.pem", "server-key.pem"] {
+        assert!(server.config.join("tls").join(file).is_file(), "{file}");
+    }
+    let client = client();
+    let set = client.post(format!("{url}/api/auth/token")).json(&serde_json::json!({ "token": token })).send().await;
+    let cookie = set.unwrap().headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_owned();
+    let meta: serde_json::Value =
+        client.get(format!("{url}/api/meta")).header("cookie", &cookie).send().await.unwrap().json().await.unwrap();
+    assert_eq!(meta["host"], "0.0.0.0");
+    assert_eq!(meta["listeningMode"], "all");
+    assert_eq!(meta["remoteUrl"], remote_url);
+    let remote_port = meta["remotePort"].as_u64().expect("remotePort");
+    assert!(remote_port > 0, "{meta}");
+    assert!(meta["addresses"].as_array().is_some_and(|a| !a.is_empty()), "{meta}");
+
+    // Verify the wildcard HTTPS listener answers real TLS requests on 127.0.0.1 and rejects rogue Host headers.
+    let ca_pem = fs::read(server.config.join("tls").join("ca-cert.pem")).unwrap();
+    let ca = reqwest::Certificate::from_pem(&ca_pem).unwrap();
+    let https = reqwest::Client::builder().no_proxy().add_root_certificate(ca).build().unwrap();
+    let tls_status = https.get(format!("https://127.0.0.1:{remote_port}/api/auth/status")).send().await.unwrap();
+    assert_eq!(tls_status.status(), 200);
+    let tls_body: serde_json::Value = tls_status.json().await.unwrap();
+    assert_eq!(tls_body["authenticated"], false);
+    let misdirected = https
+        .get(format!("https://127.0.0.1:{remote_port}/api/auth/status"))
+        .header("host", format!("rogue.invalid:{remote_port}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(misdirected.status(), 421);
+
+    server.stop(b"").await;
+}
+
 #[tokio::test]
 async fn shutdown_cancels_pending_plugin_snapshot() {
     let root = scratch("pending-stop");
@@ -440,4 +500,129 @@ async fn shutdown_cancels_pending_plugin_snapshot() {
     assert_eq!(response.json::<serde_json::Value>().await.unwrap()["error"], "Server is shutting down");
     assert!(timeout(Duration::from_secs(15), child.wait()).await.unwrap().unwrap().success());
     let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn managed_session_renews_over_parent_pipes_and_retires_on_logout() {
+    let args = [&PROD[..], &["--https", "false", "--http-port", "0"]].concat();
+    let mut server =
+        Server::start_with(scratch("managed-renew"), Path::new(env!("CARGO_BIN_EXE_codenomad-rs")), &args, |cmd| {
+            cmd.env("CODENOMAD_NATIVE_PARENT", "1")
+                .env("CODENOMAD_SESSION_IDLE_SECONDS", "1")
+                .env("CNRS_FIXTURE_URL", "http://127.0.0.1:9/")
+                .env("CNRS_FIXTURE_PASSWORD", "placeholder");
+        });
+    let (token, url, _) = server.ready().await;
+    let client = client();
+    let set = client
+        .post(format!("{url}/api/auth/token"))
+        .json(&serde_json::json!({ "token": token }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let old_cookie = set.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_owned();
+    assert_eq!(client.get(format!("{url}/api/meta")).header("cookie", &old_cookie).send().await.unwrap().status(), 200);
+
+    async fn ask(stdin: &mut tokio::process::ChildStdin, id: &str) {
+        let line = format!("codenomad:renew-session {id}\n");
+        stdin.write_all(line.as_bytes()).await.unwrap();
+        stdin.flush().await.unwrap();
+    }
+    async fn read_reply(server: &mut Server, id: &str) -> String {
+        let prefix = format!("CODENOMAD_MANAGED_SESSION:{id} ");
+        loop {
+            let line = server.line().await;
+            if let Some(value) = line.strip_prefix(&prefix) {
+                return value.to_owned();
+            }
+        }
+    }
+
+    // Active delivered session must not renew.
+    let id1 = "9d754f99-0b08-44d0-a99c-0d6c95229647";
+    ask(server.child.stdin.as_mut().unwrap(), id1).await;
+    assert_eq!(read_reply(&mut server, id1).await, "-");
+
+    // Wait for the 1 s idle expiry, verify 401, then renew over parent stdin/stdout.
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(client.get(format!("{url}/api/meta")).header("cookie", &old_cookie).send().await.unwrap().status(), 401);
+    let id2 = "11111111-2222-4333-8444-555555555555";
+    ask(server.child.stdin.as_mut().unwrap(), id2).await;
+    let renewed = read_reply(&mut server, id2).await;
+    assert_eq!(renewed.len(), 43);
+    let new_cookie = format!("{COOKIE}={renewed}");
+    assert_ne!(new_cookie, old_cookie);
+    assert_eq!(client.get(format!("{url}/api/meta")).header("cookie", &new_cookie).send().await.unwrap().status(), 200);
+
+    // Logout revokes the renewed session and retires the managed renewal right.
+    assert_eq!(
+        client.post(format!("{url}/api/auth/logout")).header("cookie", &new_cookie).send().await.unwrap().status(),
+        200
+    );
+    assert_eq!(client.get(format!("{url}/api/meta")).header("cookie", &new_cookie).send().await.unwrap().status(), 401);
+    let id3 = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    ask(server.child.stdin.as_mut().unwrap(), id3).await;
+    assert_eq!(read_reply(&mut server, id3).await, "-");
+
+    server.stop(b"").await;
+}
+
+#[tokio::test]
+async fn serve_declares_missions_capability_without_bench_env() {
+    let executable = Path::new(env!("CARGO_BIN_EXE_codenomad-rs"));
+    let args =
+        ["serve", "--host", "127.0.0.1", "--generate-token", "--http", "true", "--http-port", "0", "--https", "false"];
+    for (label, block_bridge, fixture_run_env) in [
+        ("clean-serve", false, false),
+        ("bridge-unavailable", true, false),
+        ("no-duplicate-with-fixture-env", false, true),
+    ] {
+        let root = scratch(&format!("missions-meta-{label}"));
+        let bridge_path = if cfg!(windows) {
+            root.join("home/AppData/Local/CodeNomad/automation-bridges")
+        } else {
+            root.join("home/.config/codenomad/automation-bridges")
+        };
+        let mut server = Server::start_with(root, executable, &args, |command| {
+            if block_bridge {
+                fs::create_dir_all(bridge_path.parent().unwrap()).unwrap();
+                fs::write(&bridge_path, "blocked").unwrap();
+            }
+            if fixture_run_env {
+                command.env("CNRS_FIXTURE_MISSIONS_RUN", "1");
+            }
+        });
+        let (token, url, _) = server.ready().await;
+        let client = client();
+        let token_response = client
+            .post(format!("{url}/api/auth/token"))
+            .json(&serde_json::json!({ "token": token }))
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(token_response.status(), 200, "{label}");
+        let cookie = token_response.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_owned();
+        let meta: serde_json::Value = client
+            .get(format!("{url}/api/meta"))
+            .header("cookie", &cookie)
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let capabilities = meta["capabilities"].as_array().expect("capabilities array");
+        let missions_count = capabilities.iter().filter(|cap| *cap == "missions").count();
+        assert_eq!(missions_count, 1, "{label}: expected exactly one missions capability, got {capabilities:?}");
+        if block_bridge {
+            assert!(published(&server.bridges(), server.pid).is_empty(), "blocked bridge must not publish");
+        } else {
+            assert_eq!(published(&server.bridges(), server.pid).len(), 1, "clean serve must publish its bridge");
+        }
+        server.stop(b"").await;
+    }
 }

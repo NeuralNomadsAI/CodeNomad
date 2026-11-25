@@ -2,7 +2,6 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:no
 body{background:var(--surface-canvas);color:var(--text-primary);font-family:var(--font-family-sans);font-size:var(--font-size-base);line-height:var(--line-height-normal)}
 #rune-boot{display:flex;align-items:center;gap:var(--space-md);padding:var(--space-xl)}
 #rune-boot[hidden],#rune-retry[hidden]{display:none}
-#rune-history-alert{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 #rune-retry{background:var(--surface-control);color:var(--text-primary);font:inherit;border:var(--web-button-border-width) solid var(--border-base);border-radius:var(--button-radius);padding:var(--button-padding-y) var(--button-padding-x);min-height:var(--control-height)}
 #rune-retry:focus-visible{outline:var(--web-outline-width) solid var(--focus-ring-color);outline-offset:var(--web-outline-offset)}
 .rune-pair{display:grid;place-items:center;overflow:auto}

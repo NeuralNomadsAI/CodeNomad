@@ -17,13 +17,6 @@ pub fn routes() -> Router<Shared> {
 
 async fn read(State(app): State<Shared>, channel: Option<Extension<tls::Channel>>) -> Json<Value> {
     let mut meta = app.meta.clone();
-    if config::serve()
-        && app.mission_bridge.is_some()
-        && crate::automation::published()
-        && let Some(capabilities) = meta["capabilities"].as_array_mut()
-    {
-        capabilities.push(json!("missions"));
-    }
     app.releases.update_feed(&app.settings);
     let (feed, update) = app.releases.snapshot();
     meta["updateFeed"] = json!(feed);
@@ -57,9 +50,10 @@ pub fn document(
         "sidecars",
         "service-usage",
         "provider-usage",
+        "settings-atomic-patches",
         "conversation-permissions",
     ];
-    if bench::missions_run() {
+    if config::serve() || bench::missions_run() {
         capabilities.push("missions");
     }
     let mut meta = json!({
@@ -77,6 +71,7 @@ pub fn document(
         meta["remoteUrl"] = json!(tls.origin);
         meta["remotePort"] = json!(address.port());
         meta["tlsFingerprint"] = json!(tls.fingerprint);
+        meta["addresses"] = json!(tls.addresses);
         // The remote listener's interface, as `serverMeta.host` and `listeningMode` follow it.
         if !address.ip().is_loopback() {
             (meta["host"], meta["hostLabel"], meta["listeningMode"]) =
@@ -87,7 +82,7 @@ pub fn document(
 }
 
 /// `resolveUpdateFeed`: the saved feed, else the installed build's label.
-fn update_feed(server: &crate::settings::document::Doc) -> &'static str {
+pub(crate) fn update_feed(server: &crate::settings::document::Doc) -> &'static str {
     match server.get("updateFeed").and_then(Value::as_str) {
         Some("preview") => "preview",
         Some("stable") => "stable",

@@ -169,25 +169,18 @@ mod tests {
         let (entered, waiting) = oneshot::channel();
         let (resume, proceed) = oneshot::channel();
         let (dispatched_tx, dispatched_rx) = oneshot::channel();
-        let handle = tokio::spawn(forward(
-            fence::enter(&dirs).unwrap(),
-            None,
-            principal.clone(),
-            |_, gate| async move {
+        let handle =
+            tokio::spawn(forward(fence::enter(&dirs).unwrap(), None, principal.clone(), |_, gate| async move {
                 entered.send(()).unwrap();
                 let _ = proceed.await;
                 let _ = dispatched_tx.send(gate.try_dispatch());
                 Ok(Response::new(Body::from("unused")))
-            },
-        ));
+            }));
         waiting.await.unwrap();
         principal.cancel();
         let response = handle.await.unwrap().unwrap();
         assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
-        assert_eq!(
-            response.headers().get("x-codenomad-before-dispatch").and_then(|v| v.to_str().ok()),
-            Some("1")
-        );
+        assert_eq!(response.headers().get("x-codenomad-before-dispatch").and_then(|v| v.to_str().ok()), Some("1"));
         let _ = resume.send(());
         assert!(!dispatched_rx.await.unwrap(), "worker must not dispatch after pre-send abort");
 

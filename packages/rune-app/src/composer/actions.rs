@@ -581,7 +581,6 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
             s.composer.restored = true;
         }
         if matches!(outcome, PromptOutcome::Unconfirmed) {
-            s.composer.command_unconfirmed = Some(UnconfirmedCommand::new(&slash.name, &slash.args));
             s.command_receipts.hold(send.id, slash);
             s.composer.announce_unconfirmed = true;
         }

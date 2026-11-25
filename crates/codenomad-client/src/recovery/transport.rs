@@ -514,6 +514,42 @@ pub(crate) async fn run_with_reading(
                 if v <= reader.fence || !reader.seen.insert(&native) {
                     continue;
                 }
+                if kind == "session.synthetic" {
+                    reader.dirty = true;
+                    reader.quiet = Instant::now() + Duration::from_millis(100);
+                    if !reader.historical
+                        && let Some(Event::Message(row)) = crate::wire::decode_native(&native)
+                        && reader.resident.len() < history::MAX_ROWS
+                        && reader.known.insert(row.id.clone())
+                    {
+                        let prior_matches = reader
+                            .resident
+                            .iter()
+                            .filter(|existing| super::reader::same_synthetic_report(existing, &row))
+                            .count();
+                        reader.resident.push(row.clone().into());
+                        if history::check(&reader.resident).is_err() {
+                            reader.resident.pop();
+                            reader.known.remove(&row.id);
+                        } else {
+                            if reader.owed_synthetics.len() < 16 {
+                                reader
+                                    .owed_synthetics
+                                    .entry(row.id.clone())
+                                    .or_insert((0, prior_matches));
+                            }
+                            reader_event(
+                                reading,
+                                reader.generation,
+                                &out,
+                                &wake,
+                                Event::Message(row),
+                            )
+                            .await;
+                        }
+                    }
+                    continue;
+                }
                 if reader.historical {
                     continue;
                 }
@@ -522,6 +558,37 @@ pub(crate) async fn run_with_reading(
                     .unwrap_or_default();
                 match kind {
                     "session.step.started" => {
+                        reader.execution_settlement = 0;
+                        let mut reconciled = false;
+                        let turn_start = reader
+                            .resident
+                            .iter()
+                            .rposition(|r| r.role == "user")
+                            .map_or(0, |idx| idx + 1);
+                        for row in &reader.resident[turn_start..] {
+                            if row.id == id {
+                                continue;
+                            }
+                            for part in &row.parts {
+                                if let content::Part::Tool(tool) = part
+                                    && matches!(
+                                        tool.status.as_str(),
+                                        "pending" | "streaming" | "running"
+                                    )
+                                    && reader.owed_tools.len() < 64
+                                {
+                                    reader
+                                        .owed_tools
+                                        .entry((row.id.clone(), tool.id.clone()))
+                                        .or_insert(0);
+                                    reconciled = true;
+                                }
+                            }
+                        }
+                        if reconciled && !reader.dirty {
+                            reader.dirty = true;
+                            reader.quiet = Instant::now() + Duration::from_millis(100);
+                        }
                         if let Some(prior) = reader.resident.iter().find(|row| row.id == id) {
                             if !can_restart(prior) {
                                 if !reader.dirty && reader.repairs < 3 {
@@ -662,29 +729,99 @@ pub(crate) async fn run_with_reading(
                         }
                     }
                     kind if kind.starts_with("session.tool.") => {
-                        let fit = reader
-                            .resident
-                            .iter_mut()
-                            .find(|row| row.id == id)
-                            .map_or(content::ToolFit::Repair, |row| {
-                                content::apply_tool(Arc::make_mut(row), kind, &native["data"])
-                            });
+                        let row_idx = reader.resident.iter().position(|row| row.id == id);
+                        let (fit, ok) = row_idx.map_or((content::ToolFit::Repair, true), |i| {
+                            content::apply_tool_checked(
+                                &mut reader.resident,
+                                i,
+                                kind,
+                                &native["data"],
+                                native["created"].as_u64(),
+                            )
+                        });
                         match fit {
                             content::ToolFit::Applied(tool) => {
-                                history::check(&reader.resident)?;
-                                reader_event(
-                                    reading,
-                                    reader.generation,
-                                    &out,
-                                    &wake,
-                                    Event::Tool(id.into(), tool),
-                                )
-                                .await;
+                                if kind == "session.tool.called" {
+                                    reader.execution_settlement = 0;
+                                }
+                                if !ok {
+                                    if !reader.dirty {
+                                        reader.dirty = true;
+                                        reader.quiet = Instant::now() + Duration::from_millis(100);
+                                    }
+                                } else {
+                                    reader_event(
+                                        reading,
+                                        reader.generation,
+                                        &out,
+                                        &wake,
+                                        Event::Tool(id.into(), tool),
+                                    )
+                                    .await;
+                                }
+                            }
+                            content::ToolFit::Settled(tool) => {
+                                if history::valid_id(id) && reader.owed_tools.len() < 64 {
+                                    reader
+                                        .owed_tools
+                                        .entry((id.into(), tool.id.clone()))
+                                        .or_insert(0);
+                                }
+                                if ok {
+                                    reader_event(
+                                        reading,
+                                        reader.generation,
+                                        &out,
+                                        &wake,
+                                        Event::Tool(id.into(), tool),
+                                    )
+                                    .await;
+                                }
+                                if !reader.dirty {
+                                    reader.dirty = true;
+                                    reader.quiet = Instant::now() + Duration::from_millis(100);
+                                }
                             }
                             content::ToolFit::Drop => {}
                             content::ToolFit::Repair => {
-                                reader.dirty = true;
-                                reader.quiet = Instant::now() + Duration::from_millis(100);
+                                if matches!(kind, "session.tool.success" | "session.tool.failed") {
+                                    let known_call = native["data"]["id"]
+                                        .as_str()
+                                        .filter(|c| !c.is_empty() && c.len() <= 256)
+                                        .filter(|call| {
+                                            reader.resident.iter().any(|row| {
+                                                row.id == id
+                                                    && row.parts.iter().any(|part| {
+                                                        matches!(
+                                                            part,
+                                                            crate::content::Part::Tool(t)
+                                                                if t.id == *call
+                                                        )
+                                                    })
+                                            })
+                                        });
+                                    if let Some(call) = known_call
+                                        && reader.owed_tools.len() < 64
+                                    {
+                                        reader
+                                            .owed_tools
+                                            .entry((id.into(), call.into()))
+                                            .or_insert(0);
+                                        if !reader.dirty {
+                                            reader.dirty = true;
+                                            reader.quiet =
+                                                Instant::now() + Duration::from_millis(100);
+                                        }
+                                    } else if !reader.dirty && reader.repairs < 3 {
+                                        reader.repairs += 1;
+                                        reader.dirty = true;
+                                        reader.quiet = Instant::now() + Duration::from_millis(100);
+                                    }
+                                } else if !reader.dirty && reader.repairs < 3 {
+                                    reader.repairs += 1;
+                                    reader.dirty = true;
+                                    reader.quiet = Instant::now() + Duration::from_millis(100);
+                                }
                             }
                         }
                     }
@@ -692,6 +829,8 @@ pub(crate) async fn run_with_reading(
                     | "session.execution.failed"
                     | "session.execution.interrupted" => {
                         reader.terminal = reader.busy;
+                        reader.execution_settlement = 3;
+                        reader.execution_ended_at = native["created"].as_u64().filter(|&at| at > 0);
                         if reading.is_some() {
                             publish(
                                 &out,

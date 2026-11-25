@@ -79,7 +79,7 @@ pub struct Jump {
 }
 
 pub(crate) enum JumpOffer {
-    Loaded(crate::history::Page, u64),
+    Loaded(crate::history::Page, Vec<Row>, u64),
     Failed,
     AuthenticationExpired,
 }
@@ -131,7 +131,7 @@ impl Jump {
             }),
         )
         .await;
-        let page = match fetched {
+        let mut page = match fetched {
             Fetch::Loaded(page) => page,
             Fetch::AuthenticationExpired => return JumpOffer::AuthenticationExpired,
             Fetch::Failed => {
@@ -141,6 +141,11 @@ impl Jump {
                 return JumpOffer::Failed;
             }
         };
+        let raw_rows = page.rows.clone();
+        let mut merged = page.rows.clone();
+        if crate::content::merge_page(resident, &mut merged).is_ok() {
+            page.rows = merged;
+        }
         let (admit, verdict) = bounded(1);
         if !send(Event::Anchor {
             ticket,
@@ -162,7 +167,7 @@ impl Jump {
         })
         .await;
         match accepted {
-            Some(()) => JumpOffer::Loaded(page, stamp),
+            Some(()) => JumpOffer::Loaded(page, raw_rows, stamp),
             None => JumpOffer::Failed,
         }
     }

@@ -7,9 +7,11 @@ mod preview;
 mod reading_line;
 pub(crate) mod search;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod view;
-pub(crate) use navigation::{admit, cancel_jump, failed, input_precedes_admission, restore_search};
+pub(crate) use navigation::{
+    admit, cancel_jump, failed, input_precedes_admission, poll_reveal, restore_search,
+};
 pub(crate) use preview::{ExcerptCache, window_layout as preview_window_layout};
 pub(crate) use preview::{dismiss as dismiss_preview, overlay as preview_overlay};
 pub(crate) use reading_line::watch as watch_block;
@@ -62,6 +64,14 @@ enum ScanUpdate {
 }
 type Scan = (Sender<()>, Receiver<ScanUpdate>);
 
+struct RailBounds(rune_theme_codenomad::layout::DrawnRect);
+
+impl Default for RailBounds {
+    fn default() -> Self {
+        Self(rune_theme_codenomad::layout::DrawnRect::new([0.0; 4]))
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Timeline {
     backend: Option<Backend>,
@@ -76,6 +86,10 @@ pub(crate) struct Timeline {
     online: bool,
     running: bool,
     visible: bool,
+    rail_shown: bool,
+    poll_input_waiting: bool,
+    keep_passage_deferred: Option<(String, f32)>,
+    live: bool,
     width: f32,
     markers: Vec<Marker>,
     folded: HashMap<String, String>,
@@ -87,6 +101,7 @@ pub(crate) struct Timeline {
     outline_error: bool,
     jump: navigation::Navigation,
     scroll: Rc<Cell<view::Scroll>>,
+    rail_bounds: RailBounds,
     resident: Vec<(String, Vec<Marker>)>,
     detached: bool,
     pub(crate) paging: Option<(Sender<()>, crate::transport::HistoryEdge)>,
@@ -94,6 +109,13 @@ pub(crate) struct Timeline {
     reading_line: reading_line::Blocks,
     previews: preview::Previews,
     search: search::Search,
+}
+
+#[cfg(test)]
+impl Timeline {
+    pub(crate) fn is_online(&self) -> bool {
+        self.online
+    }
 }
 
 fn owner(s: &mut State) -> &mut Timeline {
@@ -152,22 +174,34 @@ pub(crate) fn sync_outline_mutation(s: &mut State) -> bool {
     }
 }
 
-pub(crate) fn suspend(s: &mut State) {
-    search::close(s);
-    cancel_jump(s);
-    let t = owner(s);
-    t.visible = false;
-    t.previews.hide();
-    cancel_scan(t);
-    t.refresh = true;
+fn drop_uncacheable_outline(t: &mut Timeline) -> bool {
     // A departed view can retain only a cache-sized completed index.
     if t.outline.as_ref().is_some_and(|index| !index.cacheable) {
         t.outline = None;
-        t.markers.clear();
+        t.markers = Vec::new();
+        t.folded = HashMap::new();
         t.has_raw_markers = false;
-        t.resident.clear();
+        t.resident = Vec::new();
+        t.version = t.version.wrapping_add(1);
         t.changed = true;
+        true
+    } else {
+        false
     }
+}
+
+pub(crate) fn suspend(s: &mut State) {
+    search::close(s);
+    cancel_jump(s);
+    navigation::clear_browse(s);
+    let t = owner(s);
+    t.visible = false;
+    t.live = false;
+    t.keep_passage_deferred = None;
+    t.previews.hide();
+    cancel_scan(t);
+    t.refresh = true;
+    drop_uncacheable_outline(t);
 }
 
 pub(crate) fn observe(s: &mut State, event: &Event) {
@@ -180,6 +214,7 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
         Event::Connected(backend) => s.saved_outlines.mutation(backend),
         _ => None,
     };
+    let detached = s.history_detached;
     let t = owner(s);
     match event {
         Event::Connected(backend) => {
@@ -213,6 +248,10 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
             cancel_jump(s);
             search::invalidate(s);
         }
+        Event::AgentHint(true) if detached => {
+            t.refresh |= !t.online;
+            t.online = true;
+        }
         Event::ReaderSync { .. } | Event::Sync(_) => {
             t.refresh |= !t.online;
             t.online = true;
@@ -233,11 +272,13 @@ fn project_root(s: &State) -> Option<&str> {
     Some(s.screen.launcher()?.project.as_ref()?.path.as_str())
 }
 
+pub(super) fn conversation_shown(s: &State) -> bool {
+    !s.screen.is_launcher() && !crate::files::has_preview(s) && !crate::git::has_preview(s)
+}
+
 pub(crate) fn demanded(s: &State) -> bool {
     let t = &s.transcript_display.timeline;
-    !s.screen.is_launcher()
-        && !crate::files::has_preview(s)
-        && !crate::git::has_preview(s)
+    conversation_shown(s)
         && crate::settings::show_timeline(s)
         && rune_theme_codenomad::timeline::fits(t.width)
 }
@@ -322,24 +363,80 @@ fn reproject(s: &mut State) -> bool {
     }
 }
 
+pub(super) fn defer_keep_passage(s: &mut State, tx: &mut rune::Tx) {
+    if owner(s).keep_passage_deferred.is_none()
+        && let Some(target) = crate::chat::reading::passage_target(s)
+    {
+        owner(s).keep_passage_deferred = Some(target);
+    }
+    if owner(s).keep_passage_deferred.is_some() {
+        tx.wake_after(std::time::Duration::ZERO);
+    }
+}
+
+fn flush_deferred_keep_passage(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
+    let on_conversation = conversation_shown(s);
+    let t = owner(s);
+    if t.keep_passage_deferred.is_none() {
+        return false;
+    }
+    let scroll = t.scroll.get();
+    let scrolled =
+        scroll.transcript != t.jump.last.transcript || scroll.wheel_last_rail == Some(false);
+    if scrolled || !on_conversation || t.jump.align.is_some() {
+        t.keep_passage_deferred = None;
+        return false;
+    }
+    if input_waiting {
+        tx.wake_after(std::time::Duration::ZERO);
+        return false;
+    }
+    if let Some((key, offset)) = t.keep_passage_deferred.take() {
+        tx.scroll_key_to(key, offset);
+        true
+    } else {
+        false
+    }
+}
+
 pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
-    let mut changed = sync_outline_mutation(s);
+    let input_waiting = tx.input_waiting();
+    owner(s).poll_input_waiting = input_waiting;
+    let mut changed = sync_outline_mutation(s) | flush_deferred_keep_passage(s, tx, input_waiting);
     if !demanded(s) {
+        let on_conversation = conversation_shown(s);
         owner(s).previews.hide();
-        if std::mem::take(&mut owner(s).visible) {
-            if search::is_open(s) {
-                cancel_scan(owner(s));
-                owner(s).refresh = true;
-            } else {
+        let was_visible = std::mem::take(&mut owner(s).visible);
+        let was_shown = std::mem::take(&mut owner(s).rail_shown);
+        if was_visible {
+            navigation::clear_browse(s);
+        }
+        if !on_conversation {
+            if std::mem::take(&mut owner(s).live)
+                || was_visible
+                || search::is_open(s)
+                || navigation::has_pending_or_locked(s)
+            {
                 suspend(s);
+                changed = true;
+            }
+            return changed | navigation::apply_alignment(s, tx);
+        }
+        if was_shown && owner(s).jump.align.is_none() {
+            if input_waiting {
+                defer_keep_passage(s, tx);
+            } else {
+                crate::chat::reading::keep_passage(s, tx);
             }
         }
-        return changed
-            | if search::is_open(s) {
-                navigation::poll(s, tx)
-            } else {
-                navigation::apply_alignment(s, tx)
-            };
+        if std::mem::take(&mut owner(s).live) || was_visible {
+            cancel_scan(owner(s));
+            owner(s).refresh = true;
+            drop_uncacheable_outline(owner(s));
+            changed = true;
+        }
+        changed |= navigation::cancel_rail_jump(s, !crate::settings::show_timeline(s));
+        return changed | navigation::poll(s, tx);
     }
     let reads = s.reads.clone();
     let wake = s.wake.clone();
@@ -354,6 +451,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         t.changed = true;
     }
     t.visible = true;
+    t.live = true;
     let mut remember = None;
     while let Some(update) = t.scan.as_ref().and_then(|(_, in_)| in_.try_recv().ok()) {
         changed = true;
@@ -425,6 +523,18 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let t = owner(s);
     if std::mem::take(&mut t.changed) {
         changed |= reproject(s);
+    }
+    let shown = owner(s).has_raw_markers || !owner(s).markers.is_empty();
+    let was_shown = std::mem::replace(&mut owner(s).rail_shown, shown);
+    if shown != was_shown {
+        changed = true;
+        if owner(s).jump.align.is_none() {
+            if input_waiting {
+                defer_keep_passage(s, tx);
+            } else {
+                crate::chat::reading::keep_passage(s, tx);
+            }
+        }
     }
     changed | navigation::poll(s, tx) | preview::poll(s, tx)
 }

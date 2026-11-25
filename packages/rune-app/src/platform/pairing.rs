@@ -126,6 +126,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         s.pairing.focus = FocusCheck::new(s.wake.clone());
     } else {
         s.pairing.focus = None;
+        crate::chat::reader::cancel_page(s);
         s.history_error = false;
         let target_tab = observed_tab
             .unwrap_or_else(|| s.workspace.as_ref().map(|ui| ui.active_key().to_owned()));

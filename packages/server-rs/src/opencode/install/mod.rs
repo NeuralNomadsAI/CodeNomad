@@ -81,6 +81,21 @@ pub enum Probed {
 /// its presentation prefix removed. On expiry or past 64 KiB of output the probe's whole process
 /// family is ended (`boundedVersionProbe`): wrappers may start descendants.
 pub async fn probe_version(binary: &str, timeout: Duration) -> Probed {
+    probe_version_until(binary, || tokio::time::sleep(timeout)).await
+}
+
+async fn probe_version_until<F: std::future::Future<Output = ()>>(
+    binary: &str,
+    make_expire: impl FnOnce() -> F,
+) -> Probed {
+    struct KillOnDrop(Option<crate::shared::process_group::Group>);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            if let Some(group) = self.0.take() {
+                group.kill();
+            }
+        }
+    }
     let Ok(spec) = launch::spec(binary, &["--version"]) else { return Probed::Failed };
     let mut command = tokio::process::Command::new(&spec.command);
     #[cfg(windows)]
@@ -104,6 +119,7 @@ pub async fn probe_version(binary: &str, timeout: Duration) -> Probed {
         Err(_) => return Probed::Failed,
     };
     let Some(group) = crate::shared::process_group::Group::adopt(&mut child) else { return Probed::Failed };
+    let mut group_guard = KillOnDrop(Some(group));
     let (out, err) = (child.stdout.take(), child.stderr.take());
     let read = |stream: Option<Box<dyn tokio::io::AsyncRead + Unpin + Send>>| async move {
         match stream {
@@ -112,13 +128,25 @@ pub async fn probe_version(binary: &str, timeout: Duration) -> Probed {
         }
     };
     let (out, err) = (out.map(|s| Box::new(s) as _), err.map(|s| Box::new(s) as _));
-    let finished = tokio::time::timeout(timeout, async { tokio::join!(read(out), read(err), child.wait()) }).await;
-    let Ok((Ok(stdout), Ok(stderr), Ok(status))) = finished else {
+    let expire = make_expire();
+    let finished = tokio::select! {
+        biased;
+        result = async {
+            let (stdout, stderr) = tokio::try_join!(read(out), read(err)).ok()?;
+            let status = child.wait().await.ok()?;
+            Some((stdout, stderr, status))
+        } => result,
+        _ = expire => None,
+    };
+    let Some((stdout, stderr, status)) = finished else {
         // Before the leader is reaped, so the group is still its own.
-        group.kill();
+        if let Some(group) = group_guard.0.take() {
+            group.kill();
+        }
         let _ = child.kill().await;
         return Probed::Unknown;
     };
+    group_guard.0 = None;
     if !status.success() {
         return Probed::Failed;
     }

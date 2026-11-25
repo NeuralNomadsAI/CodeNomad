@@ -34,7 +34,11 @@ fn open_nofollow(path: &Path) -> io::Result<File> {
     const NOFOLLOW: i32 = 0o400000;
     #[cfg(not(target_os = "linux"))]
     const NOFOLLOW: i32 = 0x100;
-    fs::OpenOptions::new().read(true).custom_flags(NOFOLLOW).open(path)
+    #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+    const NONBLOCK: i32 = 0x0004;
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
+    const NONBLOCK: i32 = 0x0800;
+    fs::OpenOptions::new().read(true).custom_flags(NOFOLLOW | NONBLOCK).open(path)
 }
 #[cfg(windows)]
 fn open_nofollow(path: &Path) -> io::Result<File> {

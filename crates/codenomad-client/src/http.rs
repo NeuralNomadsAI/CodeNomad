@@ -3,13 +3,77 @@ use crate::history::Result;
 use reqwest::{Client, RequestBuilder};
 use std::{
     sync::{
-        Arc, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_TRACKED_DROPS: usize = 64;
+
+type DropTable = Arc<Mutex<Vec<(String, u64, usize, bool, bool)>>>;
+struct CapabilityState {
+    drop_generation: Arc<AtomicU64>,
+    observed: Mutex<(u64, u64, bool, bool)>,
+    required: AtomicBool,
+    open_streams: Arc<AtomicUsize>,
+    probe_seq: AtomicU64,
+    stream_drop_epoch: AtomicU64,
+    attested_drop_epoch: AtomicU64,
+}
+
+pub(crate) struct StreamDropGuard {
+    drops: DropTable,
+    client_id: String,
+    open_streams: Arc<AtomicUsize>,
+    drop_generation: Arc<AtomicU64>,
+    opened: Arc<AtomicBool>,
+}
+
+impl StreamDropGuard {
+    pub(crate) fn release_open(&self) -> bool {
+        if self.opened.swap(false, Ordering::SeqCst) {
+            if self.open_streams.fetch_sub(1, Ordering::SeqCst) == 1 {
+                self.drop_generation.fetch_add(1, Ordering::SeqCst);
+            }
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Drop for StreamDropGuard {
+    fn drop(&mut self) {
+        self.release_open();
+        let mut drops = self.drops.lock().unwrap();
+        if let Some((_, _, active, _, _)) = drops
+            .iter_mut()
+            .find(|(id, _, _, _, _)| id == &self.client_id)
+        {
+            *active = active.saturating_sub(1);
+        }
+    }
+}
+
+pub struct ClientDropWatch {
+    drops: DropTable,
+    client_ids: Vec<String>,
+}
+
+impl Drop for ClientDropWatch {
+    fn drop(&mut self) {
+        let mut drops = self.drops.lock().unwrap();
+        for client_id in &self.client_ids {
+            if let Some((_, _, active, _, _)) =
+                drops.iter_mut().find(|(id, _, _, _, _)| id == client_id)
+            {
+                *active = active.saturating_sub(1);
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Http(
@@ -17,12 +81,77 @@ pub struct Http(
     Arc<OnceLock<Identity>>,
     Arc<crate::stream::Children>,
     Arc<AtomicBool>,
+    Arc<[AtomicU64; 3]>,
+    DropTable,
+    Arc<CapabilityState>,
 );
 struct Identity {
     server: String,
     capabilities: Vec<String>,
 }
+#[cfg(not(target_arch = "wasm32"))]
+struct OriginCookieJar {
+    origin: (String, Option<String>, Option<u16>),
+    inner: reqwest::cookie::Jar,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl OriginCookieJar {
+    fn new(url: &reqwest::Url) -> Self {
+        Self {
+            origin: (
+                url.scheme().to_owned(),
+                url.host_str().map(str::to_owned),
+                url.port_or_known_default(),
+            ),
+            inner: reqwest::cookie::Jar::default(),
+        }
+    }
+
+    fn matches(&self, url: &reqwest::Url) -> bool {
+        url.scheme() == self.origin.0
+            && url.host_str() == self.origin.1.as_deref()
+            && url.port_or_known_default() == self.origin.2
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl reqwest::cookie::CookieStore for OriginCookieJar {
+    fn set_cookies(
+        &self,
+        cookie_headers: &mut dyn Iterator<Item = &reqwest::header::HeaderValue>,
+        url: &reqwest::Url,
+    ) {
+        if self.matches(url) {
+            self.inner.set_cookies(cookie_headers, url);
+        }
+    }
+
+    fn cookies(&self, url: &reqwest::Url) -> Option<reqwest::header::HeaderValue> {
+        self.matches(url).then(|| self.inner.cookies(url)).flatten()
+    }
+}
+
 impl Http {
+    fn from_client(client: Client) -> Self {
+        Self(
+            client,
+            Arc::new(OnceLock::new()),
+            Arc::default(),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(std::array::from_fn(|_| AtomicU64::new(0))),
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(CapabilityState {
+                drop_generation: Arc::new(AtomicU64::new(0)),
+                observed: Mutex::new((0, 0, false, false)),
+                required: AtomicBool::new(false),
+                open_streams: Arc::new(AtomicUsize::new(0)),
+                probe_seq: AtomicU64::new(0),
+                stream_drop_epoch: AtomicU64::new(0),
+                attested_drop_epoch: AtomicU64::new(0),
+            }),
+        )
+    }
     pub fn new() -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
         let client = Client::builder()
@@ -33,15 +162,183 @@ impl Http {
             .build()?;
         #[cfg(target_arch = "wasm32")]
         let client = Client::new();
-        Ok(Self(
-            client,
-            Arc::new(OnceLock::new()),
-            Arc::default(),
-            Arc::new(AtomicBool::new(true)),
-        ))
+        Ok(Self::from_client(client))
+    }
+    /// Pre-seed a loopback session cookie issued over the owned child host's stdio channel.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_session_cookie(address: &str, name: &str, value: &str) -> Result<Self> {
+        let valid_token = |token: &str| {
+            !token.is_empty()
+                && token
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        };
+        if !valid_token(name) || !valid_token(value) {
+            return Err("invalid session cookie".into());
+        }
+        let base = endpoint(address)?;
+        let url = reqwest::Url::parse(&base)?;
+        let jar = Arc::new(OriginCookieJar::new(&url));
+        jar.inner
+            .add_cookie_str(&format!("{name}={value}; Path=/"), &url);
+        let client = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .cookie_provider(jar)
+            .timeout(REQUEST_TIMEOUT)
+            .build()?;
+        Ok(Self::from_client(client))
     }
     pub fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.1, &other.1)
+    }
+    pub(crate) fn preferences_notices(&self) -> Arc<[AtomicU64; 3]> {
+        self.4.clone()
+    }
+    pub fn preferences_revision(&self, owner: crate::settings::Owner) -> u64 {
+        self.4[owner.index()].load(Ordering::SeqCst)
+    }
+    pub(crate) fn open_streams_counter(&self) -> Arc<AtomicUsize> {
+        self.6.open_streams.clone()
+    }
+    fn evict_inactive(drops: &mut Vec<(String, u64, usize, bool, bool)>) {
+        while drops.len() >= MAX_TRACKED_DROPS {
+            if let Some(index) = drops
+                .iter()
+                .position(|(_, count, active, _, _)| *active == 0 && *count == 0)
+                .or_else(|| drops.iter().position(|(_, _, active, _, _)| *active == 0))
+            {
+                drops.remove(index);
+            } else {
+                break;
+            }
+        }
+    }
+    pub(crate) fn track_stream(&self, client_id: &str) -> (StreamDropGuard, Arc<AtomicBool>) {
+        let mut drops = self.5.lock().unwrap();
+        if let Some((_, _, active, _, _)) =
+            drops.iter_mut().find(|(id, _, _, _, _)| id == client_id)
+        {
+            *active += 1;
+        } else {
+            Self::evict_inactive(&mut drops);
+            drops.push((client_id.to_owned(), 0, 1, false, false));
+        }
+        let opened = Arc::new(AtomicBool::new(false));
+        (
+            StreamDropGuard {
+                drops: self.5.clone(),
+                client_id: client_id.to_owned(),
+                open_streams: self.6.open_streams.clone(),
+                drop_generation: self.6.drop_generation.clone(),
+                opened: opened.clone(),
+            },
+            opened,
+        )
+    }
+    pub fn watch_drops(&self, client_ids: &[String]) -> ClientDropWatch {
+        let mut pinned = Vec::new();
+        let mut drops = self.5.lock().unwrap();
+        for client_id in client_ids {
+            if pinned.iter().any(|existing| existing == client_id) {
+                continue;
+            }
+            if let Some((_, _, active, _, _)) =
+                drops.iter_mut().find(|(id, _, _, _, _)| id == client_id)
+            {
+                *active += 1;
+            } else {
+                Self::evict_inactive(&mut drops);
+                drops.push((client_id.clone(), 0, 1, false, false));
+            }
+            pinned.push(client_id.clone());
+        }
+        ClientDropWatch {
+            drops: self.5.clone(),
+            client_ids: pinned,
+        }
+    }
+    pub(crate) fn mark_stream_opened(&self, client_id: &str) {
+        let mut drops = self.5.lock().unwrap();
+        if let Some((_, _, _, in_outage, reconnect_noted)) =
+            drops.iter_mut().find(|(id, _, _, _, _)| id == client_id)
+        {
+            *in_outage = false;
+            *reconnect_noted = false;
+        }
+    }
+    pub(crate) fn record_transport_drop(&self, client_id: &str, was_open: bool) {
+        let mut drops = self.5.lock().unwrap();
+        if let Some((_, count, _, in_outage, reconnect_noted)) =
+            drops.iter_mut().find(|(id, _, _, _, _)| id == client_id)
+        {
+            if was_open || !*in_outage {
+                self.6.stream_drop_epoch.fetch_add(1, Ordering::SeqCst);
+                *count += 1;
+                *in_outage = true;
+                *reconnect_noted = false;
+            }
+        } else {
+            self.6.stream_drop_epoch.fetch_add(1, Ordering::SeqCst);
+            Self::evict_inactive(&mut drops);
+            drops.push((client_id.to_owned(), 1, 0, true, false));
+        }
+    }
+    pub(crate) fn note_reconnect_attempt(&self, client_id: &str) {
+        let mut drops = self.5.lock().unwrap();
+        if let Some((_, _, _, _, reconnect_noted)) =
+            drops.iter_mut().find(|(id, _, _, _, _)| id == client_id)
+        {
+            if !*reconnect_noted {
+                *reconnect_noted = true;
+                self.6.stream_drop_epoch.fetch_add(1, Ordering::SeqCst);
+            }
+        } else {
+            Self::evict_inactive(&mut drops);
+            drops.push((client_id.to_owned(), 0, 0, false, true));
+            self.6.stream_drop_epoch.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    pub(crate) fn observed_capability_stamp(&self) -> (u64, u64) {
+        let state = self.6.observed.lock().unwrap();
+        (state.0, state.1)
+    }
+    pub fn has_unattested_stream_drop(&self) -> bool {
+        self.6.attested_drop_epoch.load(Ordering::SeqCst)
+            < self.6.stream_drop_epoch.load(Ordering::SeqCst)
+    }
+    pub(crate) fn mark_drop_epoch_attested(&self, drop_epoch: u64) {
+        self.6
+            .attested_drop_epoch
+            .fetch_max(drop_epoch, Ordering::SeqCst);
+    }
+    pub fn transport_drops(&self, client_id: &str) -> u64 {
+        self.5
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(id, _, _, _, _)| id == client_id)
+            .map_or(0, |(_, count, _, _, _)| *count)
+    }
+    pub fn is_in_outage(&self, client_id: &str) -> bool {
+        self.5
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(id, _, _, _, _)| id == client_id)
+            .is_some_and(|(_, _, _, in_outage, _)| *in_outage)
+    }
+    pub fn transport_drops_sum(&self, client_ids: &[String]) -> u64 {
+        let drops = self.5.lock().unwrap();
+        client_ids
+            .iter()
+            .map(|client_id| {
+                drops
+                    .iter()
+                    .find(|(id, _, _, _, _)| id == client_id)
+                    .map_or(0, |(_, count, _, _, _)| *count)
+            })
+            .sum()
     }
     pub(crate) fn children(&self) -> &crate::stream::Children {
         &self.2
@@ -54,20 +351,113 @@ impl Http {
             .get()
             .is_some_and(|identity| identity.capabilities.iter().any(|item| item == capability))
     }
+    pub fn require_attestation(&self) {
+        self.6.required.store(true, Ordering::SeqCst);
+    }
+    pub(crate) fn revoke_server_attestation_at(&self, generation: u64, seq: u64) -> bool {
+        let state = self.6.observed.lock().unwrap();
+        if generation == self.6.drop_generation.load(Ordering::SeqCst) && seq >= state.1 {
+            self.6.drop_generation.fetch_add(1, Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
+    }
+    #[cfg(test)]
     pub(crate) fn attest(&self, id: &str, capabilities: Vec<String>) -> bool {
-        self.1
+        let matched = self
+            .1
             .get_or_init(|| Identity {
                 server: id.to_owned(),
                 capabilities,
             })
             .server
-            == id
+            == id;
+        if !matched {
+            self.6.drop_generation.fetch_add(1, Ordering::SeqCst);
+        }
+        matched
+    }
+    #[cfg(test)]
+    pub(crate) fn verify_server_identity(&self, id: &str) -> bool {
+        self.attest(id, Vec::new())
+    }
+    pub(crate) fn verify_server_identity_at(
+        &self,
+        id: &str,
+        capabilities: Vec<String>,
+        generation: u64,
+        seq: u64,
+    ) -> bool {
+        let matched = self
+            .1
+            .get_or_init(|| Identity {
+                server: id.to_owned(),
+                capabilities,
+            })
+            .server
+            == id;
+        if !matched {
+            self.revoke_server_attestation_at(generation, seq);
+        }
+        matched
     }
     pub fn supports_service_usage(&self) -> bool {
         self.3.load(Ordering::Relaxed)
     }
-    pub(crate) fn observe_service_usage(&self, advertised: bool) {
-        self.3.store(advertised, Ordering::Relaxed);
+    pub fn drop_generation(&self) -> u64 {
+        self.6.drop_generation.load(Ordering::SeqCst)
+    }
+    pub(crate) fn begin_meta_probe(&self) -> (u64, u64, u64) {
+        let generation = self.6.drop_generation.load(Ordering::SeqCst);
+        let seq = self.6.probe_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        let drop_epoch = self.6.stream_drop_epoch.load(Ordering::SeqCst);
+        (generation, seq, drop_epoch)
+    }
+    pub fn supports_atomic_settings_patches(&self) -> bool {
+        let current = self.6.drop_generation.load(Ordering::SeqCst);
+        let state = self.6.observed.lock().unwrap();
+        state.2 && state.0 == current
+    }
+    pub fn needs_capability_recheck(&self) -> bool {
+        let current = self.6.drop_generation.load(Ordering::SeqCst);
+        let state = self.6.observed.lock().unwrap();
+        let required = self.6.required.load(Ordering::SeqCst);
+        (required && self.server_identity().is_none())
+            || ((required || state.3 || self.server_identity().is_some()) && state.0 < current)
+    }
+    pub fn attestation_revoked(&self) -> bool {
+        let current = self.6.drop_generation.load(Ordering::SeqCst);
+        let state = self.6.observed.lock().unwrap();
+        let required = self.6.required.load(Ordering::SeqCst);
+        (required || state.3 || self.server_identity().is_some()) && state.0 < current
+    }
+    pub fn tracks_server_attestation(&self) -> bool {
+        self.6.required.load(Ordering::SeqCst)
+            || self.server_identity().is_some()
+            || self.6.observed.lock().unwrap().3
+    }
+    pub(crate) fn observe_capabilities_at(
+        &self,
+        generation: u64,
+        seq: u64,
+        service_usage: bool,
+        atomic_settings: bool,
+    ) -> bool {
+        let mut state = self.6.observed.lock().unwrap();
+        if generation == self.6.drop_generation.load(Ordering::SeqCst) && seq >= state.1 {
+            self.3.store(service_usage, Ordering::Relaxed);
+            *state = (generation, seq, atomic_settings, true);
+            true
+        } else {
+            false
+        }
+    }
+    pub fn observe_atomic_settings_patches(&self, advertised: bool) {
+        let mut state = self.6.observed.lock().unwrap();
+        let current = self.6.drop_generation.load(Ordering::SeqCst);
+        let seq = self.6.probe_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        *state = (current, seq, advertised, true);
     }
     fn request(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
         let request = self.0.request(method, url).timeout(REQUEST_TIMEOUT);
@@ -193,6 +583,34 @@ pub fn client_id() -> Result<String> {
         ))
     }
 }
+
+/// Cryptographic lowercase RFC 4122 v4 UUID for native control correlation.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn random_uuid_v4() -> Result<String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| "random source unavailable")?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15],
+    ))
+}
 /// Parse an external link without accepting credentials or active schemes.
 pub fn external_http_url(raw: &str) -> Option<(String, String)> {
     let url = credential_free_http_url(raw)?;
@@ -271,4 +689,152 @@ fn loopback_requires_an_explicit_http_scheme_and_literal_host() {
     ] {
         assert!(external_http_url(rejected).is_none(), "{rejected:?}");
     }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn session_cookie_helper_validates_tokens_and_formats_uuid_v4() {
+    let id = random_uuid_v4().unwrap();
+    assert_eq!(id.len(), 36);
+    assert_eq!(&id[14..15], "4");
+    assert!(matches!(&id[19..20], "8" | "9" | "a" | "b"));
+    assert!(
+        id.bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'-'))
+    );
+    assert!(Http::with_session_cookie("http://127.0.0.1:9/", "", "abc").is_err());
+    assert!(Http::with_session_cookie("http://127.0.0.1:9/", "name;bad", "abc").is_err());
+    assert!(Http::with_session_cookie("http://127.0.0.1:9/", "codenomad_session", "a;b").is_err());
+    assert!(Http::with_session_cookie("http://127.0.0.1:9/", "codenomad_session", "a\nb").is_err());
+    assert!(Http::with_session_cookie("http://example.com/", "codenomad_session", "abc").is_err());
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let other_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let other_port = other_listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let n = stream.read(&mut buf).unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+            req
+        });
+        let other_server = std::thread::spawn(move || {
+            let (mut stream, _) = other_listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let n = stream.read(&mut buf).unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nSet-Cookie: foreign=1; Path=/\r\nContent-Length: 2\r\n\r\nok",
+            );
+            req
+        });
+        let http = Http::with_session_cookie(
+            &format!("http://127.0.0.1:{port}"),
+            "codenomad_session_42",
+            "renewed_cookie_value_1234567890123456789012",
+        )
+        .unwrap();
+        let res = http
+            .get(format!("http://127.0.0.1:{port}/api/meta"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        let raw = server.join().unwrap();
+        assert!(
+            raw.to_ascii_lowercase().contains(
+                "cookie: codenomad_session_42=renewed_cookie_value_1234567890123456789012"
+            ),
+            "missing session cookie in request: {raw}"
+        );
+        let other_res = http
+            .get(format!("http://127.0.0.1:{other_port}/api/meta"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(other_res.status(), 200);
+        let other_raw = other_server.join().unwrap();
+        assert!(
+            !other_raw.to_ascii_lowercase().contains("cookie:"),
+            "cookie leaked to another loopback port: {other_raw}"
+        );
+    });
+}
+
+#[cfg(test)]
+#[test]
+fn watched_streams_cannot_evict_and_stale_capability_generation_is_discarded() {
+    let http = Http::new().unwrap();
+    let (gen0, seq0, _) = http.begin_meta_probe();
+    assert!(http.observe_capabilities_at(gen0, seq0, true, true));
+    assert!(http.supports_atomic_settings_patches());
+    // Out-of-order probe in the same drop generation cannot re-enable atomic patches after downgrade.
+    let (gen_same, seq_old, _) = http.begin_meta_probe();
+    let (gen_same2, seq_new, _) = http.begin_meta_probe();
+    assert!(http.observe_capabilities_at(gen_same2, seq_new, true, false));
+    assert!(!http.supports_atomic_settings_patches());
+    assert!(!http.observe_capabilities_at(gen_same, seq_old, true, true));
+    assert!(!http.supports_atomic_settings_patches());
+    let (gen_re, seq_re, _) = http.begin_meta_probe();
+    assert!(http.observe_capabilities_at(gen_re, seq_re, true, true));
+    assert!(http.supports_atomic_settings_patches());
+    let (guard_a, open_a) = http.track_stream("stream-a");
+    let (guard_b, open_b) = http.track_stream("stream-b");
+    let watch_a = http.watch_drops(&["stream-a".to_owned()]);
+    let watch_healthy = http.watch_drops(&["stream-healthy".to_owned()]);
+    // Closing one of two open streams keeps attestation valid; closing the last open stream
+    // (even voluntarily during SSE handoff) bumps drop_generation and revokes attestation.
+    open_a.store(true, Ordering::SeqCst);
+    open_b.store(true, Ordering::SeqCst);
+    http.open_streams_counter().fetch_add(2, Ordering::SeqCst);
+    assert!(guard_b.release_open());
+    assert!(http.supports_atomic_settings_patches());
+    assert!(!http.needs_capability_recheck());
+    assert!(guard_a.release_open());
+    assert!(!http.supports_atomic_settings_patches());
+    assert!(http.needs_capability_recheck());
+    http.record_transport_drop("stream-a", false);
+    assert_eq!(http.transport_drops("stream-a"), 1);
+    // Repeated failed SSE reconnect attempts (was_open=false while already in outage) must not
+    // keep incrementing transport_drops and starving slow HTTP revalidation reads during flush().
+    http.record_transport_drop("stream-a", false);
+    http.record_transport_drop("stream-a", false);
+    assert_eq!(http.transport_drops("stream-a"), 1);
+    http.mark_stream_opened("stream-a");
+    http.record_transport_drop("stream-a", true);
+    assert_eq!(http.transport_drops("stream-a"), 2);
+    // A delayed /api/meta response started at gen0 cannot re-enable atomic mode after the drop.
+    assert!(!http.observe_capabilities_at(gen0, seq0, true, true));
+    assert!(!http.supports_atomic_settings_patches());
+    assert!(http.needs_capability_recheck());
+    // A stale mismatch from an older probe sequence cannot revoke a newer confirmed attestation.
+    let (gen_cur, seq_stale, _) = http.begin_meta_probe();
+    let (gen_cur2, seq_fresh, drop_epoch_fresh) = http.begin_meta_probe();
+    assert!(http.has_unattested_stream_drop());
+    assert!(http.observe_capabilities_at(gen_cur2, seq_fresh, true, true));
+    http.mark_drop_epoch_attested(drop_epoch_fresh);
+    assert!(!http.has_unattested_stream_drop());
+    assert!(!http.revoke_server_attestation_at(gen_cur, seq_stale));
+    assert!(http.supports_atomic_settings_patches());
+    assert!(!http.needs_capability_recheck());
+    drop((guard_a, guard_b));
+    // Filling past MAX_TRACKED_DROPS never evicts watched stream-a.
+    let mut guards = Vec::new();
+    for i in 0..MAX_TRACKED_DROPS {
+        guards.push(http.track_stream(&format!("stream-other-{i}")));
+    }
+    assert_eq!(http.transport_drops_sum(&["stream-a".to_owned()]), 2);
+    // Once stream-a is unwatched and evicted, healthy streams stay at 0 drops with no false positive.
+    drop(watch_a);
+    let _extra = http.track_stream("stream-extra");
+    assert_eq!(http.transport_drops_sum(&["stream-healthy".to_owned()]), 0);
+    drop((guards, watch_healthy));
 }

@@ -145,7 +145,7 @@ pub(super) async fn read(
         }
         match runtime::recv_timeout(&rx, Duration::from_millis(25)).await {
             Some(Frame::Open) => {
-                b.client.children().invalidate(b, None);
+                b.client.children().invalidate_all(b);
                 opened(epoch, out, state).await?;
             }
             Some(Frame::Data(kind, data)) => {
@@ -153,7 +153,7 @@ pub(super) async fn read(
                 dispatch(b, epoch, out, state, &connection, &kind, &data).await?
             }
             Some(Frame::Skipped) => {
-                b.client.children().invalidate(b, None);
+                b.client.children().invalidate_all(b);
                 reread(epoch, out, state).await?;
             }
             Some(Frame::Closed) => {

@@ -43,7 +43,7 @@ use appearance::render_with;
 pub(crate) use appearance::{app_locale, render};
 pub(crate) use connection::{
     authentication_required, bound_backend, connected, connection_event,
-    conversation_authentication, invalidate, stop_before_conversation,
+    conversation_authentication, invalidate, stop_before_conversation, tab_activated,
 };
 #[cfg(test)]
 use connection::{provider_changed, provider_stopped};
@@ -74,7 +74,7 @@ pub(crate) struct Host {
     contrast: Option<web_contrast::Watch>,
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
-    last_display: Option<([&'static str; 5], bool)>,
+    last_display: Option<([&'static str; 5], bool, bool, bool)>,
     last_revision: u64,
     last_transcript: Option<[&'static str; transcript_preset::ROW_COUNT]>,
     transcript_filters: transcript_filters::Filters,
@@ -127,9 +127,11 @@ pub(crate) fn poll_window_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
     let changed = memory::cleanup::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     return changed
-        | s.settings
-            .web
-            .poll_window_actions(&s.settings.shared.borrow(), tx);
+        | s.settings.web.poll_window_actions(
+            &s.settings.shared.borrow(),
+            s.settings.transcript_filters.is_open(&s.input_scope),
+            tx,
+        );
     #[cfg(not(target_arch = "wasm32"))]
     changed
 }
@@ -168,11 +170,20 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         .launcher()
         .is_some_and(|launcher| shared.bind(launcher.connection.clone()));
     let expired = shared.observe_authentication();
+    let mut renewing = false;
     if expired {
+        let expired_backend = shared.backend.clone();
         if let Some(launcher) = s.screen.launcher_mut() {
             launcher.authentication_required = true;
+            if let Some(expired_backend) = &expired_backend {
+                renewing = launcher.start_managed_renewal(expired_backend);
+            }
         }
-        s.phase = crate::Phase::Failed;
+        s.phase = if renewing {
+            crate::Phase::Reconnecting
+        } else {
+            crate::Phase::Failed
+        };
     }
     {
         let watch = s.screen.launcher().and_then(|l| l.catalogue_watch.as_ref());
@@ -221,6 +232,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             }
         }
     }
+    let stream_clients = crate::workspace::conversation_stream_clients(s);
+    shared.observe_conversation_clients(&stream_clients);
     if s.screen
         .launcher()
         .is_some_and(|launcher| launcher.authentication_required)
@@ -241,7 +254,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     #[cfg(target_arch = "wasm32")]
     if s.settings
         .last_display
-        .is_none_or(|(last, _)| last[0] != locale)
+        .is_none_or(|(last, ..)| last[0] != locale)
         && let Some(root) = web_sys::window()
             .and_then(|window| window.document())
             .and_then(|document| document.document_element())
@@ -257,6 +270,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             shared.contrast(),
         ],
         awaiting_appearance(s, &shared),
+        shared.show_timeline(),
+        shared.transcript_ready(),
     ));
     let mut rows = TranscriptRow::all();
     let transcript = Some(std::array::from_fn(|_| {
@@ -311,7 +326,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         }
     });
     if expired {
-        s.show_launcher();
+        if !renewing {
+            s.show_launcher();
+        }
         crate::workspace::suspend_missions(s);
     } else {
         if keep_passage {

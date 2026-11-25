@@ -230,6 +230,76 @@ pub(crate) fn can_switch_for_notification(s: &State, target: &Target) -> bool {
     })
 }
 
+pub(crate) fn open_session_tab_target(
+    s: &State,
+    current: &Backend,
+    session: &str,
+) -> Option<(String, Backend)> {
+    let ui = s.workspace.as_ref()?;
+    let current_server = current.client.server_identity();
+    for (index, entry) in ui.entries.iter().enumerate() {
+        if index == ui.active {
+            continue;
+        }
+        let Tab::Workspace(saved) = &entry.saved else {
+            continue;
+        };
+        let Some(workspace_id) = saved.workspace_id.as_deref() else {
+            continue;
+        };
+        let known = saved.active_session_id.as_deref() == Some(session)
+            || entry.listed_sessions.contains(session)
+            || entry.sessions.iter().any(|row| row.id == session);
+        if !known {
+            continue;
+        }
+        let source = entry
+            .binding
+            .as_ref()
+            .or_else(|| s.screen.launcher()?.connection.as_ref())?;
+        if source.base != current.base {
+            continue;
+        }
+        let entry_server = source
+            .client
+            .server_identity()
+            .or(saved.server_id.as_deref());
+        if current_server.is_some() && entry_server.is_some() && current_server != entry_server {
+            continue;
+        }
+        return Some((
+            entry.key.clone(),
+            Backend {
+                workspace: workspace_id.into(),
+                session: session.into(),
+                ..source.clone()
+            },
+        ));
+    }
+    None
+}
+
+pub(crate) fn switch_tab_for_child(
+    s: &mut State,
+    tab: &str,
+    child_id: String,
+    ticket: u64,
+    tx: &mut Tx,
+) -> bool {
+    super::tabs::select_destination(s, tab, tx);
+    if !s
+        .workspace
+        .as_ref()
+        .is_some_and(|ui| ui.active_key() == tab)
+    {
+        return false;
+    }
+    if s.screen.is_launcher() || super::active_session(s) != Some(child_id.as_str()) {
+        crate::launcher::choose_child_ticket(s, child_id, Some(ticket), tx);
+    }
+    true
+}
+
 pub(crate) fn open_notification(
     s: &mut State,
     target: &Target,

@@ -52,7 +52,22 @@ pub enum Owner {
     State,
     Server,
 }
+#[derive(Debug)]
+pub enum PatchOutcome {
+    Applied(Value),
+    Rejected,
+    Uncertain,
+}
+
 impl Owner {
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Self::Config => 0,
+            Self::State => 1,
+            Self::Server => 2,
+        }
+    }
+
     fn url(self, backend: &Backend) -> String {
         let path = match self {
             Self::Config => "api/storage/config/ui",
@@ -63,33 +78,53 @@ impl Owner {
     }
 
     pub async fn read(self, backend: &Backend) -> Result<Value> {
-        let response = backend
+        let request = backend
             .client
             .get(self.url(backend))
             .query(&[("authoritative", "1")])
-            .send()
-            .await?
-            .error_for_status()?;
-        owner(read_json(response).await?)
+            .header(reqwest::header::CACHE_CONTROL, "no-store");
+        #[cfg(target_arch = "wasm32")]
+        let request = request.fetch_cache_no_store();
+        let response = request.send().await?.error_for_status()?;
+        self.validate(read_json(response).await?)
     }
 
-    pub async fn patch(self, backend: &Backend, patch: &Value) -> Result<Value> {
-        let response = backend
-            .client
-            .patch(self.url(backend))
-            .json(patch)
-            .send()
-            .await?
-            .error_for_status()?;
-        owner(read_json(response).await?)
+    pub async fn patch(self, backend: &Backend, patch: &Value, atomic: bool) -> PatchOutcome {
+        let mut request = backend.client.patch(self.url(backend)).json(patch);
+        let atomic_query =
+            atomic || (self == Self::Server && patch.get("secureEnvVarsMask").is_some());
+        let stamp = atomic_query.then(|| backend.client.observed_capability_stamp());
+        if atomic_query {
+            request = request.query(&[("conditional", "atomic-v1")]);
+        }
+        let Ok(response) = request.send().await else {
+            return PatchOutcome::Uncertain;
+        };
+        if let Some((generation, seq)) = stamp
+            && response.status() == reqwest::StatusCode::BAD_REQUEST
+        {
+            backend.client.revoke_server_attestation_at(generation, seq);
+            return PatchOutcome::Rejected;
+        }
+        let Ok(response) = response.error_for_status() else {
+            return PatchOutcome::Uncertain;
+        };
+        match read_json(response).await.and_then(|v| self.validate(v)) {
+            Ok(value) => PatchOutcome::Applied(value),
+            Err(_) => PatchOutcome::Uncertain,
+        }
     }
-}
 
-fn owner(value: Value) -> Result<Value> {
-    if value.is_object() {
-        Ok(value)
-    } else {
-        Err("Invalid preferences owner document".into())
+    fn validate(self, value: Value) -> Result<Value> {
+        let valid = value.as_object().is_some_and(|map| match self {
+            Self::Config => map.get("settings").is_none_or(Value::is_object),
+            Self::State | Self::Server => true,
+        });
+        if valid {
+            Ok(value)
+        } else {
+            Err("Invalid preferences owner document".into())
+        }
     }
 }
 
@@ -216,7 +251,9 @@ pub struct PreferencesWatch {
     _cancel: crate::Sender<()>,
     closed: crate::Receiver<()>,
     dirty: Arc<AtomicU8>,
+    connected: Arc<std::sync::atomic::AtomicBool>,
     missions: Arc<Mutex<Vec<crate::transport::WorkspaceEvent>>>,
+    client_id: String,
     project: Option<String>,
 }
 impl PreferencesWatch {
@@ -229,18 +266,40 @@ impl PreferencesWatch {
         let (close, closed) = crate::bounded(1);
         let dirty = Arc::new(AtomicU8::new(0));
         let notices = dirty.clone();
+        let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let connected_state = connected.clone();
         let missions = Arc::new(Mutex::new(Vec::new()));
         let mission_notices = missions.clone();
         let project = project.map(str::to_owned);
         backend.workspace = project.clone().unwrap_or_default();
         backend.session.clear();
         backend.client_id.push_str("-preferences");
+        let client_id = backend.client_id.clone();
         let run = async move {
             futures_lite::future::race(
                 async {
+                    let mut disconnected = false;
                     for epoch in 1u64.. {
+                        if (backend.client.tracks_server_attestation()
+                            || (epoch > 1 && backend.client.needs_capability_recheck()))
+                            && let Err(err) = backend.attest_server().await
+                        {
+                            if crate::http::authentication_expired(&err) {
+                                notices.fetch_or(4, SeqCst);
+                                break;
+                            }
+                            if !disconnected {
+                                disconnected = true;
+                                if notices.fetch_or(64, SeqCst) & 64 == 0 {
+                                    wake();
+                                }
+                            }
+                            runtime::sleep(Duration::from_millis(250 * (1 << epoch.min(5)))).await;
+                            continue;
+                        }
                         let (output, events) = crate::bounded(16);
                         let state = stream::State::default();
+                        let mut opened = false;
                         let (result, ()) = futures_lite::future::zip(
                             async {
                                 let output = output;
@@ -249,7 +308,11 @@ impl PreferencesWatch {
                             async {
                                 while let Ok(event) = events.recv().await {
                                     let flag = match event {
-                                        Input::Opened(e) => if e > 1 { 11 | 16 | 32 } else { 11 | 32 },
+                                        Input::Opened(e) => {
+                                            opened = true;
+                                            connected_state.store(true, SeqCst);
+                                            if e > 1 { 11 | 16 | 32 } else { 11 | 32 }
+                                        }
                                         Input::Preferences(Owner::Config) => 1,
                                         Input::Preferences(Owner::State) => 2,
                                         Input::Preferences(Owner::Server) => 32,
@@ -276,12 +339,22 @@ impl PreferencesWatch {
                             },
                         )
                         .await;
+                        connected_state.store(false, SeqCst);
+                        if opened {
+                            disconnected = false;
+                        }
                         if result
                             .as_ref()
                             .is_err_and(crate::http::authentication_expired)
                         {
                             notices.fetch_or(4, SeqCst);
                             break;
+                        }
+                        if !disconnected {
+                            disconnected = true;
+                            if notices.fetch_or(64, SeqCst) & 64 == 0 {
+                                wake();
+                            }
                         }
                         runtime::sleep(Duration::from_millis(250 * (1 << epoch.min(5)))).await;
                     }
@@ -292,6 +365,7 @@ impl PreferencesWatch {
             )
             .await;
             // The EventSource/HTTP response has been dropped before releasing the next reader.
+            connected_state.store(false, SeqCst);
             drop(close);
             wake();
         };
@@ -300,11 +374,21 @@ impl PreferencesWatch {
                 _cancel: hold,
                 closed,
                 dirty,
+                connected,
                 missions,
+                client_id,
                 project,
             },
             run,
         )
+    }
+
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(SeqCst)
     }
 
     pub fn take(&self) -> (bool, bool) {
@@ -334,6 +418,10 @@ impl PreferencesWatch {
 
     pub fn take_server_changed(&self) -> bool {
         self.dirty.fetch_and(!32, SeqCst) & 32 != 0
+    }
+
+    pub fn take_disconnected(&self) -> bool {
+        self.dirty.fetch_and(!64, SeqCst) & 64 != 0
     }
 
     pub fn stop(self) -> crate::Receiver<()> {

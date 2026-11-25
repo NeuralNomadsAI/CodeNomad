@@ -41,7 +41,7 @@ same-file = "1"
 subtle = "2"
 sys-locale = "0.3.2"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value"] }
+serde_json = { version = "1", features = ["raw_value", "float_roundtrip"] }
 # config.yaml / state.yaml shared with the TypeScript server (maintained serde_yaml fork).
 serde_norway = "0.9"
 sha2 = "0.10"
@@ -61,7 +61,7 @@ debug = "line-tables-only"
 jsonschema = { version = "0.33", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -2,6 +2,14 @@ import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
+import { crc32 } from "node:zlib"
+import { fromDist, privateGit, waitForPruningPlugin } from "./fixtures.mjs"
+
+export async function prepare({ root }) {
+  // Strict media ownership refuses Git environment overrides. A private
+  // enclosing checkout stops discovery before reaching the CodeNomad checkout.
+  await privateGit(root, "attachment-history-boundary")
+}
 
 const MiB = 1024 * 1024
 const referenceHeaders = { "x-codenomad-user-files": "reference-v1" }
@@ -9,6 +17,125 @@ const digest = bytes => createHash("sha256").update(bytes).digest("hex")
 const post = (value, headers = {}) => ({
   method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(value),
 })
+
+function inTransaction(database, fn) {
+  database.exec("BEGIN")
+  try {
+    const value = fn()
+    database.exec("COMMIT")
+    return value
+  } catch (error) {
+    try { if (database.isTransaction !== false) database.exec("ROLLBACK") } catch { /* SQLite may have auto-rolled back. */ }
+    throw error
+  }
+}
+
+async function toolMedia(call, client, id, root, location, other, database) {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPQij8BAAIIAVL6yIt6AAAAAElFTkSuQmCC", "base64")
+  // 200 KiB PNG (~267 KiB base64) exceeds the 256 KiB inline per-message budget.
+  const text = Buffer.from("Comment\0" + "a".repeat(200 * 1024))
+  const chunk = Buffer.alloc(text.length + 12)
+  chunk.writeUInt32BE(text.length); chunk.write("tEXt", 4); text.copy(chunk, 8)
+  chunk.writeUInt32BE(crc32(chunk.subarray(4, -4)), chunk.length - 4)
+  const large = Buffer.concat([png.subarray(0, -12), chunk, png.subarray(-12)])
+  const files = [png, large].map((bytes, index) => ({
+    type: "file", name: `image-${index}.png`, mime: "image/png", uri: `data:image/png;base64,${bytes.toString("base64")}`,
+  }))
+  const session = await client.session.create({ location, title: "Deferred images" })
+  const foreign = await client.session.create({ location: { directory: other }, title: "Foreign media" })
+  const message = "msg_deferred_media_fixture"
+  const content = [{ type: "text", text: "Fixture" }, { type: "tool", id: "call_media_fixture", name: "read",
+    time: { created: 1, completed: 2 }, state: { status: "completed", input: {}, content: [{ type: "text", text: "Images" }, ...files] } }]
+  const userID = seq => `msg_deferred_media_${String(seq).padStart(3, "0")}`
+  const insert = database.prepare("INSERT INTO session_message(id,session_id,type,seq,data,time_created,time_updated) VALUES (?,?,'user',?,?,?,?)")
+  const attachment = { name: "note.bin", mime: "application/octet-stream", data: Buffer.from("reference fixture").toString("base64"), source: { type: "inline" } }
+  const input = { sessionID: session.id, target: { kind: "before", messageID: message } }
+  const insertAssistant = database.prepare("INSERT INTO session_message(id,session_id,type,seq,data,time_created,time_updated) VALUES (?,?,'assistant',186,?,186,187)")
+  inTransaction(database, () => {
+    for (let seq = 1; seq <= 202; seq++) {
+      if (seq !== 186) insert.run(userID(seq), session.id, seq, JSON.stringify({
+        text: "Fixture", time: { created: seq }, ...(seq === 185 ? { files: [attachment] } : {}),
+      }), seq, seq)
+    }
+    insertAssistant.run(message, session.id, JSON.stringify({ time: { created: 186, completed: 187 }, content,
+      agent: "build", model: { providerID: "fixture", id: "fixture" } }))
+  })
+  const native = await client.session.message.get({ sessionID: session.id, messageID: message })
+  assert.equal(native.id, message)
+  assert.deepEqual(native.content[1].state.content.slice(1), files)
+  const window = async headers => {
+    const response = await call(`${root}/session-history/window`, post(input, headers))
+    const data = await response.json()
+    assert.equal(response.status, 200)
+    assert.equal(data.status, "window", JSON.stringify(data).slice(0, 256))
+    return data
+  }
+  const inline = await window({})
+  const tool = page => page.messages[184].content[1].state.content
+  const order = Array.from({ length: 200 }, (_, index) => index === 184 ? message : userID(index + 2))
+  const { messages, ...cursors } = inline
+  assert.deepEqual(messages.map(row => row.id), order)
+  assert.deepEqual(cursors, { status: "window", older: { kind: "before", messageID: userID(2) },
+    newer: { kind: "after", messageID: userID(201) }, resume: input.target, latest: false })
+  assert.deepEqual(tool(inline).slice(1), files)
+  assert.deepEqual(await window({ "x-codenomad-media": "inline" }), inline)
+  const optIn = { "x-codenomad-media": "deferred" }
+  const deferred = await window(optIn)
+  const reference = `${root}/session-media/${session.id}/${message}/1/2/${digest(files[1].uri)}`
+  assert.deepEqual(tool(deferred).slice(1), [files[0], { ...files[1], uri: reference }])
+  tool(deferred)[2].uri = files[1].uri
+  assert.deepEqual(deferred, inline, "the window only replaces the large URI")
+  const combined = await window({ ...optIn, ...referenceHeaders })
+  assert.equal(combined.userFiles, "reference-v1")
+  assert.equal(tool(combined)[2].uri, reference)
+  assert.deepEqual(combined.messages[183].files, [{ name: attachment.name, mime: attachment.mime,
+    source: { type: "deferred", sha256: digest(Buffer.from(attachment.data, "base64")) } }])
+  const list = async headers => {
+    const response = await call(`/workspaces/${id}/instance/api/session/${session.id}/message?limit=25`, { headers })
+    assert.equal(response.status, 200)
+    return response.json()
+  }
+  const listInline = await list({})
+  const listRow = page => page.data.find(row => row.id === message)
+  const listTool = page => listRow(page).content[1].state.content
+  assert.deepEqual(listTool(listInline).slice(1), files)
+  assert.deepEqual(await list({ "x-codenomad-media": "inline" }), listInline)
+  const listDeferred = await list(optIn)
+  assert.deepEqual(listTool(listDeferred).slice(1), [files[0], { ...files[1], uri: reference }])
+  listTool(listDeferred)[2].uri = files[1].uri
+  assert.deepEqual(listDeferred, listInline, "message.list only replaces the large URI")
+  const { parseSessionMediaPath } = await fromDist("opencode/session-media-contract.js")
+  assert.deepEqual(parseSessionMediaPath(reference), {
+    workspaceId: root.split("/").at(-1), sessionId: session.id, messageId: message, part: 1, index: 2, digest: digest(files[1].uri),
+  })
+  const served = await call(reference)
+  assert.equal(served.status, 200, `${served.status} for deferred image`)
+  const headers = Object.fromEntries(["content-type", "cache-control", "x-content-type-options", "content-security-policy"]
+    .map(key => [key, served.headers.get(key)]))
+  assert.deepEqual(headers, { "content-type": "image/png", "cache-control": "private, max-age=31536000, immutable",
+    "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" })
+  assert.deepEqual(Buffer.from(await served.arrayBuffer()), large)
+  const assertNoImage = async (target, expected) => {
+    const response = await call(target)
+    const raw = Buffer.from(await response.arrayBuffer())
+    assert.equal(response.status, expected)
+    assert(!raw.includes(png.subarray(0, 8)), `refused media response leaked PNG bytes (${expected})`)
+    assert(!raw.includes(large), `refused media response leaked image bytes (${expected})`)
+    return response.status
+  }
+  const badDigest = await assertNoImage(reference.slice(0, -64) + "0".repeat(64), 404)
+  const foreignStatus = await assertNoImage(reference.replace(`/${session.id}/`, `/${foreign.id}/`), 403)
+  database.prepare("UPDATE session_v2 SET revert=? WHERE id=?").run(JSON.stringify({ messageID: message }), session.id)
+  const undoStatus = await assertNoImage(reference, 404)
+  database.prepare("UPDATE session_v2 SET revert=NULL WHERE id=?").run(session.id)
+  database.prepare("UPDATE session_v2 SET directory=(SELECT directory FROM session_v2 WHERE id=?), project_id=(SELECT project_id FROM session_v2 WHERE id=?) WHERE id=?")
+    .run(foreign.id, foreign.id, session.id)
+  assert.equal((await client.session.get({ sessionID: session.id })).location.directory, foreign.location.directory)
+  const movedStatus = await assertNoImage(reference, 403)
+  return { order: digest(order.join("\n")), cursors, listDeferred: true,
+    reference: reference.replace(root, "/api/workspaces/workspace").replace(session.id, "session"),
+    bytes: digest(large), headers, badDigest, foreign: foreignStatus, undo: undoStatus, moved: movedStatus }
+}
 
 async function qualifyStream(call, client, id, location, size, count, nativeSend = false) {
   const session = await client.session.create({ location, title: "Reference SSE fixture" })
@@ -64,19 +191,23 @@ export async function run({ call, fixture, folder, other }) {
   const database = new DatabaseSync(path.join(fixture.root, "fixture.db"))
   database.exec("PRAGMA busy_timeout=5000")
   const result = []
+  let failed = false
   try {
     const insert = database.prepare("INSERT INTO session_message(id,session_id,type,seq,data,time_created,time_updated) VALUES (?,?,'user',?,?,1,1)")
     const moveUndo = database.prepare("UPDATE session_v2 SET revert=? WHERE id=?")
     const nested = { directory: path.join(location.directory, "sub") }
     await mkdir(nested.directory, { recursive: true })
+    await waitForPruningPlugin(client, nested.directory)
     for (const [rows, perRow] of [[1, 3], [4, 1]]) {
       const session = await client.session.create({ location: rows === 4 ? nested : location, title: "Attachment projection fixture" })
       const bytes = Buffer.alloc(5 * MiB, rows)
       const sha = digest(bytes)
       const file = { name: "attachment.bin", mime: "application/octet-stream", data: bytes.toString("base64"), source: { type: "inline" } }
       const ids = Array.from({ length: rows }, (_, i) => `msg_fixture_files_${rows}_${i}`)
-      for (const [index, message] of ids.entries()) insert.run(message, session.id, index + 1,
-        JSON.stringify({ text: "stored", time: { created: index + 1 }, files: Array.from({ length: perRow }, () => file) }))
+      inTransaction(database, () => {
+        for (const [index, message] of ids.entries()) insert.run(message, session.id, index + 1,
+          JSON.stringify({ text: "stored", time: { created: index + 1 }, files: Array.from({ length: perRow }, () => file) }))
+      })
       const page = await call(`${root}/session-history/window`, post({ sessionID: session.id, target: { kind: "latest" } }, referenceHeaders))
       assert.equal(page.status, 200)
       const wire = await page.text()
@@ -120,11 +251,19 @@ export async function run({ call, fixture, folder, other }) {
     database.prepare("UPDATE blob SET data=zeroblob(?),bytes=? WHERE hash=?").run(bytes.length + 1, bytes.length + 1, sha)
     assert.equal((await call(route)).status, 413)
     result.push({ blob: true, bound: bytes.length })
-    return { history: result, stream: await qualifyStream(call, client, id, location, 255 * 1024, 1),
+    return { history: result, toolMedia: await toolMedia(call, client, id, root, location, other, database),
+      stream: await qualifyStream(call, client, id, location, 255 * 1024, 1),
       largeStream: await qualifyStream(call, client, id, location, 5 * MiB, 3),
       nestedStream: await qualifyStream(call, client, id, nested, 5 * MiB, 3, true) }
+  } catch (error) {
+    failed = true
+    throw error
   } finally {
-    database.close()
-    await call(root, { method: "DELETE" })
+    let closeError
+    try { database.close() }
+    catch (error) { closeError = error }
+    try { await call(root, { method: "DELETE" }) }
+    catch (cleanupError) { if (!failed && !closeError) throw cleanupError }
+    if (!failed && closeError) throw closeError
   }
 }

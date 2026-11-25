@@ -17,7 +17,9 @@ pub(super) struct LiveDraft {
 
 impl LiveDraft {
     pub(super) fn unconfirmed_id(&self) -> Option<&str> {
-        self.unconfirmed.as_ref().map(crate::composer::UnconfirmedPrompt::id)
+        self.unconfirmed
+            .as_ref()
+            .map(crate::composer::UnconfirmedPrompt::id)
     }
 
     pub(super) fn unconfirmed_state(&self) -> Option<&crate::composer::UnconfirmedPrompt> {
@@ -86,7 +88,9 @@ pub fn window_inline_usage_without_history(
     seen: &mut std::collections::HashSet<usize>,
     include_active_draft: bool,
 ) -> (usize, usize) {
-    let (mut files, mut bytes) = s.composer.add_unique_inline_usage(seen, include_active_draft);
+    let (mut files, mut bytes) = s
+        .composer
+        .add_unique_inline_usage(seen, include_active_draft);
     let Some(ui) = &s.workspace else {
         return (files, bytes);
     };
@@ -194,7 +198,8 @@ pub(super) fn note_unconfirmed_for(
         .cloned()
         .or_else(|| {
             ui.entries.iter().enumerate().find_map(|(index, entry)| {
-                if !matches!(&entry.saved, Tab::Workspace(current) if same_backend(current, saved)) {
+                if !matches!(&entry.saved, Tab::Workspace(current) if same_backend(current, saved))
+                {
                     return None;
                 }
                 if index != ui.active

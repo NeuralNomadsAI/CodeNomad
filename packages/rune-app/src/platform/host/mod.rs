@@ -28,18 +28,38 @@ struct Output {
     cleanup: Option<bool>,
     failed: bool,
 }
+struct PendingRenewal {
+    id: String,
+    reply: mpsc::SyncSender<Option<String>>,
+}
+#[derive(Debug)]
+pub enum ManagedRenewal {
+    Renewed(Backend),
+    Denied,
+    Transient,
+}
+
 enum Control {
     Native {
         response: String,
         expires: Instant,
         deadline: u64,
     },
+    RenewSession {
+        id: String,
+        command: String,
+        deadline: Instant,
+    },
 }
 pub struct ChildHost {
     process: OwnedProcess,
     authority: Arc<AtomicU64>,
     generation: u64,
+    cookie: String,
     output: Arc<Mutex<Output>>,
+    writer: mpsc::SyncSender<Control>,
+    pending_renewal: Arc<Mutex<Option<PendingRenewal>>>,
+    stdout_closed: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
     url: String,
@@ -72,7 +92,7 @@ impl ChildHost {
             .as_nanos();
         let cookie = format!("codenomad_session_{}_{nonce}", std::process::id());
         let mut process = OwnedProcess::spawn(&mut config.command(&cookie)?)?;
-        let mut stdin = process
+        let stdin = process
             .take_stdin()
             .ok_or_else(|| io::Error::other("Backend stdin unavailable"))?;
         let stdout = process
@@ -82,45 +102,27 @@ impl ChildHost {
             .take_stderr()
             .ok_or_else(|| io::Error::other("Backend stderr unavailable"))?;
         let output = Arc::new(Mutex::new(Output::default()));
+        let pending_renewal = Arc::new(Mutex::new(None::<PendingRenewal>));
+        let stdout_closed = Arc::new(AtomicBool::new(false));
         let (writer, receiver) = mpsc::sync_channel::<Control>(32);
         let shutdown = Arc::new(AtomicBool::new(false));
         let writer_shutdown = shutdown.clone();
         let writer_authority = authority.clone();
+        let writer_pending = pending_renewal.clone();
         let writer_thread = thread::spawn(move || {
-            loop {
-                if writer_shutdown.load(Ordering::SeqCst) {
-                    let _ = stdin
-                        .write_all(protocol::SHUTDOWN)
-                        .and_then(|_| stdin.flush());
-                    break;
-                }
-                let control = match receiver.recv_timeout(Duration::from_millis(20)) {
-                    Ok(control) => control,
-                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                    Err(_) => break,
-                };
-                match control {
-                    Control::Native {
-                        response,
-                        expires,
-                        deadline,
-                    } => {
-                        if writer_authority.load(Ordering::SeqCst) == generation {
-                            let response = protocol::fenced_response(response, expires, deadline);
-                            if stdin
-                                .write_all(response.as_bytes())
-                                .and_then(|_| stdin.flush())
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+            write_control_loop(
+                stdin,
+                receiver,
+                writer_shutdown,
+                writer_authority,
+                generation,
+                writer_pending,
+            );
         });
         let reader_output = output.clone();
         let reader_authority = authority.clone();
+        let reader_renewal = pending_renewal.clone();
+        let reader_closed = stdout_closed.clone();
         let replies = writer.clone();
         let stdout_thread = thread::spawn(move || {
             let result = protocol::pump(BufReader::new(stdout), |line| {
@@ -137,6 +139,14 @@ impl ChildHost {
                         }
                     }
                     protocol::Line::Ready(url) => reader_output.lock().unwrap().url = Some(url),
+                    protocol::Line::ManagedSession { id, session } => {
+                        let mut pending = reader_renewal.lock().unwrap();
+                        if pending.as_ref().is_some_and(|request| request.id == id)
+                            && let Some(request) = pending.take()
+                        {
+                            let _ = request.reply.try_send(session);
+                        }
+                    }
                     protocol::Line::Shutdown(complete) => {
                         reader_output.lock().unwrap().cleanup = Some(complete)
                     }
@@ -154,6 +164,8 @@ impl ChildHost {
                     protocol::Line::Diagnostic => {}
                 }
             });
+            reader_closed.store(true, Ordering::SeqCst);
+            reader_renewal.lock().unwrap().take();
             if result.is_err() {
                 reader_output.lock().unwrap().failed = true;
             }
@@ -169,7 +181,11 @@ impl ChildHost {
             process,
             authority,
             generation,
+            cookie,
             output,
+            writer,
+            pending_renewal,
+            stdout_closed,
             shutdown,
             threads: vec![writer_thread, stdout_thread, stderr_thread],
             url: String::new(),
@@ -235,7 +251,49 @@ impl ChildHost {
         }
         Ok(backend)
     }
+    /// Ask the owned child process over stdin to renew an expired bootstrap-only session.
+    pub fn renew_managed_session(&mut self, cancel: &AtomicBool) -> io::Result<ManagedRenewal> {
+        if self.stopped
+            || self.url.is_empty()
+            || cancel.load(Ordering::SeqCst)
+            || !self.current()
+            || self.stdout_closed.load(Ordering::SeqCst)
+            || self.process.try_wait()?.is_some()
+        {
+            return Ok(ManagedRenewal::Denied);
+        }
+        let id = codenomad_client::http::random_uuid_v4()
+            .map_err(|_| io::Error::other("Backend renewal request id unavailable"))?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let outcome = request_managed_session(
+            &self.pending_renewal,
+            &self.writer,
+            &self.stdout_closed,
+            cancel,
+            || self.current(),
+            id,
+            deadline,
+        );
+        if self.stopped
+            || cancel.load(Ordering::SeqCst)
+            || !self.current()
+            || self.process.try_wait()?.is_some()
+        {
+            return Ok(ManagedRenewal::Denied);
+        }
+        match outcome {
+            RenewalWait::Token(session) => {
+                let backend =
+                    Backend::connect_with_session_cookie(&self.url, &self.cookie, &session)
+                        .map_err(|_| io::Error::other("Backend session renewal failed"))?;
+                Ok(ManagedRenewal::Renewed(backend))
+            }
+            RenewalWait::Denied => Ok(ManagedRenewal::Denied),
+            RenewalWait::Transient => Ok(ManagedRenewal::Transient),
+        }
+    }
     pub fn stop(&mut self) -> io::Result<StopReport> {
+        self.pending_renewal.lock().unwrap().take();
         if self.stopped {
             return Ok(StopReport {
                 forced: false,
@@ -306,5 +364,138 @@ impl Drop for ChildHost {
         }
     }
 }
+#[derive(Debug, PartialEq, Eq)]
+enum RenewalWait {
+    Token(String),
+    Denied,
+    Transient,
+}
+
+fn write_control_loop<W: Write>(
+    mut stdin: W,
+    receiver: mpsc::Receiver<Control>,
+    shutdown: Arc<AtomicBool>,
+    authority: Arc<AtomicU64>,
+    generation: u64,
+    pending_renewal: Arc<Mutex<Option<PendingRenewal>>>,
+) {
+    loop {
+        if shutdown.load(Ordering::SeqCst) {
+            let _ = stdin
+                .write_all(protocol::SHUTDOWN)
+                .and_then(|_| stdin.flush());
+            break;
+        }
+        let control = match receiver.recv_timeout(Duration::from_millis(20)) {
+            Ok(control) => control,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(_) => break,
+        };
+        match control {
+            Control::Native {
+                response,
+                expires,
+                deadline,
+            } => {
+                if authority.load(Ordering::SeqCst) == generation {
+                    let response = protocol::fenced_response(response, expires, deadline);
+                    if stdin
+                        .write_all(response.as_bytes())
+                        .and_then(|_| stdin.flush())
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+            Control::RenewSession {
+                id,
+                command,
+                deadline,
+            } => {
+                let still_pending = authority.load(Ordering::SeqCst) == generation
+                    && !shutdown.load(Ordering::SeqCst)
+                    && Instant::now() < deadline
+                    && pending_renewal
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .is_some_and(|pending| pending.id == id);
+                if still_pending
+                    && stdin
+                        .write_all(command.as_bytes())
+                        .and_then(|_| stdin.flush())
+                        .is_err()
+                {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn request_managed_session(
+    pending_renewal: &Arc<Mutex<Option<PendingRenewal>>>,
+    writer: &mpsc::SyncSender<Control>,
+    stdout_closed: &AtomicBool,
+    cancel: &AtomicBool,
+    current: impl Fn() -> bool,
+    id: String,
+    deadline: Instant,
+) -> RenewalWait {
+    let (reply, receiver) = mpsc::sync_channel(1);
+    {
+        let mut pending = pending_renewal.lock().unwrap();
+        if pending.is_some()
+            || stdout_closed.load(Ordering::SeqCst)
+            || cancel.load(Ordering::SeqCst)
+            || !current()
+        {
+            return RenewalWait::Denied;
+        }
+        *pending = Some(PendingRenewal {
+            id: id.clone(),
+            reply,
+        });
+    }
+    let command = protocol::renew_command(&id);
+    if writer
+        .try_send(Control::RenewSession {
+            id,
+            command,
+            deadline,
+        })
+        .is_err()
+    {
+        pending_renewal.lock().unwrap().take();
+        return RenewalWait::Transient;
+    }
+    let outcome = loop {
+        if cancel.load(Ordering::SeqCst) || !current() {
+            break RenewalWait::Denied;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break if stdout_closed.load(Ordering::SeqCst) {
+                RenewalWait::Denied
+            } else {
+                RenewalWait::Transient
+            };
+        }
+        match receiver.recv_timeout(remaining.min(Duration::from_millis(25))) {
+            Ok(Some(token)) => break RenewalWait::Token(token),
+            Ok(None) => break RenewalWait::Denied,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if stdout_closed.load(Ordering::SeqCst) {
+                    break RenewalWait::Denied;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break RenewalWait::Denied,
+        }
+    };
+    pending_renewal.lock().unwrap().take();
+    outcome
+}
+
 #[cfg(test)]
 mod tests;

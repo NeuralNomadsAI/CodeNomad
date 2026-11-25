@@ -56,19 +56,21 @@ pub(super) fn input_json(value: &Value, limit: usize, partial: bool) -> Option<S
 }
 
 pub(super) fn title(tool: &Tool) -> String {
-    let name = tool.name.strip_prefix("opencode_").unwrap_or(&tool.name);
-    let mut chars = name.chars();
+    let name = tool
+        .name
+        .trim()
+        .strip_prefix("opencode_")
+        .unwrap_or(tool.name.trim());
     let mut title = if name == "websearch" {
         name.into()
-    } else if matches!(name, "bash" | "shell") {
-        t("toolCall.renderer.toolName.shell").to_owned()
+    } else if name == "invalid" && !string(&tool.input, &["tool"]).trim().is_empty() {
+        format!(
+            "{} {}",
+            label("invalid"),
+            label(string(&tool.input, &["tool"]))
+        )
     } else {
-        chars
-            .next()
-            .into_iter()
-            .flat_map(char::to_uppercase)
-            .chain(chars)
-            .collect()
+        label(name)
     };
     let summary = match name {
         "read" | "edit" | "write" => {
@@ -80,6 +82,7 @@ pub(super) fn title(tool: &Tool) -> String {
         }
         "bash" | "shell" => shell::summary(tool),
         "glob" | "grep" => search::pattern(tool),
+        "webfetch" => string(&tool.input, &["url"]),
         _ => "",
     };
     if !summary.is_empty() {
@@ -106,8 +109,103 @@ pub(super) fn title(tool: &Tool) -> String {
     title
 }
 
+pub(super) fn label(name: &str) -> String {
+    let trimmed = name.trim();
+    let normalized = trimmed.strip_prefix("opencode_").unwrap_or(trimmed);
+    let key = match normalized {
+        "" | "invalid" => "toolCall.renderer.toolName.invalid",
+        "bash" | "shell" => "toolCall.renderer.toolName.shell",
+        "webfetch" => "toolCall.renderer.toolName.fetch",
+        "todowrite" => "toolCall.renderer.toolName.plan",
+        "apply_patch" => "toolCall.renderer.toolName.applyPatch",
+        _ => {
+            let mut chars = normalized.chars();
+            return chars
+                .next()
+                .into_iter()
+                .flat_map(char::to_uppercase)
+                .chain(chars.take(249))
+                .collect();
+        }
+    };
+    t(key).into()
+}
+
 pub(super) fn error(tool: &Tool) -> &str {
     shell::interrupted(tool).map_or(tool.error.as_str(), |(_, notice)| notice)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Formatted {
+    Empty,
+    Text(String, &'static str),
+    TooLarge,
+}
+
+pub(super) fn format_unknown(value: &Value, limit: Option<usize>) -> Formatted {
+    match value {
+        Value::Null => Formatted::Empty,
+        Value::String(s) => {
+            if s.is_empty() {
+                Formatted::Empty
+            } else if limit.is_some_and(|max| s.len() > max) {
+                Formatted::TooLarge
+            } else {
+                Formatted::Text(s.clone(), "text")
+            }
+        }
+        Value::Bool(b) => Formatted::Text(b.to_string(), "text"),
+        Value::Number(n) => Formatted::Text(n.to_string(), "text"),
+        Value::Array(items) => {
+            let mut out = String::new();
+            for item in items {
+                let sep = usize::from(!out.is_empty());
+                let remaining = limit.map(|max| max.saturating_sub(out.len().saturating_add(sep)));
+                let piece = match format_unknown(item, remaining) {
+                    Formatted::Empty => continue,
+                    Formatted::TooLarge => return Formatted::TooLarge,
+                    Formatted::Text(piece, _) => piece,
+                };
+                if piece.is_empty() {
+                    continue;
+                }
+                let add = piece.len() + sep;
+                if limit.is_some_and(|max| out.len().saturating_add(add) > max) {
+                    return Formatted::TooLarge;
+                }
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&piece);
+            }
+            if out.is_empty() {
+                Formatted::Empty
+            } else {
+                Formatted::Text(out, "text")
+            }
+        }
+        Value::Object(_) => {
+            let json = match limit {
+                Some(max) => input_json(value, max, false),
+                None => serde_json::to_string_pretty(value).ok(),
+            };
+            match json {
+                Some(json) => Formatted::Text(json, "json"),
+                None => Formatted::TooLarge,
+            }
+        }
+    }
+}
+
+pub(super) fn structured_output(tool: &Tool) -> Option<&Value> {
+    if tool.name != "webfetch" || tool.status == "completed" || !tool.output.is_empty() {
+        return None;
+    }
+    let value = tool.metadata.get("output")?;
+    if value.is_null() || value.is_string() || value.as_array().is_some_and(Vec::is_empty) {
+        return None;
+    }
+    Some(value)
 }
 
 pub(super) fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
@@ -122,6 +220,13 @@ pub(super) fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
         let (content, language) = write::output(tool);
         parts[0] = content;
         language
+    } else if tool.name == "webfetch" {
+        parts[0] = if tool.status == "completed" {
+            &tool.output
+        } else {
+            tool.metadata["output"].as_str().unwrap_or_default()
+        };
+        "text"
     } else {
         parts[0] = if tool.output.is_empty() && tool.status != "completed" {
             live
@@ -142,4 +247,24 @@ fn nested_tool_arguments_stop_at_the_actual_pretty_json_budget() {
     assert!(value.to_string().len() < limit);
     assert!(serde_json::to_string_pretty(&value).unwrap().len() > 400_000);
     assert!(input_json(&value, limit, false).is_none());
+}
+
+#[test]
+fn format_unknown_skips_empty_nested_arrays_instead_of_marking_too_large() {
+    assert_eq!(
+        format_unknown(&serde_json::json!([[null], "ok"]), Some(1024)),
+        Formatted::Text("ok".into(), "text")
+    );
+    assert_eq!(
+        format_unknown(&serde_json::json!([[null, ""]]), Some(1024)),
+        Formatted::Empty
+    );
+    assert_eq!(
+        format_unknown(&serde_json::json!("abcdef"), Some(4)),
+        Formatted::TooLarge
+    );
+    assert_eq!(
+        format_unknown(&serde_json::json!(["ab", "cde"]), Some(4)),
+        Formatted::TooLarge
+    );
 }

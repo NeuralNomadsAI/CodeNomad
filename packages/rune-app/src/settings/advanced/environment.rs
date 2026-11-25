@@ -15,6 +15,7 @@ pub(in crate::settings) struct Editor {
     name: TextEdit,
     value: TextEdit,
     unmasked: bool,
+    mask_changed: bool,
     reveal: bool,
     submitted: bool,
 }
@@ -49,6 +50,7 @@ impl Editor {
         self.name = TextEdit::default();
         self.value = TextEdit::default();
         self.unmasked = false;
+        self.mask_changed = false;
         self.reveal = false;
     }
 
@@ -76,7 +78,18 @@ impl Editor {
             return;
         }
         let value = (!remove).then(|| self.value.text.clone());
-        self.submitted = prefs.stage_environment(name.to_owned(), value, !self.unmasked);
+        let mask = if remove {
+            Some(false)
+        } else if !self.unmasked {
+            // Whenever "Mask value" is ON, always assert the mask so a concurrent deletion can
+            // never recreate the secret in plaintext.
+            Some(true)
+        } else if self.mask_changed {
+            Some(false)
+        } else {
+            None
+        };
+        self.submitted = prefs.stage_environment(name.to_owned(), value, mask);
     }
 
     pub fn view<S: 'static>(
@@ -124,13 +137,7 @@ impl Editor {
                             let Some(value) = doc["environmentVariables"][&key].as_str() else {
                                 return;
                             };
-                            let masked = doc["secureEnvVars"].as_array().into_iter().flatten().any(
-                                |candidate| {
-                                    candidate.as_str().is_some_and(|candidate| {
-                                        candidate.eq_ignore_ascii_case(&key)
-                                    })
-                                },
-                            );
+                            let masked = super::super::preferences::env_var_is_masked(doc, &key);
                             editor.reset_fields();
                             editor.name = TextEdit::new(&key);
                             editor.value = TextEdit::new(value);
@@ -177,10 +184,11 @@ impl Editor {
                         .child(chrome::setting_switch(
                             t("advancedSettings.environmentVariables.maskValue"),
                             !self.unmasked,
-                            !ready,
+                            !ready || !prefs.supports_atomic_settings_patches(),
                             move |s| {
                                 let editor = edit(s);
                                 editor.unmasked = !editor.unmasked;
+                                editor.mask_changed = true;
                             },
                         ))
                         .child(layout::button(
@@ -190,14 +198,20 @@ impl Editor {
                                 "envEditor.actions.add.title"
                             }),
                             !ready
+                                || (!prefs.supports_atomic_settings_patches()
+                                    && (self.selected.is_none()
+                                        || self.mask_changed
+                                        || !self.unmasked))
                                 || !valid_name(self.name.text.trim())
                                 || self.value.text.len() > 64 * 1024,
                             move |s| edit(s).save(&mut save.borrow_mut(), false),
                         ))
                         .children(self.selected.is_some().then(|| {
-                            layout::button(t("envEditor.actions.remove.title"), !ready, move |s| {
-                                edit(s).save(&mut remove.borrow_mut(), true)
-                            })
+                            layout::button(
+                                t("envEditor.actions.remove.title"),
+                                !ready || !prefs.supports_atomic_settings_patches(),
+                                move |s| edit(s).save(&mut remove.borrow_mut(), true),
+                            )
                         }))
                         .children(self.selected.is_some().then(|| {
                             layout::button(t("envEditor.actions.add.title"), !ready, move |s| {
