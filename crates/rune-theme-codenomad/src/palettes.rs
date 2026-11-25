@@ -13,6 +13,7 @@ pub struct Palette {
     theme: OnceLock<Theme>,
     pub(crate) kit: OnceLock<Kit>,
     pub(crate) field: OnceLock<Kit>,
+    pub(crate) composer_inner: OnceLock<Kit>,
 }
 impl Palette {
     fn source(&self) -> &'static Value {
@@ -75,6 +76,7 @@ fn variants(high_contrast: bool) -> &'static [Palette] {
                 theme: OnceLock::new(),
                 kit: OnceLock::new(),
                 field: OnceLock::new(),
+                composer_inner: OnceLock::new(),
             })
             .collect()
     })

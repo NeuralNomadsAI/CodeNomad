@@ -195,6 +195,7 @@ fn select_on_close_closes_first_and_keeps_explicit_focus_in_release_gesture() {
             item.select_on_close = true;
             let mut menu = Menu::new("actions", "Actions", vec![Rc::new(item)]);
             menu.on_open_change = Some(Rc::new(|s, open, _| s.events.push(format!("open:{open}"))));
+            menu.on_focus_restored = Some(Rc::new(|s, _| s.events.push("restored".into())));
             let trigger = Button::new("Actions")
                 .variant(ButtonVariant::Ghost)
                 .build(kit(layout::dark()));
@@ -224,6 +225,12 @@ fn select_on_close_closes_first_and_keeps_explicit_focus_in_release_gesture() {
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     rt.frame(0.0);
+    for _ in 0..2 {
+        rt.update(|s, tx| {
+            poll(s, state, tx);
+        });
+        rt.frame(0.0);
+    }
     let close_at = rt
         .state
         .events
@@ -232,6 +239,11 @@ fn select_on_close_closes_first_and_keeps_explicit_focus_in_release_gesture() {
         .unwrap();
     let select_at = rt.state.events.iter().position(|e| e == "select").unwrap();
     assert!(close_at < select_at);
+    assert_eq!(rt.state.events.iter().filter(|e| *e == "select").count(), 1);
+    assert_eq!(
+        rt.state.events.iter().filter(|e| *e == "restored").count(),
+        1
+    );
     assert!(!rt.state.menu.is_open("actions"));
     let focused = rt
         .elements()

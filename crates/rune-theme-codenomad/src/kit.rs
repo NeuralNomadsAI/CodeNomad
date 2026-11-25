@@ -22,6 +22,27 @@ pub fn field_kit(dark: bool) -> &'static Kit {
         kit
     })
 }
+pub(crate) fn composer_inner_kit(dark: bool) -> &'static Kit {
+    static INNER: [OnceLock<Kit>; 4] = [const { OnceLock::new() }; 4];
+    let cache = crate::palettes::active(dark)
+        .map_or(&INNER[crate::palette_index(dark)], |p| &p.composer_inner);
+    cache.get_or_init(|| {
+        let mut kit = field_kit(dark).clone();
+        kit.c.hover = Color::TRANSPARENT;
+        kit.c.border_focus = Color::TRANSPARENT;
+        let field = kit
+            .metrics
+            .field
+            .unwrap_or_else(|| rune_kit::FieldMetrics::kit(&kit));
+        kit.metrics.field = Some(rune_kit::FieldMetrics {
+            radius: 0.0,
+            focus_width: 0.0,
+            focus_offset: 0.0,
+            ..field
+        });
+        kit
+    })
+}
 fn build(dark: bool) -> Kit {
     let t = tokens(dark);
     let c = |name| t.color(name);

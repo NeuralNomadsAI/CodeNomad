@@ -504,7 +504,7 @@ mod tests {
             ctrl: !cfg!(target_os = "macos"),
             ..Mods::default()
         };
-        let before_copy = crate::chat::tools::children::clipboard_write_epoch();
+        assert_eq!(rt.state.composer.clipboard_writes, 0);
         rt.key(KeyEvent {
             key: Key::Command('c'),
             mods,
@@ -514,12 +514,11 @@ mod tests {
             clipboard.text().as_deref().map(String::as_str),
             Some("hello")
         );
-        assert!(
-            crate::chat::tools::children::clipboard_write_epoch() > before_copy,
+        assert_eq!(
+            rt.state.composer.clipboard_writes, 1,
             "on_input_copy must record clipboard writes on copy"
         );
 
-        let before_cut = crate::chat::tools::children::clipboard_write_epoch();
         rt.update(|s, _| s.draft.set_selection(0, 6));
         rt.key(KeyEvent {
             key: Key::Command('x'),
@@ -531,8 +530,8 @@ mod tests {
             Some("hello ")
         );
         assert_eq!(rt.state.draft.text, "trailing");
-        assert!(
-            crate::chat::tools::children::clipboard_write_epoch() > before_cut,
+        assert_eq!(
+            rt.state.composer.clipboard_writes, 2,
             "on_input_copy must record clipboard writes on cut"
         );
 

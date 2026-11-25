@@ -84,8 +84,6 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
             .key("composer-stop"),
         );
     }
-    #[cfg(target_arch = "wasm32")]
-    platform::device_picker::sync_web_input_fence(s.web_composer_input_epoch);
     let editor_slot = col().child(editor);
     #[cfg(target_arch = "wasm32")]
     let editor_slot = editor_slot.key(format!("composer-epoch-{}", s.web_composer_input_epoch));
@@ -218,11 +216,21 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
         )
 }
 
+fn record_composer_copy(s: &mut State) {
+    crate::chat::tools::children::note_clipboard_write();
+    #[cfg(test)]
+    {
+        s.composer.clipboard_writes += 1;
+    }
+    #[cfg(not(test))]
+    let _ = s;
+}
+
 fn editor(s: &State, compact: bool, trailing: El) -> El {
     let area = layout::composer_textarea(&s.draft, t("promptInput.placeholder.default"), compact)
         .label(t("rune.prompt"));
     if s.composer.editing_locked() {
-        return layout::build_composer(area, trailing, false, true, compact);
+        return layout::build_composer::<State>(area, trailing, false, true, compact);
     }
     let scope = s.input_scope.clone();
     let key_scope = scope.clone();
@@ -236,23 +244,35 @@ fn editor(s: &State, compact: bool, trailing: El) -> El {
             if !s.current_scope(&paste_scope) || s.composer.editing_locked() {
                 return true;
             }
-            #[cfg(target_arch = "wasm32")]
-            if platform::device_picker::paste(s, content) {
-                return true;
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            if !content.files().is_empty() || content.image().is_some() && content.text().is_empty()
-            {
-                return true;
-            }
-            super::long_paste::paste(s, content.text(), tx)
+            crate::strings::with_locale(crate::settings::app_locale(s), || {
+                #[cfg(target_arch = "wasm32")]
+                if platform::device_picker::paste(s, content) {
+                    return true;
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if !content.files().is_empty()
+                    || content.image().is_some() && content.text().is_empty()
+                {
+                    return true;
+                }
+                super::long_paste::paste(s, content.text(), tx)
+            })
         })
         .on_input_copy(move |s: &mut State, _cut, _| {
             if s.current_scope(&copy_scope) {
-                crate::chat::tools::children::note_clipboard_write();
+                record_composer_copy(s);
             }
             None
         });
+    #[cfg(target_arch = "wasm32")]
+    let area = {
+        let selection_scope = scope.clone();
+        area.on_input_selection(move |s: &mut State, _| {
+            if s.current_scope(&selection_scope) {
+                platform::device_picker::sync_draft_signature(&s.draft);
+            }
+        })
+    };
     #[cfg(not(target_arch = "wasm32"))]
     let area = {
         let menu_scope = scope.clone();
@@ -262,7 +282,7 @@ fn editor(s: &State, compact: bool, trailing: El) -> El {
             }
         })
     };
-    let field = layout::build_composer(area, trailing, s.draft.focused, false, compact);
+    let field = layout::build_composer::<State>(area, trailing, s.draft.focused, false, compact);
     #[cfg(not(target_arch = "wasm32"))]
     let field = field.on_drop_files(move |s: &mut State, paths, _| {
         if s.current_scope(&scope) {
@@ -323,6 +343,8 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
 }
 
 pub(super) fn changed(s: &mut State, tx: &mut Tx) {
+    #[cfg(target_arch = "wasm32")]
+    platform::device_picker::sync_draft_signature(&s.draft);
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(read) = &s.composer.device.clipboard {
         read.set(false);

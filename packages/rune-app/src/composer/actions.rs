@@ -20,6 +20,8 @@ pub struct Owner {
     pub restored: bool,
     pub attachments_missing: bool,
     pub(crate) recall: Option<super::recall::Recall>,
+    #[cfg(test)]
+    pub(crate) clipboard_writes: u64,
 }
 impl Owner {
     pub fn pending(&self) -> bool {

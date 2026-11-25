@@ -84,9 +84,15 @@ export async function longPaste(page, messages) {
   await field.evaluate(el => el.setSelectionRange(6, 13))
   await present()
   assert(await field.evaluate((el, {text, png}) => {
+    const file = new File([Uint8Array.from(atob(png), c => c.charCodeAt(0))], 'capture.png', {type:'image/png'})
+    const origArrayBuffer = file.arrayBuffer.bind(file)
+    globalThis.__pngPasteReads = 0
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: () => { globalThis.__pngPasteReads += 1; return origArrayBuffer() },
+    })
     const clipboardData = new DataTransfer()
     clipboardData.setData('text/plain', text)
-    clipboardData.items.add(new File([Uint8Array.from(atob(png), c => c.charCodeAt(0))], 'capture.png', {type:'image/png'}))
+    clipboardData.items.add(file)
     return !el.dispatchEvent(new ClipboardEvent('paste', {clipboardData, bubbles: true, cancelable: true}))
   }, {text, png}), 'Rune must handle both formats in one browser paste event')
   await expectDraft(token)
@@ -94,32 +100,45 @@ export async function longPaste(page, messages) {
   const image = composer.getByText('capture.png', {exact: true})
   await chip.waitFor({state: 'attached'})
   await image.waitFor({state: 'attached'})
+  assert.equal(await page.evaluate(() => globalThis.__pngPasteReads), 1,
+    'Valid pasted PNG must be read once and reused via Source::Png')
   assert.equal(await composer.getByText('clipboard.png', {exact: true}).count(), 0,
     'Pasted PNG must attach once with its WebFile name, without a duplicate clipboard.png chip')
   assert(await page.locator('canvas').first().evaluate(canvas => {
+    const file = new File(['dropped text body'], 'dropped.txt', {type: 'text/plain'})
+    globalThis.__dropTextReads = 0
+    Object.defineProperty(file, 'text', {
+      value: () => { globalThis.__dropTextReads += 1; return Promise.resolve('dropped text body') },
+    })
     const dataTransfer = new DataTransfer()
-    dataTransfer.items.add(new File(['dropped text body'], 'dropped.txt', {type: 'text/plain'}))
+    dataTransfer.items.add(file)
     return !canvas.dispatchEvent(new DragEvent('drop', {dataTransfer, bubbles: true, cancelable: true}))
-  }), 'Rune must forward dropped browser files to the focused composer')
+  }), 'Focused composer must capture dropped browser files synchronously')
   const dropped = composer.getByText('dropped.txt', {exact: true})
   await dropped.waitFor({state: 'attached'})
+  assert.equal(await page.evaluate(() => globalThis.__dropTextReads), 0,
+    'Composer drop must not invoke Rune async File.text()')
   await expectDraft(token)
   const mac = process.platform === 'darwin'
   await page.keyboard.press(mac ? 'Meta+z' : 'Control+z')
   await expectDraft(initial)
   await page.keyboard.press(mac ? 'Meta+Shift+z' : 'Control+Shift+z')
   await expectDraft(token)
-  // Start a delayed text-file drop before sending (which rotates the composer epoch),
-  // then resolve its text() read only after the new draft is active.
-  assert(await page.locator('canvas').first().evaluate(canvas => {
-    const delayed = new File(['secret body from A'], 'A-private.txt', {type: 'text/plain'})
-    Object.defineProperty(delayed, 'text', {
-      value: () => new Promise(resolve => { globalThis.__releaseDelayedDrop = resolve }),
+  // Start a delayed mixed text+PNG paste before sending (which rotates the composer epoch),
+  // then resolve its arrayBuffer() only after the new draft is active.
+  assert(await field.evaluate((el, png) => {
+    const bytes = Uint8Array.from(atob(png), c => c.charCodeAt(0))
+    const delayed = new File([bytes], 'A-delayed.png', {type: 'image/png'})
+    globalThis.__releaseDelayedPng = undefined
+    Object.defineProperty(delayed, 'arrayBuffer', {
+      value: () => new Promise(resolve => { globalThis.__releaseDelayedPng = () => resolve(bytes.buffer.slice(0)) }),
     })
-    const dataTransfer = new DataTransfer()
-    dataTransfer.items.add(delayed)
-    return !canvas.dispatchEvent(new DragEvent('drop', {dataTransfer, bubbles: true, cancelable: true}))
-  }), 'Delayed browser drop must enter Rune before the epoch change')
+    const clipboardData = new DataTransfer()
+    clipboardData.setData('text/plain', ' stale-from-A')
+    clipboardData.items.add(delayed)
+    return !el.dispatchEvent(new ClipboardEvent('paste', {clipboardData, bubbles: true, cancelable: true}))
+  }, png), 'Delayed PNG paste must enter Rune before the epoch change')
+  await page.waitForFunction(() => typeof globalThis.__releaseDelayedPng === 'function')
   await page.keyboard.press('Enter')
   const sent = page.getByText(`avant ${text} après`, {exact: true})
   await sent.waitFor({state: 'attached'})
@@ -131,10 +150,15 @@ export async function longPaste(page, messages) {
   await refused.waitFor()
   await sent.waitFor({state:'detached'})
   await expectDraft('nouveau brouillon')
-  await page.evaluate(() => globalThis.__releaseDelayedDrop?.('secret body from A'))
+  await page.evaluate(() => {
+    if (typeof globalThis.__releaseDelayedPng !== 'function') throw Error('Delayed PNG resolver was not installed')
+    globalThis.__releaseDelayedPng()
+  })
   await present()
-  assert.equal(await page.getByText('A-private.txt', {exact: true}).count(), 0,
-    'A delayed drop resolved after an epoch switch must not attach to the new draft')
+  await field.evaluate(el => el.setSelectionRange(el.value.length, el.value.length))
+  await present()
+  assert.equal(await page.getByText('A-delayed.png', {exact: true}).count(), 0,
+    'A delayed PNG paste resolved after an epoch switch must not attach to the new draft')
   await expectDraft('nouveau brouillon')
   const more = composer.getByRole('button', {name: messages['messageItem.actions.more'], exact:true})
   const click = async locator => {
@@ -184,6 +208,54 @@ export async function longPaste(page, messages) {
   await expectDraft('nouveau brouillon suite')
   assert.equal(await composer.getByText('oversized.png', {exact: true}).count(), 0,
     'Oversized PNG must not attach')
+  // Corrupt under-limit PNG + text must preserve text, reject the corrupt PNG, and never reread it.
+  await field.evaluate(el => el.setSelectionRange(el.value.length, el.value.length))
+  await present()
+  assert(await field.evaluate(el => {
+    const file = new File([new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])], 'corrupt.png', {type: 'image/png'})
+    const origArrayBuffer = file.arrayBuffer.bind(file)
+    globalThis.__corruptPngReads = 0
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: () => { globalThis.__corruptPngReads += 1; return origArrayBuffer() },
+    })
+    const clipboardData = new DataTransfer()
+    clipboardData.setData('text/plain', ' ok')
+    clipboardData.items.add(file)
+    return !el.dispatchEvent(new ClipboardEvent('paste', {clipboardData, bubbles: true, cancelable: true}))
+  }), 'Corrupt PNG mixed paste must route through Rune')
+  await expectDraft('nouveau brouillon suite ok')
+  const corruptNotice = messages['promptInput.attachFiles.rejected.unreadable'].replace('{name}', 'corrupt.png')
+  await composer.getByText(corruptNotice, {exact: true}).waitFor({state: 'attached'})
+  assert.equal(await composer.getByText('corrupt.png', {exact: true}).count(), 0,
+    'Corrupt under-limit PNG must not attach')
+  assert.equal(await page.evaluate(() => globalThis.__corruptPngReads), 1,
+    'Corrupt under-limit PNG must not be read a second time')
+  // Delayed mixed paste across a same-epoch selection/draft edit must not clobber the edited draft.
+  assert(await field.evaluate((el, png) => {
+    const bytes = Uint8Array.from(atob(png), c => c.charCodeAt(0))
+    const delayed = new File([bytes], 'B-selection.png', {type: 'image/png'})
+    globalThis.__releaseSelectionPng = undefined
+    Object.defineProperty(delayed, 'arrayBuffer', {
+      value: () => new Promise(resolve => { globalThis.__releaseSelectionPng = () => resolve(bytes.buffer.slice(0)) }),
+    })
+    const clipboardData = new DataTransfer()
+    clipboardData.setData('text/plain', ' stale-selection')
+    clipboardData.items.add(delayed)
+    return !el.dispatchEvent(new ClipboardEvent('paste', {clipboardData, bubbles: true, cancelable: true}))
+  }, png), 'Selection-fenced PNG paste must enter Rune')
+  await page.waitForFunction(() => typeof globalThis.__releaseSelectionPng === 'function')
+  await field.fill('nouveau brouillon suite ok!')
+  await expectDraft('nouveau brouillon suite ok!')
+  await page.evaluate(() => {
+    if (typeof globalThis.__releaseSelectionPng !== 'function') throw Error('Selection PNG resolver was not installed')
+    globalThis.__releaseSelectionPng()
+  })
+  await present()
+  await field.evaluate(el => el.setSelectionRange(el.value.length, el.value.length))
+  await present()
+  assert.equal(await composer.getByText('B-selection.png', {exact: true}).count(), 0,
+    'Delayed PNG paste after a same-epoch draft edit must not attach')
+  await expectDraft('nouveau brouillon suite ok!')
   // PNG-only drop and multi-file drop must attach all chips without injecting file text.
   assert(await page.locator('canvas').first().evaluate((canvas, png) => {
     const dataTransfer = new DataTransfer()
@@ -201,12 +273,13 @@ export async function longPaste(page, messages) {
   }), 'Multi-file drop must route through Rune')
   await composer.getByText('multi-a.txt', {exact: true}).waitFor({state: 'attached'})
   await composer.getByText('multi-b.txt', {exact: true}).waitFor({state: 'attached'})
-  await expectDraft('nouveau brouillon suite')
+  await expectDraft('nouveau brouillon suite ok!')
   // Mouse clear must focus the real textarea immediately without a second click.
   await pressMenu(messages['promptInput.clear.title'])
   await expectDraft('')
   return {insertedAtSelection: true, undo: true, retainedPng: true, droppedWebFile: true,
-    delayedDropFenced: true, oversizedPngPreservedText: true, pngAndMultiDrop: true,
+    syncComposerDrop: true, delayedPngFenced: true, selectionPasteFenced: true,
+    corruptPngRejectedOnce: true, oversizedPngPreservedText: true, pngAndMultiDrop: true,
     mouseClearFocused: true, recalledAfterRefusal: true, nextDraftIntact: true, expandedExactlyOnce: true}
 }
 

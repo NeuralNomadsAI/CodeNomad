@@ -118,7 +118,7 @@ pub fn composer_textarea(edit: &TextEdit, placeholder: &str, compact: bool) -> r
         .auto_grow(if compact { 1 } else { 4 }, 20)
         .max_height(max_inner)
 }
-pub fn build_composer(
+pub fn build_composer<S: 'static>(
     area: rune_kit::TextArea,
     trailing: El,
     focused: bool,
@@ -126,9 +126,9 @@ pub fn build_composer(
     compact: bool,
 ) -> El {
     // Deliberate shortcut: pinned rune_kit::TextArea::trailing shares its row direction with
-    // the inner editor and lacks TextArea::dir / dir_by_paragraph, so placing content_direction()
-    // outside TextArea flips Send with draft script. Upgrade to TextArea::trailing directly once
-    // Rune forwards per-paragraph direction to TextArea's inner text_input leaf.
+    // the inner editor and lacks both TextArea::dir and TextArea::dir_by_paragraph, so placing
+    // Direction::Auto outside TextArea flips Send with draft script and per-paragraph direction
+    // waits on upstream TextArea direction forwarding to its inner text_input leaf.
     let k = crate::field_kit(dark());
     let field = k
         .metrics
@@ -140,18 +140,19 @@ pub fn build_composer(
         .unwrap_or_else(|| rune_kit::TextAreaMetrics::kit(k))
         .padding;
     let inset = composer_focus_inset(k);
-    let editor = rune::col()
-        .content_direction()
+    let mut editor = rune::col()
+        .dir(rune::Direction::Auto)
         .grow(1.0)
         .shrink()
         .min_w(0.0)
         .child(
-            area.plain()
-                .disabled(disabled)
-                .build(k)
-                .fill(k.c.bg_base)
+            area.disabled(disabled)
+                .build(crate::kit::composer_inner_kit(dark()))
                 .key("composer"),
         );
+    if !disabled {
+        editor = editor.on_background_press_tx(|_: &mut S, tx| tx.focus("composer", false));
+    }
     let trailing = rune::row()
         .key("trailing")
         .self_end()
@@ -171,14 +172,6 @@ pub fn build_composer(
     }
     if disabled {
         return k.elevate(shell, k.elevation.input());
-    }
-    if let Some(highlight) = k.forced {
-        let shell = shell.border(1.0, k.c.text_base);
-        return if focused {
-            shell.outline(2.0, 2.0, highlight)
-        } else {
-            shell
-        };
     }
     if focused {
         shell.outline(field.focus_width, field.focus_offset, k.c.border_focus)
@@ -603,15 +596,18 @@ mod tests {
                         let send = button("Send", false, |_: &mut ComposerCase| {}).key("send");
                         let area = composer_textarea(&s.edit, "Prompt", s.compact)
                             .on_edit(|s: &mut ComposerCase| &mut s.edit);
-                        rune::col().w_full().h_full().child(
-                            rune::col().w_full().key("slot").child(build_composer(
+                        rune::col()
+                            .w_full()
+                            .h_full()
+                            .child(rune::col().w_full().key("slot").child(build_composer::<
+                                ComposerCase,
+                            >(
                                 area,
                                 send,
                                 s.edit.focused,
                                 false,
                                 s.compact,
-                            )),
-                        )
+                            )))
                     })
                 },
                 (640.0, 600.0),
@@ -626,13 +622,32 @@ mod tests {
                 .find(|node| node.key.as_deref() == Some("slot"))
                 .expect("outer composer slot")
                 .rect[3];
-            let box_h = rt
+            let box_rect = rt
                 .elements()
                 .into_iter()
                 .find(|node| node.key.as_deref() == Some("composer-box"))
                 .expect("painted composer")
-                .rect[3];
-            (outer, box_h)
+                .rect;
+            let composer = rt
+                .elements()
+                .into_iter()
+                .find(|node| node.key.as_deref() == Some("composer"))
+                .expect("inner composer");
+            assert_eq!(composer.fill, crate::field_kit(false).c.bg_base);
+            if !compact && text.is_empty() {
+                let x = box_rect[0] + 16.0;
+                let y = box_rect[1] + box_rect[3] - 4.0;
+                rt.pointer_down(x, y);
+                rt.pointer_up(x, y);
+                rt.frame(1.0 / 60.0);
+                assert!(
+                    rt.elements()
+                        .iter()
+                        .any(|node| node.focused && node.path.ends_with("/composer/scroll/input")),
+                    "clicking the lower interior of the 104px composer must focus the inner input"
+                );
+            }
+            (outer, box_rect[3])
         };
         let overflow = (0..40)
             .map(|i| format!("line {i}"))

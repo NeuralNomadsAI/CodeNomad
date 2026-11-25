@@ -301,8 +301,6 @@ impl Cache {
             s.screen.show_chat();
         }
         s.input_scope = self.input_scope;
-        #[cfg(target_arch = "wasm32")]
-        s.rotate_composer_input();
         s.status_permissions = self.status_permissions;
         s.status_usage = self.status_usage;
     }

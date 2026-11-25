@@ -12,6 +12,8 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         if s.git.scene {
             return crate::probes::git_scene::view(s);
         }
+        #[cfg(target_arch = "wasm32")]
+        platform::device_picker::sync_web_input_fence(s);
         let base = shell::view(s, cx, chat::view::chat_view);
         let mut layer = Vec::new();
         if !s.screen.is_launcher() {

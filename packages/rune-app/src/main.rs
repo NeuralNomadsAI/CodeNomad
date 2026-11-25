@@ -66,7 +66,6 @@ struct State {
     #[cfg(not(target_arch = "wasm32"))]
     direct_authentication: chat::authentication::Recovery,
     input_scope: std::rc::Rc<()>,
-    #[cfg(target_arch = "wasm32")]
     web_composer_input_epoch: u64,
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
@@ -130,7 +129,6 @@ fn init() -> State {
         #[cfg(not(target_arch = "wasm32"))]
         direct_authentication: Default::default(),
         input_scope: std::rc::Rc::new(()),
-        #[cfg(target_arch = "wasm32")]
         web_composer_input_epoch: 0,
         rejected_edit: TextEdit::new(""),
         workspace: None,

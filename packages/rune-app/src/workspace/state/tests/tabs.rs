@@ -635,3 +635,54 @@ fn closing_active_or_cached_tab_keeps_a_draft_after_its_reader_closed() {
         "unsaved"
     );
 }
+
+#[test]
+fn polling_and_hidden_reconnect_preserve_composer_input_epoch_until_tab_switch() {
+    let mut s = init();
+    s.phase = Phase::Ready;
+    s.draft = TextEdit::new("Active draft");
+    let mut ui = Ui::new();
+    ui.ready = true;
+    let mut hidden = init();
+    hidden.phase = Phase::Ready;
+    let (out, incoming) = bounded(4);
+    hidden.incoming = Some(incoming);
+    drop(out);
+    let mut second = entry("tab-1".into(), Tab::Blank);
+    second.cache = Some(Cache::take(&mut hidden));
+    ui.entries.push(second);
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    rt.poll = Some(crate::poll);
+    rt.frame(0.0);
+    let (x, y) = rt.find("composer").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.state.draft.focused);
+    let initial_epoch = rt.state.web_composer_input_epoch;
+    let initial_scope = rt.state.input_scope.clone();
+    for step in 1..=6 {
+        rt.frame(0.02 * step as f64);
+    }
+    assert_eq!(
+        rt.state.web_composer_input_epoch, initial_epoch,
+        "routine workspace polling and hidden-tab state changes must not rotate the visible composer epoch"
+    );
+    assert!(rt.state.current_scope(&initial_scope));
+    assert!(rt.state.draft.focused);
+    assert_eq!(rt.state.draft.text, "Active draft");
+
+    rt.update(|s, tx| select(s, "tab-1", tx));
+    let epoch_b = rt.state.web_composer_input_epoch;
+    assert_ne!(
+        epoch_b, initial_epoch,
+        "switching to another tab must rotate the composer epoch"
+    );
+    rt.update(|s, tx| select(s, "tab-0", tx));
+    let epoch_a2 = rt.state.web_composer_input_epoch;
+    assert_ne!(
+        epoch_a2, epoch_b,
+        "switching back to the original tab must rotate the composer epoch again"
+    );
+}

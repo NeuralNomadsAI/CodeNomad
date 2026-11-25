@@ -79,6 +79,8 @@ pub fn enqueue(s: &mut State, offers: impl IntoIterator<Item = Offer>) {
 
 pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     if !available(s) {
+        #[cfg(target_arch = "wasm32")]
+        platform::device_picker::discard_pending_drops();
         if s.composer.device.file_work() {
             s.composer.device.cancel();
             return true;
@@ -86,6 +88,14 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         return false;
     }
     let mut changed = false;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let drops = platform::device_picker::take_pending_drops(s);
+        if !drops.is_empty() {
+            enqueue(s, drops);
+            changed = true;
+        }
+    }
     #[cfg(target_arch = "wasm32")]
     if let Some(offers) = s
         .composer

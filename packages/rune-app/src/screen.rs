@@ -83,13 +83,12 @@ impl State {
     pub fn renew_scope(&mut self) {
         self.input_scope = Rc::new(());
         self.composer.menu = Default::default();
-        #[cfg(target_arch = "wasm32")]
         self.rotate_composer_input();
     }
-    #[cfg(target_arch = "wasm32")]
     pub fn rotate_composer_input(&mut self) {
         // The web clipboard binds deferred images and dropped files to the focused field's epoch.
         self.web_composer_input_epoch = self.web_composer_input_epoch.wrapping_add(1);
+        #[cfg(target_arch = "wasm32")]
         crate::platform::device_picker::set_composer_epoch(self.web_composer_input_epoch);
     }
     pub fn current_scope(&self, scope: &Rc<()>) -> bool {

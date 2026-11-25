@@ -1,6 +1,7 @@
 use super::{Cache, State, Tx, Ui, drafts, notification};
 
 pub(super) fn poll_cached(s: &mut State, ui: &mut Ui, now: Option<f64>, tx: &mut Tx) -> bool {
+    let active_composer_epoch = s.web_composer_input_epoch;
     let active = Cache::take(s);
     let active_has_healthy_stream = active.has_healthy_conversation_stream();
     let mut changed = false;
@@ -39,6 +40,9 @@ pub(super) fn poll_cached(s: &mut State, ui: &mut Ui, now: Option<f64>, tx: &mut
         }
     }
     active.apply(s);
+    s.web_composer_input_epoch = active_composer_epoch;
+    #[cfg(target_arch = "wasm32")]
+    crate::platform::device_picker::set_composer_epoch(active_composer_epoch);
     if drafts_changed {
         ui.changed();
     }
