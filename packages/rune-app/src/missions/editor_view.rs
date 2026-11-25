@@ -163,8 +163,7 @@ pub(crate) fn view<S: 'static>(
         .child(
             layout::hinted_multiline_textarea(
                 &form.objective,
-                4,
-                12,
+                layout::MultilineSize::Primary,
                 t("missions.create.objectivePlaceholder"),
             )
             .label(obj_label)
@@ -231,7 +230,7 @@ pub(crate) fn view<S: 'static>(
     content = content
         .child(text(notes_label).text_role(TextRole::Small))
         .child(
-            layout::multiline_textarea(&form.notes, 3, 10)
+            layout::multiline_textarea(&form.notes, layout::MultilineSize::Secondary)
                 .label(notes_label)
                 .disabled(locked)
                 .on_edit(move |s: &mut S| {

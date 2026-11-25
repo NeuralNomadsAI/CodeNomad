@@ -130,6 +130,7 @@ fn a_changed_order_parks_retry_at_the_first_window() {
             kind,
             read: Read::More,
             serial: 1,
+            backend: panel.backend.clone(),
             page: Err(DirectoryChanged.into()),
         })
         .unwrap();
@@ -154,6 +155,7 @@ fn hide_cancels_reads_and_rejects_stale_completions() {
             kind: Kind::Summaries,
             read: Read::Refresh,
             serial: 3,
+            backend: panel.backend.clone(),
             page: Ok(page(
                 "project",
                 "old",

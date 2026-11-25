@@ -627,7 +627,7 @@ impl Backend {
         mission: &Value,
     ) -> DocumentSync {
         let current_objective = match self
-            .read_mission_text_field(project_id, mission_id, mission, "objective", true)
+            .read_mission_text_field(project_id, mission_id, mission, "objective")
             .await
         {
             EditorBodyOutcome::Ready(text) => text,
@@ -637,14 +637,13 @@ impl Backend {
             }
         };
         let current_notes = match self
-            .read_mission_text_field(project_id, mission_id, mission, "notes", false)
+            .read_mission_optional_text_field(project_id, mission_id, mission, "notes")
             .await
         {
-            EditorBodyOutcome::Ready(text) => text,
-            EditorBodyOutcome::AuthExpired => return DocumentSync::AuthExpired,
-            EditorBodyOutcome::Changed | EditorBodyOutcome::Unavailable => {
-                return DocumentSync::Unconfirmed;
-            }
+            OptionalTextField::Present(text) => Some(text),
+            OptionalTextField::Absent => None,
+            OptionalTextField::AuthExpired => return DocumentSync::AuthExpired,
+            OptionalTextField::Unconfirmed => return DocumentSync::Unconfirmed,
         };
         let Ok(url) = missions_url(self, &[mission_id, "schedule"]) else {
             return DocumentSync::Unconfirmed;
@@ -663,10 +662,18 @@ impl Backend {
             return DocumentSync::Unconfirmed;
         };
         let doc = &body["document"];
+        let Some(config) = doc["configuration"].as_object() else {
+            return DocumentSync::Unconfirmed;
+        };
+        let doc_notes = match config.get("notes") {
+            None => None,
+            Some(Value::String(text)) => Some(text.as_str()),
+            Some(_) => return DocumentSync::Unconfirmed,
+        };
         if doc.is_object()
             && doc["id"].as_str() == Some(mission_id)
-            && doc["configuration"]["objective"].as_str() == Some(current_objective.as_str())
-            && doc["configuration"]["notes"].as_str().unwrap_or("") == current_notes.as_str()
+            && config.get("objective").and_then(Value::as_str) == Some(current_objective.as_str())
+            && doc_notes == current_notes.as_deref()
         {
             DocumentSync::Synced
         } else {
@@ -680,7 +687,6 @@ impl Backend {
         mission_id: &str,
         mission: &Value,
         field: &str,
-        required: bool,
     ) -> EditorBodyOutcome {
         if let Some(inline) = mission.get(field).and_then(Value::as_str) {
             return EditorBodyOutcome::Ready(inline.to_owned());
@@ -698,15 +704,53 @@ impl Backend {
                 )
                 .await;
         }
-        if required {
-            EditorBodyOutcome::Unavailable
-        } else {
-            self.confirm_absent_editor_body(
-                project_id,
-                mission_id,
-                &ContentSelector::mission(field),
-            )
+        EditorBodyOutcome::Unavailable
+    }
+
+    async fn read_mission_optional_text_field(
+        &self,
+        project_id: &str,
+        mission_id: &str,
+        mission: &Value,
+        field: &str,
+    ) -> OptionalTextField {
+        if let Some(value) = mission.get(field) {
+            if let Some(inline) = value.as_str() {
+                return OptionalTextField::Present(inline.to_owned());
+            }
+            if !value.is_null() {
+                return OptionalTextField::Unconfirmed;
+            }
+        }
+        if let Some(raw_desc) = mission.get("bodies").and_then(|b| b.get(field))
+            && !raw_desc.is_null()
+        {
+            let Ok(desc) = serde_json::from_value::<BodyDescriptor>(raw_desc.clone()) else {
+                return OptionalTextField::Unconfirmed;
+            };
+            return match self
+                .read_editor_body(
+                    project_id,
+                    mission_id,
+                    &ContentSelector::mission(field),
+                    &desc,
+                )
+                .await
+            {
+                EditorBodyOutcome::Ready(text) => OptionalTextField::Present(text),
+                EditorBodyOutcome::AuthExpired => OptionalTextField::AuthExpired,
+                EditorBodyOutcome::Changed | EditorBodyOutcome::Unavailable => {
+                    OptionalTextField::Unconfirmed
+                }
+            };
+        }
+        match self
+            .confirm_absent_editor_body(project_id, mission_id, &ContentSelector::mission(field))
             .await
+        {
+            EditorBodyOutcome::Ready(text) if text.is_empty() => OptionalTextField::Absent,
+            EditorBodyOutcome::AuthExpired => OptionalTextField::AuthExpired,
+            _ => OptionalTextField::Unconfirmed,
         }
     }
 
@@ -828,6 +872,13 @@ enum ChangeAfter {
 
 enum DocumentSync {
     Synced,
+    Unconfirmed,
+    AuthExpired,
+}
+
+enum OptionalTextField {
+    Present(String),
+    Absent,
     Unconfirmed,
     AuthExpired,
 }

@@ -27,11 +27,11 @@ pub use panel_state::{
 };
 pub(crate) use panel_state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
-    has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_reader,
-    mission_observation_project, mission_panel, mission_reader, mission_supported,
-    missions_composing, reconcile_detached_online, restore_mission_reader_focus, right_panel_tab,
-    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_mission_briefing,
-    suspend_missions,
+    has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_editor,
+    mission_has_reader, mission_observation_project, mission_panel, mission_reader,
+    mission_supported, missions_composing, reconcile_detached_online, restore_mission_reader_focus,
+    right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
+    suspend_mission_briefing, suspend_missions,
 };
 pub use polling::{file_draft_status, poll, poll_file_drafts, status};
 pub use strip::strip;
@@ -46,6 +46,25 @@ use crate::{
 use codenomad_client::same_server_path as same_folder;
 use rune::{Tx, edit::TextEdit};
 use std::collections::HashSet;
+
+#[cfg(test)]
+pub(crate) fn test_state_with_mission_panel(
+    panel: crate::missions::Panel,
+    mission_editor: crate::missions::EditorHolds,
+) -> State {
+    let mut state = crate::init();
+    crate::gallery::shell::fixture(&mut state);
+    let project = state.screen.launcher().unwrap().project.clone().unwrap();
+    let mut ui = Ui::new();
+    ui.mission_editor = mission_editor;
+    state.workspace = Some(ui);
+    opened(&mut state, &project);
+    if let Some(ui) = state.workspace.as_mut() {
+        let active = ui.active;
+        ui.entries[active].missions = Some(panel);
+    }
+    state
+}
 
 pub(super) struct Entry {
     key: String,

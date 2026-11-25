@@ -1,6 +1,7 @@
 use super::{
     directory::{Kind, Panel, title},
     editor::EditorGesture,
+    editor_holds::EditorHolds,
     reader::ReaderTarget,
     task_rows::OpenTask,
 };
@@ -43,11 +44,13 @@ impl<S> Scoped<S> {
 /// Panel content only. The Shell owns its occurrence, visibility and mounting.
 #[cfg(test)]
 pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
-    panel_body(ui, owner, rune::el(), None, |_, _| {}, |_, _, _| {})
+    let holds = EditorHolds::default();
+    panel_body(ui, &holds, owner, rune::el(), None, |_, _| {}, |_, _, _| {})
 }
 
 pub(crate) fn panel_body<S: 'static>(
     ui: &Panel,
+    holds: &EditorHolds,
     owner: Owner<S>,
     actions: El,
     open_task: Option<OpenTask<S>>,
@@ -132,29 +135,56 @@ pub(crate) fn panel_body<S: 'static>(
                 }
             }));
         }
-        let edit_btn = if ui.can_edit_selected() {
-            layout::button_tx(
-                t("missionsPanel.picker.edit"),
-                false,
-                move |state: &mut S, tx| {
-                    let back = tx.focused().unwrap_or("mission-edit").to_owned();
-                    editor_act(
-                        state,
-                        EditorGesture::OpenEdit {
-                            return_focus: Some(back),
-                        },
-                        tx,
-                    );
-                },
-            )
-            .key("mission-edit")
+        let mut edit_row = layout::action_row();
+        if ui.can_edit_selected() {
+            edit_row = edit_row.child(
+                layout::button_tx(
+                    t("missionsPanel.picker.edit"),
+                    false,
+                    move |state: &mut S, tx| {
+                        let back = tx.focused().unwrap_or("mission-edit").to_owned();
+                        editor_act(
+                            state,
+                            EditorGesture::OpenEdit {
+                                return_focus: Some(back),
+                            },
+                            tx,
+                        );
+                    },
+                )
+                .key("mission-edit"),
+            );
         } else {
-            layout::focusable_disabled_button(t("missionsPanel.picker.edit")).key("mission-edit")
-        };
-        body = body
-            .child(layout::action_row().child(edit_btn))
-            .child(actions)
-            .child(detail(ui, scoped.clone(), open_task, on_reader_open));
+            edit_row = edit_row.child(
+                layout::focusable_disabled_button(t("missionsPanel.picker.edit"))
+                    .key("mission-edit"),
+            );
+            if ui.selected_edit_hold(holds).is_some() {
+                edit_row = edit_row.child(
+                    layout::button_tx(
+                        t("missions.scheduling.readReceipt"),
+                        false,
+                        move |state: &mut S, tx| {
+                            let back = tx.focused().unwrap_or("mission-edit-reconcile").to_owned();
+                            editor_act(
+                                state,
+                                EditorGesture::OpenEdit {
+                                    return_focus: Some(back),
+                                },
+                                tx,
+                            );
+                        },
+                    )
+                    .key("mission-edit-reconcile"),
+                );
+            }
+        }
+        body = body.child(edit_row).child(actions).child(detail(
+            ui,
+            scoped.clone(),
+            open_task,
+            on_reader_open,
+        ));
     }
     if !ui.cleanups.is_empty() {
         body = body.child(

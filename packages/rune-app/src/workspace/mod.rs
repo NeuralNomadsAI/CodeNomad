@@ -17,6 +17,8 @@ pub(crate) use state::native_window_store;
 pub(crate) use state::poll_cached_notifications;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use state::set_files_tab;
+#[cfg(test)]
+pub(crate) use state::test_state_with_mission_panel;
 pub(crate) use state::{
     Activation, can_switch_for_notification, check_notification, notification_target,
     observes_notification, open_notification, open_session_tab_target, owns_notification,
@@ -32,11 +34,11 @@ pub(crate) use state::{
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, has_detached_panels,
-    has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_reader,
-    mission_observation_project, mission_panel, mission_reader, mission_supported,
-    missions_composing, reconcile_detached_online, restore_mission_reader_focus, right_panel_tab,
-    set_detached_online, set_right_panel_tab, stop_unlisted_detached, suspend_mission_briefing,
-    suspend_missions,
+    has_unopened_detached_panels, mission_confirmation, mission_event, mission_has_editor,
+    mission_has_reader, mission_observation_project, mission_panel, mission_reader,
+    mission_supported, missions_composing, reconcile_detached_online, restore_mission_reader_focus,
+    right_panel_tab, set_detached_online, set_right_panel_tab, stop_unlisted_detached,
+    suspend_mission_briefing, suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;

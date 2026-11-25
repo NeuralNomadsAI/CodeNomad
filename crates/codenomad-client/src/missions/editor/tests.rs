@@ -563,6 +563,140 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             EditReceiptOutcome::Unconfirmed
         );
 
+        // Document notes presence vs empty string must match strictly:
+        // mission.notes == "" with absent doc.configuration.notes stays Unconfirmed.
+        let empty_notes_req =
+            UpdateMissionRequest::with_request_id("upd-empty".into(), 2, "New objective", "")
+                .unwrap();
+        let mut empty_doc_mission = sample_mission(3, "running");
+        empty_doc_mission["document"] =
+            json!({"id": "msn_alpha123", "kind": "one-time", "revision": 2});
+        empty_doc_mission["objective"] = json!("New objective");
+        empty_doc_mission["notes"] = json!("");
+        empty_doc_mission["history"] = json!([{
+            "revision": 3,
+            "source": "user",
+            "requestID": "upd-empty",
+            "objective": { "before": "Old", "after": "New objective" },
+            "notes": { "before": "Old notes", "after": "" }
+        }]);
+        for (doc_config, expected) in [
+            (
+                json!({ "objective": "New objective" }),
+                EditReceiptOutcome::Unconfirmed,
+            ),
+            (
+                json!({ "objective": "New objective", "notes": "" }),
+                EditReceiptOutcome::Applied {
+                    mission_id: "msn_alpha123".into(),
+                    revision: 3,
+                },
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let m = empty_doc_mission.clone();
+            let _server = tokio::spawn(async move {
+                for idx in 0..2 {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let _ = read_http_request(&mut socket).await;
+                    let reply_body = if idx == 0 {
+                        json!({"available": true, "mission": m}).to_string()
+                    } else {
+                        json!({
+                            "pending": false,
+                            "document": {
+                                "id": "msn_alpha123",
+                                "configuration": doc_config
+                            }
+                        })
+                        .to_string()
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply_body}",
+                        reply_body.len()
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                }
+            });
+            assert_eq!(
+                backend(format!("http://{addr}/"))
+                    .reconcile_mission_edit(&t, &empty_notes_req)
+                    .await,
+                expected
+            );
+        }
+
+        // Absent mission.notes (confirmed via content-not-found) with doc.configuration.notes == ""
+        // stays Unconfirmed, while absent doc.configuration.notes confirms Applied.
+        let mut absent_doc_mission = sample_mission(3, "running");
+        absent_doc_mission["document"] =
+            json!({"id": "msn_alpha123", "kind": "one-time", "revision": 2});
+        absent_doc_mission["objective"] = json!("New objective");
+        absent_doc_mission["history"] = json!([{
+            "revision": 3,
+            "source": "user",
+            "requestID": "upd-empty",
+            "objective": { "before": "Old", "after": "New objective" },
+            "notes": { "before": "Old notes", "after": "" }
+        }]);
+        for (doc_config, expected) in [
+            (
+                json!({ "objective": "New objective", "notes": "" }),
+                EditReceiptOutcome::Unconfirmed,
+            ),
+            (
+                json!({ "objective": "New objective" }),
+                EditReceiptOutcome::Applied {
+                    mission_id: "msn_alpha123".into(),
+                    revision: 3,
+                },
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let m = absent_doc_mission.clone();
+            let _server = tokio::spawn(async move {
+                for idx in 0..3 {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let raw = read_http_request(&mut socket).await;
+                    let reply_body = if idx == 0 {
+                        json!({"available": true, "mission": m}).to_string()
+                    } else if raw.contains("/content?") {
+                        json!({
+                            "available": true,
+                            "version": 1,
+                            "projectID": "prj_1",
+                            "missionID": "msn_alpha123",
+                            "revision": 3,
+                            "refused": "content-not-found"
+                        })
+                        .to_string()
+                    } else {
+                        json!({
+                            "pending": false,
+                            "document": {
+                                "id": "msn_alpha123",
+                                "configuration": doc_config
+                            }
+                        })
+                        .to_string()
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply_body}",
+                        reply_body.len()
+                    );
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                }
+            });
+            assert_eq!(
+                backend(format!("http://{addr}/"))
+                    .reconcile_mission_edit(&t, &empty_notes_req)
+                    .await,
+                expected
+            );
+        }
+
         // Escaped before + after exceeding 6 * MISSION_TEXT_MAX is accepted via /content.
         let before_ctrl = "\u{0007}".repeat(MISSION_TEXT_MAX);
         let after_ctrl = "\u{0008}".repeat(MISSION_TEXT_MAX);

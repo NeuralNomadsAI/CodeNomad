@@ -108,6 +108,7 @@ pub(crate) fn mission_panel(s: &State) -> El {
             ));
         missions::panel_body(
             panel,
+            &ui.mission_editor,
             mission_edit,
             actions,
             Some(std::rc::Rc::new(open_mission_conversation)),
@@ -120,6 +121,11 @@ pub(crate) fn mission_panel(s: &State) -> El {
 pub(crate) fn mission_has_reader(s: &State) -> bool {
     !crate::shell::launcher_replaces_project(s)
         && mission_owner(s).is_some_and(missions::Panel::has_surface)
+}
+
+pub(crate) fn mission_has_editor(s: &State) -> bool {
+    !crate::shell::launcher_replaces_project(s)
+        && mission_owner(s).is_some_and(missions::Panel::has_editor)
 }
 
 pub(crate) fn close_mission_reader(s: &mut State) -> Option<String> {
@@ -142,6 +148,10 @@ pub(crate) fn restore_mission_reader_focus(s: &State, back: Option<String>, tx: 
             key == "missions-create"
                 || mission_owner(s).is_some_and(|panel| {
                     (key == "mission-edit" && panel.selected.is_some())
+                        || (key == "mission-edit-reconcile"
+                            && s.workspace.as_ref().is_some_and(|ui| {
+                                panel.selected_edit_hold(&ui.mission_editor).is_some()
+                            }))
                         || panel.has_eye_trigger(key)
                 })
         });
@@ -527,6 +537,11 @@ pub(super) fn poll_missions(
             if visible || panel.has_surface() {
                 panel.refresh_when_due(ui.clock, tx);
             }
+            if panel.take_editor_auto_start_revoked() {
+                ui.mission_editor
+                    .revoke_auto_start_for_occurrence(&entry.key);
+            }
+            changed |= panel.observe_editor_detail(&ui.mission_editor);
             changed |= panel.poll();
             changed |= panel.observe_editor_detail(&ui.mission_editor);
             extend_unique_auth(&mut auth_expired, panel.drain_auth_expired());

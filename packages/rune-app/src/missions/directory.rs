@@ -1,7 +1,9 @@
 use super::{
     detail::{Detail, read_window},
     editor::{Editor, EditorGesture},
-    editor_holds::{ActiveEditor, CreationScopeKey, EditorEvent, EditorHolds},
+    editor_holds::{
+        ActiveEditor, CreationScopeKey, EditHoldKey, EditHoldView, EditorEvent, EditorHolds,
+    },
     observation::Observation,
     reader::Reader,
 };
@@ -41,6 +43,7 @@ struct Completion {
     kind: Kind,
     read: Read,
     serial: u64,
+    backend: Backend,
     page: Result<DirectoryPage>,
 }
 
@@ -73,6 +76,9 @@ pub(crate) struct Panel {
     pub(super) editor: Editor,
     editor_saved_focus: Option<String>,
     reader_suspended: bool,
+    editor_suspended: bool,
+    editor_auto_start_revoked: bool,
+    auth_expired: Option<Backend>,
 }
 
 const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
@@ -114,6 +120,9 @@ impl Panel {
             editor: Editor::default(),
             editor_saved_focus: None,
             reader_suspended: false,
+            editor_suspended: false,
+            editor_auto_start_revoked: false,
+            auth_expired: None,
         }
     }
 
@@ -165,9 +174,17 @@ impl Panel {
     }
 
     pub(crate) fn rebind_editor(&mut self, holds: &mut EditorHolds) {
+        self.editor_suspended = false;
         let scope = self.creation_scope_key();
         self.editor
             .rebind(&scope, &self.backend, holds, &self.reads, &self.wake);
+        if self
+            .editor
+            .resume(&self.backend, holds, &self.reads, &self.wake)
+        {
+            let since = self.detail.request_fresh_refresh();
+            self.editor.set_reopen_since(since);
+        }
     }
 
     pub(crate) fn has_reader(&self) -> bool {
@@ -189,9 +206,22 @@ impl Panel {
     ) {
         self.reader.close();
         self.detail.cancel_lookup();
+        self.editor_suspended = false;
         let scope = self.creation_scope_key();
         self.editor.open_create(&scope, holds, return_focus);
         (self.wake)();
+    }
+
+    pub(crate) fn selected_edit_hold(&self, holds: &EditorHolds) -> Option<EditHoldView> {
+        let mission_id = self.selected.as_deref()?;
+        let project = self.project.as_deref().or_else(|| {
+            self.detail
+                .snapshot
+                .as_ref()
+                .map(|s| s.header.root.project_id())
+        })?;
+        let key = EditHoldKey::new(&self.backend, project, mission_id);
+        holds.edit(&key)
     }
 
     pub(crate) fn open_edit_editor(
@@ -199,36 +229,60 @@ impl Panel {
         holds: &mut EditorHolds,
         return_focus: Option<String>,
     ) -> bool {
-        if !self.detail.authoritative() {
-            return false;
-        }
-        let editable = self
-            .detail
-            .snapshot
-            .as_ref()
-            .is_some_and(|snapshot| snapshot.header.root.editable());
-        if !editable {
+        let hold = self.selected_edit_hold(holds);
+        let editable = self.detail.authoritative()
+            && self
+                .detail
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.header.root.editable());
+        if !editable && hold.is_none() {
             return false;
         }
         self.reader.close();
         self.detail.cancel_lookup();
+        self.editor_suspended = false;
         let scope = self.creation_scope_key();
-        let Some(snapshot) = self.detail.snapshot.as_ref() else {
+        if let Some(snapshot) = self.detail.snapshot.as_ref()
+            && self.selected.as_deref() == Some(snapshot.header.root.id.as_str())
+        {
+            let opened = self.editor.open_edit(
+                &snapshot.header,
+                &scope,
+                &self.backend,
+                holds,
+                &self.reads,
+                &self.wake,
+                return_focus,
+            );
+            if opened {
+                (self.wake)();
+            }
+            return opened;
+        }
+        let Some(hold) = hold else {
             return false;
         };
-        let opened = self.editor.open_edit(
-            &snapshot.header,
+        let summary = self
+            .summaries
+            .iter()
+            .find(|row| row.id == hold.target.mission);
+        let title = summary
+            .and_then(|row| row.title.clone())
+            .unwrap_or_default();
+        let template = codenomad_client::missions::Template::Custom;
+        let run_state = summary.and_then(|row| row.run_state);
+        self.editor.open_edit_hold_only(
+            &hold,
+            title,
+            template,
+            run_state,
             &scope,
-            &self.backend,
             holds,
-            &self.reads,
-            &self.wake,
             return_focus,
         );
-        if opened {
-            (self.wake)();
-        }
-        opened
+        (self.wake)();
+        true
     }
 
     pub(crate) fn can_edit_selected(&self) -> bool {
@@ -311,32 +365,47 @@ impl Panel {
     }
 
     pub(crate) fn reopen_editor(&mut self, holds: &EditorHolds) {
-        if self
-            .editor
-            .begin_reopen(&self.backend, holds, self.detail.map_reads)
-        {
+        if self.editor.begin_reopen(&self.backend, holds, 0) {
             if let Some(mid) = self.editor.editing_mission_id().map(str::to_owned)
                 && self.selected.as_deref() != Some(mid.as_str())
             {
                 self.selected = Some(mid);
                 self.detail.clear();
             }
-            self.detail.refresh();
+            let since = self.detail.request_fresh_refresh();
+            self.editor.set_reopen_since(since);
             self.refresh();
             (self.wake)();
         }
     }
 
     pub(crate) fn observe_editor_detail(&mut self, holds: &EditorHolds) -> bool {
-        self.editor.observe_detail(
-            self.detail.snapshot.as_ref(),
-            self.detail.map_reads,
-            self.detail.failed,
-            &self.backend,
-            holds,
-            &self.reads,
-            &self.wake,
-        )
+        let mut changed = false;
+        if self.editor_suspended && self.editor.is_open() {
+            self.editor_suspended = false;
+            if self
+                .editor
+                .resume(&self.backend, holds, &self.reads, &self.wake)
+            {
+                let since = self.detail.request_fresh_refresh();
+                self.editor.set_reopen_since(since);
+            }
+            changed = true;
+        }
+        changed
+            | self.editor.observe_detail(
+                self.detail.snapshot.as_ref(),
+                self.detail.refresh_completed,
+                self.detail.refresh_failed,
+                &self.backend,
+                holds,
+                &self.reads,
+                &self.wake,
+            )
+    }
+
+    pub(crate) fn take_editor_auto_start_revoked(&mut self) -> bool {
+        std::mem::take(&mut self.editor_auto_start_revoked)
     }
 
     pub(crate) fn apply_editor_events(&mut self, occurrence: &str, events: &[EditorEvent]) -> bool {
@@ -374,6 +443,7 @@ impl Panel {
 
     pub(crate) fn close_reader(&mut self) -> Option<String> {
         let back = if self.editor.is_open() {
+            self.editor_suspended = false;
             self.editor.close()
         } else {
             let back = self.reader.take_return_focus();
@@ -391,6 +461,7 @@ impl Panel {
 
     pub(crate) fn suspend(&mut self) {
         self.reader_suspended = self.reader.is_open();
+        self.editor_suspended = self.editor.is_open();
         self.show(false);
         self.refresh_due = None;
         self.detail.cancel();
@@ -402,6 +473,7 @@ impl Panel {
     pub(crate) fn drain_auth_expired(&mut self) -> Vec<Backend> {
         let mut expired = Vec::new();
         for candidate in [
+            self.auth_expired.take(),
             self.reader.take_auth_expired(),
             self.detail.take_auth_expired(),
             self.editor.take_auth_expired(),
@@ -457,7 +529,11 @@ impl Panel {
             self.detail.cancel_lookup();
             false
         } else {
-            self.editor.close();
+            if self.editor.is_open() {
+                self.editor_suspended = false;
+                self.editor_auto_start_revoked = true;
+                self.editor.close();
+            }
             if self.selected.as_deref() != Some(id) {
                 self.select(id);
             }
@@ -473,7 +549,11 @@ impl Panel {
             self.detail.cancel_lookup();
             false
         } else {
-            self.editor.close();
+            if self.editor.is_open() {
+                self.editor_suspended = false;
+                self.editor_auto_start_revoked = true;
+                self.editor.close();
+            }
             if self.selected.as_deref() != Some(mission_id) {
                 self.select(mission_id);
             }
@@ -701,6 +781,7 @@ impl Panel {
         let (cancel, cancelled) = bounded(1);
         lane.active = Some((serial, cancel));
         let reads = self.reads.clone();
+        let backend = self.backend.clone();
         let out = self.out.clone();
         let wake = self.wake.clone();
         platform::spawn(async move {
@@ -710,6 +791,7 @@ impl Panel {
                         kind,
                         read,
                         serial,
+                        backend,
                         page,
                     })
                     .await
@@ -764,10 +846,18 @@ impl Panel {
                         self.start(done.kind, Read::Refresh);
                     }
                 }
-                Err(error) if error.is::<DirectoryChanged>() => {
-                    self.lanes[done.kind as usize].failed = Some(Read::Refresh);
+                Err(error) => {
+                    if codenomad_client::missions::is_auth_expired(&error) {
+                        self.auth_expired = Some(done.backend);
+                    }
+                    self.lanes[done.kind as usize].failed =
+                        Some(if error.is::<DirectoryChanged>() {
+                            Read::Refresh
+                        } else {
+                            done.read
+                        });
                 }
-                _ => self.lanes[done.kind as usize].failed = Some(done.read),
+                Ok(false) => self.lanes[done.kind as usize].failed = Some(done.read),
             }
         }
         if self.reader_suspended && self.reader.is_open() {
@@ -802,7 +892,11 @@ impl Panel {
                     &self.wake,
                 );
             }
-        } else if self.reader.is_open()
+        } else if let Some(target_id) = self
+            .reader
+            .target()
+            .map(|t| t.mission_id().to_owned())
+            .or_else(|| self.editor.editing_mission_id().map(str::to_owned))
             && let Some(project) = self
                 .project
                 .as_deref()
@@ -813,7 +907,6 @@ impl Panel {
                         .map(|s| s.header.root.project_id())
                 })
                 .map(str::to_owned)
-            && let Some(target_id) = self.reader.target().map(|t| t.mission_id().to_owned())
         {
             let revision = self
                 .summaries
@@ -1048,11 +1141,9 @@ impl Panel {
 
     pub(super) fn select(&mut self, id: &str) {
         if self.selected.as_deref() != Some(id) && self.summaries.iter().any(|row| row.id == id) {
-            if self
-                .editor
-                .editing_mission_id()
-                .is_some_and(|mid| mid != id)
-            {
+            if self.editor.is_open() && self.editor.editing_mission_id() != Some(id) {
+                self.editor_suspended = false;
+                self.editor_auto_start_revoked = true;
                 self.editor.close();
             }
             self.control_fields.cancel();

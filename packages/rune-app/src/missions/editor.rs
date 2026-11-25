@@ -66,6 +66,7 @@ pub(super) struct EditTarget {
     pub objective_body: Option<BodyDescriptor>,
     pub notes_body: Option<BodyDescriptor>,
     pub target: LifecycleTarget,
+    pub read_only: bool,
 }
 
 impl EditTarget {
@@ -82,6 +83,29 @@ impl EditTarget {
             objective_body: header.root.body("objective").cloned(),
             notes_body: header.root.body("notes").cloned(),
             target: header.lifecycle_target(),
+            read_only: !header.root.editable(),
+        }
+    }
+
+    pub(super) fn from_hold(
+        hold: &EditHoldView,
+        title: String,
+        template: Template,
+        run_state: Option<RunState>,
+    ) -> Self {
+        Self {
+            mission_id: hold.target.mission.clone(),
+            project_id: hold.target.project.clone(),
+            expected_revision: hold.request.expected_revision,
+            title,
+            excerpt: String::new(),
+            template,
+            task_mode: TaskMode::Native,
+            run_state,
+            objective_body: None,
+            notes_body: None,
+            target: hold.target.clone(),
+            read_only: true,
         }
     }
 
@@ -128,7 +152,7 @@ impl Form {
             notes: TextEdit::new(""),
             template: Template::Custom,
             task_mode: TaskMode::Native,
-            start_on_creation: true,
+            start_on_creation: false,
             prefill: PrefillState::Ready,
             edit: None,
             reopening: None,
@@ -236,7 +260,11 @@ impl Form {
         }
         match self.mode {
             Mode::Create => creation_hold.is_some(),
-            Mode::Edit => edit_hold.is_some() || self.prefill != PrefillState::Ready,
+            Mode::Edit => {
+                edit_hold.is_some()
+                    || self.prefill != PrefillState::Ready
+                    || self.edit.as_ref().is_some_and(|e| e.read_only)
+            }
         }
     }
 
@@ -435,14 +463,14 @@ impl Editor {
         wake: &Wake,
         return_focus: Option<String>,
     ) -> bool {
-        if !header.root.editable() {
+        let target = EditTarget::from_header(header);
+        let hold = holds.edit(&target.hold_key(backend));
+        if target.read_only && hold.is_none() {
             return false;
         }
         self.cancel_prefill();
         holds.revoke_auto_start_for_scope(scope);
         let generation = self.next_generation();
-        let target = EditTarget::from_header(header);
-        let hold = holds.edit(&target.hold_key(backend));
         self.form = Some(Form::new_edit(
             generation,
             target.clone(),
@@ -457,6 +485,24 @@ impl Editor {
         true
     }
 
+    pub(crate) fn open_edit_hold_only(
+        &mut self,
+        hold: &EditHoldView,
+        title: String,
+        template: Template,
+        run_state: Option<RunState>,
+        scope: &CreationScopeKey,
+        holds: &mut EditorHolds,
+        return_focus: Option<String>,
+    ) {
+        self.cancel_prefill();
+        holds.revoke_auto_start_for_scope(scope);
+        let generation = self.next_generation();
+        let target = EditTarget::from_hold(hold, title, template, run_state);
+        self.form = Some(Form::new_edit(generation, target, Some(hold), return_focus));
+        self.focus_initial = Some("mission-editor-close");
+    }
+
     pub(crate) fn close(&mut self) -> Option<String> {
         self.cancel_prefill();
         let _ = self.next_generation();
@@ -466,6 +512,50 @@ impl Editor {
 
     pub(crate) fn suspend(&mut self) {
         self.cancel_prefill();
+    }
+
+    /// Resumes any prefill or conflict-reopen interrupted by `suspend()` on the same connection.
+    /// Returns `true` when the caller must request a fresh detail refresh and pass its serial to `set_reopen_since`.
+    pub(crate) fn resume(
+        &mut self,
+        backend: &Backend,
+        holds: &EditorHolds,
+        reads: &Reads,
+        wake: &Wake,
+    ) -> bool {
+        if self.active_edit_hold(backend, holds).is_some() {
+            return false;
+        }
+        let Some(form) = self.form.as_ref() else {
+            return false;
+        };
+        if form.mode != Mode::Edit {
+            return false;
+        }
+        if form.reopening.is_some() && form.reopen_target.is_none() {
+            return true;
+        }
+        if self.prefill_flight.is_none() {
+            let restart = if let Some(target) = form.reopen_target.clone() {
+                Some(target)
+            } else if form.prefill == PrefillState::Loading {
+                form.edit.clone()
+            } else {
+                None
+            };
+            if let Some(target) = restart {
+                self.start_prefill(target, backend, reads, wake);
+            }
+        }
+        false
+    }
+
+    pub(super) fn set_reopen_since(&mut self, since_started: u64) {
+        if let Some(form) = &mut self.form
+            && form.reopening.is_some()
+        {
+            form.reopening = Some(since_started);
+        }
     }
 
     pub(crate) fn take_initial_focus(&mut self) -> Option<&'static str> {
@@ -519,14 +609,14 @@ impl Editor {
     pub(super) fn observe_detail(
         &mut self,
         snapshot: Option<&Snapshot>,
-        map_reads: u64,
-        detail_failed: bool,
+        refresh_completed: u64,
+        refresh_failed: u64,
         backend: &Backend,
         holds: &EditorHolds,
         reads: &Reads,
         wake: &Wake,
     ) -> bool {
-        let Some((since_reads, edit_id)) = self.form.as_ref().and_then(|form| {
+        let Some((since_started, edit_id)) = self.form.as_ref().and_then(|form| {
             (form.mode == Mode::Edit && form.reopen_target.is_none())
                 .then(|| Some((form.reopening?, form.edit.as_ref()?.mission_id.clone())))
                 .flatten()
@@ -539,14 +629,14 @@ impl Editor {
             }
             return true;
         }
-        if detail_failed {
+        if refresh_failed > since_started {
             if let Some(form) = &mut self.form {
                 form.reopening = None;
                 form.error = Some("missions.control.reader.unavailable");
             }
             return true;
         }
-        if map_reads > since_reads
+        if refresh_completed > since_started
             && let Some(snap) = snapshot
             && snap.header.root.id == edit_id
         {

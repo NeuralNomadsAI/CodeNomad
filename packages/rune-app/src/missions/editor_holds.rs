@@ -1,6 +1,8 @@
 //! Window-scoped registry of in-flight and uncertain one-time Mission create/edit
-//! operations. Survives closing the editor, switching to another Mission, or closing
-//! and reopening a project tab.
+//! operations. Creation holds survive closing the editor, switching Missions, or
+//! reconnecting within the same workspace occurrence (matching the server's
+//! workspace-scoped creation receipt route). Edit holds survive across Missions and
+//! tab close/reopen on the same server and project.
 use super::{
     editor::Mode,
     lifecycle::{Lifecycle, Source as LifecycleSource},
@@ -28,6 +30,7 @@ pub(crate) enum HoldState {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct CreationScopeKey {
     server: String,
+    workspace: String,
     scope: String,
 }
 
@@ -35,6 +38,7 @@ impl CreationScopeKey {
     pub(crate) fn new(backend: &Backend, scope: &str) -> Self {
         Self {
             server: server_owner(backend),
+            workspace: backend.workspace.clone(),
             scope: scope.to_owned(),
         }
     }
@@ -86,6 +90,7 @@ pub(crate) struct CreationHoldView {
 #[derive(Clone, Debug)]
 pub(crate) struct EditHoldView {
     pub state: HoldState,
+    pub target: LifecycleTarget,
     pub request: UpdateMissionRequest,
     pub checking: bool,
 }
@@ -126,6 +131,7 @@ impl EditEntry {
     fn view(&self) -> EditHoldView {
         EditHoldView {
             state: self.state,
+            target: self.target.clone(),
             request: self.request.clone(),
             checking: self.checking,
         }

@@ -26,8 +26,8 @@ pub(super) struct Detail {
     id: String,
     observed: Option<u64>,
     pub snapshot: Option<Snapshot>,
-    active: Option<(Demand, Receiver<Result<Answer>>)>,
-    staged: Option<(Demand, Result<Answer>)>,
+    active: Option<(u64, Demand, Receiver<Result<Answer>>)>,
+    staged: Option<(u64, Demand, Result<Answer>)>,
     pending: Option<Demand>,
     retry: Option<Demand>,
     looked_up: HashSet<(String, String)>,
@@ -35,6 +35,9 @@ pub(super) struct Detail {
     auth_expired: Option<Backend>,
     pub failed: bool,
     pub map_reads: u64,
+    refresh_started: u64,
+    pub refresh_completed: u64,
+    pub refresh_failed: u64,
 }
 
 #[derive(Clone)]
@@ -114,6 +117,11 @@ impl Detail {
         self.pending = Some(Demand::Refresh);
     }
 
+    pub fn request_fresh_refresh(&mut self) -> u64 {
+        self.pending = Some(Demand::Refresh);
+        self.refresh_started
+    }
+
     pub fn observe(&mut self, id: &str, revision: u64) {
         if self.id != id {
             self.clear();
@@ -127,16 +135,22 @@ impl Detail {
             return summary;
         }
         if self.staged.is_none() {
-            self.staged = self.active.as_ref().and_then(|(demand, inbox)| {
-                inbox.try_recv().ok().map(|answer| (demand.clone(), answer))
+            self.staged = self.active.as_ref().and_then(|(serial, demand, inbox)| {
+                inbox
+                    .try_recv()
+                    .ok()
+                    .map(|answer| (*serial, demand.clone(), answer))
             });
         }
-        let answer = self.staged.as_ref().and_then(|(_, answer)| match answer {
-            Ok(answer) => Some(answer.revision()),
-            Err(error) => error
-                .downcast_ref::<RevisionChanged>()
-                .map(|changed| changed.0),
-        });
+        let answer = self
+            .staged
+            .as_ref()
+            .and_then(|(_, _, answer)| match answer {
+                Ok(answer) => Some(answer.revision()),
+                Err(error) => error
+                    .downcast_ref::<RevisionChanged>()
+                    .map(|changed| changed.0),
+            });
         self.observed.max(summary).max(answer)
     }
     pub fn retry(&mut self) {
@@ -186,10 +200,10 @@ impl Detail {
         self.lookup_failed = None;
     }
     pub fn cancel_lookup(&mut self) {
-        if matches!(self.active.as_ref(), Some((Demand::Lookup { .. }, _))) {
+        if matches!(self.active.as_ref(), Some((_, Demand::Lookup { .. }, _))) {
             self.active = None;
         }
-        if matches!(self.staged.as_ref(), Some((Demand::Lookup { .. }, _))) {
+        if matches!(self.staged.as_ref(), Some((_, Demand::Lookup { .. }, _))) {
             self.staged = None;
         }
         if matches!(self.pending.as_ref(), Some(Demand::Lookup { .. })) {
@@ -262,7 +276,7 @@ impl Detail {
             self.refresh();
         }
         self.revision_floor(id, revision);
-        if let Some((demand, result)) = self.staged.take() {
+        if let Some((serial, demand, result)) = self.staged.take() {
             self.active = None;
             let is_lookup = matches!(demand, Demand::Lookup { .. });
             if !is_lookup {
@@ -280,6 +294,9 @@ impl Detail {
                     match answer {
                         Answer::New(header, tasks, reports, end) => {
                             self.map_reads = self.map_reads.saturating_add(1);
+                            if serial > 0 {
+                                self.refresh_completed = self.refresh_completed.max(serial);
+                            }
                             self.looked_up.clear();
                             self.snapshot = Some(Snapshot {
                                 header,
@@ -292,6 +309,9 @@ impl Detail {
                         }
                         Answer::Same(header) => {
                             self.map_reads = self.map_reads.saturating_add(1);
+                            if serial > 0 {
+                                self.refresh_completed = self.refresh_completed.max(serial);
+                            }
                             if let Some(old) = &mut self.snapshot {
                                 old.header = header;
                             }
@@ -356,6 +376,9 @@ impl Detail {
             };
             if !is_lookup {
                 self.failed = failed;
+                if failed && serial > 0 {
+                    self.refresh_failed = self.refresh_failed.max(serial);
+                }
                 if self.failed && self.retry.is_none() {
                     self.retry = Some(Demand::Refresh);
                 }
@@ -406,7 +429,13 @@ impl Detail {
         });
         let started = Instant::now();
         let floor = self.observed;
-        self.active = Some((demand.clone(), inbox));
+        let serial = if matches!(demand, Demand::Refresh) {
+            self.refresh_started = self.refresh_started.saturating_add(1);
+            self.refresh_started
+        } else {
+            0
+        };
+        self.active = Some((serial, demand.clone(), inbox));
         platform::spawn(async move {
             let (_cancel, alive) = bounded(1);
             let operation = async {
@@ -684,7 +713,7 @@ mod tests {
             send.try_send(Ok(Answer::New(header(revision), vec![], HashMap::new(), 0)))
                 .ok()
                 .unwrap();
-            detail.active = Some((Demand::Refresh, inbox));
+            detail.active = Some((1, Demand::Refresh, inbox));
             assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));
             assert_eq!(
                 detail
@@ -702,13 +731,13 @@ mod tests {
         }))
         .unwrap();
         send.try_send(Ok(Answer::More(page, 8))).ok().unwrap();
-        detail.active = Some((Demand::More, inbox));
+        detail.active = Some((0, Demand::More, inbox));
         assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));
         assert_eq!(detail.snapshot.as_ref().unwrap().end, 0);
         assert!(detail.failed && matches!(detail.retry, Some(Demand::Refresh)));
         let (send, inbox) = bounded(1);
         send.try_send(Err(RevisionChanged(10).into())).ok().unwrap();
-        detail.active = Some((Demand::More, inbox));
+        detail.active = Some((0, Demand::More, inbox));
         assert_eq!(detail.revision_floor("mission", Some(8)), Some(10));
         assert_eq!(detail.revision_floor("other", Some(8)), Some(8));
         assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));

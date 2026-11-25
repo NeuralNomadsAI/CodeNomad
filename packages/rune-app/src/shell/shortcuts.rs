@@ -151,6 +151,7 @@ pub(crate) fn global_blocked(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
     authentication_required(s)
         || overlay_open(s)
         || any_editor_composing(s)
+        || workspace::mission_has_editor(s)
         || reserved_shell_key(event)
         || field_key_blocked(s, event, tx)
 }
