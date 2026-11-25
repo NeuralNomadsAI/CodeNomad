@@ -195,6 +195,16 @@ pub(crate) fn visible_slice<'a>(s: &State, rows: &'a [Row]) -> &'a [Row] {
 pub(crate) fn collapsed_group_target(
     s: &State,
     rows: &[Row],
+    row_index: usize,
+    shown_steps: usize,
+    part: usize,
+) -> Option<(String, String)> {
+    collapsed_group_target_at(s, rows, !s.history_detached, row_index, shown_steps, part)
+}
+
+pub(crate) fn collapsed_group_target_at(
+    s: &State,
+    rows: &[Row],
     at_tail: bool,
     row_index: usize,
     shown_steps: usize,

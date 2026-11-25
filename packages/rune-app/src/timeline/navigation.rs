@@ -293,14 +293,14 @@ fn locate(
             block
                 .part
                 .and_then(|index| {
-                    anchors::collapsed_group_target(s, rows, at_tail, row_index, shown, index)
+                    anchors::collapsed_group_target_at(s, rows, at_tail, row_index, shown, index)
                 })
                 .unwrap_or_else(|| (row.id.clone(), key))
         }
         super::MarkerKind::Tool => block
             .part
             .and_then(|index| {
-                anchors::collapsed_group_target(s, rows, at_tail, row_index, shown, index)
+                anchors::collapsed_group_target_at(s, rows, at_tail, row_index, shown, index)
             })
             .unwrap_or_else(|| (row.id.clone(), block.key)),
         _ => (row.id.clone(), block.key),

@@ -176,13 +176,13 @@ fn reopening_a_tool_group_during_search_does_not_persist_after_search_clears() {
 #[test]
 fn inferred_websearch_prompt_admits_hidden_websearch_in_timeline_and_search() {
     crate::platform::block_on(async {
-        let row = row(
+        let web = row(
             json!({"id":"web","type":"assistant","time":{"completed":1},"content":[
                 {"type":"tool","id":"ws_old","name":"websearch","state":{"status":"completed","content":[{"type":"text","text":"Needle old"}]}},
                 {"type":"tool","id":"ws_active","name":"websearch","state":{"status":"running","content":[{"type":"text","text":"Needle active"}]}}
             ]}),
         );
-        let mut rt = runtime(vec![row]);
+        let mut rt = runtime(vec![web]);
         rt.update(|s, tx| {
             crate::settings::fixture_transcript(
                 s,
