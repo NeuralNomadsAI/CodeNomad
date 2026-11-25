@@ -29,10 +29,37 @@ pub(crate) struct StreamDropGuard {
     open_streams: Arc<AtomicUsize>,
     drop_generation: Arc<AtomicU64>,
     opened: Arc<AtomicBool>,
+    closed: AtomicBool,
     recorded: AtomicBool,
 }
 
 impl StreamDropGuard {
+    pub(crate) fn try_mark_open(&self, client: &Http, count_open_stream: bool) -> bool {
+        if self.closed.load(Ordering::SeqCst) {
+            return false;
+        }
+        if self
+            .opened
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return false;
+        }
+        if count_open_stream {
+            self.open_streams.fetch_add(1, Ordering::SeqCst);
+        }
+        if self.closed.load(Ordering::SeqCst) {
+            if count_open_stream {
+                self.release_open();
+            } else {
+                self.opened.store(false, Ordering::SeqCst);
+            }
+            return false;
+        }
+        client.mark_stream_opened(&self.client_id);
+        true
+    }
+
     pub(crate) fn release_open(&self) -> bool {
         if self.opened.swap(false, Ordering::SeqCst) {
             if self.open_streams.fetch_sub(1, Ordering::SeqCst) == 1 {
@@ -44,8 +71,21 @@ impl StreamDropGuard {
         }
     }
 
-    pub(crate) fn mark_drop_recorded(&self) -> bool {
-        self.recorded.swap(true, Ordering::SeqCst)
+    pub(crate) fn close_and_revoke(
+        &self,
+        client: &Http,
+        count_open_stream: bool,
+        record_drop: bool,
+    ) {
+        self.closed.store(true, Ordering::SeqCst);
+        let was_open = if count_open_stream {
+            self.release_open()
+        } else {
+            self.opened.swap(false, Ordering::SeqCst)
+        };
+        if record_drop && !self.recorded.swap(true, Ordering::SeqCst) {
+            client.record_transport_drop(&self.client_id, was_open);
+        }
     }
 }
 
@@ -136,6 +176,7 @@ impl Http {
     pub fn preferences_revision(&self, owner: crate::settings::Owner) -> u64 {
         self.4[owner.index()].load(Ordering::SeqCst)
     }
+    #[cfg(test)]
     pub(crate) fn open_streams_counter(&self) -> Arc<AtomicUsize> {
         self.6.open_streams.clone()
     }
@@ -170,6 +211,7 @@ impl Http {
                 open_streams: self.6.open_streams.clone(),
                 drop_generation: self.6.drop_generation.clone(),
                 opened: opened.clone(),
+                closed: AtomicBool::new(false),
                 recorded: AtomicBool::new(false),
             },
             opened,

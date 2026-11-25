@@ -47,13 +47,14 @@ fn spawn_pong<C: Clock + Clone + Send + Sync + 'static>(
     probes: &ProbeSource,
     cancel_rx: &crate::Receiver<()>,
     abort_tx: &crate::Sender<bool>,
-) {
+) -> Option<crate::Receiver<()>> {
     if in_flight
         .compare_exchange(false, true, SeqCst, SeqCst)
         .is_err()
     {
-        return;
+        return None;
     }
+    let (done_tx, done_rx) = crate::bounded(1);
     let b = b.clone();
     let connection = connection.to_owned();
     let in_flight = in_flight.clone();
@@ -63,6 +64,7 @@ fn spawn_pong<C: Clock + Clone + Send + Sync + 'static>(
     let cancel_rx = cancel_rx.clone();
     let abort_tx = abort_tx.clone();
     crate::runtime::spawn(async move {
+        let _done = done_tx;
         let _guard = ClearOnDrop(in_flight);
         enum PongStep {
             Done(std::result::Result<reqwest::Response, reqwest::Error>),
@@ -107,6 +109,7 @@ fn spawn_pong<C: Clock + Clone + Send + Sync + 'static>(
             PongStep::Cancelled => {}
         }
     });
+    Some(done_rx)
 }
 
 pub(super) async fn pump_shared(
@@ -150,6 +153,7 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
         PongAbort(bool),
     }
     let mut auth_expired = false;
+    let mut pong_done: Option<crate::Receiver<()>> = None;
     {
         let handshake_probe = probes.subscribe();
         let request = b
@@ -215,7 +219,7 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
         }
         let read_probe = probes.subscribe();
         let pong_in_flight = Arc::new(AtomicBool::new(false));
-        let (_pong_cancel_tx, pong_cancel_rx) = crate::bounded::<()>(1);
+        let (pong_cancel_tx, pong_cancel_rx) = crate::bounded::<()>(1);
         let (pong_abort_tx, pong_abort_rx) = crate::bounded::<bool>(1);
         let mut chunks = std::pin::pin!(response.bytes_stream());
         let mut parser = Parser::default();
@@ -271,7 +275,7 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
             for byte in chunk.as_ref() {
                 match parser.byte(*byte) {
                     Ok(Some(Parsed::Data(kind, _))) if kind == "codenomad.client.ping" => {
-                        spawn_pong(
+                        if let Some(done) = spawn_pong(
                             &b,
                             &connection,
                             &pong_in_flight,
@@ -279,10 +283,12 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
                             &probes,
                             &pong_cancel_rx,
                             &pong_abort_tx,
-                        );
+                        ) {
+                            pong_done = Some(done);
+                        }
                     }
                     Ok(Some(Parsed::Data(kind, data))) => {
-                        shared.broadcast_frame(kind, data);
+                        shared.broadcast_frame(&hub, kind, data);
                     }
                     Ok(Some(Parsed::Skipped)) => {
                         b.client.children().invalidate_all(&b);
@@ -301,6 +307,11 @@ pub(super) async fn pump_shared_with<C: Clock + Clone + Send + Sync + 'static>(
             }
             chunk_guard.finish();
         }
+        drop(pong_cancel_tx);
+        drop(read_probe);
+    }
+    if let Some(done) = pong_done {
+        let _ = done.recv().await;
     }
     shared.finish(&hub, auth_expired);
 }

@@ -13,13 +13,25 @@ use tokio::{
     net::TcpListener,
 };
 
-#[test]
-fn tabs_catalogue_and_preferences_share_one_sse_connection_and_close_on_zero() {
+const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn block_bounded<F: std::future::Future<Output = ()>>(name: &str, future: F) {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()
-        .block_on(async {
+        .block_on(async move {
+            tokio::time::timeout(TEST_TIMEOUT, future)
+                .await
+                .unwrap_or_else(|_| panic!("{name} timed out after {TEST_TIMEOUT:?}"));
+        });
+}
+
+#[test]
+fn tabs_catalogue_and_preferences_share_one_sse_connection_and_close_on_zero() {
+    block_bounded(
+        "tabs_catalogue_and_preferences_share_one_sse_connection_and_close_on_zero",
+        async {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = format!("http://{}/", listener.local_addr().unwrap());
             let sse_opens = Arc::new(AtomicUsize::new(0));
@@ -200,25 +212,30 @@ fn tabs_catalogue_and_preferences_share_one_sse_connection_and_close_on_zero() {
                 "physical SSE must stay open while PreferencesWatch is still subscribed"
             );
             // Stopping PreferencesWatch as the last subscriber must close the physical TCP socket
-            // BEFORE its closed receiver resolves.
-            let _ = prefs.stop().recv().await;
-            tokio::time::timeout(Duration::from_secs(2), closed_rx.recv())
+            // before its closed receiver resolves (and within a bounded deadline).
+            let stopped = prefs.stop();
+            let stop_res = tokio::time::timeout(Duration::from_secs(2), stopped.recv())
                 .await
-                .expect("physical SSE must close before PreferencesWatch::stop resolves")
+                .expect("PreferencesWatch::stop must settle promptly");
+            assert!(stop_res.is_err());
+            tokio::time::timeout(Duration::from_millis(250), closed_rx.recv())
+                .await
+                .expect(
+                    "physical SSE socket must have already received FIN on PreferencesWatch::stop",
+                )
                 .unwrap();
             let _ = (cat_handle, prefs_handle);
             assert_eq!(sse_opens.load(SeqCst), 1);
             server.abort();
-        });
+        },
+    );
 }
 
 #[test]
 fn physical_401_fans_out_authentication_required_to_all_subscribers() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
+    block_bounded(
+        "physical_401_fans_out_authentication_required_to_all_subscribers",
+        async {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = format!("http://{}/", listener.local_addr().unwrap());
             let server = tokio::spawn(async move {
@@ -250,116 +267,114 @@ fn physical_401_fans_out_authentication_required_to_all_subscribers() {
                 Input::AuthenticationRequired(2)
             ));
             server.abort();
-        });
+        },
+    );
 }
 
 #[test]
-fn slow_subscriber_overflow_resyncs_upstream_and_preferences_without_blocking_sibling() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let hub = Arc::new(Hub::default());
-            let (stop_tx, _stop_rx) = bounded(1);
-            let (_done_tx, done_rx) = bounded(1);
-            let slow = Subscriber::new(1, None, None);
-            let fast = Subscriber::new(2, None, None);
-            let shared = Arc::new(SharedStream {
-                base: "http://127.0.0.1:1/".into(),
-                inner: Mutex::new(StreamInner {
-                    phase: Phase::Connecting,
-                    subscribers: vec![slow.clone(), fast.clone()],
-                    replays: HashMap::new(),
-                    replays_overflowed: false,
-                    chunk_active: false,
-                    stop: Some(stop_tx),
-                }),
-                done: done_rx,
-            });
-            assert!(shared.mark_open());
-            assert!(matches!(fast.pop(), Some(HubItem::Opened)));
-            shared.broadcast_frame(
-                "message".into(),
-                json!({
-                    "type": "instance.eventStatus",
-                    "instanceId": "ws-slow",
-                    "status": "disconnected",
-                    "generation": 4
-                })
-                .to_string(),
-            );
-            assert!(matches!(fast.pop(), Some(HubItem::Frame(_))));
-            for i in 0..MAX_SUBSCRIBER_FRAMES {
-                shared.broadcast_frame(
-                    "message".into(),
-                    format!("{{\"type\":\"memory.changed\",\"seq\":{i}}}"),
-                );
-                assert!(
-                    matches!(fast.pop(), Some(HubItem::Frame(_))),
-                    "fast sibling must receive every frame immediately"
-                );
-            }
-            assert!(
-                matches!(slow.pop(), Some(HubItem::Opened)),
-                "slow subscriber preserves initial Opened"
-            );
-            assert!(
-                matches!(slow.pop(), Some(HubItem::Skipped { overflow: true })),
-                "slow subscriber collapses backlog to overflow Skipped"
-            );
-            // Resync restores upstream=false from replay cache and invalidates preferences/memory.
-            let mut backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
-            backend.workspace = "ws-slow".into();
-            let state = State::default();
-            state.upstream.store(true, SeqCst);
-            let notices = backend.client.preferences_notices();
-            let _ = state.preferences_notices.set(notices.clone());
-            let (out, rx) = bounded(16);
-            resync_after_skip(&shared, &backend, 1, &out, &state, "stream-1", true)
-                .await
-                .unwrap();
-            assert!(
-                !state.upstream.load(SeqCst),
-                "overflow resync must restore disconnected instance.eventStatus"
-            );
-            assert_eq!(
-                notices[crate::settings::Owner::Config.index()].load(SeqCst),
-                1
-            );
-            assert_eq!(
-                notices[crate::settings::Owner::State.index()].load(SeqCst),
-                1
-            );
-            assert_eq!(
-                notices[crate::settings::Owner::Server.index()].load(SeqCst),
-                1
-            );
-            let mut saw_hint = false;
-            let mut saw_memory = false;
-            let mut saw_missions = false;
-            while let Ok(item) = rx.try_recv() {
-                match item {
-                    Input::Hint(1, _) => saw_hint = true,
-                    Input::Workspace(1, WorkspaceEvent::MemoryChanged) => saw_memory = true,
-                    Input::Workspace(1, WorkspaceEvent::MissionsReconnected { .. }) => {
-                        saw_missions = true
-                    }
-                    _ => {}
-                }
-            }
-            assert!(saw_hint && saw_memory && saw_missions);
-            shared.finish(&hub, false);
-        });
+fn slow_subscriber_overflow_closes_only_the_slow_subscriber_without_disrupting_sibling() {
+    let hub = Arc::new(Hub::default());
+    let (stop_tx, stop_rx) = bounded(1);
+    let (_done_tx, done_rx) = bounded(1);
+    let backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+    let client = backend.client.clone();
+    let (gen0, seq0, _) = client.begin_meta_probe();
+    assert!(client.observe_capabilities_at(gen0, seq0, true, true));
+    let (slow_guard, _) = client.track_stream("slow-tab");
+    let (fast_guard, _) = client.track_stream("fast-tab");
+    let slow_watch = crate::provider_usage::Watch::default();
+    let slow_ingress = crate::provider_usage::Ingress::new(
+        slow_watch.clone(),
+        Arc::new(|| {}),
+        "ws-slow".into(),
+        "ses-1".into(),
+    );
+    let slow = Subscriber::new(
+        1,
+        Some(slow_ingress),
+        Some(GuardHook {
+            http: client.clone(),
+            guard: Arc::new(slow_guard),
+            count_open_stream: true,
+        }),
+    );
+    let fast = Subscriber::new(
+        2,
+        None,
+        Some(GuardHook {
+            http: client.clone(),
+            guard: Arc::new(fast_guard),
+            count_open_stream: true,
+        }),
+    );
+    let shared = Arc::new(SharedStream {
+        base: backend.base.clone(),
+        inner: Mutex::new(StreamInner {
+            phase: Phase::Connecting,
+            subscribers: vec![slow.clone(), fast.clone()],
+            replays: HashMap::new(),
+            replays_overflowed: false,
+            chunk_active: false,
+            stop: Some(stop_tx),
+        }),
+        done: done_rx,
+    });
+    hub.streams.lock().unwrap().insert(
+        backend.base.clone(),
+        StreamEntry {
+            stream: shared.clone(),
+            active: true,
+        },
+    );
+    assert!(shared.mark_open());
+    assert!(slow_watch.current().1);
+    assert!(matches!(fast.pop(), Some(HubItem::Opened)));
+    for i in 0..=MAX_SUBSCRIBER_FRAMES {
+        shared.broadcast_frame(
+            &hub,
+            "message".into(),
+            format!("{{\"type\":\"memory.changed\",\"seq\":{i}}}"),
+        );
+        assert!(
+            matches!(fast.pop(), Some(HubItem::Frame(_))),
+            "fast sibling must keep receiving every frame on the shared stream"
+        );
+    }
+    // Slow subscriber is detached and closed so its standard reconnect loop runs cleanly
+    // (recovering workspace.stopped, session.moved, PreferencesWatch, etc.), while the physical
+    // stream stays open for the fast sibling.
+    assert!(
+        matches!(
+            slow.pop(),
+            Some(HubItem::Closed {
+                auth_expired: false
+            })
+        ),
+        "overflowing subscriber must close cleanly"
+    );
+    assert!(slow.pop().is_none());
+    assert!(
+        !slow_watch.current().1,
+        "overflowing subscriber must revoke quota authority immediately"
+    );
+    assert_eq!(client.transport_drops("slow-tab"), 1);
+    assert_eq!(client.transport_drops("fast-tab"), 0);
+    assert!(
+        !client.needs_capability_recheck(),
+        "fast sibling still holds an open stream so global attestation stays valid"
+    );
+    assert!(
+        !stop_rx.is_closed(),
+        "physical SSE pump must stay alive while fast sibling is still subscribed"
+    );
+    shared.finish(&hub, false);
 }
 
 #[test]
 fn late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chunk_disconnect() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
+    block_bounded(
+        "late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chunk_disconnect",
+        async {
             let hub = Arc::new(Hub::default());
             let (stop_tx, _stop_rx) = bounded(1);
             let (_done_tx, done_rx) = bounded(1);
@@ -384,8 +399,10 @@ fn late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chun
                 },
             );
             assert!(shared.mark_open());
+            let _ = first.pop();
             // Fill cache to the full MAX_REPLAY_STATUSES (256) and verify workspace error evicts.
             shared.broadcast_frame(
+                &hub,
                 "message".into(),
                 json!({
                     "type": "instance.eventStatus",
@@ -395,7 +412,9 @@ fn late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chun
                 })
                 .to_string(),
             );
+            let _ = first.pop();
             shared.broadcast_frame(
+                &hub,
                 "message".into(),
                 json!({
                     "type": "instance.eventStatus",
@@ -406,8 +425,10 @@ fn late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chun
                 })
                 .to_string(),
             );
+            let _ = first.pop();
             for i in 0..MAX_REPLAY_STATUSES {
                 shared.broadcast_frame(
+                    &hub,
                     "message".into(),
                     json!({
                         "type": "instance.eventStatus",
@@ -417,6 +438,7 @@ fn late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chun
                     })
                     .to_string(),
                 );
+                let _ = first.pop();
             }
 
             // Simulate joining mid-chunk: begin_chunk is active, then late subscriber joins,
@@ -436,10 +458,23 @@ fn late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chun
                 backend.workspace.clone(),
                 backend.session.clone(),
             );
-            let late = hub.subscribe(&backend, Some(ingress), None).await;
+            let late = tokio::time::timeout(
+                Duration::from_secs(5),
+                hub.subscribe(&backend, Some(ingress), None),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                let inner = shared.inner.lock().unwrap();
+                panic!(
+                    "late hub.subscribe timed out (subscribers={}, replays={}, first_queue_closed={})",
+                    inner.subscribers.len(),
+                    inner.replays.len(),
+                    first.queue.lock().unwrap().closed,
+                )
+            });
             assert!(
                 watch.backpressured(),
-                "late subscriber joining mid-chunk must inherit active chunk backpressure"
+                "late subscriber joining mid-chunk must inherit active chunk backpressure atomically"
             );
             // All 256 replays + Opened must fit without triggering Skipped, and ws-errored must be absent.
             assert!(matches!(late.sub.pop(), Some(HubItem::Opened)));
@@ -453,13 +488,17 @@ fn late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chun
                         );
                         replayed_count += 1;
                     }
-                    other => panic!("unexpected item in 256-entry replay: {}", matches!(other, HubItem::Skipped { .. })),
+                    other => panic!(
+                        "unexpected item in 256-entry replay: {}",
+                        matches!(other, HubItem::Skipped)
+                    ),
                 }
             }
             assert_eq!(replayed_count, MAX_REPLAY_STATUSES);
 
             // Mid-chunk disconnect must immediately update the late subscriber's Ingress!
             shared.broadcast_frame(
+                &hub,
                 "message".into(),
                 json!({
                     "type": "instance.eventStatus",
@@ -477,69 +516,99 @@ fn late_subscriber_receives_256_replays_evicts_workspace_error_and_sees_mid_chun
             assert!(!watch.backpressured());
             drop(late);
             shared.finish(&hub, false);
-        });
+        },
+    );
 }
 
 #[test]
-fn physical_close_revokes_attestation_immediately_even_when_subscriber_output_is_blocked() {
-    let hub = Arc::new(Hub::default());
-    let (stop_tx, _stop_rx) = bounded(1);
-    let (_done_tx, done_rx) = bounded(1);
-    let backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
-    let client = backend.client.clone();
-    let (gen0, seq0, _) = client.begin_meta_probe();
-    assert!(client.observe_capabilities_at(gen0, seq0, true, true));
-    assert!(!client.needs_capability_recheck());
-    let (guard, open_flag) = client.track_stream(&backend.client_id);
-    open_flag.store(true, SeqCst);
-    client.open_streams_counter().fetch_add(1, SeqCst);
-    let guard = Arc::new(guard);
-    let sub = Subscriber::new(
-        1,
-        None,
-        Some(CloseRevocation {
-            http: client.clone(),
-            guard: guard.clone(),
-            client_id: backend.client_id.clone(),
-        }),
+fn physical_close_revokes_attestation_immediately_and_queued_opened_cannot_reinstate_it() {
+    block_bounded(
+        "physical_close_revokes_attestation_immediately_and_queued_opened_cannot_reinstate_it",
+        async {
+            let hub = Arc::new(Hub::default());
+            let (stop_tx, _stop_rx) = bounded(1);
+            let (_done_tx, done_rx) = bounded(1);
+            let backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+            let client = backend.client.clone();
+            let (gen0, seq0, _) = client.begin_meta_probe();
+            assert!(client.observe_capabilities_at(gen0, seq0, true, true));
+            assert!(!client.needs_capability_recheck());
+
+            // Do NOT pre-initialize open_streams: mark_open() itself must transition the guard
+            // to open, finish() must immediately revoke it BEFORE Opened is popped, and draining
+            // Opened afterwards via stream::opened() must NOT reinstate open_streams or clear outage.
+            let (guard, _) = client.track_stream(&backend.client_id);
+            let guard = Arc::new(guard);
+            let state = State::default();
+            let _ = state.open_stream.set((client.clone(), guard.clone(), true));
+            let sub = Subscriber::new(
+                1,
+                None,
+                Some(GuardHook {
+                    http: client.clone(),
+                    guard: guard.clone(),
+                    count_open_stream: true,
+                }),
+            );
+            let shared = Arc::new(SharedStream {
+                base: backend.base.clone(),
+                inner: Mutex::new(StreamInner {
+                    phase: Phase::Connecting,
+                    subscribers: vec![sub.clone()],
+                    replays: HashMap::new(),
+                    replays_overflowed: false,
+                    chunk_active: false,
+                    stop: Some(stop_tx),
+                }),
+                done: done_rx,
+            });
+            assert!(shared.mark_open());
+            assert_eq!(client.open_streams_counter().load(SeqCst), 1);
+            // Queue a pre-EOF frame while Opened is STILL undrained in sub.queue.
+            shared.broadcast_frame(
+                &hub,
+                "message".into(),
+                r#"{"type":"memory.changed"}"#.into(),
+            );
+            // Physical close must immediately drop open_streams to 0, bump drop_generation
+            // (needs_capability_recheck), and record the outage BEFORE Opened or Frame drains.
+            shared.finish(&hub, false);
+            assert_eq!(client.open_streams_counter().load(SeqCst), 0);
+            assert!(
+                client.needs_capability_recheck(),
+                "physical SSE close must revoke attestation immediately even if Opened is still queued"
+            );
+            assert_eq!(client.transport_drops(&backend.client_id), 1);
+            assert!(client.is_in_outage(&backend.client_id));
+
+            // Draining the already-queued Opened through the real stream::opened() helper must
+            // NOT increment open_streams or clear outage on a closed guard.
+            let (out, rx) = bounded(8);
+            assert!(matches!(sub.pop(), Some(HubItem::Opened)));
+            opened(1, &out, &state).await.unwrap();
+            assert!(matches!(rx.try_recv(), Ok(Input::Opened(1))));
+            assert_eq!(
+                client.open_streams_counter().load(SeqCst),
+                0,
+                "draining queued Opened after finish() must never increment open_streams"
+            );
+            assert!(
+                client.is_in_outage(&backend.client_id),
+                "draining queued Opened after finish() must never clear outage state"
+            );
+            assert!(matches!(sub.pop(), Some(HubItem::Frame(_))));
+            assert!(matches!(
+                sub.pop(),
+                Some(HubItem::Closed {
+                    auth_expired: false
+                })
+            ));
+            assert!(sub.pop().is_none());
+            // Final guard cleanup on read_shared return must not double-count transport_drops.
+            guard.close_and_revoke(&client, true, true);
+            assert_eq!(client.transport_drops(&backend.client_id), 1);
+        },
     );
-    let shared = Arc::new(SharedStream {
-        base: backend.base.clone(),
-        inner: Mutex::new(StreamInner {
-            phase: Phase::Connecting,
-            subscribers: vec![sub.clone()],
-            replays: HashMap::new(),
-            replays_overflowed: false,
-            chunk_active: false,
-            stop: Some(stop_tx),
-        }),
-        done: done_rx,
-    });
-    assert!(shared.mark_open());
-    // Queue pending frames that have NOT been drained by the subscriber yet.
-    shared.broadcast_frame("message".into(), r#"{"type":"memory.changed"}"#.into());
-    // Physical close must immediately drop open_streams to 0, bump drop_generation
-    // (needs_capability_recheck), and increment transport_drops BEFORE queued frames drain,
-    // while still letting pre-EOF frames drain ahead of Closed.
-    shared.finish(&hub, false);
-    assert!(
-        client.needs_capability_recheck(),
-        "physical SSE close must revoke attestation immediately before subscriber queue drains"
-    );
-    assert_eq!(client.transport_drops(&backend.client_id), 1);
-    assert!(matches!(sub.pop(), Some(HubItem::Opened)));
-    assert!(matches!(sub.pop(), Some(HubItem::Frame(_))));
-    assert!(matches!(
-        sub.pop(),
-        Some(HubItem::Closed {
-            auth_expired: false
-        })
-    ));
-    assert!(sub.pop().is_none());
-    // Subsequent guard check on read_shared return must not double-count transport_drops.
-    assert!(!guard.release_open());
-    assert!(guard.mark_drop_recorded());
-    assert_eq!(client.transport_drops(&backend.client_id), 1);
 }
 
 #[test]
@@ -565,11 +634,9 @@ fn shared_stream_staleness_and_hanging_pong_close_all_subscribers_and_unregister
         }
     }
 
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
+    block_bounded(
+        "shared_stream_staleness_and_hanging_pong_close_all_subscribers_and_unregister_probes",
+        async {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = format!("http://{}/", listener.local_addr().unwrap());
             let (frame_tx, frame_rx) = bounded::<String>(8);
@@ -735,25 +802,20 @@ fn shared_stream_staleness_and_hanging_pong_close_all_subscribers_and_unregister
                     auth_expired: false
                 }
             ));
+            // Because pump_shared awaits pong_done BEFORE finish(), every probe ID is ALREADY
+            // unregistered the moment Closed arrives.
+            let ids = captured_ids.lock().unwrap().clone();
+            assert!(!ids.is_empty());
+            assert!(
+                ids.iter()
+                    .all(|id| !super::super::staleness::has_probe_id(*id)),
+                "all shared-stream and pong probes must already be unregistered when Closed arrives"
+            );
             tokio::time::timeout(Duration::from_secs(2), closed_rx.recv())
                 .await
                 .unwrap()
                 .unwrap();
-            tokio::time::timeout(Duration::from_secs(2), async {
-                loop {
-                    let ids = captured_ids.lock().unwrap().clone();
-                    if !ids.is_empty()
-                        && ids
-                            .iter()
-                            .all(|id| !super::super::staleness::has_probe_id(*id))
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .expect("all shared-stream and pong probes must unregister after stale close");
             server.abort();
-        });
+        },
+    );
 }

@@ -3043,31 +3043,42 @@ fn hidden_tab_reconnect_attestation_and_repeated_outage_and_voluntary_close_and_
                 break;
             }
         }
-        // Stage a masked secret BEFORE dropping the shared SSE, then drop SSE and hold reconnect
-        // /api/meta so even a pre-staged secret write must attest /api/meta and never leak to server-b.
-        assert!(prefs.stage_environment("API_KEY".into(), Some("top-secret".into()), Some(true),));
-        drop(sse_a);
+        // While the shared SSE is STILL OPEN (attestation valid, no global drop), revoke
+        // attestation via foreign /api/meta ("server-b"), then stage a masked secret and verify
+        // Preferences itself rejects the write and never leaks "top-secret" in any PATCH.
         let client = prefs.backend.as_ref().unwrap().client.clone();
-        wait_until(|| client.transport_drops(&tab_b_id) == 1).await;
-        let _held_tab_b_meta = request(&listener).await;
-        assert_eq!(_held_tab_b_meta.first, "GET /api/meta HTTP/1.1");
+        assert!(!client.needs_capability_recheck());
+        let probe_backend = base.clone();
+        platform::spawn(async move {
+            let _ = probe_backend.attest_server().await;
+        });
+        let foreign_probe = request(&listener).await;
+        assert_eq!(foreign_probe.first, "GET /api/meta HTTP/1.1");
+        foreign_probe
+            .reply(200, json!({"apiContract":1,"serverId":"server-b","capabilities":["settings-atomic-patches"]}))
+            .await;
+        wait_until(|| client.needs_capability_recheck()).await;
+        assert!(prefs.stage_environment("API_KEY".into(), Some("top-secret".into()), Some(true),));
         assert!(prefs.poll());
         let pre_patch_meta = poll_next_request(&mut prefs, &listener).await;
         assert_eq!(
             pre_patch_meta.first, "GET /api/meta HTTP/1.1",
-            "PATCH must attest /api/meta before sending a pre-staged secret after SSE drop"
+            "Preferences must attest /api/meta before sending a masked secret after foreign revocation"
         );
         pre_patch_meta
             .reply(200, json!({"apiContract":1,"serverId":"server-b","capabilities":["settings-atomic-patches"]}))
             .await;
         wait_until(|| {
             prefs.poll();
-            client.needs_capability_recheck()
+            !prefs.environment_ready()
         })
         .await;
-        // Drain any follow-up revalidation /api/meta (still server-b) and confirm zero PATCH ever ran.
+        // Now also drop the shared SSE stream and confirm reconnect probes /api/meta without any
+        // PATCH ever carrying the masked secret to foreign server-b.
+        drop(sse_a);
+        wait_until(|| client.transport_drops(&tab_b_id) == 1).await;
         let mut saw_patch = false;
-        for _ in 0..3 {
+        for _ in 0..4 {
             prefs.poll();
             if let Ok(accepted) = timeout(Duration::from_millis(80), listener.accept()).await {
                 let (socket, _) = accepted.unwrap();
@@ -3081,6 +3092,10 @@ fn hidden_tab_reconnect_attestation_and_repeated_outage_and_voluntary_close_and_
         assert!(
             !saw_patch,
             "masked secret PATCH must never be sent to foreign server-b"
+        );
+        assert!(
+            !prefs.environment_ready(),
+            "Preferences must stay blocked after foreign server-b rejection"
         );
         let _ = cmd_a.send(Command::Close).await;
         let _ = cmd_b.send(Command::Close).await;

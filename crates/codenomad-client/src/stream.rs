@@ -41,8 +41,7 @@ pub struct State {
     pub(crate) history_revision: AtomicU64,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     preferences_notices: std::sync::OnceLock<Arc<[AtomicU64; 3]>>,
-    open_stream: std::sync::OnceLock<(Arc<std::sync::atomic::AtomicUsize>, Arc<AtomicBool>)>,
-    stream_owner: std::sync::OnceLock<(crate::http::Http, String)>,
+    open_stream: std::sync::OnceLock<(crate::http::Http, Arc<crate::http::StreamDropGuard>, bool)>,
     catalogue: Option<Arc<catalogue::Signals>>,
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
     closed: (Sender<()>, crate::Receiver<()>),
@@ -62,7 +61,6 @@ impl Default for State {
             preferences: None,
             preferences_notices: std::sync::OnceLock::new(),
             open_stream: std::sync::OnceLock::new(),
-            stream_owner: std::sync::OnceLock::new(),
             catalogue: None,
             placement: None,
             closed: crate::bounded(1),
@@ -266,65 +264,33 @@ pub(crate) async fn read(
     out: &Sender<Input>,
     state: &State,
 ) -> Result<()> {
-    let (stream_guard, open_flag) = backend.client.track_stream(&backend.client_id);
+    let (stream_guard, _open_flag) = backend.client.track_stream(&backend.client_id);
     let stream_guard = Arc::new(stream_guard);
-    let _ = state
-        .stream_owner
-        .set((backend.client.clone(), backend.client_id.clone()));
-    if state.catalogue.is_none() {
-        let _ = state
-            .open_stream
-            .set((backend.client.open_streams_counter(), open_flag));
-    }
+    let count_open_stream = state.catalogue.is_none();
+    let _ = state.open_stream.set((
+        backend.client.clone(),
+        stream_guard.clone(),
+        count_open_stream,
+    ));
     let notices = backend.client.preferences_notices();
     let _ = state.preferences_notices.set(notices.clone());
-    let result = hub::read_shared(backend, epoch, out, state, stream_guard.clone()).await;
-    let was_open = stream_guard.release_open();
-    if !state.cancelled.load(SeqCst) && !out.is_closed() && !stream_guard.mark_drop_recorded() {
-        backend
-            .client
-            .record_transport_drop(&backend.client_id, was_open);
-    }
+    let result = hub::read_shared(
+        backend,
+        epoch,
+        out,
+        state,
+        stream_guard.clone(),
+        count_open_stream,
+    )
+    .await;
+    let record_drop = !state.cancelled.load(SeqCst) && !out.is_closed();
+    stream_guard.close_and_revoke(&backend.client, count_open_stream, record_drop);
     result
 }
 
-pub(super) async fn resync_preferences(
-    epoch: u64,
-    out: &Sender<Input>,
-    state: &State,
-) -> Result<()> {
-    if state.preferences.is_some() {
-        state
-            .storage_changed(epoch, crate::settings::Owner::Config, out)
-            .await?;
-        state
-            .notify_preferences(crate::settings::Owner::State, out)
-            .await?;
-        state
-            .notify_preferences(crate::settings::Owner::Server, out)
-            .await?;
-    } else if state.catalogue.is_none()
-        && let Some(notices) = state.preferences_notices.get()
-    {
-        for owner in [
-            crate::settings::Owner::Config,
-            crate::settings::Owner::State,
-            crate::settings::Owner::Server,
-        ] {
-            notices[owner.index()].fetch_add(1, SeqCst);
-        }
-    }
-    Ok(())
-}
-
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
-    if let Some((client, client_id)) = state.stream_owner.get() {
-        client.mark_stream_opened(client_id);
-    }
-    if let Some((counter, flag)) = state.open_stream.get()
-        && !flag.swap(true, SeqCst)
-    {
-        counter.fetch_add(1, SeqCst);
+    if let Some((client, guard, count_open_stream)) = state.open_stream.get() {
+        guard.try_mark_open(client, *count_open_stream);
     }
     if let Some(signals) = &state.catalogue {
         signals.reconnected();

@@ -3,9 +3,9 @@
 use super::{
     Backend, Input, Result, Sender, State, dispatch,
     limits::{FRAME_LIMIT, reread},
-    opened, resync_preferences,
+    opened,
 };
-use crate::{Receiver, bounded, http::StreamDropGuard, runtime, transport::WorkspaceEvent};
+use crate::{Receiver, bounded, http::StreamDropGuard, runtime};
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
@@ -34,7 +34,7 @@ impl std::error::Error for AuthenticationExpired {}
 pub(super) enum HubItem {
     Opened,
     Frame(Arc<(String, String)>),
-    Skipped { overflow: bool },
+    Skipped,
     Closed { auth_expired: bool },
 }
 
@@ -51,18 +51,20 @@ impl SubQueue {
     }
 }
 
-struct CloseRevocation {
+struct GuardHook {
     http: crate::http::Http,
     guard: Arc<StreamDropGuard>,
-    client_id: String,
+    count_open_stream: bool,
 }
 
-impl CloseRevocation {
-    fn revoke(&self) {
-        let was_open = self.guard.release_open();
-        if !self.guard.mark_drop_recorded() {
-            self.http.record_transport_drop(&self.client_id, was_open);
-        }
+impl GuardHook {
+    fn mark_open(&self) {
+        self.guard.try_mark_open(&self.http, self.count_open_stream);
+    }
+
+    fn revoke(&self, record_drop: bool) {
+        self.guard
+            .close_and_revoke(&self.http, self.count_open_stream, record_drop);
     }
 }
 
@@ -72,14 +74,14 @@ struct Subscriber {
     wake_tx: Sender<()>,
     wake_rx: Receiver<()>,
     quota: Option<crate::provider_usage::Ingress>,
-    close_revocation: Option<CloseRevocation>,
+    guard_hook: Option<GuardHook>,
 }
 
 impl Subscriber {
     fn new(
         id: u64,
         quota: Option<crate::provider_usage::Ingress>,
-        close_revocation: Option<CloseRevocation>,
+        guard_hook: Option<GuardHook>,
     ) -> Arc<Self> {
         let (wake_tx, wake_rx) = bounded(1);
         Arc::new(Self {
@@ -88,17 +90,17 @@ impl Subscriber {
             wake_tx,
             wake_rx,
             quota,
-            close_revocation,
+            guard_hook,
         })
     }
 
-    fn seed_opened(&self, replays: &[Arc<(String, String)>], force_overflow: bool) -> bool {
+    fn seed_opened(&self, replays: &[Arc<(String, String)>], force_skipped: bool) -> bool {
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
             return false;
         }
         queue.items.push_back(HubItem::Opened);
-        let mut overflowed = false;
+        let mut skipped = false;
         for frame in replays {
             let size = frame.0.len().saturating_add(frame.1.len());
             if queue.items.len() >= queue.max_items()
@@ -107,19 +109,19 @@ impl Subscriber {
                 queue.items.clear();
                 queue.bytes = 0;
                 queue.items.push_back(HubItem::Opened);
-                queue.items.push_back(HubItem::Skipped { overflow: true });
-                overflowed = true;
+                queue.items.push_back(HubItem::Skipped);
+                skipped = true;
                 break;
             }
             queue.bytes = queue.bytes.saturating_add(size);
             queue.items.push_back(HubItem::Frame(frame.clone()));
         }
-        if !overflowed && force_overflow {
-            queue.items.push_back(HubItem::Skipped { overflow: true });
-            overflowed = true;
+        if !skipped && force_skipped {
+            queue.items.push_back(HubItem::Skipped);
+            skipped = true;
         }
         let _ = self.wake_tx.try_send(());
-        overflowed
+        skipped
     }
 
     fn push_opened(&self) {
@@ -131,7 +133,8 @@ impl Subscriber {
         let _ = self.wake_tx.try_send(());
     }
 
-    fn push_frame_quiet(&self, frame: Arc<(String, String)>) -> bool {
+    /// Returns `false` if this subscriber exceeded its local queue budget and was closed.
+    fn try_push_frame(&self, frame: Arc<(String, String)>) -> bool {
         let size = frame.0.len().saturating_add(frame.1.len());
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
@@ -140,33 +143,29 @@ impl Subscriber {
         if queue.items.len() >= queue.max_items()
             || queue.bytes.saturating_add(size) > MAX_SUBSCRIBER_BYTES
         {
-            let had_opened = matches!(queue.items.front(), Some(HubItem::Opened));
+            queue.closed = true;
             queue.items.clear();
             queue.bytes = 0;
-            if had_opened {
-                queue.items.push_back(HubItem::Opened);
-            }
-            queue.items.push_back(HubItem::Skipped { overflow: true });
+            queue.items.push_back(HubItem::Closed {
+                auth_expired: false,
+            });
             let _ = self.wake_tx.try_send(());
-            true
+            false
         } else {
             queue.bytes = queue.bytes.saturating_add(size);
             queue.items.push_back(HubItem::Frame(frame));
             let _ = self.wake_tx.try_send(());
-            false
+            true
         }
     }
 
-    fn push_skipped(&self, overflow: bool) {
+    fn push_skipped(&self) {
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
             return;
         }
-        match queue.items.back_mut() {
-            Some(HubItem::Skipped { overflow: existing }) => {
-                *existing |= overflow;
-            }
-            _ => queue.items.push_back(HubItem::Skipped { overflow }),
+        if !matches!(queue.items.back(), Some(HubItem::Skipped)) {
+            queue.items.push_back(HubItem::Skipped);
         }
         let _ = self.wake_tx.try_send(());
     }
@@ -261,6 +260,9 @@ impl SharedStream {
             }
             inner.phase = Phase::Open;
             for sub in &inner.subscribers {
+                if let Some(hook) = &sub.guard_hook {
+                    hook.mark_open();
+                }
                 if let Some(quota) = &sub.quota
                     && quota.transport_quiet(true)
                 {
@@ -313,12 +315,12 @@ impl SharedStream {
         }
     }
 
-    pub(super) fn broadcast_frame(&self, kind: String, data: String) {
+    pub(super) fn broadcast_frame(&self, hub: &Hub, kind: String, data: String) {
         let frame = Arc::new((kind, data));
         let replay_update = classify_replay(&frame.0, &frame.1);
         let notify_quota = frame.0.is_empty() || frame.0 == "message";
         let mut wakes = Vec::new();
-        {
+        let became_empty = {
             let mut inner = self.inner.lock().unwrap();
             if matches!(inner.phase, Phase::Closed { .. }) {
                 return;
@@ -337,20 +339,39 @@ impl SharedStream {
                 }
                 ReplayUpdate::None => {}
             }
-            for sub in &inner.subscribers {
-                let overflowed = sub.push_frame_quiet(frame.clone());
-                if let Some(quota) = &sub.quota {
-                    let mut wake = false;
-                    if notify_quota {
-                        wake |= quota.frame_quiet(&frame.1);
+            inner.subscribers.retain(|sub| {
+                let kept = sub.try_push_frame(frame.clone());
+                if !kept {
+                    if let Some(hook) = &sub.guard_hook {
+                        hook.revoke(true);
                     }
-                    if overflowed {
-                        wake |= quota.skipped_quiet();
-                    }
-                    if wake {
+                    if let Some(quota) = &sub.quota
+                        && quota.transport_quiet(false)
+                    {
                         wakes.push(quota.clone());
                     }
+                    return false;
                 }
+                if notify_quota
+                    && let Some(quota) = &sub.quota
+                    && quota.frame_quiet(&frame.1)
+                {
+                    wakes.push(quota.clone());
+                }
+                true
+            });
+            inner.subscribers.is_empty()
+        };
+        if became_empty {
+            let mut streams = hub.streams.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap();
+            if inner.subscribers.is_empty() {
+                if let Some(entry) = streams.get_mut(&self.base)
+                    && std::ptr::eq(Arc::as_ptr(&entry.stream), self)
+                {
+                    entry.active = false;
+                }
+                inner.stop.take();
             }
         }
         for quota in wakes {
@@ -366,7 +387,7 @@ impl SharedStream {
                 return;
             }
             for sub in &inner.subscribers {
-                sub.push_skipped(false);
+                sub.push_skipped();
                 if let Some(quota) = &sub.quota
                     && quota.skipped_quiet()
                 {
@@ -379,25 +400,10 @@ impl SharedStream {
         }
     }
 
-    fn replay_for(&self, workspace: &str) -> Option<Arc<(String, String)>> {
-        if workspace.is_empty() {
-            return None;
-        }
-        let inner = self.inner.lock().unwrap();
-        inner.replays.get(workspace).cloned()
-    }
-
     pub(super) fn finish(&self, hub: &Hub, auth_expired: bool) {
         let mut wakes = Vec::new();
-        let mut revocations = Vec::new();
         {
             let mut streams = hub.streams.lock().unwrap();
-            if streams
-                .get(&self.base)
-                .is_some_and(|entry| std::ptr::eq(Arc::as_ptr(&entry.stream), self))
-            {
-                streams.remove(&self.base);
-            }
             let mut inner = self.inner.lock().unwrap();
             if matches!(inner.phase, Phase::Closed { .. }) {
                 return;
@@ -411,20 +417,21 @@ impl SharedStream {
             }
             inner.stop.take();
             for sub in std::mem::take(&mut inner.subscribers) {
+                if let Some(hook) = &sub.guard_hook {
+                    hook.revoke(true);
+                }
                 if let Some(quota) = &sub.quota
                     && quota.transport_quiet(false)
                 {
                     wakes.push(quota.clone());
                 }
                 sub.push_closed(auth_expired);
-                if sub.close_revocation.is_some() {
-                    revocations.push(sub);
-                }
             }
-        }
-        for sub in revocations {
-            if let Some(revocation) = &sub.close_revocation {
-                revocation.revoke();
+            if streams
+                .get(&self.base)
+                .is_some_and(|entry| std::ptr::eq(Arc::as_ptr(&entry.stream), self))
+            {
+                streams.remove(&self.base);
             }
         }
         for quota in wakes {
@@ -491,10 +498,10 @@ impl Hub {
         self: &Arc<Self>,
         backend: &Backend,
         quota: Option<crate::provider_usage::Ingress>,
-        close_revocation: Option<CloseRevocation>,
+        guard_hook: Option<GuardHook>,
     ) -> Subscription {
         let id = self.next_id.fetch_add(1, SeqCst) + 1;
-        let sub = Subscriber::new(id, quota, close_revocation);
+        let sub = Subscriber::new(id, quota, guard_hook);
         loop {
             let wait_done = {
                 let mut streams = self.streams.lock().unwrap();
@@ -509,28 +516,22 @@ impl Hub {
                         {
                             let mut wake_quota = None;
                             if inner.phase == Phase::Open {
+                                if let Some(hook) = &sub.guard_hook {
+                                    hook.mark_open();
+                                }
                                 let replays: Vec<_> = inner.replays.values().cloned().collect();
                                 let missing_replay = inner.replays_overflowed
                                     && !backend.workspace.is_empty()
                                     && !inner.replays.contains_key(&backend.workspace);
-                                let overflowed = sub.seed_opened(&replays, missing_replay);
-                                if let Some(quota) = &sub.quota {
-                                    let mut changed = quota.transport_quiet(true);
-                                    for frame in &replays {
-                                        if frame.0.is_empty() || frame.0 == "message" {
-                                            changed |= quota.frame_quiet(&frame.1);
-                                        }
-                                    }
-                                    if overflowed {
-                                        changed |= quota.skipped_quiet();
-                                    }
-                                    #[cfg(not(target_arch = "wasm32"))]
-                                    if inner.chunk_active {
-                                        quota.begin_chunk();
-                                    }
-                                    if changed {
-                                        wake_quota = Some(quota.clone());
-                                    }
+                                let skipped = sub.seed_opened(&replays, missing_replay);
+                                #[cfg(not(target_arch = "wasm32"))]
+                                let chunk_active = inner.chunk_active;
+                                #[cfg(target_arch = "wasm32")]
+                                let chunk_active = false;
+                                if let Some(quota) = &sub.quota
+                                    && quota.attach_open_quiet(&replays, skipped, chunk_active)
+                                {
+                                    wake_quota = Some(quota.clone());
                                 }
                             }
                             inner.subscribers.push(sub.clone());
@@ -651,74 +652,20 @@ impl Drop for Subscription {
     }
 }
 
-async fn resync_after_skip(
-    shared: &SharedStream,
-    backend: &Backend,
-    epoch: u64,
-    out: &Sender<Input>,
-    state: &State,
-    connection: &str,
-    overflow: bool,
-) -> Result<()> {
-    backend.client.children().invalidate_all(backend);
-    reread(epoch, out, state).await?;
-    if !overflow {
-        return Ok(());
-    }
-    resync_preferences(epoch, out, state).await?;
-    if let Some(status) = shared.replay_for(&backend.workspace) {
-        dispatch(backend, epoch, out, state, connection, &status.0, &status.1).await?;
-    }
-    if state.catalogue.is_none() {
-        out.send(Input::Workspace(epoch, WorkspaceEvent::MemoryChanged))
-            .await?;
-        if crate::history::valid_id(&backend.workspace) {
-            out.send(Input::Workspace(
-                epoch,
-                WorkspaceEvent::MissionsReconnected {
-                    workspace_id: backend.workspace.clone(),
-                },
-            ))
-            .await?;
-            out.send(Input::Workspace(
-                epoch,
-                WorkspaceEvent::WorktreesChanged {
-                    workspace_id: backend.workspace.clone(),
-                },
-            ))
-            .await?;
-            out.send(Input::Workspace(
-                epoch,
-                WorkspaceEvent::ProvidersChanged {
-                    workspace_id: backend.workspace.clone(),
-                },
-            ))
-            .await?;
-            if !backend.session.is_empty() {
-                out.send(Input::Workspace(
-                    epoch,
-                    WorkspaceEvent::PermissionReceiptsChanged { message: None },
-                ))
-                .await?;
-            }
-        }
-    }
-    Ok(())
-}
-
 pub(super) async fn read_shared(
     backend: &Backend,
     epoch: u64,
     out: &Sender<Input>,
     state: &State,
     stream_guard: Arc<StreamDropGuard>,
+    count_open_stream: bool,
 ) -> Result<()> {
     let hub = backend.client.sse_hub();
     let quota = state.quota_ingress(backend);
-    let close_revocation = Some(CloseRevocation {
+    let guard_hook = Some(GuardHook {
         http: backend.client.clone(),
         guard: stream_guard,
-        client_id: backend.client_id.clone(),
+        count_open_stream,
     });
     enum SubscribeStep {
         Ready(Subscription),
@@ -729,7 +676,7 @@ pub(super) async fn read_shared(
             state.wait_cancelled(out).await;
             SubscribeStep::Cancelled
         },
-        async { SubscribeStep::Ready(hub.subscribe(backend, quota, close_revocation).await) },
+        async { SubscribeStep::Ready(hub.subscribe(backend, quota, guard_hook).await) },
     )
     .await
     {
@@ -755,17 +702,9 @@ pub(super) async fn read_shared(
                         dispatch(backend, epoch, out, state, &connection, &frame.0, &frame.1)
                             .await?;
                     }
-                    HubItem::Skipped { overflow } => {
-                        resync_after_skip(
-                            &sub.shared,
-                            backend,
-                            epoch,
-                            out,
-                            state,
-                            &connection,
-                            overflow,
-                        )
-                        .await?;
+                    HubItem::Skipped => {
+                        backend.client.children().invalidate_all(backend);
+                        reread(epoch, out, state).await?;
                     }
                     HubItem::Closed { auth_expired } => {
                         if auth_expired {

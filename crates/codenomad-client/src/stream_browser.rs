@@ -108,13 +108,14 @@ fn spawn_pong(
     watchdog: &Arc<Watchdog>,
     cancel_rx: &crate::Receiver<()>,
     abort_tx: &crate::Sender<()>,
-) {
+) -> Option<crate::Receiver<()>> {
     if in_flight
         .compare_exchange(false, true, SeqCst, SeqCst)
         .is_err()
     {
-        return;
+        return None;
     }
+    let (done_tx, done_rx) = crate::bounded(1);
     let b = b.clone();
     let connection = connection.to_owned();
     let in_flight = in_flight.clone();
@@ -124,6 +125,7 @@ fn spawn_pong(
     let cancel_rx = cancel_rx.clone();
     let abort_tx = abort_tx.clone();
     crate::runtime::spawn(async move {
+        let _done = done_tx;
         let _guard = ClearOnDrop(in_flight);
         enum PongStep {
             Done(std::result::Result<reqwest::Response, reqwest::Error>),
@@ -164,6 +166,7 @@ fn spawn_pong(
             PongStep::Cancelled => {}
         }
     });
+    Some(done_rx)
 }
 
 pub(super) async fn pump_shared(
@@ -225,6 +228,7 @@ pub(super) async fn pump_shared(
 
         let tx_msg = signal_tx.clone();
         let close_msg = source.clone();
+        let hub_msg = hub.clone();
         let shared_msg = shared.clone();
         let backend_msg = b.clone();
         let watchdog_msg = watchdog.clone();
@@ -239,7 +243,7 @@ pub(super) async fn pump_shared(
                 watchdog_msg.activity();
                 let data = event.data().as_string().unwrap_or_default();
                 if data.len() <= FRAME_LIMIT {
-                    shared_msg.broadcast_frame("message".into(), data);
+                    shared_msg.broadcast_frame(&hub_msg, "message".into(), data);
                 } else {
                     backend_msg.client.children().invalidate_all(&backend_msg);
                     shared_msg.broadcast_skipped();
@@ -291,8 +295,9 @@ pub(super) async fn pump_shared(
         }
 
         let pong_in_flight = Arc::new(AtomicBool::new(false));
-        let (_pong_cancel_tx, pong_cancel_rx) = crate::bounded::<()>(1);
+        let (pong_cancel_tx, pong_cancel_rx) = crate::bounded::<()>(1);
         let (pong_abort_tx, pong_abort_rx) = crate::bounded::<()>(1);
+        let mut pong_done: Option<crate::Receiver<()>> = None;
         loop {
             if watchdog.is_stale() || pong_abort_rx.try_recv().is_ok() {
                 break;
@@ -328,14 +333,16 @@ pub(super) async fn pump_shared(
             }
             match step {
                 Step::Signal(Ok(Signal::Ping)) => {
-                    spawn_pong(
+                    if let Some(done) = spawn_pong(
                         &b,
                         &connection,
                         &pong_in_flight,
                         &watchdog,
                         &pong_cancel_rx,
                         &pong_abort_tx,
-                    );
+                    ) {
+                        pong_done = Some(done);
+                    }
                 }
                 Step::Signal(Ok(Signal::Closed))
                 | Step::Signal(Err(_))
@@ -343,6 +350,12 @@ pub(super) async fn pump_shared(
                 | Step::Stopped
                 | Step::PongAbort => break,
             }
+        }
+        drop(pong_cancel_tx);
+        drop(global_probe);
+        drop(_source);
+        if let Some(done) = pong_done {
+            let _ = done.recv().await;
         }
     }
     shared.finish(&hub, false);

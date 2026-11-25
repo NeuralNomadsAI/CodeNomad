@@ -51,8 +51,7 @@ impl Watch {
         self.0.lock().unwrap().transport(online)
     }
 
-    fn observe(&self, hint: Hint) -> bool {
-        let mut authority = self.0.lock().unwrap();
+    fn apply_hint(authority: &mut Authority, hint: Hint) -> bool {
         match hint {
             Hint::Revoke => {}
             Hint::Model => authority.model_generation += 1,
@@ -70,6 +69,11 @@ impl Watch {
         }
         authority.generation += 1;
         true
+    }
+
+    fn observe(&self, hint: Hint) -> bool {
+        let mut authority = self.0.lock().unwrap();
+        Self::apply_hint(&mut authority, hint)
     }
 }
 
@@ -283,15 +287,13 @@ impl Ingress {
         }
     }
 
-    pub(crate) fn frame_quiet(&self, data: &str) -> bool {
+    fn parse_hint(&self, data: &str) -> Option<Hint> {
         // Ignore native payloads in the authority observer; the router decodes them separately.
-        let Ok(frame) = serde_json::from_str::<Envelope<'_>>(data) else {
-            return false;
-        };
+        let frame = serde_json::from_str::<Envelope<'_>>(data).ok()?;
         if frame.workspace != Some(self.workspace.as_str()) {
-            return false;
+            return None;
         }
-        let change = match frame.kind {
+        match frame.kind {
             "instance.eventStatus" => frame.generation.map(|generation| Hint::Upstream {
                 generation,
                 connected: frame.status == Some("connected"),
@@ -310,8 +312,37 @@ impl Ingress {
                 _ => None,
             }),
             _ => None,
-        };
-        change.is_some_and(|change| self.watch.observe(change))
+        }
+    }
+
+    pub(crate) fn attach_open_quiet(
+        &self,
+        replays: &[Arc<(String, String)>],
+        overflowed: bool,
+        #[cfg_attr(target_arch = "wasm32", allow(unused_variables))] chunk_active: bool,
+    ) -> bool {
+        let mut authority = self.watch.0.lock().unwrap();
+        let mut changed = authority.transport(true);
+        for frame in replays {
+            if (frame.0.is_empty() || frame.0 == "message")
+                && let Some(hint) = self.parse_hint(&frame.1)
+            {
+                changed |= Watch::apply_hint(&mut authority, hint);
+            }
+        }
+        if overflowed {
+            changed |= Watch::apply_hint(&mut authority, Hint::Revoke);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if chunk_active {
+            authority.backpressure = true;
+        }
+        changed
+    }
+
+    pub(crate) fn frame_quiet(&self, data: &str) -> bool {
+        self.parse_hint(data)
+            .is_some_and(|change| self.watch.observe(change))
     }
 
     #[cfg(test)]
