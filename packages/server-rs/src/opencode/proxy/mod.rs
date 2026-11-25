@@ -6,6 +6,8 @@ mod defer_media;
 mod dispatch;
 mod guards;
 mod mutation;
+#[cfg(test)]
+mod stack_tests;
 
 pub use guards::verify_mutation;
 
@@ -27,6 +29,10 @@ use guards::{
 };
 
 pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Response, Error> {
+    Box::pin(relay_inner(app, request)).await
+}
+
+async fn relay_inner(app: Shared, request: Request) -> Result<Response, Error> {
     let (head, body) = request.into_parts();
     let principal = head.extensions.get::<crate::auth::Principal>().cloned().ok_or_else(crate::auth::unauthorized)?;
     let invalid = || error(Status::BAD_REQUEST, "Invalid workspace instance path");
@@ -130,7 +136,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let mut translated_directories = std::collections::BTreeMap::new();
     let mut prompt_locations = Vec::new();
     for directory in prompt_directories {
-        let (translated, live, observed) = super::prompt::observe_directory(&app, &workspace, &directory).await?;
+        let (translated, live, observed) =
+            Box::pin(super::prompt::observe_directory(&app, &workspace, &directory)).await?;
         translated_directories.insert(directory.clone(), translated.directory.clone());
         prompt_locations.push((directory, translated, (live, observed)));
     }
@@ -179,7 +186,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         if let Some(translated) = translated_directories.get(raw) {
             Some(translated.clone())
         } else {
-            let (location, live, observed) = super::prompt::observe_directory(&app, &workspace, raw).await?;
+            let (location, live, observed) = Box::pin(super::prompt::observe_directory(&app, &workspace, raw)).await?;
             let translated = location.directory.clone();
             prompt_locations.push((raw.clone(), location, (live, observed)));
             Some(translated)
@@ -498,7 +505,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
                 }
             } else {
-                let (context, live, observed) = super::prompt::observe_directory(&app, &workspace, raw).await?;
+                let (context, live, observed) =
+                    Box::pin(super::prompt::observe_directory(&app, &workspace, raw)).await?;
                 if prompt_locations.iter().any(|(_, location, _)| location != &context) {
                     return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
                 }
@@ -631,7 +639,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         input_checkout: &input_checkout,
     };
     let mutation::PreparedMutation { fork, root_permissions, input, rules_lock, mutation, receipt } =
-        match mutation::prepare_mutation(mutation::MutationContext {
+        match Box::pin(mutation::prepare_mutation(mutation::MutationContext {
             recheck: &recheck,
             head: &head,
             route,
@@ -647,7 +655,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             explicit,
             session_list,
             target: &mut target,
-        })
+        }))
         .await?
         {
             mutation::MutationOutcome::Ready(prepared) => prepared,
@@ -699,15 +707,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     principal.live()?;
     if send_input {
         if command && let Some(Value::Object(input)) = &input {
-            super::prompt::validate(&app, &workspace, input).await?;
+            Box::pin(super::prompt::validate(&app, &workspace, input)).await?;
         }
-        recheck.verify().await?;
+        Box::pin(recheck.verify()).await?;
     }
     if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
         return Err(upstream_error());
     }
     if let Some(session) = defer_media {
-        return defer_media::stream_deferred_message_list(defer_media::DeferContext {
+        return Box::pin(defer_media::stream_deferred_message_list(defer_media::DeferContext {
             app: &app,
             workspace: &workspace,
             endpoint: &endpoint,
@@ -719,14 +727,14 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             initial_identity: &initial_identity,
             input_checkout: &input_checkout,
             upstream,
-        })
+        }))
         .await;
     }
     let opened = opened.to_owned();
     let directory = directory.to_owned();
     let route = route.to_owned();
     let id = id.to_owned();
-    dispatch::dispatch_upstream(dispatch::DispatchContext {
+    Box::pin(dispatch::dispatch_upstream(dispatch::DispatchContext {
         app,
         workspace,
         endpoint,
@@ -744,6 +752,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         receipt,
         mutation,
         rules_lock,
-    })
+    }))
     .await
 }
