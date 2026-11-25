@@ -278,3 +278,69 @@ test("an OpenCode older than 2.4 is never attached, and an unreadable command is
   assert.deepEqual([settled.requestID, settled.outcome.type], ["unreadable", "failure"])
   assert.deepEqual(probes.at(-1)?.workspaceIDs, ["ws"], "the probe names the verified owners")
 })
+test("a session moved before a queued command's turn refuses it, and inventories are published one at a time", async t => {
+  const rpcCalls: Array<{ method: string; input: Record<string, unknown> }> = []
+  const dispatched: string[] = []
+  let directory = "/old"
+  let holdState: Promise<void> | undefined
+  let releaseAttach: (outcome: string) => void = () => {}
+  let attached!: (connectionID: string) => void
+  const attachedReady = new Promise<string>(resolve => { attached = resolve })
+  const app = Fastify({ logger: false })
+  app.get("/openapi.json", async () => modernContractFixture)
+  app.get("/api/session/:id", async request => ({ data: { id: (request.params as { id: string }).id, location: { directory } } }))
+  app.post("/api/rpc/:rpcID/:method", async request => {
+    const { method } = request.params as { rpcID: string; method: string }
+    const input = (request.body as { input: Record<string, unknown> }).input
+    rpcCalls.push({ method, input })
+    if (method === "attach") { attached(String(input.connectionID)); return { output: await new Promise<string>(done => { releaseAttach = done }) } }
+    if (method === "command") return { output: { action: input.requestID === "pause"
+      ? { type: "wait", condition: "delay", timeoutMs: 300 } : { type: "tabs.open", url: "https://example.com/" } } }
+    if (method === "state" && holdState) await holdState
+    return { output: { ok: true } }
+  })
+  const address = await app.listen({ host: "127.0.0.1", port: 0 })
+  t.after(async () => { releaseAttach("replaced"); await app.close() })
+  const endpoint = { url: address, auth: undefined }
+  rememberRuntime(endpoint, { version: "2.4.1", pid: 1234, discovery: "status" })
+  const connection = { endpoint, client: OpenCode.make({ baseUrl: address, fetch: globalThis.fetch }), fetch: globalThis.fetch,
+    assertCurrent: () => {}, invalidate: () => {}, profile: async () => "modern" as const }
+  const eventBus = new EventBus()
+  const attachments = new NativeBrowserAttachments({
+    workspaceManager: { getSharedServiceConnection: async () => connection, ownsLocation: async () => true } as never,
+    eventBus,
+    nativeParent: { available: true, browserAutomationUnavailable: false, request: async (method: string) => {
+      if (method === "browser.execute") dispatched.push(directory)
+      if (method === "browser.probe") return { available: true, target: "doc", loading: false }
+      return { url: "https://example.com/" }
+    } } as never,
+    logger: { warn: () => {}, debug: () => {}, info: () => {}, error: () => {}, trace: () => {}, isLevelEnabled: () => false } as never,
+  })
+  t.after(() => attachments.close())
+  attachments.hold("hold", "ws", "ses-1")
+  const connectionID = await attachedReady
+  const publish = (data: Record<string, unknown>) => eventBus.publish({ type: "instance.event", instanceId: "ws",
+    event: { type: BROWSER_CONTROL_EVENT, data: { connectionID, ...data } } } as any)
+  const results = () => rpcCalls.filter(call => call.method === "result")
+
+  // Two publications: the second waits for the first to be answered.
+  let release!: () => void
+  holdState = new Promise<void>(resolve => { release = resolve })
+  publish({ type: "attached" })
+  await until(() => rpcCalls.filter(call => call.method === "state").length === 1, "first publication")
+  publish({ type: "attached" })
+  await new Promise(resolve => setTimeout(resolve, 150))
+  assert.equal(rpcCalls.filter(call => call.method === "state").length, 1, "the second publication waits for the first")
+  holdState = undefined
+  release()
+  await until(() => rpcCalls.filter(call => call.method === "state").length === 2, "second publication")
+
+  publish({ type: "command", requestID: "pause" })
+  await until(() => rpcCalls.filter(call => call.method === "command").length === 1, "pause running")
+  publish({ type: "command", requestID: "open" })
+  await until(() => rpcCalls.filter(call => call.method === "command").length === 2, "open queued")
+  directory = "/new"
+  await until(() => results().some(call => call.input.requestID === "open"), "refused open")
+  assert.match((results().find(call => call.input.requestID === "open")!.input.outcome as any).message, /owns this conversation/)
+  assert.deepEqual(dispatched, [], "the moved session's preview is never acted on")
+})

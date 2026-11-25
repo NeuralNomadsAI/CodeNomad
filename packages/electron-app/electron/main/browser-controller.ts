@@ -482,7 +482,7 @@ export class BrowserController {
     }, deadline)
   }
 
-  async open(sessionID: string, url: string, deadline: number, workspaceIDs: readonly string[], checkAdmission: () => void = () => {}): Promise<{ url: string }> {
+  async open(sessionID: string, url: string, deadline: number, workspaceIDs: readonly string[], checkAdmission: () => void = () => {}): Promise<{ url: string; registration?: string }> {
     if (!isBrowserUrlAllowed(url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
     const registrationDeadline = Math.min(deadline, Date.now() + 10_000)
     const existingOwner = this.previewOwners.get(sessionID)
@@ -537,7 +537,7 @@ export class BrowserController {
               })
               checkRegistration()
               this.releaseOpen(owner, requestID, committed.url)
-              return committed
+              return { ...committed, registration: expected.generation }
             }, deadline, claim.retirement.signal)
           }
           await new Promise(resolve => setTimeout(resolve, 25))

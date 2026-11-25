@@ -8,7 +8,7 @@ export interface PreviewHost {
   /** The visible preview's target, its registration and whether a main-frame load is in progress, or undefined when
    * the session shows none. */
   probe(deadline: number, signal: AbortSignal): Promise<{ target: string; loading: boolean; registration?: string } | undefined>
-  open(url: string, deadline: number, signal: AbortSignal): Promise<{ url: string }>
+  open(url: string, deadline: number, signal: AbortSignal): Promise<Loaded>
   /** Loads end with the URL and the registration of the preview that loaded it. */
   navigate(url: string, target: string, deadline: number, signal: AbortSignal): Promise<Loaded>
   back(target: string, deadline: number, signal: AbortSignal): Promise<Loaded>
@@ -214,7 +214,7 @@ export class PreviewTab {
         if (x || y) await page({ action: "scroll", delta: { x, y } })
         return this.success(this.tab())
       }
-      case "wait": return this.wait(action, page, deadline, signal)
+      case "wait": return this.wait(action, deadline, signal)
       case "screenshot": {
         const { image } = await this.host.screenshot(target, deadline, signal)
         const bytes = Math.floor(image.data.length * 3 / 4) - (image.data.endsWith("==") ? 2 : image.data.endsWith("=") ? 1 : 0)
@@ -233,7 +233,8 @@ export class PreviewTab {
       // A new guest or document: refs from the previous one expire.
       this.target = undefined
       await this.refresh(deadline, signal)
-      if (!this.target) return failure("operation_failed", "The page opened, but its preview is not visible to the agent.")
+      if (!this.target || opened.registration !== this.registration)
+        return failure("operation_failed", "The page opened, but its preview is not the one shown to the agent. Call browser.tabs.list({}).")
       this.url = opened.url
       return this.success(this.tab())
     } catch (error) { return failed(error) }
@@ -249,7 +250,7 @@ export class PreviewTab {
     return this.success(this.tab())
   }
 
-  private async wait(action: Action, page: (step: BrowserPageAction) => Promise<Record<string, unknown>>, deadline: number, signal: AbortSignal): Promise<BrowserOutcome> {
+  private async wait(action: Action, deadline: number, signal: AbortSignal): Promise<BrowserOutcome> {
     const timeout = Math.min(MAX_WAIT_MS, Number(action.timeoutMs) || 10_000)
     const started = Date.now()
     if (action.condition === "load") {
@@ -268,15 +269,25 @@ export class PreviewTab {
       return this.success(this.tab())
     }
     if (action.condition !== "text" && action.condition !== "textGone") return unsupported(`wait for ${String(action.condition)}`)
+    // The text is read from whichever document the tab shows, as in OpenCode's browser: a navigation moves the wait on.
     for (;;) {
       const remaining = timeout - (Date.now() - started)
+      const target = this.target
+      if (!target) return failure("operation_failed", "This tab is no longer shown. Call browser.tabs.list({}).")
       try {
-        await page({ action: "wait", text: String(action.text), gone: action.condition === "textGone", timeout: Math.max(0, Math.min(PAGE_WAIT_MS, remaining)), literal: true })
+        const result = await this.host.page({ action: "wait", text: String(action.text), gone: action.condition === "textGone",
+          timeout: Math.max(0, Math.min(PAGE_WAIT_MS, remaining)), literal: true }, target, deadline, signal)
+        this.noteURL(target, result.url)
         return this.success(this.tab())
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        if (!/did not appear within|is still shown after/.test(message)) return failed(error)
-        if (Date.now() - started >= timeout) return failure("condition_unmet", message)
+        const moved = /stale; probe again|document changed|lease is no longer current/i.test(message)
+        if (!moved && !/did not appear within|is still shown after/.test(message)) return failed(error)
+        if (Date.now() - started >= timeout) return failure("condition_unmet", moved ? "The page changed and the text did not appear in time." : message)
+        if (moved) {
+          await sleep(LOAD_POLL_MS, undefined, { signal })
+          await this.refresh(deadline, signal)
+        }
       }
     }
   }

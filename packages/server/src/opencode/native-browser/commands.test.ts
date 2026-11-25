@@ -271,6 +271,8 @@ test("a load ending in another preview fails, an older probe never overwrites a 
   const probe = host.probe
   let registration = "window-a"
   host.probe = async (...args) => { const probed = await probe(...args); return probed && { ...probed, registration } }
+  const open = host.open
+  host.open = async (...args) => ({ ...await open(...args), registration: "window-a" })
   const navigate = host.navigate
   host.navigate = async (...args) => { const loaded = await navigate(...args); registration = "window-b"; return { ...loaded, registration: "window-a" } }
   const opened = await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal) as any
@@ -310,4 +312,23 @@ test("a load ending in another preview fails, an older probe never overwrites a 
   assert.equal((await tab.run({ type: "check", tabID: tab.id, ref: "e7", checked: false }, undefined, signal)).type, "success")
   assert.equal(checked, false, "the click happened")
   assert.ok(calls)
+})
+test("an open that ends in another preview fails, and a text wait follows the tab to its next document", async () => {
+  const { tab, state } = fixture()
+  const host = (tab as any).host as PreviewHost
+  const probe = host.probe, open = host.open, page = host.page
+  host.probe = async (...args) => { const probed = await probe(...args); return probed && { ...probed, registration: "window-b" } }
+  host.open = async (...args) => ({ ...await open(...args), registration: "window-a" })
+  assert.equal((await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)).type, "failure")
+  host.probe = probe
+  host.open = open
+  await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
+  // The first document navigates away during the wait; the next one shows the text.
+  host.page = async (action, at, deadline, abort) => {
+    if (action.action !== "wait") return page(action, at, deadline, abort)
+    if (at === "doc-2") { state.target = "doc-3"; throw new Error("Browser target is stale; probe again") }
+    return { url: "http://127.0.0.1/saved" }
+  }
+  const waited = await tab.run({ type: "wait", tabID: tab.id, condition: "text", text: "Saved", timeoutMs: 2_000 }, undefined, signal) as any
+  assert.equal(waited.type, "success")
 })

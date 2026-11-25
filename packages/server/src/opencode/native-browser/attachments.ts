@@ -182,6 +182,7 @@ class SessionAttachment {
   private readonly stopping = new AbortController()
   private attachment = new AbortController()
   private readonly requests = new Map<string, AbortController>()
+  private publishing: Promise<void> = Promise.resolve()
   /** Request IDs already taken: the relay can deliver one control event once per owning workspace. */
   private readonly taken = new Set<string>()
   private readonly tab: PreviewTab
@@ -298,7 +299,12 @@ class SessionAttachment {
       // Ownership is checked again when each command's turn comes: a project can stop owning the session while
       // the command waits behind another.
       const admit = async (): Promise<BrowserOutcome | undefined> => {
-        this.owners = this.location ? await this.verifiedOwners(this.location, signal) : []
+        // The session's current location decides: a session moved elsewhere no longer belongs to this attachment.
+        const session = this.connection && await this.connection.client.session.get({ sessionID: this.sessionID }, { signal })
+        const location = session?.location as Location | undefined
+        const moved = !location || !this.location || location.directory !== this.location.directory
+          || location.workspaceID !== this.location.workspaceID
+        this.owners = moved ? [] : await this.verifiedOwners(location, signal)
         lost = !this.workspaceID || !this.owners.includes(this.workspaceID)
         return lost ? { type: "failure", code: "operation_failed", message: "No project shown on this computer owns this conversation's browser." } : undefined
       }
@@ -327,9 +333,15 @@ class SessionAttachment {
     }
   }
 
+  /** Publications run one at a time and each reads the tab when its turn comes: OpenCode replaces its inventory with
+   * every one it receives, so an older one must never arrive last. */
   private async publish(signal = this.stopping.signal): Promise<void> {
-    await this.tab.refresh(Date.now() + 5_000, signal)
-    await this.rpc("state", { state: this.tab.state() }, signal)
+    const turn = this.publishing.then(async () => {
+      await this.tab.refresh(Date.now() + 5_000, signal)
+      await this.rpc("state", { state: this.tab.state() }, signal)
+    })
+    this.publishing = turn.catch(() => undefined)
+    await turn
   }
 
   private async rpc(method: string, input: Record<string, unknown>, signal: AbortSignal, client = this.connection?.client): Promise<unknown> {

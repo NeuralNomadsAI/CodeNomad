@@ -704,7 +704,7 @@ describe("BrowserController preview lifecycle", () => {
       visible.events.emit("did-finish-load")
     })
     const url = "https://example.com/new"
-    assert.deepEqual(await h.controller.open("session", url, Infinity, ["tab"]), { url })
+    assert.equal((await h.controller.open("session", url, Infinity, ["tab"])).url, url)
     assert.equal(load.mock.callCount(), 1)
   })
 
@@ -751,7 +751,7 @@ describe("BrowserController preview lifecycle", () => {
     const { target } = await h.controller.probe("session")
     const command = { action: "open", url }
     await assert.rejects(execute({ command, target }), /Owning project tabs are unavailable/)
-    assert.deepEqual(await execute({ command, workspaceIDs: ["tab"] }), { url })
+    assert.equal((await execute({ command, workspaceIDs: ["tab"] }) as { url: string }).url, url)
     await assert.rejects(execute({ command: { action: "screenshot" }, target }), /Browser target is stale/)
     const refreshed = await h.controller.probe("session")
     assert.notEqual(refreshed.target, target)
@@ -833,7 +833,7 @@ describe("BrowserController preview lifecycle", () => {
       h.add(guest, "exact", "session", "tab")
       const opening = h.controller.open("session", url, Infinity, ["tab"])
       if (replace) await assert.rejects(opening, /registration changed/)
-      else assert.deepEqual(await opening, { url })
+      else assert.equal((await opening).url, url)
       assert.deepEqual(trace, [16])
       assert.deepEqual(h.receipts, [{ requestID: request, sessionID: "session", instanceId: "tab", committedUrl: replace ? undefined : url }])
     })
@@ -874,7 +874,7 @@ describe("BrowserController preview lifecycle", () => {
       })
       const opening = h.controller.open("session", url, Infinity, ["tab"])
       if (replacement || fragmentAborted) await assert.rejects(opening, /Browser navigation changed/)
-      else assert.deepEqual(await opening, { url: committedUrl })
+      else assert.equal((await opening).url, committedUrl)
       assert.deepEqual(h.receipts.map(receipt => (receipt as { committedUrl?: string }).committedUrl), [replacement || fragmentAborted ? undefined : committedUrl])
       if (replacement || fragmentAborted) {
         const receipt = h.receipts[0] as { keepGuest?: boolean; successorUrl?: string }
@@ -1070,7 +1070,7 @@ describe("BrowserController preview lifecycle", () => {
       h.add(createGuest({ id: 22, owner, loadURL: async () => { now += 11_000 } }).guest, "first", "session", "tab")
       h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "first" })
     })
-    assert.deepEqual(await h.controller.open("session", url, now + 90_000, ["tab"]), { url })
+    assert.equal((await h.controller.open("session", url, now + 90_000, ["tab"])).url, url)
   })
 
   it("propagates navigation failures and keeps the queue usable", async () => {
