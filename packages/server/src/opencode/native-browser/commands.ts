@@ -151,7 +151,8 @@ export class PreviewTab {
       // replaced fails instead.
       this.claim = undefined
       const outcome = await conclude(await admit() ?? await this.execute(action, generation, signal))
-      const claim = this.claim
+      // Commands set it while awaited: TypeScript would otherwise keep the narrowing above.
+      const claim = this.claim as { id: string; document?: number } | undefined
       if (outcome.type === "success" && claim && (!this.target || this.id !== claim.id
         || (claim.document !== undefined && this.generation !== claim.document))) return replaced()
       return outcome
