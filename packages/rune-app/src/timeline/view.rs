@@ -290,10 +290,11 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
             gesture.transcript_wheel_target = None;
             gesture.viewport = at;
             // A virtual_rows commit during EdgeReturn clamps offset to 0.0 in Rune without
-            // clearing rebound velocity, leaking Momentum until the next Direct input.
+            // clearing rebound velocity, leaking Programmatic/Momentum until the next Direct input.
             match at.source {
                 timeline::ScrollSource::EdgeReturn => gesture.in_edge_return = true,
-                timeline::ScrollSource::Momentum if gesture.in_edge_return => {}
+                timeline::ScrollSource::Momentum | timeline::ScrollSource::Programmatic
+                    if gesture.in_edge_return => {}
                 _ => gesture.in_edge_return = false,
             }
             std::mem::take(&mut gesture.transcript_wheel_momentum)

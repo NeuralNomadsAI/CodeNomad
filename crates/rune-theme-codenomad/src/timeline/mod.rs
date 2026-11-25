@@ -44,11 +44,7 @@ pub fn user_scrolled(at: ScrollPosition) -> bool {
 }
 
 pub fn rail_scrolled(at: ScrollPosition) -> bool {
-    rune::scroll_watch_state().0
-        && matches!(
-            at.source,
-            rune::ScrollSource::Direct | rune::ScrollSource::Momentum
-        )
+    rune::scroll_watch_state().0 && at.source != rune::ScrollSource::EdgeReturn
 }
 
 pub fn fits(width: f32) -> bool {
@@ -472,9 +468,42 @@ mod tests {
             (pos.max[1] + pos.viewport[1] - expected_512).abs() < 1.0,
             "grown rail must keep exact extent {expected_512}, got {pos:?}"
         );
+        let m511 = rt
+            .elements()
+            .into_iter()
+            .find(|n| n.key.as_deref() == Some("m-511"))
+            .expect("last marker must mount after growing past a previously measured short band");
         assert!(
-            rt.find("m-511").is_some(),
-            "last marker must mount at the bottom after growing past a previously measured short band"
+            m511.rect[1] >= 0.0 && m511.rect[1] + m511.rect[3] <= 321.0 && m511.visible[3] > 0.0,
+            "m-511 must be visible inside the rail viewport: rect={:?}, visible={:?}",
+            m511.rect,
+            m511.visible
+        );
+        // Shrinking back 512 -> 65 must likewise align m-64 cleanly at the bottom.
+        rt.update(|s, _| s.count = 65);
+        for _ in 0..4 {
+            rt.frame(0.016);
+        }
+        rt.update(|_, tx| show_marker(64, tx));
+        for _ in 0..4 {
+            rt.frame(0.016);
+        }
+        let pos65 = scroll.get();
+        let expected_65 = 65.0 * height + 64.0 * gap;
+        assert!(
+            (pos65.max[1] + pos65.viewport[1] - expected_65).abs() < 1.0,
+            "shrunk rail must keep exact extent {expected_65}, got {pos65:?}"
+        );
+        let m64 = rt
+            .elements()
+            .into_iter()
+            .find(|n| n.key.as_deref() == Some("m-64"))
+            .expect("m-64 must mount after shrinking back to 65");
+        assert!(
+            m64.rect[1] >= 0.0 && m64.rect[1] + m64.rect[3] <= 321.0 && m64.visible[3] > 0.0,
+            "m-64 must be visible inside the rail viewport after shrink: rect={:?}, visible={:?}",
+            m64.rect,
+            m64.visible
         );
     }
 }
