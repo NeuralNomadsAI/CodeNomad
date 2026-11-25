@@ -225,26 +225,45 @@ pub async fn update(
     }
 }
 
+fn state_yaml_stamp(state_path: &std::path::Path) -> Result<String, ()> {
+    let link = match std::fs::symlink_metadata(state_path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok("missing".into()),
+        Err(_) => return Err(()),
+    };
+    let meta = if link.file_type().is_symlink() { std::fs::metadata(state_path).map_err(|_| ())? } else { link };
+    let modified =
+        meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
+    let created = meta.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos());
+    Ok(format!("{}:{:?}:{:?}", meta.len(), modified, created))
+}
+
 fn state_yaml_protects(state_path: &std::path::Path, session_id: &str) -> bool {
-    match std::fs::symlink_metadata(state_path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
-        Err(_) => return true,
-        Ok(meta) if meta.file_type().is_symlink() && std::fs::metadata(state_path).is_err() => return true,
-        Ok(_) => {}
+    let Ok(before) = state_yaml_stamp(state_path) else {
+        return true;
+    };
+    if before == "missing" {
+        return false;
     }
     let Ok(doc) = crate::settings::document::read(state_path) else {
         return true;
     };
-    let Some(raw) = doc.get("sessionFavorites") else {
-        return false;
+    let protected = match doc.get("sessionFavorites") {
+        None => false,
+        Some(raw) => {
+            let Ok(yaml_state) = serde_json::from_value::<Store>(raw.clone()) else {
+                return true;
+            };
+            if !valid_store(&yaml_state, any_session_id_ok) {
+                return true;
+            }
+            store_protects(&yaml_state, session_id)
+        }
     };
-    let Ok(yaml_state) = serde_json::from_value::<Store>(raw.clone()) else {
-        return true;
-    };
-    if !valid_store(&yaml_state, any_session_id_ok) {
+    if state_yaml_stamp(state_path).ok().as_deref() != Some(before.as_str()) {
         return true;
     }
-    store_protects(&yaml_state, session_id)
+    protected
 }
 
 pub fn is_protected(app: &App, session_id: &str) -> bool {
