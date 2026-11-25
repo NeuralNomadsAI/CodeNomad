@@ -31,6 +31,7 @@ pub(super) struct Scroll {
     pub last_rail_wheel_taken: bool,
     pub at: timeline::ScrollPosition,
     pub(super) viewport: timeline::ScrollPosition,
+    in_edge_return: bool,
     edge: Option<HistoryEdge>,
     direction: Option<HistoryEdge>,
 }
@@ -83,12 +84,8 @@ fn directed_delta(
     previous: timeline::ScrollPosition,
     now: timeline::ScrollPosition,
 ) -> Option<f32> {
-    let old = previous.offset[1];
-    let delta = now.offset[1] - old;
-    // Rune #1674 counts the elastic return as by-hand motion. Ignore inward movement
-    // from outside the scroll extent, including the final step back to the edge.
-    (delta != 0.0 && !(old < 0.0 && delta > 0.0 || old > previous.max[1] && delta < 0.0))
-        .then_some(delta)
+    let delta = now.offset[1] - previous.offset[1];
+    (delta != 0.0).then_some(delta)
 }
 
 #[cfg(test)]
@@ -292,12 +289,19 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
         } else {
             gesture.transcript_wheel_target = None;
             gesture.viewport = at;
+            // A virtual_rows commit during EdgeReturn clamps offset to 0.0 in Rune without
+            // clearing rebound velocity, leaking Momentum until the next Direct input.
+            match at.source {
+                timeline::ScrollSource::EdgeReturn => gesture.in_edge_return = true,
+                timeline::ScrollSource::Momentum if gesture.in_edge_return => {}
+                _ => gesture.in_edge_return = false,
+            }
             std::mem::take(&mut gesture.transcript_wheel_momentum)
         };
         let user_moved = if rail {
-            timeline::rail_scrolled() && !programmatic
+            timeline::rail_scrolled(at) && !programmatic
         } else {
-            timeline::user_scrolled()
+            !gesture.in_edge_return && timeline::user_scrolled(at)
         };
         if rail {
             if user_moved {

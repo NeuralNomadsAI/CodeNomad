@@ -7,8 +7,7 @@ mod stream;
 use stream::parse;
 pub use stream::{Stream, present};
 
-// Rune's selection-to-HTML path scans every range at each style boundary.
-// Keep both color and decoration ranges for the initial 10,000-unit window.
+// Cap styled and decorated ranges per block across the initial 10,000-unit window.
 const COPY_RUN_LIMIT: usize = 4096;
 const LINE_WORK_LIMIT: usize = 2_000_000;
 const WINDOW_WORK_LIMIT: usize = 16_000_000;
@@ -58,6 +57,7 @@ struct Style {
     inverse: bool,
     hidden: bool,
     strike: bool,
+    overline: bool,
 }
 
 #[derive(Clone, Default)]
@@ -163,6 +163,8 @@ impl Perform for Log {
                 27 => next.inverse = false,
                 28 => next.hidden = false,
                 29 => next.strike = false,
+                53 => set.overline = true,
+                55 => next.overline = false,
                 30..=37 => set.fg = Some(palette((code - 30) as u8)),
                 40..=47 => set.bg = Some(palette((code - 40) as u8)),
                 90..=97 => set.fg = Some(palette((code - 82) as u8)),
@@ -208,6 +210,7 @@ impl Perform for Log {
             inverse: next.inverse || set.inverse,
             hidden: next.hidden || set.hidden,
             strike: next.strike || set.strike,
+            overline: next.overline || set.overline,
         };
         if next != self.style {
             self.finish_run();
@@ -240,8 +243,10 @@ pub fn search_code(
 }
 
 fn render(log: Log, wrap: bool, query: Option<crate::timeline::search::Query<'_>>) -> El {
-    let (text, spans, strikes) = styled(log);
-    let body = rune::rich(&text, spans).strikes(strikes);
+    let (text, spans, strikes, overlines) = styled(log);
+    let body = rune::rich(&text, spans)
+        .strikes(strikes)
+        .overlines(overlines);
     super::markdown::code_body(crate::timeline::search::ink(body, &text, query), wrap)
 }
 
@@ -252,9 +257,10 @@ fn joins(ascii: bool, end: usize, style: &Style, next: &(Range<usize>, Style)) -
     (ascii || !style.underline) && end == next.0.start && *style == next.1
 }
 
-fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
+fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>, Vec<Strike>) {
     let mut spans: Vec<Span> = Vec::with_capacity(log.runs.len().min(COPY_RUN_LIMIT));
     let mut strikes: Vec<Strike> = vec![];
+    let mut overlines: Vec<Strike> = vec![];
     let metrics = tokens(dark());
     let default = metrics.color("text-primary");
     let mut window_budget = WINDOW_WORK_LIMIT;
@@ -366,24 +372,42 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
                     })
             {
                 last.end = span.end;
-            } else if spans.len() + strikes.len() < COPY_RUN_LIMIT {
+            } else if spans.len() + strikes.len() + overlines.len() < COPY_RUN_LIMIT {
                 spans.push(span);
             } else if style.hidden {
                 text[range.clone()].fill(b' ');
             }
         }
-        if !style.hidden && style.strike && line.len() <= decoration_budget && charge(line.len()) {
-            let ink = Some(dim(style.fg.unwrap_or(default)));
-            if let Some(last) = strikes.last_mut().filter(|last| {
-                last.2 == ink && matches!(text.get(last.1..range.start), Some(b"" | b"\n"))
-            }) {
-                last.1 = range.end;
-            } else if spans.len() + strikes.len() < COPY_RUN_LIMIT {
-                strikes.push((range.start, range.end, ink));
+        let mut add_decoration = |list: &mut Vec<Strike>, used: usize| {
+            if line.len() <= decoration_budget && charge(line.len()) {
+                decoration_budget -= line.len();
+                let ink = Some(dim(style.fg.unwrap_or(default)));
+                if let Some(last) = list.last_mut().filter(|last| {
+                    last.2 == ink && matches!(text.get(last.1..range.start), Some(b"" | b"\n"))
+                }) {
+                    last.1 = range.end;
+                } else if used < COPY_RUN_LIMIT {
+                    list.push((range.start, range.end, ink));
+                }
+            }
+        };
+        if !style.hidden {
+            if style.strike {
+                let used = spans.len() + strikes.len() + overlines.len();
+                add_decoration(&mut strikes, used);
+            }
+            if style.overline {
+                let used = spans.len() + strikes.len() + overlines.len();
+                add_decoration(&mut overlines, used);
             }
         }
     }
-    (String::from_utf8(text).unwrap_or_default(), spans, strikes)
+    (
+        String::from_utf8(text).unwrap_or_default(),
+        spans,
+        strikes,
+        overlines,
+    )
 }
 
 #[cfg(test)]
@@ -517,6 +541,34 @@ mod tests {
     }
 
     #[test]
+    fn sgr_53_and_55_toggle_ansi_overline_decorations() {
+        let plain = "top plain red";
+        let overlined = "\u{1b}[53mtop\u{1b}[55m plain \u{1b}[31;53mred\u{1b}[0m";
+        let paint_count = |source: &'static str| {
+            let mut rt = rune::Runtime::new(
+                source,
+                |source, _| code(source, false),
+                (480.0, 200.0),
+                rune::Env::new(false, 1.0),
+            );
+            rt.frame(0.0);
+            rt.instances
+                .iter()
+                .filter(|inst| inst.rect[2] > 4.0 && inst.rect[3] > 0.0 && inst.rect[3] <= 2.5)
+                .count()
+        };
+        let base_lines = paint_count(plain);
+        let with_overlines = paint_count(overlined);
+        assert!(
+            with_overlines >= base_lines + 2,
+            "SGR 53/55 must paint overline rules over the two overlined spans: base={base_lines}, with={with_overlines}"
+        );
+        // Concealed text with SGR 53 must not paint a visible overline rule.
+        let hidden_overlined = "\u{1b}[8;53msecret\u{1b}[0m";
+        assert_eq!(paint_count(hidden_overlined), 0);
+    }
+
+    #[test]
     fn unsupported_underline_color_keeps_its_parameters_atomic() {
         let log = parse("\u{1b}[58;5;8mErreur");
         assert_eq!(log.text, "Erreur");
@@ -530,7 +582,7 @@ mod tests {
             "A".repeat(1001),
             "x".repeat(7000)
         );
-        let (_, spans, _) = styled(parse(&source));
+        let (_, spans, _, _) = styled(parse(&source));
         assert_eq!(spans[0].end, 1001);
         assert!(spans[0].underline.is_some());
     }
@@ -538,7 +590,7 @@ mod tests {
     #[test]
     fn mixed_script_ink_cannot_reach_quadratic_shaping() {
         let source = "\u{1b}[44mA\u{1b}[45m🦀".repeat(16_000);
-        let (text, spans, _) = styled(parse(&source));
+        let (text, spans, _, _) = styled(parse(&source));
         assert_eq!(text, "A🦀".repeat(16_000));
         assert!(!spans.is_empty());
         assert!(spans.len() * text.len() <= LINE_WORK_LIMIT);
@@ -550,8 +602,11 @@ mod tests {
             "{}\u{1b}[8mhidden\u{1b}[0mEND",
             "\u{1b}[31mA\u{1b}[32mB\n".repeat(16_384)
         );
-        let (text, spans, strikes) = styled(parse(&source));
-        assert_eq!(spans.len() + strikes.len(), COPY_RUN_LIMIT);
+        let (text, spans, strikes, overlines) = styled(parse(&source));
+        assert_eq!(
+            spans.len() + strikes.len() + overlines.len(),
+            COPY_RUN_LIMIT
+        );
         assert!(text.ends_with("\n      END"));
     }
 
@@ -590,14 +645,14 @@ mod tests {
 
     #[test]
     fn dense_log_can_copy_a_real_runtime_selection() {
-        let (text, spans, strikes) = styled(parse(&"\u{1b}[31mA\u{1b}[32mB\n".repeat(4096)));
+        let (text, spans, strikes, _) = styled(parse(&"\u{1b}[31mA\u{1b}[32mB\n".repeat(4096)));
         assert_eq!(copy_selection(&text, spans, strikes).text(), text);
     }
 
     #[test]
     fn a_uniform_ascii_line_stays_underlined_and_consecutive_crs_stay_distinct() {
         let source = format!("\u{1b}[4m{}\u{1b}[24m\r\r\nB", "A".repeat(1500));
-        let (text, spans, _) = styled(parse(&source));
+        let (text, spans, _, _) = styled(parse(&source));
         assert!(text.ends_with("\n\nB"));
         assert_eq!(spans[0].end, 1500);
         assert!(spans[0].underline.is_some());
@@ -615,7 +670,7 @@ mod tests {
                 "\u{1b}[{prefix}m{}\u{1b}[0m\u{1b}[31;4mFAILED\u{1b}[0m",
                 line.repeat(1024)
             );
-            let (text, spans, strikes) = styled(parse(&source));
+            let (text, spans, strikes, _) = styled(parse(&source));
             let warning = spans.last().unwrap();
             assert_eq!(
                 &text[warning.start as usize..warning.end as usize],
@@ -638,7 +693,7 @@ mod tests {
     #[test]
     fn an_unpainted_control_cannot_displace_a_visible_style() {
         let line = "\u{1b}[7mA\u{1b}[mB".repeat(512);
-        let (text, spans, _) = styled(parse(&format!("{line}\n{line}\n\u{1b}[31;4mFAILED")));
+        let (text, spans, _, _) = styled(parse(&format!("{line}\n{line}\n\u{1b}[31;4mFAILED")));
         assert_eq!(spans.len(), 1);
         let warning = &spans[0];
         assert_eq!(
@@ -651,7 +706,7 @@ mod tests {
 
     #[test]
     fn empty_lines_are_not_merged_into_strikethrough() {
-        let (_, _, strikes) = styled(parse("\u{1b}[9mA\n\nB"));
+        let (_, _, strikes, _) = styled(parse("\u{1b}[9mA\n\nB"));
         assert_eq!(
             strikes.iter().map(|&(a, b, _)| a..b).collect::<Vec<_>>(),
             [0..1, 3..4]
@@ -665,7 +720,7 @@ mod tests {
                 "{prefix}{}\u{1b}[0m\u{1b}[31;4mFAILED",
                 "\u{1b}[31mA\u{1b}[32mB\n".repeat(512)
             );
-            let (text, spans, _) = styled(parse(&source));
+            let (text, spans, _, _) = styled(parse(&source));
             let warning = spans.last().unwrap();
             assert_eq!(
                 &text[warning.start as usize..warning.end as usize],
@@ -689,7 +744,7 @@ mod tests {
             "é".repeat(10)
         );
         for (source, bytes) in [(ascii, 3360), (unicode, 1420)] {
-            let (text, spans, _) = styled(parse(&source));
+            let (text, spans, _, _) = styled(parse(&source));
             assert_eq!(text.len(), bytes);
             assert_eq!(spans.len(), 1);
             assert_eq!(spans[0].end as usize, bytes);
@@ -705,7 +760,7 @@ mod tests {
             "\u{1b}[31mA\u{1b}[32mB".repeat(100),
             "x".repeat(3094)
         );
-        let (text, spans, _) = styled(parse(&source));
+        let (text, spans, _, _) = styled(parse(&source));
         assert!(spans[0].underline.is_some());
         let warning = spans.last().unwrap();
         assert_eq!(
@@ -724,7 +779,7 @@ mod tests {
                 "é".repeat(count),
                 "x".repeat(trailing)
             );
-            let (text, spans, _) = styled(parse(&source));
+            let (text, spans, _, _) = styled(parse(&source));
             let last = spans.last().unwrap();
             assert_eq!(&text[last.start as usize..last.end as usize], "FAILED");
             assert!(last.underline.is_some());
@@ -741,7 +796,7 @@ mod tests {
             "\u{1b}[34;41;7mA\u{1b}[31;44;27mB".repeat(170),
             "x".repeat(5654)
         );
-        let (_, spans, _) = styled(parse(&source));
+        let (_, spans, _, _) = styled(parse(&source));
         assert_eq!(spans.len(), 2);
         assert!(spans[0].underline.is_some());
     }
@@ -750,7 +805,7 @@ mod tests {
     fn a_strike_without_other_ink_can_use_the_last_range() {
         let head = "\u{1b}[9mA\u{1b}[29mB\n".repeat(COPY_RUN_LIMIT - 1);
         let tail = "OK\n".repeat(1000);
-        let (text, spans, strikes) = styled(parse(&format!("{head}\u{1b}[9m{tail}")));
+        let (text, spans, strikes, _) = styled(parse(&format!("{head}\u{1b}[9m{tail}")));
         assert!(spans.is_empty());
         assert_eq!(strikes.len(), COPY_RUN_LIMIT);
         let &(start, end, _) = strikes.last().unwrap();
@@ -770,7 +825,7 @@ mod tests {
         let blank = "\n".repeat(220_000);
         let tail = "\u{1b}[31mA\u{1b}[32mB\n".repeat(1000);
         let source = format!("{dense}{blank}B{tail}");
-        let (_, spans, _) = styled(parse(&source));
+        let (_, spans, _, _) = styled(parse(&source));
         assert_eq!(spans.len(), COPY_RUN_LIMIT);
         assert_eq!(
             spans.last().unwrap().end as usize,

@@ -31,17 +31,6 @@ pub(super) fn frame(
         let button = layout::button(label, false, toggle)
             .key(format!("{key}-diagram-toggle"))
             .checked(preview);
-        // Rune #1359 is fixed upstream; the pinned bridge still needs the state in its name.
-        #[cfg(any(target_arch = "wasm32", test))]
-        let button = button.label(format!(
-            "{}: {} — {label}",
-            t("markdown.mermaid.diagram"),
-            t(if preview {
-                "commands.common.enabled"
-            } else {
-                "commands.common.disabled"
-            }),
-        ));
         header = header.child(button);
     }
     if !preview {
@@ -105,23 +94,35 @@ mod tests {
         rt.frame(0.02);
     }
 
-    fn toggle_name(rt: &Runtime<crate::State>) -> String {
-        rt.elements()
-            .into_iter()
-            .find(|node| node.key.as_deref() == Some("example-code-0-diagram-toggle"))
-            .unwrap()
-            .label
-            .unwrap()
+    fn find_a11y<'a>(node: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+        if node.get("key").and_then(|v| v.as_str()) == Some(key) {
+            return Some(node);
+        }
+        node.get("children")?
+            .as_array()?
+            .iter()
+            .find_map(|child| find_a11y(child, key))
+    }
+
+    fn toggle_state(rt: &Runtime<crate::State>) -> (String, bool) {
+        let tree = rt.accessibility_json();
+        let node = find_a11y(&tree, "example-code-0-diagram-toggle").unwrap();
+        let name = node["name"].as_str().unwrap().to_owned();
+        let checked = node
+            .get("states")
+            .and_then(|s| s.as_array())
+            .is_some_and(|states| states.iter().any(|s| s.as_str() == Some("checked")));
+        (name, checked)
     }
 
     #[test]
     fn accessible_toggle_name_reports_the_current_mode_and_the_next_action() {
         let mut rt = render("```mermaid\nflowchart LR\n  A --> B\n```", false);
-        assert_eq!(toggle_name(&rt), "Mermaid diagram: Enabled — Show source");
+        assert_eq!(toggle_state(&rt), ("Show source".into(), true));
         click(&mut rt, "example-code-0-diagram-toggle");
-        assert_eq!(toggle_name(&rt), "Mermaid diagram: Disabled — Show diagram");
+        assert_eq!(toggle_state(&rt), ("Show diagram".into(), false));
         click(&mut rt, "example-code-0-diagram-toggle");
-        assert_eq!(toggle_name(&rt), "Mermaid diagram: Enabled — Show source");
+        assert_eq!(toggle_state(&rt), ("Show source".into(), true));
     }
 
     #[test]

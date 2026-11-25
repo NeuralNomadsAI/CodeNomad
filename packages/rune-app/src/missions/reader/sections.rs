@@ -252,6 +252,17 @@ fn render_page<S: 'static>(source_text: &str, markdown_text: Option<&str>, raw: 
             }
             col().full_width().child(header.child(copy)).child(card)
         },
+        |card, frame| {
+            let source = frame.source.to_owned();
+            let copy = markdown::copy_button(
+                t("markdown.codeBlock.copy.label"),
+                move |_: &mut S, tx: &mut Tx| tx.copy(source.as_str()),
+            );
+            col()
+                .full_width()
+                .child(layout::action_row().child(text("diff")).child(copy))
+                .child(card)
+        },
     )
 }
 

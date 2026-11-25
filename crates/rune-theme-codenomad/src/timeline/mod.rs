@@ -9,7 +9,7 @@ use std::{borrow::Cow, rc::Rc};
 
 pub const VIEWPORT: &str = "timeline";
 pub use rune::ScrollPos as ScrollPosition;
-pub use rune::{GesturePhase, WheelEvent};
+pub use rune::{GesturePhase, ScrollSource, WheelEvent};
 pub use wheel::RailWheelOverride;
 
 pub fn navigation_status(label: &'static str) -> El {
@@ -34,13 +34,21 @@ pub fn navigation_status(label: &'static str) -> El {
     )
 }
 
-pub fn user_scrolled() -> bool {
+pub fn user_scrolled(at: ScrollPosition) -> bool {
     let (hand, instant, _) = rune::scroll_watch_state();
     hand && !instant
+        && matches!(
+            at.source,
+            rune::ScrollSource::Direct | rune::ScrollSource::Momentum
+        )
 }
 
-pub fn rail_scrolled() -> bool {
+pub fn rail_scrolled(at: ScrollPosition) -> bool {
     rune::scroll_watch_state().0
+        && matches!(
+            at.source,
+            rune::ScrollSource::Direct | rune::ScrollSource::Momentum
+        )
 }
 
 pub fn fits(width: f32) -> bool {
@@ -210,32 +218,33 @@ pub fn view<S: 'static>(
                 })
             }))
     });
-    // Keep the last band separate so that even before it mounts its extent
-    // reflects the short final band and the absence of a trailing gap.
-    let last = (count - 1) / BAND * BAND;
-    let full = build.clone();
+    let band_count = count.div_ceil(BAND);
+    let expected = ((f64::from(height) + f64::from(gap)) * count as f64 - f64::from(gap)) as f32;
+    let estimate = if band_count == 1 {
+        expected
+    } else {
+        BAND as f32 * pitch
+    };
     let bands = rune::col()
         .key("timeline-bands")
         .w_full()
         .growth(GrowthSpec::default())
         .virtual_rows(
-            last / BAND,
-            BAND as f32 * pitch,
+            band_count,
+            estimate,
             |_: &S, i| Cow::Owned(i.to_string()),
-            move |s, i| full(s, i * BAND, BAND),
+            move |s, i| {
+                let first = i * BAND;
+                build(s, first, (count - first).min(BAND))
+            },
         )
         .virtual_rows_version(version);
-    let tail = rune::col()
-        .key("timeline-tail")
+    let extent = rune::col()
+        .key("timeline-extent")
         .w_full()
-        .growth(GrowthSpec::default())
-        .virtual_rows(
-            1,
-            (count - last) as f32 * pitch - gap,
-            |_: &S, _| Cow::Borrowed("tail"),
-            move |s, _| build(s, last, count - last),
-        );
-    Some(rail.child(bands).child(tail))
+        .h(expected)
+        .child(bands);
+    Some(rail.child(extent))
 }
 
 fn button(dark: bool, marker: Marker<'_>) -> El {
@@ -301,4 +310,100 @@ fn button(dark: bool, marker: Marker<'_>) -> El {
             );
     }
     button
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn timeline_bands_has_no_trailing_sibling_and_preserves_exact_extent() {
+        struct Scene {
+            count: usize,
+            scroll: Rc<Cell<ScrollPosition>>,
+        }
+        let (height, gap) = geometry();
+        for count in [1usize, 64, 65, 200] {
+            let scroll = Rc::new(Cell::new(ScrollPosition::default()));
+            let scene = Scene {
+                count,
+                scroll: scroll.clone(),
+            };
+            let mut rt = rune::Runtime::new(
+                scene,
+                |s: &Scene, _| {
+                    let scroll = s.scroll.clone();
+                    let rail = view(
+                        800.0,
+                        "en",
+                        s.count,
+                        0,
+                        |_: &Scene, i| Cow::Owned(format!("m-{i}")),
+                        |_: &Scene, i| Marker {
+                            label: Cow::Owned(format!("Marker {i}")),
+                            current: "Current",
+                            glyph: &icons::USER,
+                            tone: "message-user-border",
+                            active: i == 0,
+                        },
+                        |_: &mut Scene, _, _| {},
+                        |_: &Scene, _, el| el,
+                    )
+                    .unwrap()
+                    .on_scroll_offset(move |pos| scroll.set(pos));
+                    rail_slot(rail)
+                },
+                (800.0, 320.0),
+                rune::Env::new(false, 1.0),
+            );
+            for _ in 0..4 {
+                rt.frame(0.016);
+            }
+            // The growth stack `timeline-bands` must never have a following sibling inside `timeline`.
+            assert!(
+                rt.find("timeline-tail").is_none(),
+                "timeline-bands must not be followed by a timeline-tail sibling (count={count})"
+            );
+            let pos = scroll.get();
+            let expected = count as f32 * height + (count - 1) as f32 * gap;
+            let expected_max = (expected - pos.viewport[1]).max(0.0);
+            assert!(
+                (pos.max[1] - expected_max).abs() < 1.0,
+                "count={count}: expected max {expected_max} (extent {expected}), got {pos:?}"
+            );
+            let extent = rt
+                .elements()
+                .into_iter()
+                .find(|n| n.key.as_deref() == Some("timeline-extent"))
+                .expect("timeline-extent mounted");
+            assert!(
+                (extent.rect[3] - expected).abs() < 1.0,
+                "count={count}: expected timeline-extent height {expected}, got {}",
+                extent.rect[3]
+            );
+            if count >= 65 {
+                let m0 = rt
+                    .elements()
+                    .into_iter()
+                    .find(|n| n.key.as_deref() == Some("m-0"))
+                    .expect("m-0 mounted")
+                    .rect;
+                rt.update(|_, tx| show_marker(count - 1, tx));
+                for _ in 0..4 {
+                    rt.frame(0.016);
+                }
+                let last_key = format!("m-{}", count - 1);
+                let last_el = rt
+                    .elements()
+                    .into_iter()
+                    .find(|n| n.key.as_deref() == Some(last_key.as_str()))
+                    .expect("last marker mounted after show_marker");
+                assert!(
+                    (m0[1]).abs() < 1.0 && last_el.rect[3] > 0.0,
+                    "first and last markers must align cleanly (count={count})"
+                );
+            }
+        }
+    }
 }
