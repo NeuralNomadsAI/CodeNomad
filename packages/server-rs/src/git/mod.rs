@@ -224,6 +224,7 @@ async fn apply_paths_with(
     dir: &Path,
     stage: bool,
     validated: &[String],
+    verify_live: impl Fn() -> Result<(), Error>,
     configure: impl Fn(&mut Command),
 ) -> Result<(), Error> {
     let mut args = if stage {
@@ -237,6 +238,7 @@ async fn apply_paths_with(
             vec!["rm", "--cached", "--quiet", "--"]
         }
     };
+    verify_live()?;
     args.extend(validated.iter().map(String::as_str));
     let mut cmd = user_command::literal_command(dir, &args);
     configure(&mut cmd);
@@ -277,7 +279,19 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
         {
             return Err(conflict("Worktree changed"));
         }
-        apply_paths_with(&w.path, stage, &validated, |_| {}).await?;
+        apply_paths_with(
+            &w.path,
+            stage,
+            &validated,
+            || {
+                if !tree.contains_live(&w.path) || app.workspace(&id).is_err() {
+                    return Err(conflict("Worktree changed"));
+                }
+                Ok(())
+            },
+            |_| {},
+        )
+        .await?;
         notify(&app, &w);
         Ok(Json(json!({"ok":true})))
     })
