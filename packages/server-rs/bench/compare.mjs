@@ -54,7 +54,7 @@ const shots = path.join(out, "screenshots", mode)
 await mkdir(shots, { recursive: true })
 
 const { withProductRuntime, remove: removeRuntime } = await productRuntime({
-  holdProvider: bench?.holdProvider, gitCeiling: mode !== "history-search",
+  holdProvider: bench?.holdProvider, gitCeiling: !["history-search", "attachment-history"].includes(mode),
 })
 
 const HTTP_TIMEOUT = 20000

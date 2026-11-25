@@ -311,7 +311,9 @@ async fn body(method: &Method, headers: &HeaderMap, body: Body) -> Result<Option
     }
     Ok(match fastify::body(headers, &bytes).map_err(IntoResponse::into_response)? {
         Some(fastify::Body::Json(value)) if truthy(&value) => {
-            let text = crate::missions::activity::ojson::parse(&bytes).map(|v| v.stringify()).unwrap_or_default();
+            let text = crate::missions::activity::ojson::parse(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes))
+                .map(|v| v.stringify())
+                .unwrap_or_default();
             Some((text.into_bytes(), "application/json"))
         }
         Some(fastify::Body::Text(text)) if !text.is_empty() => Some((text.into_bytes(), "text/plain")),
@@ -443,11 +445,19 @@ async fn websocket(app: Shared, mut request: Request) -> Response {
     if own_listener(&app, &target).is_some() {
         return reject(Status::NOT_FOUND);
     }
+    let shutdown = app.events.shutdown.clone();
+    if shutdown.is_cancelled() {
+        return reject(Status::SERVICE_UNAVAILABLE);
+    }
     let client = hyper::upgrade::on(&mut request);
     let mut upstream = axum::http::Request::builder().method(request.method().clone()).uri(origin_form(&target));
     *upstream.headers_mut().unwrap() = request_headers(request.headers(), &target, app.auth.cookie_name(), true);
-    let handshake = tokio::time::timeout(Duration::from_secs(15), send(&target, upstream.body(Body::empty()).unwrap()));
-    let Ok(Ok(mut response)) = handshake.await else { return reject(Status::BAD_GATEWAY) };
+    let handshake = tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => return reject(Status::SERVICE_UNAVAILABLE),
+        res = tokio::time::timeout(Duration::from_secs(15), send(&target, upstream.body(Body::empty()).unwrap())) => res,
+    };
+    let Ok(Ok(mut response)) = handshake else { return reject(Status::BAD_GATEWAY) };
     let server = (response.status() == Status::SWITCHING_PROTOCOLS).then(|| hyper::upgrade::on(&mut response));
     let (mut head, incoming) = response.into_parts();
     response_cookies(&mut head.headers, app.auth.cookie_name());
@@ -459,8 +469,19 @@ async fn websocket(app: Shared, mut request: Request) -> Response {
         return Response::from_parts(head, Body::new(incoming));
     };
     tokio::spawn(async move {
-        if let (Ok(client), Ok(server)) = (client.await, server.await) {
-            let _ = tokio::io::copy_bidirectional(&mut TokioIo::new(client), &mut TokioIo::new(server)).await;
+        let upgraded = tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => return,
+            pair = async { (client.await, server.await) } => pair,
+        };
+        if let (Ok(client), Ok(server)) = upgraded {
+            let mut client = TokioIo::new(client);
+            let mut server = TokioIo::new(server);
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => {}
+                _ = tokio::io::copy_bidirectional(&mut client, &mut server) => {}
+            }
         }
     });
     Response::from_parts(head, Body::empty())
