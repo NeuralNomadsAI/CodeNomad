@@ -12,7 +12,7 @@ pub fn routes() -> axum::Router<Shared> {
     axum::Router::new()
         .route("/api/workspaces/{id}/files", routing::get(list))
         .route("/api/workspaces/{id}/files/preview", routing::get(preview))
-        .route("/api/workspaces/{id}/files/content", routing::put(put).layer(DefaultBodyLimit::max(8 * 1024 * 1024)))
+        .route("/api/workspaces/{id}/files/content", routing::put(put).layer(DefaultBodyLimit::max(32 * 1024 * 1024)))
         .route("/api/filesystem", routing::get(browse::browse))
         .route("/api/filesystem/folders", routing::post(browse::create_folder))
 }
@@ -53,6 +53,34 @@ fn large() -> Error {
     error(Status::BAD_REQUEST, "Selected file is too large to attach")
 }
 
+pub(super) fn is_missing_or_not_dir(err: &io::Error) -> bool {
+    matches!(err.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory)
+        || (cfg!(windows) && matches!(err.raw_os_error(), Some(2 | 3 | 267)))
+}
+
+pub(super) fn check_component(name: &str) -> Result<(), Error> {
+    let stem = name.split('.').next().unwrap_or_default().to_ascii_uppercase();
+    let port = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT"));
+    if name.is_empty()
+        || matches!(name, "." | "..")
+        || name == ".git"
+        // APFS and HFS+ are case-insensitive by default (audit I7).
+        || cfg!(target_os = "macos") && name.eq_ignore_ascii_case(".git")
+        || name.contains('\0')
+        || cfg!(windows)
+            && (name.eq_ignore_ascii_case(".git")
+                || name.ends_with(['.', ' '])
+                || name.chars().any(|c| {
+                    c.is_control() || matches!(c, ':' | '*' | '?' | '<' | '>' | '|' | '"')
+                })
+                || ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&stem.as_str())
+                || port.is_some_and(|p| ["1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³"].contains(&p)))
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 pub fn relative(input: &str, root: bool) -> Result<String, Error> {
     if root && matches!(input, "" | "." | "./" | "/") {
         return Ok(".".into());
@@ -62,25 +90,7 @@ pub fn relative(input: &str, root: bool) -> Result<String, Error> {
     }
     let value = input.strip_prefix("./").unwrap_or(input).replace('\\', "/");
     for name in value.split('/') {
-        let stem = name.split('.').next().unwrap_or_default().to_ascii_uppercase();
-        let port = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT"));
-        if name.is_empty()
-            || matches!(name, "." | "..")
-            || name == ".git"
-            // APFS and HFS+ are case-insensitive by default (audit I7).
-            || cfg!(target_os = "macos") && name.eq_ignore_ascii_case(".git")
-            || name.contains('\0')
-            || cfg!(windows)
-                && (name.eq_ignore_ascii_case(".git")
-                    || name.ends_with(['.', ' '])
-                    || name.chars().any(|c| {
-                        c.is_control() || matches!(c, ':' | '*' | '?' | '<' | '>' | '|' | '"')
-                    })
-                    || ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&stem.as_str())
-                    || port.is_some_and(|p| ["1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³"].contains(&p)))
-        {
-            return Err(invalid());
-        }
+        check_component(name)?;
     }
     Ok(value)
 }
@@ -316,10 +326,20 @@ pub async fn put(
     }
     let w = select(&app, &id, &q).await?;
     let p = workspace_path(&w.path, q.path.as_deref().ok_or_else(invalid)?, false)?;
-    let expected = match (headers.get(axum::http::header::IF_MATCH), body.expected_version.as_deref()) {
-        (Some(_), Some(_)) => return Err(error(Status::BAD_REQUEST, "Conflicting version selectors")),
-        (Some(h), None) => Some(h.to_str().map_err(|_| error(Status::BAD_REQUEST, "Invalid file version"))?.to_owned()),
-        (None, other) => other.map(str::to_owned),
+    let mut if_match = headers.get_all(axum::http::header::IF_MATCH).iter();
+    let expected = match (if_match.next(), if_match.next(), body.expected_version.as_deref()) {
+        (Some(_), _, Some(_)) => return Err(error(Status::BAD_REQUEST, "Conflicting version selectors")),
+        (Some(_), Some(_), None) => return Err(error(Status::BAD_REQUEST, "Invalid file version")),
+        (Some(h), None, None) => {
+            let value = h.to_str().map_err(|_| error(Status::BAD_REQUEST, "Invalid file version"))?;
+            if value.trim().is_empty() {
+                return Err(error(Status::BAD_REQUEST, "Invalid file version"));
+            }
+            Some(value.to_owned())
+        }
+        (None, None, Some("")) => return Err(error(Status::BAD_REQUEST, "Invalid file version")),
+        (None, None, other) => other.map(str::to_owned),
+        (None, Some(_), _) => unreachable!(),
     };
     use crate::worktrees::fence;
     let checkout = fence::identity(&fence::checkout_root(&app.scope, &w.path));
@@ -328,7 +348,7 @@ pub async fn put(
     }
     root(&w)?;
     links::guard(&w.path, &p)?;
-    let target = links::write_target(links::target(&w.path, &p), true)?;
+    let target = links::write_target(links::target(&w.path, &p), true, expected.is_some())?;
     let key = fence::identity(&target);
     let admitted = fence::admit(&[checkout, key.clone()])?;
     let write = fence::serialize(format!("file\n{key}")).await;
@@ -346,7 +366,7 @@ pub async fn put(
             app.workspace(&id)?;
             root(&w)?;
             links::guard(&w.path, &p)?;
-            if links::write_target(links::target(&w.path, &p), true)? != target {
+            if links::write_target(links::target(&w.path, &p), true, true)? != target {
                 return Err(error(Status::CONFLICT, "File changed on disk"));
             }
             if save::file_identity(&target, expected.is_some())? != identity {
@@ -408,5 +428,150 @@ mod tests {
         assert!(workspace_path(root, ".git/config", false).is_err());
         #[cfg(unix)]
         assert_eq!(workspace_path(root, "nul.txt", false).unwrap(), "nul.txt");
+    }
+
+    #[tokio::test]
+    async fn put_files_content_accepts_32mib_escaped_body_and_returns_409_on_missing_or_file_parent() {
+        use std::sync::Arc;
+        let dir = crate::shared::test_dir("files-write-parity");
+        let root_dir = dunce::canonicalize(&dir).unwrap();
+        let ws_dir = root_dir.join("project");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let auth = crate::auth::Auth::new(crate::auth::Settings {
+            username: "codenomad".into(),
+            password: None,
+            file: None,
+            cookie: "fixture".into(),
+            token: false,
+            skip: true,
+            idle: std::time::Duration::from_secs(60),
+            absolute: std::time::Duration::from_secs(60),
+        })
+        .unwrap();
+        let settings = crate::settings::Settings::new(crate::settings::document::Location::resolve(
+            dir.join("config.yaml").to_str().unwrap(),
+        ));
+        let app = Arc::new(crate::App::new(
+            auth,
+            0,
+            root_dir.clone(),
+            root_dir.clone(),
+            false,
+            settings,
+            Value::Null,
+            crate::opencode::Native::test_connection(([127, 0, 0, 1], 9).into()),
+            PathBuf::new(),
+            None,
+            watch::Watches::new(tx),
+            None,
+        ));
+        let ws_id = uuid::Uuid::new_v4();
+        app.inner.lock().unwrap().workspaces.push(Workspace {
+            id: ws_id,
+            request_id: None,
+            path: ws_dir.clone(),
+            name: Some("project".into()),
+            status: "running",
+            proxy_path: format!("/workspaces/{ws_id}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({ "directory": ws_dir }),
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, routes().with_state(app)).await;
+        });
+        let client = reqwest::Client::new();
+        let base = format!("http://{addr}/api/workspaces/{ws_id}/files");
+
+        // 1. A <= 5 MiB UTF-8 file whose JSON-escaped body exceeds the old 8 MiB limit (~12 MiB) succeeds.
+        let escaped_heavy = "\u{0001}".repeat(2_000_000);
+        let payload = serde_json::to_vec(&json!({ "contents": escaped_heavy })).unwrap();
+        assert!(payload.len() > 8 * 1024 * 1024 && payload.len() < 32 * 1024 * 1024);
+        let saved = client
+            .put(format!("{base}/content?path=escaped.txt"))
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(saved.status(), Status::NO_CONTENT);
+        assert_eq!(
+            saved.headers().get(axum::http::header::ETAG).unwrap().to_str().unwrap(),
+            version(escaped_heavy.as_bytes())
+        );
+        assert_eq!(std::fs::read(ws_dir.join("escaped.txt")).unwrap(), escaped_heavy.as_bytes());
+
+        // 2. Deleting the parent directory or replacing it with a regular file returns 409 on conditional PUT.
+        let sub = ws_dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("note.txt"), "v1").unwrap();
+        let preview_body: Value =
+            client.get(format!("{base}/preview?path=sub/note.txt")).send().await.unwrap().json().await.unwrap();
+        let v1 = preview_body["version"].as_str().unwrap().to_owned();
+
+        std::fs::remove_dir_all(&sub).unwrap();
+        let deleted_parent = client
+            .put(format!("{base}/content?path=sub/note.txt"))
+            .json(&json!({ "contents": "v2", "expectedVersion": v1 }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(deleted_parent.status(), Status::CONFLICT);
+        assert_eq!(deleted_parent.json::<Value>().await.unwrap(), json!({ "error": "File changed on disk" }));
+
+        std::fs::write(&sub, "now-a-file").unwrap();
+        let file_parent = client
+            .put(format!("{base}/content?path=sub/note.txt"))
+            .json(&json!({ "contents": "v2", "expectedVersion": v1 }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(file_parent.status(), Status::CONFLICT);
+        assert_eq!(file_parent.json::<Value>().await.unwrap(), json!({ "error": "File changed on disk" }));
+
+        // 3. Invalid version selectors return 400.
+        let blank_if_match = client
+            .put(format!("{base}/content?path=escaped.txt"))
+            .header(axum::http::header::IF_MATCH, "   ")
+            .json(&json!({ "contents": "x" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(blank_if_match.status(), Status::BAD_REQUEST);
+
+        let empty_expected = client
+            .put(format!("{base}/content?path=escaped.txt"))
+            .json(&json!({ "contents": "x", "expectedVersion": "" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(empty_expected.status(), Status::BAD_REQUEST);
+
+        let dup_if_match = client
+            .put(format!("{base}/content?path=escaped.txt"))
+            .header(axum::http::header::IF_MATCH, &v1)
+            .header(axum::http::header::IF_MATCH, &v1)
+            .json(&json!({ "contents": "x" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(dup_if_match.status(), Status::BAD_REQUEST);
+
+        let conflicting = client
+            .put(format!("{base}/content?path=escaped.txt"))
+            .header(axum::http::header::IF_MATCH, &v1)
+            .json(&json!({ "contents": "x", "expectedVersion": v1 }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(conflicting.status(), Status::BAD_REQUEST);
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
