@@ -183,7 +183,7 @@ pub struct Header {
     pub(super) coordinator_session_id: String,
     version: u8,
     #[serde(rename = "template")]
-    _template: Template,
+    pub template: Template,
     created_at: f64,
     updated_at: f64,
     #[serde(rename = "historyTruncated")]
@@ -201,16 +201,47 @@ impl Header {
     pub fn body(&self, field: &str) -> Option<&BodyDescriptor> {
         self.bodies.get(field)
     }
+
+    pub fn task_mode(&self) -> super::TaskMode {
+        match self.extra.get("taskMode").and_then(Value::as_str) {
+            Some("independent") => super::TaskMode::Independent,
+            _ => super::TaskMode::Native,
+        }
+    }
+
+    pub fn editable(&self) -> bool {
+        self.status == Status::Active && self.run_state != Some(RunState::Stopped)
+    }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
-enum Template {
+pub enum Template {
     Custom,
     Debug,
     Wayfinder,
     Delivery,
     Compare,
+}
+
+impl Template {
+    pub const ALL: [Self; 5] = [
+        Self::Custom,
+        Self::Debug,
+        Self::Wayfinder,
+        Self::Delivery,
+        Self::Compare,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Custom => "custom",
+            Self::Debug => "debug",
+            Self::Wayfinder => "wayfinder",
+            Self::Delivery => "delivery",
+            Self::Compare => "compare",
+        }
+    }
 }
 
 #[derive(Deserialize)]

@@ -107,6 +107,9 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
 }
+pub fn hinted_textarea(edit: &TextEdit, hint: &str) -> rune_kit::TextArea {
+    textarea(edit).placeholder(hint)
+}
 pub fn composer_input(edit: &TextEdit, placeholder: &str) -> El {
     base_editor(edit).hint(placeholder)
 }

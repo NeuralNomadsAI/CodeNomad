@@ -605,6 +605,19 @@ fn checkbox_row(label: El, cells: [El; 3], body: bool) -> El {
         }))
 }
 
+pub fn checkbox<S: 'static>(
+    label: &str,
+    checked: bool,
+    disabled: bool,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    Checkbox::new(checked)
+        .label(label)
+        .disabled(disabled)
+        .on_toggle(toggle)
+        .build(crate::kit(layout::dark()))
+}
+
 pub fn checkbox_cell<S: 'static>(
     label: String,
     checked: bool,

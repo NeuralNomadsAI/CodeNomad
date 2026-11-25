@@ -4,6 +4,8 @@ mod briefing_view;
 mod control_fields;
 mod detail;
 mod directory;
+mod editor;
+mod editor_view;
 mod lifecycle;
 mod lifecycle_view;
 mod observation;
@@ -18,6 +20,7 @@ pub(crate) use briefing_view::{
     confirmation as briefing_confirmation, controls as briefing_controls,
 };
 pub(crate) use directory::Panel;
+pub(crate) use editor_view::view as editor_view;
 pub(crate) use lifecycle::{Gesture, Lifecycle, Source};
 pub(crate) use lifecycle_view::{confirmation, controls};
 pub(crate) use reader::view::view as reader_view;

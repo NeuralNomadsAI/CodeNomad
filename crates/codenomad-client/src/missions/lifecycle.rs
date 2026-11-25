@@ -132,7 +132,7 @@ pub struct LifecycleTarget {
 }
 
 impl LifecycleTarget {
-    fn matches(&self, value: &serde_json::Value) -> bool {
+    pub(super) fn matches(&self, value: &serde_json::Value) -> bool {
         value["id"] == self.mission
             && value["projectID"] == self.project
             && value["projectCanonical"] == self.canonical

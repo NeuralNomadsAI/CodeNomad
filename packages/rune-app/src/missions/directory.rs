@@ -1,5 +1,6 @@
 use super::{
     detail::{Detail, read_window},
+    editor::Editor,
     observation::Observation,
     reader::Reader,
 };
@@ -67,6 +68,8 @@ pub(crate) struct Panel {
     pub(super) control_fields: super::control_fields::Fields,
     pub(super) observation: Observation,
     pub(super) reader: Reader,
+    pub(super) editor: Editor,
+    editor_saved_focus: Option<String>,
     reader_suspended: bool,
 }
 
@@ -74,7 +77,7 @@ const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
 
 impl Panel {
     pub(crate) fn is_composing(&self) -> bool {
-        self.filter.is_composing()
+        self.filter.is_composing() || self.editor.is_composing()
     }
 
     pub(crate) fn new(backend: Backend, project: Option<String>, reads: Reads, wake: Wake) -> Self {
@@ -104,6 +107,8 @@ impl Panel {
             control_fields: Default::default(),
             observation: Observation::default(),
             reader: Reader::default(),
+            editor: Editor::default(),
+            editor_saved_focus: None,
             reader_suspended: false,
         }
     }
@@ -132,7 +137,8 @@ impl Panel {
         self.detail.cancel();
         self.detail.clear_lookup_cache();
         self.reader.invalidate();
-        if self.visible || self.reader.is_open() {
+        self.editor.rebind(&self.backend, &self.reads, &self.wake);
+        if self.visible || self.reader.is_open() || self.editor.is_open() {
             self.refresh();
         }
         (self.wake)();
@@ -142,12 +148,97 @@ impl Panel {
         self.reader.is_open()
     }
 
-    pub(crate) fn close_reader(&mut self) -> Option<String> {
-        let back = self.reader.take_return_focus();
+    pub(crate) fn has_editor(&self) -> bool {
+        self.editor.is_open()
+    }
+
+    pub(crate) fn has_surface(&self) -> bool {
+        self.reader.is_open() || self.editor.is_open()
+    }
+
+    pub(crate) fn open_create_editor(&mut self, return_focus: Option<String>) {
         self.reader.close();
         self.detail.cancel_lookup();
-        self.reader_suspended = false;
-        if !self.visible {
+        self.editor.open_create(&self.backend, return_focus);
+        (self.wake)();
+    }
+
+    pub(crate) fn open_edit_editor(&mut self, return_focus: Option<String>) -> bool {
+        if !self.detail.authoritative() {
+            return false;
+        }
+        let editable = self
+            .detail
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.header.root.editable());
+        if !editable {
+            return false;
+        }
+        self.reader.close();
+        self.detail.cancel_lookup();
+        let Some(snapshot) = self.detail.snapshot.as_ref() else {
+            return false;
+        };
+        let opened = self.editor.open_edit(
+            &snapshot.header,
+            &self.backend,
+            &self.reads,
+            &self.wake,
+            return_focus,
+        );
+        if opened {
+            (self.wake)();
+        }
+        opened
+    }
+
+    pub(crate) fn can_edit_selected(&self) -> bool {
+        self.detail.authoritative()
+            && self
+                .detail
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.header.root.editable())
+    }
+
+    pub(super) fn submit_editor(&mut self) {
+        if self.editor.submit(&self.backend, &self.wake) {
+            (self.wake)();
+        }
+    }
+
+    pub(super) fn reconcile_editor_creation(&mut self) {
+        if self.editor.reconcile_creation(&self.backend, &self.wake) {
+            (self.wake)();
+        }
+    }
+
+    pub(super) fn retry_editor_prefill(&mut self) {
+        self.editor
+            .retry_prefill(&self.backend, &self.reads, &self.wake);
+        (self.wake)();
+    }
+
+    pub(super) fn reopen_editor(&mut self) {
+        if self.editor.begin_reopen(self.detail.map_reads) {
+            self.detail.refresh();
+            self.refresh();
+            (self.wake)();
+        }
+    }
+
+    pub(crate) fn close_reader(&mut self) -> Option<String> {
+        let back = if self.editor.is_open() {
+            self.editor.close()
+        } else {
+            let back = self.reader.take_return_focus();
+            self.reader.close();
+            self.detail.cancel_lookup();
+            self.reader_suspended = false;
+            back
+        };
+        if !self.visible && !self.has_surface() {
             self.refresh_due = None;
             self.detail.cancel();
         }
@@ -160,6 +251,7 @@ impl Panel {
         self.refresh_due = None;
         self.detail.cancel();
         self.reader.suspend();
+        self.editor.suspend();
         self.cancel_probe();
     }
 
@@ -167,6 +259,15 @@ impl Panel {
         self.reader
             .take_auth_expired()
             .or_else(|| self.detail.take_auth_expired())
+            .or_else(|| self.editor.take_auth_expired())
+    }
+
+    pub(crate) fn take_editor_initial_focus(&mut self) -> Option<&'static str> {
+        self.editor.take_initial_focus()
+    }
+
+    pub(crate) fn take_editor_saved_focus(&mut self) -> Option<String> {
+        self.editor_saved_focus.take()
     }
 
     #[cfg(test)]
@@ -199,6 +300,7 @@ impl Panel {
             self.detail.cancel_lookup();
             false
         } else {
+            self.editor.close();
             if self.selected.as_deref() != Some(id) {
                 self.select(id);
             }
@@ -214,6 +316,7 @@ impl Panel {
             self.detail.cancel_lookup();
             false
         } else {
+            self.editor.close();
             if self.selected.as_deref() != Some(mission_id) {
                 self.select(mission_id);
             }
@@ -235,7 +338,7 @@ impl Panel {
         if show {
             self.refresh();
         } else {
-            if !self.reader.is_open() {
+            if !self.has_surface() {
                 self.refresh_due = None;
                 self.detail.cancel();
             }
@@ -261,7 +364,7 @@ impl Panel {
                     self.start(kind, Read::Refresh);
                 }
             }
-        } else if self.reader.is_open() {
+        } else if self.has_surface() {
             self.detail.refresh();
         }
     }
@@ -270,6 +373,12 @@ impl Panel {
         if let Some((id, revision)) = change {
             if self.selected.as_deref() == Some(id)
                 || self.reader.target().is_some_and(|t| t.mission_id() == id)
+                || self
+                    .editor
+                    .form
+                    .as_ref()
+                    .and_then(|f| f.edit.as_ref())
+                    .is_some_and(|e| e.mission_id == id)
             {
                 self.detail.observe(id, revision);
             }
@@ -287,7 +396,7 @@ impl Panel {
                 }
             }
         }
-        if (self.visible || self.reader.is_open()) && self.refresh_due.is_none() {
+        if (self.visible || self.has_surface()) && self.refresh_due.is_none() {
             self.refresh_due = Some(self.last_passive.map_or(now, |last| now.max(last + 1.5)));
             (self.wake)();
         }
@@ -563,6 +672,44 @@ impl Panel {
                 &self.reads,
                 &self.wake,
             );
+        } else if let Some(edit_id) = self
+            .editor
+            .form
+            .as_ref()
+            .and_then(|f| f.edit.as_ref())
+            .map(|e| e.mission_id.clone())
+            && let Some(project) = self
+                .project
+                .as_deref()
+                .or_else(|| {
+                    self.detail
+                        .snapshot
+                        .as_ref()
+                        .map(|s| s.header.root.project_id())
+                })
+                .or_else(|| {
+                    self.editor
+                        .form
+                        .as_ref()
+                        .and_then(|f| f.edit.as_ref())
+                        .map(|e| e.project_id.as_str())
+                })
+                .map(str::to_owned)
+        {
+            let revision = self
+                .summaries
+                .iter()
+                .find(|row| row.id == edit_id)
+                .map(|row| row.revision);
+            let floor = self.detail.revision_floor(&edit_id, revision);
+            changed |= self.detail.poll(
+                &self.backend,
+                &project,
+                &edit_id,
+                floor,
+                &self.reads,
+                &self.wake,
+            );
         } else if self.selected.is_none() {
             self.detail.clear();
             self.observation = Observation::default();
@@ -671,6 +818,26 @@ impl Panel {
             &self.reads,
             &self.wake,
         );
+        changed |= self.editor.poll(&self.backend, &self.wake);
+        changed |= self.editor.observe_detail(
+            self.detail.snapshot.as_ref(),
+            self.detail.map_reads,
+            self.detail.failed,
+            &self.backend,
+            &self.reads,
+            &self.wake,
+        );
+        if let Some(saved) = self.editor.take_saved() {
+            if saved.select {
+                self.selected = Some(saved.mission_id.clone());
+            }
+            self.detail.observe(&saved.mission_id, saved.revision);
+            self.refresh();
+            self.editor_saved_focus = saved
+                .return_focus
+                .or_else(|| Some("missions-create".into()));
+            changed = true;
+        }
         changed | self.poll_control_fields()
     }
 

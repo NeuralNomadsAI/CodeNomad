@@ -28,6 +28,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("DELETE",r"^/api/workspaces/[^/]+/worktrees/[^/]+$"),
     ("GET",r"^/workspaces/[^/]+/instance/api/vcs/status$"),
     ("GET",r"^/api/(?:missions/playbooks|workspaces/[^/]+/missions(?:/msn_[a-z0-9]+(?:/(?:content|tasks))?)?)$"),
+    ("PATCH",r"^/api/workspaces/[^/]+/missions/msn_[a-z0-9]+$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/[^/]+/admission$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/creation/[A-Za-z0-9_-]+$"),
     ("GET POST",r"^/api/workspaces/[^/]+/missions/recurrence$"),
@@ -417,6 +418,9 @@ mod tests {
         assert!(admitted("GET", "/api/workspaces/ws-1/missions/legacy-1/admission"));
         assert!(admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/tasks"));
         assert!(admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/content"));
+        assert!(admitted("PATCH", "/api/workspaces/ws-1/missions/msn_abc123"));
+        assert!(!admitted("PATCH", "/api/workspaces/ws-1/missions/msn_abc123/content"));
+        assert!(!admitted("PATCH", "/api/workspaces/ws-1/missions/legacy-1"));
         assert!(!admitted("POST", "/api/workspaces/ws-1/missions/msn_abc123/admission"));
         assert!(!admitted("GET", "/api/workspaces/ws-1/missions/msn_abc123/admission/extra"));
     }

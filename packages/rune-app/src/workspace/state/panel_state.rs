@@ -118,7 +118,7 @@ pub(crate) fn mission_panel(s: &State) -> El {
 
 pub(crate) fn mission_has_reader(s: &State) -> bool {
     !crate::shell::launcher_replaces_project(s)
-        && mission_owner(s).is_some_and(missions::Panel::has_reader)
+        && mission_owner(s).is_some_and(missions::Panel::has_surface)
 }
 
 pub(crate) fn close_mission_reader(s: &mut State) -> Option<String> {
@@ -134,9 +134,13 @@ pub(crate) fn restore_mission_reader_focus(s: &State, back: Option<String>, tx: 
     let visible =
         crate::shell::right_panel_visible(s) && right_panel_tab(s) == RightPanelTab::Missions;
     let mounted = visible
-        && back
-            .as_deref()
-            .is_some_and(|key| mission_owner(s).is_some_and(|panel| panel.has_eye_trigger(key)));
+        && back.as_deref().is_some_and(|key| {
+            key == "missions-create"
+                || mission_owner(s).is_some_and(|panel| {
+                    (key == "mission-edit" && panel.selected.is_some())
+                        || panel.has_eye_trigger(key)
+                })
+        });
     let target = if mounted {
         back.unwrap_or_else(|| "right-panel-toggle".into())
     } else {
@@ -157,7 +161,7 @@ pub(crate) fn mission_reader(s: &State) -> El {
     let Some(panel) = mission_owner(s) else {
         return rune::el();
     };
-    missions::reader_view(panel, mission_reader_owner, |s: &mut State, tx| {
+    let close = |s: &mut State, tx: &mut rune::Tx| {
         let back = close_mission_reader(s);
         if s.screen.is_launcher() {
             tx.instant();
@@ -165,7 +169,12 @@ pub(crate) fn mission_reader(s: &State) -> El {
             crate::chat::reading::restore_position(s, tx);
         }
         restore_mission_reader_focus(s, back, tx);
-    })
+    };
+    if panel.has_editor() {
+        missions::editor_view(panel, mission_editor_edit, close)
+    } else {
+        missions::reader_view(panel, mission_reader_owner, close)
+    }
 }
 
 fn mission_reader_owner(s: &mut State) -> Option<&mut missions::Panel> {
@@ -174,6 +183,17 @@ fn mission_reader_owner(s: &mut State) -> Option<&mut missions::Panel> {
     }
     let ui = s.workspace.as_mut()?;
     ui.entries[ui.active].missions.as_mut()
+}
+
+fn mission_editor_edit(s: &mut State) -> (Option<&mut missions::Panel>, &mut TextEdit) {
+    if crate::shell::launcher_replaces_project(s) {
+        return (None, &mut s.rejected_edit);
+    }
+    let panel = s
+        .workspace
+        .as_mut()
+        .and_then(|ui| ui.entries[ui.active].missions.as_mut());
+    (panel, &mut s.rejected_edit)
 }
 
 fn on_mission_reader_open(s: &mut State, tx: &mut rune::Tx) {
@@ -449,7 +469,7 @@ pub(super) fn poll_missions(
             } else {
                 panel.cancel_probe();
             }
-            if visible || panel.has_reader() {
+            if visible || panel.has_surface() {
                 panel.refresh_when_due(ui.clock, tx);
             }
             changed |= panel.poll();
@@ -466,6 +486,24 @@ pub(super) fn poll_missions(
             }
             if panel.take_reader_focus_close() && panel.has_reader() {
                 tx.focus("mission-reader-close", tx.focus_visible());
+            }
+            if let Some(target) = panel.take_editor_initial_focus()
+                && panel.has_editor()
+            {
+                tx.focus(target, tx.focus_visible());
+            }
+            if let Some(back) = panel.take_editor_saved_focus()
+                && !panel.has_surface()
+            {
+                let target = if visible
+                    && (back == "missions-create"
+                        || (back == "mission-edit" && panel.selected.is_some()))
+                {
+                    back
+                } else {
+                    "right-panel-toggle".into()
+                };
+                tx.focus(target, tx.focus_visible());
             }
             if !reader_auth_expired {
                 panel.show(panel.supported() && visible);

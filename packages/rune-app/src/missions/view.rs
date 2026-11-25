@@ -130,7 +130,28 @@ pub(crate) fn panel_body<S: 'static>(
                 }
             }));
         }
+        let edit_owner = scoped.clone();
+        let edit_btn = if ui.can_edit_selected() {
+            layout::button_tx(
+                t("missionsPanel.picker.edit"),
+                false,
+                move |state: &mut S, tx| {
+                    if let Some(panel) = edit_owner.get(state).0 {
+                        let back = tx.focused().unwrap_or("mission-edit").to_owned();
+                        if panel.open_edit_editor(Some(back)) {
+                            on_reader_open(state, tx);
+                            tx.focus("mission-editor-objective", tx.focus_visible());
+                            tx.instant();
+                        }
+                    }
+                },
+            )
+            .key("mission-edit")
+        } else {
+            layout::focusable_disabled_button(t("missionsPanel.picker.edit")).key("mission-edit")
+        };
         body = body
+            .child(layout::action_row().child(edit_btn))
             .child(actions)
             .child(detail(ui, scoped.clone(), open_task, on_reader_open));
     }
@@ -172,6 +193,7 @@ pub(crate) fn panel_body<S: 'static>(
     }
     body = body.child(page_footer(ui, scoped.clone(), Kind::Cleanups));
     let refresh = scoped.clone();
+    let create = scoped.clone();
     let mut field = layout::hinted_field(&ui.filter, search).label(search);
     if partial {
         field = field.description(t("missionsPanel.pages.searchLoaded"));
@@ -197,6 +219,26 @@ pub(crate) fn panel_body<S: 'static>(
                 .child(
                     layout::action_row()
                         .child(shell::panel_title(heading).role("heading"))
+                        .child(
+                            layout::button_tx(
+                                t("missions.control.create"),
+                                false,
+                                move |s: &mut S, tx| {
+                                    if let Some(panel) = create.get(s).0 {
+                                        let back =
+                                            tx.focused().unwrap_or("missions-create").to_owned();
+                                        panel.open_create_editor(Some(back));
+                                        let target = panel.take_editor_initial_focus();
+                                        on_reader_open(s, tx);
+                                        if let Some(target) = target {
+                                            tx.focus(target, tx.focus_visible());
+                                        }
+                                        tx.instant();
+                                    }
+                                },
+                            )
+                            .key("missions-create"),
+                        )
                         .child(
                             layout::button(t("missions.control.refresh"), false, move |s| {
                                 if let Some(panel) = refresh.get(s).0 {
