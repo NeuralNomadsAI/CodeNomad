@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
 import {createHash} from 'node:crypto'
-import {readFile} from 'node:fs/promises'
+import {chmod,readFile} from 'node:fs/promises'
 import {chromium} from 'playwright'
 import path from 'node:path'
 import {spawnFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {createAttestedTcpRelay} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedTcpRelay,resolveLoopbackListenerPid,stripFixtureServerSecrets,verifyLoopbackListenerOwner} from '../../../scripts/native-fixture-http.mjs'
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 import {serverBinary} from './fixture-binaries.mjs'
@@ -29,7 +29,10 @@ export async function launchWeb({
       assert.equal(issue.status(),200)
       paired=await pairFixture({origin:uiOrigin,targetPid:serverPid,profile,pairingUrl:(await issue.json()).url,storage,manifest,ui,fromLink:!sameOriginPairing})
     }
-  }else await http.storageState({path:storage})
+  }else{
+    await http.storageState({path:storage})
+    await chmod(storage,0o600).catch(()=>{})
+  }
   let workspace
   if(!webRestore){
     const opened=await http.post('/api/workspaces',{data:{path:project}})
@@ -58,13 +61,31 @@ export async function launchWeb({
   const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
   if(webAndroid){
     androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
-    const androidRelay=await createAttestedTcpRelay(Number(new URL(uiOrigin).port),serverPid)
+    // Validate ADB config and resolve the private ADB server PID before opening the attested TCP relay.
+    const device=androidDevice(androidEnv)
+    const adbPid=await resolveLoopbackListenerPid(Number(device.port))
+    const androidRelay=await createAttestedTcpRelay(Number(new URL(uiOrigin).port),serverPid,{
+      requireClientAttestation:true,
+      allowedClientPids:[adbPid],
+    })
     state.androidRelay=androidRelay
-    state.deviceLease=androidLease(androidDevice(androidEnv),uiOrigin,{localPort:androidRelay.port,closeRelay:()=>androidRelay.close()})
-    try{await state.deviceLease.open()}catch(error){await androidRelay.close().catch(()=>{});throw error}
+    const lease=androidLease(device,uiOrigin,{
+      localPort:androidRelay.port,
+      closeRelay:()=>androidRelay.close(),
+      lockDir:path.join(root,'target/rune-web-tests/android-locks'),
+    })
+    try{
+      await lease.open()
+      state.deviceLease=lease
+    }catch(error){
+      try{await androidRelay.close()}catch(closeError){console.error(`Failed to close Android relay after open failure: ${closeError.message}`)}
+      state.androidRelay=undefined
+      throw error
+    }
   }
+  const safeClientEnv=stripFixtureServerSecrets(env)
   const launch=webMobile?spawn:spawnFixtureChild
-  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
+  const client=launch(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...safeClientEnv,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
   state.client=client
   if(webAndroid)state.clientClosed=new Promise(resolve=>client.once('close',resolve))
   if(mobile)client.on('message',action=>{
@@ -77,7 +98,10 @@ export async function launchWeb({
         if(action==='restart'){
           const resumed=await restart(http,uiOrigin)
           http=resumed.http
-          state.androidRelay?.setTargetPid(resumed.value.serverPid)
+          if(state.androidRelay){
+            await verifyLoopbackListenerOwner(Number(new URL(uiOrigin).port),resumed.value.serverPid)
+            state.androidRelay.setTargetPid(resumed.value.serverPid)
+          }
           return {value:resumed.value}
         }
         return {value:await mobile.command(action,http,ts?.https)}

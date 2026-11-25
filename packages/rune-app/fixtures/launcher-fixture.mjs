@@ -476,7 +476,7 @@ try{
   const clientEnv=stripFixtureServerSecrets(env)
   if(web){
     await signIn(origin)
-    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,serverPid,runLog:host.stdout(),http,mobile,restart:restartWeb,
+    await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env:clientEnv,origin,serverPid,runLog:host.stdout(),http,mobile,restart:restartWeb,
       webMobile,webAndroid,webMoreActions,historyReturnOnly,menuLive:()=>mobile.menuLive(records.get('ses_existing')),mobileSessionSearch,webMissions,webGitImages,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
     client=webState.client
   }else if(pendingOpen){
@@ -564,6 +564,8 @@ try{
   if(webState.deviceLease){
     await webState.clientClosed
     androidCleanup=await webState.deviceLease.close()
+  }else if(webState.androidRelay){
+    await webState.androidRelay.close().catch(error=>{androidCleanup=[`relay close: ${error.message}`]})
   }
   await webState.mobileAction
   await clientRelay?.close().catch(()=>{})

@@ -102,3 +102,48 @@ fn termination_confines_and_stops_owned_descendants() {
     );
     bystander.terminate().unwrap();
 }
+
+#[test]
+fn reusing_command_isolates_separate_owned_families() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target/host-process-tests")
+        .join(format!("trial-reuse-{}-{nonce}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let mut shared = Command::new(std::env::current_exe().unwrap());
+    shared
+        .args(["--exact", "tests::fixture_child", "--nocapture"])
+        .env("CODENOMAD_PROFILE", "trial-host-process-reuse")
+        .env("CODENOMAD_OWNED_PROCESS_TEST_ROOT", &root)
+        .env("CODENOMAD_OWNED_PROCESS_GRANDCHILD", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut first = OwnedProcess::spawn(&mut shared).unwrap();
+    let mut second = OwnedProcess::spawn(&mut shared).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !root.join("grandchild-ready").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "Reused command child became ready"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    first.terminate().unwrap();
+    let stop_deadline = Instant::now() + Duration::from_secs(5);
+    while first.try_wait().unwrap().is_none() || !first.family_is_empty().unwrap() {
+        assert!(
+            Instant::now() < stop_deadline,
+            "First family stopped cleanly"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        second.try_wait().unwrap().is_none(),
+        "Terminating first family from reused Command must not stop second family"
+    );
+    second.terminate().unwrap();
+}

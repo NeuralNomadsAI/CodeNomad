@@ -6,7 +6,7 @@ import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
 import {requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
-import {createAttestedFetch,createAttestedRelay,RELAY_PLACEHOLDER_PASSWORD} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedRelay,RELAY_PLACEHOLDER_PASSWORD,stripFixtureServerSecrets} from '../../../scripts/native-fixture-http.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
 await withNative(async native=>{
@@ -47,7 +47,7 @@ try{
       const value=JSON.parse(raw);if(value.type==='instance.event'&&value.event?.data?.sessionID===session.id)events.push(value.event.type)
     }
   }})().catch(error=>{if(!observer.signal.aborted)watchError??=error})
-  client=launchFixture(clientBinary,['--probe-real-controls'],{cwd:profile,env:{...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_TEST_MODEL:JSON.stringify(target),RUNE_LOCALE:'fr'},redact:[native.password,rustPassword]})
+  client=launchFixture(clientBinary,['--probe-real-controls'],{cwd:profile,env:{...stripFixtureServerSecrets(env),RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_TEST_MODEL:JSON.stringify(target),RUNE_LOCALE:'fr'},redact:[native.password,rustPassword]})
   rustRelay.allowClientPid(client.pid(),client.closed)
   result=await Promise.race([client.closed,delay(120000,124,{ref:false})])
   if(result===124)await client.stop()

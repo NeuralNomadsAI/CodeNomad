@@ -30,7 +30,7 @@ pub(super) struct Family {
     include_subreaper_children: bool,
 }
 impl Family {
-    pub fn prepare(command: &mut Command) -> Option<String> {
+    pub fn prepare(command: &mut Command) -> Option<(String, String)> {
         command.process_group(0);
         #[cfg(target_os = "macos")]
         {
@@ -41,14 +41,19 @@ impl Family {
             let key = format!("CODENOMAD_FIXTURE_TREE_{}_{}", std::process::id(), seq);
             let val = format!("{nanos}");
             command.env(&key, &val);
-            return Some(format!("{key}={val}"));
+            return Some((key.clone(), format!("{key}={val}")));
         }
         #[cfg(not(target_os = "macos"))]
         {
             None
         }
     }
-    pub fn adopt(child: &mut Child, tree_marker: Option<String>) -> io::Result<Self> {
+    pub fn cleanup_command(command: &mut Command, marker: Option<&(String, String)>) {
+        if let Some((key, _)) = marker {
+            command.env_remove(key);
+        }
+    }
+    pub fn adopt(child: &mut Child, tree_marker: Option<(String, String)>) -> io::Result<Self> {
         let leader = i32::try_from(child.id())
             .map_err(|_| io::Error::other("Invalid process group leader"))?;
         let leader_start_id = start_id_of(leader);
@@ -60,7 +65,7 @@ impl Family {
             leader_reaped: false,
             known_descendants: Mutex::new(HashMap::new()),
             #[cfg(target_os = "macos")]
-            tree_marker: tree_marker.unwrap_or_default(),
+            tree_marker: tree_marker.map_or_else(String::new, |(_, entry)| entry),
             #[cfg(target_os = "linux")]
             include_subreaper_children: false,
         })
@@ -219,14 +224,16 @@ fn descendants_of(
     seeds.extend(known_descendants.keys().copied());
     #[cfg(target_os = "macos")]
     if let Some(marker) = tree_marker {
+        let mut scratch = vec![0u8; macos_argmax()];
         for (pid, _, _, _) in &rows {
-            if *pid > 0
-                && *pid != self_pid
-                && *pid != root
-                && !known_descendants.contains_key(pid)
-                && process_has_env_entry(*pid, marker)
+            if *pid > 0 && *pid != self_pid && *pid != root && !known_descendants.contains_key(pid)
             {
-                seeds.push(*pid);
+                match process_has_env_entry(*pid, marker, &mut scratch) {
+                    Ok(true) => seeds.push(*pid),
+                    Ok(false) => {}
+                    // Fail closed if kernel env inspection failed unexpectedly so family_is_empty stays false.
+                    Err(()) => return None,
+                }
             }
         }
     }
@@ -409,11 +416,10 @@ fn macos_argmax() -> usize {
 }
 
 #[cfg(target_os = "macos")]
-fn process_has_env_entry(pid: i32, expected_entry: &str) -> bool {
+fn process_has_env_entry(pid: i32, expected_entry: &str, buf: &mut Vec<u8>) -> Result<bool, ()> {
     let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
-    let mut size = macos_argmax();
-    let mut buf = vec![0u8; size];
-    // SAFETY: reading KERN_PROCARGS2 for `pid` into our owned buffer of `size` bytes.
+    let mut size = buf.len();
+    // SAFETY: reading KERN_PROCARGS2 for `pid` into our owned reusable buffer of `size` bytes.
     let rc = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
@@ -424,10 +430,24 @@ fn process_has_env_entry(pid: i32, expected_entry: &str) -> bool {
             0,
         )
     };
-    if rc != 0 || size == 0 {
-        return false;
+    if rc != 0 {
+        let err = io::Error::last_os_error().raw_os_error();
+        // Exited process (ESRCH) or foreign UID/protected process (EACCES/EPERM/EINVAL) cannot be our fixture child.
+        if matches!(
+            err,
+            Some(libc::ESRCH | libc::EACCES | libc::EPERM | libc::EINVAL)
+        ) {
+            return Ok(false);
+        }
+        return Err(());
     }
-    crate::procargs::procargs2_has_env_entry(&buf[..size.min(buf.len())], expected_entry)
+    if size == 0 {
+        return Ok(false);
+    }
+    Ok(crate::procargs::procargs2_has_env_entry(
+        &buf[..size.min(buf.len())],
+        expected_entry,
+    ))
 }
 
 fn query_error(error: io::Error) -> io::Result<bool> {

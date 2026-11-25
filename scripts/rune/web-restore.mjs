@@ -4,13 +4,13 @@ import {mkdir,readFile,realpath,writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
-import {createAttestedFetch,parseCookiePairs,substitutePlaceholderCookies,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
+import {createAttestedFetch,maskSetCookieHeaders,parseCookiePairs,substitutePlaceholderCookies,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
 import {launchOwnedChromium} from './web-chromium.mjs'
 import {pendingBrowser} from './web-pending-open.mjs'
 import {fileWrapBrowser} from './web-file-wrap.mjs'
 import {outlineRestore} from './web-outline-restore.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,bundleAssetPaths,workspacePolicy} from './web-workspace-policy.mjs'
+import {privateWebFixture,bundleAssetPaths,workspacePolicy,writePrivateFile} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
 const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},'target-pid':{type:'string'},'launcher-pid':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'},outline:{type:'boolean'}}})
@@ -24,7 +24,7 @@ assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Connected web-restore r
 const out=path.resolve(values.out)
 const {profile,storage,inside}=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
 await verifyLoopbackListenerOwner(Number(url.port),targetPid)
-await verifyPrivateFixtureServer({targetPid,launcherPid,profile})
+await verifyPrivateFixtureServer({targetPid,launcherPid,profile,root})
 url.search='?locale=fr'
 await mkdir(out,{recursive:true});assert(inside(profile,await realpath(out)),'Output link escapes fixture')
 const outputAuthorized=true
@@ -49,7 +49,11 @@ const attestedFulfillWorkspaceCreation=async(route,policy)=>{
   const bytes=Buffer.from(await res.arrayBuffer())
   assert(bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
   if(res.ok)policy.admit(req.postDataJSON(),JSON.parse(bytes.toString('utf8')),req.url())
-  await route.fulfill({status:res.status,headers:Object.fromEntries(res.headers.entries()),body:bytes})
+  const outHeaders=Object.fromEntries(res.headers.entries())
+  if(url.protocol==='http:'&&outHeaders['set-cookie']&&realCookieMap.size){
+    outHeaders['set-cookie']=maskSetCookieHeaders(outHeaders['set-cookie'],realCookieMap).join(', ')
+  }
+  await route.fulfill({status:res.status,headers:outHeaders,body:bytes})
   return {status:res.status,admitted:res.ok}
 }
 try {
@@ -406,6 +410,6 @@ const imagePage=await browser.newPage()
       if(!primaryError)throw closeError
     }
   }
-  if(outputAuthorized&&!wroteSummary)await writeFile(path.join(out,'summary.json'),JSON.stringify({runner:'web-restore',origin:url.origin,contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure})),scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions'},null,2))
+  if(outputAuthorized&&!wroteSummary)await writePrivateFile(path.join(out,'summary.json'),JSON.stringify({runner:'web-restore',origin:url.origin,contexts:results.map(r=>({context:r.context,result:r.result,failure:r.failure})),scope:'Real Rust static/API, simulated OpenCode fixture, product WASM/DOM/sessionStorage; no model or real sessions'},null,2),profile)
 }
 console.log(JSON.stringify({runner:'web-restore',contexts:results.map(r=>({context:r.context,result:r.result})),out}))

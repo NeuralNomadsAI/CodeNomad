@@ -845,7 +845,14 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       await closeBackend()
     } catch (error) { cleanupError = error; result.cleanupError = "backend-cleanup-failed" }
     try {
-      const stopped = await Promise.allSettled(children.map(entry => entry.child.exitCode === null && entry.child.signalCode === null ? stopFixtureChild(entry.child, entry.closed) : entry.closed))
+      const stopped = await Promise.allSettled(children.map(entry =>
+        entry.child.exitCode === null && entry.child.signalCode === null
+          ? stopFixtureChild(entry.child, entry.closed)
+          : entry.closed.then(() => {
+              if (entry.child.exitCode === 86) {
+                throw new Error(`Fixture supervisor ${entry.child.pid} exited with incomplete child tree termination (86)`)
+              }
+            })))
       provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))
       barrier.closeAllConnections(); if (barrier.listening) await new Promise(resolve => barrier.close(resolve))
       result.calls = calls

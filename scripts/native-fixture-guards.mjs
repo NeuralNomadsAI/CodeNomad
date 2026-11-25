@@ -235,17 +235,34 @@ export async function hardKillFixtureChild(child, stopped, timeoutMs = 5_000) {
     throw new Error(`Owned fixture child ${child.pid} already exited before hard kill`)
   }
   const isJob = jobs.has(child)
+  const innerPid = isJob ? await fixtureChildPid(child, 200).catch(() => undefined) : child.pid
+  const expected = isJob ? await Promise.resolve(jobIdentities.get(child)).catch(() => null) : null
+  const confirmGone = async () => {
+    if (!Number.isSafeInteger(innerPid) || innerPid <= 0) return
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (!pidAlive(innerPid)) return
+      if (expected?.startId) {
+        const current = await processIdentityOf(innerPid, { refresh: true }).catch(() => null)
+        if (!current || current.startId !== expected.startId) return
+      }
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
+    throw new Error(`Owned fixture child PID ${innerPid} remained alive after hard kill`)
+  }
   if (process.platform === "win32") {
     // Terminating the Windows job wrapper closes the kernel Job Object and kills its exact child without PID addressing.
     child.kill("SIGKILL")
     if (!(await completesWithin(stopped, timeoutMs))) {
       throw new Error(`Owned fixture job ${child.pid} did not exit after hard kill`)
     }
+    if (child.exitCode === 86) {
+      throw new Error(`Owned fixture job ${child.pid} reported incomplete tree termination after hard kill`)
+    }
+    await confirmGone()
     return
   }
   if (isJob) {
-    const innerPid = await fixtureChildPid(child, 200).catch(() => undefined)
-    const expected = await Promise.resolve(jobIdentities.get(child)).catch(() => null)
     const current = Number.isSafeInteger(innerPid) && innerPid > 0 && expected?.startId
       ? await processIdentityOf(innerPid, { refresh: true }).catch(() => null)
       : null
@@ -255,17 +272,31 @@ export async function hardKillFixtureChild(child, stopped, timeoutMs = 5_000) {
     if (!expected?.startId || current?.startId !== expected.startId) {
       throw new Error(`Refused to hard-kill unverified or recycled fixture PID ${innerPid}`)
     }
-    try { process.kill(-innerPid, "SIGKILL") } catch {}
-    try { process.kill(innerPid, "SIGKILL") } catch {}
+    const signalErrors = []
+    for (const target of [-innerPid, innerPid]) {
+      try {
+        process.kill(target, "SIGKILL")
+      } catch (error) {
+        if (error?.code !== "ESRCH") signalErrors.push(error)
+      }
+    }
+    if (signalErrors.length) {
+      throw new Error(`Failed to hard-kill fixture PID ${innerPid}: ${signalErrors[0].message}`)
+    }
     if (!(await completesWithin(stopped, timeoutMs))) {
       throw new Error(`Owned fixture job ${child.pid} did not exit after verified hard kill`)
     }
+    if (child.exitCode === 86) {
+      throw new Error(`Owned fixture job ${child.pid} reported incomplete tree termination after hard kill`)
+    }
+    await confirmGone()
     return
   }
   child.kill("SIGKILL")
   if (!(await completesWithin(stopped, timeoutMs))) {
     throw new Error(`Owned fixture child ${child.pid} did not exit after hard kill`)
   }
+  await confirmGone()
 }
 
 // Stop a leaf IPC worker or one member of an already owned enclosing job.

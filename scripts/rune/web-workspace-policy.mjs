@@ -1,10 +1,23 @@
 import assert from 'node:assert/strict'
-import {readFile,realpath,lstat} from 'node:fs/promises'
+import {readFile,realpath,lstat,writeFile} from 'node:fs/promises'
 import path from 'node:path'
 
 const inside=(parent,value)=>{const relative=path.relative(parent,value);return relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith(`..${path.sep}`)}
+
+export async function writePrivateFile(filePath,content,allowedRoot){
+  const rootReal=await realpath(allowedRoot)
+  const resolved=path.resolve(filePath)
+  const dirReal=await realpath(path.dirname(resolved))
+  assert(dirReal===rootReal||inside(rootReal,dirReal),`Output directory escapes allowed fixture root: ${dirReal}`)
+  const existing=await lstat(resolved).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+  assert(!existing||(!existing.isSymbolicLink()&&existing.isFile()),`Refusing to overwrite symlink or non-file output: ${resolved}`)
+  await writeFile(resolved,content)
+}
+
 export async function privateWebFixture({root,project,storageState,out,origin}){
-  const target=await realpath(path.join(root,'target/rune-web-tests'))
+  const rootReal=await realpath(root)
+  const target=await realpath(path.join(rootReal,'target/rune-web-tests'))
+  assert(inside(rootReal,target),'Fixture test root must stay inside the canonical worktree')
   const directory=await realpath(project),profile=path.dirname(path.dirname(directory))
   assert(inside(target,profile)&&path.basename(profile).startsWith('launcher-')&&path.basename(directory)==='synthetic','Use the isolated launcher fixture project')
   const storage=await realpath(storageState)
@@ -12,13 +25,20 @@ export async function privateWebFixture({root,project,storageState,out,origin}){
   const auth=JSON.parse(await readFile(storage,'utf8'))
   const parsedOrigin=new URL(origin)
   assert(parsedOrigin.hostname==='127.0.0.1'&&['http:','https:'].includes(parsedOrigin.protocol),'Private 127.0.0.1 fixture origin required')
-  assert(auth.cookies.length>0&&auth.cookies.every(c=>c.domain==='127.0.0.1')&&(auth.origins??[]).every(o=>o.origin===origin),'Private 127.0.0.1 cookie state only')
+  assert(Array.isArray(auth.cookies)&&auth.cookies.length>0,'Private 127.0.0.1 cookie state only')
+  const seenNames=new Set()
+  for(const c of auth.cookies){
+    assert(c.domain==='127.0.0.1'&&(!c.path||c.path==='/'),'Private 127.0.0.1 root-scoped cookie state only')
+    assert(typeof c.name==='string'&&c.name.length>0&&!seenNames.has(c.name),'Ambiguous duplicate cookie name in fixture storage state')
+    seenNames.add(c.name)
+  }
+  assert((auth.origins??[]).every(o=>o.origin===origin),'Private 127.0.0.1 cookie state only')
   const output=path.resolve(out)
   const parent=await realpath(path.dirname(output))
   const leaf=await lstat(output).catch(error=>{if(error.code!=='ENOENT')throw error})
   assert((parent===profile||inside(profile,parent))&&(!leaf||leaf.isDirectory()&&!leaf.isSymbolicLink()),
     'Output must stay in the private fixture profile')
-  return {profile,storage,project:directory,inside}
+  return {profile,storage,project:directory,inside,rootReal}
 }
 export async function bundleAssetPaths(directory){
   const manifest=JSON.parse(await readFile(path.join(directory,'bundle-manifest.json'),'utf8'))

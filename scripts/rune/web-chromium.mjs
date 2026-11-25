@@ -55,7 +55,10 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
         try{await browser.close()}finally{await cdpRelay?.close()}
       }
     }finally{await guard?.close()}
-    return host.child.exitCode===0
+    if(host.child.exitCode!==0){
+      throw Error(`Owned Chromium exited abnormally (code=${host.child.exitCode}, signal=${host.child.signalCode})`)
+    }
+    return true
   }}
 }
 

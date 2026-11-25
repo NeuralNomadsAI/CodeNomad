@@ -11,9 +11,11 @@ import {
   attestPeerWithRetry,
   createClientPidGate,
   isPidInOwnedTree,
+  parseWindowsCommandLine,
   pidAlive,
   probeProcessIdentity,
   processIdentityOf,
+  resolveLoopbackListenerPid,
   resolveLoopbackPeerPid,
   verifyLoopbackConnectionPeer,
   verifyLoopbackListenerOwner,
@@ -24,9 +26,11 @@ export {
   attestPeerWithRetry,
   createClientPidGate,
   isPidInOwnedTree,
+  parseWindowsCommandLine,
   pidAlive,
   probeProcessIdentity,
   processIdentityOf,
+  resolveLoopbackListenerPid,
   resolveLoopbackPeerPid,
   verifyLoopbackConnectionPeer,
   verifyLoopbackListenerOwner,
@@ -48,24 +52,30 @@ function packageNameOf(specifier){
   return specifier.startsWith('@')?parts.slice(0,2).join('/'):parts[0]
 }
 
-function sameWorktreeRepoAndManifests(dirA,dirB){
+export function sameWorktreeRepoAndManifests(dirA,dirB){
   const hash=file=>createHash('sha256').update(readFileSync(file)).digest('hex')
   for(const rel of ['package-lock.json','package.json',path.join('packages','server','package.json')]){
     const fileA=path.join(dirA,rel),fileB=path.join(dirB,rel)
     if(!existsSync(fileA)||!existsSync(fileB)||hash(fileA)!==hash(fileB))return false
   }
-  const commonGitDir=dir=>{
-    const dotGit=path.join(dir,'.git')
-    if(!existsSync(dotGit))return null
+  const verifiedCommonGitDir=dir=>{
+    const dirReal=realpathSync(dir)
+    const dotGit=path.join(dirReal,'.git')
+    if(!existsSync(dotGit)||lstatSync(dotGit).isDirectory())return null
     const raw=readFileSync(dotGit,'utf8').trim()
     const match=/^gitdir:\s*(.+)$/i.exec(raw)
     if(!match)return null
-    const resolved=realpathSync(path.resolve(dir,match[1].trim()))
-    const parent=path.dirname(resolved)
-    return path.basename(parent)==='worktrees'?path.dirname(parent):null
+    const gitDir=realpathSync(path.resolve(dirReal,match[1].trim()))
+    const commonFile=path.join(gitDir,'commondir')
+    const backlinkFile=path.join(gitDir,'gitdir')
+    if(!existsSync(commonFile)||!existsSync(backlinkFile))return null
+    const commonDir=realpathSync(path.resolve(gitDir,readFileSync(commonFile,'utf8').trim()))
+    const backlinkDotGit=realpathSync(path.resolve(gitDir,readFileSync(backlinkFile,'utf8').trim()))
+    if(path.dirname(backlinkDotGit)!==dirReal)return null
+    return commonDir
   }
   try{
-    const gitA=commonGitDir(dirA),gitB=commonGitDir(dirB)
+    const gitA=verifiedCommonGitDir(dirA),gitB=verifiedCommonGitDir(dirB)
     return Boolean(gitA&&gitB&&gitA===gitB)
   }catch{return false}
 }
@@ -126,7 +136,11 @@ export function maskSetCookieHeaders(setCookie,cookieMap){
 
 export function stripFixtureServerSecrets(env){
   return Object.fromEntries(Object.entries(env??{}).filter(([key])=>
-    key!=='CNRS_SERVER_PASSWORD'&&key!=='CNRS_FIXTURE_PASSWORD'&&key!=='CNRS_FIXTURE_URL'))
+    key!=='CNRS_SERVER_PASSWORD'
+    &&key!=='CNRS_FIXTURE_PASSWORD'
+    &&key!=='CNRS_FIXTURE_URL'
+    &&key!=='CODENOMAD_SERVER_PASSWORD'
+    &&key!=='OPENCODE_SERVER_PASSWORD'))
 }
 
 export function worktreeDependencyRoots(nodeModulesDir=worktreeNodeModules){
@@ -322,7 +336,11 @@ export async function originGuardProxy(localOrigin,targetPid,options={}){
           return
         }
       }
-      res.writeHead(response.statusCode,response.headers)
+      const outHeaders={...response.headers}
+      if(injectCookieMap.size&&outHeaders['set-cookie']){
+        outHeaders['set-cookie']=maskSetCookieHeaders(outHeaders['set-cookie'],injectCookieMap)
+      }
+      res.writeHead(response.statusCode,outHeaders)
       response.on('close',()=>{if(!response.complete)res.destroy()})
       response.on('error',()=>res.destroy())
       response.pipe(res)
@@ -416,6 +434,7 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
   const verifyOwner=opts.verifyOwner??verifyLoopbackListenerOwner
   const checkPeer=opts.verifyPeer??(verifyOwner===verifyLoopbackListenerOwner?verifyLoopbackConnectionPeer:(_local,remote,expectedPid)=>verifyOwner(remote,expectedPid))
   const allowSelfSigned=opts.allowSelfSigned===true
+  const ca=opts.ca
   const isHttps=new URL(origin).protocol==='https:'
   const connector=isHttps?null:buildConnector({})
   let closed=false
@@ -454,7 +473,12 @@ export function createAttestedPool(origin,port,pid,verifyOwnerOrOptions=verifyLo
               }
               attestPeerWithRetry(tcpSocket.localPort,port,pid,checkPeer,()=>closed||tcpSocket.destroyed).then(()=>{
                 if(closed||tcpSocket.destroyed){done(Error('Socket closed during peer attestation'),null);return}
-                const tlsSocket=tls.connect({socket:tcpSocket,servername:'127.0.0.1',rejectUnauthorized:!allowSelfSigned})
+                const servername=new URL(origin).hostname
+                const tlsSocket=tls.connect({
+                  socket:tcpSocket,
+                  servername,
+                  ...(ca?{ca,rejectUnauthorized:true}:{rejectUnauthorized:!allowSelfSigned}),
+                })
                 tlsSocket.once('secureConnect',()=>done(null,tlsSocket))
                 tlsSocket.once('error',err=>done(err,null))
               },postError=>done(postError,null))
@@ -581,7 +605,7 @@ export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verif
   }=opts
   assert(Number.isSafeInteger(port)&&port>0&&port<=65535,'Invalid loopback port for TCP relay')
   assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID for TCP relay')
-  let closed=false,relayPort=0,currentPid=pid
+  let closed=false,relayPort=0,currentPid=pid,closePromise=null
   const sockets=new Set()
   const clientGate=createClientPidGate(()=>relayPort,verifyPeer)
   for(const clientPid of allowedClientPids)clientGate.allow(clientPid)
@@ -629,11 +653,16 @@ export async function createAttestedTcpRelay(port,pid,optionsOrVerifyOwner,verif
       sockets.clear()
     },
     close:()=>{
+      if(closePromise)return closePromise
       closed=true
       clientGate.close()
       for(const s of [...sockets]){try{s.destroy()}catch{}}
       sockets.clear()
-      return new Promise(resolve=>server.close(resolve))
+      closePromise=new Promise((resolve,reject)=>server.close(err=>{
+        if(err&&err.code!=='ERR_SERVER_NOT_RUNNING')reject(err)
+        else resolve()
+      }))
+      return closePromise
     },
   }
 }

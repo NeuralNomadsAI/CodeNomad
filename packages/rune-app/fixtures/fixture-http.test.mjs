@@ -360,19 +360,19 @@ test('createAttestedRelay isolates cookies strictly to placeholder headers and c
   })
   assert.equal(withPlaceholder.status,200)
   assert.equal(seenCookies.at(-1),'codenomad_session=real-secret-token')
-  // Closing clientGate invalidates an in-flight allow() without needing exitPromise rejection,
-  // and verify() refuses sockets after close().
+  // 1) Closing clientGate invalidates an in-flight allow() and refuses sockets.
   const net=await import('node:net')
   const probeServer=net.createServer()
   await new Promise(resolve=>probeServer.listen(0,'127.0.0.1',resolve))
+  const openSockets=[]
+  t.after(async()=>{
+    for(const s of openSockets){try{s.destroy()}catch{}}
+    await new Promise(resolve=>probeServer.close(resolve))
+  })
   const accepted=new Promise(resolve=>probeServer.once('connection',resolve))
   const clientSock=net.createConnection({host:'127.0.0.1',port:probeServer.address().port})
   const serverSock=await accepted
-  t.after(async()=>{
-    clientSock.destroy()
-    serverSock.destroy()
-    await new Promise(resolve=>probeServer.close(resolve))
-  })
+  openSockets.push(clientSock,serverSock)
   const gate=createClientPidGate(()=>probeServer.address().port)
   const deferredPid=Promise.withResolvers()
   const allowTask=gate.allow(deferredPid.promise)
@@ -380,26 +380,122 @@ test('createAttestedRelay isolates cookies strictly to placeholder headers and c
   deferredPid.resolve(process.pid)
   await allowTask
   assert.equal(await gate.verify(serverSock),false)
-  // Separately, a rejected exitPromise revokes the PID without triggering an unhandled rejection.
+
+  // 2) An active verified socket is torn down when exitPromise rejects (and produces no unhandled rejection).
   const gate2=createClientPidGate(()=>probeServer.address().port)
   t.after(()=>gate2.close())
-  const rejectedExit=Promise.reject(new Error('expected exit rejection'))
-  await gate2.allow(process.pid,rejectedExit)
-  await new Promise(resolve=>setTimeout(resolve,20))
+  const exitDeferred=Promise.withResolvers()
+  await gate2.allow(process.pid,exitDeferred.promise)
+  assert.equal(await gate2.verify(serverSock),true)
+  const destroyed=new Promise(resolve=>serverSock.once('close',resolve))
+  exitDeferred.reject(new Error('expected exit rejection'))
+  await destroyed
   assert.equal(await gate2.verify(serverSock),false)
+
+  // 3) Recycled PID (new OS startId on fresh probe) is rejected on new socket admission.
+  let fakeStartId='incarnation-1'
+  const gate3=createClientPidGate(()=>probeServer.address().port,undefined,{
+    probeIdentity:async()=>({status:'ok',identity:{ppid:process.ppid,startId:fakeStartId,createdAt:1n}}),
+  })
+  t.after(()=>gate3.close())
+  await gate3.allow(process.pid)
+  const accepted2=new Promise(resolve=>probeServer.once('connection',resolve))
+  const clientSock2=net.createConnection({host:'127.0.0.1',port:probeServer.address().port})
+  const serverSock2=await accepted2
+  openSockets.push(clientSock2,serverSock2)
+  assert.equal(await gate3.verify(serverSock2),true)
+  fakeStartId='incarnation-2'
+  const accepted3=new Promise(resolve=>probeServer.once('connection',resolve))
+  const clientSock3=net.createConnection({host:'127.0.0.1',port:probeServer.address().port})
+  const serverSock3=await accepted3
+  openSockets.push(clientSock3,serverSock3)
+  assert.equal(await gate3.verify(serverSock3),false)
 })
 
-test('createAttestedTcpRelay supports setTargetPid and verifyPrivateFixtureServer rejects foreign servers',{timeout:15000},async t=>{
-  const {verifyPrivateFixtureServer}=await import('../../../scripts/native-fixture-http.mjs')
-  const target=await listen(t,(_req,res)=>{res.end('tcp-ok')})
-  const relay=await createAttestedTcpRelay(Number(new URL(target.origin).port),process.pid)
+test('createAttestedTcpRelay rotates between valid targets, parseWindowsCommandLine handles quoting, and provenance + worktree checks enforce exact boundaries',{timeout:20000},async t=>{
+  const {mkdir,mkdtemp,rm,writeFile}=await import('node:fs/promises')
+  const os=await import('node:os')
+  const path=await import('node:path')
+  const {
+    parseWindowsCommandLine,
+    sameWorktreeRepoAndManifests,
+    verifyPrivateFixtureServer,
+  }=await import('../../../scripts/native-fixture-http.mjs')
+
+  // parseWindowsCommandLine: spaces, quotes, escaped quotes, backslashes, Unicode.
+  assert.deepEqual(
+    parseWindowsCommandLine('"C:\\Program Files\\node.exe" --config "D:\\tmp\\café dir\\config.yaml" --arg "a\\"b\\\\" plain'),
+    ['C:\\Program Files\\node.exe','--config','D:\\tmp\\café dir\\config.yaml','--arg','a"b\\','plain'],
+  )
+
+  // createAttestedTcpRelay: rotate from one valid server PID to a second valid server PID.
+  const targetA=await listen(t,(_req,res)=>{res.end('from-A')})
+  const targetPort=Number(new URL(targetA.origin).port)
+  let activeOwner=process.pid
+  const relay=await createAttestedTcpRelay(targetPort,process.pid,{
+    verifyOwner:async(port,pid)=>{assert.equal(port,targetPort);assert.equal(pid,activeOwner)},
+    verifyPeer:async(_local,remote,pid)=>{assert.equal(remote,targetPort);assert.equal(pid,activeOwner)},
+  })
   t.after(()=>relay.close())
-  const ok=await fixtureFetch(`http://127.0.0.1:${relay.port}/before`,{signal:AbortSignal.timeout(5000)})
-  assert.equal(ok.status,200)
+  const resA=await fixtureFetch(`http://127.0.0.1:${relay.port}/a`,{signal:AbortSignal.timeout(5000)})
+  assert.equal(resA.status,200)
+  assert.equal(await resA.text(),'from-A')
+  // Rotating to a mismatched PID fails; rotating to a second valid PID succeeds.
   relay.setTargetPid(999999999)
-  await assert.rejects(fixtureFetch(`http://127.0.0.1:${relay.port}/after`,{signal:AbortSignal.timeout(3000)}))
-  await assert.rejects(verifyPrivateFixtureServer({targetPid:process.pid,launcherPid:999999999,profile:process.cwd()}),/direct descendant|launcher/i)
-  await assert.rejects(verifyPrivateFixtureServer({targetPid:process.pid,launcherPid:process.pid,profile:process.cwd()}),/command line|profile/i)
+  await assert.rejects(fixtureFetch(`http://127.0.0.1:${relay.port}/mismatch`,{signal:AbortSignal.timeout(3000)}))
+  activeOwner=424242
+  relay.setTargetPid(activeOwner)
+  const resB=await fixtureFetch(`http://127.0.0.1:${relay.port}/b`,{signal:AbortSignal.timeout(5000)})
+  assert.equal(resB.status,200)
+  assert.equal(await resB.text(),'from-A')
+  await relay.close()
+  await relay.close() // idempotent close
+
+  // verifyPrivateFixtureServer: positive child with canonical --config and --workspace-root vs neighbor prefix & unrelated arg.
+  const tmpRoot=await mkdtemp(path.join(os.tmpdir(),'codenomad-prov-'))
+  t.after(()=>rm(tmpRoot,{recursive:true,force:true}))
+  const profile=path.join(tmpRoot,'launcher-café 1')
+  const neighbor=path.join(tmpRoot,'launcher-café 1-neighbor')
+  await mkdir(path.join(profile,'workspace'),{recursive:true})
+  await mkdir(path.join(neighbor,'workspace'),{recursive:true})
+  const dummyScript=path.join(tmpRoot,'dummy-server.mjs')
+  await writeFile(dummyScript,'console.log("READY"); setInterval(() => {}, 1000)\n')
+  const spawnDummy=args=>new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,[dummyScript,...args],{stdio:['ignore','pipe','pipe'],windowsHide:true})
+    child.once('error',reject)
+    child.stdout.once('data',()=>resolve(child))
+  })
+  const good=await spawnDummy(['--config',path.join(profile,'config.yaml'),'--workspace-root',path.join(profile,'workspace')])
+  const badNeighbor=await spawnDummy(['--config',path.join(neighbor,'config.yaml'),'--workspace-root',path.join(neighbor,'workspace')])
+  const badUnrelated=await spawnDummy(['--note',profile])
+  t.after(()=>{good.kill();badNeighbor.kill();badUnrelated.kill()})
+  const verified=await verifyPrivateFixtureServer({targetPid:good.pid,launcherPid:process.pid,profile})
+  assert.equal(verified.targetPid,good.pid)
+  assert(verified.targetStartId)
+  await assert.rejects(verifyPrivateFixtureServer({targetPid:badNeighbor.pid,launcherPid:process.pid,profile}),/canonically confined/i)
+  await assert.rejects(verifyPrivateFixtureServer({targetPid:badUnrelated.pid,launcherPid:process.pid,profile}),/canonically confined/i)
+  await assert.rejects(verifyPrivateFixtureServer({targetPid:good.pid,launcherPid:999999999,profile}),/direct descendant|launcher/i)
+
+  // sameWorktreeRepoAndManifests: rejects a sibling directory borrowing .git without reciprocal gitdir backlink.
+  const fakeGitCommon=path.join(tmpRoot,'repo.git')
+  const wtA=path.join(tmpRoot,'wt-a'),wtB=path.join(tmpRoot,'wt-b'),wtSpoof=path.join(tmpRoot,'wt-spoof')
+  const metaA=path.join(fakeGitCommon,'worktrees','wt-a'),metaB=path.join(fakeGitCommon,'worktrees','wt-b')
+  for(const dir of [wtA,wtB,wtSpoof]){
+    await mkdir(path.join(dir,'packages','server'),{recursive:true})
+    await writeFile(path.join(dir,'package-lock.json'),'{"lockfileVersion":3}\n')
+    await writeFile(path.join(dir,'package.json'),'{"name":"root"}\n')
+    await writeFile(path.join(dir,'packages','server','package.json'),'{"name":"server"}\n')
+  }
+  await mkdir(metaA,{recursive:true});await mkdir(metaB,{recursive:true})
+  await writeFile(path.join(wtA,'.git'),`gitdir: ${metaA}\n`)
+  await writeFile(path.join(wtB,'.git'),`gitdir: ${metaB}\n`)
+  await writeFile(path.join(wtSpoof,'.git'),`gitdir: ${metaB}\n`)
+  await writeFile(path.join(metaA,'commondir'),'../..\n')
+  await writeFile(path.join(metaB,'commondir'),'../..\n')
+  await writeFile(path.join(metaA,'gitdir'),`${path.join(wtA,'.git')}\n`)
+  await writeFile(path.join(metaB,'gitdir'),`${path.join(wtB,'.git')}\n`)
+  assert.equal(sameWorktreeRepoAndManifests(wtA,wtB),true)
+  assert.equal(sameWorktreeRepoAndManifests(wtA,wtSpoof),false)
 })
 
 test('originGuardProxy attests HTTPS CONNECT tunnels, rejects foreign authorities, and tears down on setTargetPid',{timeout:15000},async t=>{

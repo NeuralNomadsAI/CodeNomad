@@ -1,14 +1,14 @@
 // Attach only to an explicitly supplied isolated loopback server. Never starts a server.
 import assert from 'node:assert/strict'
-import {mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
+import {lstat, mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import {isExpectedWaitError, now, withBudget} from './web-budget.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation as defaultFulfillWorkspaceCreation} from './web-workspace-policy.mjs'
-import {activateControl,launchChromium,launchOwnedChromium} from './web-chromium.mjs'
-import {createAttestedFetch,parseCookiePairs,substitutePlaceholderCookies,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
+import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation as defaultFulfillWorkspaceCreation,writePrivateFile} from './web-workspace-policy.mjs'
+import {activateControl,launchOwnedChromium} from './web-chromium.mjs'
+import {createAttestedFetch,maskSetCookieHeaders,parseCookiePairs,substitutePlaceholderCookies,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
 import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste, mobileMoreActions, menuPrompt} from './web-paste.mjs'
@@ -20,7 +20,7 @@ import {checkGitImages, gitImageReadAllowed} from './web-git-images.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, 'target-pid': {type: 'string'}, 'launcher-pid': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'},'history-return-only':{type:'boolean'},'more-actions-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, 'target-pid': {type: 'string'}, 'launcher-pid': {type: 'string'}, profile: {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'},'history-return-only':{type:'boolean'},'more-actions-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(url.hostname === '127.0.0.1', 'Use an isolated 127.0.0.1 server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -41,9 +41,14 @@ const catalogueIndex = JSON.parse(await readFile(path.join(root, 'crates/rune-th
 assert(catalogueIndex.locales.includes(values.locale), 'Select a supported locale from the generated catalogue')
 const messages = JSON.parse(await readFile(path.join(root, `crates/rune-theme-codenomad/assets/catalogues/${values.locale}.json`), 'utf8'))
 const out = path.resolve(root, values.out)
-const relativeOut = path.relative(path.join(root, 'target'), out)
-assert(relativeOut && relativeOut !== '..' && !relativeOut.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeOut), 'Smoke output must stay inside this checkout target directory')
-let privateScope, ownedBrowser, browser, attestedFetch, browserStorageState, realCookieHeader, realCookieMap = new Map(), currentTargetPid, launcherPid, outputAuthorized = false
+const rootReal = await realpath(root)
+const insideRoot = (parent, value) => {
+  const rel = path.relative(parent, value)
+  return Boolean(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)
+}
+const targetReal = await realpath(path.join(rootReal, 'target'))
+assert(insideRoot(rootReal, targetReal), 'Target directory must stay inside canonical worktree')
+let privateScope, ownedBrowser, browser, attestedFetch, browserStorageState, realCookieHeader, realCookieMap = new Map(), currentTargetPid, launcherPid, outputAuthorized = false, outputRootReal = null
 const cookieHeaderFor = async context => url.protocol === 'http:'
   ? realCookieHeader
   : (await context.cookies(url.origin)).map(c => `${c.name}=${c.value}`).join('; ')
@@ -60,6 +65,9 @@ const fulfillWorkspaceCreation=async(route,policy,context)=>{
   assert(bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
   if(res.ok)policy.admit(req.postDataJSON(),JSON.parse(bytes.toString('utf8')),req.url())
   const outHeaders=Object.fromEntries(res.headers.entries())
+  if(url.protocol==='http:'&&outHeaders['set-cookie']&&realCookieMap.size){
+    outHeaders['set-cookie']=maskSetCookieHeaders(outHeaders['set-cookie'],realCookieMap).join(', ')
+  }
   await route.fulfill({status:res.status,headers:outHeaders,body:bytes})
   return {status:res.status,admitted:res.ok}
 }
@@ -73,17 +81,44 @@ const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??
 if(values.mobile)assets.add('/remote-pair')
 let primaryError=null
 try {
+  currentTargetPid=Number(values['target-pid'])
+  assert(Number.isSafeInteger(currentTargetPid)&&currentTargetPid>0,'Web smoke requires --target-pid <owned server PID>')
+  launcherPid=Number(values['launcher-pid'])
+  assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Web smoke requires --launcher-pid <private launcher PID>')
+  let browserProfile
   if(values.connected){
     privateScope=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
-    currentTargetPid=Number(values['target-pid'])
-    assert(Number.isSafeInteger(currentTargetPid)&&currentTargetPid>0,'Connected web smoke requires --target-pid <owned server PID>')
-    launcherPid=Number(values['launcher-pid'])
-    assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Connected web smoke requires --launcher-pid <private launcher PID>')
-    await verifyLoopbackListenerOwner(Number(url.port),currentTargetPid)
-    await verifyPrivateFixtureServer({targetPid:currentTargetPid,launcherPid,profile:privateScope.profile})
-    await mkdir(out, {recursive: true})
-    assert(privateScope.inside(privateScope.profile,await realpath(out)),'Output link escapes fixture')
-    outputAuthorized=true
+    browserProfile=privateScope.profile
+    outputRootReal=privateScope.profile
+  }else{
+    assert(values.profile,'Synthetic web smoke requires --profile <private fixture profile>')
+    const testsReal=await realpath(path.join(rootReal,'target/rune-web-tests'))
+    assert(insideRoot(rootReal,testsReal),'Fixture test root must stay inside canonical worktree')
+    browserProfile=await realpath(values.profile)
+    assert(insideRoot(testsReal,browserProfile)&&/^(?:trial|launcher)-/.test(path.basename(browserProfile)),'Synthetic profile must stay inside target/rune-web-tests')
+    const outParent=await realpath(path.dirname(out))
+    const outLeaf=await lstat(out).catch(error=>{if(error.code!=='ENOENT')throw error;return null})
+    assert((outParent===browserProfile||insideRoot(browserProfile,outParent))&&(!outLeaf||(outLeaf.isDirectory()&&!outLeaf.isSymbolicLink())),'Synthetic output must stay in the private fixture profile')
+    if(values['storage-state']){
+      const storageReal=await realpath(values['storage-state'])
+      assert(insideRoot(browserProfile,storageReal),'Synthetic storage state must come from this private fixture profile')
+      const auth=JSON.parse(await readFile(storageReal,'utf8'))
+      const seenNames=new Set()
+      assert(Array.isArray(auth.cookies)&&auth.cookies.length>0,'Private 127.0.0.1 cookie state required')
+      for(const c of auth.cookies){
+        assert(c.domain==='127.0.0.1'&&(!c.path||c.path==='/'),'Private 127.0.0.1 root-scoped cookie state only')
+        assert(typeof c.name==='string'&&c.name.length>0&&!seenNames.has(c.name),'Ambiguous duplicate cookie name')
+        seenNames.add(c.name)
+      }
+    }
+    outputRootReal=browserProfile
+  }
+  await verifyLoopbackListenerOwner(Number(url.port),currentTargetPid)
+  await verifyPrivateFixtureServer({targetPid:currentTargetPid,launcherPid,profile:browserProfile,root})
+  await mkdir(out, {recursive: true})
+  assert(insideRoot(outputRootReal,await realpath(out)),'Output link escapes fixture')
+  outputAuthorized=true
+  if(values['storage-state']){
     const rawStorage=JSON.parse(await readFile(values['storage-state'],'utf8'))
     realCookieHeader=(rawStorage?.cookies??[]).map(c=>`${c.name}=${c.value}`).join('; ')
     realCookieMap=parseCookiePairs(realCookieHeader)
@@ -95,30 +130,27 @@ try {
     }else{
       browserStorageState=rawStorage
     }
-    attestedFetch=createAttestedFetch(url.origin,Number(url.port),currentTargetPid,{allowSelfSigned:url.protocol==='https:'})
-    ownedBrowser=await launchOwnedChromium({
-      executablePath:values.executable,
-      profile:privateScope.profile,
-      env:process.env,
-      origin:url.origin,
-      targetPid:currentTargetPid,
-      ...(url.protocol==='http:'?{injectCookie:realCookieHeader}:{}),
-    })
-    browser=ownedBrowser.browser
-  }else{
-    await mkdir(out, {recursive: true})
-    outputAuthorized=true
-    browser=await launchChromium(values.executable)
   }
+  const caCert=url.protocol==='https:'?await readFile(path.join(browserProfile,'identity.data/tls/ca-cert.pem')).catch(()=>undefined):undefined
+  attestedFetch=createAttestedFetch(url.origin,Number(url.port),currentTargetPid,caCert?{ca:caCert}:{allowSelfSigned:url.protocol==='https:'})
+  ownedBrowser=await launchOwnedChromium({
+    executablePath:values.executable,
+    profile:browserProfile,
+    env:process.env,
+    origin:url.origin,
+    targetPid:currentTargetPid,
+    ...(url.protocol==='http:'&&realCookieHeader?{injectCookie:realCookieHeader}:{}),
+  })
+  browser=ownedBrowser.browser
   const imagePage = await browser.newPage()
   const onRestart = async nextPid => {
     assert(Number.isSafeInteger(nextPid)&&nextPid>0,'Restarted fixture must report owned server PID')
     await verifyLoopbackListenerOwner(Number(url.port),nextPid)
-    await verifyPrivateFixtureServer({targetPid:nextPid,launcherPid,profile:privateScope.profile})
+    await verifyPrivateFixtureServer({targetPid:nextPid,launcherPid,profile:browserProfile,root})
     currentTargetPid = nextPid
     ownedBrowser?.setTargetPid(nextPid)
     await attestedFetch?.close().catch(() => {})
-    attestedFetch = createAttestedFetch(url.origin, Number(url.port), currentTargetPid, {allowSelfSigned: url.protocol === 'https:'})
+    attestedFetch = createAttestedFetch(url.origin, Number(url.port), currentTargetPid, caCert ? {ca: caCert} : {allowSelfSigned: url.protocol === 'https:'})
   }
   const attestedGet = async (pathname, ctx) => {
     const cookie = await cookieHeaderFor(ctx)
@@ -909,10 +941,10 @@ try {
     console.error(`Failed to close browser: ${closeError.message}`)
     if (!primaryError) throw closeError
   }
-  if (outputAuthorized) {
+  if (outputAuthorized && outputRootReal) {
     try {
-      await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
-        scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
+      await writePrivateFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
+        scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n', outputRootReal)
     } catch (writeError) {
       console.error(`Failed to write smoke-report.json: ${writeError.message}`)
       if (!primaryError) throw writeError

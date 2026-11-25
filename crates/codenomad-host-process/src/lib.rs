@@ -114,7 +114,9 @@ impl OwnedProcess {
     #[cfg(unix)]
     fn spawn_unix(command: &mut Command) -> io::Result<Self> {
         let marker = Family::prepare(command);
-        let mut child = command.spawn()?;
+        let spawn_result = command.spawn();
+        Family::cleanup_command(command, marker.as_ref());
+        let mut child = spawn_result?;
         match Family::adopt(&mut child, marker) {
             Ok(family) => Ok(Self {
                 child: Some(child),

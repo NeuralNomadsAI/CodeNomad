@@ -3,25 +3,41 @@ import assert from 'node:assert/strict'
 import {createHash,X509Certificate} from 'node:crypto'
 import {readFile,readdir,writeFile} from 'node:fs/promises'
 import path from 'node:path'
+import {fileURLToPath} from 'node:url'
 import {_android} from 'playwright'
-import {verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
+import {createAttestedFetch,verifyLoopbackListenerOwner,verifyPrivateFixtureServer} from '../native-fixture-http.mjs'
 import {androidDevice,hierarchy} from '../../packages/rune-app/fixtures/android-device.mjs'
-import {bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
+import {bundleAssetPaths,workspacePolicy} from './web-workspace-policy.mjs'
 import {command,navigatePair} from './web-live.mjs'
 import {androidLive,androidPrompt} from './web-android-contract.mjs'
 import {chromeMemory,scrollMeasure} from './web-android-metrics.mjs'
 import {observeRenderer,traceSwipe} from './web-android-trace.mjs'
 import {observeGpu,gpuState,chromeGraphicsReport,observeBoot,bootActivity} from './web-android-gpu.mjs'
 
+const root=fileURLToPath(new URL('../../',import.meta.url))
 const [origin,profile,project,bundle,rawServerPid,rawLauncherPid]=process.argv.slice(2)
 const useTs=process.env.RUNE_ANDROID_TS_SERVER==='1'
 assert.match(origin,useTs?/^https:\/\/rune-server\.fixture\.test:\d+$/:/^https:\/\/127\.0\.0\.1:\d+$/)
 assert(process.send&&path.basename(profile).startsWith('launcher-'))
-const serverPid=Number(rawServerPid),launcherPid=Number(rawLauncherPid)
-assert(Number.isSafeInteger(serverPid)&&serverPid>0,'Android fixture requires owned server PID')
+let currentServerPid=Number(rawServerPid)
+const launcherPid=Number(rawLauncherPid)
+assert(Number.isSafeInteger(currentServerPid)&&currentServerPid>0,'Android fixture requires owned server PID')
 assert(Number.isSafeInteger(launcherPid)&&launcherPid>0,'Android fixture requires private launcher PID')
-await verifyLoopbackListenerOwner(Number(new URL(origin).port),serverPid)
-await verifyPrivateFixtureServer({targetPid:serverPid,launcherPid,profile})
+await verifyLoopbackListenerOwner(Number(new URL(origin).port),currentServerPid)
+await verifyPrivateFixtureServer({targetPid:currentServerPid,launcherPid,profile,root})
+const caCert=await readFile(path.join(profile,'identity.data/tls/ca-cert.pem'))
+let attestedFetch=createAttestedFetch(origin,Number(new URL(origin).port),currentServerPid,{ca:caCert})
+const attestedFulfillWorkspaceCreation=async(route,policy)=>{
+  const req=route.request()
+  const headers={...(await req.allHeaders())}
+  delete headers['host'];delete headers['content-length']
+  const res=await attestedFetch(req.url(),{method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(30000)})
+  const bytes=Buffer.from(await res.arrayBuffer())
+  assert(bytes.length<=1048576,'Workspace response exceeds fixture admission bound')
+  if(res.ok)policy.admit(req.postDataJSON(),JSON.parse(bytes.toString('utf8')),req.url())
+  await route.fulfill({status:res.status,headers:Object.fromEntries(res.headers.entries()),body:bytes})
+  return {status:res.status,admitted:res.ok}
+}
 const auth=new X509Certificate(await readFile(path.join(profile,'identity.data/tls/server-cert.pem')))
 const pin=createHash('sha256').update(auth.publicKey.export({type:'spki',format:'der'})).digest('base64')
 const solid=process.env.RUNE_ANDROID_SOLID_DIR
@@ -129,7 +145,7 @@ async function runAndroid() {
     }
     if(!await policy.request(req)){forbidden.push(p);return route.abort()}
     if(req.method()==='POST'&&p==='/api/workspaces'){
-      try{return await fulfillWorkspaceCreation(route,policy)}
+      try{return await attestedFulfillWorkspaceCreation(route,policy)}
       catch{errors.push('Private workspace response was refused before delivery');return route.abort()}
     }
     return route.continue()
@@ -277,7 +293,10 @@ async function runAndroid() {
   const restartedPid=Number(evidence.restart?.serverPid)
   assert(Number.isSafeInteger(restartedPid)&&restartedPid>0,'Restarted Android fixture must report owned server PID')
   await verifyLoopbackListenerOwner(Number(new URL(origin).port),restartedPid)
-  await verifyPrivateFixtureServer({targetPid:restartedPid,launcherPid,profile})
+  await verifyPrivateFixtureServer({targetPid:restartedPid,launcherPid,profile,root})
+  currentServerPid=restartedPid
+  await attestedFetch?.close().catch(()=>{})
+  attestedFetch=createAttestedFetch(origin,Number(new URL(origin).port),currentServerPid,{ca:caCert})
   try { await page.getByText('Mobile Rust restart history',{exact:true}).waitFor({timeout:45000}) }
   catch(error){evidence.restartWaitMs=performance.now()-restart;throw error}
   await recovering.waitFor({state:'hidden'})
@@ -315,6 +334,7 @@ try {
       .split('\n').filter(line=>/mInputShown|mShowRequested|mCurFocusedWindow|mCurAttribute|mCurMethodId/.test(line))},null,2))
   throw error
 } finally {
+  await attestedFetch?.close().catch(()=>{})
   await cdp?.detach().catch(()=>{})
   await context?.close().catch(()=>{})
   await device.close()
