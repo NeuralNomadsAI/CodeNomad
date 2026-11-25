@@ -4,12 +4,23 @@ use super::{
     frames::{Parsed, Parser},
     limits::reread,
     opened,
-    staleness::{Clock, ProbeSubscription, STALE_THRESHOLD, Watchdog},
+    staleness::{Clock, ProbeSource, STALE_THRESHOLD, Watchdog},
 };
+use std::sync::Arc;
 
 enum Next<T> {
     Ready(T),
     Stale,
+}
+
+struct QuotaGuard(Option<crate::provider_usage::Ingress>);
+
+impl Drop for QuotaGuard {
+    fn drop(&mut self) {
+        if let Some(quota) = &self.0 {
+            quota.transport(false);
+        }
+    }
 }
 
 pub(super) async fn read_native(
@@ -23,8 +34,8 @@ pub(super) async fn read_native(
         epoch,
         out,
         state,
-        Watchdog::new(STALE_THRESHOLD),
-        ProbeSubscription::register(),
+        Arc::new(Watchdog::new(STALE_THRESHOLD)),
+        ProbeSource::global(),
     )
     .await
 }
@@ -34,10 +45,11 @@ pub(super) async fn read_native_with<C: Clock>(
     epoch: u64,
     out: &Sender<Input>,
     state: &State,
-    mut watchdog: Watchdog<C>,
-    probe: ProbeSubscription,
+    watchdog: Arc<Watchdog<C>>,
+    probes: ProbeSource,
 ) -> Result<()> {
     let connection = format!("stream-{epoch}");
+    let handshake_probe = probes.subscribe();
     let request = b
         .client
         .stream_get(format!("{}api/events", b.base))
@@ -46,16 +58,19 @@ pub(super) async fn read_native_with<C: Clock>(
             ("connectionId", connection.as_str()),
             ("userFiles", crate::attachments::USER_FILES_REFERENCE),
         ]);
-    let response =
-        match futures_lite::future::race(async { Next::Ready(request.send().await) }, async {
-            watchdog.wait_until_stale(&probe).await;
+    let response = match futures_lite::future::or(
+        async {
+            watchdog.wait_until_stale(&handshake_probe, None).await;
             Next::Stale
-        })
-        .await
-        {
-            Next::Ready(response) => response?.error_for_status()?,
-            Next::Stale => return Err("event stream stale".into()),
-        };
+        },
+        async { Next::Ready(request.send().await) },
+    )
+    .await
+    {
+        Next::Ready(response) => response?.error_for_status()?,
+        Next::Stale => return Err("event stream stale".into()),
+    };
+    drop(handshake_probe);
     if !response
         .headers()
         .get("content-type")
@@ -74,7 +89,7 @@ pub(super) async fn read_native_with<C: Clock>(
         &connection,
         response.bytes_stream(),
         watchdog,
-        probe,
+        probes,
     )
     .await
 }
@@ -95,8 +110,8 @@ pub(super) async fn read_frames<B: AsRef<[u8]>>(
         state,
         connection,
         chunks,
-        Watchdog::new(STALE_THRESHOLD),
-        ProbeSubscription::register(),
+        Arc::new(Watchdog::new(STALE_THRESHOLD)),
+        ProbeSource::global(),
     )
     .await
 }
@@ -109,57 +124,92 @@ pub(super) async fn read_frames_with<B: AsRef<[u8]>, C: Clock>(
     state: &State,
     connection: &str,
     chunks: impl futures_lite::Stream<Item = std::result::Result<B, reqwest::Error>>,
-    mut watchdog: Watchdog<C>,
-    probe: ProbeSubscription,
+    watchdog: Arc<Watchdog<C>>,
+    probes: ProbeSource,
 ) -> Result<()> {
     use futures_lite::StreamExt;
     let quota = state.quota_ingress(b);
     if let Some(quota) = &quota {
         quota.transport(true);
     }
+    let _quota_guard = QuotaGuard(quota.clone());
     // One bounded frame of read-ahead keeps SSE authority ahead of transcript dispatch.
     let (send, receive) = crate::bounded(1);
+    let read_watchdog = watchdog.clone();
+    let read_probe = probes.subscribe();
     let read = async move {
-        let result: Result<()> = async {
-            let mut chunks = std::pin::pin!(chunks);
-            let mut parser = Parser::default();
-            loop {
-                match futures_lite::future::race(
-                    async { Next::Ready(chunks.next().await) },
-                    async {
-                        watchdog.wait_until_stale(&probe).await;
-                        Next::Stale
-                    },
-                )
-                .await
-                {
-                    Next::Ready(Some(chunk)) => {
-                        let chunk = chunk?;
-                        let bytes = chunk.as_ref();
-                        if !bytes.is_empty() {
-                            watchdog.activity();
-                            receive_chunk(&mut parser, bytes, quota.as_ref(), &send).await?;
+        let mut chunks = std::pin::pin!(chunks);
+        let mut parser = Parser::default();
+        loop {
+            match futures_lite::future::or(
+                async {
+                    read_watchdog.wait_until_stale(&read_probe, None).await;
+                    Next::Stale
+                },
+                async { Next::Ready(chunks.next().await) },
+            )
+            .await
+            {
+                Next::Ready(Some(chunk)) => {
+                    let chunk = match chunk {
+                        Ok(chunk) => chunk,
+                        Err(err) => return Ok(Err(err.into())),
+                    };
+                    let bytes = chunk.as_ref();
+                    if !bytes.is_empty() {
+                        read_watchdog.activity();
+                        // Waiting on the bounded local channel is UI backpressure, not server silence.
+                        let _pause = read_watchdog.pause();
+                        if let Err(err) =
+                            receive_chunk(&mut parser, bytes, quota.as_ref(), &send).await
+                        {
+                            return Ok(Err(err));
                         }
                     }
-                    Next::Ready(None) => return Err("event stream ended".into()),
-                    Next::Stale => return Err("event stream stale".into()),
+                }
+                Next::Ready(None) => return Ok(Err("event stream ended".into())),
+                Next::Stale => {
+                    return Err::<Result<()>, crate::history::Error>("event stream stale".into());
                 }
             }
         }
-        .await;
-        if let Some(quota) = &quota {
-            quota.transport(false);
-        }
-        Ok::<_, crate::history::Error>(result)
     };
     let route = async move {
-        opened(epoch, out, state).await?;
+        {
+            let _pause = watchdog.pause();
+            opened(epoch, out, state).await?;
+        }
         while let Ok(frame) = receive.recv().await {
             match frame {
+                Parsed::Data(kind, data) if kind == "codenomad.client.ping" => {
+                    // Pong POST is a network wait: keep staleness active so a dead link cuts it.
+                    let pong_probe = probes.subscribe();
+                    match futures_lite::future::or(
+                        async {
+                            watchdog.wait_until_stale(&pong_probe, None).await;
+                            Next::Stale
+                        },
+                        async {
+                            Next::Ready(
+                                dispatch(b, epoch, out, state, connection, &kind, &data).await,
+                            )
+                        },
+                    )
+                    .await
+                    {
+                        Next::Ready(result) => {
+                            result?;
+                            watchdog.activity();
+                        }
+                        Next::Stale => return Err("event stream stale".into()),
+                    }
+                }
                 Parsed::Data(kind, data) => {
+                    let _pause = watchdog.pause();
                     dispatch(b, epoch, out, state, connection, &kind, &data).await?;
                 }
                 Parsed::Skipped => {
+                    let _pause = watchdog.pause();
                     b.client.children().invalidate_all(b);
                     reread(epoch, out, state).await?;
                 }

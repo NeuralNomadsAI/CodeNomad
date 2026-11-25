@@ -309,7 +309,7 @@ impl staleness::Clock for FakeClock {
 #[test]
 fn staleness_watchdog_tracks_monotonic_wall_wake_and_clock_rollback() {
     let clock = FakeClock::new(1_000_000);
-    let mut watchdog = staleness::Watchdog::with_clock(
+    let watchdog = staleness::Watchdog::with_clock(
         clock.clone(),
         staleness::STALE_THRESHOLD,
         staleness::CHECK_INTERVAL,
@@ -339,6 +339,20 @@ fn staleness_watchdog_tracks_monotonic_wall_wake_and_clock_rollback() {
     assert!(!watchdog.is_stale());
     assert_eq!(watchdog.elapsed(), Duration::ZERO);
 
+    // Pausing during local queue backpressure suspends staleness and restarts the clock on drop.
+    {
+        let _pause = watchdog.pause();
+        clock.advance_monotonic(Duration::from_secs(60));
+        clock.advance_wall_ms(60_000);
+        assert!(!watchdog.is_stale());
+        assert_eq!(watchdog.next_check_delay(), Duration::from_secs(15));
+    }
+    assert!(!watchdog.is_stale());
+    clock.advance_monotonic(Duration::from_secs(44));
+    assert!(!watchdog.is_stale());
+    clock.advance_monotonic(Duration::from_secs(1));
+    assert!(watchdog.is_stale());
+
     // A replacement connection starts with its own full 45 s silence deadline.
     clock.advance_wall_ms(30_000);
     let replacement = staleness::Watchdog::with_clock(
@@ -352,9 +366,58 @@ fn staleness_watchdog_tracks_monotonic_wall_wake_and_clock_rollback() {
     assert!(replacement.is_stale());
 }
 
+struct HangingServer {
+    addr: std::net::SocketAddr,
+    accepted: crate::Receiver<()>,
+    release: Option<std::sync::mpsc::Sender<()>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl HangingServer {
+    fn spawn() -> Self {
+        use std::io::Read;
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (accepted_tx, accepted) = crate::bounded(1);
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 256];
+                let _ = stream.read(&mut buf);
+                let _ = accepted_tx.try_send(());
+                let _ = release_rx.recv();
+            }
+        });
+        Self {
+            addr,
+            accepted,
+            release: Some(release_tx),
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for HangingServer {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+        // Unblock accept() if the test exited before connecting.
+        let _ = std::net::TcpStream::connect(self.addr);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 #[test]
 fn native_stream_wake_probe_closes_stale_stream_after_sleep_and_keeps_fresh_stream_open() {
     use futures_lite::StreamExt;
+    enum Step<A, B> {
+        First(A),
+        Second(B),
+    }
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -369,11 +432,12 @@ fn native_stream_wake_probe_closes_stale_stream_after_sleep_and_keeps_fresh_stre
                 .with_provider_usage(Some(watch.clone()));
             let (send, chunks) = crate::bounded(4);
             let clock = FakeClock::new(10_000_000);
-            let watchdog = staleness::Watchdog::with_clock(
+            let (probe, probes) = staleness::ProbeSource::local();
+            let watchdog = Arc::new(staleness::Watchdog::with_clock(
                 clock.clone(),
                 staleness::STALE_THRESHOLD,
                 staleness::CHECK_INTERVAL,
-            );
+            ));
             let mut wire = std::pin::pin!(native::read_frames_with(
                 &backend,
                 1,
@@ -382,7 +446,7 @@ fn native_stream_wake_probe_closes_stale_stream_after_sleep_and_keeps_fresh_stre
                 "stream-1",
                 chunks.map(Ok),
                 watchdog,
-                staleness::ProbeSubscription::register(),
+                probes,
             ));
             let event = |kind| {
                 format!(
@@ -393,10 +457,6 @@ fn native_stream_wake_probe_closes_stale_stream_after_sleep_and_keeps_fresh_stre
             };
 
             send.send(event("first")).await.unwrap();
-            enum Step<A, B> {
-                First(A),
-                Second(B),
-            }
             let drain = async {
                 assert!(matches!(recovery.recv().await.unwrap(), Input::Opened(1)));
                 assert!(matches!(
@@ -424,7 +484,7 @@ fn native_stream_wake_probe_closes_stale_stream_after_sleep_and_keeps_fresh_stre
 
             // Under 45 s of sleep, wake probe must keep the stream open and deliver later frames.
             clock.advance_wall_ms(20_000);
-            probe_stale();
+            probe.trigger();
             send.send(event("second")).await.unwrap();
             match tokio::time::timeout(
                 Duration::from_secs(2),
@@ -446,7 +506,7 @@ fn native_stream_wake_probe_closes_stale_stream_after_sleep_and_keeps_fresh_stre
 
             // After 45 s of wall-clock sleep with frozen monotonic time, wake probe closes immediately.
             clock.advance_wall_ms(45_000);
-            probe_stale();
+            probe.trigger();
             let result = tokio::time::timeout(Duration::from_secs(2), wire)
                 .await
                 .expect("wake probe must close stale stream without waiting for check interval");
@@ -474,12 +534,13 @@ fn native_stream_silence_expires_without_probe_while_heartbeats_keep_it_alive() 
             let (out, recovery) = crate::bounded(8);
             let state = State::default();
             let (send, chunks) = crate::bounded(4);
-            let (_probe_tx, probe) = staleness::ProbeSubscription::local();
-            let watchdog = staleness::Watchdog::with_clock(
-                staleness::SystemClock,
-                Duration::from_millis(120),
-                Duration::from_millis(30),
-            );
+            let (_probe, probes) = staleness::ProbeSource::local();
+            let clock = FakeClock::new(15_000_000);
+            let watchdog = Arc::new(staleness::Watchdog::with_clock(
+                clock.clone(),
+                staleness::STALE_THRESHOLD,
+                Duration::from_millis(10),
+            ));
             let mut wire = std::pin::pin!(native::read_frames_with(
                 &backend,
                 1,
@@ -488,15 +549,17 @@ fn native_stream_silence_expires_without_probe_while_heartbeats_keep_it_alive() 
                 "stream-1",
                 chunks.map(Ok),
                 watchdog,
-                probe,
+                probes,
             ));
 
-            // Regular SSE heartbeat comments beyond the 120 ms threshold must keep the stream open.
+            // Four 15 s SSE heartbeat comments (60 s total > 45 s threshold) keep the stream alive.
             let heartbeats = async {
                 assert!(matches!(recovery.recv().await.unwrap(), Input::Opened(1)));
                 for _ in 0..4 {
-                    runtime::sleep(Duration::from_millis(35)).await;
+                    clock.advance_monotonic(Duration::from_secs(15));
+                    clock.advance_wall_ms(15_000);
                     send.send(b": heartbeat\n\n".to_vec()).await.unwrap();
+                    runtime::sleep(Duration::from_millis(15)).await;
                 }
             };
             match tokio::time::timeout(
@@ -513,21 +576,23 @@ fn native_stream_silence_expires_without_probe_while_heartbeats_keep_it_alive() 
             .unwrap()
             {
                 Step::First(()) => {}
-                Step::Second(result) => panic!("active heartbeat stream expired early: {result:?}"),
+                Step::Second(result) => {
+                    panic!("active heartbeat stream expired early: {result:?}")
+                }
             }
 
-            // Once heartbeats stop, silence closes the stream automatically without any wake probe.
+            // Once heartbeats stop for 45 s, periodic check expires the stream without any wake probe.
+            clock.advance_monotonic(Duration::from_secs(45));
+            clock.advance_wall_ms(45_000);
             let result = tokio::time::timeout(Duration::from_secs(2), wire)
                 .await
-                .expect("silent stream must expire at threshold");
+                .expect("silent stream must expire at threshold without wake probe");
             assert_eq!(result.unwrap_err().to_string(), "event stream stale");
         });
 }
 
 #[test]
 fn native_handshake_hanging_server_expires_on_staleness_instead_of_24h() {
-    use std::io::Read;
-    use std::net::TcpListener;
     enum Step<A, B> {
         First(A),
         Second(B),
@@ -537,36 +602,25 @@ fn native_handshake_hanging_server_expires_on_staleness_instead_of_24h() {
         .build()
         .unwrap()
         .block_on(async {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let addr = listener.local_addr().unwrap();
-            let (accepted_tx, accepted_rx) = crate::bounded(1);
-            let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
-            let server = std::thread::spawn(move || {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut buf = [0u8; 256];
-                let _ = stream.read(&mut buf);
-                let _ = accepted_tx.try_send(());
-                let _ = release_rx.recv();
-            });
-
-            let backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+            let server = HangingServer::spawn();
+            let backend = Backend::unauthenticated(&format!("http://{}/", server.addr)).unwrap();
             let (out, _recovery) = crate::bounded(4);
             let state = State::default();
             let clock = FakeClock::new(20_000_000);
-            let (probe_tx, probe) = staleness::ProbeSubscription::local();
-            let watchdog = staleness::Watchdog::with_clock(
+            let (probe, probes) = staleness::ProbeSource::local();
+            let watchdog = Arc::new(staleness::Watchdog::with_clock(
                 clock.clone(),
                 staleness::STALE_THRESHOLD,
                 staleness::CHECK_INTERVAL,
-            );
+            ));
             let mut wire = std::pin::pin!(native::read_native_with(
-                &backend, 1, &out, &state, watchdog, probe,
+                &backend, 1, &out, &state, watchdog, probes,
             ));
 
             match tokio::time::timeout(
                 Duration::from_secs(2),
                 futures_lite::future::race(
-                    async { Step::First(accepted_rx.recv().await) },
+                    async { Step::First(server.accepted.recv().await) },
                     async { Step::Second((&mut wire).await) },
                 ),
             )
@@ -582,20 +636,218 @@ fn native_handshake_hanging_server_expires_on_staleness_instead_of_24h() {
 
             // Under 45 s, a wake probe must not abort a connecting stream.
             clock.advance_wall_ms(20_000);
-            probe_tx.try_send(()).unwrap();
+            probe.trigger();
             runtime::sleep(Duration::from_millis(10)).await;
             assert!(futures_lite::future::poll_once(&mut wire).await.is_none());
 
             // At 45 s of silence during handshake, wake probe aborts immediately.
             clock.advance_wall_ms(25_000);
-            probe_tx.try_send(()).unwrap();
+            probe.trigger();
             let result = tokio::time::timeout(Duration::from_secs(2), wire)
                 .await
                 .expect("hanging handshake must abort on staleness");
             assert_eq!(result.unwrap_err().to_string(), "event stream stale");
+        });
+}
 
-            let _ = release_tx.send(());
-            server.join().unwrap();
+#[test]
+fn full_downstream_queue_past_45s_does_not_close_healthy_stream() {
+    use futures_lite::{StreamExt, future::poll_once};
+    enum Step<A, B> {
+        First(A),
+        Second(B),
+    }
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            let (out, recovery) = crate::bounded(1);
+            let state = State::default();
+            let (send, chunks) = crate::bounded(4);
+            let clock = FakeClock::new(25_000_000);
+            let (probe, probes) = staleness::ProbeSource::local();
+            let watchdog = Arc::new(staleness::Watchdog::with_clock(
+                clock.clone(),
+                staleness::STALE_THRESHOLD,
+                Duration::from_millis(10),
+            ));
+            let mut wire = std::pin::pin!(native::read_frames_with(
+                &backend,
+                1,
+                &out,
+                &state,
+                "stream-backpressure",
+                chunks.map(Ok),
+                watchdog,
+                probes,
+            ));
+            let event = format!("data: {}\n\n", json!({"type": "memory.changed"})).into_bytes();
+
+            // Fill downstream queue `out` with Opened(1) and block route on sending `event`.
+            send.send(event.clone()).await.unwrap();
+            assert!(poll_once(&mut wire).await.is_none());
+            assert!(out.is_full());
+
+            // More than 45 s of local backpressure (with periodic ticks and wake probe) must not drop the stream.
+            clock.advance_monotonic(Duration::from_secs(60));
+            clock.advance_wall_ms(60_000);
+            probe.trigger();
+            runtime::sleep(Duration::from_millis(25)).await;
+            assert!(
+                poll_once(&mut wire).await.is_none(),
+                "full downstream queue must pause staleness instead of closing a healthy stream"
+            );
+
+            // Draining `out` releases backpressure and restarts the silence deadline from zero.
+            let drain = async {
+                assert!(matches!(recovery.recv().await.unwrap(), Input::Opened(1)));
+                assert!(matches!(
+                    recovery.recv().await.unwrap(),
+                    Input::Workspace(1, WorkspaceEvent::MemoryChanged)
+                ));
+            };
+            match tokio::time::timeout(
+                Duration::from_secs(2),
+                futures_lite::future::race(
+                    async {
+                        drain.await;
+                        Step::First(())
+                    },
+                    async { Step::Second((&mut wire).await) },
+                ),
+            )
+            .await
+            .unwrap()
+            {
+                Step::First(()) => {}
+                Step::Second(result) => panic!("stream closed while draining queue: {result:?}"),
+            }
+
+            // Server stays responsive within the fresh 45 s window after backpressure clears.
+            clock.advance_monotonic(Duration::from_secs(20));
+            clock.advance_wall_ms(20_000);
+            probe.trigger();
+            send.send(event).await.unwrap();
+            match tokio::time::timeout(
+                Duration::from_secs(2),
+                futures_lite::future::race(async { Step::First(recovery.recv().await) }, async {
+                    Step::Second((&mut wire).await)
+                }),
+            )
+            .await
+            .unwrap()
+            {
+                Step::First(item) => {
+                    assert!(matches!(
+                        item.unwrap(),
+                        Input::Workspace(1, WorkspaceEvent::MemoryChanged)
+                    ));
+                }
+                Step::Second(result) => {
+                    panic!("stream closed after backpressure cleared: {result:?}")
+                }
+            }
+
+            // Now genuine server silence of 45 s without local backpressure closes the stream.
+            clock.advance_monotonic(Duration::from_secs(45));
+            clock.advance_wall_ms(45_000);
+            probe.trigger();
+            let result = tokio::time::timeout(Duration::from_secs(2), wire)
+                .await
+                .expect("stream must expire once genuinely silent after backpressure clears");
+            assert_eq!(result.unwrap_err().to_string(), "event stream stale");
+        });
+}
+
+#[test]
+fn hanging_pong_past_45s_closes_stream_as_stale() {
+    use futures_lite::{StreamExt, future::poll_once};
+    enum Step<A, B> {
+        First(A),
+        Second(B),
+    }
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let server = HangingServer::spawn();
+            let mut backend =
+                Backend::unauthenticated(&format!("http://{}/", server.addr)).unwrap();
+            backend.workspace = "project".into();
+            let (out, recovery) = crate::bounded(8);
+            let (events, _display) = crate::bounded(8);
+            let watch = crate::provider_usage::Watch::default();
+            let state = State::observing_preferences(events, Arc::new(|| {}))
+                .with_provider_usage(Some(watch.clone()));
+            let (send, chunks) = crate::bounded(4);
+            let clock = FakeClock::new(28_000_000);
+            let (probe, probes) = staleness::ProbeSource::local();
+            let watchdog = Arc::new(staleness::Watchdog::with_clock(
+                clock.clone(),
+                staleness::STALE_THRESHOLD,
+                staleness::CHECK_INTERVAL,
+            ));
+            let mut wire = std::pin::pin!(native::read_frames_with(
+                &backend,
+                1,
+                &out,
+                &state,
+                "stream-pong",
+                chunks.map(Ok),
+                watchdog,
+                probes,
+            ));
+
+            send.send(b"event: codenomad.client.ping\ndata: {\"ts\":1}\n\n".to_vec())
+                .await
+                .unwrap();
+            let wait_pong = async {
+                assert!(matches!(recovery.recv().await.unwrap(), Input::Opened(1)));
+                server.accepted.recv().await.unwrap();
+            };
+            match tokio::time::timeout(
+                Duration::from_secs(2),
+                futures_lite::future::race(
+                    async {
+                        wait_pong.await;
+                        Step::First(())
+                    },
+                    async { Step::Second((&mut wire).await) },
+                ),
+            )
+            .await
+            .unwrap()
+            {
+                Step::First(()) => {}
+                Step::Second(result) => {
+                    panic!("stream ended before pong reached server: {result:?}")
+                }
+            }
+            assert!(
+                watch.current().1,
+                "transport should be online while pong is in flight"
+            );
+
+            // Under 45 s, a wake probe must not cut an in-flight pong.
+            clock.advance_wall_ms(20_000);
+            probe.trigger();
+            runtime::sleep(Duration::from_millis(10)).await;
+            assert!(poll_once(&mut wire).await.is_none());
+
+            // Past 45 s, a hanging pong POST is a network wait and must close the stream as stale.
+            clock.advance_wall_ms(25_000);
+            probe.trigger();
+            let result = tokio::time::timeout(Duration::from_secs(2), wire)
+                .await
+                .expect("hanging pong past 45 s must abort stream immediately");
+            assert_eq!(result.unwrap_err().to_string(), "event stream stale");
+            assert!(
+                !watch.current().1,
+                "transport must be marked offline after stale pong close"
+            );
         });
 }
 
@@ -612,9 +864,7 @@ fn probe_registry_unregisters_closed_and_cancelled_streams() {
             let state = State::default();
 
             // 1. Stream closed by EOF unregisters from the process-local probe registry.
-            let probe_eof = staleness::ProbeSubscription::register();
-            let eof_id = probe_eof.id().unwrap();
-            assert!(staleness::has_probe_id(eof_id));
+            let before = staleness::global_probe_ids();
             let (send_eof, chunks_eof) = crate::bounded::<Vec<u8>>(2);
             let mut wire_eof = std::pin::pin!(native::read_frames_with(
                 &backend,
@@ -623,11 +873,14 @@ fn probe_registry_unregisters_closed_and_cancelled_streams() {
                 &state,
                 "stream-eof",
                 chunks_eof.map(Ok),
-                staleness::Watchdog::new(staleness::STALE_THRESHOLD),
-                probe_eof,
+                Arc::new(staleness::Watchdog::new(staleness::STALE_THRESHOLD)),
+                staleness::ProbeSource::global(),
             ));
             assert!(poll_once(&mut wire_eof).await.is_none());
-            assert!(staleness::has_probe_id(eof_id));
+            let eof_id = *staleness::global_probe_ids()
+                .iter()
+                .find(|id| !before.contains(id))
+                .expect("open stream must register with probe_stale()");
             drop(send_eof);
             let _ = recovery.recv().await;
             let result = tokio::time::timeout(Duration::from_secs(2), wire_eof)
@@ -639,17 +892,11 @@ fn probe_registry_unregisters_closed_and_cancelled_streams() {
                 "closed stream must unregister from probe_stale()"
             );
 
-            // 2. Cancelled/dropped stream unregisters while another open stream still wakes.
-            let probe_drop = staleness::ProbeSubscription::register();
-            let drop_id = probe_drop.id().unwrap();
-            let probe_live = staleness::ProbeSubscription::register();
-            let live_id = probe_live.id().unwrap();
-            assert!(staleness::has_probe_id(drop_id));
-            assert!(staleness::has_probe_id(live_id));
-
+            // 2. Cancelled/dropped stream unregisters while another open stream still wakes on probe_stale().
+            let before_drop = staleness::global_probe_ids();
             let clock = FakeClock::new(30_000_000);
             let (_send_drop, chunks_drop) = crate::bounded::<Vec<u8>>(2);
-            let (_send_live, chunks_live) = crate::bounded::<Vec<u8>>(2);
+            let drop_id;
             {
                 let mut wire_drop = std::pin::pin!(native::read_frames_with(
                     &backend,
@@ -658,22 +905,26 @@ fn probe_registry_unregisters_closed_and_cancelled_streams() {
                     &state,
                     "stream-drop",
                     chunks_drop.map(Ok),
-                    staleness::Watchdog::with_clock(
+                    Arc::new(staleness::Watchdog::with_clock(
                         clock.clone(),
                         staleness::STALE_THRESHOLD,
                         staleness::CHECK_INTERVAL,
-                    ),
-                    probe_drop,
+                    )),
+                    staleness::ProbeSource::global(),
                 ));
                 assert!(poll_once(&mut wire_drop).await.is_none());
-                assert!(staleness::has_probe_id(drop_id));
+                drop_id = *staleness::global_probe_ids()
+                    .iter()
+                    .find(|id| !before_drop.contains(id))
+                    .expect("dropped stream must register while active");
             }
             assert!(
                 !staleness::has_probe_id(drop_id),
                 "dropped/cancelled stream must unregister from probe_stale()"
             );
-            assert!(staleness::has_probe_id(live_id));
 
+            let before_live = staleness::global_probe_ids();
+            let (_send_live, chunks_live) = crate::bounded::<Vec<u8>>(2);
             let mut wire_live = std::pin::pin!(native::read_frames_with(
                 &backend,
                 3,
@@ -681,14 +932,18 @@ fn probe_registry_unregisters_closed_and_cancelled_streams() {
                 &state,
                 "stream-live",
                 chunks_live.map(Ok),
-                staleness::Watchdog::with_clock(
+                Arc::new(staleness::Watchdog::with_clock(
                     clock.clone(),
                     staleness::STALE_THRESHOLD,
                     staleness::CHECK_INTERVAL,
-                ),
-                probe_live,
+                )),
+                staleness::ProbeSource::global(),
             ));
             assert!(poll_once(&mut wire_live).await.is_none());
+            let live_id = *staleness::global_probe_ids()
+                .iter()
+                .find(|id| !before_live.contains(id))
+                .expect("live stream must register with probe_stale()");
             let _ = recovery.try_recv();
             clock.advance_wall_ms(45_000);
             probe_stale();

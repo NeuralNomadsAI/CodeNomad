@@ -1,7 +1,7 @@
 //! Browser-owned EventSource. Recovery owns reconnect epochs and backoff.
 use super::{
     limits::{FRAME_LIMIT, reread},
-    staleness::{ProbeSubscription, STALE_THRESHOLD, Watchdog},
+    staleness::{ProbeSource, STALE_THRESHOLD, Watchdog},
     *,
 };
 use std::{cell::Cell, rc::Rc};
@@ -110,17 +110,28 @@ pub(super) async fn read(
         .map_err(|_| "browser event stream unavailable")?;
     let (tx, rx) = crate::bounded(128);
     let (wake_tx, wake_rx) = crate::bounded(1);
-    let global_probe = ProbeSubscription::register();
+    let global_probe = ProbeSource::global().subscribe();
     let wake_listeners = WakeListeners::attach(&wake_tx);
-    let mut watchdog = Watchdog::new(STALE_THRESHOLD);
+    let watchdog = Arc::new(Watchdog::new(STALE_THRESHOLD));
     let overflow = Rc::new(Cell::new(false));
     let queued_bytes = Rc::new(Cell::new(0usize));
     let quota = state.quota_ingress(b);
+    struct QuotaGuard(Option<crate::provider_usage::Ingress>);
+    impl Drop for QuotaGuard {
+        fn drop(&mut self) {
+            if let Some(quota) = &self.0 {
+                quota.transport(false);
+            }
+        }
+    }
+    let _quota_guard = QuotaGuard(quota.clone());
     let quota_open = quota.clone();
     let tx_open = tx.clone();
     let fail_open = overflow.clone();
     let close_open = source.clone();
+    let watchdog_open = watchdog.clone();
     let on_open: Closure<dyn FnMut(Event)> = Closure::new(move |_: Event| {
+        watchdog_open.activity();
         if tx_open.try_send(Frame::Open).is_err() {
             fail_open.set(true);
             close_open.close();
@@ -137,7 +148,9 @@ pub(super) async fn read(
         let queued_bytes = queued_bytes.clone();
         let source = source.clone();
         let quota = quota.clone();
+        let watchdog = watchdog.clone();
         Closure::new(move |event: MessageEvent| {
+            watchdog.activity();
             let data = event.data().as_string().unwrap_or_default();
             let frame = if data.len() <= FRAME_LIMIT {
                 if kind == "message"
@@ -201,6 +214,10 @@ pub(super) async fn read(
             _source.ping.as_ref().unchecked_ref(),
         )
         .map_err(|_| "browser ping listener unavailable")?;
+    enum Next<T> {
+        Ready(T),
+        Stale,
+    }
     loop {
         if state.cancelled.load(SeqCst) || out.is_closed() {
             return Ok(());
@@ -208,50 +225,69 @@ pub(super) async fn read(
         if overflow.get() {
             return Err("browser event queue budget reached".into());
         }
+        // Activity is timestamped on EventSource arrival, so a pre-sleep buffered frame cannot
+        // mask a stream that has already gone silent past the threshold.
+        if watchdog.is_stale() {
+            return Err("browser event stream stale".into());
+        }
         let frame = match rx.try_recv() {
             Ok(frame) => Some(frame),
             Err(_) => {
-                if watchdog.is_stale() {
-                    if let Some(quota) = &quota {
-                        quota.transport(false);
-                    }
-                    return Err("browser event stream stale".into());
-                }
-                futures_lite::future::race(
-                    async { rx.recv().await.ok() },
-                    futures_lite::future::race(
-                        async {
-                            futures_lite::future::race(
+                futures_lite::future::or(
+                    async {
+                        futures_lite::future::or(
+                            futures_lite::future::or(
                                 async {
                                     let _ = wake_rx.recv().await;
                                 },
                                 global_probe.wait(),
-                            )
-                            .await;
-                            None
-                        },
-                        async {
-                            runtime::sleep(Duration::from_millis(25)).await;
-                            None
-                        },
-                    ),
+                            ),
+                            runtime::sleep(Duration::from_millis(25)),
+                        )
+                        .await;
+                        None
+                    },
+                    async { rx.recv().await.ok() },
                 )
                 .await
             }
         };
         match frame {
             Some(Frame::Open) => {
-                watchdog.activity();
+                let _pause = watchdog.pause();
                 b.client.children().invalidate_all(b);
                 opened(epoch, out, state).await?;
             }
+            Some(Frame::Data(kind, data)) if kind == "codenomad.client.ping" => {
+                queued_bytes.set(queued_bytes.get() - data.len());
+                // Pong POST is a network wait: keep staleness active so a dead link cuts it.
+                match futures_lite::future::or(
+                    async {
+                        watchdog
+                            .wait_until_stale(&global_probe, Some(&wake_rx))
+                            .await;
+                        Next::Stale
+                    },
+                    async {
+                        Next::Ready(dispatch(b, epoch, out, state, &connection, &kind, &data).await)
+                    },
+                )
+                .await
+                {
+                    Next::Ready(result) => {
+                        result?;
+                        watchdog.activity();
+                    }
+                    Next::Stale => return Err("browser event stream stale".into()),
+                }
+            }
             Some(Frame::Data(kind, data)) => {
-                watchdog.activity();
+                let _pause = watchdog.pause();
                 queued_bytes.set(queued_bytes.get() - data.len());
                 dispatch(b, epoch, out, state, &connection, &kind, &data).await?
             }
             Some(Frame::Skipped) => {
-                watchdog.activity();
+                let _pause = watchdog.pause();
                 b.client.children().invalidate_all(b);
                 reread(epoch, out, state).await?;
             }
