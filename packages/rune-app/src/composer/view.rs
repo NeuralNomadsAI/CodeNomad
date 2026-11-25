@@ -269,7 +269,7 @@ fn editor(s: &State, compact: bool, trailing: El) -> El {
         let selection_scope = scope.clone();
         area.on_input_selection(move |s: &mut State, _| {
             if s.current_scope(&selection_scope) {
-                platform::device_picker::sync_draft_signature(&s.draft);
+                platform::device_picker::bump_draft_revision(&s.draft);
             }
         })
     };
@@ -284,11 +284,20 @@ fn editor(s: &State, compact: bool, trailing: El) -> El {
     };
     let field = layout::build_composer::<State>(area, trailing, s.draft.focused, false, compact);
     #[cfg(not(target_arch = "wasm32"))]
-    let field = field.on_drop_files(move |s: &mut State, paths, _| {
-        if s.current_scope(&scope) {
-            platform::device_picker::drop_files(s, paths);
-        }
-    });
+    let field = {
+        let fallback_menu_scope = scope.clone();
+        field
+            .on_secondary_press(move |s: &mut State, point, tx| {
+                if s.current_scope(&fallback_menu_scope) {
+                    super::clipboard::menu(s, (point.x, point.y), tx);
+                }
+            })
+            .on_drop_files(move |s: &mut State, paths, _| {
+                if s.current_scope(&scope) {
+                    platform::device_picker::drop_files(s, paths);
+                }
+            })
+    };
     field
 }
 
@@ -344,7 +353,7 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
 
 pub(super) fn changed(s: &mut State, tx: &mut Tx) {
     #[cfg(target_arch = "wasm32")]
-    platform::device_picker::sync_draft_signature(&s.draft);
+    platform::device_picker::bump_draft_revision(&s.draft);
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(read) = &s.composer.device.clipboard {
         read.set(false);

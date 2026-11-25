@@ -141,8 +141,7 @@ export async function longPaste(page, messages) {
   await page.waitForFunction(() => typeof globalThis.__releaseDelayedPng === 'function')
   await page.keyboard.press('Enter')
   const sent = page.getByText(`avant ${text} après`, {exact: true})
-  await sent.waitFor({state: 'attached'})
-  await expectDraft('')
+  await Promise.all([sent.waitFor({state: 'attached'}), expectDraft('')])
   await field.fill('nouveau brouillon')
   await expectDraft('nouveau brouillon')
   const refused = page.getByText(messages['promptInput.send.errorTitle'], {exact:true})
@@ -230,7 +229,10 @@ export async function longPaste(page, messages) {
     'Corrupt under-limit PNG must not attach')
   assert.equal(await page.evaluate(() => globalThis.__corruptPngReads), 1,
     'Corrupt under-limit PNG must not be read a second time')
-  // Delayed mixed paste across a same-epoch selection/draft edit must not clobber the edited draft.
+  // Delayed mixed paste across a selection move that returns to the original caret (monotonic revision)
+  // must still be rejected.
+  await field.evaluate(el => el.setSelectionRange(el.value.length, el.value.length))
+  await present()
   assert(await field.evaluate((el, png) => {
     const bytes = Uint8Array.from(atob(png), c => c.charCodeAt(0))
     const delayed = new File([bytes], 'B-selection.png', {type: 'image/png'})
@@ -244,8 +246,10 @@ export async function longPaste(page, messages) {
     return !el.dispatchEvent(new ClipboardEvent('paste', {clipboardData, bubbles: true, cancelable: true}))
   }, png), 'Selection-fenced PNG paste must enter Rune')
   await page.waitForFunction(() => typeof globalThis.__releaseSelectionPng === 'function')
-  await field.fill('nouveau brouillon suite ok!')
-  await expectDraft('nouveau brouillon suite ok!')
+  await page.keyboard.press('ArrowLeft')
+  await present()
+  await page.keyboard.press('ArrowRight')
+  await present()
   await page.evaluate(() => {
     if (typeof globalThis.__releaseSelectionPng !== 'function') throw Error('Selection PNG resolver was not installed')
     globalThis.__releaseSelectionPng()
@@ -254,8 +258,16 @@ export async function longPaste(page, messages) {
   await field.evaluate(el => el.setSelectionRange(el.value.length, el.value.length))
   await present()
   assert.equal(await composer.getByText('B-selection.png', {exact: true}).count(), 0,
-    'Delayed PNG paste after a same-epoch draft edit must not attach')
-  await expectDraft('nouveau brouillon suite ok!')
+    'Delayed PNG paste after a caret round-trip must not attach')
+  await expectDraft('nouveau brouillon suite ok')
+  // Pasting a named non-PNG file through the real textarea exercises WebFile::read.
+  assert(await field.evaluate(el => {
+    const clipboardData = new DataTransfer()
+    clipboardData.items.add(new File(['pasted note body'], 'pasted-note.txt', {type: 'text/plain'}))
+    return !el.dispatchEvent(new ClipboardEvent('paste', {clipboardData, bubbles: true, cancelable: true}))
+  }), 'Clipboard paste of a non-PNG WebFile must route through Rune')
+  await composer.getByText('pasted-note.txt', {exact: true}).waitFor({state: 'attached'})
+  await expectDraft('nouveau brouillon suite ok')
   // PNG-only drop and multi-file drop must attach all chips without injecting file text.
   assert(await page.locator('canvas').first().evaluate((canvas, png) => {
     const dataTransfer = new DataTransfer()
@@ -273,12 +285,28 @@ export async function longPaste(page, messages) {
   }), 'Multi-file drop must route through Rune')
   await composer.getByText('multi-a.txt', {exact: true}).waitFor({state: 'attached'})
   await composer.getByText('multi-b.txt', {exact: true}).waitFor({state: 'attached'})
-  await expectDraft('nouveau brouillon suite ok!')
+  await expectDraft('nouveau brouillon suite ok')
+  // Mixed text + PNG paste while browsing recalled prompt history (attachments unavailable)
+  // must still insert the accompanying clipboard text without attaching the PNG.
+  await press('previous')
+  await expectDraft(token)
+  await field.evaluate(el => el.setSelectionRange(el.value.length, el.value.length))
+  await present()
+  assert(await field.evaluate((el, png) => {
+    const clipboardData = new DataTransfer()
+    clipboardData.setData('text/plain', ' recall-text')
+    clipboardData.items.add(new File([Uint8Array.from(atob(png), c => c.charCodeAt(0))], 'recall-skip.png', {type: 'image/png'}))
+    return !el.dispatchEvent(new ClipboardEvent('paste', {clipboardData, bubbles: true, cancelable: true}))
+  }, png), 'Mixed paste during prompt recall must route through Rune')
+  await expectDraft(`${token} recall-text`)
+  assert.equal(await composer.getByText('recall-skip.png', {exact: true}).count(), 0,
+    'PNG must not attach while attachments are unavailable during recall')
   // Mouse clear must focus the real textarea immediately without a second click.
   await pressMenu(messages['promptInput.clear.title'])
   await expectDraft('')
   return {insertedAtSelection: true, undo: true, retainedPng: true, droppedWebFile: true,
-    syncComposerDrop: true, delayedPngFenced: true, selectionPasteFenced: true,
+    pastedWebFile: true, syncComposerDrop: true, delayedPngFenced: true,
+    selectionRoundTripFenced: true, recallMixedPasteKeptText: true,
     corruptPngRejectedOnce: true, oversizedPngPreservedText: true, pngAndMultiDrop: true,
     mouseClearFocused: true, recalledAfterRefusal: true, nextDraftIntact: true, expandedExactlyOnce: true}
 }

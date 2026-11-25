@@ -15,7 +15,10 @@ pub enum Source {
     #[cfg(target_arch = "wasm32")]
     File(web_sys::File),
     #[cfg(target_arch = "wasm32")]
-    WebFile(rune::clipboard::WebFile),
+    WebFile {
+        file: rune::clipboard::WebFile,
+        validate_png: bool,
+    },
     Png(rune::clipboard::ClipboardImage),
     #[cfg(any(target_arch = "wasm32", test))]
     Rejected(Error),
@@ -33,7 +36,7 @@ enum Origin {
 struct Stamp {
     origin: Origin,
     epoch: u64,
-    draft_sig: u64,
+    draft_rev: u64,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -83,14 +86,14 @@ fn draft_signature(edit: &rune::edit::TextEdit) -> u64 {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn paste_stamp_allowed(stamp: Option<Stamp>, epoch: u64, draft_sig: u64) -> bool {
+fn paste_stamp_allowed(stamp: Option<Stamp>, epoch: u64, draft_rev: u64) -> bool {
     match stamp {
         None => true,
         Some(Stamp {
             origin: Origin::Paste,
             epoch: seen_epoch,
-            draft_sig: seen_sig,
-        }) => seen_epoch == epoch && seen_sig == draft_sig,
+            draft_rev: seen_rev,
+        }) => seen_epoch == epoch && seen_rev == draft_rev,
         Some(Stamp {
             origin: Origin::Foreign,
             ..
@@ -99,11 +102,13 @@ fn paste_stamp_allowed(stamp: Option<Stamp>, epoch: u64, draft_sig: u64) -> bool
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn classify_pasted_png(has_image: bool, size: Option<f64>) -> Result<(), Error> {
-    if has_image {
-        Ok(())
-    } else if size.is_some_and(|bytes| bytes > MAX_FILE as f64) {
+fn classify_pasted_png(decoded_len: Option<usize>, size: Option<f64>) -> Result<(), Error> {
+    if size.is_some_and(|bytes| bytes > MAX_FILE as f64)
+        || decoded_len.is_some_and(|len| len > MAX_FILE)
+    {
         Err(Error::TooLarge)
+    } else if decoded_len.is_some() {
+        Ok(())
     } else {
         Err(Error::Unreadable)
     }
@@ -115,8 +120,8 @@ pub(crate) fn set_composer_epoch(epoch: u64) {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn sync_draft_signature(edit: &rune::edit::TextEdit) {
-    web_fence::set_draft_signature(draft_signature(edit));
+pub(crate) fn bump_draft_revision(edit: &rune::edit::TextEdit) {
+    web_fence::bump_draft_revision(edit);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -148,12 +153,16 @@ fn web_file_offer(
     let source = if mime == "image/png" && !*handled_png {
         *handled_png = true;
         let size = file.js_file().and_then(|js| js_file_size(&js).ok());
-        match classify_pasted_png(reused_png.is_some(), size) {
+        let decoded_len = reused_png.map(|image| image.png().len());
+        match classify_pasted_png(decoded_len, size) {
             Ok(()) => Source::Png(reused_png.expect("classified png").clone()),
             Err(error) => Source::Rejected(error),
         }
     } else {
-        Source::WebFile(file.clone())
+        Source::WebFile {
+            file: file.clone(),
+            validate_png: mime == "image/png",
+        }
     };
     Offer { name, mime, source }
 }
@@ -181,28 +190,30 @@ pub fn paste(s: &mut State, content: &rune::clipboard::ClipboardContent) -> bool
     #[cfg(target_arch = "wasm32")]
     if !content.web_files().is_empty() {
         let files = content.web_files();
-        let current_sig = draft_signature(&s.draft);
+        let current_rev = web_fence::current_draft_revision(&s.draft);
         for file in files {
             if !paste_stamp_allowed(
                 web_fence::inspect(file),
                 s.web_composer_input_epoch,
-                current_sig,
+                current_rev,
             ) {
                 return true;
             }
         }
-        let default_name = crate::strings::with_locale(crate::settings::app_locale(s), || {
-            t("messageItem.attachment.defaultName")
-        });
-        let mut handled_png = false;
-        let reused_png = content.image();
-        device::enqueue(
-            s,
-            files
-                .iter()
-                .take(MAX_FILES + 1)
-                .map(|file| web_file_offer(file, default_name, &mut handled_png, reused_png)),
-        );
+        if device::available(s) {
+            let default_name = crate::strings::with_locale(crate::settings::app_locale(s), || {
+                t("messageItem.attachment.defaultName")
+            });
+            let mut handled_png = false;
+            let reused_png = content.image();
+            device::enqueue(
+                s,
+                files
+                    .iter()
+                    .take(MAX_FILES + 1)
+                    .map(|file| web_file_offer(file, default_name, &mut handled_png, reused_png)),
+            );
+        }
         return content.text().is_empty();
     }
     let Some(image) = content.image() else {
@@ -288,7 +299,7 @@ pub async fn read(source: &Source, limit: usize) -> Result<Arc<[u8]>, Error> {
         #[cfg(any(target_arch = "wasm32", test))]
         Source::Rejected(error) => Err(*error),
         #[cfg(target_arch = "wasm32")]
-        Source::WebFile(file) => {
+        Source::WebFile { file, validate_png } => {
             let over = if limit == MAX_FILE {
                 Error::TooLarge
             } else {
@@ -299,10 +310,13 @@ pub async fn read(source: &Source, limit: usize) -> Result<Arc<[u8]>, Error> {
             if js_file_size(&js)? > limit as f64 {
                 return Err(over);
             }
-            file.read(limit)
-                .await
-                .map(Arc::from)
-                .ok_or(Error::Unreadable)
+            let bytes = file.read(limit).await.ok_or(Error::Unreadable)?;
+            if *validate_png {
+                let image =
+                    rune::clipboard::ClipboardImage::from_png(bytes).ok_or(Error::Unreadable)?;
+                return Ok(image.png().into());
+            }
+            Ok(Arc::from(bytes))
         }
         #[cfg(target_arch = "wasm32")]
         Source::File(file) => {
@@ -438,8 +452,10 @@ mod web_fence {
     const MAX_PENDING_DROPS: u32 = 8;
 
     static EPOCH: AtomicU64 = AtomicU64::new(0);
-    static DRAFT_SIG: AtomicU64 = AtomicU64::new(0);
-    static COMPOSER_READY: AtomicBool = AtomicBool::new(false);
+    static LAST_DRAFT_SIG: AtomicU64 = AtomicU64::new(0);
+    static DRAFT_REV: AtomicU64 = AtomicU64::new(0);
+    static COMPOSER_FOCUSED: AtomicBool = AtomicBool::new(false);
+    static COMPOSER_ATTACH_READY: AtomicBool = AtomicBool::new(false);
     static WAKE: OnceLock<codenomad_client::Wake> = OnceLock::new();
     static INSTALLED: AtomicBool = AtomicBool::new(false);
 
@@ -499,7 +515,7 @@ mod web_fence {
             Origin::Paste => 2.0,
         }));
         pack_u64(&entry, stamp.epoch);
-        pack_u64(&entry, stamp.draft_sig);
+        pack_u64(&entry, stamp.draft_rev);
         for index in 0..files.length().min(rune::clipboard::MAX_WEB_FILES as u32) {
             if let Some(file) = files.get(index) {
                 let _ = map.set(file.as_ref(), &entry);
@@ -518,7 +534,7 @@ mod web_fence {
             .target()
             .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
             .is_some_and(|element| element.tag_name().eq_ignore_ascii_case("CANVAS"));
-        if is_canvas && COMPOSER_READY.load(Ordering::SeqCst) {
+        if is_canvas && COMPOSER_ATTACH_READY.load(Ordering::SeqCst) {
             event.prevent_default();
             event.stop_immediate_propagation();
             let Some(queue) = pending_drops() else {
@@ -545,7 +561,7 @@ mod web_fence {
             Stamp {
                 origin: Origin::Foreign,
                 epoch: 0,
-                draft_sig: 0,
+                draft_rev: 0,
             },
         );
     }
@@ -557,17 +573,17 @@ mod web_fence {
         if files.length() == 0 {
             return;
         }
-        let stamp = if COMPOSER_READY.load(Ordering::SeqCst) {
+        let stamp = if COMPOSER_FOCUSED.load(Ordering::SeqCst) {
             Stamp {
                 origin: Origin::Paste,
                 epoch: EPOCH.load(Ordering::SeqCst),
-                draft_sig: DRAFT_SIG.load(Ordering::SeqCst),
+                draft_rev: DRAFT_REV.load(Ordering::SeqCst),
             }
         } else {
             Stamp {
                 origin: Origin::Foreign,
                 epoch: 0,
-                draft_sig: 0,
+                draft_rev: 0,
             }
         };
         stamp_file_list(&files, stamp);
@@ -577,17 +593,29 @@ mod web_fence {
         EPOCH.store(epoch, Ordering::SeqCst);
     }
 
-    pub(crate) fn set_draft_signature(sig: u64) {
-        DRAFT_SIG.store(sig, Ordering::SeqCst);
+    pub(crate) fn bump_draft_revision(edit: &rune::edit::TextEdit) {
+        LAST_DRAFT_SIG.store(draft_signature(edit), Ordering::SeqCst);
+        DRAFT_REV.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(crate) fn current_draft_revision(edit: &rune::edit::TextEdit) -> u64 {
+        let sig = draft_signature(edit);
+        if LAST_DRAFT_SIG.swap(sig, Ordering::SeqCst) != sig {
+            DRAFT_REV.fetch_add(1, Ordering::SeqCst) + 1
+        } else {
+            DRAFT_REV.load(Ordering::SeqCst)
+        }
     }
 
     pub(crate) fn sync(s: &State) {
         EPOCH.store(s.web_composer_input_epoch, Ordering::SeqCst);
-        DRAFT_SIG.store(draft_signature(&s.draft), Ordering::SeqCst);
-        COMPOSER_READY.store(
-            s.draft.focused && device::available(s) && !crate::platform::pairing::required(s),
-            Ordering::SeqCst,
-        );
+        let _ = current_draft_revision(&s.draft);
+        let focused = s.draft.focused
+            && !s.screen.is_launcher()
+            && !s.composer.editing_locked()
+            && !crate::platform::pairing::required(s);
+        COMPOSER_FOCUSED.store(focused, Ordering::SeqCst);
+        COMPOSER_ATTACH_READY.store(focused && device::available(s), Ordering::SeqCst);
         let _ = WAKE.set(s.wake.clone());
         if INSTALLED.load(Ordering::SeqCst) {
             return;
@@ -682,11 +710,11 @@ mod web_fence {
             _ => return None,
         };
         let epoch = unpack_u64(&entry, 1)?;
-        let draft_sig = unpack_u64(&entry, 3)?;
+        let draft_rev = unpack_u64(&entry, 3)?;
         Some(Stamp {
             origin,
             epoch,
-            draft_sig,
+            draft_rev,
         })
     }
 }
@@ -735,7 +763,7 @@ mod tests {
     }
 
     #[test]
-    fn paste_stamp_fences_foreign_epoch_and_selection_changes() {
+    fn paste_stamp_fences_foreign_epoch_and_monotonic_revision_changes() {
         let mut draft = rune::edit::TextEdit::new("hello world");
         draft.set_selection(0, 5);
         let sig_a = draft_signature(&draft);
@@ -746,58 +774,66 @@ mod tests {
         let sig_c = draft_signature(&draft);
         assert_ne!(sig_b, sig_c);
 
-        assert!(paste_stamp_allowed(None, 7, sig_a));
+        assert!(paste_stamp_allowed(None, 7, 10));
         assert!(paste_stamp_allowed(
             Some(Stamp {
                 origin: Origin::Paste,
                 epoch: 7,
-                draft_sig: sig_a,
+                draft_rev: 10,
             }),
             7,
-            sig_a
+            10
         ));
         assert!(!paste_stamp_allowed(
             Some(Stamp {
                 origin: Origin::Paste,
                 epoch: 6,
-                draft_sig: sig_a,
+                draft_rev: 10,
             }),
             7,
-            sig_a
+            10
         ));
         assert!(!paste_stamp_allowed(
             Some(Stamp {
                 origin: Origin::Paste,
                 epoch: 7,
-                draft_sig: sig_a,
+                draft_rev: 10,
             }),
             7,
-            sig_b
+            12
         ));
         assert!(!paste_stamp_allowed(
             Some(Stamp {
                 origin: Origin::Foreign,
                 epoch: 7,
-                draft_sig: sig_a,
+                draft_rev: 10,
             }),
             7,
-            sig_a
+            10
         ));
     }
 
     #[test]
-    fn pasted_png_classification_rejects_corrupt_and_oversized_without_re_reading() {
-        assert!(classify_pasted_png(true, Some(128.0)).is_ok());
+    fn pasted_png_classification_rejects_corrupt_and_oversized_before_queueing() {
+        assert!(classify_pasted_png(Some(128), Some(128.0)).is_ok());
         assert!(matches!(
-            classify_pasted_png(false, Some((MAX_FILE + 1) as f64)),
+            classify_pasted_png(Some(MAX_FILE + 1), Some((MAX_FILE + 1) as f64)),
             Err(Error::TooLarge)
         ));
         assert!(matches!(
-            classify_pasted_png(false, Some(16.0)),
+            classify_pasted_png(Some(MAX_FILE + 1), None),
+            Err(Error::TooLarge)
+        ));
+        assert!(matches!(
+            classify_pasted_png(None, Some((MAX_FILE + 1) as f64)),
+            Err(Error::TooLarge)
+        ));
+        assert!(matches!(
+            classify_pasted_png(None, Some(16.0)),
             Err(Error::Unreadable)
         ));
         assert!(matches!(
-            classify_pasted_png(false, None),
+            classify_pasted_png(None, None),
             Err(Error::Unreadable)
         ));
     }
