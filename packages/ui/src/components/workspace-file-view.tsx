@@ -135,7 +135,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
       </Show>
       <Show when={content()?.text !== undefined && (!previewable() || source())}>
         <Show when={editor.editable()}>
-          <button class="files-header-icon-button" aria-label={t("instanceShell.rightPanel.actions.save")} title={withHotkey(t("instanceShell.rightPanel.actions.save"), "file-save")} disabled={!editor.dirty() || editor.saving()} onClick={() => void editor.save()}><Save size={16} /></button>
+          <button class="files-header-icon-button" aria-label={t("instanceShell.rightPanel.actions.save")} title={withHotkey(t("instanceShell.rightPanel.actions.save"), "file-save")} disabled={!editor.dirty() || editor.saving()} onClick={() => { setError(null); void editor.save() }}><Save size={16} /></button>
         </Show>
         <button class="files-header-icon-button icon-toggle" aria-label={t(wrap() ? "instanceShell.filesShell.disableWordWrap" : "instanceShell.filesShell.enableWordWrap")} aria-pressed={wrap()} onClick={() => setWrap(!wrap())}><WrapText size={16} /></button>
       </Show>
@@ -150,7 +150,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
       <Show when={value().binary}><div class="p-3 text-secondary">{t("filesPanel.binary")}</div></Show>
       <Show when={value().text !== undefined}>
         <Show when={previewable() && !source()} fallback={<div class="git-diff-content"><Suspense>
-          <MonacoFileViewer scopeKey={`${props.instanceId}:${props.target.directory}:workspace-editor`} path={props.target.path} content={editor.text()} wordWrap={wrap() ? "on" : "off"} readOnly={!editor.editable()} onContentChange={editor.change} onSave={value => void editor.save(value)} />
+          <MonacoFileViewer scopeKey={`${props.instanceId}:${props.target.directory}:workspace-editor`} path={props.target.path} content={editor.text()} wordWrap={wrap() ? "on" : "off"} readOnly={!editor.editable()} onContentChange={editor.change} onSave={value => { setError(null); void editor.save(value) }} />
         </Suspense></div>}>
           <Show when={mermaid()} fallback={<div class="workspace-markdown" ref={element => {
             queueMicrotask(() => { if (element.isConnected) element.scrollTop = views.get(props.target)?.scrollTop ?? 0 })

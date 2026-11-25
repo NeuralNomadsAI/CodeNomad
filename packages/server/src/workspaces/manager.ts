@@ -676,7 +676,7 @@ export class WorkspaceManager {
   async previewFile(workspaceId: string, relativePath: string, directory?: string): Promise<WorkspaceFileResponse> {
     const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
     const result = await browser.readFileContent(relativePath, { encoding: "base64" })
-    return { workspaceId, relativePath, contents: result.contents, encoding: "base64" }
+    return { workspaceId, relativePath, contents: result.contents, encoding: "base64", version: result.version }
   }
 
   async readFileInDirectory(workspaceId: string, directory: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
@@ -692,15 +692,15 @@ export class WorkspaceManager {
     }
   }
 
-  async writeFile(workspaceId: string, relativePath: string, contents: string): Promise<void> {
+  async writeFile(workspaceId: string, relativePath: string, contents: string, options?: { expectedVersion?: string }): Promise<string> {
     const workspace = this.requireWorkspace(workspaceId)
     const browser = new FileSystemBrowser({ rootDir: workspace.path })
-    await browser.writeFile(relativePath, contents)
+    return browser.writeFile(relativePath, contents, options)
   }
 
-  async writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string): Promise<void> {
+  async writeFileInDirectory(workspaceId: string, directory: string, relativePath: string, contents: string, options?: { expectedVersion?: string }): Promise<string> {
     const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
-    await browser.writeFile(relativePath, contents)
+    return browser.writeFile(relativePath, contents, options)
   }
 
   async create(

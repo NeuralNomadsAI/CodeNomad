@@ -59,6 +59,7 @@ const cases: { path: string; method?: string; body?: string; call: (api: ServerA
   { path: "/files/preview?path=a.png&directory=%2Frepo", call: (a, id) => a.previewWorkspaceFile(id, "a.png", directory) },
   { path: "/files/content?path=a.png&encoding=base64", call: (a, id) => a.readWorkspaceFile(id, "a.png", { encoding: "base64" }) },
   { path: "/files/content?path=a.txt&directory=%2Frepo&worktree=other", method: "PUT", body: '{"contents":"hello"}', call: (a, id) => a.writeWorkspaceFile(id, "a.txt", "hello", { directory, worktree: "other" }) },
+  { path: "/files/content?path=a.txt&directory=%2Frepo", method: "PUT", body: '{"contents":"hello","expectedVersion":"\\"v1\\""}', call: (a, id) => a.writeWorkspaceFile(id, "a.txt", "hello", { directory, expectedVersion: '"v1"' }) },
   { path: "/worktrees/root/git-status?hideWhitespace=1", call: (a, id) => a.fetchWorktreeGitStatus(id, "root", undefined, { hideWhitespace: true }) },
   { path: "/worktrees/root/git-history?offset=5&head=c", call: (a, id) => a.fetchGitHistory(id, "root", 5, "c") },
   { path: "/worktrees/root/git-history/c", call: (a, id) => a.fetchGitCommit(id, "root", "c") },

@@ -8,19 +8,19 @@ import { FileSystemBrowser } from "../browser"
 test("concurrent saves through distinct browsers cannot interleave file contents", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-write-order-"))
   const target = path.join(root, "file.txt")
-  const original = fs.promises.writeFile.bind(fs.promises)
+  const originalRename = fs.promises.rename.bind(fs.promises)
   let release!: () => void
   let started!: () => void
+  let stalledFirst = false
   const gate = new Promise<void>(resolve => { release = resolve })
   const entered = new Promise<void>(resolve => { started = resolve })
-  t.mock.method(fs.promises, "writeFile", async (...args: Parameters<typeof fs.promises.writeFile>) => {
-    if (args[1] === "first-large-save") {
-      await original(target, "first-")
+  t.mock.method(fs.promises, "rename", async (...args: Parameters<typeof fs.promises.rename>) => {
+    if (!stalledFirst && path.resolve(String(args[1])) === path.resolve(target)) {
+      stalledFirst = true
       started()
       await gate
-      // Model the multiple underlying writes used by fs.writeFile for large data.
-      await fs.promises.appendFile(target, "large-save")
-    } else await original(...args)
+    }
+    return originalRename(...args)
   })
   const first = new FileSystemBrowser({ rootDir: root }).writeFile("file.txt", "first-large-save")
   await entered
@@ -41,6 +41,7 @@ test("concurrent saves through distinct browsers cannot interleave file contents
   try {
     assert.equal(await read, "last-save")
     assert.equal(await fs.promises.readFile(target, "utf8"), "last-save")
+    assert.deepEqual(fs.readdirSync(root).sort(), ["file.txt", "other.txt"])
   }
   finally { fs.rmSync(root, { recursive: true, force: true }) }
 })
