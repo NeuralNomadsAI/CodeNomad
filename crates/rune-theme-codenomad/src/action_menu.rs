@@ -319,10 +319,7 @@ pub fn view<S: 'static>(
             row = row.description(description).help(description);
         }
         if item.disabled {
-            // The web mirror only projects press-shaped menu items; keep this row inert.
-            return row
-                .on_press(|_: &mut S| {})
-                .opacity(t.metric("actionMenuDisabled", "opacity").px());
+            return row.opacity(t.metric("actionMenuDisabled", "opacity").px());
         }
         let hovered = item.clone();
         let owner = menu.key.clone();

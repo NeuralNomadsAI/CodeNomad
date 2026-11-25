@@ -32,6 +32,8 @@ fn forbidden(name: &str) -> bool {
             "set_titlebar",
             "reduced_motion",
             "zoom",
+            "set_emoji_family",
+            "add_font",
         ]
         .contains(&name)
 }

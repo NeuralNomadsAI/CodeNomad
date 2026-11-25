@@ -569,6 +569,7 @@ try {
             for(const passage of ['Native compacted passage','Native conversation context']){
               const marker=rail.getByRole('button',{name:passage,exact:true})
               await marker.click({force:true})
+              await marker.and(rail.locator(`[aria-description^="${messages['messageTimeline.current']}"]`)).waitFor()
               const content=page.getByRole('paragraph').filter({hasText:passage})
               await content.waitFor()
               await page.evaluate(({text,top})=>new Promise((resolve,reject)=>{
