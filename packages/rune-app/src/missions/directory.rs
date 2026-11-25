@@ -1,6 +1,7 @@
 use super::{
     detail::{Detail, read_window},
-    editor::Editor,
+    editor::{Editor, EditorGesture},
+    editor_holds::{ActiveEditor, CreationScopeKey, EditorEvent, EditorHolds},
     observation::Observation,
     reader::Reader,
 };
@@ -50,6 +51,7 @@ pub(crate) struct Panel {
     out: Sender<Completion>,
     incoming: Receiver<Completion>,
     project: Option<String>,
+    owner_scope: String,
     serial: u64,
     visible: bool,
     refresh_due: Option<f64>,
@@ -82,9 +84,11 @@ impl Panel {
 
     pub(crate) fn new(backend: Backend, project: Option<String>, reads: Reads, wake: Wake) -> Self {
         let (out, incoming) = bounded(4);
+        let owner_scope = backend.workspace.clone();
         Self {
             backend,
             project,
+            owner_scope,
             reads,
             wake,
             out,
@@ -113,6 +117,22 @@ impl Panel {
         }
     }
 
+    pub(crate) fn with_owner_scope(mut self, scope: String) -> Self {
+        if !scope.is_empty() {
+            self.owner_scope = scope;
+        }
+        self
+    }
+
+    pub(crate) fn creation_scope_key(&self) -> CreationScopeKey {
+        CreationScopeKey::new(&self.backend, &self.owner_scope)
+    }
+
+    pub(crate) fn active_editor(&self, occurrence: &str) -> Option<ActiveEditor<'_>> {
+        self.editor
+            .active_context(occurrence, &self.backend, &self.wake)
+    }
+
     pub(super) fn wake(&self) {
         (self.wake)();
     }
@@ -137,11 +157,17 @@ impl Panel {
         self.detail.cancel();
         self.detail.clear_lookup_cache();
         self.reader.invalidate();
-        self.editor.rebind(&self.backend, &self.reads, &self.wake);
+        self.editor.suspend();
         if self.visible || self.reader.is_open() || self.editor.is_open() {
             self.refresh();
         }
         (self.wake)();
+    }
+
+    pub(crate) fn rebind_editor(&mut self, holds: &mut EditorHolds) {
+        let scope = self.creation_scope_key();
+        self.editor
+            .rebind(&scope, &self.backend, holds, &self.reads, &self.wake);
     }
 
     pub(crate) fn has_reader(&self) -> bool {
@@ -156,14 +182,23 @@ impl Panel {
         self.reader.is_open() || self.editor.is_open()
     }
 
-    pub(crate) fn open_create_editor(&mut self, return_focus: Option<String>) {
+    pub(crate) fn open_create_editor(
+        &mut self,
+        holds: &mut EditorHolds,
+        return_focus: Option<String>,
+    ) {
         self.reader.close();
         self.detail.cancel_lookup();
-        self.editor.open_create(&self.backend, return_focus);
+        let scope = self.creation_scope_key();
+        self.editor.open_create(&scope, holds, return_focus);
         (self.wake)();
     }
 
-    pub(crate) fn open_edit_editor(&mut self, return_focus: Option<String>) -> bool {
+    pub(crate) fn open_edit_editor(
+        &mut self,
+        holds: &mut EditorHolds,
+        return_focus: Option<String>,
+    ) -> bool {
         if !self.detail.authoritative() {
             return false;
         }
@@ -177,12 +212,15 @@ impl Panel {
         }
         self.reader.close();
         self.detail.cancel_lookup();
+        let scope = self.creation_scope_key();
         let Some(snapshot) = self.detail.snapshot.as_ref() else {
             return false;
         };
         let opened = self.editor.open_edit(
             &snapshot.header,
+            &scope,
             &self.backend,
+            holds,
             &self.reads,
             &self.wake,
             return_focus,
@@ -202,20 +240,66 @@ impl Panel {
                 .is_some_and(|snapshot| snapshot.header.root.editable())
     }
 
-    pub(super) fn submit_editor(&mut self) {
-        if self.editor.submit(&self.backend, &self.wake) {
+    pub(crate) fn editor_gesture(
+        &mut self,
+        occurrence: &str,
+        holds: &mut EditorHolds,
+        gesture: EditorGesture,
+    ) -> bool {
+        match gesture {
+            EditorGesture::OpenCreate { return_focus } => {
+                self.open_create_editor(holds, return_focus);
+                true
+            }
+            EditorGesture::OpenEdit { return_focus } => self.open_edit_editor(holds, return_focus),
+            EditorGesture::Submit => {
+                self.submit_editor(occurrence, holds);
+                false
+            }
+            EditorGesture::ReconcileCreation => {
+                self.reconcile_editor_creation(occurrence, holds);
+                false
+            }
+            EditorGesture::ReconcileEdit => {
+                self.reconcile_editor_edit(occurrence, holds);
+                false
+            }
+            EditorGesture::RetryPrefill => {
+                self.retry_editor_prefill();
+                false
+            }
+            EditorGesture::Reopen => {
+                self.reopen_editor(holds);
+                false
+            }
+        }
+    }
+
+    pub(crate) fn submit_editor(&mut self, occurrence: &str, holds: &mut EditorHolds) {
+        let scope = self.creation_scope_key();
+        if self
+            .editor
+            .submit(occurrence, &scope, &self.backend, holds, &self.wake)
+        {
             (self.wake)();
         }
     }
 
-    pub(super) fn reconcile_editor_creation(&mut self) {
-        if self.editor.reconcile_creation(&self.backend, &self.wake) {
+    pub(crate) fn reconcile_editor_creation(&mut self, occurrence: &str, holds: &mut EditorHolds) {
+        let scope = self.creation_scope_key();
+        if self
+            .editor
+            .reconcile_creation(occurrence, &scope, &self.backend, holds, &self.wake)
+        {
             (self.wake)();
         }
     }
 
-    pub(super) fn reconcile_editor_edit(&mut self) {
-        if self.editor.reconcile_edit(&self.backend, &self.wake) {
+    pub(crate) fn reconcile_editor_edit(&mut self, occurrence: &str, holds: &mut EditorHolds) {
+        if self
+            .editor
+            .reconcile_edit(occurrence, &self.backend, holds, &self.wake)
+        {
             (self.wake)();
         }
     }
@@ -226,10 +310,10 @@ impl Panel {
         (self.wake)();
     }
 
-    pub(super) fn reopen_editor(&mut self) {
+    pub(crate) fn reopen_editor(&mut self, holds: &EditorHolds) {
         if self
             .editor
-            .begin_reopen(&self.backend, self.detail.map_reads)
+            .begin_reopen(&self.backend, holds, self.detail.map_reads)
         {
             if let Some(mid) = self.editor.editing_mission_id().map(str::to_owned)
                 && self.selected.as_deref() != Some(mid.as_str())
@@ -241,6 +325,51 @@ impl Panel {
             self.refresh();
             (self.wake)();
         }
+    }
+
+    pub(crate) fn observe_editor_detail(&mut self, holds: &EditorHolds) -> bool {
+        self.editor.observe_detail(
+            self.detail.snapshot.as_ref(),
+            self.detail.map_reads,
+            self.detail.failed,
+            &self.backend,
+            holds,
+            &self.reads,
+            &self.wake,
+        )
+    }
+
+    pub(crate) fn apply_editor_events(&mut self, occurrence: &str, events: &[EditorEvent]) -> bool {
+        let scope_key = self.creation_scope_key();
+        let mut changed = false;
+        for event in events {
+            let (ev_changed, saved) = self.editor.apply_event(
+                occurrence,
+                &scope_key,
+                &self.backend,
+                self.project.as_deref(),
+                event,
+            );
+            changed |= ev_changed;
+            if let Some(saved) = saved {
+                if saved.select {
+                    self.selected = Some(saved.mission_id.clone());
+                    self.detail.clear();
+                    self.observation = Observation::default();
+                }
+                if self.selected.as_deref() == Some(saved.mission_id.as_str()) {
+                    self.detail.observe(&saved.mission_id, saved.revision);
+                }
+                self.refresh();
+                if saved.closed_form {
+                    self.editor_saved_focus = saved
+                        .return_focus
+                        .or_else(|| Some("missions-create".into()));
+                }
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub(crate) fn close_reader(&mut self) -> Option<String> {
@@ -268,12 +397,6 @@ impl Panel {
         self.reader.suspend();
         self.editor.suspend();
         self.cancel_probe();
-    }
-
-    fn has_pending_auth_expired(&self) -> bool {
-        self.reader.has_auth_expired()
-            || self.detail.has_auth_expired()
-            || self.editor.has_auth_expired()
     }
 
     pub(crate) fn drain_auth_expired(&mut self) -> Vec<Backend> {
@@ -852,29 +975,7 @@ impl Panel {
             &self.reads,
             &self.wake,
         );
-        let auth_blocked = self.has_pending_auth_expired();
-        changed |= self.editor.poll(&self.backend, &self.wake, auth_blocked);
-        changed |= self.editor.observe_detail(
-            self.detail.snapshot.as_ref(),
-            self.detail.map_reads,
-            self.detail.failed,
-            &self.backend,
-            &self.reads,
-            &self.wake,
-        );
-        if let Some(saved) = self.editor.take_saved() {
-            if saved.select {
-                self.selected = Some(saved.mission_id.clone());
-            }
-            self.detail.observe(&saved.mission_id, saved.revision);
-            self.refresh();
-            if saved.closed_form {
-                self.editor_saved_focus = saved
-                    .return_focus
-                    .or_else(|| Some("missions-create".into()));
-            }
-            changed = true;
-        }
+        changed |= self.editor.poll_prefill();
         changed | self.poll_control_fields()
     }
 

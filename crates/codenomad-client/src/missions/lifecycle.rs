@@ -120,6 +120,7 @@ pub enum LifecycleOutcome {
     Acknowledged(u64),
     Rejected,
     Unconfirmed,
+    AuthExpired,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -196,6 +197,9 @@ impl Backend {
             ]);
         let response = control_post(self, url, request).send().await?;
         let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(LifecycleOutcome::AuthExpired);
+        }
         let body = read_json_limited(response, 4 * 1024 * 1024).await?;
         Ok(settle(status, &body, target, request))
     }

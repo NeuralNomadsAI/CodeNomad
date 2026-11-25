@@ -1,5 +1,6 @@
 use super::{
     directory::{Kind, Panel, title},
+    editor::EditorGesture,
     reader::ReaderTarget,
     task_rows::OpenTask,
 };
@@ -42,7 +43,7 @@ impl<S> Scoped<S> {
 /// Panel content only. The Shell owns its occurrence, visibility and mounting.
 #[cfg(test)]
 pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
-    panel_body(ui, owner, rune::el(), None, |_, _| {})
+    panel_body(ui, owner, rune::el(), None, |_, _| {}, |_, _, _| {})
 }
 
 pub(crate) fn panel_body<S: 'static>(
@@ -51,6 +52,7 @@ pub(crate) fn panel_body<S: 'static>(
     actions: El,
     open_task: Option<OpenTask<S>>,
     on_reader_open: fn(&mut S, &mut Tx),
+    editor_act: fn(&mut S, EditorGesture, &mut Tx),
 ) -> El {
     let heading = t("missions.control.mapLabel");
     let search = t("missionsPanel.picker.search");
@@ -130,20 +132,19 @@ pub(crate) fn panel_body<S: 'static>(
                 }
             }));
         }
-        let edit_owner = scoped.clone();
         let edit_btn = if ui.can_edit_selected() {
             layout::button_tx(
                 t("missionsPanel.picker.edit"),
                 false,
                 move |state: &mut S, tx| {
-                    if let Some(panel) = edit_owner.get(state).0 {
-                        let back = tx.focused().unwrap_or("mission-edit").to_owned();
-                        if panel.open_edit_editor(Some(back)) {
-                            on_reader_open(state, tx);
-                            tx.focus("mission-editor-objective", tx.focus_visible());
-                            tx.instant();
-                        }
-                    }
+                    let back = tx.focused().unwrap_or("mission-edit").to_owned();
+                    editor_act(
+                        state,
+                        EditorGesture::OpenEdit {
+                            return_focus: Some(back),
+                        },
+                        tx,
+                    );
                 },
             )
             .key("mission-edit")
@@ -193,7 +194,6 @@ pub(crate) fn panel_body<S: 'static>(
     }
     body = body.child(page_footer(ui, scoped.clone(), Kind::Cleanups));
     let refresh = scoped.clone();
-    let create = scoped.clone();
     let mut field = layout::hinted_field(&ui.filter, search).label(search);
     if partial {
         field = field.description(t("missionsPanel.pages.searchLoaded"));
@@ -224,17 +224,14 @@ pub(crate) fn panel_body<S: 'static>(
                                 t("missions.control.create"),
                                 false,
                                 move |s: &mut S, tx| {
-                                    if let Some(panel) = create.get(s).0 {
-                                        let back =
-                                            tx.focused().unwrap_or("missions-create").to_owned();
-                                        panel.open_create_editor(Some(back));
-                                        let target = panel.take_editor_initial_focus();
-                                        on_reader_open(s, tx);
-                                        if let Some(target) = target {
-                                            tx.focus(target, tx.focus_visible());
-                                        }
-                                        tx.instant();
-                                    }
+                                    let back = tx.focused().unwrap_or("missions-create").to_owned();
+                                    editor_act(
+                                        s,
+                                        EditorGesture::OpenCreate {
+                                            return_focus: Some(back),
+                                        },
+                                        tx,
+                                    );
                                 },
                             )
                             .key("missions-create"),

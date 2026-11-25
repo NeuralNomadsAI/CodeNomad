@@ -112,6 +112,7 @@ pub(crate) fn mission_panel(s: &State) -> El {
             actions,
             Some(std::rc::Rc::new(open_mission_conversation)),
             on_mission_reader_open,
+            mission_editor_act,
         )
     })
 }
@@ -122,10 +123,13 @@ pub(crate) fn mission_has_reader(s: &State) -> bool {
 }
 
 pub(crate) fn close_mission_reader(s: &mut State) -> Option<String> {
-    if let Some(ui) = &mut s.workspace
-        && let Some(panel) = &mut ui.entries[ui.active].missions
-    {
-        return panel.close_reader();
+    if let Some(ui) = &mut s.workspace {
+        let entry = &mut ui.entries[ui.active];
+        ui.mission_editor
+            .revoke_auto_start_for_occurrence(&entry.key);
+        if let Some(panel) = &mut entry.missions {
+            return panel.close_reader();
+        }
     }
     None
 }
@@ -158,7 +162,10 @@ pub(crate) fn mission_reader(s: &State) -> El {
     if !mission_has_reader(s) {
         return rune::el();
     }
-    let Some(panel) = mission_owner(s) else {
+    let Some(ui) = s.workspace.as_ref() else {
+        return rune::el();
+    };
+    let Some(panel) = ui.entries[ui.active].missions.as_ref() else {
         return rune::el();
     };
     let close = |s: &mut State, tx: &mut rune::Tx| {
@@ -171,10 +178,44 @@ pub(crate) fn mission_reader(s: &State) -> El {
         restore_mission_reader_focus(s, back, tx);
     };
     if panel.has_editor() {
-        missions::editor_view(panel, mission_editor_edit, close)
+        missions::editor_view(
+            panel,
+            &ui.mission_editor,
+            mission_editor_edit,
+            mission_editor_act,
+            close,
+        )
     } else {
         missions::reader_view(panel, mission_reader_owner, close)
     }
+}
+
+fn mission_editor_act(s: &mut State, gesture: missions::EditorGesture, tx: &mut rune::Tx) {
+    if crate::shell::launcher_replaces_project(s) {
+        return;
+    }
+    let opening = matches!(
+        gesture,
+        missions::EditorGesture::OpenCreate { .. } | missions::EditorGesture::OpenEdit { .. }
+    );
+    let mut focus_target = None;
+    let mut opened = false;
+    if let Some(ui) = s.workspace.as_mut() {
+        let entry = &mut ui.entries[ui.active];
+        if let Some(panel) = entry.missions.as_mut() {
+            opened = panel.editor_gesture(&entry.key, &mut ui.mission_editor, gesture);
+            if opening && opened {
+                focus_target = panel.take_editor_initial_focus();
+            }
+        }
+    }
+    if opening && opened {
+        on_mission_reader_open(s, tx);
+        if let Some(target) = focus_target {
+            tx.focus(target, tx.focus_visible());
+        }
+    }
+    tx.instant();
 }
 
 fn mission_reader_owner(s: &mut State) -> Option<&mut missions::Panel> {
@@ -382,6 +423,7 @@ pub(super) fn poll_missions(
     let finished = ui.mission_lifecycle.poll();
     let mut changed = !finished.is_empty();
     let mut auth_expired = Vec::new();
+    extend_unique_auth(&mut auth_expired, ui.mission_lifecycle.drain_auth_expired());
     let mut restore_chat_after_save = false;
     let mut selection_changed = false;
     let mounted = crate::shell::right_panel_visible(s);
@@ -409,10 +451,14 @@ pub(super) fn poll_missions(
         ui.mission_lifecycle.confirmation = None;
         changed = true;
     }
+    let mut active_visible = false;
+    let mut active_polled = false;
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if index != ui.active {
             if let Some(panel) = &mut entry.missions {
                 panel.suspend();
+                ui.mission_editor
+                    .revoke_auto_start_for_occurrence(&entry.key);
             }
             continue;
         }
@@ -424,12 +470,14 @@ pub(super) fn poll_missions(
                 .and_then(|(backend, project)| {
                     let mut backend = backend.clone();
                     backend.workspace.clone_from(&project.id);
-                    (!backend.workspace.is_empty()).then_some(backend)
+                    (!backend.workspace.is_empty()).then_some((backend, project.path.clone()))
                 });
-        let Some(backend) = target else {
+        let Some((backend, folder)) = target else {
             changed |= entry.missions.take().is_some();
             ui.mission_lifecycle.retain_checks_for(None);
             ui.mission_lifecycle.confirmation = None;
+            ui.mission_editor
+                .revoke_auto_start_for_occurrence(&entry.key);
             continue;
         };
         let Tab::Workspace(saved) = &mut entry.saved else {
@@ -448,9 +496,11 @@ pub(super) fn poll_missions(
                 .filter(|panel| panel.same_workspace(&backend))
             {
                 existing.rebind(backend);
+                existing.rebind_editor(&mut ui.mission_editor);
             } else {
                 let mut panel =
-                    missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone());
+                    missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone())
+                        .with_owner_scope(folder);
                 panel.selected.clone_from(&saved.view.selected_mission);
                 entry.missions = Some(panel);
             }
@@ -459,9 +509,13 @@ pub(super) fn poll_missions(
         if let Some(panel) = &mut entry.missions {
             if replaced {
                 panel.suspend();
+                ui.mission_editor
+                    .revoke_auto_start_for_occurrence(&entry.key);
                 continue;
             }
             let visible = mounted && saved.view.right_panel == RightPanelTab::Missions;
+            active_visible = visible;
+            active_polled = true;
             if !visible {
                 panel.show(false);
             }
@@ -474,11 +528,36 @@ pub(super) fn poll_missions(
                 panel.refresh_when_due(ui.clock, tx);
             }
             changed |= panel.poll();
-            let drained_auth = panel.drain_auth_expired();
-            let reader_auth_expired = !drained_auth.is_empty();
-            auth_expired.extend(drained_auth);
+            changed |= panel.observe_editor_detail(&ui.mission_editor);
+            extend_unique_auth(&mut auth_expired, panel.drain_auth_expired());
+        }
+    }
+    changed |= ui.mission_briefing.poll();
+    extend_unique_auth(&mut auth_expired, ui.mission_briefing.take_auth_expired());
+
+    let (editor_changed, editor_events) = {
+        let active_entry = &ui.entries[ui.active];
+        let active_ctx = active_polled
+            .then(|| {
+                active_entry
+                    .missions
+                    .as_ref()?
+                    .active_editor(&active_entry.key)
+            })
+            .flatten();
+        ui.mission_editor
+            .poll(active_ctx, &auth_expired, &mut ui.mission_lifecycle)
+    };
+    changed |= editor_changed;
+    extend_unique_auth(&mut auth_expired, ui.mission_editor.drain_auth_expired());
+
+    let any_auth_expired = !auth_expired.is_empty();
+    if active_polled {
+        let entry = &mut ui.entries[ui.active];
+        if let (Tab::Workspace(saved), Some(panel)) = (&mut entry.saved, &mut entry.missions) {
+            changed |= panel.apply_editor_events(&entry.key, &editor_events);
             if let Some(text) = panel.take_reader_copy()
-                && !reader_auth_expired
+                && !any_auth_expired
                 && panel.has_reader()
             {
                 tx.copy(text);
@@ -495,7 +574,7 @@ pub(super) fn poll_missions(
                 && !panel.has_surface()
             {
                 restore_chat_after_save = true;
-                let target = if visible
+                let target = if active_visible
                     && (back == "missions-create"
                         || (back == "mission-edit" && panel.selected.is_some()))
                 {
@@ -505,9 +584,9 @@ pub(super) fn poll_missions(
                 };
                 tx.focus(target, tx.focus_visible());
             }
-            if !reader_auth_expired {
-                panel.show(panel.supported() && visible);
-                if panel.supported() && visible {
+            if !any_auth_expired {
+                panel.show(panel.supported() && active_visible);
+                if panel.supported() && active_visible {
                     panel.settle_controls(&entry.key, &mut ui.mission_lifecycle, &finished);
                 }
             }
@@ -540,12 +619,24 @@ pub(super) fn poll_missions(
                     failed: panel.detail_failed(),
                 }
             }));
-    changed |= ui.mission_briefing.poll();
     if selection_changed {
         ui.changed();
     }
-    auth_expired.extend(ui.mission_briefing.take_auth_expired());
     (changed, auth_expired, restore_chat_after_save)
+}
+
+fn extend_unique_auth(
+    target: &mut Vec<crate::backend::Backend>,
+    incoming: impl IntoIterator<Item = crate::backend::Backend>,
+) {
+    for candidate in incoming {
+        if !target
+            .iter()
+            .any(|known| known.client.same_connection(&candidate.client))
+        {
+            target.push(candidate);
+        }
+    }
 }
 
 pub(crate) fn suspend_mission_briefing(s: &mut State) {
@@ -559,7 +650,10 @@ pub(crate) fn suspend_missions(s: &mut State) {
         ui.mission_lifecycle.confirmation = None;
         ui.mission_lifecycle.retain_checks_for(None);
         ui.mission_briefing.suspend();
-        if let Some(panel) = &mut ui.entries[ui.active].missions {
+        let entry = &mut ui.entries[ui.active];
+        ui.mission_editor
+            .revoke_auto_start_for_occurrence(&entry.key);
+        if let Some(panel) = &mut entry.missions {
             panel.suspend();
         }
     }

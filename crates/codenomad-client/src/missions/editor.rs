@@ -265,6 +265,7 @@ pub enum MutationCode {
     CreationWorktreeDeleting,
     RevisionConflict,
     RequestConflict,
+    MissionFinished,
     CompareModelsRequired,
     CompareModelsIdentical,
     Forbidden,
@@ -283,6 +284,7 @@ impl MutationCode {
             "compare-models-identical" if create => Some(Self::CompareModelsIdentical),
             "revision-conflict" => Some(Self::RevisionConflict),
             "request-conflict" => Some(Self::RequestConflict),
+            "mission-finished" if !create => Some(Self::MissionFinished),
             _ => None,
         }
     }
@@ -302,6 +304,7 @@ impl MutationCode {
             Self::CreationWorktreeDeleting => "missions.control.creation.worktreeDeleting",
             Self::RevisionConflict => "missions.control.mutation.conflict",
             Self::RequestConflict => "missions.control.mutation.requestConflict",
+            Self::MissionFinished => "missions.scheduling.lock.terminal",
             Self::Forbidden => "missions.control.mutation.forbidden",
             Self::CreationUncertain | Self::CreationConflict | Self::Invalid => {
                 "missions.control.mutation.error"
@@ -333,6 +336,13 @@ impl CreatedMission {
             && self.status == Status::Active
             && self.run_state == Some(RunState::Prepared)
             && !self.pending_controls
+    }
+
+    pub fn start_request(&self) -> Result<LifecycleRequest> {
+        if !self.can_auto_start() {
+            return Err("created Mission cannot auto-start".into());
+        }
+        LifecycleRequest::new(LifecycleAction::Start, self.revision, false)
     }
 }
 
@@ -366,13 +376,6 @@ pub enum EditReceiptOutcome {
     Applied { mission_id: String, revision: u64 },
     Unconfirmed,
     AuthExpired,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StartCreatedOutcome {
-    Started(u64),
-    AuthExpired,
-    Unconfirmed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -465,61 +468,6 @@ impl Backend {
         settle_update(status, body.as_ref(), target, request)
     }
 
-    /// Starts a freshly created one-time Mission on a direct `fresh` creation ACK.
-    pub async fn start_created_mission(&self, created: &CreatedMission) -> StartCreatedOutcome {
-        if !created.can_auto_start()
-            || !valid_id(&self.workspace)
-            || !panel_id(&created.id)
-            || created.id.encode_utf16().count() > 100
-        {
-            return StartCreatedOutcome::Unconfirmed;
-        }
-        let Ok(request) = LifecycleRequest::new(LifecycleAction::Start, created.revision, false)
-        else {
-            return StartCreatedOutcome::Unconfirmed;
-        };
-        let Ok(url) = missions_url(self, &[created.id.as_str(), "control"]) else {
-            return StartCreatedOutcome::Unconfirmed;
-        };
-        let Ok(response) = self
-            .client
-            .post(url)
-            .timeout(MUTATION_TIMEOUT)
-            .json(&request)
-            .send()
-            .await
-        else {
-            return StartCreatedOutcome::Unconfirmed;
-        };
-        let status = response.status();
-        if status == StatusCode::UNAUTHORIZED {
-            return StartCreatedOutcome::AuthExpired;
-        }
-        if !status.is_success() {
-            return StartCreatedOutcome::Unconfirmed;
-        }
-        let Ok(body) = read_json_limited(response, MAX_RESPONSE_BYTES).await else {
-            return StartCreatedOutcome::Unconfirmed;
-        };
-        let mission = &body["mission"];
-        let control = &mission["control"];
-        let revision = mission["revision"].as_u64();
-        let completed = control["completedRevision"].as_u64();
-        if created.target.matches(mission)
-            && control["missionID"] == created.id
-            && control["requestID"] == request.request_id
-            && control["expectedRevision"] == created.revision
-            && control["action"] == "start"
-            && let (Some(revision), Some(completed)) = (revision, completed)
-            && (created.revision.saturating_add(1)..=revision).contains(&completed)
-            && revision <= MAX_REVISION
-        {
-            StartCreatedOutcome::Started(revision)
-        } else {
-            StartCreatedOutcome::Unconfirmed
-        }
-    }
-
     /// Reads the full text of an editable Mission field (`objective` or `notes`)
     /// pinned to its exact `BodyDescriptor` digest.
     pub async fn read_editor_body(
@@ -601,7 +549,9 @@ impl Backend {
             return EditReceiptOutcome::Unconfirmed;
         }
         let mission = &body["mission"];
-        if !target.matches(mission) || !mission["document"].is_null() {
+        if !target.matches(mission)
+            || (!mission["document"].is_null() && !mission["document"].is_object())
+        {
             return EditReceiptOutcome::Unconfirmed;
         }
         let Some(revision) = mission["revision"]
@@ -620,7 +570,7 @@ impl Backend {
         }) else {
             return EditReceiptOutcome::Unconfirmed;
         };
-        let obj_after = match self
+        let obj_after = self
             .read_change_after(
                 &target.project,
                 &target.mission,
@@ -628,13 +578,11 @@ impl Backend {
                 target_change_rev,
                 "objective",
             )
-            .await
-        {
-            ChangeAfter::Value(v) => v,
-            ChangeAfter::AuthExpired => return EditReceiptOutcome::AuthExpired,
-            ChangeAfter::Unconfirmed => return EditReceiptOutcome::Unconfirmed,
-        };
-        let notes_after = match self
+            .await;
+        if matches!(obj_after, ChangeAfter::AuthExpired) {
+            return EditReceiptOutcome::AuthExpired;
+        }
+        let notes_after = self
             .read_change_after(
                 &target.project,
                 &target.mission,
@@ -642,22 +590,123 @@ impl Backend {
                 target_change_rev,
                 "notes",
             )
+            .await;
+        if matches!(notes_after, ChangeAfter::AuthExpired) {
+            return EditReceiptOutcome::AuthExpired;
+        }
+        let obj_matches = matches!(obj_after, ChangeAfter::Present(Some(ref value)) if value == &request.objective);
+        let notes_matches = match &request.notes {
+            Some(expected) => {
+                matches!(notes_after, ChangeAfter::Present(Some(ref value)) if value == expected)
+            }
+            None => matches!(notes_after, ChangeAfter::Absent),
+        };
+        if !obj_matches || !notes_matches {
+            return EditReceiptOutcome::Unconfirmed;
+        }
+        if mission["document"].is_object() {
+            match self
+                .verify_document_text_sync(&target.project, &target.mission, mission)
+                .await
+            {
+                DocumentSync::Synced => {}
+                DocumentSync::AuthExpired => return EditReceiptOutcome::AuthExpired,
+                DocumentSync::Unconfirmed => return EditReceiptOutcome::Unconfirmed,
+            }
+        }
+        EditReceiptOutcome::Applied {
+            mission_id: target.mission.clone(),
+            revision,
+        }
+    }
+
+    async fn verify_document_text_sync(
+        &self,
+        project_id: &str,
+        mission_id: &str,
+        mission: &Value,
+    ) -> DocumentSync {
+        let current_objective = match self
+            .read_mission_text_field(project_id, mission_id, mission, "objective", true)
             .await
         {
-            ChangeAfter::Value(v) => v,
-            ChangeAfter::AuthExpired => return EditReceiptOutcome::AuthExpired,
-            ChangeAfter::Unconfirmed => return EditReceiptOutcome::Unconfirmed,
-        };
-        let expected_notes = request.notes.as_deref().unwrap_or("");
-        if obj_after.as_deref() == Some(request.objective.as_str())
-            && notes_after.as_deref().unwrap_or("") == expected_notes
-        {
-            EditReceiptOutcome::Applied {
-                mission_id: target.mission.clone(),
-                revision,
+            EditorBodyOutcome::Ready(text) => text,
+            EditorBodyOutcome::AuthExpired => return DocumentSync::AuthExpired,
+            EditorBodyOutcome::Changed | EditorBodyOutcome::Unavailable => {
+                return DocumentSync::Unconfirmed;
             }
+        };
+        let current_notes = match self
+            .read_mission_text_field(project_id, mission_id, mission, "notes", false)
+            .await
+        {
+            EditorBodyOutcome::Ready(text) => text,
+            EditorBodyOutcome::AuthExpired => return DocumentSync::AuthExpired,
+            EditorBodyOutcome::Changed | EditorBodyOutcome::Unavailable => {
+                return DocumentSync::Unconfirmed;
+            }
+        };
+        let Ok(url) = missions_url(self, &[mission_id, "schedule"]) else {
+            return DocumentSync::Unconfirmed;
+        };
+        let Ok(response) = self.client.get(url).timeout(RECEIPT_TIMEOUT).send().await else {
+            return DocumentSync::Unconfirmed;
+        };
+        let status = response.status();
+        if status == StatusCode::UNAUTHORIZED {
+            return DocumentSync::AuthExpired;
+        }
+        if !status.is_success() {
+            return DocumentSync::Unconfirmed;
+        }
+        let Ok(body) = read_json_limited(response, MAX_RESPONSE_BYTES).await else {
+            return DocumentSync::Unconfirmed;
+        };
+        let doc = &body["document"];
+        if doc.is_object()
+            && doc["id"].as_str() == Some(mission_id)
+            && doc["configuration"]["objective"].as_str() == Some(current_objective.as_str())
+            && doc["configuration"]["notes"].as_str().unwrap_or("") == current_notes.as_str()
+        {
+            DocumentSync::Synced
         } else {
-            EditReceiptOutcome::Unconfirmed
+            DocumentSync::Unconfirmed
+        }
+    }
+
+    async fn read_mission_text_field(
+        &self,
+        project_id: &str,
+        mission_id: &str,
+        mission: &Value,
+        field: &str,
+        required: bool,
+    ) -> EditorBodyOutcome {
+        if let Some(inline) = mission.get(field).and_then(Value::as_str) {
+            return EditorBodyOutcome::Ready(inline.to_owned());
+        }
+        if let Some(raw_desc) = mission.get("bodies").and_then(|b| b.get(field)) {
+            let Ok(desc) = serde_json::from_value::<BodyDescriptor>(raw_desc.clone()) else {
+                return EditorBodyOutcome::Unavailable;
+            };
+            return self
+                .read_editor_body(
+                    project_id,
+                    mission_id,
+                    &ContentSelector::mission(field),
+                    &desc,
+                )
+                .await;
+        }
+        if required {
+            EditorBodyOutcome::Unavailable
+        } else {
+            self.confirm_absent_editor_body(
+                project_id,
+                mission_id,
+                &ContentSelector::mission(field),
+            )
+            .await
         }
     }
 
@@ -670,7 +719,7 @@ impl Backend {
         field: &str,
     ) -> ChangeAfter {
         if let Some(inline) = change.get(field).and_then(Value::as_object) {
-            return ChangeAfter::Value(
+            return ChangeAfter::Present(
                 inline
                     .get("after")
                     .and_then(Value::as_str)
@@ -678,17 +727,13 @@ impl Backend {
             );
         }
         let Some(raw_desc) = change.get("bodies").and_then(|b| b.get(field)) else {
-            return if field == "notes" {
-                ChangeAfter::Value(None)
-            } else {
-                ChangeAfter::Unconfirmed
-            };
+            return ChangeAfter::Absent;
         };
         let Ok(desc) = serde_json::from_value::<BodyDescriptor>(raw_desc.clone()) else {
             return ChangeAfter::Unconfirmed;
         };
         let max_json_units = (MISSION_TEXT_MAX as u64)
-            .saturating_mul(6)
+            .saturating_mul(12)
             .saturating_add(256);
         match self
             .read_bounded_body(
@@ -702,9 +747,9 @@ impl Backend {
         {
             EditorBodyOutcome::AuthExpired => ChangeAfter::AuthExpired,
             EditorBodyOutcome::Ready(raw) => match serde_json::from_str::<Value>(&raw) {
-                Ok(Value::Object(obj)) => {
-                    ChangeAfter::Value(obj.get("after").and_then(Value::as_str).map(str::to_owned))
-                }
+                Ok(Value::Object(obj)) => ChangeAfter::Present(
+                    obj.get("after").and_then(Value::as_str).map(str::to_owned),
+                ),
                 _ => ChangeAfter::Unconfirmed,
             },
             EditorBodyOutcome::Changed | EditorBodyOutcome::Unavailable => ChangeAfter::Unconfirmed,
@@ -775,7 +820,14 @@ impl Backend {
 }
 
 enum ChangeAfter {
-    Value(Option<String>),
+    Present(Option<String>),
+    Absent,
+    Unconfirmed,
+    AuthExpired,
+}
+
+enum DocumentSync {
+    Synced,
     Unconfirmed,
     AuthExpired,
 }
@@ -941,8 +993,13 @@ fn settle_update(
         if status.as_u16() == 409 && code == Some(MutationCode::RevisionConflict) {
             return UpdateMissionOutcome::RevisionConflict;
         }
-        if status.as_u16() == 409 && code == Some(MutationCode::RequestConflict) {
-            return UpdateMissionOutcome::Rejected(MutationCode::RequestConflict);
+        if status.as_u16() == 409
+            && matches!(
+                code,
+                Some(MutationCode::RequestConflict | MutationCode::MissionFinished)
+            )
+        {
+            return UpdateMissionOutcome::Rejected(code.unwrap());
         }
         return match status.as_u16() {
             403 => UpdateMissionOutcome::Rejected(MutationCode::Forbidden),

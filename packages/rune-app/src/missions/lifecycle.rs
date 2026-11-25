@@ -39,6 +39,22 @@ impl Source {
             target: header.lifecycle_target(),
         })
     }
+
+    pub fn from_created(
+        occurrence: &str,
+        backend: &Backend,
+        created: &codenomad_client::missions::CreatedMission,
+    ) -> Option<Self> {
+        Some(Self {
+            occurrence: occurrence.into(),
+            workspace: backend.workspace.clone(),
+            mission: MissionKey {
+                server: backend.client.server_identity()?.into(),
+                id: created.id.clone(),
+            },
+            target: created.target.clone(),
+        })
+    }
 }
 
 pub(crate) enum Gesture {
@@ -202,13 +218,14 @@ pub(crate) struct Lifecycle {
     current: Option<Source>,
     pub confirmation: Option<(Source, u64)>,
     feedback: Option<(MissionKey, LifecycleTarget, &'static str)>,
+    auth_expired: Vec<Backend>,
 }
 
 struct Intent {
     target: LifecycleTarget,
     request: LifecycleRequest,
     predecessor: Option<LifecycleRequest>,
-    flight: Option<Receiver<LifecycleOutcome>>,
+    flight: Option<Receiver<(LifecycleOutcome, Backend)>>,
     checking: Option<(bool, u64)>,
     checked: Option<u64>,
     acknowledged: Option<u64>,
@@ -449,24 +466,38 @@ impl Lifecycle {
                 .control_mission(&target, &request)
                 .await
                 .unwrap_or(LifecycleOutcome::Unconfirmed);
-            if out.send(result).await.is_ok() {
+            if out.send((result, backend)).await.is_ok() {
                 wake();
             }
         });
     }
 
+    pub fn drain_auth_expired(&mut self) -> Vec<Backend> {
+        std::mem::take(&mut self.auth_expired)
+    }
+
     pub fn poll(&mut self) -> Vec<(MissionKey, LifecycleTarget, LifecycleOutcome)> {
         let mut finished = Vec::new();
         self.intents.retain(|source, intent| {
-            let Some(outcome) = intent
+            let Some((outcome, backend)) = intent
                 .flight
                 .as_ref()
                 .and_then(|inbox| inbox.try_recv().ok())
             else {
                 return true;
             };
-            finished.push((source.clone(), intent.target.clone(), outcome));
             intent.flight = None;
+            if outcome == LifecycleOutcome::AuthExpired {
+                if !self
+                    .auth_expired
+                    .iter()
+                    .any(|known| known.client.same_connection(&backend.client))
+                {
+                    self.auth_expired.push(backend);
+                }
+                return false;
+            }
+            finished.push((source.clone(), intent.target.clone(), outcome));
             if let LifecycleOutcome::Acknowledged(revision) = outcome {
                 intent.acknowledged = Some(revision);
             }

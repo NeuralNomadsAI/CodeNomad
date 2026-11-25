@@ -1,9 +1,10 @@
 use super::{
     directory::Panel,
     editor::{
-        HoldState, Mode, PrefillState, TEXT_LIMIT, TITLE_LIMIT, notes_limit_exceeded,
+        EditorGesture, Mode, PrefillState, TEXT_LIMIT, TITLE_LIMIT, notes_limit_exceeded,
         objective_limit_exceeded, title_limit_exceeded,
     },
+    editor_holds::{EditorHolds, HoldState},
 };
 use crate::{components::window_close_button, strings::t};
 use codenomad_client::missions::{RunState, TaskMode, Template, utf16_len};
@@ -42,7 +43,9 @@ impl<S> Scoped<S> {
 
 pub(crate) fn view<S: 'static>(
     panel: &Panel,
+    holds: &EditorHolds,
     owner: PanelOwner<S>,
+    act: fn(&mut S, EditorGesture, &mut Tx),
     on_close: impl Fn(&mut S, &mut Tx) + Clone + 'static,
 ) -> El {
     let Some(form) = panel.editor.form.as_ref() else {
@@ -52,26 +55,28 @@ pub(crate) fn view<S: 'static>(
         owner,
         scope: panel.scope.clone(),
     };
+    let scope_key = panel.creation_scope_key();
     let creation_hold = (form.mode == Mode::Create)
-        .then(|| panel.editor.active_hold(&panel.backend))
+        .then(|| panel.editor.active_hold(&scope_key, holds))
         .flatten();
-    let edit_hold = form.edit.as_ref().and_then(|edit| {
-        panel
-            .editor
-            .active_edit_hold(&panel.backend, &edit.mission_id)
-    });
-    let locked = form.fields_locked(creation_hold, edit_hold);
-    let structural_locked = locked || form.mode == Mode::Edit;
+    let edit_hold = (form.mode == Mode::Edit)
+        .then(|| panel.editor.active_edit_hold(&panel.backend, holds))
+        .flatten();
+    let locked = form.is_locked(creation_hold.as_ref(), edit_hold.as_ref());
+    let structural_locked = form.is_structural_locked(creation_hold.as_ref(), edit_hold.as_ref());
 
     let heading = match form.mode {
         Mode::Create => t("missions.control.create"),
         Mode::Edit => t("missions.control.edit"),
     };
-    let subtitle = form
-        .edit
-        .as_ref()
-        .and_then(|edit| edit.title.as_deref().filter(|s| !s.trim().is_empty()))
-        .or_else(|| form.edit.as_ref().map(|edit| edit.excerpt.as_str()));
+    let subtitle = form.edit.as_ref().map(|edit| {
+        let trimmed = edit.title.trim();
+        if trimmed.is_empty() {
+            edit.excerpt.as_str()
+        } else {
+            trimmed
+        }
+    });
 
     let close_owner = scoped.clone();
     let close_cb = on_close.clone();
@@ -101,8 +106,9 @@ pub(crate) fn view<S: 'static>(
     let mut content = col().full_width().pad(Space::Md).separate(Space::Sm);
 
     let active_hold_state = creation_hold
+        .as_ref()
         .map(|h| h.state)
-        .or_else(|| edit_hold.map(|h| h.state));
+        .or_else(|| edit_hold.as_ref().map(|h| h.state));
     if let Some(state) = active_hold_state {
         let (key, role) = match state {
             HoldState::Pending => ("missions.control.mutation.pending", "status"),
@@ -118,35 +124,29 @@ pub(crate) fn view<S: 'static>(
                     content.child(theme::note(t("missions.control.reader.loading"), "status"));
             }
             PrefillState::Changed => {
-                let reopen_owner = scoped.clone();
                 content = content
                     .child(theme::note(t("missions.control.reader.changed"), "alert"))
                     .child(
-                        layout::button(
+                        layout::button_tx(
                             t("missions.control.reopen"),
                             form.reopening.is_some(),
-                            move |s: &mut S| {
-                                if let Some(p) = reopen_owner.get(s).0 {
-                                    p.reopen_editor();
-                                }
-                            },
+                            move |s: &mut S, tx| act(s, EditorGesture::Reopen, tx),
                         )
                         .key("mission-editor-prefill-reopen"),
                     );
             }
             PrefillState::Failed => {
-                let retry_owner = scoped.clone();
                 content = content
                     .child(theme::note(
                         t("missions.control.reader.unavailable"),
                         "alert",
                     ))
                     .child(
-                        layout::button(t("missionsPanel.reader.retry"), false, move |s: &mut S| {
-                            if let Some(p) = retry_owner.get(s).0 {
-                                p.retry_editor_prefill();
-                            }
-                        })
+                        layout::button_tx(
+                            t("missionsPanel.reader.retry"),
+                            false,
+                            move |s: &mut S, tx| act(s, EditorGesture::RetryPrefill, tx),
+                        )
                         .key("mission-editor-prefill-retry"),
                     );
             }
@@ -161,31 +161,53 @@ pub(crate) fn view<S: 'static>(
     content = content
         .child(text(obj_label).text_role(TextRole::Small))
         .child(
-            layout::hinted_textarea(&form.objective, t("missions.create.objectivePlaceholder"))
-                .rows(4)
-                .label(obj_label)
-                .disabled(locked)
-                .on_edit(move |s: &mut S| {
-                    let (panel, fallback) = obj_owner.get(s);
-                    panel
-                        .and_then(|p| p.editor.form.as_mut())
-                        .map_or(fallback, |f| &mut f.objective)
-                })
-                .build(field_kit(dark()))
-                .key("mission-editor-objective"),
+            layout::hinted_multiline_textarea(
+                &form.objective,
+                4,
+                12,
+                t("missions.create.objectivePlaceholder"),
+            )
+            .label(obj_label)
+            .disabled(locked)
+            .on_edit(move |s: &mut S| {
+                let (panel, fallback) = obj_owner.get(s);
+                panel
+                    .and_then(|p| p.editor.form.as_mut())
+                    .map_or(fallback, |f| &mut f.objective)
+            })
+            .build(field_kit(dark()))
+            .key("mission-editor-objective"),
         )
         .child(counter(&form.objective.text, TEXT_LIMIT));
     if obj_over {
         content = content.child(theme::note(t("missions.control.mutation.error"), "alert"));
     }
 
-    // Title field
+    // Title field (with on-demand info button explaining the structural lock in Edit mode)
     let title_label = t("missions.create.title");
     let derived = form.derived_title();
     let title_owner = scoped.clone();
     let title_invalid = title_limit_exceeded(&form.title.text);
+    let mut title_header = layout::action_row().child(text(title_label).text_role(TextRole::Small));
+    if form.mode == Mode::Edit {
+        let lock_key = match form.edit.as_ref().and_then(|e| e.run_state) {
+            Some(RunState::Prepared) | None => "missions.scheduling.lock.journal",
+            _ => "missions.scheduling.lock.launched-once",
+        };
+        let info_owner = scoped.clone();
+        title_header = title_header.child(
+            chrome::info_tip(title_label, t(lock_key), form.lock_help_open, move |s| {
+                if let Some(p) = info_owner.get(s).0
+                    && let Some(form) = p.editor.form.as_mut()
+                {
+                    form.lock_help_open = !form.lock_help_open;
+                }
+            })
+            .key("mission-editor-lock-info"),
+        );
+    }
     content = content
-        .child(text(title_label).text_role(TextRole::Small))
+        .child(title_header)
         .child(
             layout::hinted_field(&form.title, &derived)
                 .label(title_label)
@@ -202,14 +224,6 @@ pub(crate) fn view<S: 'static>(
         )
         .child(counter(&form.title.text, TITLE_LIMIT));
 
-    if form.mode == Mode::Edit {
-        let lock_key = match form.edit.as_ref().and_then(|e| e.run_state) {
-            Some(RunState::Prepared) | None => "missions.scheduling.lock.journal",
-            _ => "missions.scheduling.lock.launched-once",
-        };
-        content = content.child(theme::note(t(lock_key), "status"));
-    }
-
     // Notes field
     let notes_label = t("missions.control.notes");
     let notes_owner = scoped.clone();
@@ -217,8 +231,7 @@ pub(crate) fn view<S: 'static>(
     content = content
         .child(text(notes_label).text_role(TextRole::Small))
         .child(
-            layout::textarea(&form.notes)
-                .rows(3)
+            layout::multiline_textarea(&form.notes, 3, 10)
                 .label(notes_label)
                 .disabled(locked)
                 .on_edit(move |s: &mut S| {
@@ -319,6 +332,41 @@ pub(crate) fn view<S: 'static>(
         );
     }
 
+    // Copyable previous conflicted draft preserved across Reopen
+    if let Some(previous) = &form.previous_draft {
+        let prev_owner = scoped.clone();
+        let copy_text = previous.clone();
+        let body = col()
+            .full_width()
+            .pad(Space::Sm)
+            .separate(Space::Xs)
+            .inset_surface()
+            .child(text(previous).text_role(TextRole::Body).wrap_anywhere())
+            .child(
+                layout::button_tx(
+                    t("messageItem.actions.copy"),
+                    false,
+                    move |_: &mut S, tx| tx.copy(copy_text.as_str()),
+                )
+                .key("mission-editor-copy-previous"),
+            );
+        content = content.child(
+            chrome::disclosure(
+                t("missions.scheduling.previousDraft"),
+                form.previous_draft_open,
+                body,
+                move |s: &mut S| {
+                    if let Some(p) = prev_owner.get(s).0
+                        && let Some(form) = p.editor.form.as_mut()
+                    {
+                        form.previous_draft_open = !form.previous_draft_open;
+                    }
+                },
+            )
+            .key("mission-editor-previous-draft"),
+        );
+    }
+
     if active_hold_state.is_none()
         && let Some(err) = form.error
     {
@@ -334,62 +382,44 @@ pub(crate) fn view<S: 'static>(
         .key("mission-editor-cancel"),
     );
 
-    if let Some(hold) = creation_hold
+    if let Some(hold) = &creation_hold
         && hold.state == HoldState::Uncertain
     {
-        let rec_owner = scoped.clone();
         actions = actions.child(
             layout::button_tx(
                 t("missions.control.refresh"),
                 hold.checking,
-                move |s: &mut S, tx| {
-                    if let Some(p) = rec_owner.get(s).0 {
-                        p.reconcile_editor_creation();
-                        tx.instant();
-                    }
-                },
+                move |s: &mut S, tx| act(s, EditorGesture::ReconcileCreation, tx),
             )
             .key("mission-editor-reconcile"),
         );
     }
 
-    if let Some(hold) = edit_hold
+    if let Some(hold) = &edit_hold
         && hold.state == HoldState::Uncertain
     {
-        let rec_owner = scoped.clone();
         actions = actions.child(
             layout::button_tx(
-                t("missions.control.refresh"),
+                t("missions.scheduling.readReceipt"),
                 hold.checking,
-                move |s: &mut S, tx| {
-                    if let Some(p) = rec_owner.get(s).0 {
-                        p.reconcile_editor_edit();
-                        tx.instant();
-                    }
-                },
+                move |s: &mut S, tx| act(s, EditorGesture::ReconcileEdit, tx),
             )
             .key("mission-editor-reconcile"),
         );
     }
 
     if form.mode == Mode::Edit && form.edit_conflict && edit_hold.is_none() {
-        let reopen_owner = scoped.clone();
         actions = actions.child(
             layout::button_tx(
                 t("missions.control.reopen"),
                 form.reopening.is_some(),
-                move |s: &mut S, tx| {
-                    if let Some(p) = reopen_owner.get(s).0 {
-                        p.reopen_editor();
-                        tx.instant();
-                    }
-                },
+                move |s: &mut S, tx| act(s, EditorGesture::Reopen, tx),
             )
             .key("mission-editor-reopen"),
         );
     }
 
-    let pending = form.starting_created || active_hold_state == Some(HoldState::Pending);
+    let pending = form.is_pending(creation_hold.as_ref(), edit_hold.as_ref());
     let submit_label = if pending {
         t("missions.control.mutation.pending")
     } else if form.mode == Mode::Create {
@@ -397,14 +427,10 @@ pub(crate) fn view<S: 'static>(
     } else {
         t("missions.control.save")
     };
-    let can_submit = form.can_submit(creation_hold, edit_hold);
+    let can_submit = form.can_submit(creation_hold.as_ref(), edit_hold.as_ref());
     let submit_btn = if can_submit {
-        let submit_owner = scoped;
         layout::button_tx(submit_label, false, move |s: &mut S, tx| {
-            if let Some(p) = submit_owner.get(s).0 {
-                p.submit_editor();
-                tx.instant();
-            }
+            act(s, EditorGesture::Submit, tx);
         })
         .key("mission-editor-submit")
     } else {

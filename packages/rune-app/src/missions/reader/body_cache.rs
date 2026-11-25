@@ -197,10 +197,6 @@ impl BodyCache {
         }
     }
 
-    pub(super) fn has_auth_expired(&self) -> bool {
-        self.auth_expired.is_some()
-    }
-
     pub(super) fn take_auth_expired(&mut self) -> Option<Backend> {
         self.auth_expired.take()
     }

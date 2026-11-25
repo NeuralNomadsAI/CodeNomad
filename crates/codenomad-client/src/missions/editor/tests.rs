@@ -226,10 +226,36 @@ fn create_mission_fresh_ack_and_auto_start() {
             });
             (format!("http://{addr}/"), handle)
         };
-        let start_outcome = backend(start_base).start_created_mission(&created).await;
-        assert_eq!(start_outcome, StartCreatedOutcome::Started(2));
+        let start_request = created.start_request().unwrap();
+        let start_outcome = backend(start_base)
+            .control_mission(&created.target, &start_request)
+            .await
+            .unwrap();
+        assert_eq!(
+            start_outcome,
+            crate::missions::LifecycleOutcome::Acknowledged(2)
+        );
         let start_req = start_task.await.unwrap();
         assert!(start_req.starts_with("POST /api/workspaces/ws-1/missions/msn_alpha123/control "));
+
+        // Unterminated 401 on control_mission returns AuthExpired without waiting for body EOF.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _hold = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let _ = read_http_request(&mut socket).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 9999\r\n\r\npartial")
+                .await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+        assert_eq!(
+            backend(format!("http://{addr}/"))
+                .control_mission(&created.target, &start_request)
+                .await
+                .unwrap(),
+            crate::missions::LifecycleOutcome::AuthExpired
+        );
     });
 }
 
@@ -382,6 +408,26 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
             UpdateMissionOutcome::RevisionConflict
         );
 
+        // 409 mission-finished is a definitive pre-append rejection; unqualified 409 stays Uncertain.
+        let (base, _t) = spawn_http(
+            "409 Conflict",
+            json!({"error":"finished","code":"mission-finished"}).to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base).update_mission(&t, &req).await,
+            UpdateMissionOutcome::Rejected(MutationCode::MissionFinished)
+        );
+        let (base, _t) = spawn_http(
+            "409 Conflict",
+            json!({"error":"unqualified","code":"other-conflict"}).to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base).update_mission(&t, &req).await,
+            UpdateMissionOutcome::Uncertain
+        );
+
         // Reconcile edit matches exact history entry (requestID + expectedRevision + 1 + after bodies).
         let mut mission = sample_mission(3, "running");
         mission["history"] = json!([{
@@ -398,6 +444,198 @@ fn update_mission_and_reconcile_edit_verify_exact_history_entry() {
         .await;
         assert_eq!(
             backend(base).reconcile_mission_edit(&t, &req).await,
+            EditReceiptOutcome::Applied {
+                mission_id: "msn_alpha123".into(),
+                revision: 3
+            }
+        );
+
+        // Explicit notes clear ("") must NOT be confirmed when history entry omits notes.
+        let clear_req =
+            UpdateMissionRequest::with_request_id("upd-clear".into(), 2, "New objective", "")
+                .unwrap();
+        let mut omitted_notes = sample_mission(3, "running");
+        omitted_notes["history"] = json!([{
+            "revision": 3,
+            "source": "user",
+            "requestID": "upd-clear",
+            "objective": { "before": "Old", "after": "New objective" }
+        }]);
+        let (base, _t) = spawn_http(
+            "200 OK",
+            json!({"available": true, "mission": omitted_notes}).to_string(),
+        )
+        .await;
+        assert_eq!(
+            backend(base).reconcile_mission_edit(&t, &clear_req).await,
+            EditReceiptOutcome::Unconfirmed
+        );
+
+        // Reconcile edit verifies document text sync when mission.document is present.
+        let mut with_doc = sample_mission(3, "running");
+        with_doc["document"] = json!({"id": "msn_alpha123", "kind": "one-time", "revision": 2});
+        with_doc["objective"] = json!("New objective");
+        with_doc["notes"] = json!("Notes");
+        with_doc["history"] = json!([{
+            "revision": 3,
+            "source": "user",
+            "requestID": "upd-1",
+            "objective": { "before": "Old", "after": "New objective" },
+            "notes": { "before": "", "after": "Notes" }
+        }]);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let doc_mission = with_doc.clone();
+        let _server = tokio::spawn(async move {
+            for idx in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let raw = read_http_request(&mut socket).await;
+                let reply_body = if idx == 0 {
+                    assert!(raw.starts_with("GET /api/workspaces/ws-1/missions/msn_alpha123 "));
+                    json!({"available": true, "mission": doc_mission}).to_string()
+                } else {
+                    assert!(
+                        raw.starts_with("GET /api/workspaces/ws-1/missions/msn_alpha123/schedule ")
+                    );
+                    json!({
+                        "pending": false,
+                        "document": {
+                            "id": "msn_alpha123",
+                            "configuration": {
+                                "objective": "New objective",
+                                "notes": "Notes"
+                            }
+                        }
+                    })
+                    .to_string()
+                };
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply_body}",
+                    reply_body.len()
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        assert_eq!(
+            backend(format!("http://{addr}/"))
+                .reconcile_mission_edit(&t, &req)
+                .await,
+            EditReceiptOutcome::Applied {
+                mission_id: "msn_alpha123".into(),
+                revision: 3
+            }
+        );
+
+        // Unsynchronized document stays Unconfirmed.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let doc_mission = with_doc.clone();
+        let _server = tokio::spawn(async move {
+            for idx in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let _ = read_http_request(&mut socket).await;
+                let reply_body = if idx == 0 {
+                    json!({"available": true, "mission": doc_mission}).to_string()
+                } else {
+                    json!({
+                        "pending": false,
+                        "document": {
+                            "id": "msn_alpha123",
+                            "configuration": {
+                                "objective": "Stale document text",
+                                "notes": "Notes"
+                            }
+                        }
+                    })
+                    .to_string()
+                };
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply_body}",
+                    reply_body.len()
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        assert_eq!(
+            backend(format!("http://{addr}/"))
+                .reconcile_mission_edit(&t, &req)
+                .await,
+            EditReceiptOutcome::Unconfirmed
+        );
+
+        // Escaped before + after exceeding 6 * MISSION_TEXT_MAX is accepted via /content.
+        let before_ctrl = "\u{0007}".repeat(MISSION_TEXT_MAX);
+        let after_ctrl = "\u{0008}".repeat(MISSION_TEXT_MAX);
+        let change_json = json!({"before": before_ctrl, "after": after_ctrl}).to_string();
+        assert!(utf16_len(&change_json) > MISSION_TEXT_MAX * 6);
+        let change_digest = content_digest(&change_json);
+        let large_req =
+            UpdateMissionRequest::with_request_id("upd-big".into(), 2, &after_ctrl, "Notes")
+                .unwrap();
+        let mut big_mission = sample_mission(3, "running");
+        big_mission["history"] = json!([{
+            "revision": 3,
+            "source": "user",
+            "requestID": "upd-big",
+            "bodies": {
+                "objective": {
+                    "characters": utf16_len(&change_json),
+                    "digest": change_digest,
+                }
+            },
+            "notes": { "before": "", "after": "Notes" }
+        }]);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _server = tokio::spawn(async move {
+            let mut offset = 0usize;
+            for step in 0..10 {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let _raw = read_http_request(&mut socket).await;
+                let reply_body = if step == 0 {
+                    json!({"available": true, "mission": big_mission}).to_string()
+                } else {
+                    let chunk_len = 60_000.min(change_json.len() - offset);
+                    let chunk = &change_json[offset..offset + chunk_len];
+                    let next =
+                        (offset + chunk_len < change_json.len()).then_some(offset + chunk_len);
+                    let body = json!({
+                        "available": true,
+                        "version": 1,
+                        "projectID": "prj_1",
+                        "missionID": "msn_alpha123",
+                        "revision": 3,
+                        "content": {
+                            "kind": "change",
+                            "change": 3,
+                            "field": "objective",
+                            "digest": change_digest,
+                            "offset": offset,
+                            "characters": change_json.len(),
+                            "text": chunk,
+                            "next": next,
+                        }
+                    })
+                    .to_string();
+                    offset += chunk_len;
+                    body
+                };
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply_body}",
+                    reply_body.len()
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+                if step > 0 && offset >= change_json.len() {
+                    break;
+                }
+            }
+        });
+        assert_eq!(
+            backend(format!("http://{addr}/"))
+                .reconcile_mission_edit(&t, &large_req)
+                .await,
             EditReceiptOutcome::Applied {
                 mission_id: "msn_alpha123".into(),
                 revision: 3

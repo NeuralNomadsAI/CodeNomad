@@ -107,8 +107,18 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
 }
-pub fn hinted_textarea(edit: &TextEdit, hint: &str) -> rune_kit::TextArea {
-    textarea(edit).placeholder(hint)
+pub fn multiline_textarea(edit: &TextEdit, min_rows: usize, max_rows: usize) -> rune_kit::TextArea {
+    rune_kit::TextArea::new(edit)
+        .width(None)
+        .auto_grow(min_rows, max_rows)
+}
+pub fn hinted_multiline_textarea(
+    edit: &TextEdit,
+    min_rows: usize,
+    max_rows: usize,
+    hint: &str,
+) -> rune_kit::TextArea {
+    multiline_textarea(edit, min_rows, max_rows).placeholder(hint)
 }
 pub fn composer_input(edit: &TextEdit, placeholder: &str) -> El {
     base_editor(edit).hint(placeholder)
