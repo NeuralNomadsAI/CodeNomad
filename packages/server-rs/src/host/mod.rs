@@ -85,7 +85,7 @@ pub fn read_stdin(stop: CancellationToken, app: crate::Shared) {
             if text.trim() == SHUTDOWN_COMMAND {
                 stop.cancel();
             } else if !native_parent::handle_line(text) && !stop.is_cancelled() && native_parent::available() {
-                crate::auth::managed::handle_control(text, &app.auth, line);
+                crate::auth::managed::handle_control_if(text, &app.auth, || !stop.is_cancelled(), line);
             }
         }
     });

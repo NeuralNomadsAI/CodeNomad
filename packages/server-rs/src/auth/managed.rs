@@ -12,18 +12,31 @@ pub(super) struct ManagedSession {
 }
 
 fn valid_request_id(id: &str) -> bool {
-    id.len() == 36 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'-'))
+    let bytes = id.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => *b == b'-',
+            _ => matches!(b, b'0'..=b'9' | b'a'..=b'f'),
+        })
 }
 
 /// The credential travels only over the attached parent's process pipes.
-pub fn handle_control(line: &str, auth: &Auth, mut send: impl FnMut(&str)) -> bool {
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn handle_control(line: &str, auth: &Auth, send: impl FnMut(&str)) -> bool {
+    handle_control_if(line, auth, || true, send)
+}
+
+pub fn handle_control_if(line: &str, auth: &Auth, live: impl Fn() -> bool, mut send: impl FnMut(&str)) -> bool {
     let Some(id) = line.strip_prefix(RENEW_PREFIX) else {
         return false;
     };
-    if !valid_request_id(id) {
+    if !valid_request_id(id) || !live() {
         return false;
     }
-    let renewed = auth.renew_managed_session();
+    let renewed = auth.renew_managed_session_if(&live);
+    if !live() {
+        return true;
+    }
     send(&format!("{RESPONSE_PREFIX}{id} {}", renewed.as_deref().unwrap_or("-")));
     true
 }
@@ -258,6 +271,8 @@ mod tests {
         for bad in [
             "codenomad:renew-session",
             "codenomad:renew-session short",
+            "codenomad:renew-session ------------------------------------",
+            "codenomad:renew-session 9d754f990b0844d0a99c0d6c95229647aaaa",
             "codenomad:renew-session 9D754F99-0B08-44D0-A99C-0D6C95229647",
             "codenomad:renew-session 9d754f99-0b08-44d0-a99c-0d6c95229647 extra",
             " codenomad:renew-session 9d754f99-0b08-44d0-a99c-0d6c95229647",
@@ -265,5 +280,56 @@ mod tests {
             assert!(!handle_control(bad, &unmanaged.app.auth, |line| emitted.push(line.to_owned())), "{bad:?}");
         }
         assert!(emitted.is_empty());
+    }
+
+    #[tokio::test]
+    async fn runtime_password_and_existing_auth_file_disable_managed_renewal() {
+        let dir = std::env::temp_dir().join(format!("codenomad-managed-authfile-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let auth_file = dir.join("auth.json");
+        let record = auth::password::Record::new("fixture-only").unwrap();
+        auth::password::save(
+            &auth_file,
+            &auth::password::AuthFile {
+                version: 1,
+                username: "local".into(),
+                password: record,
+                user_provided: true,
+                updated_at: crate::now(),
+            },
+        )
+        .unwrap();
+        let with_file = Auth::new(Settings {
+            username: "local".into(),
+            password: None,
+            file: Some(auth_file),
+            cookie: "codenomad_session_test".into(),
+            token: true,
+            managed_local: true,
+            skip: false,
+            idle: Duration::from_millis(20),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let _ = with_file.open_bootstrap_session().unwrap();
+        tokio::time::sleep(Duration::from_millis(35)).await;
+        assert!(with_file.renew_managed_session().is_none());
+
+        let with_cli_password = Auth::new(Settings {
+            username: "local".into(),
+            password: Some("cli-secret-password".into()),
+            file: None,
+            cookie: "codenomad_session_test".into(),
+            token: true,
+            managed_local: true,
+            skip: false,
+            idle: Duration::from_millis(20),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let _ = with_cli_password.open_bootstrap_session().unwrap();
+        tokio::time::sleep(Duration::from_millis(35)).await;
+        assert!(with_cli_password.renew_managed_session().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

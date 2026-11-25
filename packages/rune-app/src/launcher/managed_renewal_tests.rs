@@ -102,6 +102,7 @@ fn managed_local_host_renews_expired_session_without_showing_login() {
             &expired
         ));
         assert!(!rt.state.screen.is_launcher());
+        assert!(!crate::shell::launcher_replaces_project(&rt.state));
         assert!(rt.state.screen.launcher().unwrap().authentication_required);
         assert!(
             rt.state
@@ -118,6 +119,7 @@ fn managed_local_host_renews_expired_session_without_showing_login() {
             &expired
         ));
         assert!(!rt.state.screen.is_launcher());
+        assert!(!crate::shell::launcher_replaces_project(&rt.state));
 
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while rt
@@ -266,6 +268,7 @@ fn managed_renewal_rejects_server_identity_mismatch_and_shows_login() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(rt.state.screen.is_launcher());
+        assert!(crate::shell::launcher_replaces_project(&rt.state));
         let l = rt.state.screen.launcher().unwrap();
         assert!(l.authentication_required);
         assert!(
@@ -275,6 +278,171 @@ fn managed_renewal_rejects_server_identity_mismatch_and_shows_login() {
                 .client
                 .same_connection(&expired.client)
         );
+        server.abort();
+    });
+}
+
+#[test]
+fn attested_managed_renewal_keeps_new_cookie_when_projects_list_fails() {
+    crate::platform::block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let path = req
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .unwrap_or("");
+                    let (status, body) = if path == "/api/meta" {
+                        (
+                            "200 OK",
+                            r#"{"serverId":"srv-ok","apiContract":1,"capabilities":[]}"#,
+                        )
+                    } else if path == "/api/workspaces" {
+                        ("500 Internal Server Error", r#"{"error":"transient"}"#)
+                    } else {
+                        ("404 Not Found", "{}")
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        let base = format!("http://127.0.0.1:{port}/");
+        let expired = Backend::unauthenticated(&base).unwrap();
+        let base_ref = base.clone();
+        let host = crate::platform::LocalHost::fixture(move || {
+            Backend::connect_with_session_cookie(
+                &base_ref,
+                "codenomad_session_test",
+                "renewed_session_token_012345678901234567890",
+            )
+            .ok()
+        });
+
+        let mut s = crate::init();
+        let mut l = Launcher::fixture();
+        l.connection = Some(expired.clone());
+        l.server_id = Some("srv-ok".into());
+        l.host = Some(host);
+        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        let mut rt =
+            rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+
+        assert!(crate::settings::authentication_required(
+            &mut rt.state,
+            &expired
+        ));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while rt
+            .state
+            .screen
+            .launcher()
+            .unwrap()
+            .managed_renewal
+            .is_some()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "managed renewal timed out"
+            );
+            rt.update(|s, tx| {
+                let _ = poll(s, tx);
+            });
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let l = rt.state.screen.launcher().unwrap();
+        assert!(!l.authentication_required, "attested cookie must be kept");
+        assert_eq!(l.error, Some("rune.list_error"));
+        assert!(
+            !l.connection
+                .as_ref()
+                .unwrap()
+                .client
+                .same_connection(&expired.client)
+        );
+        server.abort();
+    });
+}
+
+#[test]
+fn launcher_job_proxied_401_does_not_expire_live_codenomad_session() {
+    crate::platform::block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let path = req
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .unwrap_or("");
+                    let (status, body) = if path == "/api/auth/status" {
+                        ("200 OK", r#"{"authenticated":true}"#)
+                    } else {
+                        (
+                            "401 Unauthorized",
+                            r#"{"error":"upstream opencode unauthorized"}"#,
+                        )
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        let base = format!("http://127.0.0.1:{port}/");
+        let backend = Backend::unauthenticated(&base).unwrap();
+        let mut s = crate::init();
+        let mut l = Launcher::fixture();
+        l.connection = Some(backend.clone());
+        let check_backend = backend.clone();
+        l.job("sessionList.reload.error", async move {
+            check_backend
+                .client
+                .get(format!("{base}workspaces/ws-1/instance/api/session"))
+                .send()
+                .await?
+                .error_for_status()?;
+            Err("expected 401".into())
+        });
+        s.screen = crate::Screen::Chat { launcher: Some(l) };
+        let mut rt =
+            rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while rt.state.screen.launcher().unwrap().pending {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "launcher job timed out"
+            );
+            rt.update(|s, tx| {
+                let _ = poll(s, tx);
+            });
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let l = rt.state.screen.launcher().unwrap();
+        assert!(!l.authentication_required);
+        assert_eq!(l.error, Some("sessionList.reload.error"));
         server.abort();
     });
 }

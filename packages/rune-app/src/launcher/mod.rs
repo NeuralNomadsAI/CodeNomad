@@ -211,6 +211,9 @@ impl Launcher {
             wake,
         }
     }
+    pub(crate) fn renewing_managed_session(&self) -> bool {
+        self.managed_renewal.is_some()
+    }
     pub(crate) fn start_managed_renewal(&mut self, expired: &Backend) -> bool {
         connection::start_managed_renewal(self, expired)
     }
@@ -239,9 +242,14 @@ impl Launcher {
             let result = match f.await {
                 Ok(reply) => Ok(reply),
                 Err(err)
-                    if codenomad_client::http::authentication_expired(&err) && origin.is_some() =>
+                    if codenomad_client::http::authentication_expired(&err)
+                        && let Some(origin) = origin =>
                 {
-                    Ok(Reply::AuthenticationExpired(origin.unwrap()))
+                    if matches!(origin.authentication_status().await, Ok(false)) {
+                        Ok(Reply::AuthenticationExpired(origin))
+                    } else {
+                        Err(error.into())
+                    }
                 }
                 Err(_) => Err(error.into()),
             };
@@ -586,7 +594,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
-            apply_connected(s, b, projects, server_id, selected, tx);
+            apply_connected(s, b, Some(projects), server_id, selected, tx);
         }
         Ok(Reply::AuthenticationExpired(expired)) => {
             crate::settings::authentication_required(s, &expired);
@@ -946,7 +954,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
 fn apply_connected(
     s: &mut State,
     b: Backend,
-    projects: Vec<Project>,
+    projects: Option<Vec<Project>>,
     server_id: String,
     selected: Option<String>,
     tx: &mut Tx,
@@ -955,10 +963,12 @@ fn apply_connected(
         return;
     };
     let reauthenticated = std::mem::take(&mut l.authentication_required);
-    let live_ids: HashSet<String> = if reauthenticated {
-        projects.iter().map(|p| p.id.clone()).collect()
+    let live_ids: Option<HashSet<String>> = if reauthenticated {
+        projects
+            .as_ref()
+            .map(|list| list.iter().map(|p| p.id.clone()).collect())
     } else {
-        HashSet::new()
+        None
     };
     l.catalogue_watch = None;
     l.workspace_stream_generation = 0;
@@ -970,24 +980,33 @@ fn apply_connected(
     l.managed_renewal_failed_for = None;
     l.connection = Some(b);
     l.server_id = Some(server_id);
-    l.projects = projects;
+    if let Some(projects) = projects {
+        l.projects = projects;
+    }
     l.password = TextEdit::new("");
     if reauthenticated {
         connection::watch_catalogue(l);
     }
+    let has_project = l.project.is_some();
+    let job_pending = l.pending;
     crate::workspace::connected(s);
     if reauthenticated {
         crate::workspace::renew_connection(s);
-        let live: HashSet<&str> = live_ids.iter().map(String::as_str).collect();
-        crate::workspace::stop_unlisted_detached(s, &live);
-        if let Some(id) = selected {
+        if let Some(live_ids) = &live_ids {
+            let live: HashSet<&str> = live_ids.iter().map(String::as_str).collect();
+            crate::workspace::stop_unlisted_detached(s, &live);
+        }
+        if has_project && let Some(id) = selected {
             if s.composer.pending() && s.incoming.is_none() {
                 crate::composer::settle_pending(
                     s,
                     codenomad_client::transport::PromptOutcome::Unconfirmed,
                 );
             }
-            if (s.composer.pending() && s.incoming.is_some()) || s.status_permissions.writing() {
+            if (s.composer.pending() && s.incoming.is_some())
+                || s.status_permissions.writing()
+                || job_pending
+            {
                 if let Some(l) = s.screen.launcher_mut() {
                     l.rebind_after_send = Some(id);
                 }
@@ -1007,7 +1026,11 @@ fn apply_connected(
                 .screen
                 .launcher()
                 .and_then(|l| l.project.as_ref())
-                .is_some_and(|p| live.contains(p.id.as_str()));
+                .is_some_and(|p| {
+                    live_ids
+                        .as_ref()
+                        .is_none_or(|ids| ids.contains(p.id.as_str()))
+                });
             if active_live {
                 crate::git::project_opened(s);
                 crate::workspace::restore_files_mode(s);

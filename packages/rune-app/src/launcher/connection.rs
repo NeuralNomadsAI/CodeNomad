@@ -1,9 +1,18 @@
 use super::{Backend, Launcher, Project, Reply, State, TextEdit, Tx};
 use codenomad_client::{Receiver, bounded};
 
+pub(super) enum RenewOutcome {
+    Connected {
+        backend: Box<Backend>,
+        projects: Option<Vec<Project>>,
+        server_id: String,
+    },
+    Failed,
+}
+
 pub(super) struct ManagedRenewal {
     expired: Backend,
-    receiver: Receiver<Option<(Backend, Vec<Project>, String)>>,
+    receiver: Receiver<RenewOutcome>,
 }
 
 pub(super) fn watch_catalogue(l: &mut Launcher) {
@@ -43,7 +52,13 @@ pub fn connect(s: &mut State, _: &mut Tx) {
     let password = l.password.text.clone();
     let expected_server = l
         .authentication_required
-        .then(|| l.server_id.clone())
+        .then(|| {
+            l.server_id.clone().or_else(|| {
+                l.connection
+                    .as_ref()
+                    .and_then(|backend| backend.client.server_identity().map(str::to_owned))
+            })
+        })
         .flatten();
     l.job("rune.connect_error", async move {
         let b = Backend::connect(&address, &password).await?;
@@ -86,24 +101,34 @@ pub(super) fn start_managed_renewal(l: &mut Launcher, expired: &Backend) -> bool
     l.workspace_stream_generation = 0;
     l.detached_reconcile = None;
     l.detached_reconcile_trailing = false;
-    l.result = None;
-    l.pending = false;
-    l.listing = false;
-    let expected_server = l.server_id.clone();
+    let expected_server = l
+        .server_id
+        .clone()
+        .or_else(|| current.client.server_identity().map(str::to_owned));
     let (out, input) = bounded(1);
     let wake = l.wake.clone();
     crate::platform::spawn(async move {
-        let renewed = async {
-            let backend = rx.recv().await.ok().flatten()?;
-            let server_id = backend.attest_server().await.ok()?;
+        let outcome = async {
+            let Some(backend) = rx.recv().await.ok().flatten() else {
+                return RenewOutcome::Failed;
+            };
+            let Ok(server_id) = backend.attest_server().await else {
+                return RenewOutcome::Failed;
+            };
             if expected_server.is_some_and(|expected| expected != server_id) {
-                return None;
+                return RenewOutcome::Failed;
             }
-            let projects = backend.projects().await.ok()?;
-            Some((backend, projects, server_id))
+            // Attestation already marked the renewed cookie delivered on the server;
+            // keep it even if listing workspaces transiently fails.
+            let projects = backend.projects().await.ok();
+            RenewOutcome::Connected {
+                backend: Box::new(backend),
+                projects,
+                server_id,
+            }
         }
         .await;
-        let _ = out.send(renewed).await;
+        let _ = out.send(outcome).await;
         wake();
     });
     l.managed_renewal = Some(ManagedRenewal {
@@ -132,22 +157,20 @@ pub(super) fn poll_managed_renewal(s: &mut State, selected: Option<String>, tx: 
         return true;
     }
     match result {
-        Some((backend, projects, server_id)) => {
+        RenewOutcome::Connected {
+            backend,
+            projects,
+            server_id,
+        } => {
             if let Some(l) = s.screen.launcher_mut() {
                 l.managed_renewal_failed_for = None;
-                l.error = None;
-                l.result = None;
-                l.pending = false;
-                l.listing = false;
+                l.error = projects.is_none().then_some("rune.list_error");
             }
-            super::apply_connected(s, backend, projects, server_id, selected, tx);
+            super::apply_connected(s, *backend, projects, server_id, selected, tx);
         }
-        None => {
+        RenewOutcome::Failed => {
             if let Some(l) = s.screen.launcher_mut() {
                 l.managed_renewal_failed_for = Some(expired);
-                l.result = None;
-                l.pending = false;
-                l.listing = false;
             }
             s.show_launcher();
         }

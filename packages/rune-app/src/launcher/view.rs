@@ -7,7 +7,7 @@ use rune_theme_codenomad::{
 #[cfg(test)]
 mod tests;
 pub fn view(s: &State) -> El {
-    let crate::Screen::Launcher(l) = &s.screen else {
+    let Some(l) = s.screen.launcher() else {
         return rune::el();
     };
     #[cfg(target_arch = "wasm32")]

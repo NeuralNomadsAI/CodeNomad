@@ -26,10 +26,12 @@ pub(super) fn renew_command(id: &str) -> String {
     format!("codenomad:renew-session {id}\n")
 }
 fn valid_request_id(id: &str) -> bool {
-    id.len() == 36
-        && id
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'-'))
+    let bytes = id.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => *b == b'-',
+            _ => matches!(b, b'0'..=b'9' | b'a'..=b'f'),
+        })
 }
 fn valid_session_token(value: &str) -> bool {
     value.len() == 43
@@ -184,17 +186,14 @@ pub(super) fn pump(
                 break;
             }
         }
-        if total == 0 {
+        if total == 0 || !ended {
             return Ok(());
         }
         if oversized {
             consume(None)
         } else {
             let line = String::from_utf8_lossy(&bytes);
-            consume(Some(line.trim_end()));
-        }
-        if !ended {
-            return Ok(());
+            consume(Some(line.trim_end_matches('\n').trim_end_matches('\r')));
         }
     }
 }

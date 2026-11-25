@@ -83,7 +83,9 @@ fn managed_session_reply_classification_validates_id_and_token() {
     for bad in [
         format!("CODENOMAD_MANAGED_SESSION:{id} short"),
         format!("CODENOMAD_MANAGED_SESSION:{id} {token}extra"),
+        format!("CODENOMAD_MANAGED_SESSION:{id} {token} "),
         format!("CODENOMAD_MANAGED_SESSION:bad-id {token}"),
+        format!("CODENOMAD_MANAGED_SESSION:------------------------------------ {token}"),
         format!(
             "CODENOMAD_MANAGED_SESSION:{} {token}",
             id.to_ascii_uppercase()
@@ -95,6 +97,19 @@ fn managed_session_reply_classification_validates_id_and_token() {
             "{bad:?}"
         );
     }
+    let mut pumped = Vec::new();
+    protocol::pump(
+        BufReader::new(Cursor::new(format!(
+            "CODENOMAD_MANAGED_SESSION:{id} {token} \r\nCODENOMAD_MANAGED_SESSION:{id} {token}"
+        ))),
+        |line| pumped.push(line.map(str::to_owned)),
+    )
+    .unwrap();
+    assert_eq!(
+        pumped,
+        [Some(format!("CODENOMAD_MANAGED_SESSION:{id} {token} "))],
+        "trailing spaces stay intact and unterminated EOF lines are discarded"
+    );
     assert_eq!(
         protocol::renew_command(id),
         format!("codenomad:renew-session {id}\n")

@@ -114,6 +114,14 @@ struct Credentials {
 struct SessionState {
     sessions: HashMap<String, Session>,
     managed: Option<managed::ManagedSession>,
+    password_writing: bool,
+}
+
+struct PasswordWriteGuard<'a>(&'a Mutex<SessionState>);
+impl Drop for PasswordWriteGuard<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().password_writing = false;
+    }
 }
 
 pub struct Auth {
@@ -283,13 +291,20 @@ impl Auth {
         Ok(id)
     }
     /// Called only by the authenticated process parent on stdin.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn renew_managed_session(&self) -> Option<String> {
+        self.renew_managed_session_if(|| true)
+    }
+    pub fn renew_managed_session_if(&self, live: impl Fn() -> bool) -> Option<String> {
         let credentials = self.credentials.lock().unwrap();
-        if !self.can_renew_bootstrap(&credentials) {
+        if !live() || !self.can_renew_bootstrap(&credentials) {
             return None;
         }
         let username = self.settings.username.clone();
         let mut state = self.sessions.lock().unwrap();
+        if state.password_writing || !live() {
+            return None;
+        }
         self.prune_expired(&mut state);
         let managed = state.managed.as_ref()?;
         if state.sessions.contains_key(&managed.current) {
@@ -630,6 +645,10 @@ pub async fn set_password(
         user_provided: true,
         updated_at: crate::now(),
     };
+    let _writing = {
+        app.auth.sessions.lock().unwrap().password_writing = true;
+        PasswordWriteGuard(&app.auth.sessions)
+    };
     if let Err(e) = password::save(file, &stored) {
         return conflict(&e.to_string());
     }
@@ -646,6 +665,7 @@ pub async fn set_password(
             keep
         });
     }
+    drop(_writing);
     (
         [(header::SET_COOKIE, app.auth.session_cookie("", Some(0)))],
         Json(json!({"ok":true,"username":username,"passwordUserProvided":true})),

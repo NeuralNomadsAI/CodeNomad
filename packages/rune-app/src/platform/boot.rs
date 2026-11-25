@@ -165,7 +165,7 @@ pub fn start(wake: rune::Waker) -> Option<Receiver<Result<(Backend, LocalHost)>>
                             let renewed = if stopping.load(Ordering::SeqCst) {
                                 None
                             } else {
-                                child.renew_managed_session().ok().flatten()
+                                child.renew_managed_session(&stopping).ok().flatten()
                             };
                             let _ = reply.send_blocking(renewed);
                         }

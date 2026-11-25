@@ -48,6 +48,7 @@ pub struct ChildHost {
     output: Arc<Mutex<Output>>,
     writer: mpsc::SyncSender<Control>,
     pending_renewal: Arc<Mutex<Option<PendingRenewal>>>,
+    stdout_closed: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
     url: String,
@@ -91,6 +92,7 @@ impl ChildHost {
             .ok_or_else(|| io::Error::other("Backend stderr unavailable"))?;
         let output = Arc::new(Mutex::new(Output::default()));
         let pending_renewal = Arc::new(Mutex::new(None::<PendingRenewal>));
+        let stdout_closed = Arc::new(AtomicBool::new(false));
         let (writer, receiver) = mpsc::sync_channel::<Control>(32);
         let shutdown = Arc::new(AtomicBool::new(false));
         let writer_shutdown = shutdown.clone();
@@ -141,6 +143,7 @@ impl ChildHost {
         let reader_output = output.clone();
         let reader_authority = authority.clone();
         let reader_renewal = pending_renewal.clone();
+        let reader_closed = stdout_closed.clone();
         let replies = writer.clone();
         let stdout_thread = thread::spawn(move || {
             let result = protocol::pump(BufReader::new(stdout), |line| {
@@ -182,6 +185,7 @@ impl ChildHost {
                     protocol::Line::Diagnostic => {}
                 }
             });
+            reader_closed.store(true, Ordering::SeqCst);
             reader_renewal.lock().unwrap().take();
             if result.is_err() {
                 reader_output.lock().unwrap().failed = true;
@@ -202,6 +206,7 @@ impl ChildHost {
             output,
             writer,
             pending_renewal,
+            stdout_closed,
             shutdown,
             threads: vec![writer_thread, stdout_thread, stderr_thread],
             url: String::new(),
@@ -268,8 +273,12 @@ impl ChildHost {
         Ok(backend)
     }
     /// Ask the owned child process over stdin to renew an expired bootstrap-only session.
-    pub fn renew_managed_session(&mut self) -> io::Result<Option<Backend>> {
-        if self.stopped || !self.current() || self.process.try_wait()?.is_some() {
+    pub fn renew_managed_session(&mut self, cancel: &AtomicBool) -> io::Result<Option<Backend>> {
+        if self.stopped
+            || cancel.load(Ordering::SeqCst)
+            || !self.current()
+            || self.process.try_wait()?.is_some()
+        {
             return Ok(None);
         }
         let id = codenomad_client::http::random_uuid_v4()
@@ -277,7 +286,11 @@ impl ChildHost {
         let (reply, receiver) = mpsc::sync_channel(1);
         {
             let mut pending = self.pending_renewal.lock().unwrap();
-            if pending.is_some() || !self.current() {
+            if pending.is_some()
+                || self.stdout_closed.load(Ordering::SeqCst)
+                || cancel.load(Ordering::SeqCst)
+                || !self.current()
+            {
                 return Ok(None);
             }
             *pending = Some(PendingRenewal {
@@ -293,9 +306,31 @@ impl ChildHost {
             self.pending_renewal.lock().unwrap().take();
             return Ok(None);
         }
-        let session = receiver.recv_timeout(Duration::from_secs(3)).ok().flatten();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let session = loop {
+            if cancel.load(Ordering::SeqCst) || !self.current() {
+                break None;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break None;
+            }
+            match receiver.recv_timeout(remaining.min(Duration::from_millis(25))) {
+                Ok(value) => break value,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if self.stdout_closed.load(Ordering::SeqCst) {
+                        break None;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break None,
+            }
+        };
         self.pending_renewal.lock().unwrap().take();
-        if self.stopped || !self.current() || self.process.try_wait()?.is_some() {
+        if self.stopped
+            || cancel.load(Ordering::SeqCst)
+            || !self.current()
+            || self.process.try_wait()?.is_some()
+        {
             return Ok(None);
         }
         let Some(session) = session else {
